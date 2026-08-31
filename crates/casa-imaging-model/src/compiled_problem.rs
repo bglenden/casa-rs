@@ -2139,8 +2139,16 @@ fn validate_joint_continuum_line(
     let channels = geometry.spectral().output_channels();
     let anchors = contract.continuum_anchor_channels();
     let line = contract.line_channels();
+    let unique = |support: &[usize]| {
+        let mut canonical = support.to_vec();
+        canonical.sort_unstable();
+        canonical.dedup();
+        canonical.len() == support.len()
+    };
     if anchors.is_empty()
         || line.is_empty()
+        || !unique(anchors)
+        || !unique(line)
         || line.len() != line_terms
         || anchors.len() < continuum_terms
         || !contract.maximum_condition_number().is_finite()
@@ -2309,6 +2317,33 @@ fn validate_products(
     }
     let restored_image_requested = products.contains(ProductKind::RestoredImage);
     let restoring_beam_requested = !matches!(products.restoring_beam, RestoringBeamPolicy::None);
+    if matches!(
+        reconstruction.basis,
+        ReconstructionBasis::JointContinuumLine { .. }
+    ) {
+        let unsupported = products.products.iter().any(|product| {
+            matches!(
+                product,
+                ProductKind::PrimaryBeam
+                    | ProductKind::Sensitivity
+                    | ProductKind::PbCorrectedImage
+                    | ProductKind::TaylorTerms
+                    | ProductKind::SpectralIndex
+                    | ProductKind::SpectralIndexError
+                    | ProductKind::PbCorrectedSpectralIndex
+            )
+        });
+        if unsupported {
+            return Err(CompileProblemError::InvalidProductCombination {
+                reason: "the first joint continuum-line contract does not publish PB, sensitivity, PB-corrected, Taylor-set, or spectral-index products",
+            });
+        }
+        if restored_image_requested && products.restoring_beam != RestoringBeamPolicy::Common {
+            return Err(CompileProblemError::InvalidProductCombination {
+                reason: "joint continuum-line restoration requires one explicitly common restoring beam",
+            });
+        }
+    }
     if restored_image_requested != restoring_beam_requested {
         return Err(CompileProblemError::InvalidProductCombination {
             reason: "restored-image and restoring-beam requirements must be requested together",

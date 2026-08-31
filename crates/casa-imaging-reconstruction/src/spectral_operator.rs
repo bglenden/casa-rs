@@ -819,13 +819,30 @@ pub fn spectral_operator_workload(
     let image_cells = checked_cells(specification.image_shape)?;
     let coefficient_terms = specification.coefficient_terms();
     let normal_moments = specification.normal_moments();
+    let joint_channels = usize::from(matches!(
+        specification.basis,
+        SpectralBasisPlan::Joint { .. }
+    ))
+    .checked_mul(specification.slab.total_channels())
+    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let grid_planes = match pass {
         SpectralOperatorPass::InitialMajor => coefficient_terms.checked_mul(4).and_then(|values| {
             normal_moments
                 .checked_mul(2)
                 .and_then(|moments| values.checked_add(moments))
+                .and_then(|planes| {
+                    joint_channels
+                        .checked_mul(2)
+                        .and_then(|common| planes.checked_add(common))
+                })
         }),
-        SpectralOperatorPass::ResidualRefresh => coefficient_terms.checked_mul(2),
+        SpectralOperatorPass::ResidualRefresh => {
+            coefficient_terms.checked_mul(2).and_then(|planes| {
+                joint_channels
+                    .checked_mul(2)
+                    .and_then(|common| planes.checked_add(common))
+            })
+        }
     }
     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let grid_complex_values = cells
@@ -881,11 +898,17 @@ pub fn spectral_operator_workload(
                 SpectralOperatorPass::ResidualRefresh => 2,
             })
             .and_then(|values| values.checked_add(normal_moments))
+            .and_then(|values| {
+                joint_channels
+                    .checked_mul(2)
+                    .and_then(|common| values.checked_add(common))
+            })
             .and_then(|planes| image_cells.checked_mul(planes))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         primitive_f64_values: image_cells
             .checked_mul(normal_moments)
             .and_then(|values| values.checked_add(normal_moments))
+            .and_then(|values| values.checked_add(joint_channels))
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         primitive_validity_values: specification.basis.validity_entries(specification.slab),
         coefficient_terms,
@@ -983,6 +1006,7 @@ pub struct SpectralOperatorPrimitives {
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
     sum_weights: Box<[f64]>,
+    channel_sum_weights: Box<[f64]>,
     validity: Box<[SpectralChannelValidity]>,
     major_cycle_residual: Option<Box<[Complex64]>>,
     major_cycle_residual_promoted: bool,
@@ -1069,6 +1093,12 @@ impl SpectralOperatorPrimitives {
     #[must_use]
     pub const fn sum_weights(&self) -> &[f64] {
         &self.sum_weights
+    }
+
+    /// Return exact channel-local response weights for joint common-residual normalization.
+    #[must_use]
+    pub const fn channel_sum_weights(&self) -> &[f64] {
+        &self.channel_sum_weights
     }
 
     /// Return per-channel validity, or the one order-zero-anchored Taylor support state.
@@ -1168,6 +1198,9 @@ impl SpectralOperatorPrimitives {
         for value in &self.sum_weights {
             encoder.u64(canonical_f64_bits(*value));
         }
+        for value in &self.channel_sum_weights {
+            encoder.u64(canonical_f64_bits(*value));
+        }
         for validity in &self.validity {
             encoder.u8(match validity {
                 SpectralChannelValidity::Valid => 0,
@@ -1196,6 +1229,7 @@ pub(crate) struct ReusableNormalState {
     psf: Box<[Complex64]>,
     sensitivity: Box<[f64]>,
     sum_weights: Box<[f64]>,
+    channel_sum_weights: Box<[f64]>,
     validity: Box<[SpectralChannelValidity]>,
 }
 
@@ -1221,6 +1255,7 @@ impl ReusableNormalState {
             psf,
             sensitivity,
             sum_weights,
+            channel_sum_weights,
             validity,
             ..
         } = primitives;
@@ -1241,6 +1276,7 @@ impl ReusableNormalState {
             psf,
             sensitivity,
             sum_weights,
+            channel_sum_weights,
             validity,
         }
     }
@@ -1969,6 +2005,8 @@ pub(crate) struct SpectralSlabOperator {
     prediction_len: usize,
     sum_weights: Vec<f64>,
     sum_weight_compensations: Vec<f64>,
+    channel_sum_weights: Vec<f64>,
+    channel_sum_weight_compensations: Vec<f64>,
     mapped_samples: Vec<u64>,
     coefficient_basis: Vec<f64>,
     normal_moment_weights: Vec<f64>,
@@ -2084,6 +2122,11 @@ impl SpectralSlabOperator {
         let coefficient_terms = basis.coefficient_terms(slab);
         let normal_moments = basis.normal_moments(slab);
         let resident_terms = basis.resident_terms(slab);
+        let joint_channels = if matches!(basis, SpectralBasisPlan::Joint { .. }) {
+            slab.total_channels()
+        } else {
+            0
+        };
         Self {
             specification,
             geometry,
@@ -2111,6 +2154,8 @@ impl SpectralSlabOperator {
             prediction_len: 0,
             sum_weights: vec![0.0; normal_moments],
             sum_weight_compensations: vec![0.0; normal_moments],
+            channel_sum_weights: vec![0.0; joint_channels],
+            channel_sum_weight_compensations: vec![0.0; joint_channels],
             mapped_samples: vec![0; basis.validity_entries(slab)],
             coefficient_basis: vec![0.0; coefficient_terms],
             normal_moment_weights: vec![0.0; normal_moments],
@@ -2142,12 +2187,9 @@ impl SpectralSlabOperator {
                 }
             }
             SpectralBasisPlan::Joint { .. } => {
-                let Some(mapped) = self.mapped_samples.get_mut(sample.output_channel) else {
+                if self.mapped_samples.get(sample.output_channel).is_none() {
                     return Err(SpectralOperatorError::InvalidSample);
-                };
-                *mapped = mapped
-                    .checked_add(1)
-                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                }
             }
         }
         if sample.imaging_weight == 0.0 {
@@ -2191,6 +2233,19 @@ impl SpectralSlabOperator {
                 }
             }
             SpectralBasisPlan::Joint { .. } => {
+                let mapped = self
+                    .mapped_samples
+                    .get_mut(sample.output_channel)
+                    .ok_or(SpectralOperatorError::InvalidSample)?;
+                *mapped = mapped
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                let corrected = sample.imaging_weight
+                    - self.channel_sum_weight_compensations[sample.output_channel];
+                let updated = self.channel_sum_weights[sample.output_channel] + corrected;
+                self.channel_sum_weight_compensations[sample.output_channel] =
+                    (updated - self.channel_sum_weights[sample.output_channel]) - corrected;
+                self.channel_sum_weights[sample.output_channel] = updated;
                 self.fill_joint_coefficient_basis(sample.frequency_hz, sample.output_channel)?;
                 let weighted_factor = sample.imaging_weight * factor;
                 let visibility_scale = sample.visibility * sample.phase() * weighted_factor;
@@ -2490,12 +2545,9 @@ impl SpectralSlabOperator {
                 }
             }
             SpectralBasisPlan::Joint { .. } => {
-                let Some(mapped) = self.mapped_samples.get_mut(sample.output_channel) else {
+                if self.mapped_samples.get(sample.output_channel).is_none() {
                     return Err(SpectralOperatorError::InvalidSample);
-                };
-                *mapped = mapped
-                    .checked_add(1)
-                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                }
             }
         }
         if sample.imaging_weight == 0.0 {
@@ -2549,6 +2601,21 @@ impl SpectralSlabOperator {
                 }
             }
             SpectralBasisPlan::Joint { .. } => {
+                let mapped = self
+                    .mapped_samples
+                    .get_mut(sample.output_channel)
+                    .ok_or(SpectralOperatorError::InvalidSample)?;
+                *mapped = mapped
+                    .checked_add(1)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                if self.psf_grids.is_some() {
+                    let corrected = sample.imaging_weight
+                        - self.channel_sum_weight_compensations[sample.output_channel];
+                    let updated = self.channel_sum_weights[sample.output_channel] + corrected;
+                    self.channel_sum_weight_compensations[sample.output_channel] =
+                        (updated - self.channel_sum_weights[sample.output_channel]) - corrected;
+                    self.channel_sum_weights[sample.output_channel] = updated;
+                }
                 self.fill_joint_coefficient_basis(sample.frequency_hz, sample.output_channel)?;
                 for plane in 0..self.coefficient_basis.len() {
                     let coefficient = self.coefficient_basis[plane];
@@ -3150,6 +3217,10 @@ impl SpectralSlabOperator {
             .any(|value| !value.re.is_finite() || !value.im.is_finite())
             || reused.sensitivity.iter().any(|value| !value.is_finite())
             || reused.sum_weights.iter().any(|value| !value.is_finite())
+            || reused
+                .channel_sum_weights
+                .iter()
+                .any(|value| !value.is_finite())
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
@@ -3165,6 +3236,7 @@ impl SpectralSlabOperator {
             psf: reused.psf,
             sensitivity: reused.sensitivity,
             sum_weights: reused.sum_weights,
+            channel_sum_weights: reused.channel_sum_weights,
             validity: reused.validity,
             major_cycle_residual: None,
             major_cycle_residual_promoted: true,
@@ -3267,6 +3339,12 @@ impl SpectralSlabOperator {
                 || reused.psf.len() != normal_cells
                 || reused.sensitivity.len() != normal_cells
                 || reused.sum_weights.len() != normal_moments
+                || reused.channel_sum_weights.len()
+                    != if matches!(self.basis, SpectralBasisPlan::Joint { .. }) {
+                        self.slab.total_channels()
+                    } else {
+                        0
+                    }
                 || reused.validity.len() != self.basis.validity_entries(self.slab)
             {
                 return Err(SpectralOperatorError::ReusableNormalStateMismatch);
@@ -3300,6 +3378,10 @@ impl SpectralSlabOperator {
                 .any(|value| !value.re.is_finite() || !value.im.is_finite())
                 || reused.sensitivity.iter().any(|value| !value.is_finite())
                 || reused.sum_weights.iter().any(|value| !value.is_finite())
+                || reused
+                    .channel_sum_weights
+                    .iter()
+                    .any(|value| !value.is_finite())
             {
                 return Err(SpectralOperatorError::GeneratedNonfinite);
             }
@@ -3315,6 +3397,7 @@ impl SpectralSlabOperator {
                 psf: reused.psf,
                 sensitivity: reused.sensitivity,
                 sum_weights: reused.sum_weights,
+                channel_sum_weights: reused.channel_sum_weights,
                 validity: reused.validity,
                 major_cycle_residual: None,
                 major_cycle_residual_promoted: true,
@@ -3391,6 +3474,10 @@ impl SpectralSlabOperator {
             .chain(residual.iter().flatten())
             .any(|value| !value.re.is_finite() || !value.im.is_finite())
             || self.sum_weights.iter().any(|value| !value.is_finite())
+            || self
+                .channel_sum_weights
+                .iter()
+                .any(|value| !value.is_finite())
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
@@ -3408,15 +3495,8 @@ impl SpectralSlabOperator {
             SpectralBasisPlan::Joint { .. } => self
                 .mapped_samples
                 .iter()
-                .map(|mapped| {
-                    let principal = self
-                        .basis
-                        .normal_moment_index(0, 0)
-                        .and_then(|moment| self.sum_weights.get(moment))
-                        .copied()
-                        .unwrap_or(0.0);
-                    validity_from_support(*mapped, principal)
-                })
+                .zip(&self.channel_sum_weights)
+                .map(|(mapped, weight)| validity_from_support(*mapped, *weight))
                 .collect::<Vec<_>>(),
         };
         let dirty = dirty.into_boxed_slice();
@@ -3435,6 +3515,7 @@ impl SpectralSlabOperator {
             psf: psf.into_boxed_slice(),
             sensitivity: sensitivity.into_boxed_slice(),
             sum_weights: self.sum_weights.into_boxed_slice(),
+            channel_sum_weights: self.channel_sum_weights.into_boxed_slice(),
             validity: validity.into_boxed_slice(),
             major_cycle_residual: residual.map(Vec::into_boxed_slice),
             major_cycle_residual_promoted: initial_empty,

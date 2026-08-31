@@ -923,6 +923,7 @@ fn produce_joint_members(
     if normal.coefficient_term_count() != continuum_terms + line_terms
         || normal.normal_moment_count() != (continuum_terms + line_terms).pow(2)
         || inputs.final_model().shape().coefficients() != continuum_terms + line_terms
+        || normal.channel_sum_weights().len() != channels
     {
         return Err(ProductsError::SourceLineageMismatch);
     }
@@ -1069,8 +1070,6 @@ fn produce_joint_member(
                     inputs,
                     shape,
                     channel,
-                    continuum_terms,
-                    normalization_weight,
                     required_normalization(member)?,
                 )?;
                 scatter_image_plane(&mut payload, member.axes(), channel, shape, &plane)?;
@@ -1102,8 +1101,6 @@ fn produce_joint_member(
                     inputs,
                     shape,
                     channel,
-                    continuum_terms,
-                    normalization_weight,
                     required_normalization(member)?,
                 )?;
                 let residual = rescale_residual_to_beam(
@@ -1202,8 +1199,6 @@ fn evaluate_joint_residual_plane(
     inputs: &ContinuumProductInputs<'_>,
     shape: [usize; 2],
     channel: usize,
-    _continuum_terms: usize,
-    normalization_weight: f64,
     normalization: ProductNormalization,
 ) -> Result<Vec<f32>, ProductsError> {
     let residual = inputs
@@ -1217,6 +1212,11 @@ fn evaluate_joint_residual_plane(
         .iter()
         .map(|value| value.re as f32)
         .collect::<Vec<_>>();
+    let normalization_weight = *inputs
+        .normal_state()
+        .channel_sum_weights()
+        .get(channel)
+        .ok_or(ProductsError::SourceLineageMismatch)?;
     normalize_plane(&output, normalization, normalization_weight)
 }
 

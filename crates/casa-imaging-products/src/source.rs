@@ -131,6 +131,7 @@ impl ContinuumSourceCatalog {
         let mut catalog = Self::from_major_cycle_with_mask(problem, join, Some(masks.continuum()))?;
         if masks.line().problem_id() != problem.problem_id()
             || masks.line().shape() != join.normal_state().shape()
+            || join.normal_state().coupled_mask_generation() != Some(masks.generation_id())
         {
             return Err(ProductsError::SourceLineageMismatch);
         }

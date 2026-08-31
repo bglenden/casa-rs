@@ -40,9 +40,10 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     CoupledReconstructionMask, ExecutableModelProblem, MajorCycleCompletion, MajorCycleOwner,
-    MajorCyclePreparation, ModelLifecycle, ReconstructionMask, SpectralOperatorSpecification,
-    WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
-    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
+    MajorCyclePreparation, MaskBox, ModelLifecycle, ReconstructionMask, ReconstructionMaskSet,
+    SpectralOperatorSpecification, WeightingAlgorithmState, WeightingError,
+    WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
+    begin_weighting_generation, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, SpectralOperatorPass, prepare_spectral_operator,
         spectral_operator_workload,
@@ -62,6 +63,24 @@ const TAYLOR_PRODUCTS: [ProductKind; 9] = [
     ProductKind::SpectralIndexError,
     ProductKind::Beam,
 ];
+
+fn joint_product_masks(
+    problem: &casa_imaging_model::CompiledProblem,
+    model: casa_imaging_reconstruction::ModelGenerationId,
+) -> CoupledReconstructionMask {
+    let direction = problem.geometry().domains()[0].direction();
+    let continuum = ReconstructionMask::full_plane(problem.problem_id(), model, direction, SHAPE)
+        .expect("joint continuum mask");
+    let line = ReconstructionMask::from_boxes(
+        problem.problem_id(),
+        model,
+        direction,
+        SHAPE,
+        [MaskBox::new([3, 3], [4, 4]).expect("line box")],
+    )
+    .expect("joint line mask");
+    CoupledReconstructionMask::new(continuum, line).expect("joint product masks")
+}
 const PB_PRODUCTS: [ProductKind; 9] = [
     ProductKind::Psf,
     ProductKind::Residual,
@@ -363,7 +382,10 @@ fn joint_problem(seed: u8, products: &[ProductKind]) -> casa_imaging_model::Comp
     compile(ImagingRequest::new(
         ProblemSpecification::new(
             ScientificContract::new(
-                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+                SpectralContract::new(
+                    SpectralSamplingLaw::IDENTITY,
+                    SpectralCoupling::CommonRestoringBeam,
+                ),
                 MeasurementEquationContract::new(
                     InstrumentResponse::Scalar,
                     DeclaredInnerProducts::new(
@@ -393,7 +415,7 @@ fn joint_problem(seed: u8, products: &[ProductKind]) -> casa_imaging_model::Comp
             ProductRequirements::new(
                 products.to_vec(),
                 ProductNormalization::UnitResponse,
-                RestoringBeamPolicy::PerPlane,
+                RestoringBeamPolicy::Common,
                 validity(),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
@@ -596,6 +618,7 @@ fn run_round_with_terms(
     });
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, empty, delta).expect("preparation");
+    let final_model_generation = preparation.final_model_generation();
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -626,10 +649,20 @@ fn run_round_with_terms(
     let evidence: CompleteDataOwnerResult = state
         .complete(&summary, selected, None)
         .expect("complete normal state");
-    MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("major-cycle join")
+    let mut owner =
+        MajorCycleOwner::from_complete_data(evidence, preparation).expect("major-cycle owner");
+    if matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::JointContinuumLine { .. }
+    ) {
+        owner = owner
+            .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(joint_product_masks(
+                problem,
+                final_model_generation,
+            )))
+            .expect("bind joint final masks");
+    }
+    owner.reconcile(&mut lifecycle).expect("major-cycle join")
 }
 
 fn seal(
@@ -684,25 +717,22 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
             ProductKind::RestoredImage,
             ProductKind::SumWeights,
             ProductKind::Mask,
-            ProductKind::Sensitivity,
         ],
     );
     let join = run_round_with_terms(&problem, 146, &[(0, 1.0), (1, 2.0)]);
-    let direction = problem.geometry().domains()[0].direction();
-    let make_mask = || {
-        ReconstructionMask::full_plane(
-            problem.problem_id(),
-            join.final_model().generation_id(),
-            direction,
-            SHAPE,
-        )
-        .expect("joint product mask")
-    };
-    let masks = CoupledReconstructionMask::new(make_mask(), make_mask())
-        .expect("same-lineage joint product masks");
+    let masks = joint_product_masks(&problem, join.final_model().generation_id());
     let catalog =
         ContinuumSourceCatalog::from_major_cycle_with_coupled_masks(&problem, &join, &masks)
             .expect("joint source catalog");
+    assert!(
+        join.normal_state()
+            .channel_sum_weights()
+            .iter()
+            .all(|weight| weight.is_finite() && *weight > 0.0),
+        "joint channel weights: {:?}; normal weights: {:?}",
+        join.normal_state().channel_sum_weights(),
+        join.normal_state().sum_weights()
+    );
     let authority = ProductGenerationAuthority::bind(&problem);
     let planned = authority
         .plan(&catalog, &ContinuumProductControls::default())
@@ -739,6 +769,28 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
             .iter()
             .any(|value| *value != 0.0)
     );
+    assert_ne!(
+        member(&sealed, ".continuum.mask").payload(),
+        member(&sealed, ".line.mask").payload(),
+        "distinct coupled supports must remain distinct published members"
+    );
+    let mut expected_residual = (0..2)
+        .flat_map(|channel| {
+            let weight = join.normal_state().channel_sum_weights()[channel];
+            join.normal_state()
+                .joint_common_residual(channel)
+                .expect("common residual")
+                .iter()
+                .map(move |value| (value.re / weight) as f32)
+        })
+        .collect::<Vec<_>>();
+    let mut published_residual = member(&sealed, ".total.residual").payload().to_vec();
+    expected_residual.sort_by(f32::total_cmp);
+    published_residual.sort_by(f32::total_cmp);
+    assert_eq!(published_residual.len(), expected_residual.len());
+    for (actual, expected) in published_residual.into_iter().zip(expected_residual) {
+        assert_close(actual, expected, "channel-normalized common residual");
+    }
     assert_eq!(
         sealed
             .members()
@@ -754,11 +806,13 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
             .iter()
             .all(|value| *value == 1.0)
     );
-    assert!(
+    assert_eq!(
         member(&sealed, ".line.mask")
             .payload()
             .iter()
-            .all(|value| *value == 1.0)
+            .filter(|value| **value == 1.0)
+            .count(),
+        8
     );
 }
 

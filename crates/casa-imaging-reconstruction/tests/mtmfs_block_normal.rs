@@ -34,12 +34,12 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
-    MajorCycleOwner, MajorCyclePreparation, MinorCycleProgram, ModelGeneration, ModelLifecycle,
-    NormalStateCatalog, ReconstructionCycle, ReconstructionMask, ReconstructionMaskPlan,
-    SpectralChannelValidity, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
-    SpectralStencilValidity, WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan,
-    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation,
-    compile_spectral_stencil, plan_weighting,
+    MajorCycleOwner, MajorCyclePreparation, MinorCycleError, MinorCycleProgram, ModelGeneration,
+    ModelLifecycle, NormalStateCatalog, ReconstructionCycle, ReconstructionCycleError,
+    ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
+    SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralStencilValidity,
+    WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
+    WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
         GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
@@ -201,6 +201,9 @@ fn problem_with(
         ProductKind::SumWeights,
         ProductKind::Sensitivity,
     ];
+    if is_joint {
+        product_kinds.retain(|product| *product != ProductKind::Sensitivity);
+    }
     if matches!(reconstruction.basis(), ReconstructionBasis::Taylor { .. }) {
         product_kinds.push(ProductKind::TaylorTerms);
     }
@@ -313,6 +316,12 @@ fn problem() -> casa_imaging_model::CompiledProblem {
 }
 
 fn joint_problem() -> casa_imaging_model::CompiledProblem {
+    joint_problem_with_condition(1.0e6)
+}
+
+fn joint_problem_with_condition(
+    maximum_condition_number: f64,
+) -> casa_imaging_model::CompiledProblem {
     problem_with(
         ReconstructionContract::new(
             ReconstructionBasis::JointContinuumLine {
@@ -326,7 +335,11 @@ fn joint_problem() -> casa_imaging_model::CompiledProblem {
             ReconstructionControls::new(16, 1.0, 1.0e-9),
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         )
-        .with_joint_continuum_line(JointContinuumLineContract::new([0], [1], 1.0e6)),
+        .with_joint_continuum_line(JointContinuumLineContract::new(
+            [0],
+            [1],
+            maximum_condition_number,
+        )),
         2,
     )
 }
@@ -1129,6 +1142,44 @@ fn t46_joint_minor_cycle_recovers_mixed_components_in_one_atomic_delta() {
 }
 
 #[test]
+fn t46_joint_minor_cycle_rejects_an_active_block_above_the_condition_ceiling() {
+    let problem = joint_problem_with_condition(1.0);
+    let selected = joint_samples(&problem);
+    let (lifecycle, normal, model) = run_joint_final_normal_state(&problem, &selected);
+    let masks = full_joint_masks(&normal, &model);
+    let error = ReconstructionCycle::new(
+        ChannelCyclePolicy::Coupled,
+        MinorCycleProgram::for_problem(&problem).expect("joint controls"),
+    )
+    .run_coupled(&lifecycle, &model, &normal, &masks)
+    .expect_err("ill-conditioned active block must fail closed");
+    assert!(matches!(
+        error,
+        ReconstructionCycleError::Minor(MinorCycleError::SingularJointNormalBlock)
+    ));
+}
+
+#[test]
+fn t46_joint_cycle_rejects_missing_positive_weight_support() {
+    let problem = joint_problem();
+    let mut selected = joint_samples(&problem);
+    selected[0].input_weight = 0.0;
+    selected[1].input_weight = 0.0;
+    let (lifecycle, normal, model) = run_joint_final_normal_state(&problem, &selected);
+    let masks = full_joint_masks(&normal, &model);
+    let error = ReconstructionCycle::new(
+        ChannelCyclePolicy::Coupled,
+        MinorCycleProgram::for_problem(&problem).expect("joint controls"),
+    )
+    .run_coupled(&lifecycle, &model, &normal, &masks)
+    .expect_err("zero-weight joint support must fail closed");
+    assert!(matches!(
+        error,
+        ReconstructionCycleError::InvalidJointSupport
+    ));
+}
+
+#[test]
 fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel_aliases() {
     let problem = problem();
     let samples = samples(&problem);
@@ -1348,6 +1399,7 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
         .common_residual()
         .expect("joint operator retains the channel-local common residual");
     let mut serial_residual = None;
+    let mut serial_common_residual = None;
 
     for workers in [1, 2] {
         let prior = initial_normal_from_frozen(&problem, &frozen);
@@ -1381,7 +1433,15 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
                 "workers=1 and workers=2 must commit bitwise-identical joint residuals"
             );
         } else {
-            serial_residual = Some(compact.residual);
+            serial_residual = Some(compact.residual.clone());
+        }
+        if let Some(serial) = &serial_common_residual {
+            assert_eq!(
+                common, serial,
+                "workers=1 and workers=2 must commit bitwise-identical common residuals"
+            );
+        } else {
+            serial_common_residual = Some(common.to_vec());
         }
     }
 }

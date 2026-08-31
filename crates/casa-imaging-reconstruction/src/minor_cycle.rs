@@ -55,10 +55,19 @@ pub fn minor_cycle_workspace_bytes(
 ) -> u64 {
     let cells = sat_u64(shape[0]).saturating_mul(sat_u64(shape[1]));
     let scalar_workspace = cells.saturating_mul(16);
-    let (ReconstructionBasis::Taylor { terms }, ReconstructionAlgorithm::Mtmfs { scales_px, .. }) =
-        (basis, algorithm)
-    else {
-        return scalar_workspace;
+    let (terms, scales_px) = match (basis, algorithm) {
+        (
+            ReconstructionBasis::Taylor { terms },
+            ReconstructionAlgorithm::Mtmfs { scales_px, .. },
+        ) => (terms, scales_px),
+        (
+            ReconstructionBasis::JointContinuumLine {
+                continuum_terms,
+                line_terms,
+            },
+            ReconstructionAlgorithm::JointContinuumLine { scales_px, .. },
+        ) => (continuum_terms.saturating_add(line_terms), scales_px),
+        _ => return scalar_workspace,
     };
     let terms = sat_u64(terms);
     let effective_sample_counts = scales_px
@@ -2574,6 +2583,7 @@ fn build_active_block_system(
                 .ok_or(MinorCycleError::ModelShapeMismatch)?;
             normal[local_row * count + local_column] =
                 multiscale_normalization(block.normal_approximation(), shape, psf_peak, kernel);
+            normal[local_column * count + local_row] = normal[local_row * count + local_column];
         }
     }
     if taylor_rows_nearly_dependent(&normal, count) {

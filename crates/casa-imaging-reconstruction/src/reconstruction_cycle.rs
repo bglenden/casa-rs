@@ -460,43 +460,25 @@ impl ReconstructionCycle {
         {
             return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
         }
-        let validity = normal
-            .support_validity()
-            .unwrap_or(SpectralChannelValidity::Unmapped);
-        let minor_cycle = if validity == SpectralChannelValidity::Valid {
-            let result =
-                run_joint_minor_cycle(lifecycle, base, normal, masks, self.program.clone())?;
-            let (delta, evidence) = result.into_parts();
-            let channels = vec![ChannelCycleEvidence {
-                output_channel: normal.slab().core_range().start,
-                validity,
-                budget_exhausted: false,
-                minor_cycle: Some(evidence),
-            }];
-            let evidence_id =
-                reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
-            return Ok(ReconstructionCycleResult {
-                delta,
-                evidence: ReconstructionCycleEvidence {
-                    evidence_id,
-                    problem: lifecycle.problem(),
-                    policy: self.policy,
-                    channels: channels.into_boxed_slice(),
-                },
-            });
-        } else {
-            None
-        };
+        if normal
+            .channel_validity()
+            .iter()
+            .any(|validity| *validity != SpectralChannelValidity::Valid)
+        {
+            return Err(ReconstructionCycleError::InvalidJointSupport);
+        }
+        let result = run_joint_minor_cycle(lifecycle, base, normal, masks, self.program.clone())?;
+        let (delta, evidence) = result.into_parts();
         let channels = vec![ChannelCycleEvidence {
             output_channel: normal.slab().core_range().start,
-            validity,
+            validity: SpectralChannelValidity::Valid,
             budget_exhausted: false,
-            minor_cycle,
+            minor_cycle: Some(evidence),
         }];
         let evidence_id =
             reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
         Ok(ReconstructionCycleResult {
-            delta: None,
+            delta,
             evidence: ReconstructionCycleEvidence {
                 evidence_id,
                 problem: lifecycle.problem(),
@@ -580,6 +562,9 @@ pub enum ReconstructionCycleError {
     /// No jointly coupled channel solver is approved by T38.
     #[error("coupled channel reconstruction requires an approved joint solver")]
     UnsupportedCoupledPolicy,
+    /// At least one declared anchor or line channel lacks positive weighted support.
+    #[error("joint reconstruction requires positive weighted support on every declared channel")]
+    InvalidJointSupport,
     /// The normal-state slab cannot expose all of its declared core planes.
     #[error("normal-state slab storage does not match its declared channel interval")]
     InvalidNormalStateSlab,

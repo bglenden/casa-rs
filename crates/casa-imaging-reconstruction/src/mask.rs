@@ -134,6 +134,7 @@ fn direction_world_to_pixel(
 
 const MASK_DOMAIN: &[u8] = b"casa-rs-reconstruction-mask";
 const MASK_VERSION: u32 = 1;
+const COUPLED_MASK_DOMAIN: &[u8] = b"casa-rs-coupled-reconstruction-mask";
 
 /// Stable identity of one immutable reconstruction-mask generation.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -513,6 +514,15 @@ impl CoupledReconstructionMask {
     #[must_use]
     pub const fn line(&self) -> &ReconstructionMask {
         &self.line
+    }
+
+    /// Return one immutable identity binding both independently committed supports.
+    #[must_use]
+    pub fn generation_id(&self) -> ReconstructionMaskGenerationId {
+        let mut encoder = Encoder::new(COUPLED_MASK_DOMAIN, 1);
+        encoder.identity(self.continuum.generation_id().as_bytes());
+        encoder.identity(self.line.generation_id().as_bytes());
+        ReconstructionMaskGenerationId(LogicalIdentity::from_sha256(encoder.finish()))
     }
 }
 
