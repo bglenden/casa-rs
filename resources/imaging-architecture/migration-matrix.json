@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_revision": 72,
+  "contract_revision": 73,
   "programme_issue": 486,
   "owner_issue": 487,
   "status_values": ["Native", "TemporarilyUnavailable"],
@@ -115,7 +115,7 @@
     "repo://crates/casa-ms/src/derived/engine.rs": "e53196149e365e81e3b57fe1c74d54876324ee789ddaa2932dd01a52d54f6bb1",
     "repo://crates/casa-ms/src/selected_observation/spectral_evaluation.rs": "edf1b21a17f5bf031da292a59ed7e2de6f35d8947a741e68874576d7e5af1995",
     "repo://crates/casa-ms/src/spectral_selection.rs": "6538894c318ad2ddb2fa7bede7fc07baf3dfad4536923bb65e9e37c7a790d136",
-    "repo://crates/casa-imaging-application/src/availability.rs": "85eb414bbf85bab9aa6dc86ad80c3180c90b9c7ffa7bce208b2002e600ebd60a",
+    "repo://crates/casa-imaging-application/src/availability.rs": "af167f881874c33b747be80564bea74a2c02ca6649dd7be8edd1efa9655a0147",
     "repo://docs/tutorial-parity/capability-matrix.md": "f17fb0d6a278b7494739f6f1d724a12a370ccdff3fc07713084290250d597be1",
     "repo://docs/tutorial-parity/outlierfile-inventory.md": "9ec4eff5c61668078e0bb201d6ee0216b1edb002004d8faa838f9e8ee22a9533",
     "repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md": "d8b080c6eda684b6aae7097a54609655059fa8bf20ba7f5a5f25965d183ae9c5",
