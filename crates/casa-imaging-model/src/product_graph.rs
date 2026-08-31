@@ -939,16 +939,18 @@ impl<'a> GraphBuilder<'a> {
     fn primary_beam_term(&self) -> ProductTerm {
         match self.reconstruction.basis() {
             ReconstructionBasis::Taylor { .. } => ProductTerm::Taylor(0),
-            ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
-                ProductTerm::Single
-            }
+            ReconstructionBasis::Constant
+            | ReconstructionBasis::ChannelLocal { .. }
+            | ReconstructionBasis::JointContinuumLine { .. } => ProductTerm::Single,
         }
     }
 
     fn image_terms(&self) -> Vec<ProductTerm> {
         match self.reconstruction.basis() {
             ReconstructionBasis::Taylor { terms } => (0..terms).map(ProductTerm::Taylor).collect(),
-            ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
+            ReconstructionBasis::Constant
+            | ReconstructionBasis::ChannelLocal { .. }
+            | ReconstructionBasis::JointContinuumLine { .. } => {
                 vec![ProductTerm::Single]
             }
         }
@@ -959,7 +961,9 @@ impl<'a> GraphBuilder<'a> {
             ReconstructionBasis::Taylor { terms } => (0..terms.saturating_mul(2).saturating_sub(1))
                 .map(ProductTerm::Taylor)
                 .collect(),
-            ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => {
+            ReconstructionBasis::Constant
+            | ReconstructionBasis::ChannelLocal { .. }
+            | ReconstructionBasis::JointContinuumLine { .. } => {
                 vec![ProductTerm::Single]
             }
         }

@@ -5,9 +5,9 @@ use casa_imaging_model::{
     ContinuumChannelUse, ContinuumFitRule, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, MeasurementEquationContract,
-    MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct, ModelStateIdentity,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, JointContinuumLineContract,
+    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
@@ -193,6 +193,134 @@ fn geometry() -> GeometryInput {
             DopplerConvention::NotApplicable,
         ),
     )
+}
+
+fn joint_geometry() -> GeometryInput {
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [31.0, 31.0],
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(64, 64),
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 8,
+                reference_pixel: 3.5,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+    )
+}
+
+fn joint_specification(contract: JointContinuumLineContract) -> ProblemSpecification {
+    ProblemSpecification::new(
+        science(),
+        ReconstructionContract::new(
+            ReconstructionBasis::JointContinuumLine {
+                continuum_terms: 2,
+                line_terms: 2,
+            },
+            ReconstructionAlgorithm::JointContinuumLine {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(100, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        )
+        .with_joint_continuum_line(contract),
+        weighting(),
+        ProductRequirements::new(
+            vec![
+                ProductKind::Psf,
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::SumWeights,
+            ],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        read_only_transaction(),
+        numerics(false),
+    )
+}
+
+#[test]
+fn t46_joint_contract_is_canonical_identifiable_and_distinct() {
+    let first = compile_with_geometry(
+        joint_specification(JointContinuumLineContract::new(
+            [0, 1, 2, 5, 6, 7],
+            [3, 4],
+            1.0e8,
+        )),
+        joint_geometry(),
+        inputs(false),
+    )
+    .expect("compile identifiable joint contract");
+    let reordered = compile_with_geometry(
+        joint_specification(JointContinuumLineContract::new(
+            [7, 2, 6, 0, 5, 1],
+            [4, 3],
+            1.0e8,
+        )),
+        joint_geometry(),
+        inputs(false),
+    )
+    .expect("canonicalize support ordering");
+
+    assert_eq!(first.problem_id(), reordered.problem_id());
+    assert_eq!(
+        first.reconstruction().joint_continuum_line(),
+        reordered.reconstruction().joint_continuum_line()
+    );
+    assert!(
+        first
+            .required_capabilities()
+            .contains(&RequiredCapability::JointContinuumLineReconstruction)
+    );
+
+    for invalid in [
+        JointContinuumLineContract::new([], [0, 1, 2, 3, 4, 5, 6, 7], 1.0e8),
+        JointContinuumLineContract::new([0, 1, 2, 3, 4, 5, 6, 7], [], 1.0e8),
+        JointContinuumLineContract::new([0, 1, 2, 5, 6, 7], [2, 3], 1.0e8),
+        JointContinuumLineContract::new([0], [1, 2, 3, 4, 5, 6, 7], 1.0e8),
+    ] {
+        assert!(matches!(
+            compile_with_geometry(
+                joint_specification(invalid),
+                joint_geometry(),
+                inputs(false),
+            ),
+            Err(CompileProblemError::InvalidCapabilityCombination { .. })
+        ));
+    }
 }
 
 fn specification(reverse: bool) -> ProblemSpecification {

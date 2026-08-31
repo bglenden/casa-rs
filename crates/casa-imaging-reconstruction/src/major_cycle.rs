@@ -41,6 +41,8 @@ pub enum NormalStateCatalog {
     UnnormalizedChannelSlabV1,
     /// Unnormalized Taylor residual terms and `2T-1` signed block-normal moments.
     UnnormalizedTaylorBlockV1,
+    /// Unnormalized joint continuum-line residual terms and full dense block normal state.
+    UnnormalizedJointBlockV1,
 }
 
 /// Reconstruction-owned proof that the final Normal State generation exists.
@@ -266,7 +268,11 @@ impl FinalNormalState {
     /// Return the principal support state for a polynomial normal family.
     #[must_use]
     pub fn support_validity(&self) -> Option<crate::SpectralChannelValidity> {
-        if self.catalog != NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+        if !matches!(
+            self.catalog,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
             return None;
         }
         self.primitives.channel_validity().first().copied()
@@ -278,7 +284,11 @@ impl FinalNormalState {
         &self,
         coefficient: usize,
     ) -> Option<FinalNormalStateCoefficientTerm<'_>> {
-        if self.catalog != NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+        if !matches!(
+            self.catalog,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
             return None;
         }
         let cells = self.shape()[0].checked_mul(self.shape()[1])?;
@@ -294,7 +304,11 @@ impl FinalNormalState {
     /// Borrow one retained normal moment.
     #[must_use]
     pub fn normal_moment(&self, moment: usize) -> Option<FinalNormalStateNormalMoment<'_>> {
-        if self.catalog != NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+        if !matches!(
+            self.catalog,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
             return None;
         }
         let cells = self.shape()[0].checked_mul(self.shape()[1])?;
@@ -323,7 +337,11 @@ impl FinalNormalState {
     /// Borrow one channel plane from this bounded Normal State slab.
     #[must_use]
     pub fn plane(&self, local_channel: usize) -> Option<FinalNormalStatePlane<'_>> {
-        if self.catalog == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+        if matches!(
+            self.catalog,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
             return None;
         }
         let cells = self.shape()[0].checked_mul(self.shape()[1])?;
@@ -729,6 +747,9 @@ impl MajorCycleOwner {
                 }
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1 => {
                     NormalStateCatalog::UnnormalizedTaylorBlockV1
+                }
+                SpectralPrimitiveCatalog::UnnormalizedJointBlockV1 => {
+                    NormalStateCatalog::UnnormalizedJointBlockV1
                 }
             },
             content,

@@ -1748,6 +1748,7 @@ const fn polynomial_terms(basis: ReconstructionBasis) -> Option<usize> {
         ReconstructionBasis::Constant => Some(1),
         ReconstructionBasis::Taylor { terms } => Some(terms),
         ReconstructionBasis::ChannelLocal { .. } => None,
+        ReconstructionBasis::JointContinuumLine { .. } => None,
     }
 }
 

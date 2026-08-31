@@ -5,7 +5,9 @@ use std::{collections::BTreeSet, fmt};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::geometry::{CompileGeometryError, CompiledGeometry, GeometryInput, compile_geometry};
+use crate::geometry::{
+    CompileGeometryError, CompiledGeometry, GeometryInput, SpectralWcs, compile_geometry,
+};
 use crate::measurement_equation::{
     DeclaredInnerProducts, ModelInnerProduct, NormalEquationContract, NormalStateNormalization,
     PairedMeasurementTransform, ProductBoundaryOperation, ProductNormalizationBoundary,
@@ -483,6 +485,13 @@ pub enum ReconstructionBasis {
         /// Number of output channels.
         channels: usize,
     },
+    /// One smooth continuum basis coupled to declared channel-local line terms.
+    JointContinuumLine {
+        /// Number of smooth continuum coefficients.
+        continuum_terms: usize,
+        /// Number of active channel-local line coefficients.
+        line_terms: usize,
+    },
 }
 
 /// Logical reconstruction algorithm, independent of its implementation backend.
@@ -508,6 +517,65 @@ pub enum ReconstructionAlgorithm {
         /// CASA small-scale preference in `[0, 1]`.
         small_scale_bias: f64,
     },
+    /// Joint continuum-plus-line block reconstruction.
+    JointContinuumLine {
+        /// Canonical requested scale sizes shared with multiscale cleaning.
+        scales_px: Vec<f64>,
+        /// CASA small-scale preference in `[0, 1]`.
+        small_scale_bias: f64,
+    },
+}
+
+/// Immutable identifiability commitment for joint continuum-plus-line reconstruction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JointContinuumLineContract {
+    continuum_anchor_channels: Vec<usize>,
+    line_channels: Vec<usize>,
+    maximum_condition_number: f64,
+}
+
+impl JointContinuumLineContract {
+    /// Construct the declared anchor support, line support, and conditioning ceiling.
+    #[must_use]
+    pub fn new(
+        continuum_anchor_channels: impl IntoIterator<Item = usize>,
+        line_channels: impl IntoIterator<Item = usize>,
+        maximum_condition_number: f64,
+    ) -> Self {
+        Self {
+            continuum_anchor_channels: continuum_anchor_channels.into_iter().collect(),
+            line_channels: line_channels.into_iter().collect(),
+            maximum_condition_number,
+        }
+    }
+
+    /// Return the channels on which line coefficients are structurally absent.
+    #[must_use]
+    pub fn continuum_anchor_channels(&self) -> &[usize] {
+        &self.continuum_anchor_channels
+    }
+
+    /// Return the channels carrying channel-local line coefficients.
+    #[must_use]
+    pub fn line_channels(&self) -> &[usize] {
+        &self.line_channels
+    }
+
+    /// Return the maximum admitted continuum-anchor basis condition estimate.
+    #[must_use]
+    pub const fn maximum_condition_number(&self) -> f64 {
+        self.maximum_condition_number
+    }
+
+    fn canonicalize(&mut self) {
+        self.continuum_anchor_channels.sort_unstable();
+        self.continuum_anchor_channels.dedup();
+        self.line_channels.sort_unstable();
+        self.line_channels.dedup();
+        if self.maximum_condition_number == 0.0 {
+            self.maximum_condition_number = 0.0;
+        }
+    }
 }
 
 /// Accounting policy for Högbom's historical inclusive iteration loop.
@@ -669,6 +737,7 @@ pub struct ReconstructionContract {
     algorithm: ReconstructionAlgorithm,
     controls: ReconstructionControls,
     polarization: PolarizationContract,
+    joint_continuum_line: Option<JointContinuumLineContract>,
 }
 
 impl ReconstructionContract {
@@ -685,7 +754,15 @@ impl ReconstructionContract {
             algorithm,
             controls,
             polarization,
+            joint_continuum_line: None,
         }
+    }
+
+    /// Bind the distinct joint continuum-plus-line identifiability commitment.
+    #[must_use]
+    pub fn with_joint_continuum_line(mut self, contract: JointContinuumLineContract) -> Self {
+        self.joint_continuum_line = Some(contract);
+        self
     }
 
     /// Return the reconstruction basis.
@@ -712,10 +789,17 @@ impl ReconstructionContract {
         &self.polarization
     }
 
+    /// Return the joint continuum-plus-line commitment when this is a joint problem.
+    #[must_use]
+    pub const fn joint_continuum_line(&self) -> Option<&JointContinuumLineContract> {
+        self.joint_continuum_line.as_ref()
+    }
+
     fn canonicalize(mut self) -> Result<Self, CompileProblemError> {
         self.polarization = self.polarization.canonicalize()?;
         if let ReconstructionAlgorithm::Multiscale { scales_px, .. }
-        | ReconstructionAlgorithm::Mtmfs { scales_px, .. } = &mut self.algorithm
+        | ReconstructionAlgorithm::Mtmfs { scales_px, .. }
+        | ReconstructionAlgorithm::JointContinuumLine { scales_px, .. } = &mut self.algorithm
         {
             for scale in scales_px.iter_mut() {
                 if *scale == 0.0 {
@@ -724,6 +808,9 @@ impl ReconstructionContract {
             }
             scales_px.sort_unstable_by(|left, right| left.total_cmp(right));
             scales_px.dedup();
+        }
+        if let Some(contract) = &mut self.joint_continuum_line {
+            contract.canonicalize();
         }
         Ok(self)
     }
@@ -1428,6 +1515,8 @@ pub enum RequiredCapability {
     TaylorBasis,
     /// Channel-local reconstruction basis.
     ChannelLocalBasis,
+    /// Coupled smooth-continuum and channel-local-line reconstruction.
+    JointContinuumLineReconstruction,
     /// Dirty-only reconstruction.
     DirtyReconstruction,
     /// Högbom reconstruction.
@@ -1880,9 +1969,18 @@ fn validate_reconstruction(
                 reason: "a channel-local basis requires at least one channel",
             });
         }
+        ReconstructionBasis::JointContinuumLine {
+            continuum_terms: 0, ..
+        }
+        | ReconstructionBasis::JointContinuumLine { line_terms: 0, .. } => {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "joint continuum-line reconstruction requires positive continuum and line term counts",
+            });
+        }
         ReconstructionBasis::Constant
         | ReconstructionBasis::Taylor { .. }
-        | ReconstructionBasis::ChannelLocal { .. } => {}
+        | ReconstructionBasis::ChannelLocal { .. }
+        | ReconstructionBasis::JointContinuumLine { .. } => {}
     }
     if let ReconstructionBasis::ChannelLocal { channels } = contract.basis
         && channels != geometry.spectral().output_channels()
@@ -1898,6 +1996,28 @@ fn validate_reconstruction(
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "MT-MFS and Taylor-basis reconstruction must be requested together",
         });
+    }
+    let joint_basis = match contract.basis {
+        ReconstructionBasis::JointContinuumLine {
+            continuum_terms,
+            line_terms,
+        } => Some((continuum_terms, line_terms)),
+        _ => None,
+    };
+    if matches!(
+        contract.algorithm,
+        ReconstructionAlgorithm::JointContinuumLine { .. }
+    ) != joint_basis.is_some()
+        || contract.joint_continuum_line.is_some() != joint_basis.is_some()
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "the joint basis, algorithm, and identifiability commitment must be requested together",
+        });
+    }
+    if let (Some((continuum_terms, line_terms)), Some(joint)) =
+        (joint_basis, contract.joint_continuum_line.as_ref())
+    {
+        validate_joint_continuum_line(joint, continuum_terms, line_terms, geometry)?;
     }
     if matches!(contract.algorithm, ReconstructionAlgorithm::Dirty)
         && contract.controls.max_minor_iterations != 0
@@ -1980,6 +2100,10 @@ fn validate_reconstruction(
     | ReconstructionAlgorithm::Mtmfs {
         scales_px,
         small_scale_bias,
+    }
+    | ReconstructionAlgorithm::JointContinuumLine {
+        scales_px,
+        small_scale_bias,
     } = &contract.algorithm
     {
         if scales_px.is_empty()
@@ -1996,6 +2120,118 @@ fn validate_reconstruction(
                 reason: "scale-aware small-scale bias must be finite and in [0, 1]",
             });
         }
+    }
+    Ok(())
+}
+
+fn validate_joint_continuum_line(
+    contract: &JointContinuumLineContract,
+    continuum_terms: usize,
+    line_terms: usize,
+    geometry: &CompiledGeometry,
+) -> Result<(), CompileProblemError> {
+    let channels = geometry.spectral().output_channels();
+    let anchors = contract.continuum_anchor_channels();
+    let line = contract.line_channels();
+    if anchors.is_empty()
+        || line.is_empty()
+        || line.len() != line_terms
+        || anchors.len() < continuum_terms
+        || !contract.maximum_condition_number().is_finite()
+        || contract.maximum_condition_number() < 1.0
+        || anchors
+            .iter()
+            .chain(line)
+            .any(|channel| *channel >= channels)
+        || anchors
+            .iter()
+            .any(|channel| line.binary_search(channel).is_ok())
+    {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "joint continuum-line support is empty, overlapping, out of range, underdetermined, or has an invalid conditioning ceiling",
+        });
+    }
+    let mut support = anchors.iter().chain(line).copied().collect::<Vec<_>>();
+    support.sort_unstable();
+    support.dedup();
+    if support != (0..channels).collect::<Vec<_>>() {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "joint continuum anchors and line support must partition every output channel",
+        });
+    }
+    let reference_frequency_hz = match geometry.spectral().wcs() {
+        SpectralWcs::Linear {
+            reference_frequency_hz,
+            ..
+        } if reference_frequency_hz.is_finite() && *reference_frequency_hz > 0.0 => {
+            *reference_frequency_hz
+        }
+        _ => {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "joint continuum-line reconstruction requires a finite linear frequency coordinate",
+            });
+        }
+    };
+    let mut columns = (0..continuum_terms)
+        .map(|term| {
+            anchors
+                .iter()
+                .map(|channel| {
+                    geometry
+                        .spectral()
+                        .channel_centre_hz(*channel)
+                        .map(|frequency| {
+                            ((frequency - reference_frequency_hz) / reference_frequency_hz)
+                                .powi(i32::try_from(term).unwrap_or(i32::MAX))
+                        })
+                        .filter(|value| value.is_finite())
+                })
+                .collect::<Option<Vec<_>>>()
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or(CompileProblemError::InvalidCapabilityCombination {
+            reason: "joint continuum anchors have nonfinite spectral coordinates",
+        })?;
+    let mut largest_norm = 0.0_f64;
+    let mut smallest_residual_norm = f64::INFINITY;
+    for column in 0..columns.len() {
+        let original_norm = columns[column]
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt();
+        largest_norm = largest_norm.max(original_norm);
+        for prior in 0..column {
+            let denominator = columns[prior]
+                .iter()
+                .map(|value| value * value)
+                .sum::<f64>();
+            if denominator == 0.0 {
+                continue;
+            }
+            let projection = columns[column]
+                .iter()
+                .zip(&columns[prior])
+                .map(|(left, right)| left * right)
+                .sum::<f64>()
+                / denominator;
+            let (head, tail) = columns.split_at_mut(column);
+            for (value, basis) in tail[0].iter_mut().zip(&head[prior]) {
+                *value -= projection * *basis;
+            }
+        }
+        let residual_norm = columns[column]
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt();
+        smallest_residual_norm = smallest_residual_norm.min(residual_norm);
+    }
+    let condition = largest_norm / smallest_residual_norm;
+    if !condition.is_finite() || condition > contract.maximum_condition_number() {
+        return Err(CompileProblemError::InvalidCapabilityCombination {
+            reason: "joint continuum anchor basis is rank deficient or exceeds its conditioning limit",
+        });
     }
     Ok(())
 }
@@ -2096,7 +2332,9 @@ fn validate_products(
     }
     let taylor_terms = match reconstruction.basis {
         ReconstructionBasis::Taylor { terms } => terms,
-        ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } => 0,
+        ReconstructionBasis::Constant
+        | ReconstructionBasis::ChannelLocal { .. }
+        | ReconstructionBasis::JointContinuumLine { .. } => 0,
     };
     if products.contains(ProductKind::TaylorTerms) && taylor_terms == 0 {
         return Err(CompileProblemError::InvalidProductCombination {
@@ -2210,6 +2448,9 @@ fn derive_capabilities(
         ReconstructionBasis::Constant => RequiredCapability::ConstantBasis,
         ReconstructionBasis::Taylor { .. } => RequiredCapability::TaylorBasis,
         ReconstructionBasis::ChannelLocal { .. } => RequiredCapability::ChannelLocalBasis,
+        ReconstructionBasis::JointContinuumLine { .. } => {
+            RequiredCapability::JointContinuumLineReconstruction
+        }
     });
     capabilities.insert(match reconstruction.algorithm {
         ReconstructionAlgorithm::Dirty => RequiredCapability::DirtyReconstruction,
@@ -2217,6 +2458,9 @@ fn derive_capabilities(
         ReconstructionAlgorithm::Clark => RequiredCapability::ClarkReconstruction,
         ReconstructionAlgorithm::Multiscale { .. } => RequiredCapability::MultiscaleReconstruction,
         ReconstructionAlgorithm::Mtmfs { .. } => RequiredCapability::MtmfsReconstruction,
+        ReconstructionAlgorithm::JointContinuumLine { .. } => {
+            RequiredCapability::JointContinuumLineReconstruction
+        }
     });
     capabilities.insert(match weighting.scheme() {
         WeightingScheme::Natural => RequiredCapability::NaturalWeighting,
@@ -2306,6 +2550,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         ReconstructionBasis::Constant => 0,
         ReconstructionBasis::Taylor { .. } => 1,
         ReconstructionBasis::ChannelLocal { .. } => 2,
+        ReconstructionBasis::JointContinuumLine { .. } => 3,
     });
     encoder.usize(operator.domain().polarization().coordinates().len());
     for coordinate in operator.domain().polarization().coordinates() {
@@ -2398,6 +2643,32 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             }
             encoder.f64(*small_scale_bias);
         }
+        ReconstructionAlgorithm::JointContinuumLine {
+            scales_px,
+            small_scale_bias,
+        } => {
+            encoder.u8(5);
+            encoder.usize(scales_px.len());
+            for scale in scales_px {
+                encoder.f64(*scale);
+            }
+            encoder.f64(*small_scale_bias);
+        }
+    }
+    match reconstruction.joint_continuum_line.as_ref() {
+        Some(joint) => {
+            encoder.u8(1);
+            encoder.usize(joint.continuum_anchor_channels.len());
+            for channel in &joint.continuum_anchor_channels {
+                encoder.usize(*channel);
+            }
+            encoder.usize(joint.line_channels.len());
+            for channel in &joint.line_channels {
+                encoder.usize(*channel);
+            }
+            encoder.f64(joint.maximum_condition_number);
+        }
+        None => encoder.u8(0),
     }
     encoder.usize(reconstruction.controls.max_minor_iterations);
     encoder.f64(reconstruction.controls.gain);
@@ -2761,6 +3032,14 @@ pub(crate) fn encode_reconstruction_basis(
         ReconstructionBasis::ChannelLocal { channels } => {
             encoder.u8(2);
             encoder.usize(channels);
+        }
+        ReconstructionBasis::JointContinuumLine {
+            continuum_terms,
+            line_terms,
+        } => {
+            encoder.u8(3);
+            encoder.usize(continuum_terms);
+            encoder.usize(line_terms);
         }
     }
 }
