@@ -17,7 +17,7 @@ use casa_imaging_model::{
     ProductValidityRule, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{
-    FinalNormalStatePlane, ModelGeneration, SpectralChannelValidity,
+    FinalNormalStatePlane, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
 };
 
 use crate::beam::{RestoringBeam, fit_restoring_beam};
@@ -31,20 +31,29 @@ use crate::restore::{
     fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
 };
 use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
+use crate::taylor::TaylorProducts;
 
 /// Version of the native continuum product-algorithm catalog.
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 4;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 5;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
+
+/// Explicit analytic primary-beam law available to product construction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnalyticPrimaryBeamModel {
+    /// CASA's common EVLA primary-beam power polynomial with sampled radial lookup.
+    CasaEvlaCommon,
+}
 
 /// Explicit continuum production controls.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContinuumProductControls {
     psf_cutoff: f32,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
 }
 
 impl ContinuumProductControls {
@@ -57,7 +66,10 @@ impl ContinuumProductControls {
         if !psf_cutoff.is_finite() || psf_cutoff <= 0.0 || psf_cutoff >= 1.0 {
             return Err(ProductsError::InvalidControls);
         }
-        Ok(Self { psf_cutoff })
+        Ok(Self {
+            psf_cutoff,
+            primary_beam_model: None,
+        })
     }
 
     /// Return the main-lobe cutoff fraction used for beam fitting.
@@ -65,12 +77,26 @@ impl ContinuumProductControls {
     pub const fn psf_cutoff(self) -> f32 {
         self.psf_cutoff
     }
+
+    /// Select the exact analytic primary-beam law used by requested PB products.
+    #[must_use]
+    pub const fn with_primary_beam_model(mut self, model: AnalyticPrimaryBeamModel) -> Self {
+        self.primary_beam_model = Some(model);
+        self
+    }
+
+    /// Return the explicitly selected analytic primary-beam law, if any.
+    #[must_use]
+    pub const fn primary_beam_model(self) -> Option<AnalyticPrimaryBeamModel> {
+        self.primary_beam_model
+    }
 }
 
 impl Default for ContinuumProductControls {
     fn default() -> Self {
         Self {
             psf_cutoff: DEFAULT_PSF_CUTOFF,
+            primary_beam_model: None,
         }
     }
 }
@@ -227,6 +253,10 @@ impl ProductGenerationAuthority {
         encoder.identity(commitment_id.as_bytes());
         encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
         encoder.u32(controls.psf_cutoff().to_bits());
+        match controls.primary_beam_model() {
+            Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => encoder.u8(1),
+            None => encoder.u8(0),
+        }
         encoder.usize(members.len());
         for member in &members {
             encoder.identity(member.artifact_id.as_bytes());
@@ -238,6 +268,7 @@ impl ProductGenerationAuthority {
             generation_id: PlannedGenerationId(encoder.finish()),
             commitment_id,
             psf_cutoff: controls.psf_cutoff(),
+            primary_beam_model: controls.primary_beam_model(),
             members: members.into_boxed_slice(),
             final_model_generation: sources.final_model_generation(),
             reconstruction_mask_generation: sources.reconstruction_mask_generation(),
@@ -383,34 +414,18 @@ fn encode_beams(encoder: &mut Encoder, beams: &[Option<RestoringBeam>]) {
 
 fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
     match role {
-        ProductRole::Psf(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Residual(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Model(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Weight(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::RestoredImage(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
+        ProductRole::Psf(_)
+        | ProductRole::Residual(_)
+        | ProductRole::Model(_)
+        | ProductRole::Weight(_)
+        | ProductRole::RestoredImage(_)
         | ProductRole::SumWeights(_)
+        | ProductRole::PrimaryBeam(_)
+        | ProductRole::PbCorrectedImage(_)
+        | ProductRole::SpectralIndex
+        | ProductRole::SpectralIndexError
         | ProductRole::Sensitivity
         | ProductRole::CleanMask => Ok(()),
-        ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::Residual(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::Model(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::Weight(casa_imaging_model::ProductTerm::Taylor(_))
-        | ProductRole::RestoredImage(casa_imaging_model::ProductTerm::Taylor(_)) => {
-            Err(ProductsError::UnsupportedProductRole {
-                role,
-                catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
-            })
-        }
         role => Err(ProductsError::UnsupportedProductRole {
             role,
             catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
@@ -473,6 +488,7 @@ pub struct PlannedContinuumGeneration {
     generation_id: PlannedGenerationId,
     commitment_id: ContinuumCommitmentId,
     psf_cutoff: f32,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     members: Box<[PlannedMember]>,
     final_model_generation: casa_imaging_reconstruction::ModelGenerationId,
     reconstruction_mask_generation:
@@ -520,6 +536,18 @@ impl PlannedContinuumGeneration {
     #[must_use]
     pub const fn psf_cutoff(&self) -> f32 {
         self.psf_cutoff
+    }
+
+    /// Return the analytic primary-beam law bound into this plan.
+    #[must_use]
+    pub const fn primary_beam_model(&self) -> Option<AnalyticPrimaryBeamModel> {
+        self.primary_beam_model
+    }
+
+    pub(crate) const fn reconstruction_mask_generation(
+        &self,
+    ) -> Option<casa_imaging_reconstruction::ReconstructionMaskGenerationId> {
+        self.reconstruction_mask_generation
     }
 }
 
@@ -667,6 +695,9 @@ pub fn produce_continuum_members(
     {
         return Err(ProductsError::CommitmentMismatch);
     }
+    if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+        return produce_taylor_members(planned, inputs);
+    }
     let normal_state = inputs.normal_state();
     let plane_shape = normal_state.shape();
     let channel_count = normal_state.channel_count();
@@ -782,6 +813,64 @@ pub fn produce_continuum_members(
         });
     }
 
+    Ok(ContinuumProducedMembers {
+        planned_generation: planned.generation_id,
+        commitment_id: planned.commitment_id,
+        fitted_beams,
+        restoring_beams,
+        members: members.into_boxed_slice(),
+    })
+}
+
+fn produce_taylor_members(
+    planned: &PlannedContinuumGeneration,
+    inputs: &ContinuumProductInputs<'_>,
+) -> Result<ContinuumProducedMembers, ProductsError> {
+    let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
+    let requires_beam = planned
+        .members
+        .iter()
+        .any(|member| member.beam_rule != ProductBeamRule::None);
+    let fitted_beams = if requires_beam {
+        vec![products.fitted_beam()].into_boxed_slice()
+    } else {
+        Box::new([])
+    };
+    let restoring_beams = match inputs.problem().products().restoring_beam() {
+        RestoringBeamPolicy::None => Box::new([]),
+        RestoringBeamPolicy::PerPlane | RestoringBeamPolicy::Common => {
+            vec![products.restoring_beam()].into_boxed_slice()
+        }
+    };
+    let mut members = Vec::with_capacity(planned.members.len());
+    for member in &planned.members {
+        let payload = products.payload(member.role)?;
+        let validity = if matches!(
+            member.validity,
+            ProductValidityRule::All | ProductValidityRule::FinalNormalState
+        ) {
+            vec![true; member.payload_values]
+        } else {
+            products.validity(member.validity)?
+        };
+        if payload.len() != member.payload_values || validity.len() != member.payload_values {
+            return Err(ProductsError::PayloadLengthMismatch {
+                expected: member.payload_values,
+                actual: payload.len().max(validity.len()),
+            });
+        }
+        if payload.iter().any(|value| !value.is_finite()) {
+            return Err(ProductsError::GeneratedNonfinite);
+        }
+        let digest = MemberArtifactId(member_content_digest(&payload, &validity));
+        members.push(ProducedMember {
+            node: member.node,
+            artifact_id: member.artifact_id,
+            digest,
+            payload,
+            validity,
+        });
+    }
     Ok(ContinuumProducedMembers {
         planned_generation: planned.generation_id,
         commitment_id: planned.commitment_id,
@@ -1273,6 +1362,161 @@ impl SealedContinuumGeneration {
     /// Return the exact sealed member set in canonical publication order.
     #[must_use]
     pub const fn members(&self) -> &[SealedMember] {
+        &self.members
+    }
+
+    /// Consume staged sealed payloads into their payload-free terminal record.
+    ///
+    /// The publication runtime calls this only after all member arrays have
+    /// been staged. Consuming the seal releases those arrays while preserving
+    /// every identity, contract, name, and beam needed for terminal receipts.
+    #[must_use]
+    pub fn into_published_summary(self) -> PublishedContinuumGeneration {
+        PublishedContinuumGeneration {
+            problem_id: self.problem_id,
+            graph_id: self.graph_id,
+            seal_id: self.seal_id,
+            generation_id: self.generation_id,
+            completions_id: self.completions_id,
+            fitted_beams: self.fitted_beams,
+            restoring_beams: self.restoring_beams,
+            members: self
+                .members
+                .into_vec()
+                .into_iter()
+                .map(|member| PublishedMember {
+                    node: member.node,
+                    name: member.name,
+                    artifact_id: member.artifact_id,
+                    content_identity: member.content_identity,
+                    contract: member.contract,
+                    resolved_beams: member.resolved_beams,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Payload-free terminal record for one published member.
+///
+/// This type has no public constructor and is minted only when a sealed
+/// generation relinquishes its staged numeric and validity arrays.
+#[derive(Debug, Clone)]
+pub struct PublishedMember {
+    node: ProductNodeId,
+    name: String,
+    artifact_id: MemberArtifactId,
+    content_identity: MemberArtifactId,
+    contract: SealedMemberContract,
+    resolved_beams: Box<[Option<RestoringBeam>]>,
+}
+
+impl PublishedMember {
+    /// Return the graph-local node identity.
+    #[must_use]
+    pub const fn node(&self) -> ProductNodeId {
+        self.node
+    }
+
+    /// Return the compiled product name.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Return the planned-and-published artifact identity.
+    #[must_use]
+    pub const fn artifact_id(&self) -> MemberArtifactId {
+        self.artifact_id
+    }
+
+    /// Return the exact published content identity.
+    #[must_use]
+    pub const fn content_identity(&self) -> MemberArtifactId {
+        self.content_identity
+    }
+
+    /// Return the complete compiled member contract.
+    #[must_use]
+    pub const fn contract(&self) -> &SealedMemberContract {
+        &self.contract
+    }
+
+    /// Return resolved beam metadata in output-channel order.
+    #[must_use]
+    pub const fn resolved_beams(&self) -> &[Option<RestoringBeam>] {
+        &self.resolved_beams
+    }
+}
+
+/// Payload-free terminal record for one published continuum generation.
+///
+/// This type has no public constructor and can only be obtained by consuming
+/// an authorized sealed generation after its member arrays have been staged.
+#[derive(Debug, Clone)]
+pub struct PublishedContinuumGeneration {
+    problem_id: CompiledProblemId,
+    graph_id: ProductGraphId,
+    seal_id: ContinuumSealId,
+    generation_id: PlannedGenerationId,
+    completions_id: ContinuumCompletionsId,
+    fitted_beams: Box<[Option<RestoringBeam>]>,
+    restoring_beams: Box<[Option<RestoringBeam>]>,
+    members: Box<[PublishedMember]>,
+}
+
+impl PublishedContinuumGeneration {
+    /// Return numeric and validity array residency retained after staging.
+    #[must_use]
+    pub const fn payload_residency_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Return the exact compiled problem authorized by the publication seal.
+    #[must_use]
+    pub const fn problem_id(&self) -> CompiledProblemId {
+        self.problem_id
+    }
+
+    /// Return the exact compiled Product Graph authorized by the seal.
+    #[must_use]
+    pub const fn graph_id(&self) -> ProductGraphId {
+        self.graph_id
+    }
+
+    /// Return the terminal Product Generation seal identity.
+    #[must_use]
+    pub const fn seal_id(&self) -> ContinuumSealId {
+        self.seal_id
+    }
+
+    /// Return the planned generation authorized by the seal.
+    #[must_use]
+    pub const fn generation_id(&self) -> PlannedGenerationId {
+        self.generation_id
+    }
+
+    /// Return the typed completions identity behind this publication.
+    #[must_use]
+    pub const fn completions_id(&self) -> ContinuumCompletionsId {
+        self.completions_id
+    }
+
+    /// Return the fitted restoring beams retained as terminal metadata.
+    #[must_use]
+    pub const fn fitted_beams(&self) -> &[Option<RestoringBeam>] {
+        &self.fitted_beams
+    }
+
+    /// Return selected restoring beams retained as terminal metadata.
+    #[must_use]
+    pub const fn restoring_beams(&self) -> &[Option<RestoringBeam>] {
+        &self.restoring_beams
+    }
+
+    /// Return published members in exact graph order.
+    #[must_use]
+    pub const fn members(&self) -> &[PublishedMember] {
         &self.members
     }
 }

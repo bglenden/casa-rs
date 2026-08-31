@@ -5,7 +5,7 @@ use std::{error::Error, fmt};
 
 use casa_imaging_model::{
     CompiledProblem, ImageDomainRole, InstrumentResponse, ModelStateIdentity, PhaseCentreLaw,
-    PolarizationCoordinate, ProductKind, RequiredCapability,
+    PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -160,6 +160,18 @@ pub fn validate_installed_implementation(
     {
         unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
     }
+    if !matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::Taylor { .. }
+    ) {
+        for product in [ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage] {
+            if problem.products().products().contains(&product) {
+                unsupported.push(UnsupportedRequirement::Capability(
+                    RequiredCapability::Product(product),
+                ));
+            }
+        }
+    }
 
     unsupported.sort_unstable();
     unsupported.dedup();
@@ -193,11 +205,13 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::CommonBeamSpectralCoupling
             | RequiredCapability::SequentialContinuumTransform
             | RequiredCapability::ConstantBasis
+            | RequiredCapability::TaylorBasis
             | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction
             | RequiredCapability::HogbomReconstruction
             | RequiredCapability::ClarkReconstruction
             | RequiredCapability::MultiscaleReconstruction
+            | RequiredCapability::MtmfsReconstruction
             | RequiredCapability::NaturalWeighting
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
@@ -212,5 +226,10 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::SumWeights)
             | RequiredCapability::Product(ProductKind::Mask)
             | RequiredCapability::Product(ProductKind::Beam)
+            | RequiredCapability::Product(ProductKind::PrimaryBeam)
+            | RequiredCapability::Product(ProductKind::PbCorrectedImage)
+            | RequiredCapability::Product(ProductKind::TaylorTerms)
+            | RequiredCapability::Product(ProductKind::SpectralIndex)
+            | RequiredCapability::Product(ProductKind::SpectralIndexError)
     )
 }

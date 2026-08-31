@@ -111,7 +111,8 @@
   ],
   "casa-imaging-products": [
    "casa-imaging-model",
-   "casa-imaging-reconstruction"
+   "casa-imaging-reconstruction",
+   "casa-numerics"
   ],
   "casa-imaging-runtime": [
    "casa-imaging-model",

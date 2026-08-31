@@ -3,7 +3,7 @@
 //! T22 continuum product algorithms and the two-phase Product Generation
 //! Authority, driven through owner seams end to end.
 
-use std::convert::Infallible;
+use std::{convert::Infallible, mem::size_of};
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -618,16 +618,31 @@ fn prechange_commitment_bytes(
 }
 
 #[test]
-fn t42_prechange_product_commitments_remain_constant_channel_only() {
+fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
     const CONSTANT_DIGEST: [u8; 32] = [
-        0x0e, 0x01, 0xcd, 0x6e, 0x01, 0x57, 0xa3, 0xfc, 0x11, 0x7b, 0x70, 0x8c, 0x05, 0x01, 0xa9,
-        0xf2, 0x6f, 0x8f, 0xa6, 0x8d, 0x00, 0x6e, 0x44, 0x30, 0xb6, 0xdf, 0xa6, 0xf7, 0xef, 0x39,
-        0xdc, 0x14,
+        0x6c, 0x1c, 0x00, 0x08, 0xde, 0xe8, 0x1b, 0x8d, 0x7e, 0xa7, 0x4d, 0x93, 0x3c, 0x2a, 0xba,
+        0xed, 0x44, 0xa6, 0x96, 0xdd, 0xb8, 0x56, 0x2a, 0xc2, 0x49, 0x97, 0xc2, 0x3a, 0xb4, 0x1c,
+        0xec, 0x53,
     ];
     const CHANNEL_DIGEST: [u8; 32] = [
-        0xd1, 0xcd, 0xc5, 0xa3, 0x3e, 0xe6, 0x13, 0xea, 0x8e, 0x41, 0xdf, 0xfa, 0x92, 0x9f, 0x0c,
-        0x5f, 0xaa, 0xad, 0x0b, 0x90, 0x19, 0xcd, 0x90, 0x29, 0x0b, 0x22, 0xfa, 0x7d, 0xc9, 0xa6,
-        0x96, 0x27,
+        0x6c, 0x64, 0x65, 0x99, 0x3d, 0xfe, 0xc0, 0x3c, 0x2a, 0xff, 0x2f, 0xdb, 0x0c, 0x08, 0xbc,
+        0x0e, 0x50, 0x37, 0x90, 0x5a, 0x61, 0x94, 0x8f, 0x11, 0xef, 0x0b, 0xaa, 0x1e, 0x1c, 0xa6,
+        0x4e, 0x9b,
+    ];
+    const CONSTANT_V3_DIGEST: [u8; 32] = [
+        0xc8, 0xa4, 0xcf, 0x1c, 0x51, 0x0d, 0x52, 0xd5, 0xc9, 0x0d, 0x75, 0x8a, 0x21, 0x38, 0x31,
+        0x50, 0xd4, 0xbf, 0x25, 0x68, 0x2e, 0xdb, 0xdb, 0x20, 0xa4, 0x1b, 0x96, 0xf9, 0x4b, 0x41,
+        0xd2, 0xf2,
+    ];
+    const CHANNEL_V3_DIGEST: [u8; 32] = [
+        0x6d, 0x64, 0xcf, 0x4a, 0x0b, 0x77, 0x0e, 0x7e, 0x65, 0x26, 0x50, 0xd6, 0xed, 0x9f, 0x9b,
+        0x7b, 0x99, 0x70, 0x6b, 0x02, 0xe1, 0x60, 0x3d, 0xea, 0x25, 0xe3, 0x0d, 0xf8, 0x0f, 0x37,
+        0xb4, 0x06,
+    ];
+    const TAYLOR_V3_DIGEST: [u8; 32] = [
+        0xb4, 0xc8, 0xdb, 0x5b, 0xcd, 0xb1, 0xdd, 0xef, 0x12, 0x1a, 0x64, 0x39, 0x92, 0x61, 0x85,
+        0x6d, 0xbb, 0x6b, 0x1e, 0xe1, 0x4c, 0xfa, 0x23, 0xc1, 0x08, 0x49, 0xa0, 0x6d, 0xdc, 0xf3,
+        0xcf, 0xa2,
     ];
 
     let constant_problem = continuum_problem(131, &CONTINUUM_PRODUCTS);
@@ -640,7 +655,7 @@ fn t42_prechange_product_commitments_remain_constant_channel_only() {
     assert_eq!(constant_bytes.len(), 411);
     assert_eq!(constant_bytes[200], 0, "PlaneV1 retains catalog tag zero");
     assert_eq!(constant_digest, CONSTANT_DIGEST);
-    assert_eq!(constant_catalog.commitment_id(), constant_digest);
+    assert_eq!(constant_catalog.commitment_id(), CONSTANT_V3_DIGEST);
 
     let channel_problem = continuum_problem_with_reconstruction(
         133,
@@ -668,7 +683,7 @@ fn t42_prechange_product_commitments_remain_constant_channel_only() {
         "ChannelSlabV1 retains catalog tag one"
     );
     assert_eq!(channel_digest, CHANNEL_DIGEST);
-    assert_eq!(channel_catalog.commitment_id(), channel_digest);
+    assert_eq!(channel_catalog.commitment_id(), CHANNEL_V3_DIGEST);
 
     let taylor_products = [
         ProductKind::Psf,
@@ -691,20 +706,13 @@ fn t42_prechange_product_commitments_remain_constant_channel_only() {
         1,
     );
     let taylor_round = run_continuum_round(&taylor_problem, 136);
-    assert_eq!(
+    let taylor_catalog =
         ContinuumSourceCatalog::from_major_cycle(&taylor_problem, &taylor_round.join)
-            .expect_err("Taylor catalog remains outside the continuum commitment schema"),
-        ProductsError::UnsupportedProblem
-    );
+            .expect("v3 Taylor source catalog");
+    assert_eq!(taylor_catalog.commitment_id(), TAYLOR_V3_DIGEST);
 
-    assert_eq!(
-        constant_catalog.commitment_id(),
-        <[u8; 32]>::from(Sha256::digest(&constant_bytes))
-    );
-    assert_eq!(
-        channel_catalog.commitment_id(),
-        <[u8; 32]>::from(Sha256::digest(&channel_bytes))
-    );
+    assert_eq!(constant_catalog.commitment_id(), CONSTANT_V3_DIGEST);
+    assert_eq!(channel_catalog.commitment_id(), CHANNEL_V3_DIGEST);
 }
 
 #[test]
@@ -993,6 +1001,90 @@ fn projection_publishes_the_sealed_set_once_and_retains_prepared_evidence() {
             sealed_member.payload().len() as u64 * 4
         );
     }
+
+    let seal_id = sealed.seal_id();
+    let generation_id = sealed.generation_id();
+    let completions_id = sealed.completions_id();
+    let member_evidence = sealed
+        .members()
+        .iter()
+        .map(|member| {
+            (
+                member.node(),
+                member.name().to_string(),
+                member.artifact_id(),
+                member.content_identity(),
+                member.contract().role(),
+                member.contract().unit(),
+                member.contract().schema(),
+                member.contract().validity(),
+                member.resolved_beams().to_vec(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let published = sealed.into_published_summary();
+    assert_eq!(published.seal_id(), seal_id);
+    assert_eq!(published.generation_id(), generation_id);
+    assert_eq!(published.completions_id(), completions_id);
+    assert_eq!(published.payload_residency_bytes(), 0);
+    assert_eq!(published.members().len(), member_evidence.len());
+    for (published, expected) in published.members().iter().zip(member_evidence) {
+        assert_eq!(published.node(), expected.0);
+        assert_eq!(published.name(), expected.1);
+        assert_eq!(published.artifact_id(), expected.2);
+        assert_eq!(published.content_identity(), expected.3);
+        assert_eq!(published.contract().role(), expected.4);
+        assert_eq!(published.contract().unit(), expected.5);
+        assert_eq!(published.contract().schema(), expected.6);
+        assert_eq!(published.contract().validity(), expected.7);
+        assert_eq!(published.resolved_beams(), expected.8);
+    }
+}
+
+#[test]
+fn generic_generation_demand_charges_exact_owned_arrays() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::Mask,
+    ];
+    let problem = continuum_problem_with_policy(94, &products, RestoringBeamPolicy::None);
+    let round = run_continuum_round(&problem, 95);
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let planned = ProductGenerationAuthority::bind(&problem)
+        .plan(&catalog, &ContinuumProductControls::default())
+        .expect("planned generation");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("product inputs");
+    let demand = planned.demand(&inputs).expect("generic demand");
+    let values = planned
+        .members()
+        .iter()
+        .map(|member| member.payload_values() as u64)
+        .sum::<u64>();
+    let maximum = planned
+        .members()
+        .iter()
+        .map(|member| member.payload_values() as u64)
+        .max()
+        .expect("members");
+    assert_eq!(demand.produced_residency_bytes(), values * 5);
+    assert_eq!(demand.sealed_residency_bytes(), values * 5);
+    assert_eq!(demand.maximum_member_payload_bytes(), maximum * 4);
+    assert_eq!(demand.maximum_member_validity_bytes(), maximum);
+    assert_eq!(
+        demand.algorithm_scratch_bytes(),
+        (SHAPE[0] * SHAPE[1] * 2 * size_of::<f32>()) as u64,
+        "generic normalization overlaps one converted plane and one result"
+    );
+    assert_eq!(
+        demand.peak_residency_bytes(),
+        (values * 5 * 2).max(values * 5 + demand.algorithm_scratch_bytes())
+    );
 }
 
 #[test]

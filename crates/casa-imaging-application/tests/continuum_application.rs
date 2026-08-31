@@ -451,6 +451,8 @@ fn request(
         mask: ContinuumMask::FullPlane,
         save_model_column: false,
         save_continuum_residual: false,
+        write_primary_beam: false,
+        pbcor: false,
         task_requirements: Vec::new(),
     }
 }

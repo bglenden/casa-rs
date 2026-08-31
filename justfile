@@ -103,6 +103,18 @@ imaging-t43-mtmfs-clean testdata_root casa_python casa_prefix casa_result:
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T43_RUST_OUTPUT="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-clean.json" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test mtmfs_clean_oracle t43_real_ms_mtmfs_clean_matches_frozen_casa -- --ignored --exact --nocapture
     "{{casa_python}}" tools/science/t43_mtmfs_clean_compare.py --casa-prefix "{{casa_prefix}}" --casa-result "{{casa_result}}" --rust-json "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-mtmfs-clean.json" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t43-comparison.json"
 
+# Focused #530 sealed Taylor-product and frozen-CASA publication gate.
+imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
+    just arch-check
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test continuum_products
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test taylor_products
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test availability
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run serial_product_publication -- --nocapture
+    python3 tools/science/t44_test_mtmfs_products_compare.py
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_APPLICATION_PREFIX="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle t44_application_mtmfs_publishes_frozen_casa_product_contract -- --ignored --exact --nocapture
+    "{{casa_python}}" tools/science/t44_mtmfs_products_compare.py --casa-prefix "{{casa_prefix}}" --rust-prefix "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t44-comparison.json"
+
 release-perf:
     bash scripts/test-release-perf.sh
 

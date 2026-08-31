@@ -23,21 +23,24 @@
 
 mod authority;
 mod beam;
+mod demand;
 mod digest;
 mod error;
 mod projection;
 mod restore;
 mod source;
+mod taylor;
 mod visibility;
 
 pub use authority::{
-    CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId, ContinuumCompletionsId,
-    ContinuumProducedMembers, ContinuumProductControls, ContinuumSealId, DEFAULT_PSF_CUTOFF,
-    MemberArtifactId, PlannedContinuumGeneration, PlannedGenerationId, PlannedMember,
-    ProductGenerationAuthority, SealedContinuumGeneration, SealedMember, SealedMemberContract,
-    produce_continuum_members,
+    AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId,
+    ContinuumCompletionsId, ContinuumProducedMembers, ContinuumProductControls, ContinuumSealId,
+    DEFAULT_PSF_CUTOFF, MemberArtifactId, PlannedContinuumGeneration, PlannedGenerationId,
+    PlannedMember, ProductGenerationAuthority, PublishedContinuumGeneration, PublishedMember,
+    SealedContinuumGeneration, SealedMember, SealedMemberContract, produce_continuum_members,
 };
 pub use beam::{RestoringBeam, fit_restoring_beam};
+pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
 pub use projection::{PublicationMemberProjection, PublicationProjection};
 pub use restore::{
@@ -54,7 +57,7 @@ pub use visibility::{
 mod tests {
     #[test]
     fn algorithm_catalog_version_is_pinned() {
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 4);
+        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 5);
         assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
     }
 }

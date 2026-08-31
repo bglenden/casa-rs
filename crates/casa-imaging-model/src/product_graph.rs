@@ -593,19 +593,24 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::PrimaryBeam => {
-                let term = self.primary_beam_term();
-                let primary_beam = self.add_image(
-                    domain_index,
-                    domain,
-                    ProductRole::PrimaryBeam(term),
-                    product_name("pb", term, false),
-                    ProductAxisKind::SkyImage,
-                    ProductUnit::Dimensionless,
-                    None,
-                    ProductBeamRule::None,
-                    ProductValidityRule::All,
-                    [],
-                );
+                let mut primary_beam = None;
+                for term in self.image_terms() {
+                    let node = self.add_image(
+                        domain_index,
+                        domain,
+                        ProductRole::PrimaryBeam(term),
+                        product_name("pb", term, false),
+                        ProductAxisKind::SkyImage,
+                        ProductUnit::Dimensionless,
+                        None,
+                        ProductBeamRule::None,
+                        ProductValidityRule::All,
+                        [],
+                    );
+                    if term == self.primary_beam_term() {
+                        primary_beam = Some(node);
+                    }
+                }
                 if matches!(
                     self.reconstruction.basis(),
                     ReconstructionBasis::Taylor { .. }
@@ -620,7 +625,7 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::Dimensionless,
                         ProductBeamRule::None,
                         ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam()),
-                        [primary_beam],
+                        [primary_beam.expect("primary-beam Taylor zero is compiled")],
                     );
                 }
             }

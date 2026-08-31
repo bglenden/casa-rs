@@ -32,8 +32,8 @@ use casa_imaging_model::{
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
-    PlannedContinuumGeneration, ProductGenerationAuthority, SealedContinuumGeneration,
-    VisibilityProductCompletion, produce_continuum_members,
+    PlannedContinuumGeneration, ProductGenerationAuthority, PublishedContinuumGeneration,
+    VisibilityProductCompletion,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleCompletion, MinorCycleProgram, MinorCycleStopReason,
@@ -158,8 +158,8 @@ pub struct NativeApplicationOutcome {
     pub scientific: MajorCycleCompletion,
     /// Planned product generation used before member production.
     pub planned_products: PlannedContinuumGeneration,
-    /// Authorized product generation retained after publication.
-    pub products: SealedContinuumGeneration,
+    /// Payload-free authorized generation retained after publication.
+    pub products: PublishedContinuumGeneration,
 }
 
 /// Stable application projection of the T21 owner evidence.
@@ -351,10 +351,10 @@ where
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. } => {
+        | ReconstructionAlgorithm::Multiscale { .. }
+        | ReconstructionAlgorithm::Mtmfs { .. } => {
             SpectralCyclePlan::initial(problem, &planning_registry, policy)?
         }
-        _ => unreachable!("native validation admits only continuum minor-cycle solvers"),
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let SpectralCyclePlanParts {
@@ -479,7 +479,8 @@ where
         }
         ReconstructionAlgorithm::Hogbom
         | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. } => {
+        | ReconstructionAlgorithm::Multiscale { .. }
+        | ReconstructionAlgorithm::Mtmfs { .. } => {
             let mut frozen_weighting = registry
                 .implementation()
                 .take_frozen_weighting()
@@ -771,7 +772,6 @@ where
                 );
             }
         }
-        _ => unreachable!("native validation admits only dirty or Högbom"),
     };
 
     publish_products(
@@ -931,6 +931,16 @@ where
     )?;
     let authority = ProductGenerationAuthority::bind(problem);
     let planned_products = authority.plan(&sources, &publication_config.controls)?;
+    let generation_demand = {
+        let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
+        if let Some(mask) = reconstruction_mask.as_ref() {
+            inputs = inputs.with_reconstruction_mask(mask)?;
+        }
+        planned_products.demand(&inputs)?
+    };
+    let staging_residency_bytes = publication_config
+        .sink
+        .staging_residency_bytes(&planned_products, &generation_demand)?;
 
     let visibility_write_receipt = prior
         .visibility_replay
@@ -951,6 +961,8 @@ where
     let publication_plan = SerialProductPublicationPlan::new(
         problem,
         &planned_products,
+        &generation_demand,
+        staging_residency_bytes,
         &planning_registry,
         SerialProductPublicationPolicy::new(
             runtime.implementation.clone(),
@@ -959,25 +971,9 @@ where
             runtime.confidence_parts_per_million,
         ),
     )?;
-    let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
-    if let Some(mask) = reconstruction_mask.as_ref() {
-        inputs = inputs.with_reconstruction_mask(mask)?;
-    }
-    let produced = produce_continuum_members(&planned_products, &inputs)?;
-    let sealed = authority.authorize(&planned_products, &produced)?;
     let (physical, publication) = publication_plan.into_parts();
-    let executor = SerialProductPublicationExecutor::new(
-        runtime.implementation.clone(),
-        publication,
-        sealed,
-        publication_config.sink,
-    )?;
-    let registry = SerialProductPublicationRegistry::new(
-        runtime.registry,
-        runtime.implementation.clone(),
-        problem,
-        executor,
-    );
+    // Admission covers production, validity, sealing overlap, and staging.
+    // Obtain it before allocating any product payload.
     let execution_plan = plan(
         problem,
         PlanningBindings::new(
@@ -986,10 +982,25 @@ where
             runtime.cost_model,
         ),
         &runtime.authority,
-        &registry,
+        &planning_registry,
         &runtime.receipts,
         move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
     )?;
+    let executor = SerialProductPublicationExecutor::new(
+        runtime.implementation.clone(),
+        problem.clone(),
+        publication,
+        planned_products,
+        scientific,
+        reconstruction_mask,
+        publication_config.sink,
+    )?;
+    let registry = SerialProductPublicationRegistry::new(
+        runtime.registry,
+        runtime.implementation.clone(),
+        problem,
+        executor,
+    );
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
     let current = RunBindings::new(
         problem.inputs().clone(),
@@ -1009,10 +1020,11 @@ where
             .bind(ExecutionProvenance::new(runtime.attempts[2], runtime.build)),
     )?;
     let publication_receipt = runtime.receipts.open(runtime.attempts[2])?;
-    let products = registry
+    let completion = registry
         .implementation()
-        .take_sealed_generation()
-        .ok_or_else(|| boxed("publication execution omitted its sealed product generation"))?;
+        .take_completion()
+        .ok_or_else(|| boxed("publication execution omitted its product completion"))?;
+    let (planned_products, scientific, products) = completion.into_parts();
     Ok(NativeApplicationOutcome {
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,

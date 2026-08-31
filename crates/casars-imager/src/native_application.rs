@@ -202,6 +202,8 @@ fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, St
         },
         save_model_column: config.save_model == SaveModelMode::ModelColumn,
         save_continuum_residual: config.save_continuum_residual,
+        write_primary_beam: config.write_pb,
+        pbcor: config.pbcor,
         task_requirements: task_requirements(config),
     })
 }
@@ -281,6 +283,7 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
 }
 
 fn unsupported_native_controls(config: &CliConfig) -> bool {
+    let standard_mtmfs_products = matches!(config.deconvolver, Deconvolver::Mtmfs);
     config.phasecenter_field.is_some()
         || config.phasecenter.is_some()
         || config
@@ -289,8 +292,7 @@ fn unsupported_native_controls(config: &CliConfig) -> bool {
             .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
         || config.uv_taper.is_some()
         || config.fullsummary
-        || config.pbcor
-        || config.write_pb
+        || ((config.pbcor || config.write_pb) && !standard_mtmfs_products)
         || config.chanchunks.is_some()
         || config.per_channel_weight_density
         || config.w_project_planes.is_some()

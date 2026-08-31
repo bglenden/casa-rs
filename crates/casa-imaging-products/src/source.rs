@@ -21,6 +21,7 @@ use crate::error::ProductsError;
 enum ContinuumNormalStateCatalog {
     PlaneV1,
     ChannelSlabV1,
+    TaylorBlockV1,
 }
 
 /// Identity catalog of every source role behind one continuum generation.
@@ -87,7 +88,7 @@ impl ContinuumSourceCatalog {
                 ContinuumNormalStateCatalog::ChannelSlabV1
             }
             NormalStateCatalog::UnnormalizedTaylorBlockV1 => {
-                return Err(ProductsError::UnsupportedProblem);
+                ContinuumNormalStateCatalog::TaylorBlockV1
             }
         };
         if mask.is_some_and(|mask| {
@@ -151,6 +152,7 @@ impl ContinuumSourceCatalog {
         encoder.u8(match self.normal_state_catalog {
             ContinuumNormalStateCatalog::PlaneV1 => 0,
             ContinuumNormalStateCatalog::ChannelSlabV1 => 1,
+            ContinuumNormalStateCatalog::TaylorBlockV1 => 2,
         });
         encoder.identity(self.input_model_generation.as_bytes());
         encoder.identity(self.final_model_generation.as_bytes());

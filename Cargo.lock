@@ -596,6 +596,7 @@ dependencies = [
  "casa-imaging-reconstruction",
  "casa-imaging-runtime",
  "casa-ms",
+ "casa-test-support",
  "casa-types",
  "libc",
  "ndarray",
@@ -618,6 +619,7 @@ version = "0.27.0"
 dependencies = [
  "casa-imaging-model",
  "casa-imaging-reconstruction",
+ "casa-numerics",
  "ndarray",
  "num-complex",
  "rustfft",

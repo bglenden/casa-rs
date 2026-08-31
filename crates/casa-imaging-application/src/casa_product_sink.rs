@@ -12,7 +12,9 @@ use std::{
 use casa_coordinates::CoordinateSystem;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
 use casa_imaging_model::{ProductRole, ProductUnit, ProductValidityRule};
-use casa_imaging_products::{RestoringBeam, SealedMember};
+use casa_imaging_products::{
+    ContinuumGenerationDemand, PlannedContinuumGeneration, RestoringBeam, SealedMember,
+};
 use casa_imaging_runtime::{
     ArtifactIdentity, AuthorizedProductPublicationEntry, MemberPromotionFailure,
     SerialProductPublicationSink,
@@ -47,6 +49,36 @@ impl CasaImageProductSink {
 
 impl SerialProductPublicationSink for CasaImageProductSink {
     type Error = std::io::Error;
+
+    fn staging_residency_bytes(
+        &self,
+        planned: &PlannedContinuumGeneration,
+        demand: &ContinuumGenerationDemand,
+    ) -> Result<u64, Self::Error> {
+        const IMAGE_ADAPTER_ENVELOPE_BYTES: u64 = 4_096;
+        const STAGED_MEMBER_RECORD_BYTES: u64 = 512;
+        let base_bytes = u64::try_from(self.base.to_string_lossy().len())
+            .map_err(|_| std::io::Error::other("product path length exceeds u64"))?;
+        let registry_bytes = planned.members().iter().try_fold(0_u64, |total, member| {
+            let name_bytes = u64::try_from(member.name().len())
+                .map_err(|_| std::io::Error::other("product name length exceeds u64"))?;
+            let path_bytes = base_bytes
+                .checked_add(name_bytes)
+                .and_then(|bytes| bytes.checked_mul(2))
+                .ok_or_else(|| std::io::Error::other("product path residency overflow"))?;
+            total
+                .checked_add(path_bytes)
+                .and_then(|bytes| bytes.checked_add(STAGED_MEMBER_RECORD_BYTES))
+                .ok_or_else(|| std::io::Error::other("product registry residency overflow"))
+        })?;
+        demand
+            .maximum_member_payload_bytes()
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(demand.maximum_member_validity_bytes()))
+            .and_then(|bytes| bytes.checked_add(IMAGE_ADAPTER_ENVELOPE_BYTES))
+            .and_then(|bytes| bytes.checked_add(registry_bytes))
+            .ok_or_else(|| std::io::Error::other("product staging residency overflow"))
+    }
 
     fn stage(
         &self,
@@ -287,6 +319,8 @@ const fn role_label(role: ProductRole) -> &'static str {
         ProductRole::PrimaryBeam(_) => "pb",
         ProductRole::Sensitivity => "sensitivity",
         ProductRole::PbCorrectedImage(_) => "pbcor.image",
+        ProductRole::SpectralIndex => "alpha",
+        ProductRole::SpectralIndexError => "alpha.error",
         ProductRole::BeamMetadata => "beam",
         _ => "product",
     }

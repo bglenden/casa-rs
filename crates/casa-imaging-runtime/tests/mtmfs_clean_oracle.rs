@@ -7,6 +7,11 @@ mod t42_fixture;
 
 use std::{collections::BTreeMap, convert::Infallible, error::Error, fs, io, path::PathBuf};
 
+use casa_imaging_model::{ProductRole, ProductTerm, ProductUnit};
+use casa_imaging_products::{
+    AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
+    ContinuumSourceCatalog, ProductGenerationAuthority, produce_continuum_members,
+};
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MinorCycleProgram, MinorCycleStopReason, ModelGeneration,
     ReconstructionMaskPlan, WeightingExecutionLimits,
@@ -30,11 +35,33 @@ use casa_imaging_runtime::{
 use serde_json::json;
 
 const T43_OUTPUT_ENV: &str = "CASA_RS_T43_RUST_OUTPUT";
+const T44_OUTPUT_ENV: &str = "CASA_RS_T44_RUST_OUTPUT";
 const IMAGE_SIZE: usize = 128;
 const CELLS: usize = IMAGE_SIZE * IMAGE_SIZE;
 const IMPLEMENTATION_BYTE: u8 = 0x43;
 const HOST_MEMORY_BYTES: u64 = 1 << 30;
 const STORAGE_BYTES: u64 = 4 << 30;
+const T44_PRODUCT_NAMES: [&str; 19] = [
+    ".psf.tt0",
+    ".psf.tt1",
+    ".psf.tt2",
+    ".residual.tt0",
+    ".residual.tt1",
+    ".model.tt0",
+    ".model.tt1",
+    ".image.tt0",
+    ".image.tt1",
+    ".sumwt.tt0",
+    ".sumwt.tt1",
+    ".sumwt.tt2",
+    ".mask",
+    ".pb.tt0",
+    ".pb.tt1",
+    ".image.tt0.pbcor",
+    ".image.tt1.pbcor",
+    ".alpha",
+    ".alpha.error",
+];
 
 #[derive(Debug)]
 struct CycleSummary {
@@ -54,7 +81,9 @@ struct ComponentSummary {
     scale_px: f64,
 }
 
-fn open_t43_fixture() -> Result<
+fn open_fixture(
+    t44_products: bool,
+) -> Result<
     (
         tempfile::TempDir,
         casa_imaging_model::CompiledProblem,
@@ -74,17 +103,22 @@ fn open_t43_fixture() -> Result<
     let staged = staging.path().join("ref_vlass_wtsp_creation.ms");
     t42_fixture::copy_measurement_set(&source, &staged)?;
     casa_ms::initialize_measurement_set_owner_manifest(&staged)?;
-    let (problem, selected) = t42_fixture::build_problem(&staged)?;
+    let (problem, selected) = if t44_products {
+        t42_fixture::build_t44_problem(&staged)?
+    } else {
+        t42_fixture::build_problem(&staged)?
+    };
     Ok((staging, problem, selected))
 }
 
-#[test]
-#[ignore = "requires slow-parity casatestdata and frozen CASA image products"]
-fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
-    let output = PathBuf::from(
-        std::env::var_os(T43_OUTPUT_ENV).ok_or("CASA_RS_T43_RUST_OUTPUT is not set")?,
-    );
-    let (_staging, problem, selected) = open_t43_fixture()?;
+struct CleanRun {
+    problem: casa_imaging_model::CompiledProblem,
+    final_completion: casa_imaging_reconstruction::MajorCycleCompletion,
+    cycles: Vec<CycleSummary>,
+}
+
+fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Error>> {
+    let (_staging, problem, selected) = open_fixture(t44_products)?;
     let artifact_directory = tempfile::tempdir()?;
     let receipt_directory = tempfile::tempdir()?;
     let authority = ResourceAuthority::install_production_inventory(runtime_inventory(
@@ -107,7 +141,7 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
     let execution_policy = || {
         SpectralCycleExecutionPolicy::new(
             implementation_id(),
-            WeightingExecutionLimits::new(512, 1).expect("fixed T43 weighting limits"),
+            WeightingExecutionLimits::new(512, 1).expect("fixed T43/T44 weighting limits"),
             residency.clone(),
             storage_io(),
             1_000,
@@ -127,7 +161,7 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
     let initial = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())?;
     let minor_node = initial
         .minor_cycle_node()
-        .ok_or("T43 initial plan lacks its reconstruction cycle")?
+        .ok_or("T43/T44 initial plan lacks its reconstruction cycle")?
         .clone();
     let SpectralCyclePlanParts {
         physical,
@@ -157,7 +191,7 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
     )
     .with_frozen_weighting_reservation(frozen_reservation)
     .with_planned_gridded_normal_binding(
-        gridded_normal.ok_or("T43 initial plan lacks gridded-normal binding")?,
+        gridded_normal.ok_or("T43/T44 initial plan lacks gridded-normal binding")?,
     )?
     .with_reconstruction_cycle(
         minor_node,
@@ -168,7 +202,6 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
     );
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, executor);
-    let attempt = attempt_id(0);
     let plan = runtime_plan(
         &problem,
         PlanningBindings::new(
@@ -189,22 +222,22 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
         &authority,
         &mut RunToCompletion,
         receipts.bind(ExecutionProvenance::new(
-            attempt,
+            attempt_id(0),
             BuildIdentity::from_sha256([0x43; 32]),
         )),
     )?;
     let mut completion = registry
         .implementation()
         .take_reconstruction_cycle_completion()
-        .ok_or("T43 initial reconstruction completion is missing")?;
+        .ok_or("T43/T44 initial reconstruction completion is missing")?;
     let mut frozen_weighting = registry
         .implementation()
         .take_frozen_weighting()
-        .ok_or("T43 frozen weighting state is missing")?;
+        .ok_or("T43/T44 frozen weighting state is missing")?;
     let mut replay = registry
         .implementation()
         .take_gridded_normal_replay()
-        .ok_or("T43 gridded-normal replay is missing")?;
+        .ok_or("T43/T44 gridded-normal replay is missing")?;
     let mut cycles = vec![cycle_summary(&completion)?];
     let mut input = completion.into_final_major_input();
 
@@ -248,6 +281,24 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
         4,
     )?;
     cycles[3].model_flux = Some(model_tt0_sum(final_completion.final_model()));
+    Ok(CleanRun {
+        problem,
+        final_completion,
+        cycles,
+    })
+}
+
+#[test]
+#[ignore = "requires slow-parity casatestdata and frozen CASA image products"]
+fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
+    let output = PathBuf::from(
+        std::env::var_os(T43_OUTPUT_ENV).ok_or("CASA_RS_T43_RUST_OUTPUT is not set")?,
+    );
+    let CleanRun {
+        problem: _,
+        final_completion,
+        cycles,
+    } = execute_four_cycle_clean(false)?;
 
     let model = final_completion.final_model().samples();
     if model.len() != 2 * CELLS {
@@ -316,6 +367,131 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
     fs::write(&output, serde_json::to_vec(&artifact)?)?;
     eprintln!("t43_mtmfs_rust_clean {}", output.display());
     Ok(())
+}
+
+#[test]
+#[ignore = "requires slow-parity casatestdata and frozen CASA image products"]
+fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> {
+    let output = PathBuf::from(
+        std::env::var_os(T44_OUTPUT_ENV).ok_or("CASA_RS_T44_RUST_OUTPUT is not set")?,
+    );
+    let CleanRun {
+        problem,
+        final_completion,
+        cycles,
+    } = execute_four_cycle_clean(true)?;
+    let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &final_completion)?;
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let planned = authority.plan(&catalog, &controls)?;
+    if planned.primary_beam_model() != Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) {
+        return Err("T44 product plan did not pin the CASA EVLA common beam".into());
+    }
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &final_completion)?;
+    let produced = produce_continuum_members(&planned, &inputs)?;
+    let sealed = authority.authorize(&planned, &produced)?;
+    let names = sealed
+        .members()
+        .iter()
+        .map(|member| member.name())
+        .collect::<Vec<_>>();
+    if names != T44_PRODUCT_NAMES {
+        return Err(format!("T44 sealed product set changed: {names:?}").into());
+    }
+    if names.iter().any(|name| name.starts_with(".weight")) || names.contains(&".alpha.pbcor") {
+        return Err("T44 standard product set contains weight or alpha.pbcor".into());
+    }
+    let common_beam = sealed
+        .restoring_beam()
+        .ok_or("T44 common restoring beam is missing")?;
+    for member in sealed.members().iter().filter(|member| {
+        matches!(
+            member.contract().role(),
+            ProductRole::RestoredImage(_)
+                | ProductRole::PbCorrectedImage(_)
+                | ProductRole::SpectralIndex
+                | ProductRole::SpectralIndexError
+        )
+    }) {
+        if member.resolved_beam() != Some(common_beam) {
+            return Err(format!("{} does not carry the common beam", member.name()).into());
+        }
+    }
+    let artifact = json!({
+        "schema": "casa-rs-t44-mtmfs-products-v1",
+        "geometry": {"shape": [IMAGE_SIZE, IMAGE_SIZE], "layout": "x,y"},
+        "trajectory": {
+            "cycles": cycles.iter().map(|cycle| json!({
+                "iterations": cycle.iterations,
+                "cycle_threshold": cycle.cycle_threshold,
+                "peak_residual": cycle.peak_residual,
+                "model_flux": cycle.model_flux.expect("every cycle was reconciled"),
+                "stop_reason": cycle.stop_reason,
+            })).collect::<Vec<_>>(),
+            "total_iterations": cycles.iter().map(|cycle| cycle.iterations).sum::<usize>(),
+            "stop_reason": "iteration_limit",
+        },
+        "common_beam": beam_json(common_beam),
+        "members": sealed.members().iter().map(|member| json!({
+            "name": member.name(),
+            "role": product_role_name(member.contract().role()),
+            "unit": product_unit_name(member.contract().unit()),
+            "shape": member.contract().axes().shape(),
+            "beam": member.resolved_beam().map(beam_json),
+            "payload": member.payload(),
+            "validity": member.validity(),
+        })).collect::<Vec<_>>(),
+    });
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&output, serde_json::to_vec(&artifact)?)?;
+    eprintln!("t44_mtmfs_rust_products {}", output.display());
+    Ok(())
+}
+
+fn beam_json(beam: &casa_imaging_products::RestoringBeam) -> serde_json::Value {
+    json!({
+        "major_rad": beam.major_fwhm_rad(),
+        "minor_rad": beam.minor_fwhm_rad(),
+        "position_angle_rad": beam.position_angle_rad(),
+    })
+}
+
+fn product_role_name(role: ProductRole) -> String {
+    let term = |prefix: &str, term: ProductTerm| match term {
+        ProductTerm::Single => prefix.to_string(),
+        ProductTerm::Taylor(term) => format!("{prefix}.tt{term}"),
+    };
+    match role {
+        ProductRole::Psf(value) => term("psf", value),
+        ProductRole::Residual(value) => term("residual", value),
+        ProductRole::Model(value) => term("model", value),
+        ProductRole::RestoredImage(value) => term("restored_image", value),
+        ProductRole::SumWeights(value) => term("sum_weights", value),
+        ProductRole::CleanMask => "clean_mask".to_string(),
+        ProductRole::Weight(value) => term("weight", value),
+        ProductRole::PrimaryBeam(value) => term("primary_beam", value),
+        ProductRole::PrimaryBeamSpectralIndex => "primary_beam_spectral_index".to_string(),
+        ProductRole::Sensitivity => "sensitivity".to_string(),
+        ProductRole::PbCorrectedImage(value) => term("pb_corrected_image", value),
+        ProductRole::TaylorCoefficientSet => "taylor_coefficient_set".to_string(),
+        ProductRole::SpectralIndex => "spectral_index".to_string(),
+        ProductRole::SpectralIndexError => "spectral_index_error".to_string(),
+        ProductRole::PbCorrectedSpectralIndex => "pb_corrected_spectral_index".to_string(),
+        ProductRole::BeamMetadata => "beam_metadata".to_string(),
+    }
+}
+
+const fn product_unit_name(unit: ProductUnit) -> &'static str {
+    match unit {
+        ProductUnit::NotApplicable => "not_applicable",
+        ProductUnit::JyPerBeam => "jy_per_beam",
+        ProductUnit::JyPerPixel => "jy_per_pixel",
+        ProductUnit::Dimensionless => "dimensionless",
+        ProductUnit::VisibilityWeight => "visibility_weight",
+    }
 }
 
 fn cycle_summary(
