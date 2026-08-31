@@ -212,25 +212,38 @@
 <a href=#212 id=212 data-nosnippet>212</a>            | RequiredCapability::ClarkReconstruction
 <a href=#213 id=213 data-nosnippet>213</a>            | RequiredCapability::MultiscaleReconstruction
 <a href=#214 id=214 data-nosnippet>214</a>            | RequiredCapability::MtmfsReconstruction
-<a href=#215 id=215 data-nosnippet>215</a>            | RequiredCapability::NaturalWeighting
-<a href=#216 id=216 data-nosnippet>216</a>            | RequiredCapability::UniformWeighting
-<a href=#217 id=217 data-nosnippet>217</a>            | RequiredCapability::BriggsWeighting
-<a href=#218 id=218 data-nosnippet>218</a>            | RequiredCapability::BriggsBandwidthTaperWeighting
-<a href=#219 id=219 data-nosnippet>219</a>            | RequiredCapability::UnitResponseNormalization
-<a href=#220 id=220 data-nosnippet>220</a>            | RequiredCapability::FlatNoiseNormalization
-<a href=#221 id=221 data-nosnippet>221</a>            | RequiredCapability::FlatSkyNormalization
-<a href=#222 id=222 data-nosnippet>222</a>            | RequiredCapability::Product(ProductKind::Psf)
-<a href=#223 id=223 data-nosnippet>223</a>            | RequiredCapability::Product(ProductKind::Residual)
-<a href=#224 id=224 data-nosnippet>224</a>            | RequiredCapability::Product(ProductKind::Model)
-<a href=#225 id=225 data-nosnippet>225</a>            | RequiredCapability::Product(ProductKind::RestoredImage)
-<a href=#226 id=226 data-nosnippet>226</a>            | RequiredCapability::Product(ProductKind::SumWeights)
-<a href=#227 id=227 data-nosnippet>227</a>            | RequiredCapability::Product(ProductKind::Mask)
-<a href=#228 id=228 data-nosnippet>228</a>            | RequiredCapability::Product(ProductKind::Beam)
-<a href=#229 id=229 data-nosnippet>229</a>            | RequiredCapability::Product(ProductKind::PrimaryBeam)
-<a href=#230 id=230 data-nosnippet>230</a>            | RequiredCapability::Product(ProductKind::PbCorrectedImage)
-<a href=#231 id=231 data-nosnippet>231</a>            | RequiredCapability::Product(ProductKind::TaylorTerms)
-<a href=#232 id=232 data-nosnippet>232</a>            | RequiredCapability::Product(ProductKind::SpectralIndex)
-<a href=#233 id=233 data-nosnippet>233</a>            | RequiredCapability::Product(ProductKind::SpectralIndexError)
-<a href=#234 id=234 data-nosnippet>234</a>    )
-<a href=#235 id=235 data-nosnippet>235</a>}
+<a href=#215 id=215 data-nosnippet>215</a>            | RequiredCapability::JointContinuumLineReconstruction
+<a href=#216 id=216 data-nosnippet>216</a>            | RequiredCapability::NaturalWeighting
+<a href=#217 id=217 data-nosnippet>217</a>            | RequiredCapability::UniformWeighting
+<a href=#218 id=218 data-nosnippet>218</a>            | RequiredCapability::BriggsWeighting
+<a href=#219 id=219 data-nosnippet>219</a>            | RequiredCapability::BriggsBandwidthTaperWeighting
+<a href=#220 id=220 data-nosnippet>220</a>            | RequiredCapability::UnitResponseNormalization
+<a href=#221 id=221 data-nosnippet>221</a>            | RequiredCapability::FlatNoiseNormalization
+<a href=#222 id=222 data-nosnippet>222</a>            | RequiredCapability::FlatSkyNormalization
+<a href=#223 id=223 data-nosnippet>223</a>            | RequiredCapability::Product(ProductKind::Psf)
+<a href=#224 id=224 data-nosnippet>224</a>            | RequiredCapability::Product(ProductKind::Residual)
+<a href=#225 id=225 data-nosnippet>225</a>            | RequiredCapability::Product(ProductKind::Model)
+<a href=#226 id=226 data-nosnippet>226</a>            | RequiredCapability::Product(ProductKind::RestoredImage)
+<a href=#227 id=227 data-nosnippet>227</a>            | RequiredCapability::Product(ProductKind::SumWeights)
+<a href=#228 id=228 data-nosnippet>228</a>            | RequiredCapability::Product(ProductKind::Mask)
+<a href=#229 id=229 data-nosnippet>229</a>            | RequiredCapability::Product(ProductKind::Beam)
+<a href=#230 id=230 data-nosnippet>230</a>            | RequiredCapability::Product(ProductKind::PrimaryBeam)
+<a href=#231 id=231 data-nosnippet>231</a>            | RequiredCapability::Product(ProductKind::PbCorrectedImage)
+<a href=#232 id=232 data-nosnippet>232</a>            | RequiredCapability::Product(ProductKind::TaylorTerms)
+<a href=#233 id=233 data-nosnippet>233</a>            | RequiredCapability::Product(ProductKind::SpectralIndex)
+<a href=#234 id=234 data-nosnippet>234</a>            | RequiredCapability::Product(ProductKind::SpectralIndexError)
+<a href=#235 id=235 data-nosnippet>235</a>    )
+<a href=#236 id=236 data-nosnippet>236</a>}
+<a href=#237 id=237 data-nosnippet>237</a>
+<a href=#238 id=238 data-nosnippet>238</a><span class="attr">#[cfg(test)]
+<a href=#239 id=239 data-nosnippet>239</a></span><span class="kw">mod </span>tests {
+<a href=#240 id=240 data-nosnippet>240</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#241 id=241 data-nosnippet>241</a>
+<a href=#242 id=242 data-nosnippet>242</a>    <span class="attr">#[test]
+<a href=#243 id=243 data-nosnippet>243</a>    </span><span class="kw">fn </span>t46_joint_reconstruction_is_installed_at_the_application_boundary() {
+<a href=#244 id=244 data-nosnippet>244</a>        <span class="macro">assert!</span>(supports_capability(
+<a href=#245 id=245 data-nosnippet>245</a>            RequiredCapability::JointContinuumLineReconstruction
+<a href=#246 id=246 data-nosnippet>246</a>        ));
+<a href=#247 id=247 data-nosnippet>247</a>    }
+<a href=#248 id=248 data-nosnippet>248</a>}
 </code></pre></div></section></main></body></html>

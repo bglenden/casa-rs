@@ -19,7 +19,7 @@
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">const </span>MODEL_SOURCE_SHAPE_IDENTITY_DOMAIN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"casa-rs-model-source-shape"</span>;
 <a href=#20 id=20 data-nosnippet>20</a><span class="kw">const </span>MODEL_SOURCE_SHAPE_IDENTITY_VERSION: u32 = <span class="number">1</span>;
 <a href=#21 id=21 data-nosnippet>21</a><span class="kw">const </span>MODEL_LIFECYCLE_CONTRACT_IDENTITY_DOMAIN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"casa-rs-model-lifecycle-contract"</span>;
-<a href=#22 id=22 data-nosnippet>22</a><span class="kw">const </span>MODEL_LIFECYCLE_CONTRACT_IDENTITY_VERSION: u32 = <span class="number">4</span>;
+<a href=#22 id=22 data-nosnippet>22</a><span class="kw">const </span>MODEL_LIFECYCLE_CONTRACT_IDENTITY_VERSION: u32 = <span class="number">5</span>;
 <a href=#23 id=23 data-nosnippet>23</a><span class="kw">const </span>MODEL_REPROJECTION_CONTRACT_IDENTITY_DOMAIN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"casa-rs-model-reprojection-contract"</span>;
 <a href=#24 id=24 data-nosnippet>24</a><span class="kw">const </span>MODEL_REPROJECTION_CONTRACT_IDENTITY_VERSION: u32 = <span class="number">1</span>;
 <a href=#25 id=25 data-nosnippet>25</a><span class="kw">const </span>MODEL_REPROJECTED_SEED_IDENTITY_DOMAIN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"casa-rs-model-reprojected-seed"</span>;
@@ -1613,24 +1613,28 @@
 <a href=#1613 id=1613 data-nosnippet>1613</a>        ReconstructionBasis::Constant =&gt; <span class="number">1</span>,
 <a href=#1614 id=1614 data-nosnippet>1614</a>        ReconstructionBasis::Taylor { terms } =&gt; terms,
 <a href=#1615 id=1615 data-nosnippet>1615</a>        ReconstructionBasis::ChannelLocal { channels } =&gt; channels,
-<a href=#1616 id=1616 data-nosnippet>1616</a>    }
-<a href=#1617 id=1617 data-nosnippet>1617</a>}
-<a href=#1618 id=1618 data-nosnippet>1618</a>
-<a href=#1619 id=1619 data-nosnippet>1619</a><span class="kw">const fn </span>precision_tag(precision: NumericPrecision) -&gt; u8 {
-<a href=#1620 id=1620 data-nosnippet>1620</a>    <span class="kw">match </span>precision {
-<a href=#1621 id=1621 data-nosnippet>1621</a>        NumericPrecision::F32 =&gt; <span class="number">0</span>,
-<a href=#1622 id=1622 data-nosnippet>1622</a>        NumericPrecision::F64 =&gt; <span class="number">1</span>,
-<a href=#1623 id=1623 data-nosnippet>1623</a>    }
-<a href=#1624 id=1624 data-nosnippet>1624</a>}
-<a href=#1625 id=1625 data-nosnippet>1625</a>
-<a href=#1626 id=1626 data-nosnippet>1626</a><span class="kw">fn </span>canonical_f64_bits(value: f64) -&gt; u64 {
-<a href=#1627 id=1627 data-nosnippet>1627</a>    <span class="kw">if </span>value == <span class="number">0.0 </span>{ <span class="number">0 </span>} <span class="kw">else </span>{ value.to_bits() }
+<a href=#1616 id=1616 data-nosnippet>1616</a>        ReconstructionBasis::JointContinuumLine {
+<a href=#1617 id=1617 data-nosnippet>1617</a>            continuum_terms,
+<a href=#1618 id=1618 data-nosnippet>1618</a>            line_terms,
+<a href=#1619 id=1619 data-nosnippet>1619</a>        } =&gt; continuum_terms.saturating_add(line_terms),
+<a href=#1620 id=1620 data-nosnippet>1620</a>    }
+<a href=#1621 id=1621 data-nosnippet>1621</a>}
+<a href=#1622 id=1622 data-nosnippet>1622</a>
+<a href=#1623 id=1623 data-nosnippet>1623</a><span class="kw">const fn </span>precision_tag(precision: NumericPrecision) -&gt; u8 {
+<a href=#1624 id=1624 data-nosnippet>1624</a>    <span class="kw">match </span>precision {
+<a href=#1625 id=1625 data-nosnippet>1625</a>        NumericPrecision::F32 =&gt; <span class="number">0</span>,
+<a href=#1626 id=1626 data-nosnippet>1626</a>        NumericPrecision::F64 =&gt; <span class="number">1</span>,
+<a href=#1627 id=1627 data-nosnippet>1627</a>    }
 <a href=#1628 id=1628 data-nosnippet>1628</a>}
 <a href=#1629 id=1629 data-nosnippet>1629</a>
-<a href=#1630 id=1630 data-nosnippet>1630</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
-<a href=#1631 id=1631 data-nosnippet>1631</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
-<a href=#1632 id=1632 data-nosnippet>1632</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
-<a href=#1633 id=1633 data-nosnippet>1633</a>    }
-<a href=#1634 id=1634 data-nosnippet>1634</a>    <span class="prelude-val">Ok</span>(())
-<a href=#1635 id=1635 data-nosnippet>1635</a>}
+<a href=#1630 id=1630 data-nosnippet>1630</a><span class="kw">fn </span>canonical_f64_bits(value: f64) -&gt; u64 {
+<a href=#1631 id=1631 data-nosnippet>1631</a>    <span class="kw">if </span>value == <span class="number">0.0 </span>{ <span class="number">0 </span>} <span class="kw">else </span>{ value.to_bits() }
+<a href=#1632 id=1632 data-nosnippet>1632</a>}
+<a href=#1633 id=1633 data-nosnippet>1633</a>
+<a href=#1634 id=1634 data-nosnippet>1634</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
+<a href=#1635 id=1635 data-nosnippet>1635</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
+<a href=#1636 id=1636 data-nosnippet>1636</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
+<a href=#1637 id=1637 data-nosnippet>1637</a>    }
+<a href=#1638 id=1638 data-nosnippet>1638</a>    <span class="prelude-val">Ok</span>(())
+<a href=#1639 id=1639 data-nosnippet>1639</a>}
 </code></pre></div></section></main></body></html>
