@@ -858,9 +858,9 @@ Capabilities not yet transferred to that composition are
 </tr>
 <tr>
 <td>CASA <code>outlierfile</code></td>
-<td>parse and orchestrate extra image definitions / outlier fields</td>
-<td><code>casars-imager --outlierfile</code>; task contract <code>outlier_file</code>; Python <code>outlier_file</code></td>
-<td>#220 implements source-backed parsing/inventory for CASA new-format outlier files plus execution for the main image and supported MFS/Hogbom outlier image sets, including the niter&gt;0 joint multi-image CLEAN slice and CASA's <code>usemask=user</code> pixel-circle outlier mask used by <code>refim_twopoints_twochan.ms</code>. CASA recognizes <code>imagename</code>, <code>imsize</code>, <code>cell</code>, <code>phasecenter</code>, <code>startmodel</code>, <code>usemask</code>, <code>mask</code>, <code>specmode</code>, <code>nchan</code>, <code>start</code>, <code>width</code>, <code>nterms</code>, <code>reffreq</code>, <code>gridder</code>, <code>deconvolver</code>, and <code>wprojplanes</code>; unsupported mask forms, cube/MTMFS/w-projection variants, and non-standard gridders/deconvolvers reject clearly</td>
+<td>parse extra image definitions into compiled image-domain geometry</td>
+<td><code>casa-imaging-model</code> canonical domains; <code>casa-ms</code> selected GridFT projections; shared reconstruction/runtime/product route; application parser</td>
+<td>T31/#517 replaces the displaced per-image runner with one bounded selected-observation traversal, summed prediction, domain adjoints, deterministic CASA field-local Högbom controllers, atomic model delta, and domain-resolved products. The frozen <code>refim_twopoints_twochan.ms</code> gate covers exact WCS plus dirty/clean PSF, residual, model, and image at NRMS &lt;= <code>1e-3</code>; the worst accepted result is <code>1.682477e-6</code>. Unsupported mask forms, cube/MTMFS/W-projection combinations, and non-standard gridders/deconvolvers reject during planning.</td>
 </tr>
 <tr>
 <td>CASA <code>savemodel='modelcolumn'</code></td>
