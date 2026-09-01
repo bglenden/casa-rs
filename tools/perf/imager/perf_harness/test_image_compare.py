@@ -1173,6 +1173,10 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertEqual(5.5, result["right"]["integrated_flux"])
         self.assertAlmostEqual(2.0 + 2.0 / 12.0, result["left"]["centroid_pixels"][0])
         self.assertEqual([2, 2], result["right"]["peak_abs"]["location"])
+        self.assertAlmostEqual(
+            1.0 / math.sqrt(101.0),
+            result["difference"]["diff_rms_over_right_rms"],
+        )
         self.assertGreater(result["left"]["chunks"], 1)
         self.assertLessEqual(max(factory.chunk_sizes), 4)
 

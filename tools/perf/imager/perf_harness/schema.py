@@ -296,6 +296,7 @@ RESULT_MODE_FIELDS = {
     "chanchunks",
     "channel_count",
     "deconvolver",
+    "facets",
     "gridder",
     "hogbom_iteration_mode",
     "image_shape",
@@ -1411,7 +1412,7 @@ def _validate_result_dataset(value: Any, *, source: str) -> None:
 def _validate_result_mode(value: Any, *, source: str) -> None:
     mode = _require_dict(value, source)
     _allowed_fields(mode, RESULT_MODE_FIELDS, source)
-    integer_fields = {"channel_count", "niter", "nmajor", "nterms"}
+    integer_fields = {"channel_count", "facets", "niter", "nmajor", "nterms"}
     nullable_integer_fields = {"chanchunks", "imaging_read_ahead_blocks"}
     nullable_string_fields = {
         "start",
@@ -1432,6 +1433,8 @@ def _validate_result_mode(value: Any, *, source: str) -> None:
         _nonempty_string(mode, key, source)
     for key in integer_fields & set(mode):
         _integer(mode, key, source)
+    if "facets" in mode:
+        _positive_integer(mode["facets"], f"{source}: facets")
     for key in nullable_integer_fields & set(mode):
         _optional_integer(mode[key], f"{source}: {key}")
     for key in nullable_string_fields & set(mode):

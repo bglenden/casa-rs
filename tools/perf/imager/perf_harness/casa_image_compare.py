@@ -943,9 +943,122 @@ def compare_source_regions(
                 image_factory=image_factory,
                 beam_area_pixels=right_beam_area_pixels,
             ),
+            "difference": source_region_difference(
+                left_path,
+                right_path,
+                region["blc"],
+                region["trc"],
+                max_elements=max_elements,
+                image_factory=image_factory,
+            ),
         }
         for region in regions
     ]
+
+
+def source_region_difference(
+    left_path,
+    right_path,
+    blc_xy,
+    trc_xy,
+    max_elements,
+    image_factory=None,
+):
+    """Compare a frozen source box without materializing either full image."""
+
+    if max_elements < 1:
+        raise ValueError("source-region chunk budget must be >= 1")
+    left_tool = new_image_tool(image_factory)
+    right_tool = new_image_tool(image_factory)
+    left_tool.open(left_path)
+    right_tool.open(right_path)
+    try:
+        left_shape = [int(value) for value in left_tool.shape()]
+        right_shape = [int(value) for value in right_tool.shape()]
+        if left_shape != right_shape:
+            raise ValueError(
+                f"source-region images have different shapes: {left_shape} != {right_shape}"
+            )
+        if len(left_shape) < 2:
+            raise ValueError("source region requires at least two image axes")
+        if trc_xy[0] >= left_shape[0] or trc_xy[1] >= left_shape[1]:
+            raise ValueError(
+                f"source region is outside image shape {left_shape}: {blc_xy}..{trc_xy}"
+            )
+        other_axes = [0] * (len(left_shape) - 2)
+        y_count = trc_xy[1] - blc_xy[1] + 1
+        y_chunk = min(y_count, max_elements)
+        x_chunk = max(1, max_elements // y_chunk)
+        right_squares = []
+        difference_squares = []
+        count = 0
+        chunks = 0
+        for x_start in range(blc_xy[0], trc_xy[0] + 1, x_chunk):
+            x_end = min(trc_xy[0], x_start + x_chunk - 1)
+            for y_start in range(blc_xy[1], trc_xy[1] + 1, y_chunk):
+                y_end = min(trc_xy[1], y_start + y_chunk - 1)
+                blc = [x_start, y_start, *other_axes]
+                trc = [x_end, y_end, *other_axes]
+                inc = [1] * len(left_shape)
+                left = np.asarray(
+                    left_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=False
+                    ),
+                    dtype=np.float64,
+                )
+                right = np.asarray(
+                    right_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=False
+                    ),
+                    dtype=np.float64,
+                )
+                left_mask = np.asarray(
+                    left_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=True
+                    ),
+                    dtype=bool,
+                )
+                right_mask = np.asarray(
+                    right_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=True
+                    ),
+                    dtype=bool,
+                )
+                valid = (
+                    left_mask
+                    & right_mask
+                    & np.isfinite(left)
+                    & np.isfinite(right)
+                )
+                if np.any(valid):
+                    left_values = left[valid]
+                    right_values = right[valid]
+                    differences = left_values - right_values
+                    count += int(right_values.size)
+                    right_squares.extend(float(value) for value in right_values**2)
+                    difference_squares.extend(float(value) for value in differences**2)
+                chunks += 1
+        right_rms = math.sqrt(math.fsum(right_squares) / count) if count else None
+        difference_rms = (
+            math.sqrt(math.fsum(difference_squares) / count) if count else None
+        )
+        ratio = (
+            difference_rms / right_rms
+            if difference_rms is not None and right_rms not in (None, 0.0)
+            else None
+        )
+        return {
+            "status": "measured" if count else "no_finite_overlap",
+            "finite_unmasked_count": count,
+            "right_rms": finite_float(right_rms),
+            "difference_rms": finite_float(difference_rms),
+            "diff_rms_over_right_rms": finite_float(ratio),
+            "chunks": chunks,
+            "max_chunk_elements": max_elements,
+        }
+    finally:
+        left_tool.close()
+        right_tool.close()
 
 
 def source_region_statistics(

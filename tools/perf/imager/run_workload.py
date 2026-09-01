@@ -563,6 +563,7 @@ def build_plan(
         "IMAGER_BENCH_SPECMODE": specmode,
         "IMAGER_BENCH_GRIDDER": gridder,
         "IMAGER_BENCH_CASA_GRIDDER": casa_gridder,
+        "IMAGER_BENCH_FACETS": str(int_value(imaging, "facets", 1)),
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
         "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(
@@ -689,6 +690,7 @@ def build_plan(
         "mode": {
             "specmode": specmode,
             "gridder": gridder,
+            "facets": int_value(imaging, "facets", 1),
             "bench_mode": bench_mode,
             "image_shape": [
                 int_value(imaging, "imsize", 128),

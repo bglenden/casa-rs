@@ -881,6 +881,38 @@ real 1.145408
             plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
         )
 
+    def test_faceted_widefield_plan_preserves_exact_command_controls(self) -> None:
+        manifest_path = (
+            run_workload.WORKLOAD_DIR / "issue518-t32-vla-faceted-clean.json"
+        )
+        manifest = run_workload.load_manifest(manifest_path)
+        plan = run_workload.build_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            repeats_override=None,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        env = plan["command"]["env"]
+        self.assertEqual("widefield", env["IMAGER_BENCH_GRIDDER"])
+        self.assertEqual("widefield", env["IMAGER_BENCH_CASA_GRIDDER"])
+        self.assertEqual("2", env["IMAGER_BENCH_FACETS"])
+        self.assertEqual("1", env["IMAGER_BENCH_WPROJPLANES"])
+        self.assertEqual("1", env["IMAGER_BENCH_CASA_WPROJPLANES"])
+        self.assertEqual(2, plan["mode"]["facets"])
+        self.assertEqual(24, plan["mode"]["channel_count"])
+        self.assertEqual("full", plan["comparison"]["mode"])
+        self.assertEqual(
+            ["facet-seam-x", "facet-seam-y"],
+            [region["id"] for region in plan["comparison"]["source_regions"]],
+        )
+
+        bench = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text()
+        self.assertIn('--facets "$facets"', bench)
+        self.assertIn('facets=facets,', bench)
+
     def test_reuse_prefixes_imply_skipping_the_reused_implementation(self) -> None:
         manifest = {
             "id": "reuse-both",
