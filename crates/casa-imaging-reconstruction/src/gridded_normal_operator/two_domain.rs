@@ -8,6 +8,7 @@ use ndarray::Array2;
 use num_complex::Complex64;
 
 use super::*;
+use crate::spectral_operator::GriddedNormalLocalContribution;
 
 fn planned_vec<T>(capacity: usize) -> Result<Vec<T>, SpectralOperatorError> {
     let mut values = Vec::new();
@@ -793,7 +794,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                         .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                 );
             }
-            if self.frame_sequences.is_empty() || self.groups.is_empty() {
+            if self.frame_sequences.is_empty() {
                 return Err(SpectralOperatorError::IncompleteCoverage);
             }
             self.prepare_prediction_lanes()?;
@@ -1191,7 +1192,7 @@ impl GriddedNormalOperatorApply {
             &self.program.manifest.descriptors,
             frames,
             &self.tile_catalogs,
-            self.program.manifest.specification.slab().total_channels(),
+            self.program.output_plane_count()?,
         )?;
         for task in &prepared.tasks {
             self.tile_accumulators
@@ -1326,14 +1327,19 @@ impl GriddedNormalOperatorApply {
                                 let record = decode_domain_record(
                                     bytes,
                                     &self.tile_catalogs,
-                                    self.program.manifest.specification.slab().total_channels(),
+                                    self.program.output_plane_count()?,
                                 )?;
+                                let polarizations =
+                                    self.program.manifest.specification.polarization_count();
+                                let output_channel = record.output_channel / polarizations;
+                                let polarization = record.output_channel % polarizations;
                                 prediction += self
                                     .operators
                                     .get(record.chart_ordinal)
                                     .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
-                                    .predict_gridded_normal(
-                                        record.output_channel,
+                                    .predict_gridded_normal_polarization(
+                                        output_channel,
+                                        polarization,
                                         record.taps,
                                         record.forward_scale,
                                     )?;
@@ -1464,7 +1470,7 @@ impl GriddedNormalOperatorApply {
                                     let record = decode_domain_record(
                                         record_bytes,
                                         &self.tile_catalogs,
-                                        self.program.manifest.specification.slab().total_channels(),
+                                        self.program.output_plane_count()?,
                                     )?;
                                     if record.chart_ordinal != domain_ordinal {
                                         return Err(SpectralOperatorError::GriddedRecordMismatch);
@@ -1473,14 +1479,20 @@ impl GriddedNormalOperatorApply {
                                         .first()
                                         .copied()
                                         .ok_or(SpectralOperatorError::IncompleteCoverage)?;
-                                    self.operators[domain_ordinal].grid_gridded_normal_local(
-                                        grids,
-                                        compensations,
-                                        geometry.translated_taps(record.taps)?,
-                                        record.output_channel,
-                                        predicted,
-                                        record.forward_scale.conj() * record.imaging_weight,
-                                    )?;
+                                    let polarizations =
+                                        self.program.manifest.specification.polarization_count();
+                                    self.operators[domain_ordinal]
+                                        .grid_gridded_normal_local_polarization(
+                                            grids,
+                                            compensations,
+                                            GriddedNormalLocalContribution::new(
+                                                geometry.translated_taps(record.taps)?,
+                                                record.output_channel / polarizations,
+                                                record.output_channel % polarizations,
+                                                predicted,
+                                                record.forward_scale.conj() * record.imaging_weight,
+                                            ),
+                                        )?;
                                 }
                                 GriddedNormalRecordLayout::Taylor(plan) => {
                                     let record = decode_taylor_record(

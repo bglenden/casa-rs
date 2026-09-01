@@ -225,7 +225,7 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
     if !(dirty_divisor > 0.0 && psf_divisor > 0.0) {
         return Err("principal Taylor normalization is not positive".into());
     }
-    if basis_bits.iter().any(|bits| *bits == u32::MAX)
+    if basis_bits.contains(&u32::MAX)
         || evaluated_frequency_hz
             .iter()
             .any(|value| !value.is_finite())
@@ -317,6 +317,10 @@ pub(crate) fn build_problem(
     build_problem_with_specification(path, specification()?)
 }
 
+#[allow(
+    dead_code,
+    reason = "shared with mtmfs_clean_oracle through a path module"
+)]
 pub(crate) fn build_t44_problem(
     path: &Path,
 ) -> Result<
@@ -552,6 +556,10 @@ fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {
     )
 }
 
+#[allow(
+    dead_code,
+    reason = "shared with mtmfs_clean_oracle through a path module"
+)]
 fn t44_specification() -> Result<ProblemSpecification, Box<dyn Error>> {
     specification_with_products(
         vec![

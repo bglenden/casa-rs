@@ -202,6 +202,8 @@ pub enum UnsupportedRequirement {
     SingleObservationSource,
     /// Facet execution currently requires the constant spectral basis.
     ConstantBasisForFacets,
+    /// Non-Stokes-I or multi-polarization execution requires an independent-plane basis.
+    IndependentBasisForPolarizationSelection,
     /// The implementation requires a fixed phase centre.
     FixedPhaseCentre,
     /// The implementation does not accept an initial model.
@@ -221,6 +223,7 @@ impl UnsupportedRequirement {
             Self::Task(_) => "task",
             Self::SingleObservationSource
             | Self::ConstantBasisForFacets
+            | Self::IndependentBasisForPolarizationSelection
             | Self::FixedPhaseCentre
             | Self::EmptyInitialModel
             | Self::NoModelColumnWrite
@@ -238,6 +241,9 @@ impl UnsupportedRequirement {
             Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
             Self::SingleObservationSource => "constraint.single_observation_source".to_string(),
             Self::ConstantBasisForFacets => "constraint.constant_basis_for_facets".to_string(),
+            Self::IndependentBasisForPolarizationSelection => {
+                "constraint.independent_basis_for_polarization_selection".to_string()
+            }
             Self::FixedPhaseCentre => "constraint.fixed_phase_centre".to_string(),
             Self::EmptyInitialModel => "constraint.empty_initial_model".to_string(),
             Self::NoModelColumnWrite => "constraint.no_model_column_write".to_string(),
@@ -384,6 +390,12 @@ pub fn validate_installed_implementation(
     if is_faceted && problem.reconstruction().basis() != ReconstructionBasis::Constant {
         unsupported.push(UnsupportedRequirement::ConstantBasisForFacets);
     }
+    if coupled_basis_requires_independent_polarization(
+        problem.reconstruction().basis(),
+        problem.reconstruction().polarization().coordinates(),
+    ) {
+        unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
+    }
     if !matches!(
         problem.geometry().centres().phase_tracking(),
         PhaseCentreLaw::Fixed(_)
@@ -423,11 +435,22 @@ pub fn validate_installed_implementation(
     }
 }
 
+fn coupled_basis_requires_independent_polarization(
+    basis: ReconstructionBasis,
+    coordinates: &[PolarizationCoordinate],
+) -> bool {
+    matches!(
+        basis,
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::JointContinuumLine { .. }
+    ) && coordinates != [PolarizationCoordinate::StokesI]
+}
+
 const fn supports_task(requirement: TaskRequirement) -> bool {
     matches!(
         requirement,
         TaskRequirement::SpectralCube
             | TaskRequirement::SpectralCubedata
+            | TaskRequirement::PolarizationSelection
             | TaskRequirement::Automasking
             | TaskRequirement::MaskProduct
             | TaskRequirement::ModelColumnWrite
@@ -440,7 +463,7 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
 const fn supports_capability(capability: RequiredCapability) -> bool {
     matches!(
         capability,
-        RequiredCapability::Polarization(PolarizationCoordinate::StokesI)
+        RequiredCapability::Polarization(_)
             | RequiredCapability::SpectralFrameTransform
             | RequiredCapability::SpectralResampling
             | RequiredCapability::CommonBeamSpectralCoupling
@@ -482,6 +505,8 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
 mod tests {
     use std::collections::BTreeSet;
 
+    use casa_imaging_model::PolarizationCoordinate;
+
     use super::*;
 
     #[test]
@@ -492,7 +517,38 @@ mod tests {
     }
 
     #[test]
-    fn t33_polarization_operator_does_not_claim_the_t34_production_route() {
+    fn coupled_basis_polarization_constraint_covers_taylor_and_joint() {
+        for basis in [
+            ReconstructionBasis::Taylor { terms: 2 },
+            ReconstructionBasis::JointContinuumLine {
+                continuum_terms: 2,
+                line_terms: 1,
+            },
+        ] {
+            assert!(!coupled_basis_requires_independent_polarization(
+                basis,
+                &[PolarizationCoordinate::StokesI]
+            ));
+            assert!(coupled_basis_requires_independent_polarization(
+                basis,
+                &[PolarizationCoordinate::StokesQ]
+            ));
+            assert!(coupled_basis_requires_independent_polarization(
+                basis,
+                &[PolarizationCoordinate::CircularRl]
+            ));
+            assert!(coupled_basis_requires_independent_polarization(
+                basis,
+                &[
+                    PolarizationCoordinate::StokesI,
+                    PolarizationCoordinate::StokesQ,
+                ]
+            ));
+        }
+    }
+
+    #[test]
+    fn t34_standard_polarization_routes_are_installed_without_full_mueller() {
         for coordinate in [
             PolarizationCoordinate::StokesQ,
             PolarizationCoordinate::StokesU,
@@ -500,7 +556,7 @@ mod tests {
             PolarizationCoordinate::LinearXy,
             PolarizationCoordinate::CircularRl,
         ] {
-            assert!(!supports_capability(RequiredCapability::Polarization(
+            assert!(supports_capability(RequiredCapability::Polarization(
                 coordinate
             )));
         }
@@ -509,20 +565,26 @@ mod tests {
         ));
 
         let catalog = installed_imaging_capability_catalog();
-        for requirement in [
-            RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
-            RequiredCapability::FullMuellerResponse,
-        ] {
-            assert_eq!(
-                catalog
-                    .iter()
-                    .find(|entry| {
-                        entry.requirement() == ImagingCapabilityRequirement::Scientific(requirement)
-                    })
-                    .and_then(ImagingCapabilityCatalogEntry::unsupported),
-                Some(UnsupportedRequirement::Capability(requirement))
-            );
-        }
+        let stokes_q = RequiredCapability::Polarization(PolarizationCoordinate::StokesQ);
+        assert_eq!(
+            catalog
+                .iter()
+                .find(|entry| {
+                    entry.requirement() == ImagingCapabilityRequirement::Scientific(stokes_q)
+                })
+                .and_then(ImagingCapabilityCatalogEntry::unsupported),
+            None
+        );
+        let mueller = RequiredCapability::FullMuellerResponse;
+        assert_eq!(
+            catalog
+                .iter()
+                .find(|entry| {
+                    entry.requirement() == ImagingCapabilityRequirement::Scientific(mueller)
+                })
+                .and_then(ImagingCapabilityCatalogEntry::unsupported),
+            Some(UnsupportedRequirement::Capability(mueller))
+        );
     }
 
     #[test]

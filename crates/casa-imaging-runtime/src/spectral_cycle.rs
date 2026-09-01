@@ -2578,7 +2578,7 @@ impl InitialMajorPhaseCompletion {
                     &masks,
                 )?;
                 (
-                    ReconstructionMaskSet::Coupled(masks),
+                    ReconstructionMaskSet::Coupled(Box::new(masks)),
                     auto_masks
                         .into_iter()
                         .collect::<Vec<_>>()
@@ -2588,7 +2588,8 @@ impl InitialMajorPhaseCompletion {
             } else {
                 let (masks, auto_masks) = mask_plans
                     .materialize(continuation.generation(), &normal_state)
-                    .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
+                    .map_err(|error| ReconstructionCycleError::Minor(error.into()))?
+                    .into_parts();
                 let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1
                     && normal_state.domain_count() > 1
                 {

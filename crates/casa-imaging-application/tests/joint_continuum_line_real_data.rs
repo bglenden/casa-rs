@@ -188,6 +188,7 @@ fn base_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagi
         spectral_mode: SpectralImagingMode::Continuum,
         continuum_subtraction: None,
         data_column: Some("DATA".to_string()),
+        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
         algorithm: ContinuumAlgorithm::Dirty,
         weighting: ContinuumWeighting::Natural,
         iterations: 512,

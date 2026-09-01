@@ -481,6 +481,7 @@ impl WeightingAlgorithmState {
             problem,
             max_block_samples: plan.limits.max_block_samples,
             block,
+            pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
             coverage: CoverageEncoder::new(),
@@ -513,6 +514,7 @@ impl WeightingAlgorithmState {
             problem,
             max_block_samples: plan.limits.max_block_samples,
             block,
+            pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
             coverage: CoverageEncoder::derived(proof.coverage()),
@@ -856,6 +858,7 @@ impl WeightingSumWeightPhase {
             sum: self,
             density_prepass,
             block: Vec::with_capacity(plan.limits.max_block_samples),
+            pending: None,
             max_block_samples: plan.limits.max_block_samples,
             peak_weighted_capacity: plan.limits.max_block_samples,
             block_sequence: 0,
@@ -940,6 +943,7 @@ pub struct FusedWeightingPhase {
     sum: WeightingSumWeightPhase,
     density_prepass: bool,
     block: Vec<WeightingSampleValue>,
+    pending: Option<WeightingSampleValue>,
     max_block_samples: usize,
     peak_weighted_capacity: usize,
     block_sequence: u64,
@@ -957,12 +961,29 @@ impl FusedWeightingPhase {
         let weighted = self
             .sum
             .weighted_sample(problem, sample.into(), contributions)?;
+        let emitted = self
+            .flush_before_group(&weighted)?
+            .then(|| self.take_block())
+            .transpose()?;
         self.coverage.push(&weighted);
-        self.block.push(weighted);
-        if self.block.len() == self.max_block_samples {
-            self.take_block().map(Some)
+        if let Some(emitted) = emitted {
+            self.pending = Some(weighted);
+            Ok(Some(emitted))
         } else {
-            Ok(None)
+            if self.block.capacity() == 0 {
+                self.block = Vec::with_capacity(self.max_block_samples);
+            }
+            self.block.push(weighted);
+            if self.block.len() == self.max_block_samples
+                && self
+                    .block
+                    .last()
+                    .is_some_and(|value| value.sample.ends_correlation_group())
+            {
+                self.take_block().map(Some)
+            } else {
+                Ok(None)
+            }
         }
     }
 
@@ -976,12 +997,16 @@ impl FusedWeightingPhase {
         mut block: WeightingReplayChunk,
     ) -> Result<(), WeightingError> {
         if !self.block.is_empty()
-            || block.samples.len() != self.max_block_samples
+            || block.samples.is_empty()
+            || block.samples.len() > self.max_block_samples
             || block.sequence.checked_add(1) != Some(self.block_sequence)
         {
             return Err(WeightingError::ReturnedBlockMismatch);
         }
         block.samples.clear();
+        if let Some(pending) = self.pending.take() {
+            block.samples.push(pending);
+        }
         self.block = block.samples;
         Ok(())
     }
@@ -997,6 +1022,9 @@ impl FusedWeightingPhase {
         ),
         WeightingError,
     > {
+        if self.pending.is_some() {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
         let final_block = if self.block.is_empty() {
             None
         } else {
@@ -1063,6 +1091,24 @@ impl FusedWeightingPhase {
             coverage: self.coverage.clone(),
         })
     }
+
+    fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
+        if weighted.sample.correlation_group_size() > self.max_block_samples {
+            return Err(WeightingError::ResidencyOverflow);
+        }
+        if weighted.sample.starts_correlation_group()
+            && !self.block.is_empty()
+            && self
+                .block
+                .len()
+                .checked_add(weighted.sample.correlation_group_size())
+                .is_none_or(|size| size > self.max_block_samples)
+        {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 /// One output-channel contribution carrying its reconstruction-owned W value.
@@ -1109,9 +1155,12 @@ pub struct WeightingSelectedSample {
     pub(crate) row_flag: bool,
     // Reconstruction-derived CASA imaging weight, not raw per-correlation storage weight.
     pub(crate) input_weight: f32,
+    pub(crate) raw_input_weight: f32,
+    pub(crate) starts_correlation_group: bool,
+    pub(crate) ends_correlation_group: bool,
+    pub(crate) correlation_group_size: usize,
+    pub(crate) parallactic_angles_rad: [f64; 2],
     pub(crate) density_uvw_m: [f64; 3],
-    pub(crate) transformed_uvw_m: [f64; 3],
-    pub(crate) phase_shift_m: f64,
     domain_projections: SelectedImageDomainProjections,
 }
 
@@ -1126,9 +1175,12 @@ impl WeightingSelectedSample {
             parallel_hand_group_flag: sample.parallel_hand_group_flag(),
             row_flag: sample.row_flag(),
             input_weight: casa_unpolarized_input_weight(input_weight_group),
+            raw_input_weight: sample.input_weight(),
+            starts_correlation_group: input_weight_group.is_density_owner(),
+            ends_correlation_group: input_weight_group.is_terminal_member(),
+            correlation_group_size: input_weight_group.member_count(),
+            parallactic_angles_rad: coordinates.parallactic_angles_rad,
             density_uvw_m: coordinates.density_uvw_m,
-            transformed_uvw_m: coordinates.transformed_uvw_m,
-            phase_shift_m: coordinates.phase_shift_m,
             domain_projections: sample.domain_projections().clone(),
         }
     }
@@ -1157,6 +1209,30 @@ impl WeightingSelectedSample {
         self.parallel_hand_group_flag
     }
 
+    /// Return the exact raw per-correlation MS input weight.
+    #[must_use]
+    pub const fn raw_input_weight(&self) -> f32 {
+        self.raw_input_weight
+    }
+
+    /// Return row-local parallactic angles for the two receptors.
+    #[must_use]
+    pub const fn parallactic_angles_rad(&self) -> [f64; 2] {
+        self.parallactic_angles_rad
+    }
+
+    fn starts_correlation_group(&self) -> bool {
+        self.starts_correlation_group
+    }
+
+    fn correlation_group_size(&self) -> usize {
+        self.correlation_group_size
+    }
+
+    fn ends_correlation_group(&self) -> bool {
+        self.ends_correlation_group
+    }
+
     /// Return the MAIN row flag.
     #[must_use]
     pub const fn row_flag(&self) -> bool {
@@ -1165,20 +1241,27 @@ impl WeightingSelectedSample {
 
     /// Return the transformed UVW coordinate consumed by the paired operator.
     #[must_use]
-    pub const fn transformed_uvw_m(&self) -> [f64; 3] {
-        self.transformed_uvw_m
+    pub fn transformed_uvw_m(&self) -> [f64; 3] {
+        self.primary_model_projection().transformed_uvw_m()
     }
 
     /// Return the phase-shift path length consumed by prediction and gridding.
     #[must_use]
-    pub const fn phase_shift_m(&self) -> f64 {
-        self.phase_shift_m
+    pub fn phase_shift_m(&self) -> f64 {
+        self.primary_model_projection().phase_shift_m()
     }
 
     /// Return the projections for every compiled image domain.
     #[must_use]
     pub const fn domain_projections(&self) -> &SelectedImageDomainProjections {
         &self.domain_projections
+    }
+
+    fn primary_model_projection(&self) -> casa_imaging_model::SelectedPhaseCentreProjection {
+        self.domain_projections
+            .get(0)
+            .expect("validated selected samples always contain the primary domain")
+            .model()
     }
 }
 
@@ -1234,6 +1317,23 @@ impl WeightingReplayChunk {
         &self.samples
     }
 
+    /// Iterate complete row/channel correlation groups in canonical source order.
+    pub fn correlation_groups(&self) -> impl Iterator<Item = &[WeightingSampleValue]> {
+        let mut start = 0_usize;
+        std::iter::from_fn(move || {
+            if start == self.samples.len() {
+                return None;
+            }
+            let end = self.samples[start + 1..]
+                .iter()
+                .position(|sample| sample.sample.starts_correlation_group())
+                .map_or(self.samples.len(), |offset| start + 1 + offset);
+            let group = &self.samples[start..end];
+            start = end;
+            Some(group)
+        })
+    }
+
     pub(super) const fn coverage_checkpoint(&self) -> &CoverageEncoder {
         &self.coverage
     }
@@ -1251,6 +1351,7 @@ pub struct WeightingReplayPhase<'a> {
     problem: &'a CompiledProblem,
     max_block_samples: usize,
     block: Vec<WeightingSampleValue>,
+    pending: Option<WeightingSampleValue>,
     peak_weighted_capacity: usize,
     block_sequence: u64,
     coverage: CoverageEncoder,
@@ -1290,19 +1391,33 @@ impl WeightingReplayPhase<'_> {
             sample,
             spectral_values,
         };
+        let emitted = self
+            .flush_before_group(&weighted)?
+            .then(|| self.take_block())
+            .transpose()?;
         self.coverage.push(&weighted);
         self.sample_count = self
             .sample_count
             .checked_add(1)
             .ok_or(WeightingError::SampleCountOverflow)?;
-        if self.block.capacity() == 0 {
-            self.block = Vec::with_capacity(self.max_block_samples);
-        }
-        self.block.push(weighted);
-        if self.block.len() == self.max_block_samples {
-            self.take_block().map(Some)
+        if let Some(emitted) = emitted {
+            self.pending = Some(weighted);
+            Ok(Some(emitted))
         } else {
-            Ok(None)
+            if self.block.capacity() == 0 {
+                self.block = Vec::with_capacity(self.max_block_samples);
+            }
+            self.block.push(weighted);
+            if self.block.len() == self.max_block_samples
+                && self
+                    .block
+                    .last()
+                    .is_some_and(|value| value.sample.ends_correlation_group())
+            {
+                self.take_block().map(Some)
+            } else {
+                Ok(None)
+            }
         }
     }
 
@@ -1312,12 +1427,16 @@ impl WeightingReplayPhase<'_> {
         mut block: WeightingReplayChunk,
     ) -> Result<(), WeightingError> {
         if !self.block.is_empty()
-            || block.samples.len() != self.max_block_samples
+            || block.samples.is_empty()
+            || block.samples.len() > self.max_block_samples
             || block.sequence.checked_add(1) != Some(self.block_sequence)
         {
             return Err(WeightingError::ReturnedBlockMismatch);
         }
         block.samples.clear();
+        if let Some(pending) = self.pending.take() {
+            block.samples.push(pending);
+        }
         self.block = block.samples;
         Ok(())
     }
@@ -1326,6 +1445,9 @@ impl WeightingReplayPhase<'_> {
     pub fn finish(
         mut self,
     ) -> Result<(Option<WeightingReplayChunk>, WeightingReplaySummary), WeightingError> {
+        if self.pending.is_some() {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
         let final_block = if self.block.is_empty() {
             None
         } else {
@@ -1402,6 +1524,24 @@ impl WeightingReplayPhase<'_> {
             samples,
             coverage: self.coverage.clone(),
         })
+    }
+
+    fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
+        if weighted.sample.correlation_group_size() > self.max_block_samples {
+            return Err(WeightingError::ResidencyOverflow);
+        }
+        if weighted.sample.starts_correlation_group()
+            && !self.block.is_empty()
+            && self
+                .block
+                .len()
+                .checked_add(weighted.sample.correlation_group_size())
+                .is_none_or(|size| size > self.max_block_samples)
+        {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 

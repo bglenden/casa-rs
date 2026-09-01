@@ -17,7 +17,9 @@ pub use availability::{
     TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
     validate_installed_implementation,
 };
-pub use casa_imaging_model::{HogbomIterationAccounting, ImagingRequestVersion};
+pub use casa_imaging_model::{
+    HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate,
+};
 pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{

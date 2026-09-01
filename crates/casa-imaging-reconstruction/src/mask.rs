@@ -468,6 +468,13 @@ pub struct ImageDomainReconstructionMasks {
     masks: Box<[ReconstructionMask]>,
 }
 
+/// Materialized domain masks and their optional auto-mask evidence.
+#[derive(Debug, Clone)]
+pub struct ImageDomainMaskMaterialization {
+    masks: ImageDomainReconstructionMasks,
+    auto_mask_evidence: Box<[Option<AutoMultithreshEvidence>]>,
+}
+
 /// The two independently committed spatial supports of one joint solve.
 ///
 /// Continuum and line components may occupy different sky regions. This value
@@ -483,11 +490,11 @@ pub struct CoupledReconstructionMask {
 #[derive(Debug, Clone)]
 pub enum ReconstructionMaskSet {
     /// One support used by a scalar, cube, or Taylor solve.
-    Shared(ReconstructionMask),
+    Shared(Box<ReconstructionMask>),
     /// One canonical spatial support for every compiled image domain.
     Domains(ImageDomainReconstructionMasks),
     /// Independently committed continuum and line supports.
-    Coupled(CoupledReconstructionMask),
+    Coupled(Box<CoupledReconstructionMask>),
 }
 
 impl ReconstructionMaskSet {
@@ -534,6 +541,12 @@ impl ImageDomainReconstructionMaskPlans {
     #[must_use]
     pub const fn len(&self) -> usize {
         self.plans.len()
+    }
+
+    /// Return whether no domain plans are present (always false for valid values).
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.plans.is_empty()
     }
 
     /// Borrow the primary-domain plan.
@@ -586,13 +599,7 @@ impl ImageDomainReconstructionMaskPlans {
         &self,
         base: &crate::ModelGeneration,
         normal: &FinalNormalState,
-    ) -> Result<
-        (
-            ImageDomainReconstructionMasks,
-            Box<[Option<AutoMultithreshEvidence>]>,
-        ),
-        MaskError,
-    > {
+    ) -> Result<ImageDomainMaskMaterialization, MaskError> {
         if self.plans.len() != normal.domain_count()
             || self.plans.len() != base.shape().domains().len()
         {
@@ -600,7 +607,7 @@ impl ImageDomainReconstructionMaskPlans {
         }
         if self.plans.len() == 1 {
             let (mask, evidence) = self.plans[0].materialize(base, normal)?;
-            return Ok((
+            return Ok(ImageDomainMaskMaterialization::new(
                 ImageDomainReconstructionMasks::new([mask])?,
                 vec![evidence].into_boxed_slice(),
             ));
@@ -645,7 +652,33 @@ impl ImageDomainReconstructionMaskPlans {
             masks.push(mask);
         }
         let evidence = vec![None; masks.len()].into_boxed_slice();
-        Ok((ImageDomainReconstructionMasks::new(masks)?, evidence))
+        Ok(ImageDomainMaskMaterialization::new(
+            ImageDomainReconstructionMasks::new(masks)?,
+            evidence,
+        ))
+    }
+}
+
+impl ImageDomainMaskMaterialization {
+    fn new(
+        masks: ImageDomainReconstructionMasks,
+        auto_mask_evidence: Box<[Option<AutoMultithreshEvidence>]>,
+    ) -> Self {
+        Self {
+            masks,
+            auto_mask_evidence,
+        }
+    }
+
+    /// Release the canonical masks and matching evidence in domain order.
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        ImageDomainReconstructionMasks,
+        Box<[Option<AutoMultithreshEvidence>]>,
+    ) {
+        (self.masks, self.auto_mask_evidence)
     }
 }
 

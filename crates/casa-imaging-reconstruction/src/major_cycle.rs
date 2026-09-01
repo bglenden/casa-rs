@@ -301,6 +301,12 @@ impl FinalNormalState {
         self.primitives.slab().core_depth()
     }
 
+    /// Return the number of reconstruction polarization planes.
+    #[must_use]
+    pub fn polarization_count(&self) -> usize {
+        self.primitives.polarization_count()
+    }
+
     /// Return the number of reconstruction-coefficient residual terms.
     #[must_use]
     pub fn coefficient_term_count(&self) -> usize {
@@ -337,10 +343,21 @@ impl FinalNormalState {
         self.primitives.sum_weight()
     }
 
-    /// Return all channel sum weights in output-channel order.
+    /// Return normal-moment-major, polarization-minor sum weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
     #[must_use]
     pub fn sum_weights(&self) -> &[f64] {
         self.primitives.sum_weights()
+    }
+
+    /// Return CASA-compatible normal-moment-major, polarization-minor sum weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`; publication
+    /// does not change normal-state scaling.
+    #[must_use]
+    pub fn published_sum_weights(&self) -> &[f64] {
+        self.primitives.published_sum_weights()
     }
 
     /// Return exact channel-local response weights for a joint common residual.
@@ -349,7 +366,10 @@ impl FinalNormalState {
         self.primitives.channel_sum_weights()
     }
 
-    /// Return all channel validity states in output-channel order.
+    /// Return support-entry-major, polarization-minor validity.
+    ///
+    /// The support-entry count is core-channel depth for channel-local state,
+    /// one for Taylor state, or total channel count for joint state.
     #[must_use]
     pub fn channel_validity(&self) -> &[crate::SpectralChannelValidity] {
         self.primitives.channel_validity()
@@ -430,9 +450,13 @@ impl FinalNormalState {
         self.primitives.joint_continuum_term_count()
     }
 
-    /// Borrow one channel plane from this bounded Normal State slab.
+    /// Borrow one channel/polarization plane from this bounded Normal State slab.
     #[must_use]
-    pub fn plane(&self, local_channel: usize) -> Option<FinalNormalStatePlane<'_>> {
+    pub fn polarization_plane(
+        &self,
+        local_channel: usize,
+        polarization: usize,
+    ) -> Option<FinalNormalStatePlane<'_>> {
         if matches!(
             self.catalog,
             NormalStateCatalog::UnnormalizedTaylorBlockV1
@@ -441,15 +465,21 @@ impl FinalNormalState {
             return None;
         }
         let cells = self.shape()[0].checked_mul(self.shape()[1])?;
-        let start = local_channel.checked_mul(cells)?;
+        let plane = local_channel
+            .checked_mul(self.primitives.polarization_count())?
+            .checked_add(polarization)?;
+        let start = plane.checked_mul(cells)?;
         let end = start.checked_add(cells)?;
-        if local_channel >= self.channel_count() {
+        if local_channel >= self.channel_count()
+            || polarization >= self.primitives.polarization_count()
+        {
             return None;
         }
         Some(FinalNormalStatePlane {
             owner: self,
             domain: self.primitives.get(0)?,
             local_channel,
+            polarization,
             residual: self.primitives.dirty().get(start..end)?,
             psf: self.primitives.psf().get(start..end)?,
             sensitivity: self.primitives.sensitivity().get(start..end)?,
@@ -507,32 +537,55 @@ impl<'a> FinalNormalDomainState<'a> {
         self.domain.primitives().sensitivity()
     }
 
-    /// Return this chart's accumulated normal weights.
+    /// Return this chart's normal-moment-major, polarization-minor weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
     #[must_use]
     pub const fn sum_weights(self) -> &'a [f64] {
         self.domain.primitives().sum_weights()
     }
 
-    /// Return this chart's channel validity.
+    /// Return CASA-compatible normal-moment-major, polarization-minor weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
+    #[must_use]
+    pub const fn published_sum_weights(self) -> &'a [f64] {
+        self.domain.primitives().published_sum_weights()
+    }
+
+    /// Return support-entry-major, polarization-minor validity for this chart.
+    ///
+    /// The support-entry count is core-channel depth for channel-local state,
+    /// one for Taylor state, or total channel count for joint state.
     #[must_use]
     pub const fn channel_validity(self) -> &'a [crate::SpectralChannelValidity] {
         self.domain.primitives().channel_validity()
     }
 
-    /// Borrow one channel plane from this chart-local Normal State.
+    /// Borrow one channel/polarization plane from this chart-local Normal State.
     #[must_use]
-    pub fn plane(self, local_channel: usize) -> Option<FinalNormalStatePlane<'a>> {
+    pub fn polarization_plane(
+        self,
+        local_channel: usize,
+        polarization: usize,
+    ) -> Option<FinalNormalStatePlane<'a>> {
         let primitives = self.domain.primitives();
         let cells = primitives.shape()[0].checked_mul(primitives.shape()[1])?;
-        let start = local_channel.checked_mul(cells)?;
+        let plane = local_channel
+            .checked_mul(primitives.polarization_count())?
+            .checked_add(polarization)?;
+        let start = plane.checked_mul(cells)?;
         let end = start.checked_add(cells)?;
-        if local_channel >= primitives.slab().core_depth() {
+        if local_channel >= primitives.slab().core_depth()
+            || polarization >= primitives.polarization_count()
+        {
             return None;
         }
         Some(FinalNormalStatePlane {
             owner: self.owner,
             domain: self.domain,
             local_channel,
+            polarization,
             residual: primitives.dirty().get(start..end)?,
             psf: primitives.psf().get(start..end)?,
             sensitivity: primitives.sensitivity().get(start..end)?,
@@ -616,6 +669,7 @@ pub struct FinalNormalStatePlane<'a> {
     owner: &'a FinalNormalState,
     domain: &'a crate::spectral_operator::SpectralDomainPrimitives,
     local_channel: usize,
+    polarization: usize,
     residual: &'a [num_complex::Complex64],
     psf: &'a [num_complex::Complex64],
     sensitivity: &'a [f64],
@@ -640,6 +694,12 @@ impl<'a> FinalNormalStatePlane<'a> {
         self.domain.primitives().slab().core_range().start + self.local_channel
     }
 
+    /// Return the reconstruction polarization-plane ordinal.
+    #[must_use]
+    pub const fn polarization(self) -> usize {
+        self.polarization
+    }
+
     /// Return this plane's model-dependent unnormalized residual.
     #[must_use]
     pub const fn residual(self) -> &'a [num_complex::Complex64] {
@@ -661,7 +721,8 @@ impl<'a> FinalNormalStatePlane<'a> {
     /// Return this plane's accumulated sum weight.
     #[must_use]
     pub fn sum_weight(self) -> f64 {
-        self.domain.primitives().sum_weights()[self.local_channel]
+        self.domain.primitives().sum_weights()
+            [self.local_channel * self.domain.primitives().polarization_count() + self.polarization]
     }
 
     /// Return the common direction-plane shape.
@@ -673,7 +734,8 @@ impl<'a> FinalNormalStatePlane<'a> {
     /// Return mapped, blank, or unmapped channel validity.
     #[must_use]
     pub fn validity(self) -> crate::SpectralChannelValidity {
-        self.domain.primitives().channel_validity()[self.local_channel]
+        self.domain.primitives().channel_validity()
+            [self.local_channel * self.domain.primitives().polarization_count() + self.polarization]
     }
 }
 

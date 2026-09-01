@@ -219,7 +219,7 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
         &plan,
         &current,
         &registry,
-        &authority,
+        authority,
         &mut RunToCompletion,
         receipts.bind(ExecutionProvenance::new(
             attempt_id(0),

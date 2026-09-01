@@ -94,17 +94,14 @@ impl<'a> SelectedObservationTraversalRun<'a> {
     /// Iterate through validated correlation members in canonical order.
     pub fn samples(&self) -> impl Iterator<Item = SelectedObservationTraversalSample<'_>> {
         let input_weight_group = self.correlations.first().map(|first| {
-            if self.correlations.len() == 1 {
-                SelectedInputWeightGroup::single(first.input_weight)
-            } else {
-                SelectedInputWeightGroup::parallel_hands(
-                    first.input_weight,
-                    self.correlations
-                        .last()
-                        .expect("nonempty correlation run")
-                        .input_weight,
-                )
-            }
+            SelectedInputWeightGroup::correlation_run(
+                first.input_weight,
+                self.correlations
+                    .last()
+                    .expect("nonempty correlation run")
+                    .input_weight,
+                self.correlations.len(),
+            )
         });
         self.correlations
             .iter()
@@ -118,7 +115,8 @@ impl<'a> SelectedObservationTraversalRun<'a> {
                                 .unwrap_or(SelectedInputWeightGroup::single(
                                     correlation.input_weight,
                                 ))
-                                .with_density_owner(ordinal == 0),
+                                .with_density_owner(ordinal == 0)
+                                .with_terminal_member(ordinal + 1 == self.correlations.len()),
                         ),
                     *evaluation,
                 )

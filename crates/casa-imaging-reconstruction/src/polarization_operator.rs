@@ -4,6 +4,7 @@
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use num_complex::Complex64;
+use smallvec::SmallVec;
 use thiserror::Error;
 
 type Coherency = [[Complex64; 2]; 2];
@@ -12,6 +13,8 @@ type Jones = [[Complex64; 2]; 2];
 /// Physical receptor basis of one selected correlation layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedBasis {
+    /// Values already expressed in Stokes coordinates.
+    Stokes,
     /// Orthogonal X/Y receptors.
     Linear,
     /// Orthogonal R/L receptors.
@@ -80,10 +83,10 @@ pub enum PolarizationOperatorError {
 /// silently select a different polarization transform.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolarizationOperator {
-    model_coordinates: Box<[PolarizationCoordinate]>,
-    correlations: Box<[CorrelationType]>,
+    model_coordinates: SmallVec<[PolarizationCoordinate; 4]>,
+    correlations: SmallVec<[CorrelationType; 4]>,
     feed_basis: FeedBasis,
-    coefficients: Box<[Complex64]>,
+    coefficients: SmallVec<[Complex64; 16]>,
 }
 
 impl PolarizationOperator {
@@ -102,24 +105,39 @@ impl PolarizationOperator {
         {
             return Err(PolarizationOperatorError::InvalidParallacticAngle);
         }
-        let first = feed_jones(feed_basis, parallactic_angles_rad[0]);
-        let second = feed_jones(feed_basis, parallactic_angles_rad[1]);
-        let mueller = mueller.elements();
-        let mut coefficients = Vec::with_capacity(correlations.len() * model_coordinates.len());
-        for correlation in correlations {
-            let output = correlation_index(*correlation)
-                .ok_or(PolarizationOperatorError::InvalidCorrelationLayout)?;
-            for coordinate in model_coordinates {
-                let sky = coordinate_coherency(*coordinate);
-                let ideal = flatten(mul2(mul2(first, sky), adjoint2(second)));
-                coefficients.push(dot4(mueller[output], ideal));
+        let mut coefficients = SmallVec::<[Complex64; 16]>::new();
+        if feed_basis == FeedBasis::Stokes {
+            if coordinate_category(model_coordinates[0]) != PolarizationFamily::Stokes
+                || mueller != MuellerMatrix::identity()
+            {
+                return Err(PolarizationOperatorError::InvalidCorrelationLayout);
+            }
+            for correlation in correlations {
+                let coordinate = stokes_coordinate(*correlation)
+                    .ok_or(PolarizationOperatorError::InvalidCorrelationLayout)?;
+                coefficients.extend(model_coordinates.iter().map(|model| {
+                    Complex64::new(if *model == coordinate { 1.0 } else { 0.0 }, 0.0)
+                }));
+            }
+        } else {
+            let first = feed_jones(feed_basis, parallactic_angles_rad[0]);
+            let second = feed_jones(feed_basis, parallactic_angles_rad[1]);
+            let mueller = mueller.elements();
+            for correlation in correlations {
+                let output = correlation_index(*correlation)
+                    .ok_or(PolarizationOperatorError::InvalidCorrelationLayout)?;
+                for coordinate in model_coordinates {
+                    let sky = coordinate_coherency(*coordinate);
+                    let ideal = flatten(mul2(mul2(first, sky), adjoint2(second)));
+                    coefficients.push(dot4(mueller[output], ideal));
+                }
             }
         }
         Ok(Self {
-            model_coordinates: model_coordinates.into(),
-            correlations: correlations.into(),
+            model_coordinates: model_coordinates.iter().copied().collect(),
+            correlations: correlations.iter().copied().collect(),
             feed_basis,
-            coefficients: coefficients.into_boxed_slice(),
+            coefficients,
         })
     }
 
@@ -131,19 +149,19 @@ impl PolarizationOperator {
 
     /// Return requested reconstruction coordinates in operator-column order.
     #[must_use]
-    pub const fn model_coordinates(&self) -> &[PolarizationCoordinate] {
+    pub fn model_coordinates(&self) -> &[PolarizationCoordinate] {
         &self.model_coordinates
     }
 
     /// Return selected correlations in operator-row order.
     #[must_use]
-    pub const fn correlations(&self) -> &[CorrelationType] {
+    pub fn correlations(&self) -> &[CorrelationType] {
         &self.correlations
     }
 
     /// Return the compiled row-major correlation-by-model coefficient matrix.
     #[must_use]
-    pub const fn coefficients(&self) -> &[Complex64] {
+    pub fn coefficients(&self) -> &[Complex64] {
         &self.coefficients
     }
 
@@ -151,7 +169,7 @@ impl PolarizationOperator {
     pub fn predict(
         &self,
         model: &[Complex64],
-    ) -> Result<Vec<Complex64>, PolarizationOperatorError> {
+    ) -> Result<SmallVec<[Complex64; 4]>, PolarizationOperatorError> {
         if model.len() != self.model_coordinates.len() {
             return Err(PolarizationOperatorError::ShapeMismatch);
         }
@@ -179,14 +197,15 @@ impl PolarizationOperator {
         visibilities: &[Complex64],
         weights: &[f64],
         flags: &[bool],
-    ) -> Result<Vec<Complex64>, PolarizationOperatorError> {
+    ) -> Result<SmallVec<[Complex64; 4]>, PolarizationOperatorError> {
         if visibilities.len() != self.correlations.len()
             || weights.len() != self.correlations.len()
             || flags.len() != self.correlations.len()
         {
             return Err(PolarizationOperatorError::ShapeMismatch);
         }
-        let mut result = vec![Complex64::default(); self.model_coordinates.len()];
+        let mut result = SmallVec::<[Complex64; 4]>::new();
+        result.resize(self.model_coordinates.len(), Complex64::default());
         for (row_index, ((visibility, weight), flagged)) in
             visibilities.iter().zip(weights).zip(flags).enumerate()
         {
@@ -267,6 +286,10 @@ fn correlation_basis(
 
 const fn basis(correlation: CorrelationType) -> Option<FeedBasis> {
     match correlation {
+        CorrelationType::StokesI
+        | CorrelationType::StokesQ
+        | CorrelationType::StokesU
+        | CorrelationType::StokesV => Some(FeedBasis::Stokes),
         CorrelationType::LinearXx
         | CorrelationType::LinearXy
         | CorrelationType::LinearYx
@@ -275,6 +298,16 @@ const fn basis(correlation: CorrelationType) -> Option<FeedBasis> {
         | CorrelationType::CircularRl
         | CorrelationType::CircularLr
         | CorrelationType::CircularLl => Some(FeedBasis::Circular),
+        _ => None,
+    }
+}
+
+const fn stokes_coordinate(correlation: CorrelationType) -> Option<PolarizationCoordinate> {
+    match correlation {
+        CorrelationType::StokesI => Some(PolarizationCoordinate::StokesI),
+        CorrelationType::StokesQ => Some(PolarizationCoordinate::StokesQ),
+        CorrelationType::StokesU => Some(PolarizationCoordinate::StokesU),
+        CorrelationType::StokesV => Some(PolarizationCoordinate::StokesV),
         _ => None,
     }
 }
@@ -333,6 +366,10 @@ fn feed_jones(basis: FeedBasis, angle: f64) -> Jones {
         ],
     ];
     match basis {
+        FeedBasis::Stokes => [
+            [Complex64::new(1.0, 0.0), Complex64::default()],
+            [Complex64::default(), Complex64::new(1.0, 0.0)],
+        ],
         FeedBasis::Linear => rotation,
         FeedBasis::Circular => mul2(circular_conversion(), rotation),
     }
@@ -518,7 +555,7 @@ mod tests {
                 &[true, false, false, false],
             )
             .unwrap();
-        assert_eq!(adjoint, [Complex64::default(); 4]);
+        assert_eq!(adjoint.as_slice(), &[Complex64::default(); 4]);
     }
 
     #[test]
@@ -608,6 +645,12 @@ mod tests {
 
     fn form_stokes(correlations: &[Complex64], basis: FeedBasis) -> [Complex64; 4] {
         match basis {
+            FeedBasis::Stokes => [
+                correlations[0],
+                correlations[1],
+                correlations[2],
+                correlations[3],
+            ],
             FeedBasis::Linear => [
                 0.5 * (correlations[0] + correlations[3]),
                 0.5 * (correlations[0] - correlations[3]),

@@ -3215,6 +3215,10 @@ impl WeightedObservationBlock {
     pub(crate) const fn reconstruction_block(&self) -> &ReconstructionWeightedBlock {
         &self.block
     }
+
+    fn into_reconstruction_block(self) -> ReconstructionWeightedBlock {
+        self.block
+    }
 }
 
 /// A frozen W whose reconstruction state is backed by two opaque T17 completions.
@@ -3458,6 +3462,9 @@ impl FrozenWeightingGeneration {
                 {
                     let block = WeightedObservationBlock::authorize(self.generation_id(), block);
                     emit(&block).map_err(ReplayCallbackError::Consumer)?;
+                    phase
+                        .reuse_emitted_block(block.into_reconstruction_block())
+                        .map_err(ReplayCallbackError::Owner)?;
                 }
                 Ok(())
             })

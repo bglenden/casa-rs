@@ -724,6 +724,7 @@ pub fn produce_continuum_members(
     if normal_state.slab().core_range() != (0..normal_state.slab().total_channels())
         || channel_count != normal_state.slab().total_channels()
         || inputs.final_model().shape().coefficients() != channel_count
+        || inputs.final_model().shape().polarizations() != normal_state.polarization_count()
         || normal_state.domain_count() != inputs.problem().geometry().domains().len()
         || inputs.final_model().shape().domains().len()
             != inputs.problem().geometry().domains().len()
@@ -740,9 +741,14 @@ pub fn produce_continuum_members(
             .geometry()
             .domains()
             .iter()
-            .flat_map(|domain| (0..channel_count).map(move |local_channel| (domain, local_channel)))
-            .map(|(domain, local_channel)| {
-                let plane = domain_plane(normal_state, domain.role(), local_channel)?;
+            .flat_map(|domain| {
+                (0..channel_count).flat_map(move |local_channel| {
+                    (0..normal_state.polarization_count())
+                        .map(move |polarization| (domain, local_channel, polarization))
+                })
+            })
+            .map(|(domain, local_channel, polarization)| {
+                let plane = domain_plane(normal_state, domain.role(), local_channel, polarization)?;
                 if plane.validity == SpectralChannelValidity::Valid {
                     fit_restoring_beam(
                         &psf_real_plane(&plane),
@@ -764,7 +770,9 @@ pub fn produce_continuum_members(
         RestoringBeamPolicy::PerPlane => fitted_beams.clone(),
         RestoringBeamPolicy::Common => {
             let mut selected = Vec::with_capacity(fitted_beams.len());
-            for domain_beams in fitted_beams.chunks(channel_count) {
+            for domain_beams in
+                fitted_beams.chunks(channel_count * normal_state.polarization_count())
+            {
                 let valid = domain_beams.iter().flatten().copied().collect::<Vec<_>>();
                 if valid.is_empty() {
                     selected.extend_from_slice(domain_beams);
@@ -790,55 +798,63 @@ pub fn produce_continuum_members(
             .pixels();
         let beam_offset = domain_ordinal
             .checked_mul(channel_count)
+            .and_then(|offset| offset.checked_mul(normal_state.polarization_count()))
             .ok_or(ProductsError::SourceLineageMismatch)?;
         let mut payload = vec![0.0_f32; member.payload_values];
         let mut validity = vec![true; member.payload_values];
         for local_channel in 0..channel_count {
-            let plane = domain_plane(normal_state, member.axes().domain(), local_channel)?;
-            if plane.shape != plane_shape {
-                return Err(ProductsError::SourceLineageMismatch);
-            }
-            let output_channel = plane.output_channel;
-            if member.validity != ProductValidityRule::All {
-                let plane_validity = product_plane_validity(member.validity, &plane)?;
-                scatter_image_plane(
-                    &mut validity,
-                    member.axes(),
-                    output_channel,
-                    plane_shape,
-                    &plane_validity,
+            for polarization in 0..normal_state.polarization_count() {
+                let plane = domain_plane(
+                    normal_state,
+                    member.axes().domain(),
+                    local_channel,
+                    polarization,
                 )?;
-            }
-            if matches!(member.role, ProductRole::SumWeights(_)) {
-                scatter_plane_state(
+                if plane.shape != plane_shape {
+                    return Err(ProductsError::SourceLineageMismatch);
+                }
+                let output_channel = plane.output_channel;
+                if member.validity != ProductValidityRule::All {
+                    let plane_validity = product_plane_validity(member.validity, &plane)?;
+                    scatter_image_polarization_plane(
+                        &mut validity,
+                        member.axes(),
+                        polarization,
+                        output_channel,
+                        plane_shape,
+                        &plane_validity,
+                    )?;
+                }
+                if matches!(member.role, ProductRole::SumWeights(_)) {
+                    scatter_polarization_plane_state(
+                        &mut payload,
+                        member.axes(),
+                        polarization,
+                        output_channel,
+                        plane.published_sum_weight as f32,
+                    )?;
+                    continue;
+                }
+                let beam_index =
+                    beam_offset + local_channel * normal_state.polarization_count() + polarization;
+                let plane_payload = produce_plane_member(
+                    member,
+                    inputs,
+                    &plane,
+                    domain_ordinal,
+                    polarization,
+                    fitted_beams.get(beam_index).copied().flatten(),
+                    restoring_beams.get(beam_index).copied().flatten(),
+                )?;
+                scatter_image_polarization_plane(
                     &mut payload,
                     member.axes(),
+                    polarization,
                     output_channel,
-                    plane.sum_weight as f32,
+                    plane_shape,
+                    &plane_payload,
                 )?;
-                continue;
             }
-            let plane_payload = produce_plane_member(
-                member,
-                inputs,
-                &plane,
-                domain_ordinal,
-                fitted_beams
-                    .get(beam_offset + local_channel)
-                    .copied()
-                    .flatten(),
-                restoring_beams
-                    .get(beam_offset + local_channel)
-                    .copied()
-                    .flatten(),
-            )?;
-            scatter_image_plane(
-                &mut payload,
-                member.axes(),
-                output_channel,
-                plane_shape,
-                &plane_payload,
-            )?;
         }
         if payload.iter().any(|value| value.is_infinite()) {
             return Err(ProductsError::GeneratedNonfinite);
@@ -1083,7 +1099,7 @@ fn produce_joint_member(
                 .collect();
         }
         ProductRole::Model(ProductTerm::Continuum(term)) => {
-            payload = model_real_plane(inputs.final_model(), 0, term, shape)?;
+            payload = model_real_plane(inputs.final_model(), 0, term, 0, shape)?;
         }
         ProductRole::Model(ProductTerm::Line) | ProductRole::Model(ProductTerm::Total) => {
             for channel in 0..channels {
@@ -1212,7 +1228,7 @@ fn evaluate_joint_model_plane(
             .ok_or(ProductsError::SourceLineageMismatch)?;
         let x = (frequency - reference) / reference;
         for term in 0..continuum_terms {
-            let plane = model_real_plane(inputs.final_model(), 0, term, shape)?;
+            let plane = model_real_plane(inputs.final_model(), 0, term, 0, shape)?;
             let factor =
                 x.powi(i32::try_from(term).map_err(|_| ProductsError::UnsupportedProblem)?);
             for (output, value) in output.iter_mut().zip(plane) {
@@ -1221,7 +1237,7 @@ fn evaluate_joint_model_plane(
         }
     }
     if let Some(line) = joint_line_term(inputs.problem(), channel)? {
-        let plane = model_real_plane(inputs.final_model(), 0, continuum_terms + line, shape)?;
+        let plane = model_real_plane(inputs.final_model(), 0, continuum_terms + line, 0, shape)?;
         for (output, value) in output.iter_mut().zip(plane) {
             *output += value;
         }
@@ -1283,6 +1299,7 @@ struct DomainPlane<'a> {
     psf: &'a [num_complex::Complex64],
     sensitivity: &'a [f64],
     sum_weight: f64,
+    published_sum_weight: f64,
     validity: SpectralChannelValidity,
 }
 
@@ -1290,6 +1307,7 @@ fn domain_plane<'a>(
     normal: &'a casa_imaging_reconstruction::FinalNormalState,
     role: &ImageDomainRole,
     local_channel: usize,
+    polarization: usize,
 ) -> Result<DomainPlane<'a>, ProductsError> {
     let domain = normal
         .domain_by_role(role)
@@ -1300,7 +1318,14 @@ fn domain_plane<'a>(
     let cells = domain.shape()[0]
         .checked_mul(domain.shape()[1])
         .ok_or(ProductsError::SourceLineageMismatch)?;
-    let start = local_channel
+    if polarization >= normal.polarization_count() {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let plane = local_channel
+        .checked_mul(normal.polarization_count())
+        .and_then(|value| value.checked_add(polarization))
+        .ok_or(ProductsError::SourceLineageMismatch)?;
+    let start = plane
         .checked_mul(cells)
         .ok_or(ProductsError::SourceLineageMismatch)?;
     let end = start
@@ -1323,11 +1348,15 @@ fn domain_plane<'a>(
             .ok_or(ProductsError::SourceLineageMismatch)?,
         sum_weight: *domain
             .sum_weights()
-            .get(local_channel)
+            .get(plane)
+            .ok_or(ProductsError::SourceLineageMismatch)?,
+        published_sum_weight: *domain
+            .published_sum_weights()
+            .get(plane)
             .ok_or(ProductsError::SourceLineageMismatch)?,
         validity: *domain
             .channel_validity()
-            .get(local_channel)
+            .get(plane)
             .ok_or(ProductsError::SourceLineageMismatch)?,
     })
 }
@@ -1337,6 +1366,7 @@ fn produce_plane_member(
     inputs: &ContinuumProductInputs<'_>,
     plane: &DomainPlane<'_>,
     domain_ordinal: usize,
+    polarization: usize,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
 ) -> Result<Vec<f32>, ProductsError> {
@@ -1381,6 +1411,7 @@ fn produce_plane_member(
             inputs.final_model(),
             domain_ordinal,
             plane.output_channel,
+            polarization,
             shape,
         ),
         ProductRole::Weight(
@@ -1406,6 +1437,7 @@ fn produce_plane_member(
                 inputs.final_model(),
                 domain_ordinal,
                 plane.output_channel,
+                polarization,
                 shape,
             )?;
             let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
@@ -1519,11 +1551,12 @@ fn model_real_plane(
     model: &ModelGeneration,
     domain_ordinal: usize,
     output_channel: usize,
+    polarization: usize,
     plane_shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
     let [width, height] = plane_shape;
     if output_channel >= model.shape().coefficients()
-        || model.shape().polarizations() != 1
+        || polarization >= model.shape().polarizations()
         || model
             .shape()
             .domains()
@@ -1541,7 +1574,12 @@ fn model_real_plane(
         for x in 0..width {
             let index = model
                 .shape()
-                .flat_index(ModelCell::new(domain_ordinal, output_channel, 0, [x, y]))
+                .flat_index(ModelCell::new(
+                    domain_ordinal,
+                    output_channel,
+                    polarization,
+                    [x, y],
+                ))
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             plane[x * height + y] = model.samples()[index].value().value() as f32;
         }
@@ -1556,13 +1594,24 @@ fn scatter_image_plane<T: Copy>(
     plane_shape: [usize; 2],
     plane: &[T],
 ) -> Result<(), ProductsError> {
+    scatter_image_polarization_plane(payload, axes, 0, output_channel, plane_shape, plane)
+}
+
+fn scatter_image_polarization_plane<T: Copy>(
+    payload: &mut [T],
+    axes: &ProductAxes,
+    polarization: usize,
+    output_channel: usize,
+    plane_shape: [usize; 2],
+    plane: &[T],
+) -> Result<(), ProductsError> {
     let [width, height] = plane_shape;
     if plane.len() != width * height {
         return Err(ProductsError::SourceLineageMismatch);
     }
     for x in 0..width {
         for y in 0..height {
-            let offset = product_offset(axes, x, y, 0, output_channel)?;
+            let offset = product_offset(axes, x, y, polarization, output_channel)?;
             payload[offset] = plane[x * height + y];
         }
     }
@@ -1575,7 +1624,17 @@ fn scatter_plane_state(
     output_channel: usize,
     value: f32,
 ) -> Result<(), ProductsError> {
-    let offset = product_offset(axes, 0, 0, 0, output_channel)?;
+    scatter_polarization_plane_state(payload, axes, 0, output_channel, value)
+}
+
+fn scatter_polarization_plane_state(
+    payload: &mut [f32],
+    axes: &ProductAxes,
+    polarization: usize,
+    output_channel: usize,
+    value: f32,
+) -> Result<(), ProductsError> {
+    let offset = product_offset(axes, 0, 0, polarization, output_channel)?;
     payload[offset] = value;
     Ok(())
 }
@@ -1778,7 +1837,7 @@ fn domain_beam_slice(
     if beams.is_empty() {
         return Ok(beams);
     }
-    if domain_count == 0 || !beams.len().is_multiple_of(domain_count) {
+    if domain_count == 0 || beams.len() % domain_count != 0 {
         return Err(ProductsError::SourceLineageMismatch);
     }
     let channels = beams.len() / domain_count;

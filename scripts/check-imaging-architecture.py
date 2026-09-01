@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "b33e858bacdcdf9b40acfe70e10e73281990ba70fb10614dd1217bbf187678da"
+    "947db69654f5c476f2330524b4914a27acc03c508e41873da327a4b50528af18"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "177cd0c9189efbfe5dd1447a2ffe64f7455be903980be994cb5fa9aab5b2e392"
+    "bf67a98b908bee9b0b787bd6bff000820630babad39508ff82c7a55d4691657e"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 78
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2232,9 +2232,12 @@ def validate_t18_global_weighting_sources(
             "parallel_hand_group_flag": "bool",
             "row_flag": "bool",
             "input_weight": "f32",
+            "raw_input_weight": "f32",
+            "starts_correlation_group": "bool",
+            "ends_correlation_group": "bool",
+            "correlation_group_size": "usize",
+            "parallactic_angles_rad": "[f64;2]",
             "density_uvw_m": "[f64;3]",
-            "transformed_uvw_m": "[f64;3]",
-            "phase_shift_m": "f64",
             "domain_projections": "SelectedImageDomainProjections",
         }
         or "input" in replay_phase_fields

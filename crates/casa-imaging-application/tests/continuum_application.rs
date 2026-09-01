@@ -5,7 +5,9 @@ use std::{
     sync::Mutex,
 };
 
-use casa_coordinates::{CoordinateSystem, DirectionCoordinate, Projection, ProjectionType};
+use casa_coordinates::{
+    CoordinateModel, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, StokesType,
+};
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
@@ -30,37 +32,104 @@ const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 fn tiny_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "input.ms", false, 1, 1, false)
+    measurement_set_fixture(
+        root,
+        "input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, false),
+    )
 }
 
 fn multi_row_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "multi-row-input.ms", false, 1, 8, false)
+    measurement_set_fixture(
+        root,
+        "multi-row-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 1, 2, 8, false),
+    )
 }
 
 fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "polarized-input.ms", true, 2, 1, false)
+    measurement_set_fixture(
+        root,
+        "polarized-input.ms",
+        MeasurementSetFixtureOptions::new(true, true, 2, 2, 1, false),
+    )
+}
+
+fn full_stokes_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "full-stokes-input.ms",
+        MeasurementSetFixtureOptions::new(true, false, 2, 27, 702, false),
+    )
 }
 
 fn spectral_line_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "line-input.ms", true, 4, 1, false)
+    measurement_set_fixture(
+        root,
+        "line-input.ms",
+        MeasurementSetFixtureOptions::new(true, true, 4, 2, 1, false),
+    )
 }
 
 fn joint_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "joint-input.ms", false, 4, 1, false)
+    measurement_set_fixture(
+        root,
+        "joint-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 4, 2, 1, false),
+    )
 }
 
 fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "undefined-weight-spectrum.ms", false, 1, 1, true)
+    measurement_set_fixture(
+        root,
+        "undefined-weight-spectrum.ms",
+        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, true),
+    )
+}
+
+#[derive(Clone, Copy)]
+struct MeasurementSetFixtureOptions {
+    polarized: bool,
+    flag_cross_hand: bool,
+    channel_count: usize,
+    antenna_count: usize,
+    main_row_count: usize,
+    undefined_weight_spectrum: bool,
+}
+
+impl MeasurementSetFixtureOptions {
+    const fn new(
+        polarized: bool,
+        flag_cross_hand: bool,
+        channel_count: usize,
+        antenna_count: usize,
+        main_row_count: usize,
+        undefined_weight_spectrum: bool,
+    ) -> Self {
+        Self {
+            polarized,
+            flag_cross_hand,
+            channel_count,
+            antenna_count,
+            main_row_count,
+            undefined_weight_spectrum,
+        }
+    }
 }
 
 fn measurement_set_fixture(
     root: &Path,
     name: &str,
-    polarized: bool,
-    channel_count: usize,
-    main_row_count: usize,
-    undefined_weight_spectrum: bool,
+    options: MeasurementSetFixtureOptions,
 ) -> PathBuf {
+    let MeasurementSetFixtureOptions {
+        polarized,
+        flag_cross_hand,
+        channel_count,
+        antenna_count,
+        main_row_count,
+        undefined_weight_spectrum,
+    } = options;
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     if undefined_weight_spectrum {
@@ -77,7 +146,9 @@ fn measurement_set_fixture(
     populate_fixture(
         &mut measurement_set,
         polarized,
+        flag_cross_hand,
         channel_count,
+        antenna_count,
         main_row_count,
     );
     measurement_set
@@ -107,39 +178,38 @@ fn measurement_set_fixture(
 fn populate_fixture(
     measurement_set: &mut MeasurementSet,
     polarized: bool,
+    flag_cross_hand: bool,
     channel_count: usize,
+    antenna_count: usize,
     main_row_count: usize,
 ) {
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
-        antennas
-            .add_antenna(
-                "VLA01",
-                "N01",
-                "GROUND-BASED",
-                "ALT-AZ",
-                [-1_601_185.4, -5_041_977.5, 3_554_875.9],
-                [0.0; 3],
-                25.0,
-            )
-            .expect("add first antenna");
-        antennas
-            .add_antenna(
-                "VLA02",
-                "N02",
-                "GROUND-BASED",
-                "ALT-AZ",
-                [-1_601_085.4, -5_041_977.5, 3_554_875.9],
-                [0.0; 3],
-                25.0,
-            )
-            .expect("add second antenna");
+        for antenna in 0..antenna_count {
+            let arm = (antenna % 3) as f64 * std::f64::consts::TAU / 3.0;
+            let radius = 35.0 * (antenna / 3 + 1) as f64;
+            antennas
+                .add_antenna(
+                    &format!("VLA{:02}", antenna + 1),
+                    &format!("N{:02}", antenna + 1),
+                    "GROUND-BASED",
+                    "ALT-AZ",
+                    [
+                        -1_601_185.4 + radius * arm.cos(),
+                        -5_041_977.5 + radius * arm.sin(),
+                        3_554_875.9,
+                    ],
+                    [0.0; 3],
+                    25.0,
+                )
+                .expect("add fixture antenna");
+        }
     }
 
     let direction = ArrayValue::Float64(
         ArrayD::from_shape_vec(vec![2, 1], vec![1.0, 0.5]).expect("direction shape"),
     );
-    let correlation_codes = if polarized { vec![5, 6, 7, 8] } else { vec![5] };
+    let correlation_codes = if polarized { vec![5, 6, 7, 8] } else { vec![1] };
     let correlation_count = correlation_codes.len();
     let correlation_products = if polarized {
         vec![0, 0, 0, 1, 1, 0, 1, 1]
@@ -245,7 +315,7 @@ fn populate_fixture(
         .map(|index| Complex32::new((index % 6 + 1) as f32, 0.0))
         .collect::<Vec<_>>();
     let flags = (0..correlation_count * channel_count)
-        .map(|index| polarized && index % 4 == 3)
+        .map(|index| flag_cross_hand && index % 4 == 3)
         .collect::<Vec<_>>();
     let weights = vec![1.0; correlation_count];
     let mut overrides = vec![
@@ -316,9 +386,50 @@ fn populate_fixture(
             )),
         ));
     }
-    for _ in 0..main_row_count {
-        add_main_row(measurement_set, &overrides);
+    let baselines = (0..antenna_count)
+        .flat_map(|first| ((first + 1)..antenna_count).map(move |second| (first, second)))
+        .collect::<Vec<_>>();
+    for row in 0..main_row_count {
+        let (antenna1, antenna2) = baselines[row % baselines.len()];
+        let integration = row / baselines.len();
+        let mut row_overrides = overrides.clone();
+        replace_override(&mut row_overrides, "ANTENNA1", int(antenna1 as i32));
+        replace_override(&mut row_overrides, "ANTENNA2", int(antenna2 as i32));
+        replace_override(
+            &mut row_overrides,
+            "TIME",
+            float(59_000.0 * 86_400.0 + 10.0 * integration as f64),
+        );
+        replace_override(
+            &mut row_overrides,
+            "TIME_CENTROID",
+            float(59_000.0 * 86_400.0 + 10.0 * integration as f64),
+        );
+        replace_override(
+            &mut row_overrides,
+            "UVW",
+            Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(
+                    vec![3],
+                    vec![
+                        30.0 * (antenna2 - antenna1) as f64,
+                        20.0 * (antenna1 + antenna2 + 1) as f64,
+                        2.0 * integration as f64,
+                    ],
+                )
+                .expect("UVW shape"),
+            )),
+        );
+        add_main_row(measurement_set, &row_overrides);
     }
+}
+
+fn replace_override(overrides: &mut [(&str, Value)], name: &str, value: Value) {
+    overrides
+        .iter_mut()
+        .find(|(candidate, _)| *candidate == name)
+        .expect("fixture override")
+        .1 = value;
 }
 
 fn add_main_row(measurement_set: &mut MeasurementSet, overrides: &[(&str, Value)]) {
@@ -451,6 +562,7 @@ fn request(
         spectral_mode: SpectralImagingMode::Continuum,
         continuum_subtraction: None,
         data_column: Some("DATA".to_string()),
+        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
         algorithm,
         weighting: ContinuumWeighting::Natural,
         iterations: 1,
@@ -557,6 +669,141 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
             .expect("reopen numeric CLEAN mask");
     assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = full_stokes_measurement_set(root.path());
+    let image_name = root.path().join("full-stokes-dirty");
+    let mut imaging = request(
+        measurement_set.clone(),
+        image_name.clone(),
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.polarizations = vec![
+        casa_imaging_application::PolarizationCoordinate::StokesI,
+        casa_imaging_application::PolarizationCoordinate::StokesQ,
+        casa_imaging_application::PolarizationCoordinate::StokesU,
+        casa_imaging_application::PolarizationCoordinate::StokesV,
+    ];
+    imaging.image_size = 64;
+    imaging.iterations = 4;
+    imaging.cycle_iterations = 4;
+    imaging.save_model_column = true;
+    imaging.task_requirements = vec![
+        TaskRequirement::PolarizationSelection,
+        TaskRequirement::ModelColumnWrite,
+    ];
+
+    let result = execute_continuum(imaging).expect("native full-Stokes Högbom execution");
+    assert_eq!(result.minor_iterations, 1);
+    assert_eq!(result.actual_minor_iterations, 2);
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .visibility_products
+            .as_ref()
+            .expect("full-Stokes visibility completion")
+            .sample_count(),
+        2_808
+    );
+    assert_standard_products(&image_name, &result.product_names);
+    for suffix in [".psf", ".residual", ".model", ".image"] {
+        let product =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
+                .expect("reopen full-Stokes product");
+        assert_eq!(product.shape(), &[64, 64, 4, 1]);
+        let CoordinateModel::Stokes(stokes) = product.coordinates().coordinate(1) else {
+            panic!("full-Stokes product has no polarization coordinate")
+        };
+        assert_eq!(
+            stokes.stokes(),
+            &[StokesType::I, StokesType::Q, StokesType::U, StokesType::V]
+        );
+        assert_eq!(
+            product.units(),
+            if suffix == ".model" {
+                "Jy/pixel"
+            } else {
+                "Jy/beam"
+            }
+        );
+        assert!(
+            product
+                .get()
+                .expect("read full-Stokes payload")
+                .iter()
+                .all(|value| value.is_finite())
+        );
+    }
+    let sum_weights =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.sumwt", image_name.display())))
+            .expect("reopen full-Stokes sum weights");
+    assert_eq!(sum_weights.shape(), &[1, 1, 4, 1]);
+    assert_eq!(
+        sum_weights.get().expect("read full-Stokes sum weights"),
+        ArrayD::from_shape_vec(vec![1, 1, 4, 1], vec![452.0; 4])
+            .expect("full-Stokes sum-weight shape")
+    );
+    let reopened = MeasurementSet::open(&measurement_set).expect("reopen full-Stokes MODEL_DATA");
+    let model = reopened
+        .data_column(VisibilityDataColumn::ModelData)
+        .expect("full-Stokes MODEL_DATA");
+    let ArrayValue::Complex32(model) = model.get(0).expect("full-Stokes MODEL_DATA row") else {
+        panic!("full-Stokes MODEL_DATA is complex")
+    };
+    assert!(
+        model
+            .iter()
+            .all(|value| value.re.is_finite() && value.im.is_finite())
+    );
+    assert!(model.iter().any(|value| *value != Complex32::new(9.0, 9.0)));
+}
+
+#[test]
+fn application_executes_raw_linear_correlation_products_with_exact_axis() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = full_stokes_measurement_set(root.path());
+    let image_name = root.path().join("linear-correlations");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.polarizations = vec![
+        casa_imaging_application::PolarizationCoordinate::LinearXx,
+        casa_imaging_application::PolarizationCoordinate::LinearXy,
+        casa_imaging_application::PolarizationCoordinate::LinearYx,
+        casa_imaging_application::PolarizationCoordinate::LinearYy,
+    ];
+    imaging.image_size = 64;
+    imaging.task_requirements = vec![TaskRequirement::PolarizationSelection];
+
+    let result = execute_continuum(imaging).expect("native raw-correlation dirty execution");
+    assert_standard_products(&image_name, &result.product_names);
+    let product =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
+            .expect("reopen raw-correlation residual");
+    assert_eq!(product.shape(), &[64, 64, 4, 1]);
+    let CoordinateModel::Stokes(stokes) = product.coordinates().coordinate(1) else {
+        panic!("raw-correlation product has no polarization coordinate")
+    };
+    assert_eq!(
+        stokes.stokes(),
+        &[
+            StokesType::XX,
+            StokesType::XY,
+            StokesType::YX,
+            StokesType::YY
+        ]
+    );
+    assert_eq!(product.units(), "Jy/beam");
 }
 
 #[test]

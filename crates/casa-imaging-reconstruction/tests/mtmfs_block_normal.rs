@@ -1201,7 +1201,10 @@ fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel
         normal.support_validity(),
         Some(SpectralChannelValidity::Valid)
     );
-    assert!(normal.plane(0).is_none(), "Taylor terms are not channels");
+    assert!(
+        normal.polarization_plane(0, 0).is_none(),
+        "Taylor terms are not channels"
+    );
 
     for coefficient in 0..2 {
         let term = normal

@@ -549,7 +549,6 @@ impl FixedWorkerTeam {
         let Self {
             pool,
             threads_started,
-            stack_capacity_bytes: _,
             ..
         } = self;
         drop(pool);
@@ -1274,7 +1273,7 @@ where
                         },
                         &storage,
                         &mut kernel,
-                        &worker_team,
+                        worker_team,
                         &mut measurements.worker_slots,
                         worker_measurement_capacity_bytes,
                     )
@@ -1715,7 +1714,7 @@ where
                         identity,
                         &lease.storage,
                         &mut kernel,
-                        &worker_team,
+                        worker_team,
                         &mut measurements.worker_slots,
                         worker_measurement_capacity_bytes,
                     )

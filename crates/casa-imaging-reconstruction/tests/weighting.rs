@@ -377,7 +377,9 @@ fn selected_generation(
 fn bounded_replay_retains_a_compact_kernel_projection() {
     assert!(
         size_of::<WeightingSelectedSample>() < size_of::<SelectedObservationSample>() / 2,
-        "replay must not retain the complete validated source record"
+        "replay must not retain the complete validated source record: weighted={} selected={}",
+        size_of::<WeightingSelectedSample>(),
+        size_of::<SelectedObservationSample>()
     );
 }
 
@@ -1164,6 +1166,104 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .reuse_emitted_block(second)
         .expect("reuse second replay block");
     replay.finish().expect("finish replay");
+}
+
+#[test]
+fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let base = exact_samples(&problem)[0].clone();
+    let mut samples = Vec::new();
+    let mut groups = Vec::new();
+    for ordinal in 0..2_u64 {
+        let mut sample = base.clone();
+        sample.address.physical_row = ordinal;
+        sample.address.correlation_index = 0;
+        sample.address.correlation_type = CorrelationType::StokesI;
+        samples.push(sample);
+        groups.push(SelectedInputWeightGroup::single(1.0));
+    }
+    let run = SelectedInputWeightGroup::correlation_run(1.0, 1.0, 3);
+    for (ordinal, correlation) in [
+        CorrelationType::LinearXx,
+        CorrelationType::LinearXy,
+        CorrelationType::LinearYy,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut sample = base.clone();
+        sample.address.physical_row = 2;
+        sample.address.correlation_index = ordinal as u32;
+        sample.address.correlation_type = correlation;
+        samples.push(sample);
+        groups.push(
+            run.with_density_owner(ordinal == 0)
+                .with_terminal_member(ordinal == 2),
+        );
+    }
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(4, 1).expect("four-sample bound"),
+    )
+    .expect("weighting plan");
+
+    let consume = |phase: &mut casa_imaging_reconstruction::FusedWeightingPhase| {
+        let mut lengths = Vec::new();
+        for (sample, group) in samples.iter().zip(groups.iter().copied()) {
+            if let Some(block) = phase
+                .consume(
+                    &problem,
+                    sample.as_view().with_input_weight_group(group),
+                    exact_contributions(sample),
+                )
+                .expect("fused sample")
+            {
+                lengths.push(block.samples().len());
+                phase.reuse_emitted_block(block).expect("synchronous reuse");
+            }
+        }
+        lengths
+    };
+    let mut fused = begin_natural_weighting_stream(&problem, &plan).expect("fused stream");
+    assert_eq!(consume(&mut fused), [2]);
+    let (terminal, generation, _) = fused.finish().expect("finish fused stream");
+    assert_eq!(
+        terminal.expect("three-lane terminal block").samples().len(),
+        3
+    );
+
+    let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
+    let mut lengths = Vec::new();
+    for (sample, group) in samples.iter().zip(groups.iter().copied()) {
+        if let Some(block) = replay
+            .consume(
+                &problem,
+                sample.as_view().with_input_weight_group(group),
+                exact_contributions(sample),
+            )
+            .expect("replay sample")
+        {
+            lengths.push(block.samples().len());
+            replay
+                .reuse_emitted_block(block)
+                .expect("synchronous replay reuse");
+        }
+    }
+    assert_eq!(lengths, [2]);
+    assert_eq!(
+        replay
+            .finish()
+            .expect("finish replay")
+            .0
+            .expect("three-lane replay terminal block")
+            .samples()
+            .len(),
+        3,
+    );
 }
 
 #[test]
