@@ -65,11 +65,8 @@ pub use execution::{
 };
 pub use gridded_normal_artifact::GriddedNormalReplayStorage;
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
-#[cfg(all(target_os = "macos", not(coverage)))]
-pub use metal_runtime::{MetalCommandFence, MetalEncodingContext};
 pub use metal_runtime::{
-    MetalCommandOutcome, MetalExecutionDecision, MetalNodeDecision, MetalRuntime,
-    MetalRuntimeError, MetalRuntimeInventory,
+    MetalExecutionDecision, MetalNodeDecision, MetalRuntimeError, MetalRuntimeInventory,
 };
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,

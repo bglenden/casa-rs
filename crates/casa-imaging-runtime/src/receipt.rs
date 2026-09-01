@@ -3746,7 +3746,12 @@ impl<'store> ReceiptRecorder<'store> {
         self.checkpoint()
     }
 
-    pub(crate) fn fence_completed(&mut self, fence: &FenceId) -> Result<(), ReceiptError> {
+    pub(crate) fn fence_completed_with_measurements(
+        &mut self,
+        fence: &FenceId,
+        measurements: &WorkMeasurements,
+    ) -> Result<(), ReceiptError> {
+        self.record_measurements(fence.node(), measurements)?;
         self.finish_fence(fence, ReceiptStatus::Completed)?;
         self.checkpoint()
     }

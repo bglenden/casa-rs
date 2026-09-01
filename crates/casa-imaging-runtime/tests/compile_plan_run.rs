@@ -1143,6 +1143,7 @@ fn recording_executor(
         fence_waits: AtomicUsize::new(0),
         observed_knobs: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
+        fence_measurement_node: None,
         resource_peak_overrides: BTreeMap::new(),
         panic_on_execute: false,
         publication_launched: None,
@@ -1373,6 +1374,7 @@ struct RecordingExecutor {
     fence_waits: AtomicUsize,
     observed_knobs: Mutex<Vec<ExecutionKnobs>>,
     measurements: BTreeMap<WorkNodeId, (Vec<IoMeasurement>, Vec<ArtifactMeasurement>)>,
+    fence_measurement_node: Option<WorkNodeId>,
     resource_peak_overrides: BTreeMap<WorkNodeId, u64>,
     panic_on_execute: bool,
     publication_launched: Option<Arc<AtomicBool>>,
@@ -1437,6 +1439,67 @@ struct PublicationProbe {
 }
 
 impl RecordingExecutor {
+    fn work_measurements(&self, context: WorkExecutionContext<'_>) -> WorkMeasurements {
+        let resources = context
+            .node()
+            .claims
+            .iter()
+            .map(|claim| {
+                ResourceMeasurement::new(
+                    claim.resource.clone(),
+                    claim.lifetime.clone(),
+                    self.resource_peak_overrides
+                        .get(&context.node().id)
+                        .copied()
+                        .unwrap_or(claim.amount),
+                )
+            })
+            .collect();
+        let (io, mut artifacts) = self
+            .measurements
+            .get(&context.node().id)
+            .cloned()
+            .unwrap_or_else(|| {
+                (
+                    context
+                        .node()
+                        .claims
+                        .iter()
+                        .filter_map(|claim| match claim.resource {
+                            LeaseResource::IoBuffer(kind) => {
+                                Some(IoMeasurement::new(kind, claim.amount, 1))
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                    Vec::new(),
+                )
+            });
+        if context.node().kind == WorkKind::Publication && self.sealed_measurements.is_some() {
+            artifacts = self
+                .sealed_measurements
+                .clone()
+                .expect("sealed measurements present");
+        }
+        if context.node().kind == WorkKind::Publication && artifacts.is_empty() {
+            artifacts = context
+                .planned_artifacts()
+                .map(|artifact| {
+                    let identity = artifact.identity();
+                    ArtifactMeasurement::new(
+                        identity,
+                        Some(identity),
+                        ArtifactDisposition::Staged,
+                        1,
+                        None,
+                    )
+                    .expect("publication evidence is externally constructible")
+                })
+                .collect();
+        }
+        WorkMeasurements::new(resources, io, artifacts)
+    }
+
     fn observe_publication_buffer(&self, context: WorkExecutionContext<'_>) {
         let Some(observed) = &self.publication_buffer_held else {
             return;
@@ -1951,64 +2014,11 @@ impl WorkImplementation for RecordingExecutor {
         {
             launched.store(true, Ordering::SeqCst);
         }
-        let resources = context
-            .node()
-            .claims
-            .iter()
-            .map(|claim| {
-                ResourceMeasurement::new(
-                    claim.resource.clone(),
-                    claim.lifetime.clone(),
-                    self.resource_peak_overrides
-                        .get(&context.node().id)
-                        .copied()
-                        .unwrap_or(claim.amount),
-                )
-            })
-            .collect();
-        let (io, mut artifacts) = self
-            .measurements
-            .get(&context.node().id)
-            .cloned()
-            .unwrap_or_else(|| {
-                (
-                    context
-                        .node()
-                        .claims
-                        .iter()
-                        .filter_map(|claim| match claim.resource {
-                            LeaseResource::IoBuffer(kind) => {
-                                Some(IoMeasurement::new(kind, claim.amount, 1))
-                            }
-                            _ => None,
-                        })
-                        .collect(),
-                    Vec::new(),
-                )
-            });
-        if context.node().kind == WorkKind::Publication && self.sealed_measurements.is_some() {
-            artifacts = self
-                .sealed_measurements
-                .clone()
-                .expect("sealed measurements present");
+        if self.fence_measurement_node.as_ref() == Some(&context.node().id) {
+            Ok(WorkMeasurements::default())
+        } else {
+            Ok(self.work_measurements(context))
         }
-        if context.node().kind == WorkKind::Publication && artifacts.is_empty() {
-            artifacts = context
-                .planned_artifacts()
-                .map(|artifact| {
-                    let identity = artifact.identity();
-                    ArtifactMeasurement::new(
-                        identity,
-                        Some(identity),
-                        ArtifactDisposition::Staged,
-                        1,
-                        None,
-                    )
-                    .expect("publication evidence is externally constructible")
-                })
-                .collect();
-        }
-        Ok(WorkMeasurements::new(resources, io, artifacts))
     }
 
     fn failure_measurements<'error>(
@@ -2022,7 +2032,7 @@ impl WorkImplementation for RecordingExecutor {
         &self,
         context: WorkExecutionContext<'_>,
         fence: FenceKind,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<WorkMeasurements, Self::Error> {
         self.fence_waits.fetch_add(1, Ordering::SeqCst);
         if let Some(message) = self.fence_failure
             && self.fail_only_fence.is_none_or(|kind| kind == fence)
@@ -2047,7 +2057,11 @@ impl WorkImplementation for RecordingExecutor {
         {
             observed.store(true, Ordering::SeqCst);
         }
-        Ok(())
+        if self.fence_measurement_node.as_ref() == Some(&context.node().id) {
+            Ok(self.work_measurements(context))
+        } else {
+            Ok(WorkMeasurements::default())
+        }
     }
 
     fn complete_observation_read(
@@ -10029,6 +10043,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
 #[test]
 fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() {
     let problem = compile(request(1)).expect("logical compilation");
+    let read = WorkNodeId::new("read");
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
@@ -10040,7 +10055,17 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(&problem, 3, 6, None);
+    let mut executor = product_publication_recording_executor(
+        &problem,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    executor.fence_measurement_node = Some(read.clone());
+    let registry = TestRegistry {
+        id: registry(3),
+        metadata: implementation_metadata(&problem),
+        executors: BTreeMap::from([(implementation(6), executor)]),
+    };
     let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([11; 32]),
@@ -10059,7 +10084,6 @@ fn receipt_compares_plan_predictions_with_actual_stage_resource_and_fence_use() 
     )
     .expect("receipted execution");
     let receipt = receipts.open(provenance.attempt_id()).expect("receipt");
-    let read = WorkNodeId::new("read");
     let io_fence = FenceId::new(read.clone(), FenceKind::Io);
 
     assert_eq!(receipt.predicted_elapsed_nanos(), 700);
