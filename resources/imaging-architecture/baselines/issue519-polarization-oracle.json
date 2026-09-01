@@ -1,0 +1,74 @@
+{
+  "schema": "casa-rs.issue519-polarization-oracle.v2",
+  "casa_version": "6.7.6.14",
+  "generator": "repo://tools/science/casa_issue519_polarization_oracle.py",
+  "case": {
+    "array": "VLA A, 27 antennas, 351 baselines",
+    "source": "phase-centred point",
+    "stokes_jy": [2.0, 0.4, -0.2, 0.1],
+    "frequency_hz": 1400000000.0,
+    "hour_angle_seconds": 1800.0,
+    "casa_operation": "applycal parang P correction",
+    "comparison": "complex normalized RMS <= 0.001"
+  },
+  "linear": {
+    "antenna_pair": [7, 22],
+    "correlations": ["XX", "XY", "YX", "YY"],
+    "parallactic_angles_rad": [0.18807411846940772, 0.19066940811722946],
+    "operator_angles_rad": [-0.18807411846940772, -0.19066940811722946],
+    "row_count": 351,
+    "data": [
+      [2.445688486099243, -0.0002611503005027771],
+      [-0.031595975160598755, 0.09999966621398926],
+      [-0.042041897773742676, -0.09999966621398926],
+      [1.554297924041748, -0.0002611503005027771]
+    ],
+    "weighted_flagged_correlations": {
+      "flags": [false, true, false, false],
+      "weights": [2.0, 0.5, 3.0, 1.25]
+    },
+    "casa_visbuffer_form_stokes": {
+      "coordinates": ["I", "Q", "U", "V"],
+      "data_origin": "CASA ms.selectpolarization I,Q,U,V",
+      "data": [
+        [1.9999932050704956, -0.0002611503005027771],
+        [0.44569528102874756, 0.0],
+        [-0.036818936467170715, 0.0],
+        [0.09999966621398926, -0.0052229613065719604]
+      ],
+      "flags": [false, false, true, true],
+      "weights": [3.25, 3.25, 3.5, 3.5],
+      "weight_flag_origin": "CASA VisBuffer.cc::formStokesWeightandFlag"
+    }
+  },
+  "circular": {
+    "antenna_pair": [7, 22],
+    "correlations": ["RR", "RL", "LR", "LL"],
+    "parallactic_angles_rad": [0.18807411846940772, 0.19066940811722946],
+    "operator_angles_rad": [-0.18807411846940772, -0.19066940811722946],
+    "row_count": 351,
+    "data": [
+      [2.0999927520751953, -0.005484104156494141],
+      [0.4456953704357147, -0.03681895136833191],
+      [0.4456953704357147, 0.03681895136833191],
+      [1.8999935388565063, 0.00496181845664978]
+    ],
+    "weighted_flagged_correlations": {
+      "flags": [false, true, false, false],
+      "weights": [2.0, 0.5, 3.0, 1.25]
+    },
+    "casa_visbuffer_form_stokes": {
+      "coordinates": ["I", "Q", "U", "V"],
+      "data_origin": "CASA ms.selectpolarization I,Q,U,V",
+      "data": [
+        [1.999993085861206, -0.0002611428499221802],
+        [0.4456953704357147, 0.0],
+        [-0.03681895136833191, 0.0],
+        [0.09999960660934448, -0.0052229613065719604]
+      ],
+      "flags": [false, false, true, true],
+      "weights": [3.25, 3.25, 3.5, 3.5],
+      "weight_flag_origin": "CASA VisBuffer.cc::formStokesWeightandFlag"
+    }
+  }
+}

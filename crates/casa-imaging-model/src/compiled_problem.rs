@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 15;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 16;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -2775,6 +2775,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
                 encode_reconstruction_basis(&mut encoder, *basis);
             }
             PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
+            PairedMeasurementTransform::FeedResponse => encoder.u8(6),
             PairedMeasurementTransform::DirectionDependentResponse { response } => {
                 encoder.u8(2);
                 encoder.u8(match response {

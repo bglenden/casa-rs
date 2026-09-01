@@ -5685,7 +5685,8 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
                     *channels_per_bin,
                 );
             }
-            PairedMeasurementTransform::PolarizationMapping => {}
+            PairedMeasurementTransform::PolarizationMapping
+            | PairedMeasurementTransform::FeedResponse => {}
         }
     }
     evidence_field(
@@ -7208,6 +7209,7 @@ fn paired_transform_kind(value: PairedTransformKind) -> &'static str {
     match value {
         PairedTransformKind::SpectralBasis => "spectral_basis",
         PairedTransformKind::Polarization => "polarization",
+        PairedTransformKind::FeedResponse => "feed_response",
         PairedTransformKind::DirectionDependentResponse => "direction_dependent_response",
         PairedTransformKind::Phase => "phase",
         PairedTransformKind::SpectralResampling => "spectral_resampling",

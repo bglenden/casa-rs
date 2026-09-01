@@ -274,6 +274,78 @@ fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
 }
 
 #[test]
+fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
+    let directory = tempfile::tempdir().expect("temporary T33 VLA fixture");
+    let path = directory.path().join("t33-vla-polarization.ms");
+    let mut request =
+        SyntheticObservationRequest::vla_ppdisk("unused.fits", &path, tutorial_vla_a_antennas());
+    request.predict_model = false;
+    request.allow_below_elevation_limit = true;
+    request.duration_seconds = 3.0;
+    request.integration_seconds = 1.0;
+    request.spectral_setup = SyntheticSpectralSetup {
+        name: "t33-three-channel".to_string(),
+        start_frequency_hz: 1.4e9,
+        channel_width_hz: 1.0e6,
+        channel_count: 3,
+    };
+    request.worker_policy = SyntheticWorkerPolicy::Fixed;
+    request.row_workers = Some(1);
+    request.channel_workers = Some(1);
+    let report =
+        generate_synthetic_observation_ms(&request).expect("generate non-toy T33 VLA fixture");
+    assert_eq!(report.antenna_count, 27);
+    assert_eq!(report.baseline_count, 351);
+    assert_eq!(report.time_sample_count, 3);
+    assert_eq!(report.main_row_count, 1_053);
+
+    let problem = compiled_problem_with_polarization(
+        &path,
+        report.main_row_count,
+        vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesU,
+            PolarizationCoordinate::StokesV,
+        ],
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 37, 1),
+    )
+    .expect("bind non-toy T33 traversal");
+    let samples = bound
+        .selected_samples(&problem)
+        .expect("prepare non-toy T33 stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read non-toy T33 stream");
+    assert_eq!(samples.len(), report.main_row_count * 4);
+
+    let mut minimum = [f64::INFINITY; 2];
+    let mut maximum = [f64::NEG_INFINITY; 2];
+    for row_samples in samples.chunks_exact(4) {
+        let expected = row_samples[0].coordinates.parallactic_angles_rad;
+        assert!(expected.iter().all(|angle| angle.is_finite()));
+        assert!(
+            row_samples
+                .iter()
+                .all(|sample| sample.coordinates.parallactic_angles_rad == expected)
+        );
+        for antenna in 0..2 {
+            minimum[antenna] = minimum[antenna].min(expected[antenna]);
+            maximum[antenna] = maximum[antenna].max(expected[antenna]);
+        }
+    }
+    assert!(
+        (maximum[0] - minimum[0]).abs() > 1.0e-4 || (maximum[1] - minimum[1]).abs() > 1.0e-4,
+        "realistic VLA rows must not collapse to a constant feed rotation"
+    );
+}
+
+#[test]
 fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
     let directory = tempfile::tempdir().expect("temporary multidomain projection fixture");
     let path = directory.path().join("multidomain.ms");
@@ -3856,6 +3928,30 @@ fn compiled_problem(
     compiled_problem_with_sources(&[(path, 1, row_count)])
 }
 
+fn compiled_problem_with_polarization(
+    path: &std::path::Path,
+    row_count: usize,
+    coordinates: Vec<PolarizationCoordinate>,
+) -> casa_imaging_model::CompiledProblem {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile polarized selected observation");
+    compile(ImagingRequest::new(
+        specification_with_sampling_basis_and_polarization(
+            SpectralSamplingLaw::IDENTITY,
+            ReconstructionBasis::Constant,
+            coordinates,
+        ),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile polarized selected-observation problem")
+}
+
 fn compiled_problem_with_sampling(
     path: &std::path::Path,
     row_count: usize,
@@ -4297,6 +4393,18 @@ fn specification_with_sampling_and_basis(
     sampling: SpectralSamplingLaw,
     basis: ReconstructionBasis,
 ) -> ProblemSpecification {
+    specification_with_sampling_basis_and_polarization(
+        sampling,
+        basis,
+        vec![PolarizationCoordinate::StokesI],
+    )
+}
+
+fn specification_with_sampling_basis_and_polarization(
+    sampling: SpectralSamplingLaw,
+    basis: ReconstructionBasis,
+    coordinates: Vec<PolarizationCoordinate>,
+) -> ProblemSpecification {
     ProblemSpecification::new(
         ScientificContract::new(
             SpectralContract::new(sampling, SpectralCoupling::Independent),
@@ -4312,7 +4420,7 @@ fn specification_with_sampling_and_basis(
             basis,
             ReconstructionAlgorithm::Hogbom,
             ReconstructionControls::new(10, 0.1, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            PolarizationContract::new(coordinates),
         ),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         ProductRequirements::new(

@@ -637,6 +637,7 @@ dependencies = [
  "ndarray",
  "num-complex",
  "rustfft",
+ "serde_json",
  "sha2",
  "smallvec",
  "thiserror 2.0.18",

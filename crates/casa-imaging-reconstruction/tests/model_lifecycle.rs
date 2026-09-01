@@ -419,7 +419,7 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
     assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
     assert_eq!(
         base.generation_id().to_string(),
-        "c8aa1f9f2d0df2cd47f25696232e8f0f12d0058ba35783dd3ea1dc87b394ad37"
+        "c729b6c23d31b114974116005de6b3f9ce43ae5c2ed9061dd0ef2ed7539e7351"
     );
 
     let delta = owner
@@ -430,7 +430,7 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
         .expect("compile replay delta");
     assert_eq!(
         delta.delta_id().to_string(),
-        "c51140ee15cc8f4e318f71c534e3791106433916ffaf108712fc7ec2c3be4e87"
+        "c708679efe6c214d5dc98640d5b0eea7d2b30dba78659ed7fa873ba0a0ab1d0f"
     );
     let update = owner
         .apply_final_delta(base, delta)
@@ -577,7 +577,7 @@ fn reprojection_is_owner_derived_streamed_support_aware_and_golden_pinned() {
     let mapping_id = prepared.reprojection_id();
     assert_eq!(
         mapping_id.to_string(),
-        "f7bc726307177a322c156232605b670cfa5fb3a43ead14b8fb917f40adba6fde"
+        "dcc042424ab656c0584c89716f95cf0c64ff6b5218eade97365c4396dbbc4d85"
     );
     assert_eq!(
         prepared.support_identity(),

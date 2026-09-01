@@ -1159,7 +1159,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 15);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 16);
 }
 
 #[test]
@@ -1565,13 +1565,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_fifteen_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_sixteen_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 15);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 16);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "3c843adddc6f6c6d6be13da95a61b811ebd683422e0f63cef979856a2e5efd02"
+        "6ea85054a2c9e06c66a8277d2198ec1db129ae6f361ad3d81640abbb614a24d8"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

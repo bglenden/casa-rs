@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "07606d92421d4da7b494e9b02ae673dbb16f2661a87bcbf75528f92d91694d8b"
+    "f9e41d987f02a315f0e6d0388b0ff264864723463625fe4ffb99aca22ba878d9"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "6489ea668a1c500018f048100d55883a0adac8b57b35f02646dd33ffc709fe1f"
+    "177cd0c9189efbfe5dd1447a2ffe64f7455be903980be994cb5fa9aab5b2e392"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 76
+ACCEPTED_MATRIX_CONTRACT_REVISION = 77
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2531,6 +2531,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
         "repo://resources/imaging-architecture/baselines/selected-observation-generation-v5.txt",
         "repo://resources/imaging-architecture/baselines/selected-observation-generation-v6.txt",
+        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v7.txt",
     }
     if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
         raise ArchitectureError(
