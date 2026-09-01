@@ -23,6 +23,26 @@ const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T41_CASA_PREFIX";
 const PRODUCTS: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 const SELECTED_SAMPLE_COUNT: u64 = 1_620 * 1_024 * 2;
+const MVC_MS_ENV: &str = "CASA_RS_T41_MVC_MS";
+const MVC_CASA_PREFIX_ENV: &str = "CASA_RS_T41_MVC_CASA_PREFIX";
+const MVC_RUST_PREFIX_ENV: &str = "CASA_RS_T41_MVC_RUST_PREFIX";
+const MVC_SELECTED_SAMPLE_COUNT: u64 = 1_620 * (1_024 + 256 + 1_024 + 4_096) * 2;
+const MVC_PUBLIC_PRODUCTS: [&str; 14] = [
+    ".psf.tt0",
+    ".psf.tt1",
+    ".psf.tt2",
+    ".residual.tt0",
+    ".residual.tt1",
+    ".model.tt0",
+    ".model.tt1",
+    ".image.tt0",
+    ".image.tt1",
+    ".sumwt.tt0",
+    ".sumwt.tt1",
+    ".sumwt.tt2",
+    ".alpha",
+    ".alpha.error",
+];
 
 #[test]
 #[ignore = "requires slow-parity casatestdata and matching frozen CASA T41 products"]
@@ -102,6 +122,89 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     Ok(())
 }
 
+#[test]
+#[ignore = "requires the representative T41 MS and the one frozen CASA multi-SPW MVC oracle"]
+fn t41_multi_spw_mvc_matches_casa_taylor_products() -> Result<(), Box<dyn Error>> {
+    set_production_io_environment();
+    let source = required_table(MVC_MS_ENV)?;
+    let casa_prefix = required_prefix(MVC_CASA_PREFIX_ENV, ".psf.tt0")?;
+    let rust_prefix = output_prefix(MVC_RUST_PREFIX_ENV)?;
+    let staging = tempfile::tempdir()?;
+    let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
+    MeasurementSet::open(&source)?.save_as(&measurement_set)?;
+    copy_attached_ephemerides(&source, &measurement_set)?;
+    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
+
+    let result = execute_continuum(mvc_request(measurement_set, rust_prefix.clone()))?;
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .sample_count(),
+        MVC_SELECTED_SAMPLE_COUNT,
+        "MVC traversal must retain every selected sample from all four SPWs",
+    );
+    assert_eq!(result.minor_iterations, 4);
+    assert!(
+        result.outcome.output.major_cycle_count >= 2,
+        "MVC CLEAN must feed a Taylor model through more than one channel-major cycle"
+    );
+    assert_eq!(
+        result.product_names,
+        MVC_PUBLIC_PRODUCTS.map(str::to_string),
+        "MVC must retain the existing public MT-MFS Taylor topology",
+    );
+
+    assert_casa_mvc_cube_topology(&casa_prefix)?;
+    let mut failures = compare_mvc_wcs(&rust_prefix, &casa_prefix)?;
+    for suffix in MVC_PUBLIC_PRODUCTS {
+        let rust = read_product(&rust_prefix, suffix)?;
+        let casa = read_product(&casa_prefix, suffix)?;
+        let expected_shape = if suffix.starts_with(".sumwt.") {
+            vec![1, 1, 1, 1]
+        } else {
+            vec![512, 512, 1, 1]
+        };
+        if rust.shape != expected_shape {
+            failures.push(format!("{suffix} Rust shape is {:?}", rust.shape));
+            continue;
+        }
+        if rust.shape != casa.shape {
+            failures.push(format!(
+                "{suffix} shape differs: Rust {:?} CASA {:?}",
+                rust.shape, casa.shape
+            ));
+            continue;
+        }
+        if rust.valid != casa.valid {
+            failures.push(format!("{suffix} validity/support differs"));
+        }
+        let common_valid = rust
+            .valid
+            .iter()
+            .zip(&casa.valid)
+            .map(|(rust, casa)| *rust && *casa)
+            .collect::<Vec<_>>();
+        let nrms = normalized_rms(&rust.values, &casa.values, &common_valid);
+        let rust_stats = statistics(&rust.values, &common_valid);
+        let casa_stats = statistics(&casa.values, &common_valid);
+        eprintln!(
+            "t41_mvc_casa_parity product={suffix} nrms={nrms:.9e} rust_peak={} casa_peak={} rust_peak_pixel={} casa_peak_pixel={}",
+            rust_stats.maximum,
+            casa_stats.maximum,
+            rust_stats.maximum_position,
+            casa_stats.maximum_position,
+        );
+        if nrms > 0.001 {
+            failures.push(format!("{suffix} normalized RMS {nrms:.6e} exceeds 0.1%"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
 fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingRequest {
     ContinuumImagingRequest {
         measurement_set,
@@ -152,6 +255,66 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
         pbcor: false,
         task_requirements: vec![
             TaskRequirement::SpectralCubeSource,
+            TaskRequirement::SerialCpu,
+        ],
+        resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
+            casa_imaging_runtime::ResourceOverride {
+                workers: Some(1),
+                ..Default::default()
+            },
+        ),
+    }
+}
+
+fn mvc_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingRequest {
+    ContinuumImagingRequest {
+        measurement_set,
+        image_name,
+        image_size: 512,
+        facets: 1,
+        cell_arcsec: 0.1,
+        phase_center_field: None,
+        phase_center: Some("TRACKFIELD".to_string()),
+        outlier_file: None,
+        field_ids: Some(vec![1]),
+        uv_range: None,
+        intent: None,
+        data_description: None,
+        spectral_window: Some("0,1,2,3".to_string()),
+        channel_start: None,
+        channel_count: None,
+        spectral_mode: SpectralImagingMode::MtmfsViaCube {
+            axis: CubeAxisConfig::default(),
+            output_channels: Some(16),
+        },
+        continuum_subtraction: None,
+        data_column: Some("DATA".to_string()),
+        polarizations: vec![PolarizationCoordinate::StokesI],
+        algorithm: ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        weighting: ContinuumWeighting::Natural,
+        iterations: 4,
+        cycle_iterations: 2,
+        hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
+        maximum_major_cycles: None,
+        noise_sigma: None,
+        cycle_factor: 1.0,
+        minimum_psf_fraction: 0.05,
+        maximum_psf_fraction: 0.8,
+        gain: 0.1,
+        threshold_jy: 0.0,
+        psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
+        beam_policy: ContinuumBeamPolicy::Common,
+        mask: ContinuumMask::FullPlane,
+        save_model_column: false,
+        save_continuum_residual: false,
+        write_primary_beam: false,
+        pbcor: false,
+        task_requirements: vec![
+            TaskRequirement::SpectralMtmfsViaCube,
             TaskRequirement::SerialCpu,
         ],
         resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
@@ -260,6 +423,93 @@ fn assert_matching_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box
         assert_eq!(spectral.world_frequency_ref(), FrequencyRef::REST);
     }
     Ok(())
+}
+
+fn assert_casa_mvc_cube_topology(prefix: &Path) -> Result<(), Box<dyn Error>> {
+    for (suffix, expected) in [
+        (".psf", vec![512, 512, 1, 16]),
+        (".residual", vec![512, 512, 1, 16]),
+        (".model", vec![512, 512, 1, 16]),
+        (".sumwt", vec![1, 1, 1, 16]),
+    ] {
+        assert_eq!(
+            read_product(prefix, suffix)?.shape,
+            expected,
+            "CASA {suffix}"
+        );
+    }
+    Ok(())
+}
+
+fn compare_mvc_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<Vec<String>, Box<dyn Error>> {
+    let rust = PagedImage::<f32>::open(PathBuf::from(format!(
+        "{}.residual.tt0",
+        rust_prefix.display()
+    )))?;
+    let casa = PagedImage::<f32>::open(PathBuf::from(format!(
+        "{}.residual.tt0",
+        casa_prefix.display()
+    )))?;
+    let pixel = [256.0, 256.0, 0.0, 0.0];
+    let rust_world = rust.coordinates().to_world(&pixel)?;
+    let casa_world = casa.coordinates().to_world(&pixel)?;
+    eprintln!(
+        "t41_mvc_wcs rust_direction_rad={:?} casa_direction_rad={:?} rust_spectral_hz={} casa_spectral_hz={}",
+        &rust_world[..2],
+        &casa_world[..2],
+        rust_world[3],
+        casa_world[3],
+    );
+    let mut failures = Vec::new();
+    for axis in 0..2 {
+        if (rust_world[axis] - casa_world[axis]).abs() > 1.0e-10 {
+            failures.push(format!(
+                "tracked direction WCS axis {axis} differs: Rust {} CASA {}",
+                rust_world[axis], casa_world[axis]
+            ));
+        }
+    }
+    let tolerance_hz = casa_world[3].abs().max(1.0) * 2.0e-12;
+    if (rust_world[3] - casa_world[3]).abs() > tolerance_hz {
+        failures.push(format!(
+            "Taylor reference frequency differs: Rust {} Hz CASA {} Hz",
+            rust_world[3], casa_world[3]
+        ));
+    }
+    Ok(failures)
+}
+
+fn required_table(name: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = PathBuf::from(std::env::var_os(name).ok_or_else(|| format!("{name} is not set"))?);
+    if !path.is_dir() {
+        return Err(format!("{name} does not name a table: {}", path.display()).into());
+    }
+    Ok(path)
+}
+
+fn required_prefix(name: &str, required_suffix: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let prefix = PathBuf::from(std::env::var_os(name).ok_or_else(|| format!("{name} is not set"))?);
+    if !PathBuf::from(format!("{}{required_suffix}", prefix.display())).is_dir() {
+        return Err(format!(
+            "{name} has no {required_suffix} product at {}",
+            prefix.display()
+        )
+        .into());
+    }
+    Ok(prefix)
+}
+
+fn output_prefix(name: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let prefix = PathBuf::from(std::env::var_os(name).ok_or_else(|| format!("{name} is not set"))?);
+    let parent = prefix.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    if MVC_PUBLIC_PRODUCTS
+        .iter()
+        .any(|suffix| PathBuf::from(format!("{}{suffix}", prefix.display())).exists())
+    {
+        return Err(format!("refusing to overwrite MVC products at {}", prefix.display()).into());
+    }
+    Ok(prefix)
 }
 
 fn copy_attached_ephemerides(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
