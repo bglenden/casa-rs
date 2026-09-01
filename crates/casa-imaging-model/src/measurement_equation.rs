@@ -15,10 +15,10 @@ use sha2::{Digest, Sha256};
 use crate::{
     ProblemInputIdentities,
     compiled_problem::{
-        InstrumentResponse, LogicalIdentity, NumericsContractId, PolarizationContract, ProductKind,
-        ProductNormalization, ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy,
-        ScientificContract, SpectralKernel, SpectralSamplingLaw, UvTaper, WeightDensityScope,
-        WeightingContract, WeightingScheme,
+        InstrumentModel, InstrumentResponse, LogicalIdentity, NumericsContractId,
+        PolarizationContract, ProductKind, ProductNormalization, ReconstructionBasis,
+        ReconstructionContract, RestoringBeamPolicy, ScientificContract, SpectralKernel,
+        SpectralSamplingLaw, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme,
     },
     geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
     observation::{
@@ -163,6 +163,8 @@ pub enum PairedMeasurementTransform {
     DirectionDependentResponse {
         /// Exact response included in both directions.
         response: InstrumentResponse,
+        /// Exact versioned power-response law included in both directions.
+        instrument_model: Option<InstrumentModel>,
     },
     /// Apply the compiled prediction phase and its conjugate adjoint.
     PhaseRotation {
@@ -542,6 +544,7 @@ pub(crate) fn compile_normal_equation(
         PairedMeasurementTransform::FeedResponse,
         PairedMeasurementTransform::DirectionDependentResponse {
             response: science.measurement_equation().instrument_response(),
+            instrument_model: science.instrument_model(),
         },
         PairedMeasurementTransform::PhaseRotation {
             convention: geometry.uvw().prediction_phase(),

@@ -33,9 +33,9 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 16;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 17;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
-const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
+const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -442,6 +442,19 @@ pub enum InstrumentResponse {
     FullMueller,
 }
 
+/// Closed identity of an instrument power-response law compiled into the
+/// paired measurement operator.
+///
+/// Each variant is a versioned scientific identity, not a runtime backend
+/// selector. Changing the law requires a new variant so compiled-problem
+/// identities cannot silently change meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InstrumentModel {
+    /// CASA-compatible direct scalar power response for a homogeneous ALMA
+    /// 7 m ACA interferometric array, version 1.
+    CasaAlmaAcaInterferometricDirectPbV1,
+}
+
 /// Logical measurement-equation terms independent of an implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeasurementEquationContract {
@@ -480,6 +493,7 @@ impl MeasurementEquationContract {
 pub struct ScientificContract {
     spectral: SpectralContract,
     measurement_equation: MeasurementEquationContract,
+    instrument_model: Option<InstrumentModel>,
 }
 
 impl ScientificContract {
@@ -492,7 +506,16 @@ impl ScientificContract {
         Self {
             spectral,
             measurement_equation,
+            instrument_model: None,
         }
+    }
+
+    /// Bind the exact instrument power-response law used by the measurement
+    /// equation.
+    #[must_use]
+    pub const fn with_instrument_model(mut self, instrument_model: InstrumentModel) -> Self {
+        self.instrument_model = Some(instrument_model);
+        self
     }
 
     /// Return spectral requirements.
@@ -505,6 +528,12 @@ impl ScientificContract {
     #[must_use]
     pub const fn measurement_equation(&self) -> MeasurementEquationContract {
         self.measurement_equation
+    }
+
+    /// Return the exact instrument power-response law, when one is declared.
+    #[must_use]
+    pub const fn instrument_model(&self) -> Option<InstrumentModel> {
+        self.instrument_model
     }
 }
 
@@ -2118,6 +2147,14 @@ fn validate_science(
             reason: "spectral channel averaging requires a positive bin width",
         });
     }
+    if science.measurement_equation.instrument_response == InstrumentResponse::PrimaryBeam
+        && science.instrument_model
+            != Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "primary-beam response requires the CASA ALMA interferometric direct power-response model",
+        });
+    }
     if science.measurement_equation.instrument_response != InstrumentResponse::Scalar
         && !inputs
             .reference_data()
@@ -2784,6 +2821,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         InstrumentResponse::PrimaryBeam => 1,
         InstrumentResponse::FullMueller => 2,
     });
+    encode_instrument_model(&mut encoder, science.instrument_model);
     let inner_products = science.measurement_equation.inner_products;
     encoder.u8(match inner_products.model() {
         ModelInnerProduct::HermitianEuclidean => 0,
@@ -2814,13 +2852,17 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             }
             PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
             PairedMeasurementTransform::FeedResponse => encoder.u8(6),
-            PairedMeasurementTransform::DirectionDependentResponse { response } => {
+            PairedMeasurementTransform::DirectionDependentResponse {
+                response,
+                instrument_model,
+            } => {
                 encoder.u8(2);
                 encoder.u8(match response {
                     InstrumentResponse::Scalar => 0,
                     InstrumentResponse::PrimaryBeam => 1,
                     InstrumentResponse::FullMueller => 2,
                 });
+                encode_instrument_model(&mut encoder, *instrument_model);
             }
             PairedMeasurementTransform::PhaseRotation { convention } => {
                 encoder.u8(3);
@@ -3245,6 +3287,13 @@ fn reference_data_tag(kind: ReferenceDataKind) -> u8 {
         ReferenceDataKind::Observatory => 2,
         ReferenceDataKind::SpectralLines => 3,
         ReferenceDataKind::Instrument => 4,
+    }
+}
+
+fn encode_instrument_model(encoder: &mut CanonicalEncoder, model: Option<InstrumentModel>) {
+    match model {
+        None => encoder.u8(0),
+        Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1) => encoder.u8(1),
     }
 }
 
