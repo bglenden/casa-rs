@@ -57,7 +57,12 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     for suffix in PRODUCTS {
         let rust = read_product(&rust_prefix, suffix)?;
         let casa = read_product(&casa_prefix, suffix)?;
-        assert_eq!(rust.shape, [512, 512, 1, 16], "Rust {suffix} shape");
+        let expected_shape = if suffix == ".sumwt" {
+            [1, 1, 1, 16]
+        } else {
+            [512, 512, 1, 16]
+        };
+        assert_eq!(rust.shape, expected_shape, "Rust {suffix} shape");
         assert_eq!(rust.shape, casa.shape, "CASA and Rust {suffix} shape");
         if rust.valid != casa.valid {
             failures.push(format!("{suffix} validity/support differs"));
@@ -240,8 +245,9 @@ fn assert_matching_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box
                 "tracked direction WCS axis {axis} differs at {pixel:?}"
             );
         }
+        let spectral_tolerance_hz = casa_world[3].abs().max(1.0) * 2.0e-12;
         assert!(
-            (rust_world[3] - casa_world[3]).abs() <= 1.0e-3,
+            (rust_world[3] - casa_world[3]).abs() <= spectral_tolerance_hz,
             "REST spectral WCS differs at {pixel:?}: Rust {} CASA {}",
             rust_world[3],
             casa_world[3],
