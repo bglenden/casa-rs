@@ -3125,6 +3125,11 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
         first.coordinates.phase_direction,
         second_row.coordinates.phase_direction
     );
+    assert_ne!(
+        first.domain_projections.iter().next().unwrap().model(),
+        second_row.domain_projections.iter().next().unwrap().model(),
+        "moving rows must not retain one fixed primary-domain projection",
+    );
     for sample in &samples {
         assert_eq!(
             sample.coordinates.phase_direction,
@@ -3135,6 +3140,17 @@ fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
             sample.coordinates.pointing_directions.antenna1
         );
         assert_ne!(sample.coordinates.phase_shift_m, 0.0);
+        let primary = sample
+            .domain_projections
+            .iter()
+            .next()
+            .expect("primary image-domain projection")
+            .model();
+        assert_eq!(
+            primary.transformed_uvw_m(),
+            sample.coordinates.transformed_uvw_m,
+        );
+        assert_eq!(primary.phase_shift_m(), sample.coordinates.phase_shift_m);
     }
     inspect_samples(&problem, samples).expect("inspect moving-centre stream");
 }

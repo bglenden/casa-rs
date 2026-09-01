@@ -50,6 +50,8 @@ pub struct MsCalEngine {
     antenna_mount_alt_az: Box<[bool]>,
     /// Field phase directions (constant term, J2000).
     field_directions: Box<[MDirection]>,
+    /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
+    field_phase_offsets: Box<[[f64; 2]]>,
     /// Observatory position (antenna 0 if no OBSERVATION subtable).
     observatory_position: MPosition,
     /// Epoch reference used by MAIN.TIME.
@@ -134,7 +136,7 @@ impl MsCalEngine {
             .checked_mul(size_of::<MPosition>() + size_of::<bool>())
             .and_then(|bytes| {
                 field_count
-                    .checked_mul(size_of::<MDirection>())
+                    .checked_mul(size_of::<MDirection>() + size_of::<[f64; 2]>())
                     .and_then(|fields| bytes.checked_add(fields))
             })
             .ok_or_else(|| {
@@ -167,7 +169,10 @@ impl MsCalEngine {
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
+        let mut field_phase_offsets = Vec::with_capacity(n_field);
         for row in 0..n_field {
+            let (longitude, latitude) = phase_dir_constant(field.phase_dir(row)?)?;
+            field_phase_offsets.push([longitude, latitude]);
             field_directions.push(resolve_field_phase_direction_j2000_with_observatory(
                 ms,
                 row,
@@ -181,6 +186,7 @@ impl MsCalEngine {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
+            field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             observatory_position,
             time_reference,
             measures: Some(measures),
@@ -237,7 +243,11 @@ impl MsCalEngine {
             resolve_observatory_position_selected(ms, &antenna_positions, measures.as_ref());
         let field = ms.field()?;
         let mut field_directions = Vec::with_capacity(field.row_count());
+        let mut field_phase_offsets = Vec::with_capacity(field.row_count());
         for row in 0..field.row_count() {
+            let raw = selected_array_value(field.table(), row, "PHASE_DIR")?;
+            let (longitude, latitude) = phase_dir_constant(&raw)?;
+            field_phase_offsets.push([longitude, latitude]);
             field_directions.push(resolve_field_phase_direction_selected(
                 ms,
                 row,
@@ -250,6 +260,7 @@ impl MsCalEngine {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
+            field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             observatory_position,
             time_reference: detect_time_reference(ms),
             measures: Some(measures),
@@ -270,10 +281,19 @@ impl MsCalEngine {
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
         let antenna_mount_alt_az = vec![true; antenna_positions.len()].into_boxed_slice();
+        let field_phase_offsets = field_directions
+            .iter()
+            .map(|direction| {
+                let (longitude, latitude) = direction.as_angles();
+                [longitude, latitude]
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         Self {
             antenna_mount_alt_az,
             antenna_positions: antenna_positions.into_boxed_slice(),
             field_directions: field_directions.into_boxed_slice(),
+            field_phase_offsets,
             observatory_position,
             time_reference: EpochRef::UTC,
             measures: Some(measures),
@@ -445,10 +465,11 @@ impl MsCalEngine {
             }
             return self.named_direction_j2000(time_mjd_sec, target);
         }
+        let ephemeris_mjd_tdb = self.ephemeris_mjd_tdb(time_mjd_sec)?;
         let sample = ephemeris
-            .sample(field_id, time_mjd_sec / 86_400.0)
+            .sample(field_id, ephemeris_mjd_tdb)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.topocentric_ephemeris_direction_j2000(time_mjd_sec, sample)
+        self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
     }
 
     pub(crate) fn moving_radial_velocity(
@@ -462,8 +483,9 @@ impl MsCalEngine {
         if ephemeris.named_target().is_some() {
             return Ok(None);
         }
+        let ephemeris_mjd_utc = self.ephemeris_mjd_utc(time_mjd_sec)?;
         ephemeris
-            .sample(field_id, time_mjd_sec / 86_400.0)
+            .sample(field_id, ephemeris_mjd_utc)
             .map(|sample| {
                 Some(casa_types::measures::radial_velocity::MRadialVelocity::new(
                     sample.radial_velocity_m_per_s,
@@ -489,13 +511,49 @@ impl MsCalEngine {
             }
             return self.named_direction_j2000(time_mjd_sec, target);
         }
+        let ephemeris_mjd_tdb = self.ephemeris_mjd_tdb(time_mjd_sec)?;
         let sample = ephemeris
-            .sample(field_id, time_mjd_sec / 86_400.0)
+            .sample(field_id, ephemeris_mjd_tdb)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        self.topocentric_ephemeris_direction_j2000(time_mjd_sec, sample)
+        self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
     }
 
-    fn topocentric_ephemeris_direction_j2000(
+    /// Evaluate an immutable ephemeris radial velocity at the CASA `MeasComet`
+    /// sampling epoch corresponding to one MeasurementSet timestamp.
+    pub fn ephemeris_radial_velocity(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        ephemeris: &SelectedObservationEphemeris,
+    ) -> MsResult<casa_types::measures::radial_velocity::MRadialVelocity> {
+        let sample = ephemeris
+            .sample(field_id, self.ephemeris_mjd_utc(time_mjd_sec)?)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        Ok(casa_types::measures::radial_velocity::MRadialVelocity::new(
+            sample.radial_velocity_m_per_s,
+            sample.velocity_reference,
+        ))
+    }
+
+    fn ephemeris_mjd_tdb(&self, time_mjd_sec: f64) -> MsResult<f64> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        let epoch = frame
+            .epoch()
+            .expect("ephemeris conversion frame always contains an epoch");
+        Ok(epoch.convert_to(EpochRef::TDB, &frame)?.value().as_mjd())
+    }
+
+    fn ephemeris_mjd_utc(&self, time_mjd_sec: f64) -> MsResult<f64> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        let epoch = frame
+            .epoch()
+            .expect("ephemeris conversion frame always contains an epoch");
+        Ok(epoch.convert_to(EpochRef::UTC, &frame)?.value().as_mjd())
+    }
+
+    fn sampled_ephemeris_direction_j2000(
         &self,
         time_mjd_sec: f64,
         sample: crate::ephemeris::EvaluatedEphemerisSample,
@@ -507,32 +565,40 @@ impl MsCalEngine {
                 "ephemeris position has invalid distance".to_string(),
             ));
         }
-        let geocentric = MDirection::from_angles(
-            y.atan2(x),
-            (z / distance).clamp(-1.0, 1.0).asin(),
-            sample.position_reference,
-        );
         let frame =
             self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
-        let geocentric_itrf = geocentric.convert_to(DirectionRef::ITRF, &frame)?;
-        let (longitude, latitude) = geocentric_itrf.as_angles();
-        let (sin_longitude, cos_longitude) = longitude.sin_cos();
-        let (sin_latitude, cos_latitude) = latitude.sin_cos();
         let [observer_x, observer_y, observer_z] = self.observatory_position.as_itrf();
-        let topocentric_itrf = [
-            distance * cos_latitude * cos_longitude - observer_x,
-            distance * cos_latitude * sin_longitude - observer_y,
-            distance * sin_latitude - observer_z,
+        let observer_radius = observer_x.hypot(observer_y).hypot(observer_z);
+        let observer_latitude = (observer_z / observer_radius).clamp(-1.0, 1.0).asin();
+        let epoch = frame
+            .epoch()
+            .expect("ephemeris conversion frame always contains an epoch");
+        let last_days = epoch.convert_to(EpochRef::LAST, &frame)?.value().as_mjd();
+        let last = last_days.fract() * 2.0 * std::f64::consts::PI;
+        let (sin_last, cos_last) = last.sin_cos();
+        let (sin_latitude, cos_latitude) = observer_latitude.sin_cos();
+        let observer_app = [
+            observer_radius * cos_latitude * cos_last,
+            observer_radius * cos_latitude * sin_last,
+            observer_radius * sin_latitude,
         ];
-        let topocentric_distance = topocentric_itrf[0]
-            .hypot(topocentric_itrf[1])
-            .hypot(topocentric_itrf[2]);
-        let direction = MDirection::from_angles(
-            topocentric_itrf[1].atan2(topocentric_itrf[0]),
-            (topocentric_itrf[2] / topocentric_distance)
-                .clamp(-1.0, 1.0)
-                .asin(),
-            DirectionRef::ITRF,
+        let pre_topocentric = MDirection::from_cosines(
+            [
+                x + observer_app[0],
+                y + observer_app[1],
+                z + observer_app[2],
+            ],
+            sample.position_reference,
+        );
+        let apparent = pre_topocentric.convert_to(DirectionRef::APP, &frame)?;
+        let apparent_cosines = apparent.cosines();
+        let direction = MDirection::from_cosines(
+            [
+                apparent_cosines[0] - observer_app[0] / distance,
+                apparent_cosines[1] - observer_app[1] / distance,
+                apparent_cosines[2] - observer_app[2] / distance,
+            ],
+            DirectionRef::APP,
         );
         direction
             .convert_to(DirectionRef::J2000, &frame)
@@ -547,14 +613,18 @@ impl MsCalEngine {
         let Some(ephemeris) = self.selected_observation_ephemeris.as_ref() else {
             return self.field_dir(field_id).cloned();
         };
+        let ephemeris_mjd_tdb = self.ephemeris_mjd_tdb(time_mjd_sec)?;
         let Some(sample) = ephemeris
-            .attached_field_sample(field_id, time_mjd_sec / 86_400.0)
+            .attached_field_sample(field_id, ephemeris_mjd_tdb)
             .map_err(|error| MsError::InvalidInput(error.to_string()))?
         else {
             return self.field_dir(field_id).cloned();
         };
-        let direction = self.topocentric_ephemeris_direction_j2000(time_mjd_sec, sample)?;
-        let (offset_longitude, offset_latitude) = self.field_dir(field_id)?.as_angles();
+        let direction = self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)?;
+        let [offset_longitude, offset_latitude] = *self
+            .field_phase_offsets
+            .get(field_id)
+            .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
         shift_direction_true_angle(direction, offset_longitude, offset_latitude)
     }
 

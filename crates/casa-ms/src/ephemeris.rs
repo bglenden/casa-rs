@@ -10,7 +10,7 @@ use std::{
 use casa_imaging_model::LogicalIdentity;
 use casa_tables::{Table, TableOptions};
 use casa_types::measures::direction::DirectionRef;
-use casa_types::measures::radial_velocity::{MRadialVelocity, RadialVelocityRef};
+use casa_types::measures::radial_velocity::RadialVelocityRef;
 use casa_types::{ScalarValue, Value};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -247,18 +247,6 @@ impl SelectedObservationEphemeris {
             .ok()
             .map(|index| fields[index].series.sample(mjd_days))
             .transpose()
-    }
-
-    /// Evaluate CASA's observer-frame radial velocity at one selected row epoch.
-    pub fn radial_velocity(
-        &self,
-        field_id: usize,
-        time_mjd_seconds: f64,
-    ) -> Result<MRadialVelocity, SelectedObservationEphemerisError> {
-        self.sample(field_id, time_mjd_seconds / 86_400.0)
-            .map(|sample| {
-                MRadialVelocity::new(sample.radial_velocity_m_per_s, sample.velocity_reference)
-            })
     }
 }
 

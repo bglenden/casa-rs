@@ -1806,6 +1806,24 @@ fn evaluate_row_geometry(
             (density_uvw_m, transformed_uvw_m, phase_shift_m)
         };
     let domains = problem.geometry().domains();
+    let moving_direction_shift = if matches!(centres.phase_tracking(), PhaseCentreLaw::Ephemeris(_))
+    {
+        let anchor = domains
+            .first()
+            .ok_or(BoundObservationSourceError::InvalidRowGeometry)?
+            .model_phase_centre();
+        let anchor_j2000 = source.geometry_engine.direction_angles_j2000(
+            stored.time_mjd_seconds(),
+            [anchor.longitude_rad(), anchor.latitude_rad()],
+            direction_ref(anchor.frame()),
+        )?;
+        Some([
+            phase_direction.longitude_rad() - anchor_j2000[0],
+            phase_direction.latitude_rad() - anchor_j2000[1],
+        ])
+    } else {
+        None
+    };
     let chart_count = domains.iter().try_fold(0_usize, |count, domain| {
         count.checked_add(domain.facets().len())
     });
@@ -1827,6 +1845,7 @@ fn evaluate_row_geometry(
                 observation_direction,
                 domain.psf_phase_centre(),
                 domain.facets().len() > 1,
+                moving_direction_shift,
             )?)
         };
         for (facet_ordinal, facet) in domain.facets().iter().enumerate() {
@@ -1844,6 +1863,7 @@ fn evaluate_row_geometry(
                 observation_direction,
                 model_phase_centre,
                 domain.facets().len() > 1,
+                moving_direction_shift,
             )?;
             let projection = match distinct_psf {
                 Some(psf) => SelectedImageDomainProjection::new_facet(
@@ -1881,8 +1901,9 @@ fn evaluate_phase_centre_projection(
     observation_direction: SkyDirection,
     target_direction: SkyDirection,
     project_to_observation_plane: bool,
+    moving_direction_shift: Option<[f64; 2]>,
 ) -> Result<SelectedPhaseCentreProjection, BoundObservationSourceError> {
-    let target_angles = source.geometry_engine.direction_angles_j2000(
+    let mut target_angles = source.geometry_engine.direction_angles_j2000(
         stored.time_mjd_seconds(),
         [
             target_direction.longitude_rad(),
@@ -1890,6 +1911,10 @@ fn evaluate_phase_centre_projection(
         ],
         direction_ref(target_direction.frame()),
     )?;
+    if let Some([longitude, latitude]) = moving_direction_shift {
+        target_angles[0] += longitude;
+        target_angles[1] += latitude;
+    }
     let target_j2000 = SkyDirection::new(DirectionFrame::J2000, target_angles[0], target_angles[1]);
     let (transformed_uvw_m, phase_shift_m) =
         if target_j2000 == observation_direction && !project_to_observation_plane {

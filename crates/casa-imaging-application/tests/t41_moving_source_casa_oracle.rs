@@ -58,11 +58,20 @@ fn t41_external_ephemeris_cubesource_matches_casa_geometry_and_dirty_image()
     let casa_values = casa.get_slice(&vec![0; casa.shape().len()], casa.shape())?;
     let rust_stats = statistics(rust_values.iter().copied());
     let casa_stats = statistics(casa_values.iter().copied());
+    let nrms = normalized_rms(rust_values.iter().copied(), casa_values.iter().copied());
     assert!(
-        relative_difference(rust_stats.sum, casa_stats.sum) <= 0.01,
-        "dirty flux differs: Rust {} CASA {}",
-        rust_stats.sum,
-        casa_stats.sum,
+        nrms <= 0.001,
+        "dirty image normalized RMS {nrms} exceeds 0.1%; Rust peak {} at {}, CASA peak {} at {}",
+        rust_stats.maximum,
+        rust_stats.maximum_position,
+        casa_stats.maximum,
+        casa_stats.maximum_position,
+    );
+    assert!(
+        relative_difference(rust_stats.maximum, casa_stats.maximum) <= 0.01,
+        "dirty peak flux differs: Rust {} CASA {}",
+        rust_stats.maximum,
+        casa_stats.maximum,
     );
     assert_eq!(rust_stats.maximum_position, casa_stats.maximum_position);
     Ok(())
@@ -129,25 +138,37 @@ fn request(
 }
 
 struct Statistics {
-    sum: f64,
+    maximum: f64,
     maximum_position: usize,
 }
 
 fn statistics(values: impl Iterator<Item = f32>) -> Statistics {
-    let mut sum = 0.0;
     let mut maximum = f32::NEG_INFINITY;
     let mut maximum_position = 0;
     for (position, value) in values.enumerate() {
-        sum += f64::from(value);
         if value > maximum {
             maximum = value;
             maximum_position = position;
         }
     }
     Statistics {
-        sum,
+        maximum: f64::from(maximum),
         maximum_position,
     }
+}
+
+fn normalized_rms(rust: impl Iterator<Item = f32>, casa: impl Iterator<Item = f32>) -> f64 {
+    let (error, reference) =
+        rust.zip(casa)
+            .fold((0.0, 0.0), |(error, reference), (actual, expected)| {
+                let actual = f64::from(actual);
+                let expected = f64::from(expected);
+                (
+                    error + (actual - expected).powi(2),
+                    reference + expected.powi(2),
+                )
+            });
+    (error / reference.max(f64::MIN_POSITIVE)).sqrt()
 }
 
 fn relative_difference(actual: f64, expected: f64) -> f64 {
