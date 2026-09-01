@@ -262,6 +262,8 @@ pub struct ContinuumImagingRequest {
     pub continuum_subtraction: Option<VisibilityContinuumSubtraction>,
     /// Optional explicit visibility column.
     pub data_column: Option<String>,
+    /// Ordered Stokes or raw-correlation reconstruction coordinates.
+    pub polarizations: Vec<PolarizationCoordinate>,
     /// Reconstruction algorithm.
     pub algorithm: ContinuumAlgorithm,
     /// Visibility-weighting law.
@@ -856,6 +858,7 @@ fn prepare(
             request.image_size,
             request.cell_arcsec,
             [right_ascension, declination],
+            &request.polarizations,
             prepared_spectral.output_frequency_reference,
             prepared_spectral.reference_frequency_hz,
             prepared_spectral.increment_hz,
@@ -880,6 +883,7 @@ fn prepare(
                     input.image_size,
                     input.cell_arcsec,
                     [centre.longitude_rad(), centre.latitude_rad()],
+                    &request.polarizations,
                     prepared_spectral.output_frequency_reference,
                     prepared_spectral.reference_frequency_hz,
                     prepared_spectral.increment_hz,
@@ -977,6 +981,7 @@ fn prepare(
                 .ok_or_else(|| boxed("reconstruction model sample count overflowed"))
         })?
         .checked_mul(reconstruction_planes)
+        .and_then(|samples| samples.checked_mul(request.polarizations.len()))
         .ok_or_else(|| boxed("reconstruction model sample count overflowed"))?;
     let specification = match continuum_transform {
         Some(transform) => {
@@ -1336,6 +1341,7 @@ fn image_coordinates(
     image_size: usize,
     cell_arcsec: f64,
     phase: [f64; 2],
+    polarizations: &[PolarizationCoordinate],
     frequency_reference: FrequencyRef,
     reference_frequency: f64,
     increment_hz: f64,
@@ -1350,7 +1356,9 @@ fn image_coordinates(
         [-cell, cell],
         [reference_pixel, reference_pixel],
     ));
-    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::I]));
+    coordinates.add_coordinate(StokesCoordinate::new(
+        polarizations.iter().copied().map(stokes_type).collect(),
+    ));
     coordinates.add_coordinate(SpectralCoordinate::new(
         frequency_reference,
         reference_frequency,
@@ -1359,6 +1367,23 @@ fn image_coordinates(
         reference_frequency,
     ));
     coordinates
+}
+
+const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
+    match coordinate {
+        PolarizationCoordinate::StokesI => StokesType::I,
+        PolarizationCoordinate::StokesQ => StokesType::Q,
+        PolarizationCoordinate::StokesU => StokesType::U,
+        PolarizationCoordinate::StokesV => StokesType::V,
+        PolarizationCoordinate::CircularRr => StokesType::RR,
+        PolarizationCoordinate::CircularRl => StokesType::RL,
+        PolarizationCoordinate::CircularLr => StokesType::LR,
+        PolarizationCoordinate::CircularLl => StokesType::LL,
+        PolarizationCoordinate::LinearXx => StokesType::XX,
+        PolarizationCoordinate::LinearXy => StokesType::XY,
+        PolarizationCoordinate::LinearYx => StokesType::YX,
+        PolarizationCoordinate::LinearYy => StokesType::YY,
+    }
 }
 
 fn parse_phase_center_direction(text: &str) -> Result<SkyDirection, crate::ApplicationError> {
@@ -1662,7 +1687,7 @@ fn specification(
                 .noise_sigma
                 .map_or(controls, |sigma| controls.with_noise_sigma(sigma))
         },
-        PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        PolarizationContract::new(request.polarizations.clone()),
     );
     if let ContinuumAlgorithm::JointContinuumLine {
         continuum_anchor_channels,

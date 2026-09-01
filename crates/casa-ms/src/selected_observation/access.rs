@@ -614,7 +614,11 @@ impl BoundObservationSamples<'_> {
                         channel_offset,
                         self.row_offset,
                     ) {
-                        Some(group) => group.with_density_owner(self.correlation_ordinal == 0),
+                        Some(group) => group
+                            .with_density_owner(self.correlation_ordinal == 0)
+                            .with_terminal_member(
+                                self.correlation_ordinal + 1 == coordinates.products.len(),
+                            ),
                         None => {
                             self.finished = true;
                             return Some(Err(
@@ -1066,9 +1070,10 @@ fn selected_input_weight_group(
             usize::try_from(last.correlation_index()).ok()?,
         )?
         .input_weight();
-    Some(SelectedInputWeightGroup::parallel_hands(
+    Some(SelectedInputWeightGroup::correlation_run(
         first_weight,
         last_weight,
+        coordinates.products.len(),
     ))
 }
 

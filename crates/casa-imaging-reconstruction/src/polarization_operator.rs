@@ -12,6 +12,8 @@ type Jones = [[Complex64; 2]; 2];
 /// Physical receptor basis of one selected correlation layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedBasis {
+    /// Values already expressed in Stokes coordinates.
+    Stokes,
     /// Orthogonal X/Y receptors.
     Linear,
     /// Orthogonal R/L receptors.
@@ -102,17 +104,32 @@ impl PolarizationOperator {
         {
             return Err(PolarizationOperatorError::InvalidParallacticAngle);
         }
-        let first = feed_jones(feed_basis, parallactic_angles_rad[0]);
-        let second = feed_jones(feed_basis, parallactic_angles_rad[1]);
-        let mueller = mueller.elements();
         let mut coefficients = Vec::with_capacity(correlations.len() * model_coordinates.len());
-        for correlation in correlations {
-            let output = correlation_index(*correlation)
-                .ok_or(PolarizationOperatorError::InvalidCorrelationLayout)?;
-            for coordinate in model_coordinates {
-                let sky = coordinate_coherency(*coordinate);
-                let ideal = flatten(mul2(mul2(first, sky), adjoint2(second)));
-                coefficients.push(dot4(mueller[output], ideal));
+        if feed_basis == FeedBasis::Stokes {
+            if coordinate_category(model_coordinates[0]) != PolarizationFamily::Stokes
+                || mueller != MuellerMatrix::identity()
+            {
+                return Err(PolarizationOperatorError::InvalidCorrelationLayout);
+            }
+            for correlation in correlations {
+                let coordinate = stokes_coordinate(*correlation)
+                    .ok_or(PolarizationOperatorError::InvalidCorrelationLayout)?;
+                coefficients.extend(model_coordinates.iter().map(|model| {
+                    Complex64::new(if *model == coordinate { 1.0 } else { 0.0 }, 0.0)
+                }));
+            }
+        } else {
+            let first = feed_jones(feed_basis, parallactic_angles_rad[0]);
+            let second = feed_jones(feed_basis, parallactic_angles_rad[1]);
+            let mueller = mueller.elements();
+            for correlation in correlations {
+                let output = correlation_index(*correlation)
+                    .ok_or(PolarizationOperatorError::InvalidCorrelationLayout)?;
+                for coordinate in model_coordinates {
+                    let sky = coordinate_coherency(*coordinate);
+                    let ideal = flatten(mul2(mul2(first, sky), adjoint2(second)));
+                    coefficients.push(dot4(mueller[output], ideal));
+                }
             }
         }
         Ok(Self {
@@ -267,6 +284,10 @@ fn correlation_basis(
 
 const fn basis(correlation: CorrelationType) -> Option<FeedBasis> {
     match correlation {
+        CorrelationType::StokesI
+        | CorrelationType::StokesQ
+        | CorrelationType::StokesU
+        | CorrelationType::StokesV => Some(FeedBasis::Stokes),
         CorrelationType::LinearXx
         | CorrelationType::LinearXy
         | CorrelationType::LinearYx
@@ -275,6 +296,16 @@ const fn basis(correlation: CorrelationType) -> Option<FeedBasis> {
         | CorrelationType::CircularRl
         | CorrelationType::CircularLr
         | CorrelationType::CircularLl => Some(FeedBasis::Circular),
+        _ => None,
+    }
+}
+
+const fn stokes_coordinate(correlation: CorrelationType) -> Option<PolarizationCoordinate> {
+    match correlation {
+        CorrelationType::StokesI => Some(PolarizationCoordinate::StokesI),
+        CorrelationType::StokesQ => Some(PolarizationCoordinate::StokesQ),
+        CorrelationType::StokesU => Some(PolarizationCoordinate::StokesU),
+        CorrelationType::StokesV => Some(PolarizationCoordinate::StokesV),
         _ => None,
     }
 }
@@ -333,6 +364,10 @@ fn feed_jones(basis: FeedBasis, angle: f64) -> Jones {
         ],
     ];
     match basis {
+        FeedBasis::Stokes => [
+            [Complex64::new(1.0, 0.0), Complex64::default()],
+            [Complex64::default(), Complex64::new(1.0, 0.0)],
+        ],
         FeedBasis::Linear => rotation,
         FeedBasis::Circular => mul2(circular_conversion(), rotation),
     }
@@ -608,6 +643,12 @@ mod tests {
 
     fn form_stokes(correlations: &[Complex64], basis: FeedBasis) -> [Complex64; 4] {
         match basis {
+            FeedBasis::Stokes => [
+                correlations[0],
+                correlations[1],
+                correlations[2],
+                correlations[3],
+            ],
             FeedBasis::Linear => [
                 0.5 * (correlations[0] + correlations[3]),
                 0.5 * (correlations[0] - correlations[3]),

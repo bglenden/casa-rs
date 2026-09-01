@@ -17,7 +17,7 @@ use crate::{
 };
 
 const RECONSTRUCTION_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-reconstruction-cycle-evidence";
-const RECONSTRUCTION_CYCLE_EVIDENCE_VERSION: u32 = 2;
+const RECONSTRUCTION_CYCLE_EVIDENCE_VERSION: u32 = 3;
 
 /// Stable identity of one ordered continuum or channel-local solve.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -55,6 +55,7 @@ pub enum ChannelCyclePolicy {
 #[derive(Debug)]
 pub struct ChannelCycleEvidence {
     output_channel: usize,
+    polarization: usize,
     validity: SpectralChannelValidity,
     budget_exhausted: bool,
     minor_cycle: Option<MinorCycleEvidence>,
@@ -65,6 +66,12 @@ impl ChannelCycleEvidence {
     #[must_use]
     pub const fn output_channel(&self) -> usize {
         self.output_channel
+    }
+
+    /// Return the compiled polarization ordinal solved for this channel.
+    #[must_use]
+    pub const fn polarization(&self) -> usize {
+        self.polarization
     }
 
     /// Return the normal-state validity of this channel.
@@ -158,11 +165,20 @@ impl ReconstructionCycleEvidence {
     /// Return the component count charged to the reported controller budget.
     #[must_use]
     pub fn controller_iterations(&self) -> usize {
-        self.channels
+        let polarizations = self
+            .channels
             .iter()
-            .filter_map(ChannelCycleEvidence::minor_cycle)
-            .map(MinorCycleEvidence::controller_iterations)
-            .sum()
+            .map(ChannelCycleEvidence::polarization)
+            .max()
+            .map_or(0, |maximum| maximum + 1);
+        let mut totals = vec![0_usize; polarizations];
+        for channel in &self.channels {
+            if let Some(evidence) = channel.minor_cycle() {
+                totals[channel.polarization] =
+                    totals[channel.polarization].saturating_add(evidence.controller_iterations());
+            }
+        }
+        totals.into_iter().max().unwrap_or(0)
     }
 
     /// Return cumulative absolute accepted component flux across channels.
@@ -296,6 +312,9 @@ impl ReconstructionCycleEvidence {
             if candidate_channel.output_channel != expected_channel.output_channel {
                 return None;
             }
+            if candidate_channel.polarization != expected_channel.polarization {
+                return None;
+            }
             match (
                 candidate_channel.minor_cycle(),
                 expected_channel.minor_cycle(),
@@ -359,6 +378,7 @@ impl ReconstructionCycle {
         if validity != SpectralChannelValidity::Valid {
             let channels = vec![ChannelCycleEvidence {
                 output_channel: normal.slab().core_range().start,
+                polarization: 0,
                 validity,
                 budget_exhausted: false,
                 minor_cycle: None,
@@ -380,6 +400,7 @@ impl ReconstructionCycle {
         let (delta, minor_cycle) = result.into_parts();
         let channels = vec![ChannelCycleEvidence {
             output_channel: normal.slab().core_range().start,
+            polarization: 0,
             validity,
             budget_exhausted: false,
             minor_cycle: Some(minor_cycle),
@@ -419,6 +440,7 @@ impl ReconstructionCycle {
             if validity != SpectralChannelValidity::Valid {
                 let channels = vec![ChannelCycleEvidence {
                     output_channel: normal.slab().core_range().start,
+                    polarization: 0,
                     validity,
                     budget_exhausted: false,
                     minor_cycle: None,
@@ -439,6 +461,7 @@ impl ReconstructionCycle {
             let (delta, minor_cycle) = result.into_parts();
             let channels = vec![ChannelCycleEvidence {
                 output_channel: normal.slab().core_range().start,
+                polarization: 0,
                 validity,
                 budget_exhausted: false,
                 minor_cycle: Some(minor_cycle),
@@ -456,49 +479,56 @@ impl ReconstructionCycle {
             });
         }
         let shared_cycle_threshold = shared_cycle_threshold(&self.program, normal)?;
-        let mut remaining_iterations = self.program.max_iterations();
-        let mut remaining_valid_channels = normal
-            .channel_validity()
-            .iter()
-            .filter(|validity| **validity == SpectralChannelValidity::Valid)
-            .count();
         let mut terms = Vec::<ModelDeltaTerm>::new();
-        let mut channels = Vec::with_capacity(normal.channel_count());
-        for local_channel in 0..normal.channel_count() {
-            let plane = normal
-                .plane(local_channel)
-                .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
-            let validity = plane.validity();
-            let budget_exhausted =
-                validity == SpectralChannelValidity::Valid && remaining_iterations == 0;
-            let minor_cycle = if validity == SpectralChannelValidity::Valid && !budget_exhausted {
-                let channel_limit = remaining_iterations.div_ceil(remaining_valid_channels);
-                let program = self
-                    .program
-                    .clone()
-                    .limit_iterations(channel_limit)?
-                    .with_fixed_cycle_threshold(shared_cycle_threshold)
-                    .on_model_plane(MinorCycleModelPlane::new(0, plane.output_channel(), 0));
-                let result = run_minor_cycle_plane(lifecycle, base, plane, mask, program)?;
-                let (delta, evidence) = result.into_parts();
-                remaining_iterations =
-                    remaining_iterations.saturating_sub(evidence.controller_iterations());
-                if let Some(delta) = delta {
-                    terms.extend_from_slice(delta.terms());
+        let mut channels = Vec::with_capacity(normal.channel_count() * normal.polarization_count());
+        for polarization in 0..normal.polarization_count() {
+            let mut remaining_iterations = self.program.max_iterations();
+            let mut remaining_valid_channels = (0..normal.channel_count())
+                .filter_map(|local_channel| normal.polarization_plane(local_channel, polarization))
+                .filter(|plane| plane.validity() == SpectralChannelValidity::Valid)
+                .count();
+            for local_channel in 0..normal.channel_count() {
+                let plane = normal
+                    .polarization_plane(local_channel, polarization)
+                    .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
+                let validity = plane.validity();
+                let budget_exhausted =
+                    validity == SpectralChannelValidity::Valid && remaining_iterations == 0;
+                let minor_cycle = if validity == SpectralChannelValidity::Valid && !budget_exhausted
+                {
+                    let channel_limit = remaining_iterations.div_ceil(remaining_valid_channels);
+                    let program = self
+                        .program
+                        .clone()
+                        .limit_iterations(channel_limit)?
+                        .with_fixed_cycle_threshold(shared_cycle_threshold)
+                        .on_model_plane(MinorCycleModelPlane::new(
+                            0,
+                            plane.output_channel(),
+                            polarization,
+                        ));
+                    let result = run_minor_cycle_plane(lifecycle, base, plane, mask, program)?;
+                    let (delta, evidence) = result.into_parts();
+                    remaining_iterations =
+                        remaining_iterations.saturating_sub(evidence.controller_iterations());
+                    if let Some(delta) = delta {
+                        terms.extend_from_slice(delta.terms());
+                    }
+                    Some(evidence)
+                } else {
+                    None
+                };
+                if validity == SpectralChannelValidity::Valid {
+                    remaining_valid_channels = remaining_valid_channels.saturating_sub(1);
                 }
-                Some(evidence)
-            } else {
-                None
-            };
-            if validity == SpectralChannelValidity::Valid {
-                remaining_valid_channels = remaining_valid_channels.saturating_sub(1);
+                channels.push(ChannelCycleEvidence {
+                    output_channel: plane.output_channel(),
+                    polarization,
+                    validity,
+                    budget_exhausted,
+                    minor_cycle,
+                });
             }
-            channels.push(ChannelCycleEvidence {
-                output_channel: plane.output_channel(),
-                validity,
-                budget_exhausted,
-                minor_cycle,
-            });
         }
         let delta = (!terms.is_empty())
             .then(|| lifecycle.compile_delta(base, terms))
@@ -540,6 +570,7 @@ impl ReconstructionCycle {
         let (delta, evidence) = result.into_parts();
         let channels = vec![ChannelCycleEvidence {
             output_channel: normal.slab().core_range().start,
+            polarization: 0,
             validity: SpectralChannelValidity::Valid,
             budget_exhausted: false,
             minor_cycle: Some(evidence),
@@ -562,38 +593,40 @@ fn shared_cycle_threshold(
     program: &MinorCycleProgram,
     normal: &FinalNormalState,
 ) -> Result<Option<f64>, MinorCycleError> {
-    if normal.channel_count() == 1 {
+    if normal.channel_count() * normal.polarization_count() == 1 {
         return Ok(None);
     }
     let mut global_peak = 0.0_f64;
     let mut maximum_sidelobe = 0.0_f64;
-    for local_channel in 0..normal.channel_count() {
-        let plane = normal
-            .plane(local_channel)
-            .ok_or(MinorCycleError::ModelShapeMismatch)?;
-        if plane.validity() != SpectralChannelValidity::Valid {
-            continue;
+    for polarization in 0..normal.polarization_count() {
+        for local_channel in 0..normal.channel_count() {
+            let plane = normal
+                .polarization_plane(local_channel, polarization)
+                .ok_or(MinorCycleError::ModelShapeMismatch)?;
+            if plane.validity() != SpectralChannelValidity::Valid {
+                continue;
+            }
+            let psf = plane
+                .normal_approximation()
+                .iter()
+                .map(|value| value.re as f32)
+                .collect::<Vec<_>>();
+            let psf_peak = psf
+                .iter()
+                .map(|value| f64::from(value.abs()))
+                .fold(0.0_f64, f64::max);
+            if !(psf_peak.is_finite() && psf_peak > 0.0) {
+                return Err(MinorCycleError::InvalidPsfPeak);
+            }
+            let peak = plane
+                .residual()
+                .iter()
+                .map(|value| value.re.abs() / psf_peak)
+                .fold(0.0_f64, f64::max);
+            global_peak = global_peak.max(peak);
+            maximum_sidelobe =
+                maximum_sidelobe.max(crate::fitted_psf_sidelobe_fraction(&psf, plane.shape())?);
         }
-        let psf = plane
-            .normal_approximation()
-            .iter()
-            .map(|value| value.re as f32)
-            .collect::<Vec<_>>();
-        let psf_peak = psf
-            .iter()
-            .map(|value| f64::from(value.abs()))
-            .fold(0.0_f64, f64::max);
-        if !(psf_peak.is_finite() && psf_peak > 0.0) {
-            return Err(MinorCycleError::InvalidPsfPeak);
-        }
-        let peak = plane
-            .residual()
-            .iter()
-            .map(|value| value.re.abs() / psf_peak)
-            .fold(0.0_f64, f64::max);
-        global_peak = global_peak.max(peak);
-        maximum_sidelobe =
-            maximum_sidelobe.max(crate::fitted_psf_sidelobe_fraction(&psf, plane.shape())?);
     }
     Ok(program.cycle_threshold_for(global_peak, maximum_sidelobe))
 }
@@ -664,6 +697,7 @@ fn reconstruction_cycle_evidence_id(
     encoder.usize(channels.len());
     for channel in channels {
         encoder.usize(channel.output_channel);
+        encoder.usize(channel.polarization);
         encoder.u8(match channel.validity {
             SpectralChannelValidity::Valid => 0,
             SpectralChannelValidity::Blank => 1,

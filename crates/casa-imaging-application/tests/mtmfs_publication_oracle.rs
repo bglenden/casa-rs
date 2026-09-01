@@ -89,6 +89,7 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
         spectral_mode: SpectralImagingMode::Continuum,
         continuum_subtraction: None,
         data_column: Some("DATA".to_string()),
+        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
         algorithm: ContinuumAlgorithm::Mtmfs {
             terms: 2,
             scales_px: vec![0.0, 5.0],

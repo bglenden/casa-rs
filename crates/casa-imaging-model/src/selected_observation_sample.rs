@@ -721,6 +721,8 @@ impl SelectedObservationSample {
 pub struct SelectedInputWeightGroup {
     kind: SelectedInputWeightGroupKind,
     density_owner: bool,
+    terminal_member: bool,
+    members: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -736,6 +738,8 @@ impl SelectedInputWeightGroup {
         Self {
             kind: SelectedInputWeightGroupKind::Single(input_weight),
             density_owner: true,
+            terminal_member: true,
+            members: 1,
         }
     }
 
@@ -745,6 +749,24 @@ impl SelectedInputWeightGroup {
         Self {
             kind: SelectedInputWeightGroupKind::ParallelHands { first, last },
             density_owner: true,
+            terminal_member: false,
+            members: 2,
+        }
+    }
+
+    /// Describe one complete canonical row/channel correlation run.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn correlation_run(first: f32, last: f32, members: usize) -> Self {
+        Self {
+            kind: if members == 1 {
+                SelectedInputWeightGroupKind::Single(first)
+            } else {
+                SelectedInputWeightGroupKind::ParallelHands { first, last }
+            },
+            density_owner: true,
+            terminal_member: members == 1,
+            members,
         }
     }
 
@@ -755,10 +777,32 @@ impl SelectedInputWeightGroup {
         self
     }
 
+    /// Mark whether this member closes the canonical correlation group.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_terminal_member(mut self, terminal_member: bool) -> Self {
+        self.terminal_member = terminal_member;
+        self
+    }
+
     /// Return whether this member owns the group's one density contribution.
     #[must_use]
     pub const fn is_density_owner(self) -> bool {
         self.density_owner
+    }
+
+    /// Return whether this member closes the canonical correlation group.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn is_terminal_member(self) -> bool {
+        self.terminal_member
+    }
+
+    /// Return the number of canonical correlations in this row/channel run.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn member_count(self) -> usize {
+        self.members
     }
 
     /// Return the canonical first weight and an optional last parallel-hand weight.

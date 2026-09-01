@@ -26,12 +26,15 @@ pub use two_domain::{GriddedNormalPartial, GriddedNormalWork};
 
 use crate::{
     Encoder, FinalNormalState, ModelGeneration,
+    polarization_operator::{MuellerMatrix, PolarizationOperator},
     spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, OVERSAMPLING,
         PreparedSpectralOperator, ReusableNormalState, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps,
         SpectralOperatorError, SpectralOperatorPass, SpectralOperatorSpecification,
         SpectralPrimitiveCatalog, SpectralSlabOperator, StandardConvolution, TapSpan,
-        accept_weighted_input, combine_chart_updates, selected_model_projection,
+        accept_weighted_input, combine_chart_updates, final_correlation_weight,
+        polarization_diagonal, polarization_effective_flags, polarization_effective_weights,
+        selected_model_projection,
     },
     weighting::{
         CoverageEncoder, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -619,77 +622,112 @@ impl GriddedNormalOperatorCompiler {
     > {
         let mut source_groups = Vec::new();
         let mut measurements = GriddedNormalOperatorBlockMeasurements::default();
-        for weighted in block.samples() {
-            let selected = weighted.selected();
-            if !accept_weighted_input(selected, self.finite_values)?
-                || !selected
-                    .address()
-                    .correlation_type
-                    .contributes_to_stokes_i()
-            {
-                continue;
-            }
-            let mut group = Vec::new();
-            let mut has_positive_weight = false;
-            for domain_ordinal in 0..self.specification.chart_count() {
-                let chart = &self.specification.charts()[domain_ordinal];
-                let (uvw_m, phase_shift_m) = selected_model_projection(
-                    selected,
-                    self.specification.chart_count(),
-                    chart.domain_ordinal(),
-                    chart.facet_ordinal(),
-                )?;
-                let gridder = self
-                    .gridders
-                    .get(domain_ordinal)
-                    .ok_or(SpectralOperatorError::DomainProjectionMismatch)?;
-                for spectral in weighted.spectral_values() {
-                    let contribution = spectral.contribution();
+        for correlations in block.correlation_groups() {
+            let first = correlations
+                .first()
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            let selected = first.selected();
+            let operator = PolarizationOperator::compile(
+                self.specification.polarization_coordinates(),
+                &correlations
+                    .iter()
+                    .map(|weighted| weighted.selected().address().correlation_type)
+                    .collect::<Vec<_>>(),
+                selected.parallactic_angles_rad(),
+                MuellerMatrix::identity(),
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+            let flags = correlations
+                .iter()
+                .map(|weighted| {
+                    accept_weighted_input(weighted.selected(), self.finite_values).map(|ok| !ok)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let flags = polarization_effective_flags(&operator, flags);
+            for spectral_ordinal in 0..first.spectral_values().count() {
+                let first_spectral = first
+                    .spectral_values()
+                    .nth(spectral_ordinal)
+                    .ok_or(SpectralOperatorError::InvalidSample)?;
+                let weights = correlations
+                    .iter()
+                    .map(|weighted| {
+                        let spectral = weighted
+                            .spectral_values()
+                            .nth(spectral_ordinal)
+                            .ok_or(SpectralOperatorError::InvalidSample)?;
+                        if spectral.contribution() != first_spectral.contribution() {
+                            return Err(SpectralOperatorError::InvalidSample);
+                        }
+                        final_correlation_weight(weighted, spectral.imaging_weight())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let weights = polarization_effective_weights(&operator, weights);
+                let diagonal = polarization_diagonal(&operator, &weights, &flags);
+                for (polarization, imaging_weight) in diagonal.into_iter().enumerate() {
+                    if imaging_weight == 0.0 {
+                        continue;
+                    }
+                    let contribution = first_spectral.contribution();
                     let output_channel = usize::try_from(contribution.output_channel())
                         .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                    let frequency_hz = contribution.evaluation_frequency_hz();
-                    if output_channel >= self.specification.slab().total_channels()
-                        || !frequency_hz.is_finite()
-                        || frequency_hz <= 0.0
-                        || !spectral.imaging_weight().is_finite()
-                        || spectral.imaging_weight() < 0.0
-                        || !contribution.factor().is_finite()
-                        || contribution.factor() == 0.0
-                    {
+                    if output_channel >= self.specification.slab().total_channels() {
                         return Err(SpectralOperatorError::InvalidSample);
                     }
-                    let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
-                    let Some(taps) = gridder.taps([uvw_m[0] * scale, uvw_m[1] * scale]) else {
-                        continue;
-                    };
-                    let phase_angle = std::f64::consts::TAU * phase_shift_m * frequency_hz
-                        / SPEED_OF_LIGHT_M_PER_S;
-                    let forward_scale = Complex64::from_polar(contribution.factor(), -phase_angle);
-                    if !forward_scale.re.is_finite() || !forward_scale.im.is_finite() {
-                        return Err(SpectralOperatorError::GeneratedNonfinite);
+                    let output_plane = output_channel
+                        .checked_mul(self.specification.polarization_count())
+                        .and_then(|plane| plane.checked_add(polarization))
+                        .and_then(|plane| u32::try_from(plane).ok())
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                    let mut group = Vec::new();
+                    for domain_ordinal in 0..self.specification.chart_count() {
+                        let chart = &self.specification.charts()[domain_ordinal];
+                        let (uvw_m, phase_shift_m) = selected_model_projection(
+                            selected,
+                            self.specification.chart_count(),
+                            chart.domain_ordinal(),
+                            chart.facet_ordinal(),
+                        )?;
+                        let frequency_hz = contribution.evaluation_frequency_hz();
+                        let factor = contribution.factor();
+                        if !frequency_hz.is_finite()
+                            || frequency_hz <= 0.0
+                            || !factor.is_finite()
+                            || factor == 0.0
+                        {
+                            return Err(SpectralOperatorError::InvalidSample);
+                        }
+                        let scale = frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+                        let Some(taps) = self.gridders[domain_ordinal]
+                            .taps([uvw_m[0] * scale, uvw_m[1] * scale])
+                        else {
+                            continue;
+                        };
+                        let phase_angle = std::f64::consts::TAU * phase_shift_m * frequency_hz
+                            / SPEED_OF_LIGHT_M_PER_S;
+                        let forward_scale = Complex64::from_polar(factor, -phase_angle);
+                        let old_capacity = group.capacity();
+                        group.push(ReducedRecordKey {
+                            chart_ordinal: u32::try_from(domain_ordinal)
+                                .map_err(|_| SpectralOperatorError::DomainProjectionMismatch)?,
+                            output_channel: output_plane,
+                            taps: encode_taps(taps)?,
+                            forward_real: canonical_zero_bits(forward_scale.re),
+                            forward_imaginary: canonical_zero_bits(forward_scale.im),
+                            imaging_weight: canonical_zero_bits(imaging_weight),
+                        });
+                        record_vector_growth(
+                            old_capacity,
+                            group.capacity(),
+                            size_of::<ReducedRecordKey>(),
+                            &mut measurements.source_group_vector_allocations,
+                            &mut measurements.source_group_capacity_growth_bytes,
+                        )?;
                     }
-                    has_positive_weight |= spectral.imaging_weight() > 0.0;
-                    let old_capacity = group.capacity();
-                    group.push(ReducedRecordKey {
-                        chart_ordinal: u32::try_from(domain_ordinal)
-                            .map_err(|_| SpectralOperatorError::DomainProjectionMismatch)?,
-                        output_channel: contribution.output_channel(),
-                        taps: encode_taps(taps)?,
-                        forward_real: canonical_zero_bits(forward_scale.re),
-                        forward_imaginary: canonical_zero_bits(forward_scale.im),
-                        imaging_weight: canonical_zero_bits(spectral.imaging_weight()),
-                    });
-                    record_vector_growth(
-                        old_capacity,
-                        group.capacity(),
-                        size_of::<ReducedRecordKey>(),
-                        &mut measurements.source_group_vector_allocations,
-                        &mut measurements.source_group_capacity_growth_bytes,
-                    )?;
+                    if !group.is_empty() {
+                        source_groups.push(group);
+                    }
                 }
-            }
-            if !group.is_empty() && has_positive_weight {
-                source_groups.push(group);
             }
         }
         Ok((source_groups, measurements))
@@ -953,6 +991,16 @@ impl GriddedNormalOperatorProgram {
         self.manifest
             .record_layout
             .accumulation_width(self.manifest.specification.slab().total_channels())
+            * self.manifest.specification.polarization_count()
+    }
+
+    fn output_plane_count(&self) -> Result<usize, SpectralOperatorError> {
+        self.manifest
+            .specification
+            .slab()
+            .total_channels()
+            .checked_mul(self.manifest.specification.polarization_count())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
     }
 
     /// Return the exact encoded byte count for one block.
@@ -1034,6 +1082,7 @@ impl GriddedNormalOperatorProgram {
             || prior.channel_count() != self.manifest.specification.slab().core_depth()
             || prior.coefficient_term_count() != self.manifest.record_layout.coefficient_terms()
             || prior.normal_moment_count() != self.manifest.record_layout.normal_moments()
+            || prior.polarization_count() != self.manifest.specification.polarization_count()
             || prior.domain_count() != self.manifest.specification.domain_count()
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
@@ -1053,10 +1102,7 @@ impl GriddedNormalOperatorProgram {
         if reusable_domains.len() != prepared_specification.domain_count() {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
-        let core_depth = self
-            .manifest
-            .record_layout
-            .accumulation_width(self.manifest.specification.slab().total_channels());
+        let core_depth = self.accumulation_width();
         let tile_catalogs = GriddedNormalDomainTileCatalogs::new(
             self.manifest
                 .specification
@@ -1575,6 +1621,7 @@ impl GriddedNormalSectorAccumulator {
         encoded: &[u8],
         grid_shape: [usize; 2],
         output_channels: usize,
+        polarizations: usize,
         sector_id: usize,
         prepared: &PreparedGriddedNormalBlock,
     ) -> Result<(), SpectralOperatorError> {
@@ -1609,11 +1656,12 @@ impl GriddedNormalSectorAccumulator {
                         .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                 )
                 .ok_or(SpectralOperatorError::IncompleteCoverage)?;
-            operator.grid_gridded_normal_local(
+            operator.grid_gridded_normal_local_polarization(
                 &mut self.grids,
                 &mut self.compensations,
                 self.geometry.translated_taps(record.taps)?,
-                record.output_channel,
+                record.output_channel / polarizations,
+                record.output_channel % polarizations,
                 predicted,
                 record.forward_scale.conj() * record.imaging_weight,
             )?;
@@ -1762,10 +1810,13 @@ impl GriddedNormalOperatorApply {
                         sequence,
                         encoded,
                         self.program.manifest.specification.grid_shape(),
-                        self.program.manifest.specification.slab().total_channels(),
+                        self.program.output_plane_count()?,
                         |record| {
-                            self.operators[0].predict_gridded_normal(
-                                record.output_channel,
+                            let polarizations =
+                                self.program.manifest.specification.polarization_count();
+                            self.operators[0].predict_gridded_normal_polarization(
+                                record.output_channel / polarizations,
+                                record.output_channel % polarizations,
                                 record.taps,
                                 record.forward_scale,
                             )
@@ -1936,7 +1987,8 @@ impl GriddedNormalOperatorApply {
                 operator,
                 encoded,
                 self.program.manifest.specification.grid_shape(),
-                self.program.manifest.specification.slab().total_channels(),
+                self.program.output_plane_count()?,
+                self.program.manifest.specification.polarization_count(),
                 work.sector_id,
                 block,
             )?;
@@ -2200,7 +2252,11 @@ fn validate_record_geometry(
 ) -> Result<(), SpectralOperatorError> {
     if specification.slab().core_depth() != specification.slab().total_channels()
         || specification.slab().resident_depth() != specification.slab().total_channels()
-        || specification.slab().total_channels() > 1 << CHANNEL_KEY_BITS
+        || specification
+            .slab()
+            .total_channels()
+            .checked_mul(specification.polarization_count())
+            .is_none_or(|planes| planes > 1 << CHANNEL_KEY_BITS)
         || (specification.chart_count() > specification.domain_count()
             && !matches!(
                 specification.block_normal_plan(),

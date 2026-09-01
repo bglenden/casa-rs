@@ -1246,7 +1246,8 @@ pub fn run_minor_cycle(
     run_minor_cycle_plane(
         lifecycle,
         base,
-        view.plane(0).ok_or(MinorCycleError::ModelShapeMismatch)?,
+        view.polarization_plane(0, controls.model_plane().polarization())
+            .ok_or(MinorCycleError::ModelShapeMismatch)?,
         mask,
         controls,
     )
@@ -1311,7 +1312,9 @@ pub(crate) fn run_image_domain_minor_cycle(
     let mut work = Vec::with_capacity(view.domain_count());
     let mut maximum_sidelobe = 0.0_f64;
     for (domain, mask) in view.domains().zip(masks.iter()) {
-        let plane = domain.plane(0).ok_or(MinorCycleError::ModelShapeMismatch)?;
+        let plane = domain
+            .polarization_plane(0, controls.model_plane().polarization())
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
         let shape = plane.shape();
         let model_plane =
             MinorCycleModelPlane::new(domain.ordinal(), 0, controls.model_plane().polarization());

@@ -7,9 +7,10 @@ use std::time::Instant;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
-    HogbomIterationAccounting, ImagingCapabilityRequirement, ResourcePolicy, SpectralImagingMode,
-    TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
-    installed_imaging_capability_catalog, resource_policy_for_task_requirements,
+    HogbomIterationAccounting, ImagingCapabilityRequirement, PolarizationCoordinate,
+    ResourcePolicy, SpectralImagingMode, TaskRequirement, UnsupportedRequirement,
+    VisibilityContinuumSubtraction, execute_continuum, installed_imaging_capability_catalog,
+    resource_policy_for_task_requirements,
 };
 
 use super::{
@@ -160,6 +161,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
             }
         }),
         data_column: config.datacolumn.clone(),
+        polarizations: polarization_coordinates(config.correlation.as_deref())?,
         algorithm,
         weighting: match config.weighting {
             WeightingMode::Natural => ContinuumWeighting::Natural,
@@ -218,6 +220,21 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         task_requirements,
         resource_policy,
     })
+}
+
+fn polarization_coordinates(selector: Option<&str>) -> Result<Vec<PolarizationCoordinate>, String> {
+    let coordinate = match selector.unwrap_or("I") {
+        "I" => PolarizationCoordinate::StokesI,
+        "Q" => PolarizationCoordinate::StokesQ,
+        "U" => PolarizationCoordinate::StokesU,
+        "V" => PolarizationCoordinate::StokesV,
+        "XX" => PolarizationCoordinate::LinearXx,
+        "YY" => PolarizationCoordinate::LinearYy,
+        "RR" => PolarizationCoordinate::CircularRr,
+        "LL" => PolarizationCoordinate::CircularLl,
+        selector => return Err(format!("invalid scalar polarization selector {selector:?}")),
+    };
+    Ok(vec![coordinate])
 }
 
 fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
@@ -392,7 +409,8 @@ mod tests {
     use std::ffi::OsString;
 
     use casa_imaging_application::{
-        ImagingCapabilityRequirement, ResourcePolicy, installed_imaging_capability_catalog,
+        ImagingCapabilityRequirement, PolarizationCoordinate, ResourcePolicy,
+        installed_imaging_capability_catalog,
     };
 
     use super::{
@@ -432,6 +450,16 @@ mod tests {
     #[test]
     fn default_backend_choices_select_the_installed_native_cpu_implementation() {
         assert!(backend_requirements(&config(&[])).is_empty());
+    }
+
+    #[test]
+    fn scalar_polarization_selection_reaches_the_native_application_request() {
+        assert_eq!(
+            application_request(&config(&["--stokes", "Q"]))
+                .expect("installed Stokes-Q request")
+                .polarizations,
+            [PolarizationCoordinate::StokesQ]
+        );
     }
 
     #[test]

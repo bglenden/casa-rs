@@ -377,7 +377,9 @@ fn selected_generation(
 fn bounded_replay_retains_a_compact_kernel_projection() {
     assert!(
         size_of::<WeightingSelectedSample>() < size_of::<SelectedObservationSample>() / 2,
-        "replay must not retain the complete validated source record"
+        "replay must not retain the complete validated source record: weighted={} selected={}",
+        size_of::<WeightingSelectedSample>(),
+        size_of::<SelectedObservationSample>()
     );
 }
 
