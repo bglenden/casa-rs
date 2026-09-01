@@ -60,6 +60,8 @@ use std::convert::Infallible;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
+mod t41_ephemeris_oracle;
+
 /// Canonical model-lifecycle commitment matching the compiled snapshot.
 fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
     let input = match model {
