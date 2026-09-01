@@ -3086,6 +3086,56 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
 }
 
 #[test]
+fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
+    let directory = tempfile::tempdir().expect("temporary moving-centre fixture");
+    let path = directory.path().join("moving.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let samples = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind moving-centre source")
+    .selected_samples(&problem)
+    .expect("prepare moving-centre stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("evaluate moving-centre samples");
+
+    let first = &samples[0];
+    let second_row = samples
+        .iter()
+        .find(|sample| sample.address.physical_row == 1)
+        .expect("second selected row");
+    assert_ne!(
+        first.coordinates.phase_direction,
+        second_row.coordinates.phase_direction
+    );
+    for sample in &samples {
+        assert_eq!(
+            sample.coordinates.phase_direction,
+            sample.coordinates.delay_direction
+        );
+        assert_eq!(
+            sample.coordinates.phase_direction,
+            sample.coordinates.pointing_directions.antenna1
+        );
+        assert_ne!(sample.coordinates.phase_shift_m, 0.0);
+    }
+    inspect_samples(&problem, samples).expect("inspect moving-centre stream");
+}
+
+#[test]
 fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() {
     let directory = tempfile::tempdir().expect("temporary POINTING fixture");
     let path = directory.path().join("pointing.ms");
@@ -4027,9 +4077,13 @@ fn compiled_problem_with_centres(
     row_count: usize,
     centres: CentreLaws,
 ) -> casa_imaging_model::CompiledProblem {
+    let mut references = vec![(ReferenceDataKind::Measures, identity(90))];
+    if matches!(centres.phase_tracking(), PhaseCentreLaw::Ephemeris(_)) {
+        references.push((ReferenceDataKind::Ephemeris, identity(90)));
+    }
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![source_input(path, 1, row_count)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
+        references,
         ModelStateIdentity::Empty,
     ))
     .expect("compile fixed-centre observation");

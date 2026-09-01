@@ -1736,8 +1736,12 @@ fn evaluate_row_geometry(
     let phase_direction = match centres.phase_tracking() {
         PhaseCentreLaw::Observation => observation_direction,
         PhaseCentreLaw::Fixed(direction) => require_fixed_j2000(*direction)?,
-        PhaseCentreLaw::Ephemeris(_) => {
-            return Err(BoundObservationSourceError::UnsupportedCentreLaw);
+        PhaseCentreLaw::Ephemeris(target) => {
+            let direction = source
+                .geometry_engine
+                .named_direction_j2000(stored.time_mjd_seconds(), target)?;
+            let (longitude_rad, latitude_rad) = direction.as_angles();
+            SkyDirection::new(DirectionFrame::J2000, longitude_rad, latitude_rad)
         }
     };
     let delay_direction = match centres.delay() {
@@ -1968,7 +1972,17 @@ fn evaluate_phase_direction(
     match problem.geometry().centres().phase_tracking() {
         PhaseCentreLaw::Observation => Ok(observation),
         PhaseCentreLaw::Fixed(direction) => require_fixed_j2000(*direction),
-        PhaseCentreLaw::Ephemeris(_) => Err(BoundObservationSourceError::UnsupportedCentreLaw),
+        PhaseCentreLaw::Ephemeris(target) => {
+            let direction = source
+                .geometry_engine
+                .named_direction_j2000(stored.time_mjd_seconds(), target)?;
+            let (longitude_rad, latitude_rad) = direction.as_angles();
+            Ok(SkyDirection::new(
+                DirectionFrame::J2000,
+                longitude_rad,
+                latitude_rad,
+            ))
+        }
     }
 }
 

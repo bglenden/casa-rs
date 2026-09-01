@@ -396,9 +396,9 @@ pub fn validate_installed_implementation(
     ) {
         unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
     }
-    if !matches!(
+    if matches!(
         problem.geometry().centres().phase_tracking(),
-        PhaseCentreLaw::Fixed(_)
+        PhaseCentreLaw::Observation
     ) {
         unsupported.push(UnsupportedRequirement::FixedPhaseCentre);
     }

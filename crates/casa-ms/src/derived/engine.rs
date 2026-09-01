@@ -403,6 +403,25 @@ impl MsCalEngine {
         Ok([longitude_rad, latitude_rad])
     }
 
+    /// Evaluate one named moving-source direction at an observation timestamp.
+    ///
+    /// The direction is resolved from the immutable Measures provider bound to
+    /// this engine and is never retained as a sample-sized array. Solar-system
+    /// bodies therefore follow the selected row epoch while fixed catalog
+    /// names remain constant, with both projected into the J2000 frame used by
+    /// MeasurementSet imaging geometry.
+    pub(crate) fn named_direction_j2000(
+        &self,
+        time_mjd_sec: f64,
+        source_name: &str,
+    ) -> MsResult<MDirection> {
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        MDirection::from_source_name(source_name, &frame)?
+            .convert_to(DirectionRef::J2000, &frame)
+            .map_err(Into::into)
+    }
+
     /// Get the field direction for the given field_id.
     fn field_dir(&self, field_id: usize) -> MsResult<&MDirection> {
         self.field_directions
