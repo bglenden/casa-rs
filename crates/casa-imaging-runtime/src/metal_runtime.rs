@@ -11,11 +11,13 @@ use std::time::Instant;
 
 use crate::{
     AcceleratorId, AcceleratorKind, AllocationId, CapacityDomainId, CapacityViewId,
-    ExecutionAttemptId, ExecutionDag, FenceKind, IoBufferKind, IoMeasurement, LeaseResource,
-    MemoryCapacityKind, PhysicalSlotId, QueueResourceId, ResourceMeasurement, ResourceTopology,
-    RuntimeOverheadDemand, StorageMode, TransferLinkId, WorkDomain, WorkExecutionContext, WorkKind,
-    WorkMeasurements, WorkNodeId,
+    ExecutionAttemptId, ExecutionDag, FenceKind, IoBufferKind, LeaseResource, MemoryCapacityKind,
+    PhysicalSlotId, QueueResourceId, ResourceTopology, RuntimeOverheadDemand, StorageMode,
+    TransferLinkId, WorkDomain, WorkExecutionContext, WorkKind, WorkMeasurements, WorkNodeId,
 };
+
+#[cfg(all(target_os = "macos", not(coverage)))]
+use crate::{IoMeasurement, ResourceMeasurement};
 
 #[cfg(all(target_os = "macos", not(coverage)))]
 use objc2::rc::Retained;
@@ -921,7 +923,7 @@ fn close_platform(_inner: &mut MetalExecutionInner) -> Result<(), MetalRuntimeEr
     Ok(())
 }
 
-#[cfg(not(all(target_os = "macos", not(coverage))))]
+#[cfg(all(test, not(all(target_os = "macos", not(coverage)))))]
 fn probe_platform(_decision: &MetalExecutionDecision) -> Result<(), MetalRuntimeError> {
     Err(MetalRuntimeError::UnsupportedPlatform)
 }
