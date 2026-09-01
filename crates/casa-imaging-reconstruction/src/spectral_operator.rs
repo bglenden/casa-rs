@@ -2669,7 +2669,7 @@ impl CompleteDataOwnerState {
                         if spectral.contribution() != first_spectral.contribution() {
                             return Err(SpectralOperatorError::InvalidSample);
                         }
-                        final_correlation_weight(weighted, spectral.imaging_weight())
+                        Ok(spectral.imaging_weight())
                     })
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 let published_weights =
@@ -3073,33 +3073,6 @@ fn spectral_stencil(
         .collect()
 }
 
-pub(crate) fn final_correlation_weight(
-    weighted: &crate::weighting::WeightingSampleValue,
-    imaging_weight: f64,
-) -> Result<f64, SpectralOperatorError> {
-    let selected = weighted.selected();
-    let group_weight = f64::from(selected.input_weight);
-    let raw_weight = f64::from(selected.raw_input_weight());
-    if !imaging_weight.is_finite()
-        || imaging_weight < 0.0
-        || !group_weight.is_finite()
-        || group_weight < 0.0
-        || !raw_weight.is_finite()
-        || raw_weight < 0.0
-    {
-        return Err(SpectralOperatorError::InvalidSample);
-    }
-    if group_weight == 0.0 {
-        return (imaging_weight == 0.0)
-            .then_some(0.0)
-            .ok_or(SpectralOperatorError::InvalidSample);
-    }
-    if raw_weight == group_weight {
-        return Ok(imaging_weight);
-    }
-    Ok(raw_weight * imaging_weight / group_weight)
-}
-
 pub(crate) fn polarization_diagonal(
     operator: &PolarizationOperator,
     weights: &[f64],
@@ -3127,6 +3100,7 @@ fn polarization_published_weights(
     use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
 
     if operator.feed_basis() == crate::polarization_operator::FeedBasis::Stokes
+        || operator.model_coordinates() == [StokesI]
         || !matches!(
             operator.model_coordinates().first(),
             Some(StokesI | StokesQ | StokesU | StokesV)

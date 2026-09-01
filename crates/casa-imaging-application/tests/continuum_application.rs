@@ -63,6 +63,20 @@ fn full_stokes_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+fn unequal_linear_parallel_hand_measurement_set(
+    root: &Path,
+    name: &str,
+    parallel_hand_weights: [f32; 2],
+) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        name,
+        MeasurementSetFixtureOptions::new(true, false, 1, 2, 1, false)
+            .with_linear_correlations()
+            .with_parallel_hand_weights(parallel_hand_weights),
+    )
+}
+
 fn spectral_line_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -95,6 +109,8 @@ struct MeasurementSetFixtureOptions {
     antenna_count: usize,
     main_row_count: usize,
     undefined_weight_spectrum: bool,
+    linear_correlations: bool,
+    parallel_hand_weights: Option<[f32; 2]>,
 }
 
 impl MeasurementSetFixtureOptions {
@@ -113,7 +129,19 @@ impl MeasurementSetFixtureOptions {
             antenna_count,
             main_row_count,
             undefined_weight_spectrum,
+            linear_correlations: false,
+            parallel_hand_weights: None,
         }
+    }
+
+    const fn with_linear_correlations(mut self) -> Self {
+        self.linear_correlations = true;
+        self
+    }
+
+    const fn with_parallel_hand_weights(mut self, weights: [f32; 2]) -> Self {
+        self.parallel_hand_weights = Some(weights);
+        self
     }
 }
 
@@ -129,6 +157,8 @@ fn measurement_set_fixture(
         antenna_count,
         main_row_count,
         undefined_weight_spectrum,
+        linear_correlations,
+        parallel_hand_weights,
     } = options;
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
@@ -150,6 +180,8 @@ fn measurement_set_fixture(
         channel_count,
         antenna_count,
         main_row_count,
+        linear_correlations,
+        parallel_hand_weights,
     );
     measurement_set
         .save_as(&output)
@@ -182,6 +214,8 @@ fn populate_fixture(
     channel_count: usize,
     antenna_count: usize,
     main_row_count: usize,
+    linear_correlations: bool,
+    parallel_hand_weights: Option<[f32; 2]>,
 ) {
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
@@ -209,7 +243,13 @@ fn populate_fixture(
     let direction = ArrayValue::Float64(
         ArrayD::from_shape_vec(vec![2, 1], vec![1.0, 0.5]).expect("direction shape"),
     );
-    let correlation_codes = if polarized { vec![5, 6, 7, 8] } else { vec![1] };
+    let correlation_codes = if !polarized {
+        vec![1]
+    } else if linear_correlations {
+        vec![9, 10, 11, 12]
+    } else {
+        vec![5, 6, 7, 8]
+    };
     let correlation_count = correlation_codes.len();
     let correlation_products = if polarized {
         vec![0, 0, 0, 1, 1, 0, 1, 1]
@@ -317,7 +357,11 @@ fn populate_fixture(
     let flags = (0..correlation_count * channel_count)
         .map(|index| flag_cross_hand && index % 4 == 3)
         .collect::<Vec<_>>();
-    let weights = vec![1.0; correlation_count];
+    let mut weights = vec![1.0; correlation_count];
+    if let Some([first, last]) = parallel_hand_weights {
+        weights[0] = first;
+        weights[correlation_count - 1] = last;
+    }
     let mut overrides = vec![
         ("ANTENNA1", int(0)),
         ("ANTENNA2", int(1)),
@@ -669,6 +713,57 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
             .expect("reopen numeric CLEAN mask");
     assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn stokes_i_uses_one_shared_imaging_weight_for_each_linear_parallel_hand() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+
+    let run = |name: &str, weights: [f32; 2]| {
+        let measurement_set =
+            unequal_linear_parallel_hand_measurement_set(root.path(), name, weights);
+        let image_name = root.path().join(format!("{name}-dirty"));
+        execute_continuum(request(
+            measurement_set,
+            image_name.clone(),
+            ContinuumAlgorithm::Dirty,
+        ))
+        .expect("native unequal-XX/YY dirty execution");
+        let psf = product_plane(&image_name, ".psf");
+        let residual = product_plane(&image_name, ".residual");
+        let sumwt =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}.sumwt", image_name.display())))
+                .expect("open Stokes-I sum weights")
+                .get()
+                .expect("read Stokes-I sum weights");
+        (psf, residual, sumwt)
+    };
+
+    let (equal_psf, equal_residual, equal_sumwt) = run("equal-hands", [2.0, 2.0]);
+    let (unequal_psf, unequal_residual, unequal_sumwt) = run("unequal-hands", [1.0, 3.0]);
+
+    assert_eq!(equal_psf, unequal_psf, "the common mean preserves the PSF");
+    assert!(
+        equal_residual.iter().any(|value| value.abs() > 0.0),
+        "the numerator comparison must be non-vacuous"
+    );
+    for (equal, unequal) in equal_residual.iter().zip(unequal_residual.iter()) {
+        assert!(
+            (equal - unequal).abs() <= 1.0e-6,
+            "shared per-hand weighting changed the Stokes-I numerator: equal={equal} unequal={unequal}"
+        );
+    }
+    assert_eq!(
+        equal_sumwt.as_slice().expect("contiguous sum weights"),
+        &[4.0]
+    );
+    assert_eq!(
+        unequal_sumwt.as_slice().expect("contiguous sum weights"),
+        &[4.0],
+        "both mapped hands contribute their shared row/channel imaging weight"
+    );
 }
 
 #[test]

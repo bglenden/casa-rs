@@ -34,8 +34,7 @@ use crate::{
         SpectralOperatorError, SpectralOperatorPass, SpectralOperatorSpecification,
         SpectralPrimitiveCatalog, SpectralSlabOperator, StandardConvolution, TapSpan,
         accept_polarization_input, accept_weighted_input, combine_chart_updates,
-        final_correlation_weight, polarization_diagonal, polarization_effective_flags,
-        selected_model_projection,
+        polarization_diagonal, polarization_effective_flags, selected_model_projection,
     },
     weighting::{
         CoverageEncoder, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -684,7 +683,7 @@ impl GriddedNormalOperatorCompiler {
                         if spectral.contribution() != first_spectral.contribution() {
                             return Err(SpectralOperatorError::InvalidSample);
                         }
-                        final_correlation_weight(weighted, spectral.imaging_weight())
+                        Ok(spectral.imaging_weight())
                     })
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 let diagonal = polarization_diagonal(&operator, &weights, &flags);
