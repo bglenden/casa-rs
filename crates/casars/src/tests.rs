@@ -241,12 +241,26 @@ fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
         &profile,
     )
     .expect("resolve shared imager profile");
+    let invocation = crate::parameters_cli::project_task_invocation(&session)
+        .expect("project canonical imager request from TUI session");
+    let request: serde_json::Value = serde_json::from_str(
+        invocation
+            .stdin
+            .as_deref()
+            .expect("canonical imager request stdin"),
+    )
+    .expect("decode canonical imager request");
+    assert_eq!(request, expected["request"]);
     let temp = tempdir().expect("tempdir");
     let app_definition = imager_app();
     let schema = app_definition.load_schema().expect("imager UI schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(app_definition, schema, config);
     app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
+    let preflight = app
+        .execution_stdin_for_test()
+        .expect_err("unsupported fixture must surface owner diagnostics before execution");
+    assert!(preflight.contains("task/task.aw_projection"), "{preflight}");
 
     for name in ["vis", "imagename", "imsize", "cell", "niter"] {
         assert_eq!(
