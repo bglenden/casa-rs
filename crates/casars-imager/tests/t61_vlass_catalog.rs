@@ -12,6 +12,7 @@ use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casars_imager::{ImagerTaskRequest, imager_provider_invocation};
 
 const DATASET: &str = "measurementset/vla/ref_vlass_wtsp_creation.ms";
+const FIXTURE_SPW_SELECTOR: &str = "0:0~15";
 
 #[test]
 #[ignore = "requires slow-parity casatestdata"]
@@ -48,14 +49,17 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
         ),
         (
             "imsize".into(),
-            ParameterValue::Array(vec![ParameterValue::Integer(128); 2]),
+            ParameterValue::Array(vec![ParameterValue::Integer(12_150); 2]),
         ),
         (
             "cell".into(),
             ParameterValue::Array(vec![ParameterValue::String("2.5arcsec".into()); 2]),
         ),
         ("field".into(), ParameterValue::String("0".into())),
-        ("spw".into(), ParameterValue::String("0:0~15".into())),
+        (
+            "spw".into(),
+            ParameterValue::String(FIXTURE_SPW_SELECTOR.into()),
+        ),
         ("uvrange".into(), ParameterValue::String("<12km".into())),
         ("intent".into(), ParameterValue::String("*TARGET*".into())),
         ("stokes".into(), ParameterValue::String("I".into())),
@@ -89,7 +93,7 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
         ("write_preview_pngs".into(), ParameterValue::Bool(false)),
     ]);
     let bundle = builtin_surface_bundle("imager")?;
-    let mut open = OpenSessionRequest::defaults(bundle, staging.path());
+    let mut open = OpenSessionRequest::defaults(bundle.clone(), staging.path());
     open.override_patch = ResolutionPatch {
         values: overrides,
         unset: Default::default(),
@@ -104,6 +108,8 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
             .as_deref()
             .ok_or("missing typed provider request")?,
     )?;
+    assert_eq!(request.image_size, 12_150);
+    assert_eq!(request.spw_selector.as_deref(), Some(FIXTURE_SPW_SELECTOR));
     assert_eq!(request.parallel, Some(false));
     assert!(request.use_pointing);
     assert_eq!(request.w_project_planes, Some(32));
@@ -121,6 +127,67 @@ fn t61_vlass_controls_reach_the_real_snapshot_and_exact_typed_unavailability()
         "imaging request requires unsupported installed-implementation contract items: \
 [Task(AwProjection), Task(WProjectionPlanes)]"
     );
+
+    let supported_image_name = output.path().join("vlass-t61-standard");
+    let supported_overrides = BTreeMap::from([
+        (
+            "vis".into(),
+            ParameterValue::String(staged_measurement_set.display().to_string()),
+        ),
+        (
+            "imagename".into(),
+            ParameterValue::String(supported_image_name.display().to_string()),
+        ),
+        (
+            "imsize".into(),
+            ParameterValue::Array(vec![ParameterValue::Integer(1024); 2]),
+        ),
+        (
+            "cell".into(),
+            ParameterValue::Array(vec![ParameterValue::String("2.5arcsec".into()); 2]),
+        ),
+        ("field".into(), ParameterValue::String("0".into())),
+        (
+            "spw".into(),
+            ParameterValue::String(FIXTURE_SPW_SELECTOR.into()),
+        ),
+        ("uvrange".into(), ParameterValue::String("<12km".into())),
+        ("intent".into(), ParameterValue::String("*TARGET*".into())),
+        ("stokes".into(), ParameterValue::String("I".into())),
+        ("specmode".into(), ParameterValue::String("mfs".into())),
+        (
+            "deconvolver".into(),
+            ParameterValue::String("hogbom".into()),
+        ),
+        ("nterms".into(), ParameterValue::Integer(1)),
+        ("gridder".into(), ParameterValue::String("standard".into())),
+        ("niter".into(), ParameterValue::Integer(0)),
+        ("parallel".into(), ParameterValue::Bool(false)),
+        ("write_preview_pngs".into(), ParameterValue::Bool(false)),
+    ]);
+    let mut supported_open = OpenSessionRequest::defaults(bundle, staging.path());
+    supported_open.override_patch = ResolutionPatch {
+        values: supported_overrides,
+        unset: Default::default(),
+    };
+    let supported_session = ParameterRuntime::default().open_session(supported_open)?;
+    let supported_invocation =
+        project_provider_invocation(&supported_session, |_family, values, direct| {
+            imager_provider_invocation(values, direct.args)
+        })?;
+    let ImagerTaskRequest::Run(supported_request) = serde_json::from_str(
+        supported_invocation
+            .stdin
+            .as_deref()
+            .ok_or("missing supported typed provider request")?,
+    )?;
+    let summary = supported_request.execute()?;
+    assert_eq!(summary.request.image_size, 1024);
+    assert_eq!(
+        summary.request.spw_selector.as_deref(),
+        Some(FIXTURE_SPW_SELECTOR)
+    );
+    assert!(summary.run.gridded_samples > 0);
     Ok(())
 }
 
