@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 10,
+      "contract_version": 11,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -12172,7 +12172,7 @@
           "active_when": {
             "kind": "always"
           },
-          "surface_note": "none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. stage-aware and hybrid currently apply their corresponding caps only in planner probes. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.",
+          "surface_note": "none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.",
           "projections": {
             "cli": {
               "flags": [
@@ -12199,7 +12199,7 @@
           "name": "imaging_memory_pressure_policy",
           "concept": {
             "id": "parameter.imaging_memory_pressure_policy",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 84,
           "default": {
@@ -12215,7 +12215,7 @@
           "active_when": {
             "kind": "always"
           },
-          "surface_note": "auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. stage-aware and hybrid are planner-probe-only until their requested runtime actions are implemented.",
+          "surface_note": "auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target.",
           "projections": {
             "cli": {
               "flags": [
@@ -12707,6 +12707,12 @@
         {
           "from_contract": 9,
           "to_contract": 10,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 10,
+          "to_contract": 11,
           "steps": [],
           "changed_defaults": []
         }

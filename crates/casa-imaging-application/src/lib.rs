@@ -13,15 +13,18 @@ mod continuum_domains;
 mod continuum_request;
 
 pub use availability::{
-    ImplementationUnavailable, TaskRequirement, UnsupportedRequirement,
+    ImagingCapabilityCatalogEntry, ImagingCapabilityRequirement, ImplementationUnavailable,
+    TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
     validate_installed_implementation,
 };
-pub use casa_imaging_model::HogbomIterationAccounting;
+pub use casa_imaging_model::{HogbomIterationAccounting, ImagingRequestVersion};
+pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
     ContinuumWeighting, SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
+    resource_policy_for_task_requirements,
 };
 
 use std::{error::Error, fmt, io, sync::Arc};
@@ -45,8 +48,8 @@ use casa_imaging_runtime::{
     ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
     FrozenWeightingReservation, GriddedNormalReplayStorage, ImplementationContractMetadata,
     ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, ResourcePolicy,
-    RunBindings, RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
+    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, RunBindings,
+    RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
     SpectralCyclePlanParts, SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext,

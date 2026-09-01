@@ -470,6 +470,7 @@ fn request(
         write_primary_beam: false,
         pbcor: false,
         task_requirements: Vec::new(),
+        resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
     }
 }
 

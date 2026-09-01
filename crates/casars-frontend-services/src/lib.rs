@@ -5668,6 +5668,7 @@ pub fn parameter_provider_invocation(
         .render_sparse()
         .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
     let invocation = project_provider_invocation(&session, |family, values, direct| match family {
+        "imager" => casars_imager::imager_provider_invocation(values, direct.args),
         "simobserve" => {
             casa_ms::simulation_task::simobserve_provider_invocation(values, direct.args)
         }
@@ -9726,6 +9727,40 @@ mod tests {
         assert_eq!(request["request"]["output_ms"], "simobserve-family.ms");
         assert!(request["request"].get("model").is_none());
         assert!(request["request"].get("out").is_none());
+    }
+
+    #[test]
+    fn parameter_provider_invocation_uses_the_imager_typed_request() {
+        let values = HashMap::from([
+            (
+                "vis".to_string(),
+                SurfaceParameterValue::String {
+                    value: "input.ms".to_string(),
+                },
+            ),
+            (
+                "imagename".to_string(),
+                SurfaceParameterValue::String {
+                    value: "products/image".to_string(),
+                },
+            ),
+            (
+                "parallel".to_string(),
+                SurfaceParameterValue::Bool { value: false },
+            ),
+        ]);
+        let invocation = parameter_provider_invocation("imager".to_string(), values)
+            .expect("typed imager invocation");
+        assert_eq!(
+            invocation.args,
+            ["--managed-output", "true", "--json-run", "-"]
+        );
+        let request: serde_json::Value =
+            serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
+        assert_eq!(request["kind"], "run");
+        assert_eq!(request["request"]["measurement_set"], "input.ms");
+        assert_eq!(request["request"]["image_name"], "products/image");
+        assert_eq!(request["request"]["parallel"], false);
     }
 
     #[test]

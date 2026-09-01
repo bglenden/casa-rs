@@ -13,10 +13,10 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
-    assert len(catalog["surfaces"]) == 42
+    assert len(catalog["surfaces"]) == 41
     assert (
         len([surface for surface in catalog["surfaces"] if surface["kind"] == "task"])
-        == 40
+        == 39
     )
     assert (
         len(

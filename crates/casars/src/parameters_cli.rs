@@ -493,6 +493,7 @@ pub(crate) fn project_task_invocation(
     session: &ParameterSession,
 ) -> Result<ProviderInvocation, String> {
     project_provider_invocation(session, |family, values, direct| match family {
+        "imager" => casars_imager::imager_provider_invocation(values, direct.args),
         "simobserve" => {
             casa_ms::simulation_task::simobserve_provider_invocation(values, direct.args)
         }
@@ -798,9 +799,16 @@ mod tests {
             session.values()["cell"],
             ParameterValue::Array(vec![ParameterValue::String("0.2arcsec".into()); 2])
         );
-        let args = project_task_invocation(&session).unwrap().args;
-        assert!(args.windows(2).any(|args| args == ["--imsize", "1024"]));
-        assert!(args.windows(2).any(|args| args == ["--cell-arcsec", "0.2"]));
+        let invocation = project_task_invocation(&session).unwrap();
+        assert_eq!(
+            invocation.args,
+            ["--managed-output", "true", "--json-run", "-"]
+        );
+        let request: serde_json::Value =
+            serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
+        assert_eq!(request["kind"], "run");
+        assert_eq!(request["request"]["image_size"], 1024);
+        assert_eq!(request["request"]["cell_arcsec"], 0.2);
     }
 
     #[test]

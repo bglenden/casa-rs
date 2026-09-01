@@ -207,6 +207,12 @@ fn base_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagi
         write_primary_beam: false,
         pbcor: false,
         task_requirements: vec![TaskRequirement::SerialCpu],
+        resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
+            casa_imaging_runtime::ResourceOverride {
+                workers: Some(1),
+                ..Default::default()
+            },
+        ),
     }
 }
 
