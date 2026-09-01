@@ -881,7 +881,6 @@ fn prepare_mvc_spectral_axis(
         selected_source_channels.insert(window.spw_id, selected);
     }
 
-    let setup = setup.expect("nonempty selected spectral windows");
     let output_frame = imaging_frequency_frame(output_frequency_reference)?;
     let (rest_frequency, doppler) = match axis.rest_frequency_hz {
         None => (
@@ -900,11 +899,10 @@ fn prepare_mvc_spectral_axis(
             },
         ),
     };
-    let sampling = match setup.interpolation {
-        CubeInterpolation::Nearest => SpectralSamplingLaw::NEAREST,
-        CubeInterpolation::Linear => SpectralSamplingLaw::LINEAR,
-        CubeInterpolation::Cubic => SpectralSamplingLaw::CUBIC,
-    };
+    // CASA's MVC helper forces the cube-major GridFT interpolation to nearest
+    // after deriving the shared frequency range; task interpolation is not
+    // carried into this internal cube (`imager_mtmfs_via_cube.py`).
+    let sampling = SpectralSamplingLaw::NEAREST;
     Ok(PreparedSpectralAxis {
         selected_source_channels,
         source_frame,

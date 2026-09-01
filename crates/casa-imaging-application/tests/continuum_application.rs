@@ -72,7 +72,7 @@ fn unequal_linear_parallel_hand_measurement_set(
     measurement_set_fixture(
         root,
         name,
-        MeasurementSetFixtureOptions::new(true, false, 1, 2, 1, false)
+        MeasurementSetFixtureOptions::new(true, false, 1, 1, 2, 1, false)
             .with_linear_correlations()
             .with_parallel_hand_weights(parallel_hand_weights),
     )
@@ -162,41 +162,20 @@ fn measurement_set_fixture(
     name: &str,
     options: MeasurementSetFixtureOptions,
 ) -> PathBuf {
-    let MeasurementSetFixtureOptions {
-        polarized,
-        flag_cross_hand,
-        channel_count,
-        spectral_window_count,
-        antenna_count,
-        main_row_count,
-        undefined_weight_spectrum,
-        linear_correlations,
-        parallel_hand_weights,
-    } = options;
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
-    if undefined_weight_spectrum {
+    if options.undefined_weight_spectrum {
         builder = builder.with_main_column(OptionalMainColumn::WeightSpectrum);
     }
-    if polarized {
+    if options.polarized {
         builder = builder.with_main_column(OptionalMainColumn::ModelData);
     }
-    if channel_count == 4 {
+    if options.channel_count == 4 {
         builder = builder.with_main_column(OptionalMainColumn::CorrectedData);
     }
     let mut measurement_set =
         MeasurementSet::create_memory(builder).expect("create in-memory application fixture");
-    populate_fixture(
-        &mut measurement_set,
-        polarized,
-        flag_cross_hand,
-        channel_count,
-        spectral_window_count,
-        antenna_count,
-        main_row_count,
-        linear_correlations,
-        parallel_hand_weights,
-    );
+    populate_fixture(&mut measurement_set, options);
     measurement_set
         .save_as(&output)
         .expect("persist fixture with production tiled bindings");
@@ -221,17 +200,18 @@ fn measurement_set_fixture(
     output
 }
 
-fn populate_fixture(
-    measurement_set: &mut MeasurementSet,
-    polarized: bool,
-    flag_cross_hand: bool,
-    channel_count: usize,
-    spectral_window_count: usize,
-    antenna_count: usize,
-    main_row_count: usize,
-    linear_correlations: bool,
-    parallel_hand_weights: Option<[f32; 2]>,
-) {
+fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSetFixtureOptions) {
+    let MeasurementSetFixtureOptions {
+        polarized,
+        flag_cross_hand,
+        channel_count,
+        spectral_window_count,
+        antenna_count,
+        main_row_count,
+        linear_correlations,
+        parallel_hand_weights,
+        ..
+    } = options;
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
         for antenna in 0..antenna_count {
