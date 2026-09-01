@@ -536,10 +536,6 @@ fn prepare_spectral_axis(
         SpectralImagingMode::Cube {
             axis,
             output_channels,
-        }
-        | SpectralImagingMode::MtmfsViaCube {
-            axis,
-            output_channels,
         } => {
             let [window] = spectral_windows else {
                 return Err(boxed(
@@ -638,6 +634,23 @@ fn prepare_spectral_axis(
                 increment_hz,
             })
         }
+        SpectralImagingMode::MtmfsViaCube {
+            axis,
+            output_channels,
+        } => prepare_mvc_spectral_axis(
+            request,
+            spectral_windows,
+            source_frequency_reference,
+            source_frame,
+            anchor_time_mjd_seconds,
+            time_bounds_mjd_seconds,
+            field_id,
+            phase,
+            direction,
+            frame_engine,
+            axis,
+            *output_channels,
+        ),
         SpectralImagingMode::CubeSource {
             axis,
             output_channels,
@@ -730,6 +743,196 @@ fn prepare_spectral_axis(
             })
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_mvc_spectral_axis(
+    request: &ContinuumImagingRequest,
+    spectral_windows: &[SourceSpectralWindow],
+    source_frequency_reference: FrequencyRef,
+    source_frame: FrequencyFrame,
+    anchor_time_mjd_seconds: f64,
+    time_bounds_mjd_seconds: [f64; 2],
+    field_id: usize,
+    phase: MDirection,
+    direction: DirectionCoordinateSpec,
+    frame_engine: &casa_ms::derived::engine::MsCalEngine,
+    axis: &CubeAxisConfig,
+    requested_output_channels: Option<usize>,
+) -> Result<PreparedSpectralAxis, crate::ApplicationError> {
+    let mut selected_by_spw = BTreeMap::new();
+    let mut selected_channel_count = 0_usize;
+    let mut global_low_hz = f64::INFINITY;
+    let mut global_high_hz = f64::NEG_INFINITY;
+    let mut output_frequency_reference = None;
+    // CASA MVC derives the major-cycle cube from the complete selected band,
+    // then replaces task start/width with that global linear axis.
+    let mut range_axis = axis.clone();
+    range_axis.start = None;
+    range_axis.width = None;
+
+    for window in spectral_windows {
+        let selected = selected_channels(request, window.spw_id, &window.frequencies_hz)?;
+        selected_channel_count = selected_channel_count
+            .checked_add(selected.len())
+            .ok_or_else(|| boxed("selected MVC channel count overflows usize"))?;
+        let (probe, _) = CubeSpectralSetup::for_casa_cube_axis(
+            source_frequency_reference,
+            &window.frequencies_hz,
+            &window.channel_widths_hz,
+            window.frequencies_hz.len(),
+            &range_axis,
+            anchor_time_mjd_seconds,
+            field_id,
+            Some(phase.clone()),
+            time_bounds_mjd_seconds,
+            frame_engine,
+        )?;
+        if output_frequency_reference.is_some_and(|reference| reference != probe.output_freq_ref) {
+            return Err(boxed(
+                "selected MVC spectral windows resolve to different output frequency frames",
+            ));
+        }
+        output_frequency_reference.get_or_insert(probe.output_freq_ref);
+
+        let source_edges_hz = selected
+            .iter()
+            .flat_map(|channel| {
+                let center_hz = window.frequencies_hz[*channel];
+                let half_width_hz = window.channel_widths_hz[*channel].abs() / 2.0;
+                [center_hz - half_width_hz, center_hz + half_width_hz]
+            })
+            .collect::<Vec<_>>();
+        let output_edges_hz = probe.row_source_frequencies_for_interpolation(
+            &source_edges_hz,
+            anchor_time_mjd_seconds,
+            field_id,
+            frame_engine,
+        )?;
+        for edge_hz in output_edges_hz {
+            global_low_hz = global_low_hz.min(edge_hz);
+            global_high_hz = global_high_hz.max(edge_hz);
+        }
+        selected_by_spw.insert(window.spw_id, selected);
+    }
+
+    let output_channels = requested_output_channels.unwrap_or(selected_channel_count);
+    if output_channels == 0
+        || !global_low_hz.is_finite()
+        || !global_high_hz.is_finite()
+        || global_high_hz <= global_low_hz
+    {
+        return Err(boxed(
+            "MVC requires a positive output channel count and finite selected frequency range",
+        ));
+    }
+    let output_frequency_reference =
+        output_frequency_reference.expect("nonempty selected spectral windows");
+    let increment_hz = (global_high_hz - global_low_hz) / output_channels as f64;
+    let mut global_axis = axis.clone();
+    global_axis.start = Some(casa_ms::CubeAxisValue::FrequencyHz {
+        hz: global_low_hz,
+        frame: Some(output_frequency_reference),
+    });
+    global_axis.width = Some(casa_ms::CubeAxisValue::FrequencyHz {
+        hz: increment_hz,
+        frame: Some(output_frequency_reference),
+    });
+
+    let mut setup = None;
+    let mut selected_source_channels = BTreeMap::new();
+    for window in spectral_windows {
+        let (window_setup, support) = CubeSpectralSetup::for_casa_cube_axis(
+            source_frequency_reference,
+            &window.frequencies_hz,
+            &window.channel_widths_hz,
+            output_channels,
+            &global_axis,
+            anchor_time_mjd_seconds,
+            field_id,
+            Some(phase.clone()),
+            time_bounds_mjd_seconds,
+            frame_engine,
+        )?;
+        if setup.as_ref().is_some_and(|shared: &CubeSpectralSetup| {
+            shared.output_channel_frequencies_hz != window_setup.output_channel_frequencies_hz
+                || shared.output_channel_widths_hz != window_setup.output_channel_widths_hz
+        }) {
+            return Err(boxed(
+                "selected MVC spectral windows did not resolve to one shared output axis",
+            ));
+        }
+        setup.get_or_insert(window_setup);
+        let selected = selected_by_spw
+            .get(&window.spw_id)
+            .expect("selected MVC SPW");
+        let support = support.indices.into_iter().collect::<BTreeSet<_>>();
+        let selected = selected
+            .iter()
+            .copied()
+            .filter(|channel| support.contains(channel))
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            return Err(boxed(format!(
+                "MVC output axis has no supporting source channels in SPW {}",
+                window.spw_id
+            )));
+        }
+        selected_source_channels.insert(window.spw_id, selected);
+    }
+
+    let setup = setup.expect("nonempty selected spectral windows");
+    let output_frame = imaging_frequency_frame(output_frequency_reference)?;
+    let (rest_frequency, doppler) = match axis.rest_frequency_hz {
+        None => (
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+        Some(hertz) => (
+            RestFrequency::Line { hertz },
+            match axis.veltype {
+                DopplerRef::RADIO => DopplerConvention::Radio,
+                DopplerRef::Z => DopplerConvention::Optical,
+                DopplerRef::BETA => DopplerConvention::Relativistic,
+                DopplerRef::RATIO | DopplerRef::GAMMA => {
+                    return Err(boxed("MVC Doppler convention is not supported"));
+                }
+            },
+        ),
+    };
+    let sampling = match setup.interpolation {
+        CubeInterpolation::Nearest => SpectralSamplingLaw::NEAREST,
+        CubeInterpolation::Linear => SpectralSamplingLaw::LINEAR,
+        CubeInterpolation::Cubic => SpectralSamplingLaw::CUBIC,
+    };
+    Ok(PreparedSpectralAxis {
+        selected_source_channels,
+        source_frame,
+        output_frequency_reference,
+        output_frame,
+        anchor: spectral_frame_anchor(
+            source_frame,
+            output_frame,
+            anchor_time_mjd_seconds,
+            direction,
+            frame_engine,
+        )?,
+        wcs: SpectralWcs::Linear {
+            channels: output_channels,
+            reference_pixel: 0.0,
+            reference_frequency_hz: global_low_hz,
+            increment_hz,
+        },
+        rest_frequency,
+        doppler,
+        sampling,
+        basis: ReconstructionBasis::ChannelLocal {
+            channels: output_channels,
+        },
+        output_channels,
+        reference_frequency_hz: global_low_hz,
+        increment_hz,
+    })
 }
 
 fn spectral_frame_anchor(

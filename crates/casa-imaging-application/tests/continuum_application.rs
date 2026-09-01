@@ -10,9 +10,10 @@ use casa_coordinates::{
 };
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    ApplicationDispatchError, ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy,
+    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    ContinuumWeighting, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
+    execute_continuum,
 };
 use casa_imaging_model::ImageDomainRole;
 use casa_ms::{
@@ -35,7 +36,7 @@ fn tiny_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, false),
+        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 1, false),
     )
 }
 
@@ -43,7 +44,7 @@ fn multi_row_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "multi-row-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 2, 8, false),
+        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 8, false),
     )
 }
 
@@ -51,7 +52,7 @@ fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "polarized-input.ms",
-        MeasurementSetFixtureOptions::new(true, true, 2, 2, 1, false),
+        MeasurementSetFixtureOptions::new(true, true, 2, 1, 2, 1, false),
     )
 }
 
@@ -59,7 +60,7 @@ fn full_stokes_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "full-stokes-input.ms",
-        MeasurementSetFixtureOptions::new(true, false, 2, 27, 702, false),
+        MeasurementSetFixtureOptions::new(true, false, 2, 1, 27, 702, false),
     )
 }
 
@@ -81,7 +82,7 @@ fn spectral_line_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "line-input.ms",
-        MeasurementSetFixtureOptions::new(true, true, 4, 2, 1, false),
+        MeasurementSetFixtureOptions::new(true, true, 4, 1, 2, 1, false),
     )
 }
 
@@ -89,7 +90,7 @@ fn joint_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "joint-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 4, 2, 1, false),
+        MeasurementSetFixtureOptions::new(false, false, 4, 1, 2, 1, false),
     )
 }
 
@@ -97,7 +98,15 @@ fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "undefined-weight-spectrum.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, true),
+        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 1, true),
+    )
+}
+
+fn four_spw_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "four-spw-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false),
     )
 }
 
@@ -106,6 +115,7 @@ struct MeasurementSetFixtureOptions {
     polarized: bool,
     flag_cross_hand: bool,
     channel_count: usize,
+    spectral_window_count: usize,
     antenna_count: usize,
     main_row_count: usize,
     undefined_weight_spectrum: bool,
@@ -118,6 +128,7 @@ impl MeasurementSetFixtureOptions {
         polarized: bool,
         flag_cross_hand: bool,
         channel_count: usize,
+        spectral_window_count: usize,
         antenna_count: usize,
         main_row_count: usize,
         undefined_weight_spectrum: bool,
@@ -126,6 +137,7 @@ impl MeasurementSetFixtureOptions {
             polarized,
             flag_cross_hand,
             channel_count,
+            spectral_window_count,
             antenna_count,
             main_row_count,
             undefined_weight_spectrum,
@@ -154,6 +166,7 @@ fn measurement_set_fixture(
         polarized,
         flag_cross_hand,
         channel_count,
+        spectral_window_count,
         antenna_count,
         main_row_count,
         undefined_weight_spectrum,
@@ -178,6 +191,7 @@ fn measurement_set_fixture(
         polarized,
         flag_cross_hand,
         channel_count,
+        spectral_window_count,
         antenna_count,
         main_row_count,
         linear_correlations,
@@ -212,6 +226,7 @@ fn populate_fixture(
     polarized: bool,
     flag_cross_hand: bool,
     channel_count: usize,
+    spectral_window_count: usize,
     antenna_count: usize,
     main_row_count: usize,
     linear_correlations: bool,
@@ -301,55 +316,57 @@ fn populate_fixture(
         ))
         .expect("add POLARIZATION row");
 
-    let frequency = Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(
-            vec![channel_count],
-            (0..channel_count)
-                .map(|channel| 44.0e9 + channel as f64 * 1.0e6)
-                .collect(),
-        )
-        .expect("frequency shape"),
-    ));
-    let width = Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(vec![channel_count], vec![1.0e6; channel_count])
-            .expect("width shape"),
-    ));
-    measurement_set
-        .subtable_mut(SubtableId::SpectralWindow)
-        .expect("SPECTRAL_WINDOW")
-        .add_row(required_row(
-            schema::spectral_window::REQUIRED_COLUMNS,
-            &[
-                ("NUM_CHAN", int(channel_count as i32)),
-                ("NAME", string("CONTINUUM")),
-                ("REF_FREQUENCY", float(44.0e9)),
-                ("TOTAL_BANDWIDTH", float(channel_count as f64 * 1.0e6)),
-                ("CHAN_FREQ", frequency),
-                ("CHAN_WIDTH", width.clone()),
-                ("EFFECTIVE_BW", width.clone()),
-                ("RESOLUTION", width),
-                ("MEAS_FREQ_REF", int(5)),
-                ("NET_SIDEBAND", int(1)),
-                ("FREQ_GROUP", int(0)),
-                ("FREQ_GROUP_NAME", string("")),
-                ("IF_CONV_CHAIN", int(0)),
-                ("FLAG_ROW", boolean(false)),
-            ],
-        ))
-        .expect("add SPECTRAL_WINDOW row");
-
-    measurement_set
-        .subtable_mut(SubtableId::DataDescription)
-        .expect("DATA_DESCRIPTION")
-        .add_row(required_row(
-            schema::data_description::REQUIRED_COLUMNS,
-            &[
-                ("SPECTRAL_WINDOW_ID", int(0)),
-                ("POLARIZATION_ID", int(0)),
-                ("FLAG_ROW", boolean(false)),
-            ],
-        ))
-        .expect("add DATA_DESCRIPTION row");
+    for spw in 0..spectral_window_count {
+        let first_frequency_hz = 44.0e9 + spw as f64 * 100.0e6;
+        let frequency = Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(
+                vec![channel_count],
+                (0..channel_count)
+                    .map(|channel| first_frequency_hz + channel as f64 * 1.0e6)
+                    .collect(),
+            )
+            .expect("frequency shape"),
+        ));
+        let width = Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![channel_count], vec![1.0e6; channel_count])
+                .expect("width shape"),
+        ));
+        measurement_set
+            .subtable_mut(SubtableId::SpectralWindow)
+            .expect("SPECTRAL_WINDOW")
+            .add_row(required_row(
+                schema::spectral_window::REQUIRED_COLUMNS,
+                &[
+                    ("NUM_CHAN", int(channel_count as i32)),
+                    ("NAME", string(&format!("CONTINUUM_{spw}"))),
+                    ("REF_FREQUENCY", float(first_frequency_hz)),
+                    ("TOTAL_BANDWIDTH", float(channel_count as f64 * 1.0e6)),
+                    ("CHAN_FREQ", frequency),
+                    ("CHAN_WIDTH", width.clone()),
+                    ("EFFECTIVE_BW", width.clone()),
+                    ("RESOLUTION", width),
+                    ("MEAS_FREQ_REF", int(5)),
+                    ("NET_SIDEBAND", int(1)),
+                    ("FREQ_GROUP", int(0)),
+                    ("FREQ_GROUP_NAME", string("")),
+                    ("IF_CONV_CHAIN", int(0)),
+                    ("FLAG_ROW", boolean(false)),
+                ],
+            ))
+            .expect("add SPECTRAL_WINDOW row");
+        measurement_set
+            .subtable_mut(SubtableId::DataDescription)
+            .expect("DATA_DESCRIPTION")
+            .add_row(required_row(
+                schema::data_description::REQUIRED_COLUMNS,
+                &[
+                    ("SPECTRAL_WINDOW_ID", int(spw as i32)),
+                    ("POLARIZATION_ID", int(0)),
+                    ("FLAG_ROW", boolean(false)),
+                ],
+            ))
+            .expect("add DATA_DESCRIPTION row");
+    }
 
     let visibilities = (0..correlation_count * channel_count)
         .map(|index| Complex32::new((index % 6 + 1) as f32, 0.0))
@@ -439,6 +456,11 @@ fn populate_fixture(
         let mut row_overrides = overrides.clone();
         replace_override(&mut row_overrides, "ANTENNA1", int(antenna1 as i32));
         replace_override(&mut row_overrides, "ANTENNA2", int(antenna2 as i32));
+        replace_override(
+            &mut row_overrides,
+            "DATA_DESC_ID",
+            int((row % spectral_window_count) as i32),
+        );
         replace_override(
             &mut row_overrides,
             "TIME",
@@ -1259,6 +1281,45 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
             .beam_set
             .has_single_beam()
     );
+}
+
+#[test]
+fn mtmfs_via_cube_compiles_one_sixteen_channel_axis_from_four_spectral_windows() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = four_spw_measurement_set(root.path());
+    let image_name = root.path().join("four-spw-mvc");
+    let mut imaging = request(
+        measurement_set,
+        image_name,
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.channel_count = Some(8);
+    imaging.maximum_major_cycles = Some(1);
+    // Stop after backend-independent compilation so this spectral-axis test
+    // does not depend on the separately owned MVC runtime/publication lane.
+    imaging.task_requirements = vec![
+        TaskRequirement::SpectralMtmfsViaCube,
+        TaskRequirement::MosaicGridder,
+    ];
+    imaging.spectral_mode = SpectralImagingMode::MtmfsViaCube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(16),
+    };
+
+    assert!(matches!(
+        execute_continuum(imaging),
+        Err(ApplicationDispatchError::Unavailable(_))
+    ));
 }
 
 #[test]
