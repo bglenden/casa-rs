@@ -776,6 +776,9 @@ def build_plan(
             "require_exact_product_inventory": bool_value(
                 comparison, "require_exact_product_inventory", False
             ),
+            "require_direction_wcs_parity": bool_value(
+                comparison, "require_direction_wcs_parity", False
+            ),
             "require_metadata_parity": bool_value(
                 comparison, "require_metadata_parity", False
             ),
@@ -3101,6 +3104,9 @@ def compare_products(
         "require_exact_product_inventory": plan["comparison"][
             "require_exact_product_inventory"
         ],
+        "require_direction_wcs_parity": plan["comparison"].get(
+            "require_direction_wcs_parity", False
+        ),
         "require_metadata_parity": plan["comparison"]["require_metadata_parity"],
         "source_regions": plan["comparison"].get("source_regions", []),
         "tolerances": plan["comparison"].get("tolerances"),
@@ -3113,6 +3119,17 @@ def compare_products(
         artifact_prefix=log_path,
         cwd=REPO_ROOT,
     )
+    if "schema_version" not in comparison and comparison.get("status") != "completed":
+        # The comparator facade retains detailed operational diagnostics in its
+        # protocol artifacts. The run receipt embeds only the closed live
+        # terminal summary accepted by run-result schema v3.
+        return {
+            "status": str(comparison.get("status", "failed_execution")),
+            "reason": str(
+                comparison.get("reason") or "image-product comparison did not complete"
+            ),
+            "products": {},
+        }
     comparison["panel_dir"] = str(panel_dir)
     comparison["source_regions"] = plan["comparison"].get("source_regions", [])
     comparison["tolerances"] = plan["comparison"].get("tolerances")

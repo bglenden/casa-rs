@@ -232,6 +232,8 @@ pub struct ContinuumImagingRequest {
     pub image_name: PathBuf,
     /// Square image dimension.
     pub image_size: usize,
+    /// Number of regular image facets along each direction axis.
+    pub facets: usize,
     /// Direction pixel size in arcseconds.
     pub cell_arcsec: f64,
     /// Optional main-chart phase-centre field selected from the MeasurementSet.
@@ -895,7 +897,14 @@ fn prepare(
                     domain.role.clone(),
                     ImageShape::new(domain.image_size, domain.image_size),
                     domain.direction,
-                    FacetLayout::Single,
+                    if request.facets == 1 || !matches!(domain.role, ImageDomainRole::Main) {
+                        FacetLayout::Single
+                    } else {
+                        FacetLayout::Regular {
+                            columns: request.facets,
+                            rows: request.facets,
+                        }
+                    },
                     AxisOrder::new([
                         ImageAxis::DirectionLongitude,
                         ImageAxis::DirectionLatitude,
@@ -1916,7 +1925,10 @@ fn runtime(
         storage_io,
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
-        resource_policy: request.resource_policy.clone(),
+        resource_policy: match resource_policy_for_task_requirements(&request.task_requirements) {
+            ResourcePolicy::Explicit(serial) => ResourcePolicy::Explicit(serial),
+            _ => request.resource_policy.clone(),
+        },
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority,

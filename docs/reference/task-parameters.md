@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 11 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 12 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -231,7 +231,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `11`
+- Contract version: `12`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -309,7 +309,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
 | <code>cfcache</code> | <code>parameter.cfcache@r1</code> | <code>optional&lt;path (directory)&gt; (states: auto)</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AWProject convolution-function cache selection<br><em>Surface:</em> auto selects the managed plan-keyed cache; an explicit path preserves CASA cache interoperability. |
 | <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r1</code> | <code>integer; unit dimension: data_size</code> | <code>256</code>; optional | Advanced Wide-Field | AW convolution-function working-memory ceiling in MiB<br><em>Surface:</em> Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero. |
-| <code>facets</code> | <code>parameter.facets@r1</code> | <code>integer</code> | <code>1</code>; optional | Advanced Wide-Field | Number of wide-field image facets<br><em>Surface:</em> Unsupported facet layouts fail closed with a capability diagnostic. |
+| <code>facets</code> | <code>parameter.facets@r2</code> | <code>integer</code> | <code>1</code>; optional | Advanced Wide-Field | Number of wide-field image facets<br><em>Surface:</em> Constant-basis MFS executes exact regular facets; unsupported basis combinations fail closed. |
 | <code>psfphasecenter</code> | <code>parameter.psfphasecenter@r1</code> | <code>optional&lt;string&gt; (states: none); unit dimension: angle</code> | <code>"none"</code>; optional | Advanced Wide-Field | Optional distinct AWProject PSF phase center |
 | <code>vptable</code> | <code>parameter.vptable@r1</code> | <code>optional&lt;path (table)&gt; (states: none)</code> | <code>"none"</code>; optional | Advanced Wide-Field | Optional CASA voltage-pattern table for AWProject |
 | <code>aterm</code> | <code>parameter.aterm@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Enable the aperture-illumination A term for AWProject |

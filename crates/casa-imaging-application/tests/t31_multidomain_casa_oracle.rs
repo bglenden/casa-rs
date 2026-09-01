@@ -120,6 +120,7 @@ fn request(
         measurement_set,
         image_name,
         image_size: 100,
+        facets: 1,
         cell_arcsec: 8.0,
         phase_center_field: None,
         phase_center: Some(MAIN_PHASE_CENTRE.to_string()),

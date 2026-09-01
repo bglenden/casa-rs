@@ -2000,9 +2000,6 @@ pub struct ImagerAwProjectConfig {
     /// Per-allocation full-cell LRU and compact source-order tap ceiling in MiB.
     #[serde(default = "default_aw_cf_resident_mb")]
     pub cf_resident_mb: usize,
-    /// CASA facet count.
-    #[serde(default = "default_one_usize")]
-    pub facets: usize,
     /// Optional distinct PSF phase center in radians.
     #[serde(default)]
     pub psf_phase_center_direction_rad: Option<[f64; 2]>,
@@ -2045,7 +2042,6 @@ impl From<&AwProjectControls> for ImagerAwProjectConfig {
         Self {
             cf_cache: value.cf_cache.clone(),
             cf_resident_mb: value.cf_resident_bytes.div_ceil(1024 * 1024),
-            facets: value.facets,
             psf_phase_center_direction_rad: value.psf_phase_center_direction_rad,
             vp_table: value.vp_table.clone(),
             a_term: value.a_term,
@@ -2074,7 +2070,6 @@ impl ImagerAwProjectConfig {
         Ok(AwProjectControls {
             cf_cache: self.cf_cache,
             cf_resident_bytes,
-            facets: self.facets,
             w_plane_count,
             psf_phase_center_direction_rad: self.psf_phase_center_direction_rad,
             vp_table: self.vp_table,
@@ -2102,6 +2097,9 @@ pub struct ImagerRunTaskRequest {
     pub image_name: PathBuf,
     /// Square image size in pixels.
     pub image_size: usize,
+    /// Number of regular image facets along each direction axis.
+    #[serde(default = "default_one_usize")]
+    pub facets: usize,
     /// Cell size in arcseconds.
     pub cell_arcsec: f64,
     /// Image direction-coordinate projection.
@@ -2349,6 +2347,7 @@ impl ImagerRunTaskRequest {
             measurement_set: config.ms.clone(),
             image_name: config.imagename.clone(),
             image_size: config.imsize,
+            facets: config.facets,
             cell_arcsec: config.cell_arcsec,
             projection: ImagerProjection::Sin,
             field_ids: config.field_ids.clone(),
@@ -2523,6 +2522,7 @@ impl ImagerRunTaskRequest {
             ms: self.measurement_set.clone(),
             imagename: self.image_name.clone(),
             imsize: self.image_size,
+            facets: self.facets,
             cell_arcsec: self.cell_arcsec,
             field_ids: self.field_ids.clone(),
             uvrange: self.uvrange.clone(),
@@ -3507,6 +3507,66 @@ mod tests {
     }
 
     #[test]
+    fn widefield_facets_round_trip_without_selecting_aw_projection() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/faceted"),
+            OsString::from("--imsize"),
+            OsString::from("512"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.35"),
+            OsString::from("--gridder"),
+            OsString::from("widefield"),
+            OsString::from("--facets"),
+            OsString::from("2"),
+            OsString::from("--wprojplanes"),
+            OsString::from("1"),
+        ])
+        .expect("parse faceted widefield request");
+
+        assert_eq!(config.facets, 2);
+        assert_eq!(config.w_term_mode, WTermMode::None);
+        assert_eq!(config.w_project_planes, Some(1));
+        assert!(config.aw_project.is_none());
+
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        assert_eq!(request.facets, 2);
+        let restored = request.to_cli_config().expect("restore faceted request");
+        assert_eq!(restored.facets, 2);
+        assert_eq!(restored.w_term_mode, WTermMode::None);
+        assert_eq!(restored.w_project_planes, Some(1));
+        assert!(restored.aw_project.is_none());
+    }
+
+    #[test]
+    fn natural_weighting_ignores_the_casa_robust_parameter() {
+        let parse = |weighting_before_robust| {
+            let mut args = vec![
+                OsString::from("--ms"),
+                OsString::from("demo.ms"),
+                OsString::from("--imagename"),
+                OsString::from("out/natural"),
+                OsString::from("--imsize"),
+                OsString::from("512"),
+                OsString::from("--cell-arcsec"),
+                OsString::from("0.35"),
+            ];
+            let controls = if weighting_before_robust {
+                ["--weighting", "natural", "--robust", "0.5"]
+            } else {
+                ["--robust", "0.5", "--weighting", "natural"]
+            };
+            args.extend(controls.into_iter().map(OsString::from));
+            CliConfig::parse(args).expect("parse CASA natural weighting controls")
+        };
+
+        assert_eq!(parse(true).weighting, WeightingMode::Natural);
+        assert_eq!(parse(false).weighting, WeightingMode::Natural);
+    }
+
+    #[test]
     fn run_request_preserves_numeric_spw_without_selector() {
         let mut config = CliConfig::parse([
             OsString::from("--ms"),
@@ -3651,6 +3711,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -3764,6 +3825,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -4037,6 +4099,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -4202,6 +4265,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: image_name.clone(),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -4780,6 +4844,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,

@@ -200,8 +200,8 @@ pub enum UnsupportedRequirement {
     Task(TaskRequirement),
     /// The implementation requires exactly one observation source.
     SingleObservationSource,
-    /// The implementation requires one facet.
-    SingleFacet,
+    /// Facet execution currently requires the constant spectral basis.
+    ConstantBasisForFacets,
     /// The implementation requires a fixed phase centre.
     FixedPhaseCentre,
     /// The implementation does not accept an initial model.
@@ -220,7 +220,7 @@ impl UnsupportedRequirement {
             Self::Capability(_) => "capability",
             Self::Task(_) => "task",
             Self::SingleObservationSource
-            | Self::SingleFacet
+            | Self::ConstantBasisForFacets
             | Self::FixedPhaseCentre
             | Self::EmptyInitialModel
             | Self::NoModelColumnWrite
@@ -237,7 +237,7 @@ impl UnsupportedRequirement {
             }
             Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
             Self::SingleObservationSource => "constraint.single_observation_source".to_string(),
-            Self::SingleFacet => "constraint.single_facet".to_string(),
+            Self::ConstantBasisForFacets => "constraint.constant_basis_for_facets".to_string(),
             Self::FixedPhaseCentre => "constraint.fixed_phase_centre".to_string(),
             Self::EmptyInitialModel => "constraint.empty_initial_model".to_string(),
             Self::NoModelColumnWrite => "constraint.no_model_column_write".to_string(),
@@ -376,13 +376,13 @@ pub fn validate_installed_implementation(
         problem.geometry().domains()[0].role(),
         &ImageDomainRole::Main
     );
-    if problem
+    let is_faceted = problem
         .geometry()
         .domains()
         .iter()
-        .any(|domain| domain.facets().len() != 1)
-    {
-        unsupported.push(UnsupportedRequirement::SingleFacet);
+        .any(|domain| domain.facets().len() != 1);
+    if is_faceted && problem.reconstruction().basis() != ReconstructionBasis::Constant {
+        unsupported.push(UnsupportedRequirement::ConstantBasisForFacets);
     }
     if !matches!(
         problem.geometry().centres().phase_tracking(),
@@ -446,6 +446,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::CommonBeamSpectralCoupling
             | RequiredCapability::SequentialContinuumTransform
             | RequiredCapability::ConstantBasis
+            | RequiredCapability::FacetedGeometry
             | RequiredCapability::MultiDomainGeometry
             | RequiredCapability::TaylorBasis
             | RequiredCapability::ChannelLocalBasis

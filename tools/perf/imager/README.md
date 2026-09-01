@@ -630,8 +630,10 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_WTERM`
   - currently only `none` is supported in the Rust-vs-CASA benchmark script because the Rust-only `direct` mode has no matching `tclean` configuration in this harness
 - `IMAGER_BENCH_MS_STAGING`
-  - `copy` copies the MeasurementSet into the script temp directory before
-    timing; this is the default for small workloads
+  - `copy` gives Rust an explicitly owner-initialized MeasurementSet copy in
+    the script temp directory while CASA reads the unchanged source; this is
+    appropriate for small, disposable correctness workloads whose source was
+    not created by casa-rs
   - `direct` benchmarks the manifest MeasurementSet path in place and is the
     required mode for about-memory or larger-than-memory datasets
 - `IMAGER_BENCH_TMP_ROOT`

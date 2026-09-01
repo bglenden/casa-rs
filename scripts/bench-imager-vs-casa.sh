@@ -426,14 +426,20 @@ echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
   cargo build --release -p casars-imager --bin casars-imager >/dev/null
+  if [[ "$ms_staging" == "copy" ]]; then
+    cargo build --release -p casa-ms --example initialize_imaging_owner >/dev/null
+  fi
 fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
-if [[ "$ms_staging" == "copy" ]]; then
-  staged_ms_path="$tmpdir/benchmark.ms"
-  cp -R "$ms_path" "$staged_ms_path"
-  ms_path="$staged_ms_path"
+source_ms_path="$ms_path"
+rust_ms_path="$source_ms_path"
+casa_ms_path="$source_ms_path"
+if [[ "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" ]]; then
+  rust_ms_path="$tmpdir/benchmark.ms"
+  cp -R "$source_ms_path" "$rust_ms_path"
+  target/release/examples/initialize_imaging_owner "$rust_ms_path" >/dev/null
 fi
 if [[ -n "$keep_output_root" ]]; then
   mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
@@ -519,7 +525,7 @@ for run in $(seq 1 "$repeats"); do
   rust_stderr="$tmpdir/rust-$run.stderr"
   if [[ -n "$scales" ]]; then
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$ms_path" \
+      --ms "$rust_ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
@@ -567,7 +573,7 @@ for run in $(seq 1 "$repeats"); do
     fi
   else
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$ms_path" \
+      --ms "$rust_ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
@@ -632,7 +638,7 @@ elif [[ "$skip_profile_enabled" == "1" ]]; then
   echo "  skipped=1"
 elif [[ -n "$scales" ]]; then
   run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$ms_path" \
+    "$rust_ms_path" \
     --field "$field" \
     --spw "$spw" \
     --channel-start "$channel_start" \
@@ -676,7 +682,7 @@ elif [[ -n "$scales" ]]; then
     | sed 's/^/  /'
 else
   run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$ms_path" \
+    "$rust_ms_path" \
     --field "$field" \
     --spw "$spw" \
     --channel-start "$channel_start" \
@@ -883,7 +889,7 @@ if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || 
 else
   echo "CASA tclean timings (seconds):"
   echo "casa_run_start repeats=$repeats"
-  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
@@ -945,7 +951,7 @@ fi
 
 if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
   echo "CASA PySynthesisImager stage medians (milliseconds):"
-  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \

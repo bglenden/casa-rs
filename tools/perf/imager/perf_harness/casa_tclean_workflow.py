@@ -1964,6 +1964,9 @@ def casa_repeatability_comparison_request(
         "require_exact_product_inventory": plan["comparison"][
             "require_exact_product_inventory"
         ],
+        "require_direction_wcs_parity": plan["comparison"].get(
+            "require_direction_wcs_parity", False
+        ),
         "require_metadata_parity": plan["comparison"]["require_metadata_parity"],
         "source_regions": plan["comparison"].get("source_regions", []),
         "tolerances": plan["comparison"].get("tolerances"),
@@ -2091,8 +2094,7 @@ def recover_casa_repeatability(
                 remove_accepted_structure_workspace(comparison, request)
             except ValueError as error:
                 raise ProtocolError(
-                    "recovered accepted comparison workspace cleanup failed: "
-                    f"{error}"
+                    f"recovered accepted comparison workspace cleanup failed: {error}"
                 ) from error
         comparison.update(
             {

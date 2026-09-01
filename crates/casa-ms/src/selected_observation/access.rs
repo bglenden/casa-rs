@@ -1781,6 +1781,7 @@ fn evaluate_row_geometry(
                 field_id,
                 observation_direction,
                 domain.psf_phase_centre(),
+                domain.facets().len() > 1,
             )?)
         };
         for (facet_ordinal, facet) in domain.facets().iter().enumerate() {
@@ -1797,6 +1798,7 @@ fn evaluate_row_geometry(
                 field_id,
                 observation_direction,
                 model_phase_centre,
+                domain.facets().len() > 1,
             )?;
             let projection = match distinct_psf {
                 Some(psf) => SelectedImageDomainProjection::new_facet(
@@ -1833,6 +1835,7 @@ fn evaluate_phase_centre_projection(
     field_id: usize,
     observation_direction: SkyDirection,
     target_direction: SkyDirection,
+    project_to_observation_plane: bool,
 ) -> Result<SelectedPhaseCentreProjection, BoundObservationSourceError> {
     let target_angles = source.geometry_engine.direction_angles_j2000(
         stored.time_mjd_seconds(),
@@ -1843,13 +1846,22 @@ fn evaluate_phase_centre_projection(
         direction_ref(target_direction.frame()),
     )?;
     let target_j2000 = SkyDirection::new(DirectionFrame::J2000, target_angles[0], target_angles[1]);
-    let (transformed_uvw_m, phase_shift_m) = if target_j2000 == observation_direction {
-        (stored.uvw_m(), 0.0)
-    } else {
-        source
-            .geometry_engine
-            .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target_angles)?
-    };
+    let (transformed_uvw_m, phase_shift_m) =
+        if target_j2000 == observation_direction && !project_to_observation_plane {
+            (stored.uvw_m(), 0.0)
+        } else if project_to_observation_plane {
+            source
+                .geometry_engine
+                .reproject_raw_uvw_for_faceted_gridft_to_j2000(
+                    stored.uvw_m(),
+                    field_id,
+                    target_angles,
+                )?
+        } else {
+            source
+                .geometry_engine
+                .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target_angles)?
+        };
     SelectedPhaseCentreProjection::new(transformed_uvw_m, phase_shift_m)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)
 }

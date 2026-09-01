@@ -4,6 +4,7 @@
 
 use std::{collections::BTreeMap, convert::Infallible, fs, io, path::PathBuf, sync::OnceLock};
 
+use crate::complete_data_operator::project_gridded_normal_artifact_budget;
 use crate::spectral_cycle::CompleteDataStreamEvidence;
 use crate::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
@@ -161,6 +162,41 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
             "the variable route plan must bound the live three-frame window",
         );
     }
+}
+
+#[test]
+fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
+    let weighting =
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable);
+    let (snapshot_input, _) = resolve_selected_observation(observation_resolution())
+        .expect("resolve three-baseline fixture")
+        .into_parts();
+    let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
+    let problem = compile(ImagingRequest::new(
+        problem_specification(weighting),
+        geometry_with_facets(FacetLayout::Regular {
+            columns: 2,
+            rows: 2,
+        }),
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("compile four-chart MFS problem");
+    let maximum_block_samples = 4_096;
+    let record_bytes =
+        casa_imaging_reconstruction::runtime_adapter::gridded_normal_operator_record_bytes(
+            &problem,
+        )
+        .expect("scalar record width");
+
+    let budget = project_gridded_normal_artifact_budget(&problem, maximum_block_samples)
+        .expect("faceted replay budget");
+
+    assert_eq!(
+        budget.maximum_frame_payload_bytes(),
+        3 * 4 * record_bytes,
+        "one weighted sample may produce one record in each physical facet chart",
+    );
 }
 
 #[test]
@@ -510,6 +546,10 @@ fn observation_resolution() -> SelectedObservationResolutionRequest {
 }
 
 fn geometry() -> GeometryInput {
+    geometry_with_facets(FacetLayout::Single)
+}
+
+fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -523,7 +563,7 @@ fn geometry() -> GeometryInput {
             ImageDomainRole::Main,
             ImageShape::new(16, 16),
             direction,
-            FacetLayout::Single,
+            facets,
             AxisOrder::new([
                 ImageAxis::DirectionLongitude,
                 ImageAxis::DirectionLatitude,

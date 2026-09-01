@@ -2589,7 +2589,9 @@ impl InitialMajorPhaseCompletion {
                 let (masks, auto_masks) = mask_plans
                     .materialize(continuation.generation(), &normal_state)
                     .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
-                let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1 {
+                let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1
+                    && normal_state.domain_count() > 1
+                {
                     ReconstructionCycle::new(policy, program).run_domains(
                         lifecycle,
                         continuation.generation(),

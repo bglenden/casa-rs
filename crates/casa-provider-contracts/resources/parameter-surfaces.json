@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 11,
+      "contract_version": 12,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -11575,7 +11575,7 @@
           "name": "facets",
           "concept": {
             "id": "parameter.facets",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 71,
           "default": {
@@ -11589,14 +11589,27 @@
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "gridder",
-            "value": {
-              "kind": "string",
-              "value": "awproject"
-            }
+            "kind": "any",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "widefield"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              }
+            ]
           },
-          "surface_note": "Unsupported facet layouts fail closed with a capability diagnostic.",
+          "surface_note": "Constant-basis MFS executes exact regular facets; unsupported basis combinations fail closed.",
           "projections": {
             "cli": {
               "flags": [
@@ -12713,6 +12726,12 @@
         {
           "from_contract": 10,
           "to_contract": 11,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 11,
+          "to_contract": 12,
           "steps": [],
           "changed_defaults": []
         }

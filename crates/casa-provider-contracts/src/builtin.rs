@@ -352,10 +352,10 @@ mod tests {
     }
 
     #[test]
-    fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
+    fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 11);
+        assert_eq!(surface.contract_version(), 12);
         assert_eq!(surface.bindings().len(), 94);
         for binding in surface.bindings() {
             let concept = catalog
@@ -395,7 +395,6 @@ mod tests {
         for name in [
             "cfcache",
             "cf_resident_mb",
-            "facets",
             "psfphasecenter",
             "vptable",
             "aterm",
@@ -422,6 +421,45 @@ mod tests {
             assert!(binding.projections.cli.is_some(), "{name}");
             assert!(binding.projections.python.is_some(), "{name}");
         }
+
+        let facet_concepts = catalog
+            .catalog
+            .concepts
+            .iter()
+            .filter(|concept| concept.id.as_str() == "parameter.facets")
+            .collect::<Vec<_>>();
+        assert_eq!(facet_concepts.len(), 1, "one canonical facets concept");
+        assert_eq!(facet_concepts[0].semantic_revision, SemanticRevision(2));
+        let facet_bindings = surface
+            .bindings()
+            .iter()
+            .filter(|binding| binding.name == "facets")
+            .collect::<Vec<_>>();
+        assert_eq!(facet_bindings.len(), 1, "one canonical facets binding");
+        let facets = facet_bindings[0];
+        assert_eq!(
+            facets.active_when,
+            Predicate::Any {
+                predicates: vec![
+                    Predicate::Equals {
+                        parameter: "gridder".to_string(),
+                        value: ParameterValue::String("widefield".to_string()),
+                    },
+                    awproject.clone(),
+                ],
+            }
+        );
+        assert_eq!(facets.concept.semantic_revision, SemanticRevision(2));
+        assert_eq!(
+            facets.default,
+            crate::DefaultSpec::Literal {
+                value: ParameterValue::Integer(1),
+            }
+        );
+        assert_eq!(facets.projections.presentation.group, "Advanced Wide-Field");
+        assert!(facets.projections.presentation.advanced);
+        assert!(facets.projections.cli.is_some());
+        assert!(facets.projections.python.is_some());
 
         let usepointing = surface
             .bindings()
