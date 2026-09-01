@@ -947,6 +947,11 @@
       "fingerprint": "8732f218bce265479a349e392edf8b86d6b65fec35cc7f05b768f524d6e5287b"
     },
     {
+      "id": "parameter.imaging_memory_pressure_policy",
+      "semantic_revision": 2,
+      "fingerprint": "ba4827b5182edb283e52609c62f99980fdf12ce7abf22047dc80d3fb782c601c"
+    },
+    {
       "id": "parameter.imaging_memory_target_mb",
       "semantic_revision": 1,
       "fingerprint": "7c15c98d31f18f0b101db688a16f29a62eb3a6027efd1f27acf2ba23a60a1330"
@@ -2377,6 +2382,11 @@
       "id": "imager",
       "contract_version": 10,
       "fingerprint": "bf013a341a65bd699a95b5bd58addae88f7e1f8c4c99923e8036e55533c12ad3"
+    },
+    {
+      "id": "imager",
+      "contract_version": 11,
+      "fingerprint": "ee76d12e9ce530fd9b99eb9726b684c84086cdbf0d68a4f5cc33f37ddb29c160"
     },
     {
       "id": "imcollapse",

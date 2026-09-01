@@ -337,6 +337,44 @@ pub enum PolarizationCoordinate {
     CircularLl,
 }
 
+impl PolarizationCoordinate {
+    /// Complete stable catalog of polarization coordinates understood by the
+    /// current request compiler.
+    pub const ALL: [Self; 12] = [
+        Self::StokesI,
+        Self::StokesQ,
+        Self::StokesU,
+        Self::StokesV,
+        Self::LinearXx,
+        Self::LinearXy,
+        Self::LinearYx,
+        Self::LinearYy,
+        Self::CircularRr,
+        Self::CircularRl,
+        Self::CircularLr,
+        Self::CircularLl,
+    ];
+
+    /// Return the stable request-catalog identity.
+    #[must_use]
+    pub const fn catalog_id(self) -> &'static str {
+        match self {
+            Self::StokesI => "stokes_i",
+            Self::StokesQ => "stokes_q",
+            Self::StokesU => "stokes_u",
+            Self::StokesV => "stokes_v",
+            Self::LinearXx => "linear_xx",
+            Self::LinearXy => "linear_xy",
+            Self::LinearYx => "linear_yx",
+            Self::LinearYy => "linear_yy",
+            Self::CircularRr => "circular_rr",
+            Self::CircularRl => "circular_rl",
+            Self::CircularLr => "circular_lr",
+            Self::CircularLl => "circular_ll",
+        }
+    }
+}
+
 /// Requested polarization reconstruction coordinates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolarizationContract {
@@ -964,6 +1002,50 @@ pub enum ProductKind {
     Beam,
 }
 
+impl ProductKind {
+    /// Complete stable catalog of logical products understood by the current
+    /// request compiler.
+    pub const ALL: [Self; 15] = [
+        Self::Psf,
+        Self::Residual,
+        Self::Model,
+        Self::RestoredImage,
+        Self::SumWeights,
+        Self::Mask,
+        Self::Weight,
+        Self::PrimaryBeam,
+        Self::Sensitivity,
+        Self::PbCorrectedImage,
+        Self::TaylorTerms,
+        Self::SpectralIndex,
+        Self::SpectralIndexError,
+        Self::PbCorrectedSpectralIndex,
+        Self::Beam,
+    ];
+
+    /// Return the stable request-catalog identity.
+    #[must_use]
+    pub const fn catalog_id(self) -> &'static str {
+        match self {
+            Self::Psf => "psf",
+            Self::Residual => "residual",
+            Self::Model => "model",
+            Self::RestoredImage => "restored_image",
+            Self::SumWeights => "sum_weights",
+            Self::Mask => "mask",
+            Self::Weight => "weight",
+            Self::PrimaryBeam => "primary_beam",
+            Self::Sensitivity => "sensitivity",
+            Self::PbCorrectedImage => "pb_corrected_image",
+            Self::TaylorTerms => "taylor_terms",
+            Self::SpectralIndex => "spectral_index",
+            Self::SpectralIndexError => "spectral_index_error",
+            Self::PbCorrectedSpectralIndex => "pb_corrected_spectral_index",
+            Self::Beam => "beam",
+        }
+    }
+}
+
 /// Published image normalization semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductNormalization {
@@ -1545,6 +1627,88 @@ pub enum RequiredCapability {
     FlatSkyNormalization,
     /// Formation of a particular logical product.
     Product(ProductKind),
+}
+
+impl RequiredCapability {
+    /// Return every stable compiler-derived capability in the current request
+    /// catalog, including every polarization coordinate and logical product.
+    #[must_use]
+    pub fn catalog() -> Vec<Self> {
+        let mut capabilities = vec![
+            Self::MultiDomainGeometry,
+            Self::FacetedGeometry,
+            Self::SpectralFrameTransform,
+            Self::SpectralResampling,
+            Self::SequentialContinuumTransform,
+            Self::CommonBeamSpectralCoupling,
+            Self::PrimaryBeamResponse,
+            Self::FullMuellerResponse,
+            Self::UvTaper,
+            Self::ConstantBasis,
+            Self::TaylorBasis,
+            Self::ChannelLocalBasis,
+            Self::JointContinuumLineReconstruction,
+            Self::DirtyReconstruction,
+            Self::HogbomReconstruction,
+            Self::ClarkReconstruction,
+            Self::MultiscaleReconstruction,
+            Self::MtmfsReconstruction,
+            Self::NaturalWeighting,
+            Self::UniformWeighting,
+            Self::BriggsWeighting,
+            Self::BriggsBandwidthTaperWeighting,
+            Self::UnitResponseNormalization,
+            Self::FlatNoiseNormalization,
+            Self::FlatSkyNormalization,
+        ];
+        capabilities.extend(Self::polarization_catalog());
+        capabilities.extend(ProductKind::ALL.into_iter().map(Self::Product));
+        capabilities
+    }
+
+    fn polarization_catalog() -> impl Iterator<Item = Self> {
+        PolarizationCoordinate::ALL
+            .into_iter()
+            .map(Self::Polarization)
+    }
+
+    /// Return the stable request-catalog identity used by boundary projections.
+    #[must_use]
+    pub fn catalog_id(self) -> String {
+        match self {
+            Self::MultiDomainGeometry => "multi_domain_geometry".to_string(),
+            Self::FacetedGeometry => "faceted_geometry".to_string(),
+            Self::SpectralFrameTransform => "spectral_frame_transform".to_string(),
+            Self::SpectralResampling => "spectral_resampling".to_string(),
+            Self::SequentialContinuumTransform => "sequential_continuum_transform".to_string(),
+            Self::CommonBeamSpectralCoupling => "common_beam_spectral_coupling".to_string(),
+            Self::Polarization(coordinate) => {
+                format!("polarization.{}", coordinate.catalog_id())
+            }
+            Self::PrimaryBeamResponse => "primary_beam_response".to_string(),
+            Self::FullMuellerResponse => "full_mueller_response".to_string(),
+            Self::UvTaper => "uv_taper".to_string(),
+            Self::ConstantBasis => "constant_basis".to_string(),
+            Self::TaylorBasis => "taylor_basis".to_string(),
+            Self::ChannelLocalBasis => "channel_local_basis".to_string(),
+            Self::JointContinuumLineReconstruction => {
+                "joint_continuum_line_reconstruction".to_string()
+            }
+            Self::DirtyReconstruction => "dirty_reconstruction".to_string(),
+            Self::HogbomReconstruction => "hogbom_reconstruction".to_string(),
+            Self::ClarkReconstruction => "clark_reconstruction".to_string(),
+            Self::MultiscaleReconstruction => "multiscale_reconstruction".to_string(),
+            Self::MtmfsReconstruction => "mtmfs_reconstruction".to_string(),
+            Self::NaturalWeighting => "natural_weighting".to_string(),
+            Self::UniformWeighting => "uniform_weighting".to_string(),
+            Self::BriggsWeighting => "briggs_weighting".to_string(),
+            Self::BriggsBandwidthTaperWeighting => "briggs_bandwidth_taper_weighting".to_string(),
+            Self::UnitResponseNormalization => "unit_response_normalization".to_string(),
+            Self::FlatNoiseNormalization => "flat_noise_normalization".to_string(),
+            Self::FlatSkyNormalization => "flat_sky_normalization".to_string(),
+            Self::Product(product) => format!("product.{}", product.catalog_id()),
+        }
+    }
 }
 
 /// Stable comparable identity of one compiled problem.

@@ -195,8 +195,6 @@ mod tests {
                 "conservative-no-swap".to_string(),
                 "aggressive".to_string(),
                 "oversubscribe".to_string(),
-                "stage-aware".to_string(),
-                "hybrid".to_string(),
             ]
         );
         assert!(

@@ -5,14 +5,16 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use casa_imaging_application::{ImagingRequestVersion, installed_imaging_capability_catalog};
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
 };
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
-    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
-    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
+    ParameterValue, ProviderCliMachineActions, ProviderCliProjection, ProviderInvocation,
+    ProviderInvocationAdaptation, ProviderProjectionMetadata, ProviderProtocolDescriptor,
+    ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas,
+    TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
@@ -25,6 +27,7 @@ use crate::{
     ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
     RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
     UvTaperSize, WTermMode, WeightingMode, apply_parallel_runtime_control, run_from_request,
+    validate_parallel_acceleration,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
@@ -82,6 +85,67 @@ pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
 pub struct ImagerAdditionalSchemas {
     /// Schema for newline-delimited progress events.
     pub progress_event_schema: RootSchema,
+    /// Current canonical imaging-request contract version.
+    pub imaging_request_version: u32,
+    /// Typed installed-capability catalog projected from the application owner.
+    pub capability_catalog: ImagerCapabilityCatalog,
+    /// Schema for the typed installed-capability catalog.
+    pub capability_catalog_schema: RootSchema,
+}
+
+/// Typed provider-boundary projection of the installed imaging capabilities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerCapabilityCatalog {
+    /// Version of this transport projection.
+    pub schema_version: u32,
+    /// Sole semantic owner of the projected entries.
+    pub owner: String,
+    /// Stable deterministic capability entries.
+    pub entries: Vec<ImagerCapabilityCatalogEntry>,
+}
+
+/// One typed installed-capability entry at the provider boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerCapabilityCatalogEntry {
+    /// Scientific or task capability family.
+    pub kind: String,
+    /// Stable owner-defined requirement identity.
+    pub id: String,
+    /// Whether the current installed build supports the requirement.
+    pub supported: bool,
+    /// Exact owner-defined typed reason identity when unsupported.
+    pub unsupported_reason: Option<ImagerUnsupportedReason>,
+}
+
+/// Exact typed unsupported reason projected from the application owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerUnsupportedReason {
+    /// Capability, task, or request-constraint family.
+    pub kind: String,
+    /// Stable application-owned reason identity.
+    pub id: String,
+}
+
+fn imager_capability_catalog() -> ImagerCapabilityCatalog {
+    ImagerCapabilityCatalog {
+        schema_version: 1,
+        owner: "casa-imaging-application".to_string(),
+        entries: installed_imaging_capability_catalog()
+            .into_iter()
+            .map(|entry| {
+                let requirement = entry.requirement();
+                ImagerCapabilityCatalogEntry {
+                    kind: requirement.catalog_kind().to_string(),
+                    id: requirement.catalog_id(),
+                    supported: entry.unsupported().is_none(),
+                    unsupported_reason: entry.unsupported().map(|reason| ImagerUnsupportedReason {
+                        kind: reason.catalog_kind().to_string(),
+                        id: reason.catalog_id(),
+                    }),
+                }
+            })
+            .collect(),
+    }
 }
 
 /// Build the current imager schema bundle with the shared envelope.
@@ -89,6 +153,8 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
     let request_schema = schema_for!(ImagerTaskRequest);
     let result_schema = schema_for!(ImagerTaskResult);
     let progress_event_schema = schema_for!(ImagerProgressEvent);
+    let capability_catalog_schema = schema_for!(ImagerCapabilityCatalog);
+    let capability_catalog = imager_capability_catalog();
     TaskProviderContract {
         protocol: imager_protocol_descriptor(),
         semantic: TaskSemanticContract {
@@ -100,7 +166,12 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
                 result_kind: Some("run".to_string()),
             }],
         },
-        components: merged_components([&request_schema, &result_schema, &progress_event_schema]),
+        components: merged_components([
+            &request_schema,
+            &result_schema,
+            &progress_event_schema,
+            &capability_catalog_schema,
+        ]),
         annotations: serde_json::json!({}),
         projections: ProviderProjectionMetadata {
             cli: Some(ProviderCliProjection {
@@ -122,9 +193,165 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
             result_schema,
             additional: ImagerAdditionalSchemas {
                 progress_event_schema,
+                imaging_request_version: ImagingRequestVersion::CURRENT.as_u32(),
+                capability_catalog,
+                capability_catalog_schema,
             },
         },
     }
+}
+
+/// Project one fully resolved canonical parameter set into the typed imager
+/// task request transported by the provider bundle.
+///
+/// Parameter resolution, defaults, activation, and constraints remain owned by
+/// the shared parameter catalog. This provider-owned step maps those resolved
+/// values directly into the typed request used by every machine surface; CLI
+/// spellings are transport output only and are not reparsed here.
+pub fn imager_provider_invocation(
+    values: &BTreeMap<String, ParameterValue>,
+    direct_args: Vec<String>,
+) -> Result<ProviderInvocationAdaptation, String> {
+    let (managed_args, _task_args) = split_managed_output_args(direct_args)?;
+    let config = CliConfig::from_parameter_values(values)?;
+    let request = ImagerTaskRequest::Run(ImagerRunTaskRequest::from_cli_config(&config));
+    let mut stdin = serde_json::to_string(&request)
+        .map_err(|error| format!("serialize canonical imager task request: {error}"))?;
+    stdin.push('\n');
+
+    let mut args = managed_args;
+    args.extend(["--json-run".to_string(), "-".to_string()]);
+    Ok(ProviderInvocationAdaptation {
+        invocation: ProviderInvocation {
+            args,
+            stdin: Some(stdin),
+        },
+        consumed_parameters: IMAGER_PROJECTED_PARAMETERS
+            .iter()
+            .filter(|name| values.contains_key(**name))
+            .map(|name| (*name).to_string())
+            .collect(),
+    })
+}
+
+const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
+    "vis",
+    "imagename",
+    "imsize",
+    "cell",
+    "datacolumn",
+    "savemodel",
+    "startmodel",
+    "outlierfile",
+    "field",
+    "phasecenter_field",
+    "ddid",
+    "phasecenter",
+    "spw",
+    "channel_start",
+    "channel_count",
+    "stokes",
+    "specmode",
+    "chanchunks",
+    "start",
+    "width",
+    "outframe",
+    "veltype",
+    "interpolation",
+    "restfreq",
+    "restoringbeam",
+    "perchanweightdensity",
+    "dirty_only",
+    "niter",
+    "threshold",
+    "nmajor",
+    "fullsummary",
+    "gain",
+    "nsigma",
+    "psfcutoff",
+    "minor_cycle_length",
+    "cyclefactor",
+    "deconvolver",
+    "minpsffraction",
+    "maxpsffraction",
+    "nterms",
+    "hogbom_iteration_mode",
+    "scales",
+    "smallscalebias",
+    "usemask",
+    "sidelobethreshold",
+    "noisethreshold",
+    "lownoisethreshold",
+    "negativethreshold",
+    "minbeamfrac",
+    "growiterations",
+    "mask_box",
+    "weighting",
+    "mask_image",
+    "robust",
+    "wprojplanes",
+    "usepointing",
+    "uvtaper",
+    "write_preview_pngs",
+    "write_pb",
+    "pbcor",
+    "pblimit",
+    "wterm",
+    "gridder",
+    "standard_mfs_acceleration",
+    "parallel",
+    "imaging_read_ahead_blocks",
+    "imaging_fft_backend",
+    "uvrange",
+    "intent",
+    "cfcache",
+    "cf_resident_mb",
+    "facets",
+    "psfphasecenter",
+    "vptable",
+    "aterm",
+    "psterm",
+    "wbawp",
+    "conjbeams",
+    "computepastep",
+    "rotatepastep",
+    "pointingoffsetsigdev",
+    "mosweight",
+    "normtype",
+    "imaging_memory_target_mb",
+    "imaging_memory_pressure_policy",
+    "imaging_prepare_buffer_mb",
+    "imaging_row_block_rows",
+    "imaging_prepare_workers",
+    "imaging_fft_precision",
+    "standard_mfs_grid_threads",
+    "projection",
+    "fitspw",
+    "fitorder",
+    "save_continuum_residual",
+];
+
+fn split_managed_output_args(args: Vec<String>) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut managed = Vec::new();
+    let mut task = Vec::with_capacity(args.len());
+    let mut args = args.into_iter();
+    while let Some(argument) = args.next() {
+        if argument != "--managed-output" {
+            task.push(argument);
+            continue;
+        }
+        managed.push(argument);
+        let value = args
+            .next()
+            .ok_or_else(|| "--managed-output requires its projected boolean value".to_string())?;
+        if !matches!(value.as_str(), "true" | "false") {
+            return Err(format!(
+                "--managed-output expects true or false, found {value:?}"
+            ));
+        }
+        managed.push(value);
+    }
+    Ok((managed, task))
 }
 
 /// Opt-in controls for low-rate running imager progress telemetry.
@@ -2184,7 +2411,7 @@ impl ImagerRunTaskRequest {
             w_project_planes: config.w_project_planes,
             aw_project: config.aw_project.as_ref().map(Into::into),
             dirty_only: config.dirty_only,
-            parallel: None,
+            parallel: config.parallel,
             chanchunks: config.chanchunks,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
             standard_mfs_backend: config.standard_mfs_backend.clone(),
@@ -2233,6 +2460,7 @@ impl ImagerRunTaskRequest {
         if self.chanchunks.is_some() && spectral_mode == SpectralMode::Mfs {
             return Err("chanchunks applies only to cube and cubedata imaging".to_string());
         }
+        validate_parallel_acceleration(self.parallel, self.standard_mfs_acceleration)?;
         if self.imaging_memory_target_mb == Some(0) {
             return Err("imaging_memory_target_mb must be positive".to_string());
         }
@@ -2360,6 +2588,7 @@ impl ImagerRunTaskRequest {
                 .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
                 .transpose()?,
             dirty_only: self.dirty_only,
+            parallel: self.parallel,
             chanchunks: self.chanchunks,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
             standard_mfs_backend: self.standard_mfs_backend.clone(),
@@ -3010,7 +3239,7 @@ fn product_preview_requested(request: &ImagerRunTaskRequest, suffix: &str) -> bo
 mod tests {
     use super::{ImagerObservedMemoryConfidence, ImagerObservedMemoryKind};
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -3022,15 +3251,16 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_TASK_PROTOCOL_NAME,
-        IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind, ImagerAutoMultiThresholdConfig,
-        ImagerCleanMaskMode, ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue,
-        ImagerCubeInterpolation, ImagerDeconvolver, ImagerHogbomIterationMode,
-        ImagerObservedResourceId, ImagerObservedResourceState, ImagerObservedStageKind,
-        ImagerPlaneSelection, ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime,
-        ImagerProjection, ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel,
-        ImagerSpectralMode, ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode,
-        ImagerWeighting, imager_task_schema_bundle,
+        IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROJECTED_PARAMETERS,
+        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
+        ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
+        ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
+        ImagerHogbomIterationMode, ImagerObservedResourceId, ImagerObservedResourceState,
+        ImagerObservedStageKind, ImagerPlaneSelection, ImagerProgressDetail, ImagerProgressEvent,
+        ImagerProgressRuntime, ImagerProjection, ImagerRestoringBeamMode, ImagerRunTaskRequest,
+        ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerUnsupportedReason,
+        ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        imager_task_schema_bundle,
     };
     use crate::{
         CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, ImagingFftBackendPolicy,
@@ -3051,12 +3281,37 @@ mod tests {
         assert_eq!(bundle.semantic.operations.len(), 1);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
+        assert_eq!(bundle.domain_schemas.additional.imaging_request_version, 3);
+        assert_eq!(bundle.annotations, serde_json::json!({}));
+        let capabilities = &bundle.domain_schemas.additional.capability_catalog.entries;
+        let awproject = capabilities
+            .iter()
+            .find(|entry| entry.id == "task.aw_projection")
+            .expect("AWProject capability");
+        assert_eq!(awproject.kind, "task");
+        assert!(!awproject.supported);
+        assert_eq!(
+            awproject.unsupported_reason.as_ref(),
+            Some(&ImagerUnsupportedReason {
+                kind: "task".to_string(),
+                id: "task.aw_projection".to_string(),
+            })
+        );
         assert!(bundle.projections.cli.is_some());
         assert_eq!(bundle.parameter_surfaces.len(), 1);
         assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");
         bundle.parameter_surfaces[0]
             .validate()
             .expect("embedded imager parameter surface");
+        assert_eq!(
+            bundle.parameter_surfaces[0]
+                .surface
+                .bindings()
+                .iter()
+                .map(|binding| binding.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            IMAGER_PROJECTED_PARAMETERS.iter().copied().collect()
+        );
         assert_eq!(
             serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
                 .as_array()
@@ -3193,7 +3448,7 @@ mod tests {
             OsString::from("--imaging-fft-backend"),
             OsString::from("metal-mpsgraph"),
             OsString::from("--imaging-memory-pressure-policy"),
-            OsString::from("stage-aware"),
+            OsString::from("aggressive"),
             OsString::from("--dirty-only"),
             OsString::from("--no-preview-pngs"),
         ])
@@ -3245,7 +3500,7 @@ mod tests {
         );
         assert_eq!(
             restored.imaging_memory_pressure_policy,
-            ImagingMemoryPressurePolicy::StageAware
+            ImagingMemoryPressurePolicy::Aggressive
         );
         assert!(restored.dirty_only);
         assert!(!restored.write_preview_pngs);
@@ -3484,14 +3739,16 @@ mod tests {
         parallel.parallel = Some(true);
         assert_eq!(
             parallel.to_cli_config().unwrap().standard_mfs_acceleration,
-            StandardMfsAccelerationPolicy::MultiCpu
+            StandardMfsAccelerationPolicy::Cpu
         );
         let mut serial = request.clone();
         serial.parallel = Some(false);
         serial.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
-        assert_eq!(
-            serial.to_cli_config().unwrap().standard_mfs_acceleration,
-            StandardMfsAccelerationPolicy::Cpu
+        assert!(
+            serial
+                .to_cli_config()
+                .unwrap_err()
+                .contains("parallel=false conflicts")
         );
 
         let cube = ImagerRunTaskRequest {

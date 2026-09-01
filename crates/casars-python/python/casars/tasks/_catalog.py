@@ -343,7 +343,7 @@ def imager(
     mosweight: bool | object = _UNSET,
     normtype: Literal['flatnoise', 'flatsky', 'pbsquare'] | object = _UNSET,
     imaging_memory_target_mb: int | Literal['none'] | object = _UNSET,
-    imaging_memory_pressure_policy: Literal['auto', 'conservative-no-swap', 'aggressive', 'oversubscribe', 'stage-aware', 'hybrid'] | object = _UNSET,
+    imaging_memory_pressure_policy: Literal['auto', 'conservative-no-swap', 'aggressive', 'oversubscribe'] | object = _UNSET,
     imaging_prepare_buffer_mb: int | Literal['none'] | object = _UNSET,
     imaging_row_block_rows: int | Literal['none'] | object = _UNSET,
     imaging_prepare_workers: int | Literal['none'] | object = _UNSET,

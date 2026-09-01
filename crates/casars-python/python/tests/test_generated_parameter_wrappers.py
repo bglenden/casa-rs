@@ -18,7 +18,7 @@ def test_catalog_generates_one_wrapper_for_every_task() -> None:
         for surface in parameters.catalog()["surfaces"]
         if surface["kind"] == "task"
     )
-    assert len(task_ids) == 40
+    assert len(task_ids) == 39
     assert tasks.TASK_SURFACES == task_ids
     assert all(callable(getattr(tasks, name)) for name in tasks.TASK_SURFACES)
 

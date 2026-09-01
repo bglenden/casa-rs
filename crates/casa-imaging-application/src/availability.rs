@@ -51,8 +51,144 @@ pub enum TaskRequirement {
     Fftw,
     /// Metal MPSGraph FFT override.
     MetalMpsGraph,
-    /// Task controls outside the installed spectral-cycle contract.
-    UnsupportedControls,
+    /// Non-Stokes-I or raw-correlation selection.
+    PolarizationSelection,
+    /// UV tapering.
+    UvTaper,
+    /// Long-form minor-cycle summary.
+    FullSummary,
+    /// Cube channel chunking.
+    ChannelChunks,
+    /// Per-channel weighting-density control.
+    PerChannelWeightDensity,
+    /// Explicit W-projection plane budget.
+    WProjectionPlanes,
+    /// Explicit standard-MFS grid worker count.
+    GridThreads,
+    /// Explicit fixed-tile anchor.
+    TileAnchor,
+    /// Explicit residual backend override.
+    ResidualBackend,
+    /// Explicit initial-dirty backend override.
+    InitialDirtyBackend,
+    /// Metal minor-cycle chunk override.
+    MetalMinorCycleChunk,
+    /// Metal grouped-input cache override.
+    MetalGroupedInputCache,
+    /// Explicit source-stream memory target.
+    MemoryTarget,
+    /// Explicit non-default source-stream memory-pressure policy.
+    MemoryPressurePolicy,
+    /// Explicit source-stream prepare-buffer budget.
+    PrepareBuffer,
+    /// Explicit source row-block size.
+    RowBlockRows,
+    /// Explicit source preparation worker count.
+    PrepareWorkers,
+    /// Explicit source read-ahead count.
+    ReadAheadBlocks,
+    /// Explicit FFT precision.
+    FftPrecision,
+    /// Preview sidecar publication.
+    PreviewPng,
+    /// Unknown backend spelling.
+    UnknownBackend,
+}
+
+impl TaskRequirement {
+    /// Complete stable task-only capability catalog for the current application
+    /// contract.
+    pub const ALL: [Self; 41] = [
+        Self::SpectralCube,
+        Self::SpectralCubedata,
+        Self::MosaicGridder,
+        Self::WProjection,
+        Self::AwProjection,
+        Self::Automasking,
+        Self::MaskProduct,
+        Self::StartModel,
+        Self::ModelColumnWrite,
+        Self::SerialCpu,
+        Self::ExecutionAuto,
+        Self::FixedTileCpu,
+        Self::MetalGridder,
+        Self::MetalRowRunGridder,
+        Self::MetalRowRunGroupedGridder,
+        Self::FftAuto,
+        Self::RustFft,
+        Self::Accelerate,
+        Self::Fftw,
+        Self::MetalMpsGraph,
+        Self::PolarizationSelection,
+        Self::UvTaper,
+        Self::FullSummary,
+        Self::ChannelChunks,
+        Self::PerChannelWeightDensity,
+        Self::WProjectionPlanes,
+        Self::GridThreads,
+        Self::TileAnchor,
+        Self::ResidualBackend,
+        Self::InitialDirtyBackend,
+        Self::MetalMinorCycleChunk,
+        Self::MetalGroupedInputCache,
+        Self::MemoryTarget,
+        Self::MemoryPressurePolicy,
+        Self::PrepareBuffer,
+        Self::RowBlockRows,
+        Self::PrepareWorkers,
+        Self::ReadAheadBlocks,
+        Self::FftPrecision,
+        Self::PreviewPng,
+        Self::UnknownBackend,
+    ];
+
+    /// Return the stable application-catalog identity.
+    #[must_use]
+    pub const fn catalog_id(self) -> &'static str {
+        match self {
+            Self::SpectralCube => "spectral_cube",
+            Self::SpectralCubedata => "spectral_cubedata",
+            Self::MosaicGridder => "mosaic_gridder",
+            Self::WProjection => "w_projection",
+            Self::AwProjection => "aw_projection",
+            Self::Automasking => "automasking",
+            Self::MaskProduct => "mask_product",
+            Self::StartModel => "start_model",
+            Self::ModelColumnWrite => "model_column_write",
+            Self::SerialCpu => "serial_cpu",
+            Self::ExecutionAuto => "execution_auto",
+            Self::FixedTileCpu => "fixed_tile_cpu",
+            Self::MetalGridder => "metal_gridder",
+            Self::MetalRowRunGridder => "metal_row_run_gridder",
+            Self::MetalRowRunGroupedGridder => "metal_row_run_grouped_gridder",
+            Self::FftAuto => "fft_auto",
+            Self::RustFft => "rust_fft",
+            Self::Accelerate => "accelerate_fft",
+            Self::Fftw => "fftw",
+            Self::MetalMpsGraph => "metal_mps_graph",
+            Self::PolarizationSelection => "polarization_selection",
+            Self::UvTaper => "uv_taper",
+            Self::FullSummary => "full_summary",
+            Self::ChannelChunks => "channel_chunks",
+            Self::PerChannelWeightDensity => "per_channel_weight_density",
+            Self::WProjectionPlanes => "w_projection_planes",
+            Self::GridThreads => "grid_threads",
+            Self::TileAnchor => "tile_anchor",
+            Self::ResidualBackend => "residual_backend",
+            Self::InitialDirtyBackend => "initial_dirty_backend",
+            Self::MetalMinorCycleChunk => "metal_minor_cycle_chunk",
+            Self::MetalGroupedInputCache => "metal_grouped_input_cache",
+            Self::MemoryTarget => "memory_target",
+            Self::MemoryPressurePolicy => "memory_pressure_policy",
+            Self::PrepareBuffer => "prepare_buffer",
+            Self::RowBlockRows => "row_block_rows",
+            Self::PrepareWorkers => "prepare_workers",
+            Self::ReadAheadBlocks => "read_ahead_blocks",
+            Self::FftPrecision => "fft_precision",
+            Self::PreviewPng => "preview_png",
+            Self::UnknownBackend => "unknown_backend",
+        }
+    }
 }
 
 /// One typed requirement not implemented by the installed imaging build.
@@ -74,6 +210,116 @@ pub enum UnsupportedRequirement {
     NoModelColumnWrite,
     /// The implementation requires a scalar measurement equation.
     ScalarInstrumentResponse,
+}
+
+impl UnsupportedRequirement {
+    /// Return the stable reason family used by typed transport projections.
+    #[must_use]
+    pub const fn catalog_kind(self) -> &'static str {
+        match self {
+            Self::Capability(_) => "capability",
+            Self::Task(_) => "task",
+            Self::SingleObservationSource
+            | Self::SingleFacet
+            | Self::FixedPhaseCentre
+            | Self::EmptyInitialModel
+            | Self::NoModelColumnWrite
+            | Self::ScalarInstrumentResponse => "constraint",
+        }
+    }
+
+    /// Return the exact stable reason identity exposed by provider projections.
+    #[must_use]
+    pub fn catalog_id(self) -> String {
+        match self {
+            Self::Capability(requirement) => {
+                format!("capability.{}", requirement.catalog_id())
+            }
+            Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
+            Self::SingleObservationSource => "constraint.single_observation_source".to_string(),
+            Self::SingleFacet => "constraint.single_facet".to_string(),
+            Self::FixedPhaseCentre => "constraint.fixed_phase_centre".to_string(),
+            Self::EmptyInitialModel => "constraint.empty_initial_model".to_string(),
+            Self::NoModelColumnWrite => "constraint.no_model_column_write".to_string(),
+            Self::ScalarInstrumentResponse => "constraint.scalar_instrument_response".to_string(),
+        }
+    }
+}
+
+/// Owner-typed scientific or task capability represented in the installed
+/// application catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImagingCapabilityRequirement {
+    /// Compiler-derived backend-independent capability.
+    Scientific(RequiredCapability),
+    /// Task-only capability not represented by the compiled problem.
+    Task(TaskRequirement),
+}
+
+impl ImagingCapabilityRequirement {
+    /// Return the stable requirement identity.
+    #[must_use]
+    pub fn catalog_id(self) -> String {
+        match self {
+            Self::Scientific(requirement) => {
+                format!("capability.{}", requirement.catalog_id())
+            }
+            Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
+        }
+    }
+
+    /// Return the stable requirement kind used by transport projections.
+    #[must_use]
+    pub const fn catalog_kind(self) -> &'static str {
+        match self {
+            Self::Scientific(_) => "scientific",
+            Self::Task(_) => "task",
+        }
+    }
+}
+
+/// One application-owned capability and its exact installed-build status.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagingCapabilityCatalogEntry {
+    requirement: ImagingCapabilityRequirement,
+    unsupported: Option<UnsupportedRequirement>,
+}
+
+impl ImagingCapabilityCatalogEntry {
+    /// Return the typed requirement.
+    #[must_use]
+    pub const fn requirement(&self) -> ImagingCapabilityRequirement {
+        self.requirement
+    }
+
+    /// Return the exact typed unavailability reason, or `None` when supported.
+    #[must_use]
+    pub const fn unsupported(&self) -> Option<UnsupportedRequirement> {
+        self.unsupported
+    }
+}
+
+/// Return every stable scientific, product, and task capability understood by
+/// the current request/application contract with its exact installed status.
+#[must_use]
+pub fn installed_imaging_capability_catalog() -> Vec<ImagingCapabilityCatalogEntry> {
+    let mut catalog = RequiredCapability::catalog()
+        .into_iter()
+        .map(|requirement| ImagingCapabilityCatalogEntry {
+            requirement: ImagingCapabilityRequirement::Scientific(requirement),
+            unsupported: (!supports_capability(requirement))
+                .then_some(UnsupportedRequirement::Capability(requirement)),
+        })
+        .collect::<Vec<_>>();
+    catalog.extend(TaskRequirement::ALL.into_iter().map(|requirement| {
+        ImagingCapabilityCatalogEntry {
+            requirement: ImagingCapabilityRequirement::Task(requirement),
+            unsupported: (!supports_task(requirement))
+                .then_some(UnsupportedRequirement::Task(requirement)),
+        }
+    }));
+    catalog.sort_by_key(|entry| entry.requirement.catalog_id());
+    catalog
 }
 
 /// Typed fail-closed result returned before physical planning or execution.
@@ -233,6 +479,8 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
 
     #[test]
@@ -240,5 +488,46 @@ mod tests {
         assert!(supports_capability(
             RequiredCapability::JointContinuumLineReconstruction
         ));
+    }
+
+    #[test]
+    fn capability_catalog_is_complete_unique_and_exactly_typed() {
+        let catalog = installed_imaging_capability_catalog();
+        let ids = catalog
+            .iter()
+            .map(|entry| entry.requirement().catalog_id())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(ids.len(), catalog.len());
+        assert_eq!(
+            catalog
+                .iter()
+                .find(|entry| {
+                    entry.requirement()
+                        == ImagingCapabilityRequirement::Task(TaskRequirement::AwProjection)
+                })
+                .and_then(ImagingCapabilityCatalogEntry::unsupported),
+            Some(UnsupportedRequirement::Task(TaskRequirement::AwProjection))
+        );
+        assert_eq!(
+            catalog
+                .iter()
+                .find(|entry| {
+                    entry.requirement()
+                        == ImagingCapabilityRequirement::Scientific(RequiredCapability::Product(
+                            ProductKind::Sensitivity,
+                        ))
+                })
+                .and_then(ImagingCapabilityCatalogEntry::unsupported),
+            Some(UnsupportedRequirement::Capability(
+                RequiredCapability::Product(ProductKind::Sensitivity)
+            ))
+        );
+        assert!(catalog.iter().any(|entry| {
+            entry.requirement()
+                == ImagingCapabilityRequirement::Scientific(RequiredCapability::Product(
+                    ProductKind::RestoredImage,
+                ))
+                && entry.unsupported().is_none()
+        }));
     }
 }
