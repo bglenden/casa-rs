@@ -764,7 +764,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericTaskArgumentsUseRequiredCanonicalProviderInvocation() throws {
-        let invocation = SurfaceProviderInvocation(
+        let invocation = makeSurfaceProviderInvocation(
             args: ["--vis", "/data/input.ms", "--mode", "summary", "--no-flagbackup"]
         )
         let request = GenericTaskRequest(
@@ -785,7 +785,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let request = GenericTaskRequest(
             runID: "run-cube",
             task: makeImagerApplicationCatalogEntry(),
-            providerInvocation: SurfaceProviderInvocation(args: providerArguments)
+            providerInvocation: makeSurfaceProviderInvocation(args: providerArguments)
         )
 
         let arguments = try ProcessGenericTaskClient.arguments(for: request)
@@ -798,7 +798,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericTaskArgumentsPreserveCatalogProjectedHiddenDefaults() throws {
-        let invocation = SurfaceProviderInvocation(
+        let invocation = makeSurfaceProviderInvocation(
             args: ["--mode", "apply", "--ms", "/data/input.ms"]
         )
         let request = GenericTaskRequest(
@@ -813,7 +813,7 @@ final class WorkbenchStoreTests: XCTestCase {
     }
 
     func testGenericTaskArgumentsPreserveCatalogProjectedFixedArguments() throws {
-        let invocation = SurfaceProviderInvocation(
+        let invocation = makeSurfaceProviderInvocation(
             args: ["imhead", "/data/image.im", "--mode", "list"]
         )
         let request = GenericTaskRequest(
@@ -854,7 +854,7 @@ final class WorkbenchStoreTests: XCTestCase {
                 showInSwift: true,
                 includeInSuite: true
             ),
-            providerInvocation: SurfaceProviderInvocation(
+            providerInvocation: makeSurfaceProviderInvocation(
                 args: ["twhya_cont.image", "casa-rs-runs/twhya_cont.fits", "--overwrite"]
             ),
             parameterBundle: try UniFFISurfaceParameterClient().loadBundle(surfaceID: "exportfits"),
@@ -3077,7 +3077,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let request = GenericTaskRequest(
             runID: "run-1",
             task: makeImagerApplicationCatalogEntry(),
-            providerInvocation: SurfaceProviderInvocation(args: providerArguments)
+            providerInvocation: makeSurfaceProviderInvocation(args: providerArguments)
         )
 
         let arguments = try ProcessGenericTaskClient.arguments(for: request)
@@ -5687,7 +5687,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let request = GenericTaskRequest(
             runID: "large-stdout",
             task: task,
-            providerInvocation: SurfaceProviderInvocation(
+            providerInvocation: makeSurfaceProviderInvocation(
                 args: ["--vis", "/data/probed.ms", "--imagename", outputPrefix]
             )
         )
@@ -5778,7 +5778,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let request = GenericTaskRequest(
             runID: "jsonl-progress",
             task: task,
-            providerInvocation: SurfaceProviderInvocation(
+            providerInvocation: makeSurfaceProviderInvocation(
                 args: ["--vis", "/data/probed.ms", "--imagename", outputPrefix]
             ),
             workingDirectoryPath: tempRoot.path
@@ -7084,11 +7084,24 @@ private func taskCompletionProbe(_ dataset: DatasetSummary) -> CasarsFrontendSer
     )
 }
 
+private func makeSurfaceProviderInvocation(
+    args: [String],
+    stdin: String? = nil
+) -> SurfaceProviderInvocation {
+    SurfaceProviderInvocation(
+        protocolName: nil,
+        protocolVersion: nil,
+        args: args,
+        stdin: stdin,
+        unsupportedReasons: []
+    )
+}
+
 private func makeSimobserveGenericTaskRequest(rootURL: URL) throws -> GenericTaskRequest {
     GenericTaskRequest(
         runID: "simobserve-1",
         task: makeSimobserveApplicationCatalogEntry(),
-        providerInvocation: SurfaceProviderInvocation(
+        providerInvocation: makeSurfaceProviderInvocation(
             args: ["--json-run", "-"],
             stdin: #"{"kind":"family","request":{"model":"model.image","output_ms":"products/family.ms"}}"#
         ),
