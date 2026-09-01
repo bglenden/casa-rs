@@ -14,7 +14,9 @@ mod schema;
 mod surface_types;
 mod task_contract;
 
-use std::{ffi::OsString, path::PathBuf, time::Duration};
+use std::{collections::BTreeMap, ffi::OsString, path::PathBuf, time::Duration};
+
+use casa_provider_contracts::ParameterValue;
 
 pub use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
 pub use managed_output::*;
@@ -152,10 +154,6 @@ pub enum ImagingMemoryPressurePolicy {
     Aggressive,
     /// Permit explicit oversubscription experiments.
     Oversubscribe,
-    /// Request stage-aware residency.
-    StageAware,
-    /// Request next-use-aware residency.
-    Hybrid,
 }
 
 /// Dirty/residual FFT precision request.
@@ -778,6 +776,354 @@ impl CliConfig {
             write_preview_pngs: false,
         }
     }
+
+    /// Project a fully resolved parameter-catalog value set into runtime
+    /// configuration without reparsing generated CLI arguments.
+    pub(crate) fn from_parameter_values(
+        values: &BTreeMap<String, ParameterValue>,
+    ) -> Result<Self, String> {
+        let mut config = Self::defaults();
+        let text = |name: &str| parameter_text(values, name);
+        let optional_text = |name: &str| -> Result<Option<String>, String> {
+            let value = text(name)?;
+            Ok(
+                (!matches!(value.to_ascii_lowercase().as_str(), "none" | "auto")
+                    && !value.is_empty())
+                .then_some(value),
+            )
+        };
+        let integer = |name: &str| parameter_integer(values, name);
+        let float = |name: &str| parameter_float(values, name);
+        let boolean = |name: &str| parameter_bool(values, name);
+
+        config.ms = PathBuf::from(text("vis")?);
+        config.imagename = PathBuf::from(text("imagename")?);
+        config.imsize = parameter_square_usize(values, "imsize")?;
+        config.cell_arcsec = parameter_square_quantity(values, "cell", "arcsec")?;
+        config.datacolumn = optional_text("datacolumn")?;
+        config.save_model = parse_save_model(&text("savemodel")?)?;
+        config.start_model = optional_text("startmodel")?.map(PathBuf::from);
+        config.outlier_file = optional_text("outlierfile")?.map(PathBuf::from);
+        config.field_ids = optional_text("field")?
+            .map(|value| parse_ids(&value, "field"))
+            .transpose()?;
+        config.phasecenter_field = optional_text("phasecenter_field")?
+            .map(|value| value.parse::<i32>().map_err(|error| error.to_string()))
+            .transpose()?;
+        config.ddid = optional_text("ddid")?
+            .map(|value| value.parse::<i32>().map_err(|error| error.to_string()))
+            .transpose()?;
+        config.phasecenter = optional_text("phasecenter")?;
+        config.spw_selector = optional_text("spw")?;
+        config.spw = config
+            .spw_selector
+            .as_deref()
+            .and_then(|value| value.parse().ok());
+        config.channel_start = optional_usize(values, "channel_start")?;
+        config.channel_count = optional_usize(values, "channel_count")?;
+        config.correlation = Some(text("stokes")?);
+        config.spectral_mode = SpectralMode::parse(&text("specmode")?)?;
+        config.chanchunks = optional_usize(values, "chanchunks")?;
+        if let Some(value) = optional_text("outframe")? {
+            config.cube_axis.outframe = value
+                .parse()
+                .map_err(|error| format!("parse outframe: {error}"))?;
+        }
+        if let Some(value) = optional_text("veltype")? {
+            config.cube_axis.veltype = value
+                .parse()
+                .map_err(|error| format!("parse veltype: {error}"))?;
+        }
+        if let Some(value) = optional_text("start")? {
+            config.cube_axis.start = Some(
+                CubeAxisValue::parse(&value, config.cube_axis.veltype)
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        if let Some(value) = optional_text("width")? {
+            config.cube_axis.width = Some(
+                CubeAxisValue::parse(&value, config.cube_axis.veltype)
+                    .map_err(|error| error.to_string())?,
+            );
+        }
+        if let Some(value) = optional_text("interpolation")? {
+            config.cube_axis.interpolation = parse_cube_interpolation(&value)?;
+        }
+        if let Some(value) = optional_text("restfreq")? {
+            config.cube_axis.rest_frequency_hz =
+                Some(casa_ms::parse_rest_frequency_hz(&value).map_err(|error| error.to_string())?);
+        }
+        if let Some(value) = optional_text("restoringbeam")? {
+            config.restoring_beam_mode = parse_restoring_beam(&value)?;
+        }
+        config.per_channel_weight_density = boolean("perchanweightdensity")?;
+        config.dirty_only = boolean("dirty_only")?;
+        config.niter = usize::try_from(integer("niter")?).map_err(|error| error.to_string())?;
+        config.threshold_jy = parameter_quantity(values, "threshold", "Jy")? as f32;
+        config.nmajor = match integer("nmajor")? {
+            -1 => None,
+            value if value >= 0 => Some(value as usize),
+            value => return Err(format!("nmajor expects -1 or non-negative, found {value}")),
+        };
+        config.fullsummary = boolean("fullsummary")?;
+        config.gain = float("gain")? as f32;
+        config.nsigma = float("nsigma")? as f32;
+        config.psf_cutoff = float("psfcutoff")? as f32;
+        config.minor_cycle_length =
+            usize::try_from(integer("minor_cycle_length")?).map_err(|error| error.to_string())?;
+        config.cyclefactor = float("cyclefactor")? as f32;
+        config.deconvolver = parse_deconvolver(&text("deconvolver")?)?;
+        config.min_psf_fraction = float("minpsffraction")? as f32;
+        config.max_psf_fraction = float("maxpsffraction")? as f32;
+        config.nterms = usize::try_from(integer("nterms")?).map_err(|error| error.to_string())?;
+        config.hogbom_iteration_mode = match text("hogbom_iteration_mode")?.as_str() {
+            "strict" => HogbomIterationMode::Strict,
+            "casa-inclusive" => HogbomIterationMode::CasaInclusive,
+            value => return Err(format!("unsupported hogbom_iteration_mode {value:?}")),
+        };
+        config.multiscale_scales = optional_text("scales")?
+            .map(|value| parse_csv(&value, "scales"))
+            .transpose()?
+            .unwrap_or_default();
+        config.small_scale_bias = float("smallscalebias")? as f32;
+        config.use_mask = parse_clean_mask(&text("usemask")?)?;
+        config.auto_mask.sidelobe_threshold = float("sidelobethreshold")? as f32;
+        config.auto_mask.noise_threshold = float("noisethreshold")? as f32;
+        config.auto_mask.low_noise_threshold = float("lownoisethreshold")? as f32;
+        config.auto_mask.negative_threshold = float("negativethreshold")? as f32;
+        config.auto_mask.min_beam_frac = float("minbeamfrac")? as f32;
+        config.auto_mask.grow_iterations =
+            usize::try_from(integer("growiterations")?).map_err(|error| error.to_string())?;
+        config.mask_boxes = optional_text("mask_box")?
+            .map(|value| value.split(';').map(parse_box).collect())
+            .transpose()?
+            .unwrap_or_default();
+        config.mask_image = optional_text("mask_image")?.map(PathBuf::from);
+        config.weighting = parse_weighting(&text("weighting")?, Some(float("robust")? as f32))?;
+        config.w_project_planes = optional_usize(values, "wprojplanes")?;
+        config.use_pointing = boolean("usepointing")?;
+        config.uv_taper = optional_text("uvtaper")?
+            .map(|value| parse_uv_taper(&value))
+            .transpose()?;
+        config.write_preview_pngs = boolean("write_preview_pngs")?;
+        config.write_pb = boolean("write_pb")?;
+        config.pbcor = boolean("pbcor")?;
+        config.mosaic_pb_limit = float("pblimit")? as f32;
+        config.w_term_mode = parse_w_term(&text("wterm")?)?;
+        set_gridder(&mut config, &text("gridder")?)?;
+        config.standard_mfs_acceleration = parse_acceleration(&text("standard_mfs_acceleration")?)?;
+        config.parallel = optional_bool(values, "parallel")?;
+        validate_parallel_acceleration(config.parallel, config.standard_mfs_acceleration)?;
+        config.imaging_read_ahead_blocks = optional_usize(values, "imaging_read_ahead_blocks")?;
+        config.imaging_fft_backend = parse_fft_backend(&text("imaging_fft_backend")?)?;
+        config.uvrange = optional_text("uvrange")?;
+        config.intent = optional_text("intent")?;
+        if config.aw_project.is_some() {
+            let controls = aw_controls(&mut config);
+            controls.cf_cache = PathBuf::from(text("cfcache")?);
+            controls.cf_resident_bytes = usize::try_from(integer("cf_resident_mb")?)
+                .map_err(|error| error.to_string())?
+                .saturating_mul(1024 * 1024);
+            controls.facets =
+                usize::try_from(integer("facets")?).map_err(|error| error.to_string())?;
+            controls.psf_phase_center_direction_rad = optional_text("psfphasecenter")?
+                .map(|value| {
+                    let values = parse_csv::<f64>(&value, "psfphasecenter")?;
+                    values
+                        .try_into()
+                        .map_err(|_| "psfphasecenter expects two radians".to_string())
+                })
+                .transpose()?;
+            controls.vp_table = optional_text("vptable")?.map(PathBuf::from);
+            controls.a_term = boolean("aterm")?;
+            controls.ps_term = boolean("psterm")?;
+            controls.wb_awp = boolean("wbawp")?;
+            controls.conjugate_beams = boolean("conjbeams")?;
+            controls.compute_pa_step_deg = float("computepastep")?;
+            controls.rotate_pa_step_deg = float("rotatepastep")?;
+            controls.pointing_offset_sigdev =
+                parse_csv(&text("pointingoffsetsigdev")?, "pointingoffsetsigdev")?;
+            controls.mosaic_weighting = boolean("mosweight")?;
+            controls.normalization = parse_aw_normalization(&text("normtype")?)?;
+        }
+        config.imaging_memory_target_mb = optional_usize(values, "imaging_memory_target_mb")?;
+        config.imaging_memory_pressure_policy =
+            parse_memory_policy(&text("imaging_memory_pressure_policy")?)?;
+        config.imaging_prepare_buffer_mb = optional_usize(values, "imaging_prepare_buffer_mb")?;
+        config.imaging_row_block_rows = optional_usize(values, "imaging_row_block_rows")?;
+        config.imaging_prepare_workers = optional_usize(values, "imaging_prepare_workers")?;
+        config.imaging_fft_precision = parse_fft_precision(&text("imaging_fft_precision")?)?;
+        config.standard_mfs_grid_threads = optional_text("standard_mfs_grid_threads")?;
+        if !text("projection")?.eq_ignore_ascii_case("sin") {
+            return Err("only SIN projection is supported".to_string());
+        }
+        config.continuum_fit_spw = optional_text("fitspw")?;
+        config.continuum_fit_order =
+            usize::try_from(integer("fitorder")?).map_err(|error| error.to_string())?;
+        config.save_continuum_residual = boolean("save_continuum_residual")?;
+        if config.ms.as_os_str().is_empty() || config.imagename.as_os_str().is_empty() {
+            return Err("vis and imagename are required".to_string());
+        }
+        Ok(config)
+    }
+}
+
+fn parameter_value<'a>(
+    values: &'a BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<&'a ParameterValue, String> {
+    values
+        .get(name)
+        .ok_or_else(|| format!("resolved imager parameter {name:?} is missing"))
+}
+
+fn parameter_text(values: &BTreeMap<String, ParameterValue>, name: &str) -> Result<String, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::String(value) => Ok(value.clone()),
+        ParameterValue::Array(values) if values.len() == 1 => match &values[0] {
+            ParameterValue::String(value) => Ok(value.clone()),
+            value => Err(format!(
+                "resolved imager parameter {name:?} singleton must be text, found {value:?}"
+            )),
+        },
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be text, found {value:?}"
+        )),
+    }
+}
+
+fn parameter_integer(values: &BTreeMap<String, ParameterValue>, name: &str) -> Result<i64, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Integer(value) => Ok(*value),
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be integer, found {value:?}"
+        )),
+    }
+}
+
+fn parameter_float(values: &BTreeMap<String, ParameterValue>, name: &str) -> Result<f64, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Float(value) => Ok(*value),
+        ParameterValue::Integer(value) => Ok(*value as f64),
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be numeric, found {value:?}"
+        )),
+    }
+}
+
+fn parameter_bool(values: &BTreeMap<String, ParameterValue>, name: &str) -> Result<bool, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Bool(value) => Ok(*value),
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be boolean, found {value:?}"
+        )),
+    }
+}
+
+fn optional_usize(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<Option<usize>, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Integer(value) => usize::try_from(*value)
+            .map(Some)
+            .map_err(|error| error.to_string()),
+        ParameterValue::String(value)
+            if matches!(value.to_ascii_lowercase().as_str(), "none" | "auto") =>
+        {
+            Ok(None)
+        }
+        ParameterValue::String(value) => value
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|error| error.to_string()),
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be optional integer, found {value:?}"
+        )),
+    }
+}
+
+fn optional_bool(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<Option<bool>, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Bool(value) => Ok(Some(*value)),
+        ParameterValue::String(value) if value.eq_ignore_ascii_case("none") => Ok(None),
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be optional boolean, found {value:?}"
+        )),
+    }
+}
+
+fn parameter_square_usize(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<usize, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Integer(value) => {
+            usize::try_from(*value).map_err(|error| error.to_string())
+        }
+        ParameterValue::Array(items) if items.len() == 2 => {
+            let [first, second] = items.as_slice() else {
+                unreachable!()
+            };
+            if first != second {
+                return Err(format!("{name} must be square"));
+            }
+            match first {
+                ParameterValue::Integer(value) => {
+                    usize::try_from(*value).map_err(|error| error.to_string())
+                }
+                value => Err(format!("{name} axis must be integer, found {value:?}")),
+            }
+        }
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be integer or square pair, found {value:?}"
+        )),
+    }
+}
+
+fn parameter_square_quantity(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+    suffix: &str,
+) -> Result<f64, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::String(value) => parse_suffixed(value, suffix),
+        ParameterValue::Array(items) if items.len() == 2 && items[0] == items[1] => match &items[0]
+        {
+            ParameterValue::String(value) => parse_suffixed(value, suffix),
+            value => Err(format!("{name} axis must be text, found {value:?}")),
+        },
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be quantity or square pair, found {value:?}"
+        )),
+    }
+}
+
+fn parameter_quantity(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+    suffix: &str,
+) -> Result<f64, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Float(value) => Ok(*value),
+        ParameterValue::Integer(value) => Ok(*value as f64),
+        ParameterValue::String(value) => parse_suffixed(value, suffix),
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be quantity, found {value:?}"
+        )),
+    }
+}
+
+fn parse_suffixed(value: &str, suffix: &str) -> Result<f64, String> {
+    value
+        .strip_suffix(suffix)
+        .unwrap_or(value)
+        .trim()
+        .parse()
+        .map_err(|error| format!("parse {value:?}: {error}"))
 }
 
 /// Compact presentation result from one application invocation.
@@ -815,16 +1161,6 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
     run_from_config(&request.to_cli_config()?)
 }
 
-/// Project one canonical task request into the sole native application request.
-/// This exposes the same seam used by execution so acceptance tests can inspect
-/// typed capability and Resource Policy outcomes without reproducing frontend
-/// conversion logic.
-pub fn project_application_request(
-    request: &ImagerRunTaskRequest,
-) -> Result<casa_imaging_application::ContinuumImagingRequest, String> {
-    native_application::application_request(&request.to_cli_config()?)
-}
-
 /// Run the machine or direct CLI surface.
 pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let raw_args = args.into_iter().collect::<Vec<_>>();
@@ -855,7 +1191,22 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         |request: ImagerTaskRequest| request.execute(),
     );
     if let Some(output) = host.dispatch(&args).map_err(|error| error.to_string())? {
-        println!("{output}");
+        if managed_output
+            && args
+                .iter()
+                .any(|argument| argument.to_str() == Some("--json-run"))
+        {
+            let result: ImagerTaskResult = serde_json::from_str(&output)
+                .map_err(|error| format!("decode canonical imager task result: {error}"))?;
+            let ImagerTaskResult::Run(result) = result;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ManagedImagingOutput::from_task_result(&result))
+                    .map_err(|error| format!("serialize managed imaging output: {error}"))?
+            );
+        } else {
+            println!("{output}");
+        }
         return Ok(());
     }
     if args
@@ -898,11 +1249,18 @@ pub(crate) fn apply_parallel_runtime_control(
 ) -> Result<(), String> {
     if let Some(parallel) = parallel {
         config.parallel = Some(parallel);
-        config.standard_mfs_acceleration = if parallel {
-            StandardMfsAccelerationPolicy::MultiCpu
-        } else {
-            StandardMfsAccelerationPolicy::Cpu
-        };
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_parallel_acceleration(
+    parallel: Option<bool>,
+    acceleration: StandardMfsAccelerationPolicy,
+) -> Result<(), String> {
+    if parallel == Some(false) && acceleration != StandardMfsAccelerationPolicy::Cpu {
+        return Err(format!(
+            "parallel=false conflicts with standard_mfs_acceleration={acceleration:?}"
+        ));
     }
     Ok(())
 }
@@ -1144,8 +1502,6 @@ fn parse_memory_policy(value: &str) -> Result<ImagingMemoryPressurePolicy, Strin
         "conservative-no-swap" => Ok(ImagingMemoryPressurePolicy::ConservativeNoSwap),
         "aggressive" => Ok(ImagingMemoryPressurePolicy::Aggressive),
         "oversubscribe" => Ok(ImagingMemoryPressurePolicy::Oversubscribe),
-        "stage-aware" => Ok(ImagingMemoryPressurePolicy::StageAware),
-        "hybrid" => Ok(ImagingMemoryPressurePolicy::Hybrid),
         _ => Err(format!("unsupported memory policy {value:?}")),
     }
 }

@@ -355,7 +355,7 @@ mod tests {
     fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 10);
+        assert_eq!(surface.contract_version(), 11);
         assert_eq!(surface.bindings().len(), 94);
         for binding in surface.bindings() {
             let concept = catalog
@@ -490,12 +490,13 @@ mod tests {
             .iter()
             .find(|binding| binding.name == "imaging_memory_pressure_policy")
             .expect("imaging memory policy binding");
-        assert!(
-            memory_policy
-                .surface_note
-                .as_deref()
-                .is_some_and(|note| note.contains("planner-probe-only"))
-        );
+        let memory_policy_note = memory_policy
+            .surface_note
+            .as_deref()
+            .expect("memory policy note");
+        assert!(memory_policy_note.contains("oversubscribe"));
+        assert!(!memory_policy_note.contains("stage-aware"));
+        assert!(!memory_policy_note.contains("hybrid"));
         let migration = surface
             .migrations()
             .iter()

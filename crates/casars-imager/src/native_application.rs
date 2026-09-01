@@ -7,7 +7,7 @@ use std::time::Instant;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
-    HogbomIterationAccounting, SpectralImagingMode, TaskRequirement,
+    HogbomIterationAccounting, ResourcePolicy, SpectralImagingMode, TaskRequirement,
     VisibilityContinuumSubtraction, execute_continuum, resource_policy_for_task_requirements,
 };
 
@@ -127,7 +127,11 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
     let iterations = config.niter;
     let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
     let task_requirements = task_requirements(config);
-    let resource_policy = resource_policy_for_task_requirements(&task_requirements);
+    let resource_policy = if config.parallel == Some(true) {
+        ResourcePolicy::Balanced
+    } else {
+        resource_policy_for_task_requirements(&task_requirements)
+    };
     Ok(ContinuumImagingRequest {
         measurement_set: config.ms.clone(),
         image_name: config.imagename.clone(),
@@ -243,9 +247,7 @@ fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
         requirements.push(TaskRequirement::ModelColumnWrite);
     }
     requirements.extend(backend_requirements(config));
-    if unsupported_native_controls(config) {
-        requirements.push(TaskRequirement::UnsupportedControls);
-    }
+    requirements.extend(unsupported_native_controls(config));
     requirements
 }
 
@@ -272,7 +274,7 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
             "metal-row-run-grouped" | "metal-row-run-grouped-gridder" => {
                 TaskRequirement::MetalRowRunGroupedGridder
             }
-            _ => TaskRequirement::UnsupportedControls,
+            _ => TaskRequirement::UnknownBackend,
         });
     }
     match config.imaging_fft_backend {
@@ -285,34 +287,86 @@ fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
     requirements
 }
 
-fn unsupported_native_controls(config: &CliConfig) -> bool {
-    let standard_mtmfs_products = matches!(config.deconvolver, Deconvolver::Mtmfs);
-    config
-        .correlation
-        .as_deref()
-        .is_some_and(|plane| !plane.eq_ignore_ascii_case("I"))
-        || config.uv_taper.is_some()
-        || config.fullsummary
-        || ((config.pbcor || config.write_pb) && !standard_mtmfs_products)
-        || config.chanchunks.is_some()
-        || config.per_channel_weight_density
-        || config.w_project_planes.is_some()
-        || config.standard_mfs_grid_threads.is_some()
-        || config.standard_mfs_tile_anchor.is_some()
-        || config.standard_mfs_residual_backend.is_some()
-        || config.standard_mfs_initial_dirty_backend.is_some()
-        || config.standard_mfs_metal_minor_cycle_chunk.is_some()
-        || config.standard_mfs_metal_grouped_input_cache.is_some()
-        || config.standard_mfs_memory_target_mb.is_some()
-        || config.standard_mfs_prepare_buffer_mb.is_some()
-        || config.imaging_memory_target_mb.is_some()
-        || config.imaging_memory_pressure_policy != ImagingMemoryPressurePolicy::Auto
-        || config.imaging_prepare_buffer_mb.is_some()
-        || config.imaging_row_block_rows.is_some()
-        || config.imaging_prepare_workers.is_some()
-        || config.imaging_read_ahead_blocks.is_some()
-        || config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto
-        || config.write_preview_pngs
+fn unsupported_native_controls(config: &CliConfig) -> Vec<TaskRequirement> {
+    let mut requirements = Vec::new();
+    let mut require = |condition, requirement| {
+        if condition {
+            requirements.push(requirement);
+        }
+    };
+    require(
+        config
+            .correlation
+            .as_deref()
+            .is_some_and(|plane| !plane.eq_ignore_ascii_case("I")),
+        TaskRequirement::PolarizationSelection,
+    );
+    require(config.uv_taper.is_some(), TaskRequirement::UvTaper);
+    require(config.fullsummary, TaskRequirement::FullSummary);
+    require(config.chanchunks.is_some(), TaskRequirement::ChannelChunks);
+    require(
+        config.per_channel_weight_density,
+        TaskRequirement::PerChannelWeightDensity,
+    );
+    require(
+        config.w_project_planes.is_some(),
+        TaskRequirement::WProjectionPlanes,
+    );
+    require(
+        config.standard_mfs_grid_threads.is_some(),
+        TaskRequirement::GridThreads,
+    );
+    require(
+        config.standard_mfs_tile_anchor.is_some(),
+        TaskRequirement::TileAnchor,
+    );
+    require(
+        config.standard_mfs_residual_backend.is_some(),
+        TaskRequirement::ResidualBackend,
+    );
+    require(
+        config.standard_mfs_initial_dirty_backend.is_some(),
+        TaskRequirement::InitialDirtyBackend,
+    );
+    require(
+        config.standard_mfs_metal_minor_cycle_chunk.is_some(),
+        TaskRequirement::MetalMinorCycleChunk,
+    );
+    require(
+        config.standard_mfs_metal_grouped_input_cache.is_some(),
+        TaskRequirement::MetalGroupedInputCache,
+    );
+    require(
+        config.standard_mfs_memory_target_mb.is_some() || config.imaging_memory_target_mb.is_some(),
+        TaskRequirement::MemoryTarget,
+    );
+    require(
+        config.imaging_memory_pressure_policy != ImagingMemoryPressurePolicy::Auto,
+        TaskRequirement::MemoryPressurePolicy,
+    );
+    require(
+        config.standard_mfs_prepare_buffer_mb.is_some()
+            || config.imaging_prepare_buffer_mb.is_some(),
+        TaskRequirement::PrepareBuffer,
+    );
+    require(
+        config.imaging_row_block_rows.is_some(),
+        TaskRequirement::RowBlockRows,
+    );
+    require(
+        config.imaging_prepare_workers.is_some(),
+        TaskRequirement::PrepareWorkers,
+    );
+    require(
+        config.imaging_read_ahead_blocks.is_some(),
+        TaskRequirement::ReadAheadBlocks,
+    );
+    require(
+        config.imaging_fft_precision != ImagingFftPrecisionPolicy::Auto,
+        TaskRequirement::FftPrecision,
+    );
+    require(config.write_preview_pngs, TaskRequirement::PreviewPng);
+    requirements
 }
 
 #[cfg(test)]
@@ -323,7 +377,7 @@ mod tests {
 
     use super::{
         CliConfig, HogbomIterationAccounting, StandardMfsAccelerationPolicy, TaskRequirement,
-        application_request, backend_requirements, task_requirements,
+        application_request, backend_requirements, task_requirements, unsupported_native_controls,
     };
 
     fn config(extra: &[&str]) -> CliConfig {
@@ -360,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn parallel_flags_select_serial_or_planned_multi_cpu_requirements() {
+    fn parallel_flags_do_not_select_an_acceleration_backend() {
         let serial = config(&["--no-parallel"]);
         assert_eq!(
             serial.standard_mfs_acceleration,
@@ -371,11 +425,11 @@ mod tests {
         let parallel = config(&["--parallel"]);
         assert_eq!(
             parallel.standard_mfs_acceleration,
-            StandardMfsAccelerationPolicy::MultiCpu
+            StandardMfsAccelerationPolicy::Cpu
         );
         assert_eq!(
             task_requirements(&parallel),
-            vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu,]
+            vec![TaskRequirement::SerialCpu]
         );
 
         assert_eq!(
@@ -429,7 +483,7 @@ mod tests {
             "--no-parallel",
         ]));
 
-        assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
+        assert!(!requirements.contains(&TaskRequirement::UnknownBackend));
     }
 
     #[test]
@@ -442,7 +496,7 @@ mod tests {
             "--nmajor",
             "3",
         ]));
-        assert!(!requirements.contains(&TaskRequirement::UnsupportedControls));
+        assert!(!requirements.contains(&TaskRequirement::UnknownBackend));
     }
 
     #[test]
@@ -462,7 +516,7 @@ mod tests {
             request.outlier_file.as_deref(),
             Some(std::path::Path::new("outliers.txt"))
         );
-        assert!(!task_requirements(&config).contains(&TaskRequirement::UnsupportedControls));
+        assert!(unsupported_native_controls(&config).is_empty());
     }
 
     #[test]
@@ -497,7 +551,7 @@ mod tests {
             request.hogbom_iteration_accounting,
             HogbomIterationAccounting::CasaInclusive
         );
-        assert!(!task_requirements(&config).contains(&TaskRequirement::UnsupportedControls));
+        assert!(unsupported_native_controls(&config).is_empty());
     }
 
     #[test]

@@ -51,14 +51,54 @@ pub enum TaskRequirement {
     Fftw,
     /// Metal MPSGraph FFT override.
     MetalMpsGraph,
-    /// Task controls outside the installed spectral-cycle contract.
-    UnsupportedControls,
+    /// Non-Stokes-I or raw-correlation selection.
+    PolarizationSelection,
+    /// UV tapering.
+    UvTaper,
+    /// Long-form minor-cycle summary.
+    FullSummary,
+    /// Cube channel chunking.
+    ChannelChunks,
+    /// Per-channel weighting-density control.
+    PerChannelWeightDensity,
+    /// Explicit W-projection plane budget.
+    WProjectionPlanes,
+    /// Explicit standard-MFS grid worker count.
+    GridThreads,
+    /// Explicit fixed-tile anchor.
+    TileAnchor,
+    /// Explicit residual backend override.
+    ResidualBackend,
+    /// Explicit initial-dirty backend override.
+    InitialDirtyBackend,
+    /// Metal minor-cycle chunk override.
+    MetalMinorCycleChunk,
+    /// Metal grouped-input cache override.
+    MetalGroupedInputCache,
+    /// Explicit source-stream memory target.
+    MemoryTarget,
+    /// Explicit non-default source-stream memory-pressure policy.
+    MemoryPressurePolicy,
+    /// Explicit source-stream prepare-buffer budget.
+    PrepareBuffer,
+    /// Explicit source row-block size.
+    RowBlockRows,
+    /// Explicit source preparation worker count.
+    PrepareWorkers,
+    /// Explicit source read-ahead count.
+    ReadAheadBlocks,
+    /// Explicit FFT precision.
+    FftPrecision,
+    /// Preview sidecar publication.
+    PreviewPng,
+    /// Unknown backend spelling.
+    UnknownBackend,
 }
 
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 41] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
         Self::MosaicGridder,
@@ -79,7 +119,27 @@ impl TaskRequirement {
         Self::Accelerate,
         Self::Fftw,
         Self::MetalMpsGraph,
-        Self::UnsupportedControls,
+        Self::PolarizationSelection,
+        Self::UvTaper,
+        Self::FullSummary,
+        Self::ChannelChunks,
+        Self::PerChannelWeightDensity,
+        Self::WProjectionPlanes,
+        Self::GridThreads,
+        Self::TileAnchor,
+        Self::ResidualBackend,
+        Self::InitialDirtyBackend,
+        Self::MetalMinorCycleChunk,
+        Self::MetalGroupedInputCache,
+        Self::MemoryTarget,
+        Self::MemoryPressurePolicy,
+        Self::PrepareBuffer,
+        Self::RowBlockRows,
+        Self::PrepareWorkers,
+        Self::ReadAheadBlocks,
+        Self::FftPrecision,
+        Self::PreviewPng,
+        Self::UnknownBackend,
     ];
 
     /// Return the stable application-catalog identity.
@@ -106,7 +166,27 @@ impl TaskRequirement {
             Self::Accelerate => "accelerate_fft",
             Self::Fftw => "fftw",
             Self::MetalMpsGraph => "metal_mps_graph",
-            Self::UnsupportedControls => "unsupported_controls",
+            Self::PolarizationSelection => "polarization_selection",
+            Self::UvTaper => "uv_taper",
+            Self::FullSummary => "full_summary",
+            Self::ChannelChunks => "channel_chunks",
+            Self::PerChannelWeightDensity => "per_channel_weight_density",
+            Self::WProjectionPlanes => "w_projection_planes",
+            Self::GridThreads => "grid_threads",
+            Self::TileAnchor => "tile_anchor",
+            Self::ResidualBackend => "residual_backend",
+            Self::InitialDirtyBackend => "initial_dirty_backend",
+            Self::MetalMinorCycleChunk => "metal_minor_cycle_chunk",
+            Self::MetalGroupedInputCache => "metal_grouped_input_cache",
+            Self::MemoryTarget => "memory_target",
+            Self::MemoryPressurePolicy => "memory_pressure_policy",
+            Self::PrepareBuffer => "prepare_buffer",
+            Self::RowBlockRows => "row_block_rows",
+            Self::PrepareWorkers => "prepare_workers",
+            Self::ReadAheadBlocks => "read_ahead_blocks",
+            Self::FftPrecision => "fft_precision",
+            Self::PreviewPng => "preview_png",
+            Self::UnknownBackend => "unknown_backend",
         }
     }
 }
@@ -133,6 +213,21 @@ pub enum UnsupportedRequirement {
 }
 
 impl UnsupportedRequirement {
+    /// Return the stable reason family used by typed transport projections.
+    #[must_use]
+    pub const fn catalog_kind(self) -> &'static str {
+        match self {
+            Self::Capability(_) => "capability",
+            Self::Task(_) => "task",
+            Self::SingleObservationSource
+            | Self::SingleFacet
+            | Self::FixedPhaseCentre
+            | Self::EmptyInitialModel
+            | Self::NoModelColumnWrite
+            | Self::ScalarInstrumentResponse => "constraint",
+        }
+    }
+
     /// Return the exact stable reason identity exposed by provider projections.
     #[must_use]
     pub fn catalog_id(self) -> String {
