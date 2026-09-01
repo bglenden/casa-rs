@@ -5,7 +5,7 @@ use casa_imaging_model::{
     CompiledProblem, DirectionFrame, FrequencyFrame, SelectedInputWeightGroup,
     SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
     SelectedObservationSampleView, SelectedSpectralEvaluation, SelectedSpectralInterval,
-    SpectralFrameAnchor, TimeScale,
+    SpectralFrameAnchor, SpectralWindowSelection, TimeScale,
 };
 
 use casa_types::measures::{
@@ -16,9 +16,298 @@ use casa_types::measures::{
     position::MPosition,
 };
 
-use crate::{derived::engine::MsCalEngine, spectral_selection::PreparedFrequencyFrameConversion};
+use crate::{
+    MeasurementSet, MsError, MsResult, MsSelectionIoBudget, SelectedObservationEphemeris,
+    derived::engine::{MsCalEngine, raw_field_phase_direction},
+    spectral_selection::{PreparedFrequencyFrameConversion, convert_frequency_to_frame_with_frame},
+};
 
-use super::BoundObservationSourceError;
+use super::{BoundObservationSourceError, SelectedObservationRowSelection};
+
+/// Bounded metadata measurements from one selected spectral-range reduction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedObservationSpectralRangeMeasurements {
+    selected_rows: u64,
+    edge_evaluations: u64,
+}
+
+impl SelectedObservationSpectralRangeMeasurements {
+    /// Return the selected MAIN rows observed by the metadata traversal.
+    #[must_use]
+    pub const fn selected_rows(self) -> u64 {
+        self.selected_rows
+    }
+
+    /// Return the distinct consecutive TIME-by-DDID edge evaluations.
+    #[must_use]
+    pub const fn edge_evaluations(self) -> u64 {
+        self.edge_evaluations
+    }
+}
+
+/// Output-frame selected-channel edge extrema and reference-epoch axis bounds.
+///
+/// The selected range is reduced directly from bounded MAIN-row metadata and
+/// never retains a row- or time-sized payload. The reference range evaluates
+/// the same selected source edges at the output-axis epoch and direction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedObservationSpectralRange {
+    selected_edges_hz: [f64; 2],
+    reference_edges_hz: [f64; 2],
+    measurements: SelectedObservationSpectralRangeMeasurements,
+}
+
+impl SelectedObservationSpectralRange {
+    /// Return the global lower and upper selected-channel edges in the output frame.
+    #[must_use]
+    pub const fn selected_edges_hz(self) -> [f64; 2] {
+        self.selected_edges_hz
+    }
+
+    /// Return the selected-channel edges at the output-axis reference frame.
+    #[must_use]
+    pub const fn reference_edges_hz(self) -> [f64; 2] {
+        self.reference_edges_hz
+    }
+
+    /// Return bounded metadata traversal measurements.
+    #[must_use]
+    pub const fn measurements(self) -> SelectedObservationSpectralRangeMeasurements {
+        self.measurements
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SelectedWindowEdges {
+    spectral_window_id: u32,
+    lower_hz: f64,
+    upper_hz: f64,
+}
+
+impl MeasurementSet {
+    /// Reduce selected native-channel edges over every selected TIME-by-DDID row.
+    ///
+    /// This is the storage-owned equivalent of CASA `advisechansel` frequency-
+    /// range evaluation. It streams canonical selected-row metadata under the
+    /// caller's I/O budget and retains only extrema plus one consecutive-key
+    /// cache. `reference_time_mjd_seconds` and `reference_direction` describe
+    /// the output cube frame used to clamp an edge-valued requested start. MVC
+    /// follows CASA's single-field range contract and rejects a selected row
+    /// whose FIELD_ID differs from `field_id`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn selected_observation_spectral_range(
+        &self,
+        row_selection: &SelectedObservationRowSelection,
+        spectral_selection: &[SpectralWindowSelection],
+        source_frequency_reference: FrequencyRef,
+        output_frequency_reference: FrequencyRef,
+        field_id: usize,
+        reference_time_mjd_seconds: f64,
+        reference_direction: MDirection,
+        moving_phase_centre: Option<&SelectedObservationEphemeris>,
+        geometry_engine: &MsCalEngine,
+        io: MsSelectionIoBudget,
+    ) -> MsResult<SelectedObservationSpectralRange> {
+        if spectral_selection.is_empty() {
+            return Err(MsError::InvalidInput(
+                "selected spectral range requires at least one spectral window".to_string(),
+            ));
+        }
+        let spectral_window = self.spectral_window()?;
+        let mut windows = Vec::with_capacity(spectral_selection.len());
+        for selection in spectral_selection {
+            let spectral_window_id = selection.spectral_window_id();
+            if windows
+                .iter()
+                .any(|window: &SelectedWindowEdges| window.spectral_window_id == spectral_window_id)
+            {
+                return Err(MsError::InvalidInput(format!(
+                    "selected spectral range repeats SPECTRAL_WINDOW_ID {spectral_window_id}"
+                )));
+            }
+            let row = usize::try_from(spectral_window_id).expect("u32 fits usize");
+            let frequencies_hz = spectral_window.chan_freq(row)?;
+            let widths_hz = spectral_window.chan_width(row)?;
+            if frequencies_hz.len() != widths_hz.len() {
+                return Err(MsError::InvalidInput(format!(
+                    "SPECTRAL_WINDOW_ID {spectral_window_id} frequency/width lengths differ"
+                )));
+            }
+            let mut lower_hz = f64::INFINITY;
+            let mut upper_hz = f64::NEG_INFINITY;
+            for channel in selection.channel_indices() {
+                let channel = usize::try_from(*channel).expect("u32 fits usize");
+                let frequency_hz = *frequencies_hz.get(channel).ok_or_else(|| {
+                    MsError::InvalidInput(format!(
+                        "selected channel {channel} is outside SPECTRAL_WINDOW_ID {spectral_window_id}"
+                    ))
+                })?;
+                let width_hz = *widths_hz
+                    .get(channel)
+                    .expect("frequency/width lengths match");
+                if !(frequency_hz.is_finite() && width_hz.is_finite() && width_hz != 0.0) {
+                    return Err(MsError::InvalidInput(format!(
+                        "selected channel {channel} in SPECTRAL_WINDOW_ID {spectral_window_id} has invalid frequency metadata"
+                    )));
+                }
+                let half_width_hz = width_hz.abs() / 2.0;
+                lower_hz = lower_hz.min(frequency_hz - half_width_hz);
+                upper_hz = upper_hz.max(frequency_hz + half_width_hz);
+            }
+            if !(lower_hz.is_finite() && upper_hz.is_finite() && upper_hz > lower_hz) {
+                return Err(MsError::InvalidInput(format!(
+                    "SPECTRAL_WINDOW_ID {spectral_window_id} selects no finite channel interval"
+                )));
+            }
+            windows.push(SelectedWindowEdges {
+                spectral_window_id,
+                lower_hz,
+                upper_hz,
+            });
+        }
+
+        let reference_frame = geometry_engine
+            .spectral_frame_observatory_direction(reference_time_mjd_seconds, reference_direction)
+            .map_err(|error| {
+                MsError::VersionError(format!(
+                    "build selected spectral-range reference frame: {error}"
+                ))
+            })?;
+        let mut reference_edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
+        for window in &windows {
+            reference_edges_hz[0] =
+                reference_edges_hz[0].min(convert_frequency_to_frame_with_frame(
+                    source_frequency_reference,
+                    output_frequency_reference,
+                    window.lower_hz,
+                    Some(&reference_frame),
+                )?);
+            reference_edges_hz[1] =
+                reference_edges_hz[1].max(convert_frequency_to_frame_with_frame(
+                    source_frequency_reference,
+                    output_frequency_reference,
+                    window.upper_hz,
+                    Some(&reference_frame),
+                )?);
+        }
+
+        let mut selected_edges_hz = [f64::INFINITY, f64::NEG_INFINITY];
+        let selected_direction = raw_field_phase_direction(self, field_id)?;
+        let mut selected_rows = 0_u64;
+        let mut edge_evaluations = 0_u64;
+        let mut last_key = None;
+        let mut traversal_error = None;
+        self.visit_selected_observation_rows(row_selection, io, |row| {
+            selected_rows = selected_rows.saturating_add(1);
+            if traversal_error.is_some() {
+                return;
+            }
+            let row_field_id = match usize::try_from(row.field_id()) {
+                Ok(value) => value,
+                Err(_) => {
+                    traversal_error = Some(MsError::InvalidInput(
+                        "selected spectral range observed a negative FIELD_ID".to_string(),
+                    ));
+                    return;
+                }
+            };
+            if row_field_id != field_id {
+                traversal_error = Some(MsError::InvalidInput(format!(
+                    "MVC selected spectral range requires one FIELD_ID; expected {field_id}, observed {row_field_id}"
+                )));
+                return;
+            }
+            let data_description_id = match u32::try_from(row.data_description_id()) {
+                Ok(value) => value,
+                Err(_) => {
+                    traversal_error = Some(MsError::InvalidInput(
+                        "selected spectral range observed a negative DATA_DESC_ID".to_string(),
+                    ));
+                    return;
+                }
+            };
+            let Some(description) = row_selection
+                .data_descriptions()
+                .iter()
+                .find(|description| description.data_description_id() == data_description_id)
+            else {
+                traversal_error = Some(MsError::InvalidInput(format!(
+                    "selected DATA_DESC_ID {data_description_id} has no storage binding"
+                )));
+                return;
+            };
+            let Some(window) = windows.iter().find(|window| {
+                window.spectral_window_id == description.spectral_window_id()
+            }) else {
+                traversal_error = Some(MsError::InvalidInput(format!(
+                    "selected DATA_DESC_ID {data_description_id} references an unselected spectral window"
+                )));
+                return;
+            };
+            let key = (row.time_mjd_seconds().to_bits(), data_description_id);
+            if last_key == Some(key) {
+                return;
+            }
+            last_key = Some(key);
+            let row_direction = match moving_phase_centre {
+                Some(ephemeris) => geometry_engine.tracked_field_direction_j2000(
+                    row.time_mjd_seconds(),
+                    field_id,
+                    ephemeris,
+                ),
+                None => Ok(selected_direction.clone()),
+            };
+            let frame = match row_direction.and_then(|direction| {
+                geometry_engine
+                    .spectral_frame_observatory_direction(row.time_mjd_seconds(), direction)
+            }) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    traversal_error = Some(error);
+                    return;
+                }
+            };
+            let converted = [window.lower_hz, window.upper_hz].map(|frequency_hz| {
+                convert_frequency_to_frame_with_frame(
+                    source_frequency_reference,
+                    output_frequency_reference,
+                    frequency_hz,
+                    Some(&frame),
+                )
+            });
+            let [Ok(lower_hz), Ok(upper_hz)] = converted else {
+                traversal_error = converted.into_iter().find_map(Result::err);
+                return;
+            };
+            selected_edges_hz[0] = selected_edges_hz[0].min(lower_hz.min(upper_hz));
+            selected_edges_hz[1] = selected_edges_hz[1].max(lower_hz.max(upper_hz));
+            edge_evaluations = edge_evaluations.saturating_add(1);
+        })?;
+        if let Some(error) = traversal_error {
+            return Err(error);
+        }
+        if selected_rows == 0
+            || !selected_edges_hz[0].is_finite()
+            || !selected_edges_hz[1].is_finite()
+            || selected_edges_hz[1] <= selected_edges_hz[0]
+            || !reference_edges_hz[0].is_finite()
+            || !reference_edges_hz[1].is_finite()
+            || reference_edges_hz[1] <= reference_edges_hz[0]
+        {
+            return Err(MsError::InvalidInput(
+                "selected spectral range produced no finite output interval".to_string(),
+            ));
+        }
+        Ok(SelectedObservationSpectralRange {
+            selected_edges_hz,
+            reference_edges_hz,
+            measurements: SelectedObservationSpectralRangeMeasurements {
+                selected_rows,
+                edge_evaluations,
+            },
+        })
+    }
+}
 
 /// One owner-issued selected sample and its evaluated output spectral support.
 ///

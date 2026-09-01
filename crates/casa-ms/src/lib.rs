@@ -152,7 +152,8 @@ pub use selected_observation::{
     SelectedObservationContentBudget, SelectedObservationMeasures,
     SelectedObservationMeasuresError, SelectedObservationReplayAuthorization,
     SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
-    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationTerminal,
+    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationSpectralRange,
+    SelectedObservationSpectralRangeMeasurements, SelectedObservationTerminal,
     SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
     SelectedObservationTraversalRun, SelectedObservationTraversalSample,
 };

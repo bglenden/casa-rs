@@ -1497,10 +1497,13 @@ impl SpectralOperatorPrimitives {
         &self.sum_weights
     }
 
-    /// Return CASA-compatible normal-moment-major, polarization-minor sum weights.
+    /// Return CASA publication-statistic numerators in normal-moment-major,
+    /// polarization-minor order.
     ///
-    /// The length is `normal_moment_count() * polarization_count()`; publication
-    /// does not change scientific normalization.
+    /// The length is `normal_moment_count() * polarization_count()`. Channel-
+    /// major Taylor state retains `sum(W² x^t)` here so products can apply the
+    /// single complete-family `sum(W)` denominator. Publication does not change
+    /// scientific normalization.
     #[must_use]
     pub const fn published_sum_weights(&self) -> &[f64] {
         &self.published_sum_weights
@@ -5546,7 +5549,7 @@ impl SpectralSlabOperator {
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
                 plan.fill_normal_moment_weights(
                     frequency,
-                    published_weight,
+                    published_weight * published_weight,
                     &mut published_moments,
                 )
                 .map_err(|_| SpectralOperatorError::InvalidSample)?;

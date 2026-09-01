@@ -351,10 +351,12 @@ impl FinalNormalState {
         self.primitives.sum_weights()
     }
 
-    /// Return CASA-compatible normal-moment-major, polarization-minor sum weights.
+    /// Return CASA publication-statistic numerators in normal-moment-major,
+    /// polarization-minor order.
     ///
-    /// The length is `normal_moment_count() * polarization_count()`; publication
-    /// does not change normal-state scaling.
+    /// The length is `normal_moment_count() * polarization_count()`. Product
+    /// formation owns any complete-family denominator; publication does not
+    /// change normal-state scaling.
     #[must_use]
     pub fn published_sum_weights(&self) -> &[f64] {
         self.primitives.published_sum_weights()
@@ -545,9 +547,11 @@ impl<'a> FinalNormalDomainState<'a> {
         self.domain.primitives().sum_weights()
     }
 
-    /// Return CASA-compatible normal-moment-major, polarization-minor weights.
+    /// Return CASA publication-statistic numerators in normal-moment-major,
+    /// polarization-minor order.
     ///
-    /// The length is `normal_moment_count() * polarization_count()`.
+    /// The length is `normal_moment_count() * polarization_count()`; publication
+    /// does not change normal-state scaling.
     #[must_use]
     pub const fn published_sum_weights(self) -> &'a [f64] {
         self.domain.primitives().published_sum_weights()

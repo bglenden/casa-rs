@@ -35,6 +35,7 @@ pub(crate) use content_plan::{
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
 pub use spectral_evaluation::{
+    SelectedObservationSpectralRange, SelectedObservationSpectralRangeMeasurements,
     SelectedObservationTraversalRun, SelectedObservationTraversalSample,
 };
 

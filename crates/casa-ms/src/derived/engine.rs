@@ -518,6 +518,21 @@ impl MsCalEngine {
         self.sampled_ephemeris_direction_j2000(time_mjd_sec, sample)
     }
 
+    pub(crate) fn tracked_field_direction_j2000(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        ephemeris: &SelectedObservationEphemeris,
+    ) -> MsResult<MDirection> {
+        let direction =
+            self.ephemeris_direction_j2000(time_mjd_sec, field_id, "TRACKFIELD", ephemeris)?;
+        let [offset_longitude, offset_latitude] = *self
+            .field_phase_offsets
+            .get(field_id)
+            .ok_or_else(|| MsError::InvalidInput(format!("FIELD_ID {field_id} out of range")))?;
+        shift_direction_true_angle(direction, offset_longitude, offset_latitude)
+    }
+
     /// Evaluate an immutable ephemeris radial velocity at the CASA `MeasComet`
     /// sampling epoch corresponding to one MeasurementSet timestamp.
     pub fn ephemeris_radial_velocity(
@@ -1530,6 +1545,22 @@ pub fn resolve_field_phase_direction_j2000(
         &observatory_position,
         measures,
     )
+}
+
+/// Return the stored FIELD phase-direction measure without changing its frame.
+///
+/// Storage-owned spectral-range evaluation needs the original measure reference
+/// because CASA applies dynamic references such as ITRF at every selected row
+/// epoch instead of freezing them at the FIELD reference epoch.
+pub(crate) fn raw_field_phase_direction(
+    ms: &MeasurementSet,
+    field_id: usize,
+) -> MsResult<MDirection> {
+    let field = ms.field()?;
+    let raw = field.phase_dir(field_id)?;
+    let (longitude, latitude) = phase_dir_constant(raw)?;
+    let reference = resolve_direction_reference(field.table(), "FIELD", "PHASE_DIR", field_id)?;
+    Ok(MDirection::from_angles(longitude, latitude, reference))
 }
 
 enum BorrowedMeasureReference<'a> {

@@ -47,8 +47,8 @@ use casa_imaging_runtime::{
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
     SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
-    SelectedObservationResolutionRequest, SelectedObservationRow, VisibilityDataColumn,
-    parse_spw_selector, resolve_channel_selector_selection,
+    SelectedObservationResolutionRequest, SelectedObservationRow, SelectedObservationRowSelection,
+    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::{
@@ -418,6 +418,10 @@ struct SourceSpectralWindow {
 #[allow(clippy::too_many_arguments)]
 fn prepare_spectral_axis(
     request: &ContinuumImagingRequest,
+    measurement_set: &MeasurementSet,
+    row_selection: &SelectedObservationRowSelection,
+    selection_io: MsSelectionIoBudget,
+    moving_phase_centre: Option<&SelectedObservationEphemeris>,
     spectral_windows: &[SourceSpectralWindow],
     source_frequency_reference: FrequencyRef,
     anchor_time_mjd_seconds: f64,
@@ -639,6 +643,10 @@ fn prepare_spectral_axis(
             output_channels,
         } => prepare_mvc_spectral_axis(
             request,
+            measurement_set,
+            row_selection,
+            selection_io,
+            moving_phase_centre,
             spectral_windows,
             source_frequency_reference,
             source_frame,
@@ -748,6 +756,10 @@ fn prepare_spectral_axis(
 #[allow(clippy::too_many_arguments)]
 fn prepare_mvc_spectral_axis(
     request: &ContinuumImagingRequest,
+    measurement_set: &MeasurementSet,
+    row_selection: &SelectedObservationRowSelection,
+    selection_io: MsSelectionIoBudget,
+    moving_phase_centre: Option<&SelectedObservationEphemeris>,
     spectral_windows: &[SourceSpectralWindow],
     source_frequency_reference: FrequencyRef,
     source_frame: FrequencyFrame,
@@ -761,9 +773,8 @@ fn prepare_mvc_spectral_axis(
     requested_output_channels: Option<usize>,
 ) -> Result<PreparedSpectralAxis, crate::ApplicationError> {
     let mut selected_by_spw = BTreeMap::new();
+    let mut spectral_selection = Vec::with_capacity(spectral_windows.len());
     let mut selected_channel_count = 0_usize;
-    let mut global_low_hz = f64::INFINITY;
-    let mut global_high_hz = f64::NEG_INFINITY;
     let mut output_frequency_reference = None;
     // CASA MVC derives the major-cycle cube from the complete selected band,
     // then replaces task start/width with that global linear axis.
@@ -795,43 +806,51 @@ fn prepare_mvc_spectral_axis(
         }
         output_frequency_reference.get_or_insert(probe.output_freq_ref);
 
-        let source_edges_hz = selected
-            .iter()
-            .flat_map(|channel| {
-                let center_hz = window.frequencies_hz[*channel];
-                let half_width_hz = window.channel_widths_hz[*channel].abs() / 2.0;
-                [center_hz - half_width_hz, center_hz + half_width_hz]
-            })
-            .collect::<Vec<_>>();
-        let output_edges_hz = probe.row_source_frequencies_for_interpolation(
-            &source_edges_hz,
-            anchor_time_mjd_seconds,
-            field_id,
-            frame_engine,
-        )?;
-        for edge_hz in output_edges_hz {
-            global_low_hz = global_low_hz.min(edge_hz);
-            global_high_hz = global_high_hz.max(edge_hz);
-        }
+        spectral_selection.push(SpectralWindowSelection::new(
+            u32::try_from(window.spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
+            selected
+                .iter()
+                .copied()
+                .map(|channel| {
+                    u32::try_from(channel).map_err(|_| boxed("channel index exceeds u32"))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ));
         selected_by_spw.insert(window.spw_id, selected);
     }
 
     let output_channels = requested_output_channels.unwrap_or(selected_channel_count);
-    if output_channels == 0
-        || !global_low_hz.is_finite()
-        || !global_high_hz.is_finite()
-        || global_high_hz <= global_low_hz
-    {
+    if output_channels == 0 {
         return Err(boxed(
             "MVC requires a positive output channel count and finite selected frequency range",
         ));
     }
     let output_frequency_reference =
         output_frequency_reference.expect("nonempty selected spectral windows");
+    let range = measurement_set.selected_observation_spectral_range(
+        row_selection,
+        &spectral_selection,
+        source_frequency_reference,
+        output_frequency_reference,
+        field_id,
+        anchor_time_mjd_seconds,
+        phase.clone(),
+        moving_phase_centre,
+        frame_engine,
+        selection_io,
+    )?;
+    let [global_low_hz, global_high_hz] = range.selected_edges_hz();
+    let [reference_low_hz, _] = range.reference_edges_hz();
+    let expansion_reference_frequency_hz = (global_low_hz + global_high_hz) / 2.0;
     let increment_hz = (global_high_hz - global_low_hz) / output_channels as f64;
+    let first_channel_centre_hz = global_low_hz.max(reference_low_hz) + increment_hz / 2.0;
+    let public_reference_frequency_hz =
+        first_channel_centre_hz + (output_channels as f64 - 1.0) * increment_hz / 2.0;
+    let expansion_reference_pixel =
+        (expansion_reference_frequency_hz - first_channel_centre_hz) / increment_hz;
     let mut global_axis = axis.clone();
     global_axis.start = Some(casa_ms::CubeAxisValue::FrequencyHz {
-        hz: global_low_hz,
+        hz: first_channel_centre_hz,
         frame: Some(output_frequency_reference),
     });
     global_axis.width = Some(casa_ms::CubeAxisValue::FrequencyHz {
@@ -917,8 +936,8 @@ fn prepare_mvc_spectral_axis(
         )?,
         wcs: SpectralWcs::Linear {
             channels: output_channels,
-            reference_pixel: 0.0,
-            reference_frequency_hz: global_low_hz,
+            reference_pixel: expansion_reference_pixel,
+            reference_frequency_hz: expansion_reference_frequency_hz,
             increment_hz,
         },
         rest_frequency,
@@ -928,8 +947,8 @@ fn prepare_mvc_spectral_axis(
             channels: output_channels,
         },
         output_channels,
-        reference_frequency_hz: global_low_hz,
-        increment_hz,
+        reference_frequency_hz: public_reference_frequency_hz,
+        increment_hz: global_high_hz - global_low_hz,
     })
 }
 
@@ -1175,6 +1194,15 @@ fn prepare(
     };
     let prepared_spectral = prepare_spectral_axis(
         &request,
+        &ms,
+        &row_selection,
+        MsSelectionIoBudget {
+            available_bytes: content_budget.available_bytes(),
+            maximum_live_blocks: content_budget.maximum_live_blocks(),
+            requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+            storage_alignment_rows: None,
+        },
+        ephemeris.as_ref(),
         &spectral_windows,
         frequency_reference,
         anchor_time_mjd_seconds,

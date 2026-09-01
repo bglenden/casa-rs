@@ -2,7 +2,7 @@
 
 //! T42 public-owner acceptance for MT-MFS block-normal construction.
 
-use std::{convert::Infallible, thread};
+use std::{collections::BTreeMap, convert::Infallible, thread};
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -53,6 +53,213 @@ use casa_imaging_reconstruction::{
 
 const REFERENCE_FREQUENCY_HZ: f64 = 1.0e9;
 const IMAGE_WIDTH: usize = 8;
+
+#[test]
+fn frozen_casa_mvc_channel_folding_law() {
+    const CHANNELS: usize = 40;
+    const FIRST_CHANNEL_CENTRE_HZ: f64 = 230_449_729_492.188_84;
+    const CHANNEL_INCREMENT_HZ: f64 = 122_982_578.274_169_92;
+    const TAYLOR_REFERENCE_FREQUENCY_HZ: f64 = 232_847_889_767.857_8;
+    const WEIGHTS: [f64; CHANNELS] = [
+        639_163_584.0,
+        10_790_249.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        188_639_120.0,
+        754_556_480.0,
+        707_396_736.0,
+        754_556_480.0,
+        754_556_480.0,
+        754_556_480.0,
+        707_396_736.0,
+        754_556_480.0,
+        754_556_480.0,
+        754_556_480.0,
+        707_396_736.0,
+        754_556_480.0,
+        754_556_480.0,
+        754_556_480.0,
+        707_396_736.0,
+        0.0,
+    ];
+    const PRIMARY_BEAM: [f64; CHANNELS] = [
+        0.688_695_669_174_194_3,
+        0.688_327_729_701_995_8,
+        0.688_143_670_558_929_4,
+        0.687_775_433_063_507_1,
+        0.687_591_254_711_151_1,
+        0.687_222_898_006_439_2,
+        0.686_854_422_092_437_7,
+        0.686_670_184_135_437,
+        0.686_301_589_012_146,
+        0.685_932_755_470_275_9,
+        0.685_748_457_908_630_4,
+        0.685_379_505_157_470_7,
+        0.685_010_552_406_311,
+        0.684_825_956_821_441_7,
+        0.684_456_884_860_992_4,
+        0.684_272_229_671_478_3,
+        0.683_902_919_292_45,
+        0.683_533_489_704_132_1,
+        0.683_348_655_700_683_6,
+        0.682_979_106_903_076_2,
+        0.682_609_379_291_534_4,
+        0.682_424_545_288_085_9,
+        0.682_054_638_862_609_9,
+        0.681_869_745_254_516_6,
+        0.681_499_660_015_106_2,
+        0.681_129_574_775_695_8,
+        0.680_944_442_749_023_4,
+        0.680_574_119_091_033_9,
+        0.680_203_735_828_399_7,
+        0.680_018_484_592_437_7,
+        0.679_647_922_515_869_1,
+        0.679_277_300_834_655_8,
+        0.679_091_930_389_404_3,
+        0.678_721_129_894_256_6,
+        0.678_535_699_844_360_4,
+        0.678_164_660_930_633_5,
+        0.677_793_622_016_906_7,
+        0.677_608_072_757_721,
+        0.677_236_795_425_415,
+        0.676_865_458_488_464_4,
+    ];
+    const RESIDUAL: [f64; CHANNELS] = [
+        -0.012_630_579_993_128_777,
+        -0.011_666_422_709_822_655,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.086_194_373_667_240_14,
+        0.084_854_930_639_266_97,
+        0.083_378_627_896_308_9,
+        0.081_058_189_272_880_55,
+        0.080_800_563_097_000_12,
+        0.081_458_963_453_769_68,
+        0.082_277_722_656_726_84,
+        0.080_849_200_487_136_84,
+        0.079_072_520_136_833_19,
+        0.077_560_365_200_042_72,
+        0.076_599_426_567_554_47,
+        0.075_768_440_961_837_77,
+        0.075_612_261_891_365_05,
+        0.076_553_344_726_562_5,
+        0.075_070_008_635_520_94,
+        0.0,
+    ];
+
+    let frequencies = std::array::from_fn::<_, CHANNELS, _>(|channel| {
+        FIRST_CHANNEL_CENTRE_HZ + channel as f64 * CHANNEL_INCREMENT_HZ
+    });
+    let x = frequencies.map(|frequency| {
+        (frequency - TAYLOR_REFERENCE_FREQUENCY_HZ) / TAYLOR_REFERENCE_FREQUENCY_HZ
+    });
+    let total_weight: f64 = WEIGHTS.iter().sum();
+    let primary_beam_tt0 = WEIGHTS
+        .iter()
+        .zip(PRIMARY_BEAM)
+        .map(|(weight, primary_beam)| weight * primary_beam)
+        .sum::<f64>()
+        / total_weight;
+    let denominator = total_weight * primary_beam_tt0;
+    let psf = std::array::from_fn::<_, 3, _>(|term| {
+        WEIGHTS
+            .iter()
+            .zip(x)
+            .map(|(weight, x)| weight * x.powi(term as i32))
+            .sum::<f64>()
+            / total_weight
+    });
+    let residual = std::array::from_fn::<_, 2, _>(|term| {
+        WEIGHTS
+            .iter()
+            .zip(PRIMARY_BEAM)
+            .zip(RESIDUAL)
+            .zip(x)
+            .map(|(((weight, primary_beam), residual), x)| {
+                weight * primary_beam * residual * x.powi(term as i32)
+            })
+            .sum::<f64>()
+            / denominator
+    });
+    let sum_weights = std::array::from_fn::<_, 3, _>(|term| {
+        WEIGHTS
+            .iter()
+            .zip(x)
+            .map(|(weight, x)| weight.powi(2) * x.powi(term as i32))
+            .sum::<f64>()
+            / total_weight
+    });
+
+    fn assert_casa_float(actual: f64, expected: f64) {
+        let scale = expected.abs().max(1.0);
+        assert!(
+            (actual - expected).abs() <= 2.0e-6 * scale,
+            "actual {actual:.17e}, expected {expected:.17e}"
+        );
+    }
+
+    assert_casa_float(primary_beam_tt0, 0.679_800_510_406_494_1);
+    for (actual, expected) in psf.into_iter().zip([
+        1.0,
+        0.005_303_129_553_794_861,
+        0.000_047_518_253_268_208_355,
+    ]) {
+        assert_casa_float(actual, expected);
+    }
+    for (actual, expected) in residual
+        .into_iter()
+        .zip([0.074_071_452_021_598_82, 0.000_469_728_838_652_372_36])
+    {
+        assert_casa_float(actual, expected);
+    }
+    for (actual, expected) in
+        sum_weights
+            .into_iter()
+            .zip([725_843_840.0, 3_975_053.0, 34_450.343_75])
+    {
+        assert_casa_float(actual, expected);
+    }
+}
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
@@ -556,7 +763,7 @@ fn run_operator(
     block_samples: usize,
     density_partitions: usize,
     preparation: Option<&MajorCyclePreparation>,
-) -> (CompleteDataOwnerResult, [f64; 3]) {
+) -> (CompleteDataOwnerResult, [f64; 3], Option<[f64; 3]>) {
     let limits = WeightingExecutionLimits::new(block_samples, density_partitions)
         .expect("T42 execution limits");
     let plan = plan_weighting(problem, limits).expect("T42 weighting plan");
@@ -598,21 +805,54 @@ fn run_operator(
 
     let mut expected = [0.0; 3];
     let mut compensation = [0.0; 3];
+    let mut channel_weights = BTreeMap::<u32, (f64, f64, f64)>::new();
     for weighted in blocks.iter().flat_map(|block| block.samples()) {
         for spectral in weighted.spectral_values() {
+            let contribution = spectral.contribution();
             for moment in 0..3 {
                 compensated_add(
                     &mut expected[moment],
                     &mut compensation[moment],
                     casa_moment_weight(
-                        spectral.contribution().evaluation_frequency_hz(),
+                        contribution.evaluation_frequency_hz(),
                         spectral.imaging_weight(),
                         moment,
                     ),
                 );
             }
+            if matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::TaylorViaChannelMajor { .. }
+            ) {
+                let entry = channel_weights
+                    .entry(contribution.output_channel())
+                    .or_insert((contribution.evaluation_frequency_hz(), 0.0, 0.0));
+                assert_eq!(
+                    entry.0.to_bits(),
+                    contribution.evaluation_frequency_hz().to_bits()
+                );
+                compensated_add(
+                    &mut entry.1,
+                    &mut entry.2,
+                    spectral.imaging_weight() * contribution.factor().powi(2),
+                );
+            }
         }
     }
+    let expected_publication = (!channel_weights.is_empty()).then(|| {
+        let mut moments = [0.0; 3];
+        let mut compensation = [0.0; 3];
+        for (_, (frequency_hz, weight, _)) in channel_weights {
+            for moment in 0..3 {
+                compensated_add(
+                    &mut moments[moment],
+                    &mut compensation[moment],
+                    casa_moment_weight(frequency_hz, weight * weight, moment),
+                );
+            }
+        }
+        moments
+    });
 
     let (selected_generation, selected_count) = problem
         .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
@@ -647,7 +887,7 @@ fn run_operator(
     let result = owner
         .complete(&summary, selected_generation, None)
         .expect("complete Taylor normal state");
-    (result, expected)
+    (result, expected, expected_publication)
 }
 
 fn compensated_add(sum: &mut f64, compensation: &mut f64, value: f64) {
@@ -683,7 +923,7 @@ fn run_final_normal_state(
     let initial = lifecycle.initial_empty().expect("empty Taylor model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare Taylor model");
-    let (complete_data, expected) = run_operator(problem, samples, 1, 1, Some(&preparation));
+    let (complete_data, expected, _) = run_operator(problem, samples, 1, 1, Some(&preparation));
     let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
         .expect("join Taylor complete-data evidence")
         .reconcile(&mut lifecycle)
@@ -717,7 +957,7 @@ fn run_joint_final_normal_state(
     let initial = lifecycle.initial_empty().expect("empty joint model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare joint model");
-    let (complete_data, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
+    let (complete_data, _, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
     let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
         .expect("join joint complete-data evidence")
         .reconcile(&mut lifecycle)
@@ -1235,10 +1475,12 @@ fn t41_channel_major_sampling_fold_and_residency_preserve_all_channels() {
     assert_eq!(one_channel_workload.resident_model_terms(), 2);
     assert!(one_channel_workload.grid_complex_values() < full_workload.grid_complex_values());
 
-    let (one_sample_blocks, expected) = run_operator(&problem, &selected, 1, 1, None);
-    let (one_full_block, full_expected) =
+    let (one_sample_blocks, expected, published_expected) =
+        run_operator(&problem, &selected, 1, 1, None);
+    let (one_full_block, full_expected, full_published_expected) =
         run_operator(&problem, &selected, selected.len(), 2, None);
     assert_eq!(expected, full_expected);
+    assert_eq!(published_expected, full_published_expected);
     for result in [&one_sample_blocks, &one_full_block] {
         assert_eq!(
             result.completion().primitive_catalog(),
@@ -1250,10 +1492,20 @@ fn t41_channel_major_sampling_fold_and_residency_preserve_all_channels() {
         assert_eq!(primitives.normal_moment_count(), 3);
         assert_eq!(primitives.sum_weights(), expected);
         assert_eq!(
+            primitives.published_sum_weights(),
+            published_expected.expect("channel-major publication moments"),
+            "MVC publication must retain the exact channel self-fold"
+        );
+        assert_eq!(
             primitives.channel_validity(),
             &[SpectralChannelValidity::Valid]
         );
     }
+    assert_eq!(
+        one_sample_blocks.primitives().published_sum_weights(),
+        one_full_block.primitives().published_sum_weights(),
+        "block and density partitions cannot change the MVC publication fold"
+    );
     assert_eq!(
         one_sample_blocks
             .primitives()
@@ -1309,6 +1561,11 @@ fn t41_channel_major_ordered_slab_fold_matches_one_window() {
         assert_eq!(
             bounded.primitives().sum_weights(),
             full.primitives().sum_weights()
+        );
+        assert_eq!(
+            bounded.primitives().published_sum_weights(),
+            full.primitives().published_sum_weights(),
+            "bounded MVC slabs must preserve the publication self-fold"
         );
     }
     assert_eq!(
@@ -1511,8 +1768,8 @@ fn t41_channel_major_two_cycle_feedback_and_gridded_replay_stay_dual_space() {
 fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
     let problem = problem();
     let samples = samples(&problem);
-    let (single_sample_blocks, expected) = run_operator(&problem, &samples, 1, 1, None);
-    let (single_full_block, full_expected) =
+    let (single_sample_blocks, expected, _) = run_operator(&problem, &samples, 1, 1, None);
+    let (single_full_block, full_expected, _) =
         run_operator(&problem, &samples, samples.len(), 2, None);
     assert_eq!(expected, full_expected);
 
@@ -1567,7 +1824,7 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
 
     let mut symmetric_samples = samples;
     symmetric_samples[0].input_weight = 1.0;
-    let (symmetric, symmetric_expected) = run_operator(
+    let (symmetric, symmetric_expected, _) = run_operator(
         &problem,
         &symmetric_samples,
         symmetric_samples.len(),
@@ -1587,8 +1844,8 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
 fn t46_joint_block_accumulates_cross_terms_once_and_is_partition_deterministic() {
     let problem = joint_problem();
     let samples = joint_samples(&problem);
-    let (one_sample_blocks, _) = run_operator(&problem, &samples, 1, 1, None);
-    let (one_full_block, _) = run_operator(&problem, &samples, samples.len(), 2, None);
+    let (one_sample_blocks, _, _) = run_operator(&problem, &samples, 1, 1, None);
+    let (one_full_block, _, _) = run_operator(&problem, &samples, samples.len(), 2, None);
 
     for result in [&one_sample_blocks, &one_full_block] {
         assert_eq!(
