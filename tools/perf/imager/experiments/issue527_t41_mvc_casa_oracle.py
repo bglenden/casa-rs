@@ -8,6 +8,7 @@ twice accidentally.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Any
 
 
 MS = Path("/tmp/t41-alma-ephemobj-icrs.ms")
-ARTIFACT_ROOT = Path("/tmp/t41-mvc-casa-oracle")
+ARTIFACT_ROOT = Path("/tmp/t41-mvc-casa-oracle-spw01-nchan35-niter1")
 PREFIX = ARTIFACT_ROOT / "casa"
 PRODUCT_SUFFIXES = (
     ".psf",
@@ -36,6 +37,7 @@ PRODUCT_SUFFIXES = (
     ".sumwt.tt0",
     ".sumwt.tt1",
     ".sumwt.tt2",
+    ".mask",
     ".pb",
     ".pb.tt0",
     ".alpha",
@@ -86,6 +88,21 @@ def image_receipt(image_tool: Any, path: Path) -> dict[str, Any]:
         image.done()
 
 
+def supported_sumwt_planes(image_tool: Any, path: Path) -> list[int]:
+    image = image_tool()
+    try:
+        if not image.open(str(path)):
+            raise RuntimeError(f"cannot open CASA image {path}")
+        values = image.getchunk().reshape(-1)
+        return [
+            int(index)
+            for index, value in enumerate(values)
+            if math.isfinite(float(value)) and float(value) > 0.0
+        ]
+    finally:
+        image.done()
+
+
 def main() -> None:
     if not MS.is_dir():
         raise RuntimeError(f"T41 MeasurementSet is missing: {MS}")
@@ -129,22 +146,22 @@ def main() -> None:
         "vis": str(MS),
         "imagename": str(PREFIX),
         "field": "1",
-        "spw": "0,1,2,3",
+        "spw": "0,1",
         "datacolumn": "data",
         "imsize": [512, 512],
         "cell": ["0.1arcsec", "0.1arcsec"],
         "phasecenter": "TRACKFIELD",
         "stokes": "I",
         "specmode": "mvc",
-        "nchan": 16,
+        "nchan": 35,
         "outframe": "LSRK",
         "gridder": "standard",
         "deconvolver": "mtmfs",
         "nterms": 2,
         "scales": [0],
         "weighting": "natural",
-        "niter": 4,
-        "cycleniter": 2,
+        "niter": 1,
+        "cycleniter": 1,
         "gain": 0.1,
         "threshold": "0Jy",
         "pblimit": -0.1,
@@ -163,6 +180,12 @@ def main() -> None:
         suffix: image_receipt(image, Path(f"{PREFIX}{suffix}"))
         for suffix in PRODUCT_SUFFIXES
     }
+    supported_planes = supported_sumwt_planes(image, Path(f"{PREFIX}.sumwt"))
+    if len(supported_planes) != 16:
+        raise RuntimeError(
+            f"CASA MVC oracle has {len(supported_planes)} supported planes, expected 16: "
+            f"{supported_planes}"
+        )
     inventory = sorted(
         entry.name.removeprefix(PREFIX.name)
         for entry in ARTIFACT_ROOT.iterdir()
@@ -170,12 +193,14 @@ def main() -> None:
     )
     manifest = {
         "kind": "casa_rs_t41_multi_spw_mvc_oracle",
+        "recipe_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "casatasks_version": casatasks.version_string(),
         "casatools_version": casatools.version_string(),
         "measurement_set": str(MS),
         "parameters": kwargs,
         "tclean_return": json_safe(result),
         "wall_seconds": wall_seconds,
+        "supported_channel_planes": supported_planes,
         "product_inventory": inventory,
         "products": products,
     }

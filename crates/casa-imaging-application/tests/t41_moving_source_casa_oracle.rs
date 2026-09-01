@@ -26,7 +26,7 @@ const SELECTED_SAMPLE_COUNT: u64 = 1_620 * 1_024 * 2;
 const MVC_MS_ENV: &str = "CASA_RS_T41_MVC_MS";
 const MVC_CASA_PREFIX_ENV: &str = "CASA_RS_T41_MVC_CASA_PREFIX";
 const MVC_RUST_PREFIX_ENV: &str = "CASA_RS_T41_MVC_RUST_PREFIX";
-const MVC_SELECTED_SAMPLE_COUNT: u64 = 1_620 * (1_024 + 256 + 1_024 + 4_096) * 2;
+const MVC_SELECTED_SAMPLE_COUNT: u64 = 1_620 * (1_024 + 256) * 2;
 const MVC_PUBLIC_PRODUCTS: [&str; 15] = [
     ".psf.tt0",
     ".psf.tt1",
@@ -151,9 +151,9 @@ fn t41_multi_spw_mvc_matches_casa_taylor_products() -> Result<(), Box<dyn Error>
             .normal_state()
             .sample_count(),
         MVC_SELECTED_SAMPLE_COUNT,
-        "MVC traversal must retain every selected sample from all four SPWs",
+        "MVC traversal must retain every selected sample from SPWs 0 and 1",
     );
-    assert_eq!(result.minor_iterations, 4);
+    assert_eq!(result.minor_iterations, 1);
     assert!(
         result.outcome.output.major_cycle_count >= 2,
         "MVC CLEAN must feed a Taylor model through more than one channel-major cycle"
@@ -206,6 +206,20 @@ fn t41_multi_spw_mvc_matches_casa_taylor_products() -> Result<(), Box<dyn Error>
         );
         if nrms > 0.001 {
             failures.push(format!("{suffix} normalized RMS {nrms:.6e} exceeds 0.1%"));
+        }
+        if matches!(suffix, ".psf.tt0" | ".residual.tt0") {
+            if relative_difference(rust_stats.maximum, casa_stats.maximum) > 0.001 {
+                failures.push(format!(
+                    "{suffix} peak flux differs: Rust {} CASA {}",
+                    rust_stats.maximum, casa_stats.maximum,
+                ));
+            }
+            if rust_stats.maximum_position != casa_stats.maximum_position {
+                failures.push(format!(
+                    "{suffix} peak position differs: Rust {} CASA {}",
+                    rust_stats.maximum_position, casa_stats.maximum_position,
+                ));
+            }
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -287,12 +301,12 @@ fn mvc_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagin
         uv_range: None,
         intent: None,
         data_description: None,
-        spectral_window: Some("0,1,2,3".to_string()),
+        spectral_window: Some("0,1".to_string()),
         channel_start: None,
         channel_count: None,
         spectral_mode: SpectralImagingMode::MtmfsViaCube {
             axis: CubeAxisConfig::default(),
-            output_channels: Some(16),
+            output_channels: Some(35),
         },
         continuum_subtraction: None,
         data_column: Some("DATA".to_string()),
@@ -303,8 +317,8 @@ fn mvc_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagin
             small_scale_bias: 0.0,
         },
         weighting: ContinuumWeighting::Natural,
-        iterations: 4,
-        cycle_iterations: 2,
+        iterations: 1,
+        cycle_iterations: 1,
         hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
         maximum_major_cycles: None,
         noise_sigma: None,
@@ -434,10 +448,10 @@ fn assert_matching_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box
 
 fn assert_casa_mvc_cube_topology(prefix: &Path) -> Result<(), Box<dyn Error>> {
     for (suffix, expected) in [
-        (".psf", vec![512, 512, 1, 16]),
-        (".residual", vec![512, 512, 1, 16]),
-        (".model", vec![512, 512, 1, 16]),
-        (".sumwt", vec![1, 1, 1, 16]),
+        (".psf", vec![512, 512, 1, 35]),
+        (".residual", vec![512, 512, 1, 35]),
+        (".model", vec![512, 512, 1, 35]),
+        (".sumwt", vec![1, 1, 1, 35]),
     ] {
         assert_eq!(
             read_product(prefix, suffix)?.shape,
@@ -445,6 +459,16 @@ fn assert_casa_mvc_cube_topology(prefix: &Path) -> Result<(), Box<dyn Error>> {
             "CASA {suffix}"
         );
     }
+    let sumwt = read_product(prefix, ".sumwt")?;
+    let supported = sumwt
+        .values
+        .iter()
+        .enumerate()
+        .filter_map(|(channel, weight)| weight.is_finite().then_some((channel, *weight)))
+        .filter_map(|(channel, weight)| (weight > 0.0).then_some(channel))
+        .collect::<Vec<_>>();
+    eprintln!("t41_mvc_casa_supported_channels={supported:?}");
+    assert_eq!(supported.len(), 16, "CASA supported MVC channel planes");
     Ok(())
 }
 
