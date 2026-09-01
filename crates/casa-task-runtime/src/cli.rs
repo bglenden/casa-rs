@@ -6,8 +6,13 @@ use std::io::{self, Read};
 use std::marker::PhantomData;
 use std::path::Path;
 
-use casa_provider_contracts::TaskProviderContract;
+use casa_provider_contracts::{
+    ParameterType, ParameterValue, SurfaceContractBundle, SurfaceParameterBinding,
+    TaskProviderContract,
+};
 use serde::{Serialize, de::DeserializeOwned};
+
+use crate::{ResolutionPatch, validate_parameter_edit};
 
 /// Machine-readable task action handled by the shared CLI host.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +133,163 @@ pub fn read_task_request(source: &str) -> Result<String, TaskCliError> {
     })
 }
 
+/// Parse catalog-declared CLI flags and positional values into one typed
+/// highest-precedence parameter patch.
+///
+/// This parser accepts only spellings declared by the surface contract. Value
+/// parsing, unit conversion, normalization, and constraints are delegated to
+/// the canonical parameter edit contract rather than reimplemented by a
+/// frontend.
+pub fn parse_parameter_cli_overrides(
+    bundle: &SurfaceContractBundle,
+    args: &[OsString],
+) -> Result<ResolutionPatch, String> {
+    let mut patch = ResolutionPatch::default();
+    let mut positional = bundle
+        .surface
+        .bindings()
+        .iter()
+        .filter_map(|binding| {
+            binding
+                .projections
+                .cli
+                .as_ref()
+                .and_then(|projection| projection.positional)
+                .map(|position| (position, binding))
+        })
+        .collect::<Vec<_>>();
+    positional.sort_by_key(|(position, _)| *position);
+    let mut positional_index = 0usize;
+    let mut index = 0usize;
+    while index < args.len() {
+        let raw = args[index]
+            .to_str()
+            .ok_or_else(|| "parameter arguments must be valid UTF-8".to_string())?;
+        if raw == "--unset" {
+            let name = args
+                .get(index + 1)
+                .and_then(|value| value.to_str())
+                .ok_or_else(|| "missing --unset parameter".to_string())?;
+            ensure_parameter_binding(bundle, name)?;
+            patch.values.remove(name);
+            patch.unset.insert(name.to_string());
+            index += 2;
+            continue;
+        }
+        if raw.starts_with("--") {
+            let (flag, inline) = raw
+                .split_once('=')
+                .map_or((raw, None), |(flag, value)| (flag, Some(value)));
+            let (binding, false_flag) = cli_flag_binding(bundle, flag)
+                .ok_or_else(|| format!("unknown {} parameter flag {flag}", bundle.surface.id()))?;
+            let concept = bundle
+                .catalog
+                .concept(&binding.concept)
+                .ok_or_else(|| format!("missing concept for {}", binding.name))?;
+            let (value, consumed) = if is_bool_domain(&concept.value_domain) {
+                if inline.is_some() {
+                    return Err(format!("boolean {flag} does not take a value"));
+                }
+                (ParameterValue::Bool(!false_flag), 1)
+            } else {
+                if false_flag {
+                    return Err(format!(
+                        "non-boolean parameter {} declares boolean flag {flag}",
+                        binding.name
+                    ));
+                }
+                let text = match inline {
+                    Some(value) => value,
+                    None => args
+                        .get(index + 1)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| format!("{flag} requires a value"))?,
+                };
+                (
+                    validated_cli_value(bundle, binding, text)?,
+                    if inline.is_some() { 1 } else { 2 },
+                )
+            };
+            patch.unset.remove(&binding.name);
+            patch.values.insert(binding.name.clone(), value);
+            index += consumed;
+            continue;
+        }
+
+        let Some((_, binding)) = positional.get(positional_index) else {
+            return Err(format!("unexpected positional parameter {raw:?}"));
+        };
+        patch.unset.remove(&binding.name);
+        patch.values.insert(
+            binding.name.clone(),
+            validated_cli_value(bundle, binding, raw)?,
+        );
+        positional_index += 1;
+        index += 1;
+    }
+    Ok(patch)
+}
+
+fn cli_flag_binding<'a>(
+    bundle: &'a SurfaceContractBundle,
+    flag: &str,
+) -> Option<(&'a SurfaceParameterBinding, bool)> {
+    bundle.surface.bindings().iter().find_map(|binding| {
+        let projection = binding.projections.cli.as_ref()?;
+        if projection.flags.iter().any(|candidate| candidate == flag) {
+            Some((binding, false))
+        } else if projection
+            .false_flags
+            .iter()
+            .any(|candidate| candidate == flag)
+        {
+            Some((binding, true))
+        } else if projection.flags.is_empty()
+            && projection.false_flags.is_empty()
+            && projection.positional.is_none()
+            && flag == format!("--{}", binding.name.replace('_', "-"))
+        {
+            Some((binding, false))
+        } else {
+            None
+        }
+    })
+}
+
+fn ensure_parameter_binding<'a>(
+    bundle: &'a SurfaceContractBundle,
+    name: &str,
+) -> Result<&'a SurfaceParameterBinding, String> {
+    bundle
+        .surface
+        .bindings()
+        .iter()
+        .find(|binding| binding.name == name)
+        .ok_or_else(|| format!("unknown {} parameter {name:?}", bundle.surface.id()))
+}
+
+fn validated_cli_value(
+    bundle: &SurfaceContractBundle,
+    binding: &SurfaceParameterBinding,
+    text: &str,
+) -> Result<ParameterValue, String> {
+    let result = validate_parameter_edit(bundle, &binding.name, text, []);
+    if let Some(diagnostic) = result.diagnostics.first() {
+        return Err(diagnostic.message.clone());
+    }
+    result
+        .normalized_value
+        .ok_or_else(|| format!("parameter {:?} has no typed value", binding.name))
+}
+
+fn is_bool_domain(domain: &ParameterType) -> bool {
+    match domain {
+        ParameterType::Bool => true,
+        ParameterType::Optional { value, .. } => is_bool_domain(value),
+        _ => false,
+    }
+}
+
 /// Render the common machine-action help block once for every hosted task.
 pub fn task_cli_machine_help(request_type: &str) -> String {
     format!(
@@ -142,6 +304,7 @@ fn pretty_json(value: &impl Serialize) -> Result<String, TaskCliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use casa_provider_contracts::ParameterValue;
     use serde::{Deserialize, Serialize, Serializer};
 
     #[derive(Deserialize, schemars::JsonSchema)]
@@ -227,6 +390,67 @@ mod tests {
             parse_task_cli_action(&["--json-run".into()]),
             Err(TaskCliError::MissingJsonRunSource)
         ));
+    }
+
+    #[test]
+    fn catalog_cli_parser_accepts_only_declared_flags_and_normalizes_values() {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &[
+                "--ms".into(),
+                "input.ms".into(),
+                "--imsize".into(),
+                "1024".into(),
+                "--cell-arcsec=0.0002777777777777778deg".into(),
+                "--gridder".into(),
+                "awproject".into(),
+                "--no-psterm".into(),
+                "--imaging-memory-pressure-policy".into(),
+                "conservative-no-swap".into(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            patch.values["vis"],
+            ParameterValue::Array(vec![ParameterValue::String("input.ms".into())])
+        );
+        assert_eq!(
+            patch.values["imsize"],
+            ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
+        );
+        assert_eq!(
+            patch.values["cell"],
+            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
+        );
+        assert_eq!(patch.values["psterm"], ParameterValue::Bool(false));
+        assert_eq!(
+            patch.values["imaging_memory_pressure_policy"],
+            ParameterValue::String("conservative-no-swap".into())
+        );
+
+        let alias = parse_parameter_cli_overrides(&bundle, &["--threshold".into(), "1Jy".into()])
+            .unwrap_err();
+        assert!(alias.contains("unknown imager parameter flag --threshold"));
+    }
+
+    #[test]
+    fn catalog_cli_parser_applies_unsets_in_argument_order() {
+        let bundle = casa_provider_contracts::builtin_surface_bundle("imager").unwrap();
+        let patch = parse_parameter_cli_overrides(
+            &bundle,
+            &[
+                "--niter".into(),
+                "7".into(),
+                "--unset".into(),
+                "niter".into(),
+                "--niter=9".into(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(patch.values["niter"], ParameterValue::Integer(9));
+        assert!(!patch.unset.contains("niter"));
     }
 
     #[test]

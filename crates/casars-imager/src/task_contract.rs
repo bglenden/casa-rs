@@ -2341,6 +2341,21 @@ pub struct ImagerRunTaskRequest {
 }
 
 impl ImagerRunTaskRequest {
+    /// Return exact application-owned reasons that make this request
+    /// unavailable in the installed build, without opening data or planning
+    /// execution.
+    pub fn unsupported_reasons(&self) -> Result<Vec<ImagerUnsupportedReason>, String> {
+        Ok(
+            crate::native_application::unsupported_requirements(&self.to_cli_config()?)
+                .into_iter()
+                .map(|reason| ImagerUnsupportedReason {
+                    kind: reason.catalog_kind().to_string(),
+                    id: reason.catalog_id(),
+                })
+                .collect(),
+        )
+    }
+
     /// Build the canonical request from one parsed CLI config.
     pub fn from_cli_config(config: &CliConfig) -> Self {
         Self {

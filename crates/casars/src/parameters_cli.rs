@@ -1,22 +1,20 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! Headless parameter/profile commands layered over the shared task runtime.
 
-use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use casa_notebook::ExecutionStatus;
 use casa_provider_contracts::{
-    ParameterConcept, ParameterType, ParameterValue, ProviderInvocation,
-    ProviderInvocationAdaptation, SurfaceContractBundle, SurfaceKind, builtin_surface_bundle,
-    builtin_surface_catalog,
+    ParameterConcept, ParameterValue, ProviderInvocation, ProviderInvocationAdaptation,
+    SurfaceContractBundle, SurfaceKind, builtin_surface_bundle, builtin_surface_catalog,
 };
 use casa_task_runtime::{
     BaseSource, OpenSessionRequest, ParameterRuntime, ParameterSession, ResolutionPatch,
-    TaskLastCoordinator, parameter_value_is_omitted, parse_profile, project_parameter_value,
-    project_provider_invocation, render_documented_template, resolve_profile,
-    validate_parameter_edit, write_parameter_profile_atomic,
+    TaskLastCoordinator, parameter_value_is_omitted, parse_parameter_cli_overrides, parse_profile,
+    project_parameter_value, project_provider_invocation, render_documented_template,
+    resolve_profile, write_parameter_profile_atomic,
 };
 
 use crate::execution::{ExecutionPlan, run_process_blocking};
@@ -133,6 +131,7 @@ fn run_task(args: &[OsString]) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     enforce_runtime_confirmations(&session, &options)?;
     let invocation = project_task_invocation(&session)?;
+    ensure_supported_invocation(&surface_id, &invocation)?;
 
     if let Some(path) = &options.save_params {
         save_explicit(
@@ -311,27 +310,13 @@ fn parse_surface_options(
     let mut workspace = None;
     let mut notebook = None;
     let mut initiating_surface = "cli".to_string();
-    let mut overrides = ResolutionPatch::default();
     let context = ResolutionPatch::default();
     let mut save_params = None;
     let mut no_save_last = false;
     let mut no_notebook_recording = false;
     let mut confirm_overwrite = false;
     let mut confirm_mutation = false;
-    let positional = bundle
-        .surface
-        .bindings()
-        .iter()
-        .filter_map(|binding| {
-            binding
-                .projections
-                .cli
-                .as_ref()
-                .and_then(|projection| projection.positional)
-                .map(|position| (position, binding.name.as_str()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut positional_index = 0usize;
+    let mut parameter_args = Vec::new();
     let mut index = 0usize;
     while index < args.len() {
         let raw = args[index]
@@ -361,12 +346,6 @@ fn parse_surface_options(
             if !matches!(initiating_surface.as_str(), "cli" | "python") {
                 return Err("--initiating-surface must be cli or python".to_string());
             }
-        } else if raw == "--unset" {
-            index += 1;
-            let name = required_utf8(args.get(index), "--unset parameter")?;
-            ensure_binding(bundle, &name)?;
-            overrides.values.remove(&name);
-            overrides.unset.insert(name);
         } else if raw == "--save-params" {
             index += 1;
             save_params = Some(required_path(args.get(index), "--save-params file")?);
@@ -378,55 +357,12 @@ fn parse_surface_options(
             confirm_overwrite = true;
         } else if raw == "--confirm-mutation" && allow_runtime_controls {
             confirm_mutation = true;
-        } else if let Some(stripped) = raw.strip_prefix("--") {
-            let (flag, inline) = stripped
-                .split_once('=')
-                .map_or((raw.trim_start_matches("--"), None), |(flag, value)| {
-                    (flag, Some(value))
-                });
-            let (negated, flag) = flag
-                .strip_prefix("no-")
-                .map_or((false, flag), |flag| (true, flag));
-            let binding = find_binding_by_flag(bundle, flag).ok_or_else(|| {
-                format!("unknown {} parameter flag --{flag}", bundle.surface.id())
-            })?;
-            let concept = bundle
-                .catalog
-                .concept(&binding.concept)
-                .ok_or_else(|| format!("missing concept for {}", binding.name))?;
-            let value = if is_bool_domain(&concept.value_domain) {
-                if inline.is_some() {
-                    return Err(format!("boolean --{flag} does not take a value"));
-                }
-                ParameterValue::Bool(!negated)
-            } else {
-                if negated {
-                    return Err(format!("--no-{flag} is valid only for booleans"));
-                }
-                let value = match inline {
-                    Some(value) => value.to_string(),
-                    None => {
-                        index += 1;
-                        required_utf8(args.get(index), &format!("--{flag} value"))?
-                    }
-                };
-                validated_parameter_edit(bundle, &binding.name, &value)?
-            };
-            overrides.unset.remove(&binding.name);
-            overrides.values.insert(binding.name.clone(), value);
         } else {
-            let Some(name) = positional.get(&positional_index) else {
-                return Err(format!("unexpected positional parameter {raw:?}"));
-            };
-            let binding = ensure_binding(bundle, name)?;
-            overrides.values.insert(
-                binding.name.clone(),
-                validated_parameter_edit(bundle, &binding.name, raw)?,
-            );
-            positional_index += 1;
+            parameter_args.push(args[index].clone());
         }
         index += 1;
     }
+    let overrides = parse_parameter_cli_overrides(bundle, &parameter_args)?;
     let workspace =
         workspace.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     Ok(SurfaceOptions {
@@ -442,20 +378,6 @@ fn parse_surface_options(
         confirm_overwrite,
         confirm_mutation,
     })
-}
-
-fn validated_parameter_edit(
-    bundle: &SurfaceContractBundle,
-    parameter: &str,
-    text: &str,
-) -> Result<ParameterValue, String> {
-    let result = validate_parameter_edit(bundle, parameter, text, []);
-    if let Some(diagnostic) = result.diagnostics.first() {
-        return Err(diagnostic.message.clone());
-    }
-    result
-        .normalized_value
-        .ok_or_else(|| format!("parameter {parameter:?} has no typed value"))
 }
 
 fn set_source(target: &mut Option<SourceChoice>, source: SourceChoice) -> Result<(), String> {
@@ -502,6 +424,34 @@ pub(crate) fn project_task_invocation(
     .map_err(|error| error.to_string())
 }
 
+pub(crate) fn ensure_supported_invocation(
+    surface_id: &str,
+    invocation: &ProviderInvocation,
+) -> Result<(), String> {
+    if surface_id != "imager" {
+        return Ok(());
+    }
+    let stdin = invocation
+        .stdin
+        .as_deref()
+        .ok_or_else(|| "imager provider projection omitted its canonical request".to_string())?;
+    let request: casars_imager::ImagerTaskRequest = serde_json::from_str(stdin)
+        .map_err(|error| format!("decode canonical imager request for preflight: {error}"))?;
+    let casars_imager::ImagerTaskRequest::Run(request) = request;
+    let reasons = request.unsupported_reasons()?;
+    if reasons.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "imager request is unavailable in this installed build: {}",
+        reasons
+            .iter()
+            .map(|reason| format!("{}/{}", reason.kind, reason.id))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 fn enforce_runtime_confirmations(
     session: &ParameterSession,
     options: &SurfaceOptions,
@@ -522,42 +472,6 @@ fn enforce_runtime_confirmations(
         );
     }
     Ok(())
-}
-
-fn is_bool_domain(domain: &ParameterType) -> bool {
-    match domain {
-        ParameterType::Bool => true,
-        ParameterType::Optional { value, .. } => is_bool_domain(value),
-        _ => false,
-    }
-}
-
-fn find_binding_by_flag<'a>(
-    bundle: &'a SurfaceContractBundle,
-    flag: &str,
-) -> Option<&'a casa_provider_contracts::SurfaceParameterBinding> {
-    let normalized = flag.replace('-', "_");
-    bundle.surface.bindings().iter().find(|binding| {
-        binding.name == flag
-            || binding.name == normalized
-            || binding
-                .projections
-                .python
-                .as_ref()
-                .is_some_and(|projection| projection.name == flag || projection.name == normalized)
-    })
-}
-
-fn ensure_binding<'a>(
-    bundle: &'a SurfaceContractBundle,
-    name: &str,
-) -> Result<&'a casa_provider_contracts::SurfaceParameterBinding, String> {
-    bundle
-        .surface
-        .bindings()
-        .iter()
-        .find(|binding| binding.name == name)
-        .ok_or_else(|| format!("unknown {} parameter {name:?}", bundle.surface.id()))
 }
 
 fn show_session(session: &ParameterSession) -> String {
@@ -753,7 +667,7 @@ Usage:\n\
   casars run TASK [SOURCE] [OVERRIDES] [--workspace DIR] [--notebook FILE_OR_ID] [--save-params FILE]\n\
   casars open SESSION [SOURCE] [OVERRIDES] [--workspace DIR] [--save-params FILE]\n\n\
 SOURCE is exactly one of --defaults, --last, --last-successful (tasks), or --params FILE.\n\
-Overrides use CASA names such as --vis, --imsize, --cell, or --unset NAME.\n\
+Overrides use generated CLI spellings such as --ms, --imsize, --cell-arcsec, or --unset NAME.\n\
 Runtime-only controls: --notebook FILE_OR_ID, --initiating-surface cli|python, --no-save-last, --no-notebook-recording (one run), --confirm-overwrite, --confirm-mutation.\n"
         .to_string()
 }
@@ -776,13 +690,13 @@ mod tests {
         let options = parse_surface_options(
             &bundle,
             &[
-                "--vis".into(),
+                "--ms".into(),
                 "input.ms".into(),
                 "--imagename".into(),
                 "out".into(),
                 "--imsize".into(),
                 "1024".into(),
-                "--cell".into(),
+                "--cell-arcsec".into(),
                 "0.2arcsec".into(),
             ],
             true,
@@ -831,16 +745,20 @@ mod tests {
             .open_session(open_session_request(bundle, &options))
             .unwrap();
 
-        assert_eq!(
-            session.values()["imsize"],
-            ParameterValue::Array(vec![ParameterValue::Integer(1024); 2])
-        );
-        assert_eq!(
-            session.values()["cell"],
-            ParameterValue::Array(vec![ParameterValue::String("1arcsec".into()); 2])
-        );
-        assert_eq!(expected["values"]["niter"], 7);
-        assert_eq!(session.values()["niter"], ParameterValue::Integer(7));
+        let invocation = project_task_invocation(&session).unwrap();
+        let request: serde_json::Value =
+            serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
+        assert_eq!(request, expected["request"]);
+        let error = ensure_supported_invocation("imager", &invocation).unwrap_err();
+        for reason in [
+            "task/task.aw_projection",
+            "task/task.per_channel_weight_density",
+            "task/task.grid_threads",
+            "task/task.memory_target",
+            "task/task.memory_pressure_policy",
+        ] {
+            assert!(error.contains(reason), "missing {reason} in {error}");
+        }
     }
 
     #[test]
@@ -849,7 +767,6 @@ mod tests {
         let options = parse_surface_options(
             &bundle,
             &[
-                "--imagename".into(),
                 "input.image".into(),
                 "--notebook".into(),
                 "Analysis.md".into(),
@@ -886,13 +803,7 @@ mod tests {
         let bundle = builtin_surface_bundle("importfits").unwrap();
         let mut options = parse_surface_options(
             &bundle,
-            &[
-                "--fitsimage".into(),
-                "input.fits".into(),
-                "--imagename".into(),
-                "out".into(),
-                "--overwrite".into(),
-            ],
+            &["input.fits".into(), "out".into(), "--overwrite".into()],
             true,
         )
         .unwrap();
@@ -935,7 +846,6 @@ mod tests {
         let args = vec![
             "imexplore".into(),
             "--defaults".into(),
-            "--image".into(),
             "cube.image".into(),
             "--save-params".into(),
             destination.clone().into_os_string(),

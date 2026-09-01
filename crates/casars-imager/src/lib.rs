@@ -17,6 +17,10 @@ mod task_contract;
 use std::{collections::BTreeMap, ffi::OsString, path::PathBuf, time::Duration};
 
 use casa_provider_contracts::ParameterValue;
+use casa_task_runtime::{
+    BaseSource, OpenSessionRequest, ParameterRuntime, ResolutionPatch,
+    parse_parameter_cli_overrides,
+};
 
 pub use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
 pub use managed_output::*;
@@ -395,6 +399,7 @@ pub struct CliConfig {
 }
 
 impl CliConfig {
+    #[cfg(test)]
     /// Parse the direct CLI surface. Machine JSON requests are handled before
     /// this method by `TaskCliHost`.
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
@@ -919,7 +924,13 @@ impl CliConfig {
         config.mask_image = optional_text("mask_image")?.map(PathBuf::from);
         config.weighting = parse_weighting(&text("weighting")?, Some(float("robust")? as f32))?;
         config.w_project_planes = optional_usize(values, "wprojplanes")?;
-        config.facets = usize::try_from(integer("facets")?).map_err(|error| error.to_string())?;
+        config.facets = values
+            .get("facets")
+            .map(|_| integer("facets"))
+            .transpose()?
+            .map_or(Ok(1), |value| {
+                usize::try_from(value).map_err(|error| error.to_string())
+            })?;
         config.use_pointing = boolean("usepointing")?;
         config.uv_taper = optional_text("uvtaper")?
             .map(|value| parse_uv_taper(&value))
@@ -970,7 +981,8 @@ impl CliConfig {
         config.imaging_row_block_rows = optional_usize(values, "imaging_row_block_rows")?;
         config.imaging_prepare_workers = optional_usize(values, "imaging_prepare_workers")?;
         config.imaging_fft_precision = parse_fft_precision(&text("imaging_fft_precision")?)?;
-        config.standard_mfs_grid_threads = optional_text("standard_mfs_grid_threads")?;
+        config.standard_mfs_grid_threads =
+            optional_usize(values, "standard_mfs_grid_threads")?.map(|value| value.to_string());
         if !text("projection")?.eq_ignore_ascii_case("sin") {
             return Err("only SIN projection is supported".to_string());
         }
@@ -1178,6 +1190,32 @@ pub fn run_from_request(request: &ImagerRunTaskRequest) -> Result<RunSummary, St
     run_from_config(&request.to_cli_config()?)
 }
 
+fn request_from_parameter_cli_args(args: &[OsString]) -> Result<ImagerRunTaskRequest, String> {
+    let bundle = casa_provider_contracts::builtin_surface_bundle("imager")?;
+    let override_patch = parse_parameter_cli_overrides(&bundle, args)?;
+    let session = ParameterRuntime::default()
+        .open_session(OpenSessionRequest {
+            bundle,
+            workspace: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            source: BaseSource::Defaults,
+            profile_text: None,
+            context_patch: ResolutionPatch::default(),
+            override_patch,
+            managed_save: false,
+        })
+        .map_err(|error| format!("resolve imager parameters: {error}"))?;
+    let adaptation = imager_provider_invocation(&session.values(), Vec::new())?;
+    let stdin = adaptation
+        .invocation
+        .stdin
+        .ok_or_else(|| "imager provider projection omitted its canonical request".to_string())?;
+    match serde_json::from_str::<ImagerTaskRequest>(&stdin)
+        .map_err(|error| format!("decode canonical imager task request: {error}"))?
+    {
+        ImagerTaskRequest::Run(request) => Ok(request),
+    }
+}
+
 /// Run the machine or direct CLI surface.
 pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let raw_args = args.into_iter().collect::<Vec<_>>();
@@ -1233,8 +1271,18 @@ pub fn run_with_cli_args(args: impl IntoIterator<Item = OsString>) -> Result<(),
         println!("{}", command_schema("casars-imager").render_help());
         return Ok(());
     }
-    let config = CliConfig::parse(args)?;
-    let request = ImagerRunTaskRequest::from_cli_config(&config);
+    let request = request_from_parameter_cli_args(&args)?;
+    let unsupported = request.unsupported_reasons()?;
+    if !unsupported.is_empty() {
+        return Err(format!(
+            "imager request is unavailable in this installed build: {}",
+            unsupported
+                .iter()
+                .map(|reason| format!("{}/{}", reason.kind, reason.id))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     let summary = run_from_request(&request)?;
     let result = ImagerRunTaskResult::from_run(request, &summary);
     if managed_output {
@@ -1521,5 +1569,35 @@ fn parse_memory_policy(value: &str) -> Result<ImagingMemoryPressurePolicy, Strin
         "aggressive" => Ok(ImagingMemoryPressurePolicy::Aggressive),
         "oversubscribe" => Ok(ImagingMemoryPressurePolicy::Oversubscribe),
         _ => Err(format!("unsupported memory policy {value:?}")),
+    }
+}
+
+#[cfg(test)]
+mod cli_projection_tests {
+    use super::*;
+
+    #[test]
+    fn standalone_cli_uses_only_catalog_declared_imager_spellings() {
+        let canonical = request_from_parameter_cli_args(&[
+            "--ms".into(),
+            "input.ms".into(),
+            "--imagename".into(),
+            "products/image".into(),
+            "--threshold-jy".into(),
+            "2.5Jy".into(),
+        ])
+        .unwrap();
+        assert_eq!(canonical.threshold_jy, 2.5);
+
+        let error = request_from_parameter_cli_args(&[
+            "--ms".into(),
+            "input.ms".into(),
+            "--imagename".into(),
+            "products/image".into(),
+            "--threshold".into(),
+            "2.5Jy".into(),
+        ])
+        .unwrap_err();
+        assert!(error.contains("unknown imager parameter flag --threshold"));
     }
 }

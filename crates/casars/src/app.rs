@@ -14151,6 +14151,10 @@ impl AppState {
             .render_sparse()
             .map_err(|error| error.to_string())?;
         let invocation = crate::parameters_cli::project_task_invocation(parameter_session)?;
+        crate::parameters_cli::ensure_supported_invocation(
+            parameter_session.bundle().surface.id(),
+            &invocation,
+        )?;
         let arguments = invocation
             .args
             .into_iter()

@@ -18,8 +18,8 @@ mod session;
 mod storage;
 
 pub use cli::{
-    TaskCliAction, TaskCliError, TaskCliHost, parse_task_cli_action, read_task_request,
-    task_cli_machine_help,
+    TaskCliAction, TaskCliError, TaskCliHost, parse_parameter_cli_overrides, parse_task_cli_action,
+    read_task_request, task_cli_machine_help,
 };
 pub use completion::{
     RunProductReference, TaskCompletion, TaskCompletionError, TaskOutputValue,

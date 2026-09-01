@@ -7,8 +7,9 @@ use std::time::Instant;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
-    HogbomIterationAccounting, ResourcePolicy, SpectralImagingMode, TaskRequirement,
-    VisibilityContinuumSubtraction, execute_continuum, resource_policy_for_task_requirements,
+    HogbomIterationAccounting, ImagingCapabilityRequirement, ResourcePolicy, SpectralImagingMode,
+    TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    installed_imaging_capability_catalog, resource_policy_for_task_requirements,
 };
 
 use super::{
@@ -250,6 +251,22 @@ fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
     requirements.extend(backend_requirements(config));
     requirements.extend(unsupported_native_controls(config));
     requirements
+}
+
+pub(super) fn unsupported_requirements(config: &CliConfig) -> Vec<UnsupportedRequirement> {
+    let required = task_requirements(config);
+    let mut unsupported = installed_imaging_capability_catalog()
+        .into_iter()
+        .filter_map(|entry| match entry.requirement() {
+            ImagingCapabilityRequirement::Task(requirement) if required.contains(&requirement) => {
+                entry.unsupported()
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    unsupported.sort();
+    unsupported.dedup();
+    unsupported
 }
 
 fn backend_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
