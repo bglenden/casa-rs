@@ -1758,7 +1758,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">10</td>
+<td style="text-align: right;">11</td>
 <td><code>imager</code></td>
 <td style="text-align: right;">94</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
@@ -3166,7 +3166,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>10</code></li>
+<li>Contract version: <code>11</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3853,15 +3853,15 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code></td>
 <td><code>"none"</code>; required when imaging_memory_pressure_policy="oversubscribe"</td>
 <td>Execution Resources</td>
-<td>Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. stage-aware and hybrid currently apply their corresponding caps only in planner probes. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.</td>
+<td>Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.</td>
 </tr>
 <tr>
 <td><code>imaging_memory_pressure_policy</code></td>
-<td><code>parameter.imaging_memory_pressure_policy@r1</code></td>
-<td><code>choice (6 values)</code></td>
+<td><code>parameter.imaging_memory_pressure_policy@r2</code></td>
+<td><code>choice (4 values)</code></td>
 <td><code>"auto"</code>; optional</td>
 <td>Execution Resources</td>
-<td>Imaging memory-pressure and stage-residency policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. stage-aware and hybrid are planner-probe-only until their requested runtime actions are implemented.</td>
+<td>Imaging memory-pressure policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target.</td>
 </tr>
 <tr>
 <td><code>imaging_prepare_buffer_mb</code></td>
