@@ -208,7 +208,27 @@ def test_successful_process_with_malformed_managed_result_is_rejected(
         tasks.imager(
             vis="input.ms",
             imagename="dirty",
+            write_preview_pngs=False,
             workspace=tmp_path,
             binary=binary,
             env={"FAKE_CASARS_LOG": str(tmp_path / "invocation.json")},
         )
+
+
+def test_imager_ineligibility_raises_exact_typed_owner_reason_before_process(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(tasks.TaskCapabilityError) as failure:
+        tasks.imager(
+            vis="mosaic.ms",
+            imagename="products/mosaic",
+            gridder="mosaic",
+            usepointing=True,
+            write_preview_pngs=False,
+            workspace=tmp_path,
+            binary=tmp_path / "missing-casars",
+        )
+
+    assert [(reason.kind, reason.id) for reason in failure.value.reasons] == [
+        ("task", "task.mosaic_gridder")
+    ]

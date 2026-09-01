@@ -12,7 +12,14 @@ from tempfile import TemporaryDirectory
 from typing import Literal, TypeAlias
 
 from .._task_runtime import _resolve_task_binary
-from ..parameters import ParameterData, SurfaceParameters, TaskParameters, _frontend
+from ..parameters import (
+    ParameterData,
+    ProviderInvocation,
+    ProviderUnsupportedReason,
+    SurfaceParameters,
+    TaskParameters,
+    _frontend,
+)
 
 StrPath: TypeAlias = str | PathLike[str]
 TaskBaseSource: TypeAlias = Literal["defaults", "last", "last_successful"]
@@ -27,6 +34,18 @@ class TaskInvocationError(RuntimeError):
 
 class TaskResultError(RuntimeError):
     """Raised when Rust rejects a successful provider result contract."""
+
+
+class TaskCapabilityError(RuntimeError):
+    """Raised from exact canonical provider-owned infeasibility reasons."""
+
+    def __init__(
+        self, task: str, reasons: tuple[ProviderUnsupportedReason, ...]
+    ) -> None:
+        self.task = task
+        self.reasons = reasons
+        detail = ", ".join(f"{reason.kind}/{reason.id}" for reason in reasons)
+        super().__init__(f"{task} is unavailable in this installed build: {detail}")
 
 
 class TaskExecutionError(RuntimeError):
@@ -51,6 +70,7 @@ class TaskCompletion:
     stdout: str
     stderr: str
     parameters_toml: str
+    provider_invocation: ProviderInvocation
     result: object | None
 
     @property
@@ -123,6 +143,9 @@ def run(
     merged_overrides = _merge_overrides(overrides, casa_overrides)
     if merged_overrides:
         resolved.set_many(merged_overrides)
+    provider_invocation = resolved.provider_invocation()
+    if provider_invocation.unsupported_reasons:
+        raise TaskCapabilityError(task, provider_invocation.unsupported_reasons)
 
     executable = _resolve_casars_binary(binary)
     with TemporaryDirectory(prefix=f"casars-{task}-parameters-") as temporary:
@@ -198,6 +221,7 @@ def run(
         stdout=process.stdout,
         stderr=process.stderr,
         parameters_toml=parameters_toml,
+        provider_invocation=provider_invocation,
         result=result,
     )
     if check:
