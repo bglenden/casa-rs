@@ -13,6 +13,7 @@ mod execution_bindings;
 #[allow(dead_code)]
 mod gridded_normal_artifact;
 mod major_cycle;
+mod metal_runtime;
 mod observation_transaction;
 mod prepared_artifact;
 pub mod product_publication;
@@ -64,6 +65,12 @@ pub use execution::{
 };
 pub use gridded_normal_artifact::GriddedNormalReplayStorage;
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
+#[cfg(all(target_os = "macos", not(coverage)))]
+pub use metal_runtime::{MetalCommandFence, MetalEncodingContext};
+pub use metal_runtime::{
+    MetalCommandOutcome, MetalExecutionDecision, MetalNodeDecision, MetalResidency, MetalRuntime,
+    MetalRuntimeError, MetalRuntimeInventory,
+};
 pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
     ObservationTransactionPublicationScope, ObservationTransactionWork,

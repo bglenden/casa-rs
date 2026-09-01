@@ -656,6 +656,7 @@ dependencies = [
  "fs2",
  "libc",
  "num-complex",
+ "objc2",
  "objc2-metal",
  "rayon",
  "serde",
