@@ -1172,7 +1172,11 @@ impl WorkImplementation for PlanningImplementation {
         None
     }
 
-    fn wait_for_fence(&self, _: WorkExecutionContext<'_>, _: FenceKind) -> Result<(), Self::Error> {
+    fn wait_for_fence(
+        &self,
+        _: WorkExecutionContext<'_>,
+        _: FenceKind,
+    ) -> Result<WorkMeasurements, Self::Error> {
         Err(io::Error::other("planning-only registry cannot execute"))
     }
 

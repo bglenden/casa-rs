@@ -30,7 +30,12 @@ casa-test-support = { path = "../casa-test-support" }
 casa-types = { path = "../casa-types" }
 
 [target.'cfg(all(target_os = "macos", not(coverage)))'.dependencies]
+objc2 = "0.6.4"
 objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "MTLAllocation",
+    "MTLBuffer",
+    "MTLCommandBuffer",
     "MTLCommandQueue",
     "MTLDevice",
+    "MTLResource",
 ] }

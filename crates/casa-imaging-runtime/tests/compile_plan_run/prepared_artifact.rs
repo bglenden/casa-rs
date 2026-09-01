@@ -230,8 +230,8 @@ impl WorkImplementation for PreparedFailureAdapter {
         &self,
         _context: WorkExecutionContext<'_>,
         _fence: FenceKind,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+    ) -> Result<WorkMeasurements, Self::Error> {
+        Ok(WorkMeasurements::default())
     }
 
     fn complete_observation_read(
@@ -334,8 +334,8 @@ impl WorkImplementation for PreparedOperationAdapter {
         &self,
         _context: WorkExecutionContext<'_>,
         _fence: FenceKind,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+    ) -> Result<WorkMeasurements, Self::Error> {
+        Ok(WorkMeasurements::default())
     }
 
     fn complete_observation_read(
@@ -392,7 +392,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         &self,
         context: WorkExecutionContext<'_>,
         fence: FenceKind,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<WorkMeasurements, Self::Error> {
         match self {
             Self::Base(adapter) => adapter.wait_for_fence(context, fence),
             Self::Prepared(adapter) => adapter.wait_for_fence(context, fence),

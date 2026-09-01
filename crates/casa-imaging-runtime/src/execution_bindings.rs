@@ -23,7 +23,7 @@ use crate::{
     ExecutionKnobs, ExecutionOutcome, ExecutionReceiptBinding, FenceKind, IoBufferKind,
     LeaseResource, PhysicalSlotId, PublicationLayoutLedger, ReceiptError, ReceiptFailureKind,
     ReceiptStatus, ResourceAuthority, ResourceError, ResourceIdentity, ResourceOverride,
-    ResourcePolicy, WorkImplementationId, WorkKind, WorkNodeId,
+    ResourcePolicy, WorkDomain, WorkImplementationId, WorkKind, WorkNodeId,
     bounded_stream::BOUNDED_WORKER_STACK_BYTES,
     cost_model::PlannerCostModelProfileRecord,
     execution::{
@@ -730,6 +730,12 @@ impl WorkMeasurements {
     pub fn artifacts(&self) -> &[ArtifactMeasurement] {
         &self.artifacts
     }
+
+    fn merge(&mut self, other: Self) {
+        self.resources.extend(other.resources);
+        self.io.extend(other.io);
+        self.artifacts.extend(other.artifacts);
+    }
 }
 
 /// Invalid prediction or artifact declaration supplied with physical work.
@@ -895,6 +901,11 @@ impl Error for PhysicalWorkBindingError {}
 /// Adapter evidence did not exactly cover the work sealed into the plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionEvidenceError {
+    /// A Metal node returned without submitting through the execution-owned runtime.
+    MetalRuntimeBypassed {
+        /// Exact node.
+        node: WorkNodeId,
+    },
     /// The adapter reported the same planned resource claim more than once.
     DuplicateResource {
         /// Exact node.
@@ -1000,7 +1011,8 @@ pub enum ExecutionEvidenceError {
 impl ExecutionEvidenceError {
     fn node(&self) -> &WorkNodeId {
         match self {
-            Self::DuplicateResource { node, .. }
+            Self::MetalRuntimeBypassed { node }
+            | Self::DuplicateResource { node, .. }
             | Self::UnplannedResource { node, .. }
             | Self::MissingResource { node, .. }
             | Self::ResourcePeakExceeded { node, .. }
@@ -1019,6 +1031,11 @@ impl ExecutionEvidenceError {
 impl fmt::Display for ExecutionEvidenceError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MetalRuntimeBypassed { node } => write!(
+                formatter,
+                "Metal node {} bypassed the execution-owned runtime",
+                node.as_str()
+            ),
             Self::DuplicateResource { node, resource, .. } => write!(
                 formatter,
                 "node {} repeated resource measurement {}",
@@ -3087,6 +3104,14 @@ impl<'a> WorkExecutionContext<'a> {
         self.scheduled.allocations()
     }
 
+    pub(crate) fn metal_execution(
+        self,
+    ) -> Result<&'a crate::metal_runtime::MetalExecutionState, crate::MetalRuntimeError> {
+        self.scheduled
+            .metal_execution()
+            .ok_or(crate::MetalRuntimeError::UnsupportedPlatform)
+    }
+
     /// Return the canonical plan-listed artifacts owned by this exact node.
     pub fn planned_artifacts(self) -> impl Iterator<Item = &'a PlannedArtifact> + 'a {
         let node = &self.scheduled.node().id;
@@ -3352,11 +3377,12 @@ pub trait WorkImplementation {
 
     /// Launch or synchronously execute exactly one scheduled node.
     ///
-    /// Returning `Ok` means every fence declared by the node was launched and
-    /// the returned evidence completely covers its plan-listed resource, I/O,
-    /// and artifact work. Fences can subsequently be joined through
-    /// [`Self::wait_for_fence`]. Returning `Err` guarantees that no asynchronous
-    /// work escaped.
+    /// Returning `Ok` means every fence declared by the node was launched. For
+    /// synchronous work, the returned evidence completely covers plan-listed
+    /// resource, I/O, and artifact work. For asynchronous work, launch evidence
+    /// may be partial; [`Self::wait_for_fence`] supplies terminal contributions,
+    /// and the runtime requires complete accumulated evidence at the final
+    /// fence. Returning `Err` guarantees that no asynchronous work escaped.
     /// A transaction-bound [`WorkKind::ObservationRead`] implementation
     /// revalidates the compiled read generations and holds its declared
     /// source-table locks through the complete work or fence event.
@@ -3380,8 +3406,9 @@ pub trait WorkImplementation {
     ) -> Option<&'error WorkMeasurements>;
 
     /// Block until one exact fence previously launched by [`Self::execute`]
-    /// settles. An error means the fence settled unsuccessfully, so the
-    /// scheduler may drain and release resources after recording failure. For
+    /// settles and return the evidence observed at that completion boundary.
+    /// An error means the fence settled unsuccessfully, so the scheduler may
+    /// drain and release resources after recording failure. For
     /// [`WorkKind::Publication`], any launch or fence error leaves the previous
     /// generation solely visible. Successful [`FenceKind::Publication`]
     /// completion establishes publication readiness only; it does not expose
@@ -3390,7 +3417,7 @@ pub trait WorkImplementation {
         &self,
         context: WorkExecutionContext<'_>,
         fence: FenceKind,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<WorkMeasurements, Self::Error>;
 
     /// Bind the storage owner's selected-observation completion to runtime freshness evidence.
     ///
@@ -3683,6 +3710,14 @@ fn validate_work_measurements(
     validate_measurements(plan, work, measurements, true)
 }
 
+fn validate_partial_work_measurements(
+    plan: &ExecutionPlan,
+    work: &WorkExecutionContext,
+    measurements: &WorkMeasurements,
+) -> Result<(), ExecutionEvidenceError> {
+    validate_measurements(plan, work, measurements, false)
+}
+
 fn validate_failed_work_measurements(
     plan: &ExecutionPlan,
     work: &WorkExecutionContext,
@@ -3695,7 +3730,7 @@ fn validate_measurements(
     plan: &ExecutionPlan,
     work: &WorkExecutionContext,
     measurements: &WorkMeasurements,
-    require_all_artifacts: bool,
+    require_complete: bool,
 ) -> Result<(), ExecutionEvidenceError> {
     let node = &work.node().id;
     let claims = work
@@ -3733,15 +3768,17 @@ fn validate_measurements(
             });
         }
     }
-    if let Some(((resource, lifetime), _)) = claims
-        .iter()
-        .find(|(key, _)| !measured_claims.contains_key(*key))
-    {
-        return Err(ExecutionEvidenceError::MissingResource {
-            node: node.clone(),
-            resource: resource.clone(),
-            lifetime: lifetime.clone(),
-        });
+    if require_complete {
+        if let Some(((resource, lifetime), _)) = claims
+            .iter()
+            .find(|(key, _)| !measured_claims.contains_key(*key))
+        {
+            return Err(ExecutionEvidenceError::MissingResource {
+                node: node.clone(),
+                resource: resource.clone(),
+                lifetime: lifetime.clone(),
+            });
+        }
     }
 
     let predicted_io = plan.prediction.stages[node]
@@ -3767,14 +3804,16 @@ fn validate_measurements(
             });
         }
     }
-    if let Some(kind) = predicted_io
-        .keys()
-        .find(|kind| !measured_io.contains_key(kind))
-    {
-        return Err(ExecutionEvidenceError::MissingIo {
-            node: node.clone(),
-            kind: *kind,
-        });
+    if require_complete {
+        if let Some(kind) = predicted_io
+            .keys()
+            .find(|kind| !measured_io.contains_key(kind))
+        {
+            return Err(ExecutionEvidenceError::MissingIo {
+                node: node.clone(),
+                kind: *kind,
+            });
+        }
     }
 
     let planned_artifacts = plan
@@ -3788,7 +3827,7 @@ fn validate_measurements(
         work.node().kind,
         &planned_artifacts,
         measurements,
-        require_all_artifacts,
+        require_complete,
     ) {
         Ok(()) => None,
         Err(error @ ExecutionEvidenceError::RejectedArtifact { .. }) => Some(error),
@@ -3959,6 +3998,19 @@ fn work_execution_context<'a>(
             None,
             None,
         )
+    }
+}
+
+struct LaunchedWork {
+    work: crate::execution::WorkExecutionContext,
+    measurements: std::cell::RefCell<WorkMeasurements>,
+}
+
+impl std::ops::Deref for LaunchedWork {
+    type Target = crate::execution::WorkExecutionContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.work
     }
 }
 
@@ -4134,7 +4186,8 @@ where
         Some(plan.observation_transaction.work().commit()),
     )
     .map_err(RunError::Scheduler)?;
-    let mut launched = BTreeMap::<WorkNodeId, crate::execution::WorkExecutionContext>::new();
+    let mut launched = BTreeMap::<WorkNodeId, LaunchedWork>::new();
+    let mut settled_fences = BTreeMap::<WorkNodeId, BTreeSet<FenceKind>>::new();
     let mut settled_observation_fences = BTreeMap::<WorkNodeId, BTreeSet<FenceKind>>::new();
     let mut completed_observation_reads =
         BTreeMap::<WorkNodeId, AttemptBoundObservationCompletion>::new();
@@ -4301,7 +4354,25 @@ where
                         if work.node().kind == WorkKind::Publication {
                             controller_stopped = true;
                         }
-                        match validate_work_measurements(plan, &context, &measurements) {
+                        let metal_submitted =
+                            if matches!(work.node().domain, WorkDomain::Metal { .. }) {
+                                context
+                                    .metal_execution()
+                                    .and_then(|execution| execution.submitted(&node_id))
+                                    .unwrap_or(false)
+                            } else {
+                                true
+                            };
+                        let validation = if !metal_submitted {
+                            Err(ExecutionEvidenceError::MetalRuntimeBypassed {
+                                node: node_id.clone(),
+                            })
+                        } else if work.node().fences.is_empty() {
+                            validate_work_measurements(plan, &context, &measurements)
+                        } else {
+                            validate_partial_work_measurements(plan, &context, &measurements)
+                        };
+                        match validation {
                             Ok(()) => {
                                 if work.node().kind == WorkKind::Publication {
                                     publication_measurements = Some(measurements.clone());
@@ -4327,7 +4398,13 @@ where
                                         && work.node().fences.is_empty();
                                 let synchronous_work = work.node().fences.is_empty();
                                 let work_lease_epoch = context.lease_epoch();
-                                launched.insert(node_id.clone(), work);
+                                launched.insert(
+                                    node_id.clone(),
+                                    LaunchedWork {
+                                        work,
+                                        measurements: std::cell::RefCell::new(measurements),
+                                    },
+                                );
                                 match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
                                 {
                                     Ok(_) if synchronous_observation_read => {
@@ -4474,7 +4551,13 @@ where
                                 if observation_read {
                                     let _ = implementation.abort_observation_read(&node_id);
                                 }
-                                launched.insert(node_id.clone(), work);
+                                launched.insert(
+                                    node_id.clone(),
+                                    LaunchedWork {
+                                        work,
+                                        measurements: std::cell::RefCell::new(measurements),
+                                    },
+                                );
                                 match scheduler.finish_work(node_id.clone(), WorkResult::Succeeded)
                                 {
                                     Ok(fences) if fences.is_empty() && observation_read => {
@@ -4636,161 +4719,197 @@ where
                     &fence_work,
                     &completed_observation_reads,
                 );
-                if let Err(source) = implementation.wait_for_fence(context, fence.kind()) {
+                let fence_measurements = match implementation.wait_for_fence(context, fence.kind())
+                {
+                    Ok(measurements) => measurements,
+                    Err(source) => {
+                        if pending.is_none() {
+                            pending = Some(PendingRunError::Execution {
+                                node: fence.node().clone(),
+                                source,
+                            });
+                        }
+                        let _ = receipt.fence_failed(&fence);
+                        controller_stopped = true;
+                        if work.node().kind.reads_observation() {
+                            let _ = implementation.abort_observation_read(fence.node());
+                        }
+                        if work.node().kind == WorkKind::Release {
+                            if scheduler.fail_release_fence(fence).is_err() {
+                                return Err(terminal_drain_error(
+                                    &mut scheduler,
+                                    &mut pending,
+                                    "release fence failure is retained",
+                                ));
+                            }
+                            scheduler.cancel_after_error();
+                            continue;
+                        }
+                        if scheduler
+                            .fail_fence(fence.clone(), "asynchronous work failed".to_string())
+                            .is_err()
+                        {
+                            return Err(terminal_drain_error(
+                                &mut scheduler,
+                                &mut pending,
+                                "fence failure is retained",
+                            ));
+                        }
+                        if work.node().kind.reads_observation()
+                            && scheduler
+                                .take_observation_completion_permits(&work.node().id)
+                                .release()
+                                .is_err()
+                        {
+                            return Err(terminal_drain_error(
+                                &mut scheduler,
+                                &mut pending,
+                                "observation abort completed before permit release failure",
+                            ));
+                        }
+                        continue;
+                    }
+                };
+                let settled = settled_fences.entry(work.node().id.clone()).or_default();
+                settled.insert(fence.kind());
+                let final_fence = settled == &work.node().fences;
+                let mut combined_measurements = work.measurements.borrow().clone();
+                combined_measurements.merge(fence_measurements.clone());
+                let evidence = if final_fence {
+                    validate_work_measurements(plan, &context, &combined_measurements)
+                } else {
+                    validate_partial_work_measurements(plan, &context, &fence_measurements)
+                };
+                if let Err(error) = evidence {
                     if pending.is_none() {
-                        pending = Some(PendingRunError::Execution {
-                            node: fence.node().clone(),
-                            source,
-                        });
+                        pending = Some(PendingRunError::Evidence(error));
                     }
                     let _ = receipt.fence_failed(&fence);
                     controller_stopped = true;
                     if work.node().kind.reads_observation() {
                         let _ = implementation.abort_observation_read(fence.node());
                     }
-                    if work.node().kind == WorkKind::Release {
-                        if scheduler.fail_release_fence(fence).is_err() {
-                            return Err(terminal_drain_error(
-                                &mut scheduler,
-                                &mut pending,
-                                "release fence failure is retained",
-                            ));
-                        }
-                        scheduler.cancel_after_error();
-                        continue;
-                    }
                     if scheduler
-                        .fail_fence(fence.clone(), "asynchronous work failed".to_string())
+                        .fail_fence(fence.clone(), "asynchronous evidence failed".to_string())
                         .is_err()
                     {
                         return Err(terminal_drain_error(
                             &mut scheduler,
                             &mut pending,
-                            "fence failure is retained",
+                            "fence evidence failure is retained",
                         ));
                     }
-                    if work.node().kind.reads_observation()
-                        && scheduler
-                            .take_observation_completion_permits(&work.node().id)
-                            .release()
-                            .is_err()
-                    {
-                        return Err(terminal_drain_error(
-                            &mut scheduler,
-                            &mut pending,
-                            "observation abort completed before permit release failure",
-                        ));
-                    }
-                } else {
-                    let observation_completion = if work.node().kind.reads_observation() {
-                        let settled = settled_observation_fences
-                            .entry(work.node().id.clone())
-                            .or_default();
-                        settled.insert(fence.kind());
-                        if settled == &work.node().fences {
-                            Some(ObservationReadCompletionContext {
-                                attempt_id: receipt.attempt_id(),
-                                owner_node: work.node().id.clone(),
-                                settled_fences: settled.clone(),
-                                lease_epoch: context.lease_epoch(),
-                                problem_id: problem.problem_id(),
-                                observation_snapshot_id: problem
-                                    .inputs()
-                                    .observation_snapshot()
-                                    .snapshot_id(),
-                                observation_provenance_id: problem
-                                    .inputs()
-                                    .observation_snapshot()
-                                    .provenance_id(),
-                                commitment_id: problem.selected_observation().commitment_id(),
-                            })
-                        } else {
-                            None
-                        }
+                    scheduler.cancel_after_error();
+                    continue;
+                }
+                let observation_completion = if work.node().kind.reads_observation() {
+                    let settled = settled_observation_fences
+                        .entry(work.node().id.clone())
+                        .or_default();
+                    settled.insert(fence.kind());
+                    if settled == &work.node().fences {
+                        Some(ObservationReadCompletionContext {
+                            attempt_id: receipt.attempt_id(),
+                            owner_node: work.node().id.clone(),
+                            settled_fences: settled.clone(),
+                            lease_epoch: context.lease_epoch(),
+                            problem_id: problem.problem_id(),
+                            observation_snapshot_id: problem
+                                .inputs()
+                                .observation_snapshot()
+                                .snapshot_id(),
+                            observation_provenance_id: problem
+                                .inputs()
+                                .observation_snapshot()
+                                .provenance_id(),
+                            commitment_id: problem.selected_observation().commitment_id(),
+                        })
                     } else {
                         None
-                    };
-                    let mut fence_transition_succeeded = true;
-                    if let Err(error) = receipt.fence_completed(&fence) {
-                        defer_receipt_error(&mut scheduler, &mut pending, error);
-                        controller_stopped = true;
-                        fence_transition_succeeded = false;
                     }
-                    if let Err(error) = scheduler.complete_fence(fence) {
-                        defer_scheduler_error(&mut scheduler, &mut pending, error);
+                } else {
+                    None
+                };
+                let mut fence_transition_succeeded = true;
+                if let Err(error) =
+                    receipt.fence_completed_with_measurements(&fence, &fence_measurements)
+                {
+                    defer_receipt_error(&mut scheduler, &mut pending, error);
+                    controller_stopped = true;
+                    fence_transition_succeeded = false;
+                }
+                if let Err(error) = scheduler.complete_fence(fence) {
+                    defer_scheduler_error(&mut scheduler, &mut pending, error);
+                    controller_stopped = true;
+                    fence_transition_succeeded = false;
+                }
+                *work.measurements.borrow_mut() = combined_measurements;
+                if let Some(completion) = observation_completion {
+                    let node = work.node().id.clone();
+                    let permits = scheduler.take_observation_completion_permits(&node);
+                    let duplicate = completed_observation_reads.contains_key(&node);
+                    if duplicate {
+                        defer_scheduler_error(
+                            &mut scheduler,
+                            &mut pending,
+                            ExecutionError::InvalidState(format!(
+                                "observation read {} completed more than once",
+                                node.as_str()
+                            )),
+                        );
                         controller_stopped = true;
-                        fence_transition_succeeded = false;
                     }
-                    if let Some(completion) = observation_completion {
-                        let node = work.node().id.clone();
-                        let permits = scheduler.take_observation_completion_permits(&node);
-                        let duplicate = completed_observation_reads.contains_key(&node);
-                        if duplicate {
-                            defer_scheduler_error(
-                                &mut scheduler,
-                                &mut pending,
-                                ExecutionError::InvalidState(format!(
-                                    "observation read {} completed more than once",
-                                    node.as_str()
-                                )),
-                            );
-                            controller_stopped = true;
-                        }
-                        if !fence_transition_succeeded
-                            || duplicate
-                            || pending.is_some()
-                            || controller_stopped
-                        {
-                            let _ = implementation.abort_observation_read(&node);
-                        } else {
-                            match implementation.complete_observation_read(completion) {
-                                Ok(completion) => {
-                                    match transfer_artifact_resources(
-                                        &mut scheduler,
-                                        implementation,
-                                        &node,
-                                    ) {
-                                        Ok(()) => {
-                                            completed_observation_reads
-                                                .insert(node.clone(), completion);
-                                        }
-                                        Err(error) => {
-                                            pending = Some(error);
-                                            controller_stopped = true;
-                                            scheduler.cancel_after_error();
-                                        }
+                    if !fence_transition_succeeded
+                        || duplicate
+                        || pending.is_some()
+                        || controller_stopped
+                    {
+                        let _ = implementation.abort_observation_read(&node);
+                    } else {
+                        match implementation.complete_observation_read(completion) {
+                            Ok(completion) => {
+                                match transfer_artifact_resources(
+                                    &mut scheduler,
+                                    implementation,
+                                    &node,
+                                ) {
+                                    Ok(()) => {
+                                        completed_observation_reads
+                                            .insert(node.clone(), completion);
                                     }
-                                }
-                                Err(source) => {
-                                    let _ = implementation.abort_observation_read(&node);
-                                    if pending.is_none() {
-                                        pending = Some(PendingRunError::Execution {
-                                            node: node.clone(),
-                                            source,
-                                        });
+                                    Err(error) => {
+                                        pending = Some(error);
+                                        controller_stopped = true;
+                                        scheduler.cancel_after_error();
                                     }
-                                    controller_stopped = true;
-                                    scheduler.cancel_after_error();
                                 }
                             }
+                            Err(source) => {
+                                let _ = implementation.abort_observation_read(&node);
+                                if pending.is_none() {
+                                    pending = Some(PendingRunError::Execution {
+                                        node: node.clone(),
+                                        source,
+                                    });
+                                }
+                                controller_stopped = true;
+                                scheduler.cancel_after_error();
+                            }
                         }
-                        if let Err(error) = permits.release() {
-                            defer_scheduler_error(&mut scheduler, &mut pending, error);
-                            controller_stopped = true;
-                        }
-                    } else if !work.node().kind.reads_observation()
-                        && fence_transition_succeeded
-                        && pending.is_none()
-                        && let Err(error) = transfer_artifact_resources(
-                            &mut scheduler,
-                            implementation,
-                            &work.node().id,
-                        )
-                    {
-                        pending = Some(error);
-                        controller_stopped = true;
-                        scheduler.cancel_after_error();
                     }
+                    if let Err(error) = permits.release() {
+                        defer_scheduler_error(&mut scheduler, &mut pending, error);
+                        controller_stopped = true;
+                    }
+                } else if !work.node().kind.reads_observation()
+                    && fence_transition_succeeded
+                    && pending.is_none()
+                    && let Err(error) =
+                        transfer_artifact_resources(&mut scheduler, implementation, &work.node().id)
+                {
+                    pending = Some(error);
+                    controller_stopped = true;
+                    scheduler.cancel_after_error();
                 }
             }
             SchedulerAction::PublicationReady {
