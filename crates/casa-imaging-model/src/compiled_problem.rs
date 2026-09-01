@@ -518,6 +518,17 @@ pub enum ReconstructionBasis {
         /// Number of Taylor coefficients.
         terms: usize,
     },
+    /// Taylor model coefficients reconstructed from channel-local major cycles.
+    ///
+    /// The public model and minor-cycle space contains `terms` Taylor planes,
+    /// while prediction and adjoint sampling pass through `channels` distinct
+    /// output-channel planes before their deterministic Taylor reduction.
+    TaylorViaChannelMajor {
+        /// Number of public Taylor coefficients.
+        terms: usize,
+        /// Number of channel-local major-cycle planes.
+        channels: usize,
+    },
     /// Independent coefficient state for each output channel.
     ChannelLocal {
         /// Number of output channels.
@@ -2126,9 +2137,20 @@ fn validate_reconstruction(
     geometry: &CompiledGeometry,
 ) -> Result<(), CompileProblemError> {
     match contract.basis {
-        ReconstructionBasis::Taylor { terms: 0 | 1 } => {
+        ReconstructionBasis::Taylor { terms: 0 | 1 }
+        | ReconstructionBasis::TaylorViaChannelMajor { terms: 0 | 1, .. } => {
             return Err(CompileProblemError::InvalidCapabilityCombination {
                 reason: "a Taylor basis requires at least two terms; single-term MFS uses the constant basis",
+            });
+        }
+        ReconstructionBasis::TaylorViaChannelMajor { channels: 0, .. } => {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "a Taylor-via-channel major-cycle basis requires at least one channel",
+            });
+        }
+        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } if channels < terms => {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "a Taylor-via-channel major-cycle basis requires at least as many channels as Taylor terms",
             });
         }
         ReconstructionBasis::ChannelLocal { channels: 0 } => {
@@ -2146,6 +2168,7 @@ fn validate_reconstruction(
         }
         ReconstructionBasis::Constant
         | ReconstructionBasis::Taylor { .. }
+        | ReconstructionBasis::TaylorViaChannelMajor { .. }
         | ReconstructionBasis::ChannelLocal { .. }
         | ReconstructionBasis::JointContinuumLine { .. } => {}
     }
@@ -2157,8 +2180,19 @@ fn validate_reconstruction(
             reconstruction_channels: channels,
         });
     }
+    if let ReconstructionBasis::TaylorViaChannelMajor { channels, .. } = contract.basis
+        && channels != geometry.spectral().output_channels()
+    {
+        return Err(CompileProblemError::SpectralChannelCountMismatch {
+            geometry_channels: geometry.spectral().output_channels(),
+            reconstruction_channels: channels,
+        });
+    }
     if matches!(contract.algorithm, ReconstructionAlgorithm::Mtmfs { .. })
-        != matches!(contract.basis, ReconstructionBasis::Taylor { .. })
+        != matches!(
+            contract.basis,
+            ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
+        )
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "MT-MFS and Taylor-basis reconstruction must be requested together",
@@ -2538,7 +2572,8 @@ fn validate_products(
         });
     }
     let taylor_terms = match reconstruction.basis {
-        ReconstructionBasis::Taylor { terms } => terms,
+        ReconstructionBasis::Taylor { terms }
+        | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
         ReconstructionBasis::Constant
         | ReconstructionBasis::ChannelLocal { .. }
         | ReconstructionBasis::JointContinuumLine { .. } => 0,
@@ -2656,7 +2691,9 @@ fn derive_capabilities(
     }
     capabilities.insert(match reconstruction.basis {
         ReconstructionBasis::Constant => RequiredCapability::ConstantBasis,
-        ReconstructionBasis::Taylor { .. } => RequiredCapability::TaylorBasis,
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. } => {
+            RequiredCapability::TaylorBasis
+        }
         ReconstructionBasis::ChannelLocal { .. } => RequiredCapability::ChannelLocalBasis,
         ReconstructionBasis::JointContinuumLine { .. } => {
             RequiredCapability::JointContinuumLineReconstruction
@@ -2759,6 +2796,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     encoder.u8(match operator.domain().basis() {
         ReconstructionBasis::Constant => 0,
         ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::TaylorViaChannelMajor { .. } => 4,
         ReconstructionBasis::ChannelLocal { .. } => 2,
         ReconstructionBasis::JointContinuumLine { .. } => 3,
     });
@@ -3239,6 +3277,11 @@ pub(crate) fn encode_reconstruction_basis(
         ReconstructionBasis::Taylor { terms } => {
             encoder.u8(1);
             encoder.usize(terms);
+        }
+        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } => {
+            encoder.u8(4);
+            encoder.usize(terms);
+            encoder.usize(channels);
         }
         ReconstructionBasis::ChannelLocal { channels } => {
             encoder.u8(2);

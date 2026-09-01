@@ -58,7 +58,8 @@ pub fn minor_cycle_workspace_bytes(
     let scalar_workspace = cells.saturating_mul(16);
     let (terms, scales_px) = match (basis, algorithm) {
         (
-            ReconstructionBasis::Taylor { terms },
+            ReconstructionBasis::Taylor { terms }
+            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. },
             ReconstructionAlgorithm::Mtmfs { scales_px, .. },
         ) => (terms, scales_px),
         (

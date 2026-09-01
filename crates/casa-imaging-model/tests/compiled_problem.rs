@@ -885,6 +885,83 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
 }
 
 #[test]
+fn t41_taylor_via_channel_major_is_distinct_and_channel_bounded() {
+    let contract = |basis| {
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                basis,
+                ReconstructionAlgorithm::Mtmfs {
+                    scales_px: vec![0.0],
+                    small_scale_bias: 0.0,
+                },
+                ReconstructionControls::new(100, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        )
+    };
+    let four_channel_geometry =
+        geometry().with_spectral(geometry().spectral().clone().with_wcs(SpectralWcs::Linear {
+            channels: 4,
+            reference_pixel: 1.5,
+            reference_frequency_hz: 1.4e9,
+            increment_hz: 1.0e6,
+        }));
+    let dual = compile_with_geometry(
+        contract(ReconstructionBasis::TaylorViaChannelMajor {
+            terms: 2,
+            channels: 4,
+        }),
+        four_channel_geometry.clone(),
+        inputs(false),
+    )
+    .expect("four channels support two Taylor terms");
+    let direct = compile_with_geometry(
+        contract(ReconstructionBasis::Taylor { terms: 2 }),
+        four_channel_geometry.clone(),
+        inputs(false),
+    )
+    .expect("direct Taylor contract compiles independently of its implementation route");
+    assert_eq!(
+        dual.reconstruction().basis(),
+        ReconstructionBasis::TaylorViaChannelMajor {
+            terms: 2,
+            channels: 4,
+        }
+    );
+    assert_ne!(dual.problem_id(), direct.problem_id());
+    assert!(matches!(
+        compile_with_geometry(
+            contract(ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 2,
+                channels: 3,
+            }),
+            four_channel_geometry.clone(),
+            inputs(false),
+        ),
+        Err(CompileProblemError::SpectralChannelCountMismatch {
+            geometry_channels: 4,
+            reconstruction_channels: 3,
+        })
+    ));
+    assert!(matches!(
+        compile_with_geometry(
+            contract(ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 5,
+                channels: 4,
+            }),
+            four_channel_geometry,
+            inputs(false),
+        ),
+        Err(CompileProblemError::InvalidCapabilityCombination { .. })
+    ));
+}
+
+#[test]
 fn one_term_mfs_uses_the_constant_basis_instead_of_taylor() {
     let specification = ProblemSpecification::new(
         science(),

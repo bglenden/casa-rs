@@ -696,6 +696,25 @@ fn channel_local_request(observation: u8, channels: usize) -> ImagingRequest {
     )
 }
 
+fn channel_major_taylor_request(observation: u8, channels: usize) -> ImagingRequest {
+    spectral_request_with_inputs(
+        problem_inputs_with_channels(
+            observation,
+            default_references(),
+            ModelStateIdentity::Empty,
+            channels,
+        ),
+        channels,
+        ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        ReconstructionControls::new(1, 0.1, 0.0),
+        None,
+    )
+}
+
 fn channel_local_hogbom_request(
     observation: u8,
     output_channels: usize,
@@ -756,6 +775,24 @@ fn channel_local_request_with_inputs(
     controls: ReconstructionControls,
     visibility_transform: Option<SequentialContinuumTransform>,
 ) -> ImagingRequest {
+    spectral_request_with_inputs(
+        inputs,
+        channels,
+        ReconstructionBasis::ChannelLocal { channels },
+        algorithm,
+        controls,
+        visibility_transform,
+    )
+}
+
+fn spectral_request_with_inputs(
+    inputs: ProblemInputIdentities,
+    channels: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    visibility_transform: Option<SequentialContinuumTransform>,
+) -> ImagingRequest {
     let geometry =
         geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]);
     let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
@@ -777,7 +814,7 @@ fn channel_local_request_with_inputs(
             ),
         ),
         ReconstructionContract::new(
-            ReconstructionBasis::ChannelLocal { channels },
+            basis,
             algorithm,
             controls,
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
@@ -8605,6 +8642,52 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
                 + residency.major_cycle_model_bytes()
         );
     }
+}
+
+#[test]
+fn t41_runtime_residency_bounds_channel_major_windows_without_expanding_the_taylor_model() {
+    let problem =
+        compile(channel_major_taylor_request(241, 8)).expect("Taylor-via-channel-major problem");
+    let replay = WorkNodeId::new("t41-channel-major-replay");
+    let depth_one = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        1,
+        1,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("one-channel major-cycle window");
+    let depth_two = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        1,
+        2,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("two-channel major-cycle window");
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay,
+        0,
+        8,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full channel-major window");
+
+    assert_eq!(depth_one.slab().core_range(), 1..2);
+    assert_eq!(depth_two.slab().core_range(), 1..3);
+    let one = depth_one.residency();
+    let two = depth_two.residency();
+    let all = full.residency();
+    assert_eq!(two.grid_bytes(), one.grid_bytes() * 2);
+    assert_eq!(all.grid_bytes(), one.grid_bytes() * 8);
+    assert_eq!(one.major_cycle_model_bytes(), two.major_cycle_model_bytes());
+    assert_eq!(two.major_cycle_model_bytes(), all.major_cycle_model_bytes());
+    assert!(one.peak_bytes() < two.peak_bytes());
+    assert!(two.peak_bytes() < all.peak_bytes());
 }
 
 #[test]

@@ -32,6 +32,7 @@ fn planned_prediction_lane(
     let (model_scratch, moment_scratch) = match record_layout {
         GriddedNormalRecordLayout::Scalar
         | GriddedNormalRecordLayout::ChannelLocal { .. }
+        | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
         | GriddedNormalRecordLayout::Joint { .. } => (planned_vec(0)?, planned_vec(0)?),
         GriddedNormalRecordLayout::Taylor(_) => {
             let mut model_scratch = planned_vec(prediction_width)?;
@@ -713,6 +714,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                 match self.record_layout {
                     GriddedNormalRecordLayout::Scalar
                     | GriddedNormalRecordLayout::ChannelLocal { .. }
+                    | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                     | GriddedNormalRecordLayout::Joint { .. } => {
                         let mut group_start = 0usize;
                         for (record_ordinal, bytes) in
@@ -1301,6 +1303,7 @@ impl GriddedNormalOperatorApply {
                 match prepared.record_layout {
                     GriddedNormalRecordLayout::Scalar
                     | GriddedNormalRecordLayout::ChannelLocal { .. }
+                    | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                     | GriddedNormalRecordLayout::Joint { .. } => {
                         for (local, group) in prepared.groups[group_range].iter().enumerate() {
                             let frame_ordinal = usize::try_from(group.frame_ordinal)
@@ -1466,6 +1469,7 @@ impl GriddedNormalOperatorApply {
                             match prepared.record_layout {
                                 GriddedNormalRecordLayout::Scalar
                                 | GriddedNormalRecordLayout::ChannelLocal { .. }
+                                | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                                 | GriddedNormalRecordLayout::Joint { .. } => {
                                     let record = decode_domain_record(
                                         record_bytes,

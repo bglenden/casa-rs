@@ -1259,7 +1259,8 @@ fn project_gridded_normal_frame_bounds(
         .max(1);
     let spectral_contributions_per_sample = match problem.reconstruction().basis() {
         ReconstructionBasis::Constant => 1_usize,
-        ReconstructionBasis::ChannelLocal { .. } => {
+        ReconstructionBasis::TaylorViaChannelMajor { .. }
+        | ReconstructionBasis::ChannelLocal { .. } => {
             match problem.science().spectral().sampling().kernel() {
                 SpectralKernel::Identity | SpectralKernel::Nearest => 1,
                 SpectralKernel::Linear => 2,

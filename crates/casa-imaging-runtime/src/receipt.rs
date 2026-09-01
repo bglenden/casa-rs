@@ -5715,6 +5715,10 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         ReconstructionBasis::Taylor { terms } => {
             evidence_field(fields, "reconstruction.basis.terms", terms);
         }
+        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } => {
+            evidence_field(fields, "reconstruction.basis.terms", terms);
+            evidence_field(fields, "reconstruction.basis.channels", channels);
+        }
         ReconstructionBasis::ChannelLocal { channels } => {
             evidence_field(fields, "reconstruction.basis.channels", channels);
         }
@@ -7235,6 +7239,7 @@ fn reconstruction_basis(value: ReconstructionBasis) -> &'static str {
     match value {
         ReconstructionBasis::Constant => "constant",
         ReconstructionBasis::Taylor { .. } => "taylor",
+        ReconstructionBasis::TaylorViaChannelMajor { .. } => "taylor_via_channel_major",
         ReconstructionBasis::ChannelLocal { .. } => "channel_local",
         ReconstructionBasis::JointContinuumLine { .. } => "joint_continuum_line",
     }

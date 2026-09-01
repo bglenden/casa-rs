@@ -423,7 +423,7 @@ pub fn validate_installed_implementation(
     }
     if !matches!(
         problem.reconstruction().basis(),
-        ReconstructionBasis::Taylor { .. }
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
     ) {
         for product in [ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage] {
             if problem.products().products().contains(&product) {
@@ -449,7 +449,9 @@ fn coupled_basis_requires_independent_polarization(
 ) -> bool {
     matches!(
         basis,
-        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::JointContinuumLine { .. }
+        ReconstructionBasis::Taylor { .. }
+            | ReconstructionBasis::TaylorViaChannelMajor { .. }
+            | ReconstructionBasis::JointContinuumLine { .. }
     ) && coordinates != [PolarizationCoordinate::StokesI]
 }
 

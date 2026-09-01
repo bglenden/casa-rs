@@ -1972,13 +1972,24 @@ fn specification(
     spectral: &PreparedSpectralAxis,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
     let algorithm = reconstruction_algorithm(&request.algorithm);
-    let basis = match &request.algorithm {
-        ContinuumAlgorithm::Mtmfs { terms, .. } => ReconstructionBasis::Taylor { terms: *terms },
-        ContinuumAlgorithm::JointContinuumLine {
-            continuum_terms,
-            line_channels,
-            ..
-        } => ReconstructionBasis::JointContinuumLine {
+    let basis = match (&request.spectral_mode, &request.algorithm) {
+        (SpectralImagingMode::MtmfsViaCube { .. }, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
+            ReconstructionBasis::TaylorViaChannelMajor {
+                terms: *terms,
+                channels: spectral.output_channels,
+            }
+        }
+        (_, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
+            ReconstructionBasis::Taylor { terms: *terms }
+        }
+        (
+            _,
+            ContinuumAlgorithm::JointContinuumLine {
+                continuum_terms,
+                line_channels,
+                ..
+            },
+        ) => ReconstructionBasis::JointContinuumLine {
             continuum_terms: *continuum_terms,
             line_terms: line_channels.len(),
         },
