@@ -1737,6 +1737,11 @@
       "fingerprint": "de61fa51aa2940e6bf8a73073a26d0ef846f46c27f8de692c368058a78a2abac"
     },
     {
+      "id": "parameter.specmode",
+      "semantic_revision": 2,
+      "fingerprint": "69d3ba73a4a834ac3b12747623be9635076213a4cd8e0528b1d82919f078c977"
+    },
+    {
       "id": "parameter.spwlist",
       "semantic_revision": 1,
       "fingerprint": "833ef7236c8525d4eaecc4af0d90553add82c846f941e39477bc8bef7093d3be"
@@ -2397,6 +2402,11 @@
       "id": "imager",
       "contract_version": 12,
       "fingerprint": "c20d1664021fb7c474f5de4b0fc59a2a48a0dc46fa482672496e1730255c1bc2"
+    },
+    {
+      "id": "imager",
+      "contract_version": 13,
+      "fingerprint": "ac6834d92778aa8323f474649422b6dce640947b1f4141243e66775e55bd0c5c"
     },
     {
       "id": "imcollapse",

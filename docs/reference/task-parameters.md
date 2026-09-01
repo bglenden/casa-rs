@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 12 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 13 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -231,7 +231,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `12`
+- Contract version: `13`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -254,7 +254,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>channel_start</code> | <code>parameter.channel_start@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | First selected input channel |
 | <code>channel_count</code> | <code>parameter.channel_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | Number of selected input channels |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"I"</code>; optional | Context | Stokes selector. |
-| <code>specmode</code> | <code>parameter.specmode@r1</code> | <code>choice (3 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging, cube with CASA Doppler/frame handling, or cubedata in the native data frame without Doppler correction |
+| <code>specmode</code> | <code>parameter.specmode@r2</code> | <code>choice (5 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; cubesource tracked in the source rest frame; or MVC MT-MFS via a channel cube |
 | <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Cube-axis start channel, frequency, or velocity |
 | <code>width</code> | <code>imager.width@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Cube-axis width as channels, frequency, or velocity |
 | <code>outframe</code> | <code>parameter.outframe@r1</code> | <code>choice (10 values)</code> | <code>"none"</code>; optional | Stages | Spectral frame used for cube output coordinates |
