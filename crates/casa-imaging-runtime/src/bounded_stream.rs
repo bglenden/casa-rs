@@ -549,7 +549,6 @@ impl FixedWorkerTeam {
         let Self {
             pool,
             threads_started,
-            stack_capacity_bytes: _,
             ..
         } = self;
         drop(pool);
