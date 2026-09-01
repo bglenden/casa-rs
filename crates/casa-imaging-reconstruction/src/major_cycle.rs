@@ -343,13 +343,14 @@ impl FinalNormalState {
         self.primitives.sum_weight()
     }
 
-    /// Return all channel sum weights in output-channel order.
+    /// Return sum weights in flattened `(output channel, polarization)` order.
     #[must_use]
     pub fn sum_weights(&self) -> &[f64] {
         self.primitives.sum_weights()
     }
 
-    /// Return CASA-compatible published sum weights without changing normal-state scaling.
+    /// Return CASA-compatible published sum weights in flattened
+    /// `(output channel, polarization)` order without changing normal-state scaling.
     #[must_use]
     pub fn published_sum_weights(&self) -> &[f64] {
         self.primitives.published_sum_weights()
@@ -361,7 +362,7 @@ impl FinalNormalState {
         self.primitives.channel_sum_weights()
     }
 
-    /// Return all channel validity states in output-channel order.
+    /// Return validity in flattened `(output channel, polarization)` order.
     #[must_use]
     pub fn channel_validity(&self) -> &[crate::SpectralChannelValidity] {
         self.primitives.channel_validity()
@@ -440,12 +441,6 @@ impl FinalNormalState {
     #[must_use]
     pub fn joint_continuum_term_count(&self) -> Option<usize> {
         self.primitives.joint_continuum_term_count()
-    }
-
-    /// Borrow one channel plane from this bounded Normal State slab.
-    #[must_use]
-    pub fn plane(&self, local_channel: usize) -> Option<FinalNormalStatePlane<'_>> {
-        self.polarization_plane(local_channel, 0)
     }
 
     /// Borrow one channel/polarization plane from this bounded Normal State slab.
@@ -551,12 +546,6 @@ impl<'a> FinalNormalDomainState<'a> {
     #[must_use]
     pub const fn channel_validity(self) -> &'a [crate::SpectralChannelValidity] {
         self.domain.primitives().channel_validity()
-    }
-
-    /// Borrow one channel plane from this chart-local Normal State.
-    #[must_use]
-    pub fn plane(self, local_channel: usize) -> Option<FinalNormalStatePlane<'a>> {
-        self.polarization_plane(local_channel, 0)
     }
 
     /// Borrow one channel/polarization plane from this chart-local Normal State.

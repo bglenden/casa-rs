@@ -526,7 +526,9 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     assert!(rust.evidence().requests_reconciliation());
 
     for (channel_index, channel) in rust.evidence().channels().iter().enumerate() {
-        let plane = normal.plane(channel_index).expect("channel normal plane");
+        let plane = normal
+            .polarization_plane(channel_index, 0)
+            .expect("channel normal plane");
         let psf = plane
             .normal_approximation()
             .iter()

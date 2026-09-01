@@ -83,6 +83,33 @@ fn moving_source_fails_typed_before_execution() {
 }
 
 #[test]
+fn coupled_taylor_basis_rejects_non_stokes_i_polarization() {
+    for coordinate in [
+        PolarizationCoordinate::StokesQ,
+        PolarizationCoordinate::CircularRl,
+    ] {
+        let problem = compile(request_with_reconstruction(
+            PhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5)),
+            Vec::new(),
+            ReconstructionBasis::Taylor { terms: 2 },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            vec![coordinate],
+        ))
+        .expect("compile non-Stokes-I Taylor request");
+        let error = require_installed_implementation(&problem, [])
+            .expect_err("coupled Taylor polarization must fail closed");
+        assert!(
+            error
+                .unsupported()
+                .contains(&UnsupportedRequirement::IndependentBasisForPolarizationSelection)
+        );
+    }
+}
+
+#[test]
 fn unavailable_task_requirements_are_exact_and_typed() {
     let problem = compile(standard_dirty_request()).expect("compile spectral cycle request");
     let error = require_installed_implementation(
@@ -120,6 +147,23 @@ fn request_with_phase_centre(
     phase_centre: PhaseCentreLaw,
     reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
 ) -> ImagingRequest {
+    request_with_reconstruction(
+        phase_centre,
+        reference_data,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        vec![PolarizationCoordinate::StokesI],
+    )
+}
+
+fn request_with_reconstruction(
+    phase_centre: PhaseCentreLaw,
+    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    polarizations: Vec<PolarizationCoordinate>,
+) -> ImagingRequest {
+    let iteration_budget = usize::from(!matches!(algorithm, ReconstructionAlgorithm::Dirty));
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -190,10 +234,10 @@ fn request_with_phase_centre(
                 ),
             ),
             ReconstructionContract::new(
-                ReconstructionBasis::Constant,
-                ReconstructionAlgorithm::Dirty,
-                ReconstructionControls::new(0, 1.0, 0.0),
-                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+                basis,
+                algorithm,
+                ReconstructionControls::new(iteration_budget, 1.0, 0.0),
+                PolarizationContract::new(polarizations),
             ),
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
             ProductRequirements::new(

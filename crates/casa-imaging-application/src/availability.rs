@@ -202,8 +202,8 @@ pub enum UnsupportedRequirement {
     SingleObservationSource,
     /// Facet execution currently requires the constant spectral basis.
     ConstantBasisForFacets,
-    /// Multi-polarization execution currently requires an independent-plane basis.
-    IndependentBasisForMultiplePolarizations,
+    /// Non-Stokes-I or multi-polarization execution requires an independent-plane basis.
+    IndependentBasisForPolarizationSelection,
     /// The implementation requires a fixed phase centre.
     FixedPhaseCentre,
     /// The implementation does not accept an initial model.
@@ -223,7 +223,7 @@ impl UnsupportedRequirement {
             Self::Task(_) => "task",
             Self::SingleObservationSource
             | Self::ConstantBasisForFacets
-            | Self::IndependentBasisForMultiplePolarizations
+            | Self::IndependentBasisForPolarizationSelection
             | Self::FixedPhaseCentre
             | Self::EmptyInitialModel
             | Self::NoModelColumnWrite
@@ -241,8 +241,8 @@ impl UnsupportedRequirement {
             Self::Task(requirement) => format!("task.{}", requirement.catalog_id()),
             Self::SingleObservationSource => "constraint.single_observation_source".to_string(),
             Self::ConstantBasisForFacets => "constraint.constant_basis_for_facets".to_string(),
-            Self::IndependentBasisForMultiplePolarizations => {
-                "constraint.independent_basis_for_multiple_polarizations".to_string()
+            Self::IndependentBasisForPolarizationSelection => {
+                "constraint.independent_basis_for_polarization_selection".to_string()
             }
             Self::FixedPhaseCentre => "constraint.fixed_phase_centre".to_string(),
             Self::EmptyInitialModel => "constraint.empty_initial_model".to_string(),
@@ -390,13 +390,13 @@ pub fn validate_installed_implementation(
     if is_faceted && problem.reconstruction().basis() != ReconstructionBasis::Constant {
         unsupported.push(UnsupportedRequirement::ConstantBasisForFacets);
     }
-    if problem.reconstruction().polarization().coordinates().len() > 1
-        && matches!(
-            problem.reconstruction().basis(),
-            ReconstructionBasis::Taylor { .. } | ReconstructionBasis::JointContinuumLine { .. }
-        )
+    let polarization = problem.reconstruction().polarization().coordinates();
+    if matches!(
+        problem.reconstruction().basis(),
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::JointContinuumLine { .. }
+    ) && polarization != [casa_imaging_model::PolarizationCoordinate::StokesI]
     {
-        unsupported.push(UnsupportedRequirement::IndependentBasisForMultiplePolarizations);
+        unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
     }
     if !matches!(
         problem.geometry().centres().phase_tracking(),
