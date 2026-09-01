@@ -652,6 +652,7 @@ fn prepare_spectral_axis(
             })?;
             let mut native_axis = axis.clone();
             native_axis.specmode = casa_ms::spectral_selection::CubeSpecMode::Cubedata;
+            native_axis.outframe = source_frequency_reference;
             let output_channels = output_channels.unwrap_or(window.frequencies_hz.len());
             let (setup, support) = CubeSpectralSetup::for_casa_cube_axis(
                 source_frequency_reference,
@@ -666,19 +667,18 @@ fn prepare_spectral_axis(
                 frame_engine,
             )?;
             let factor = casa_ms::convert_frequency_to_frame_with_frame(
-                setup.output_freq_ref,
+                source_frequency_reference,
                 FrequencyRef::REST,
                 1.0,
                 Some(frame),
             )?;
-            let image_reference_frequency_hz = setup.output_channel_frequencies_hz[0];
-            let image_increment_hz = if output_channels > 1 {
-                setup.output_channel_frequencies_hz[1] - setup.output_channel_frequencies_hz[0]
+            let reference_frequency_hz = setup.output_channel_frequencies_hz[0] * factor;
+            let increment_hz = if output_channels > 1 {
+                (setup.output_channel_frequencies_hz[1] - setup.output_channel_frequencies_hz[0])
+                    * factor
             } else {
-                setup.output_channel_widths_hz[0]
+                setup.output_channel_widths_hz[0] * factor
             };
-            let reference_frequency_hz = image_reference_frequency_hz * factor;
-            let increment_hz = image_increment_hz * factor;
             let rest_frequency_hz = axis
                 .rest_frequency_hz
                 .or(source_rest_frequency_hz)
@@ -688,7 +688,7 @@ fn prepare_spectral_axis(
             Ok(PreparedSpectralAxis {
                 selected_source_channels: BTreeMap::from([(window.spw_id, support.indices)]),
                 source_frame,
-                output_frequency_reference: setup.output_freq_ref,
+                output_frequency_reference: FrequencyRef::REST,
                 output_frame: FrequencyFrame::Rest,
                 anchor: spectral_frame_anchor(
                     source_frame,
@@ -725,8 +725,8 @@ fn prepare_spectral_axis(
                     channels: output_channels,
                 },
                 output_channels,
-                reference_frequency_hz: image_reference_frequency_hz,
-                increment_hz: image_increment_hz,
+                reference_frequency_hz,
+                increment_hz,
             })
         }
     }
