@@ -50,10 +50,11 @@ and depends inward on the model plus reconstruction's opaque executable-problem
 brand. That reconstruction edge is limited to admitting owner-prepared model
 inputs at the execution and receipt boundary; runtime does not own or invoke
 reprojection algorithms. Its Metal module binds only plan-selected physical
-facts, allocates each unified physical slot once, and owns command queues,
-device fences, and cancellation drain; implementation registries retain kernel
-and Numerics Contract ownership, and unavailable Metal work fails typed without
-CPU substitution. Runtime also
+facts under a one-shot scheduler-issued lease authority, allocates each unified
+physical slot once, and owns command queues, device fences, cancellation drain,
+and canonical work measurements; implementation registries retain kernel and
+Numerics Contract ownership, and unavailable Metal work fails typed without CPU
+substitution. Runtime also
 owns content-addressed prepared implementation artifacts: an exact artifact
 identity, a separate cache identity, bounded generation or load, integrity
 validation, private atomic caching, and deterministic eviction. Artifact

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -854,6 +855,7 @@ pub(crate) struct WorkExecutionContext {
     cleanup: bool,
     resources: Vec<WorkResourceCapability>,
     allocations: Vec<WorkAllocationCapability>,
+    metal_runtime_claimed: Cell<bool>,
 }
 
 impl WorkExecutionContext {
@@ -893,6 +895,10 @@ impl WorkExecutionContext {
         &self.allocations
     }
 
+    pub(crate) fn claim_metal_runtime(&self) -> bool {
+        !self.metal_runtime_claimed.replace(true)
+    }
+
     pub(crate) fn for_fence(&self, kind: FenceKind) -> Self {
         Self {
             node: self.node.clone(),
@@ -920,6 +926,7 @@ impl WorkExecutionContext {
                     lifetime: capability.lifetime.clone(),
                 })
                 .collect(),
+            metal_runtime_claimed: Cell::new(false),
         }
     }
 }
@@ -1815,6 +1822,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             cleanup,
             resources,
             allocations: allocation_capabilities,
+            metal_runtime_claimed: Cell::new(false),
         }))
     }
 

@@ -68,7 +68,7 @@ pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCy
 #[cfg(all(target_os = "macos", not(coverage)))]
 pub use metal_runtime::{MetalCommandFence, MetalEncodingContext};
 pub use metal_runtime::{
-    MetalCommandOutcome, MetalExecutionDecision, MetalNodeDecision, MetalResidency, MetalRuntime,
+    MetalCommandOutcome, MetalExecutionDecision, MetalNodeDecision, MetalRuntime,
     MetalRuntimeError, MetalRuntimeInventory,
 };
 pub use observation_transaction::{

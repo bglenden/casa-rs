@@ -2249,6 +2249,7 @@ fn fence_context_exposes_only_capabilities_live_for_that_fence() {
                 lifetime: ClaimLifetime::through_fence(FenceKind::Io),
             },
         ],
+        metal_runtime_claimed: std::cell::Cell::new(false),
     };
 
     let fence = context.for_fence(FenceKind::Io);

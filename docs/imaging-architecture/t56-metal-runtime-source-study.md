@@ -27,12 +27,25 @@ unified-memory view, and charges residency once per physical slot. Transfer
 links, staging buffers, resident cache, and driver/JIT/command-buffer envelopes
 remain the exact plan values already serialized by `ExecutionReceipt`.
 
-`MetalRuntime` then opens the selected device and queue, allocates the closed
-physical-slot ledger with shared storage, and submits one selected node at a
-time. The borrowed `MetalEncodingContext` exposes only that command buffer and
-the node's plan-owned buffers to the implementation owner. A committed
-`MetalCommandFence` must be waited or cancellation-drained; dropping it also
-drains synchronously so device work cannot outlive its retained buffers.
+`MetalRuntime::open` consumes both the immutable decision and a one-shot
+authority carried only by the live scheduler-issued work context. Every submit
+must match that execution attempt and lease epoch; nodes are single-submit, and
+their scheduler-issued accelerator, command-queue, and allocation capabilities
+must match the decision exactly. The runtime allocates the node's unique
+physical-slot ledger with shared storage and admits only one outstanding
+command at a time. The borrowed `MetalEncodingContext` exposes no raw device;
+it carries only the runtime command and that node's plan-owned buffers. A
+committed `MetalCommandFence` must be waited or cancellation-drained; dropping
+it also drains synchronously so device work cannot outlive its retained
+buffers.
+
+Fence completion produces the exact accelerator and queue peaks plus explicit
+unobserved markers for plan-listed transfer categories. The implementation
+owner adds only its plan-listed artifact outcomes through
+`MetalCommandOutcome::into_work_measurements`; the normal run seam validates
+those `WorkMeasurements` and checkpoints them into the canonical execution
+receipt alongside the sealed residency, cache, transfer, staging, and runtime
+overhead decisions.
 
 There is no CPU or legacy retry in this module. Missing device access,
 non-unified memory, queue failure, over-large residency, allocation failure,

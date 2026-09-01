@@ -3087,6 +3087,10 @@ impl<'a> WorkExecutionContext<'a> {
         self.scheduled.allocations()
     }
 
+    pub(crate) fn claim_metal_runtime(self) -> bool {
+        self.scheduled.claim_metal_runtime()
+    }
+
     /// Return the canonical plan-listed artifacts owned by this exact node.
     pub fn planned_artifacts(self) -> impl Iterator<Item = &'a PlannedArtifact> + 'a {
         let node = &self.scheduled.node().id;
