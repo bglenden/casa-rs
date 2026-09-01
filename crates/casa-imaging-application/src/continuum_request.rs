@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::CString,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use casa_coordinates::{
@@ -45,13 +46,16 @@ use casa_imaging_runtime::{
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
-    SelectedObservationContentBudget, SelectedObservationResolutionRequest, SelectedObservationRow,
-    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
+    SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
+    SelectedObservationResolutionRequest, SelectedObservationRow, VisibilityDataColumn,
+    parse_spw_selector, resolve_channel_selector_selection,
 };
+use casa_types::ArrayValue;
 use casa_types::measures::{
     direction::{DirectionRef, MDirection},
     doppler::DopplerRef,
     epoch::EpochRef,
+    frame::MeasFrame,
     frequency::FrequencyRef,
 };
 use sha2::{Digest, Sha256};
@@ -203,6 +207,20 @@ pub enum SpectralImagingMode {
     JointContinuumLine,
     /// One independently reconstructed model plane per output cube channel.
     Cube {
+        /// CASA-compatible output-axis and interpolation controls.
+        axis: CubeAxisConfig,
+        /// Requested output channel count; `None` uses every source channel.
+        output_channels: Option<usize>,
+    },
+    /// Multi-term continuum reconstruction with cube-shaped major-cycle sampling.
+    MtmfsViaCube {
+        /// CASA-compatible output-axis and interpolation controls.
+        axis: CubeAxisConfig,
+        /// Requested major-cycle channel count; `None` uses every source channel.
+        output_channels: Option<usize>,
+    },
+    /// Source-rest-frame cube evaluated against a moving phase centre.
+    CubeSource {
         /// CASA-compatible output-axis and interpolation controls.
         axis: CubeAxisConfig,
         /// Requested output channel count; `None` uses every source channel.
@@ -408,6 +426,8 @@ fn prepare_spectral_axis(
     phase: MDirection,
     direction: DirectionCoordinateSpec,
     frame_engine: &casa_ms::derived::engine::MsCalEngine,
+    moving_rest_frame: Option<&MeasFrame>,
+    source_rest_frequency_hz: Option<f64>,
 ) -> Result<PreparedSpectralAxis, crate::ApplicationError> {
     let source_frame = imaging_frequency_frame(source_frequency_reference)?;
     match &request.spectral_mode {
@@ -516,6 +536,10 @@ fn prepare_spectral_axis(
         SpectralImagingMode::Cube {
             axis,
             output_channels,
+        }
+        | SpectralImagingMode::MtmfsViaCube {
+            axis,
+            output_channels,
         } => {
             let [window] = spectral_windows else {
                 return Err(boxed(
@@ -606,6 +630,97 @@ fn prepare_spectral_axis(
                 rest_frequency,
                 doppler,
                 sampling,
+                basis: ReconstructionBasis::ChannelLocal {
+                    channels: output_channels,
+                },
+                output_channels,
+                reference_frequency_hz,
+                increment_hz,
+            })
+        }
+        SpectralImagingMode::CubeSource {
+            axis,
+            output_channels,
+        } => {
+            let [window] = spectral_windows else {
+                return Err(boxed(
+                    "source-frame cube imaging requires exactly one selected spectral window",
+                ));
+            };
+            let frame = moving_rest_frame.ok_or_else(|| {
+                boxed("source-frame cube imaging requires an ephemeris radial velocity")
+            })?;
+            let mut native_axis = axis.clone();
+            native_axis.specmode = casa_ms::spectral_selection::CubeSpecMode::Cubedata;
+            native_axis.outframe = source_frequency_reference;
+            let output_channels = output_channels.unwrap_or(window.frequencies_hz.len());
+            let (setup, support) = CubeSpectralSetup::for_casa_cube_axis(
+                source_frequency_reference,
+                &window.frequencies_hz,
+                &window.channel_widths_hz,
+                output_channels,
+                &native_axis,
+                anchor_time_mjd_seconds,
+                field_id,
+                Some(phase),
+                time_bounds_mjd_seconds,
+                frame_engine,
+            )?;
+            let factor = casa_ms::convert_frequency_to_frame_with_frame(
+                source_frequency_reference,
+                FrequencyRef::REST,
+                1.0,
+                Some(frame),
+            )?;
+            let reference_frequency_hz = setup.output_channel_frequencies_hz[0] * factor;
+            let increment_hz = if output_channels > 1 {
+                (setup.output_channel_frequencies_hz[1] - setup.output_channel_frequencies_hz[0])
+                    * factor
+            } else {
+                setup.output_channel_widths_hz[0] * factor
+            };
+            let rest_frequency_hz = axis
+                .rest_frequency_hz
+                .or(source_rest_frequency_hz)
+                .ok_or_else(|| {
+                    boxed("source-frame cube imaging requires REST_FREQUENCY metadata")
+                })?;
+            Ok(PreparedSpectralAxis {
+                selected_source_channels: BTreeMap::from([(window.spw_id, support.indices)]),
+                source_frame,
+                output_frequency_reference: FrequencyRef::REST,
+                output_frame: FrequencyFrame::Rest,
+                anchor: spectral_frame_anchor(
+                    source_frame,
+                    FrequencyFrame::Rest,
+                    anchor_time_mjd_seconds,
+                    direction,
+                    frame_engine,
+                )?,
+                wcs: SpectralWcs::Linear {
+                    channels: output_channels,
+                    reference_pixel: 0.0,
+                    reference_frequency_hz,
+                    increment_hz,
+                },
+                rest_frequency: RestFrequency::Line {
+                    hertz: rest_frequency_hz,
+                },
+                doppler: match axis.veltype {
+                    DopplerRef::RADIO => DopplerConvention::Radio,
+                    DopplerRef::Z => DopplerConvention::Optical,
+                    DopplerRef::BETA => DopplerConvention::Relativistic,
+                    DopplerRef::RATIO | DopplerRef::GAMMA => {
+                        return Err(boxed(
+                            "source-frame cube Doppler convention is not supported",
+                        ));
+                    }
+                },
+                sampling: match axis.interpolation {
+                    CubeInterpolation::Nearest => SpectralSamplingLaw::NEAREST,
+                    CubeInterpolation::Linear => SpectralSamplingLaw::LINEAR,
+                    CubeInterpolation::Cubic => SpectralSamplingLaw::CUBIC,
+                },
                 basis: ReconstructionBasis::ChannelLocal {
                     channels: output_channels,
                 },
@@ -755,24 +870,107 @@ fn prepare(
         phase.as_angles().0,
         phase.as_angles().1,
     );
-    let main_direction = request
-        .phase_center
-        .as_deref()
-        .map(parse_phase_center_direction)
-        .transpose()?
-        .unwrap_or(default_main_direction);
-    let right_ascension = main_direction.longitude_rad();
-    let declination = main_direction.latitude_rad();
-    let direction = direction_spec(
+    let anchor_time_mjd_seconds =
+        first_selected_time_mjd_seconds.expect("nonempty selected row traversal");
+    let measures_provider = casa_ms::open_measures_runtime()?;
+    let measures_identity =
+        SelectedObservationMeasures::new(Arc::clone(&measures_provider))?.identity();
+    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
+    let (phase_centre_law, ephemeris, main_direction) = match request.phase_center.as_deref() {
+        None => (
+            PhaseCentreLaw::Fixed(default_main_direction),
+            None,
+            default_main_direction,
+        ),
+        Some(text) if text.split_ascii_whitespace().next() == Some("J2000") => {
+            let direction = parse_phase_center_direction(text)?;
+            (PhaseCentreLaw::Fixed(direction), None, direction)
+        }
+        Some("TRACKFIELD") => {
+            let ephemeris = SelectedObservationEphemeris::tracked_fields(
+                &ms,
+                selected_fields
+                    .iter()
+                    .map(|field| usize::try_from(*field).expect("validated FIELD_ID")),
+            )?;
+            let direction = frame_engine.ephemeris_direction_j2000(
+                anchor_time_mjd_seconds,
+                field_id,
+                "TRACKFIELD",
+                &ephemeris,
+            )?;
+            let (longitude, latitude) = direction.as_angles();
+            (
+                PhaseCentreLaw::Ephemeris("TRACKFIELD".to_string()),
+                Some(ephemeris),
+                SkyDirection::new(DirectionFrame::J2000, longitude, latitude),
+            )
+        }
+        Some(text) => {
+            let mut ephemeris = if Path::new(text).is_dir() {
+                SelectedObservationEphemeris::external(text)?
+            } else {
+                SelectedObservationEphemeris::named(text, measures_identity)?
+            };
+            if let Some(attached) = attached_field_ephemerides(&ms, &selected_fields)? {
+                ephemeris = ephemeris.with_attached_fields(attached)?;
+            }
+            let direction = frame_engine.ephemeris_direction_j2000(
+                anchor_time_mjd_seconds,
+                field_id,
+                text,
+                &ephemeris,
+            )?;
+            let (longitude, latitude) = direction.as_angles();
+            (
+                PhaseCentreLaw::Ephemeris(text.to_string()),
+                Some(ephemeris),
+                SkyDirection::new(DirectionFrame::J2000, longitude, latitude),
+            )
+        }
+    };
+    let phase = MDirection::from_angles(
+        main_direction.longitude_rad(),
+        main_direction.latitude_rad(),
+        DirectionRef::J2000,
+    );
+    let image_centre = if ephemeris.is_some() {
+        let frame = frame_engine
+            .spectral_frame_observatory_direction(anchor_time_mjd_seconds, phase.clone())?;
+        phase.convert_to(DirectionRef::ICRS, &frame)?
+    } else {
+        phase.clone()
+    };
+    let (right_ascension, declination) = image_centre.as_angles();
+    let image_direction_frame = if ephemeris.is_some() {
+        DirectionFrame::Icrs
+    } else {
+        DirectionFrame::J2000
+    };
+    let direction = direction_spec_for_frame(
         request.image_size,
         request.cell_arcsec,
+        image_direction_frame,
         right_ascension,
         declination,
     );
     let frequency_reference = source_frequency_reference.expect("nonempty selected SPWs");
-    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
-    let anchor_time_mjd_seconds =
-        first_selected_time_mjd_seconds.expect("nonempty selected row traversal");
+    let moving_rest_frame = if matches!(
+        request.spectral_mode,
+        SpectralImagingMode::CubeSource { .. }
+    ) {
+        let ephemeris = ephemeris
+            .as_ref()
+            .ok_or_else(|| boxed("source-frame cube imaging requires a moving phase centre"))?;
+        let velocity = ephemeris.radial_velocity(field_id, anchor_time_mjd_seconds)?;
+        Some(
+            frame_engine
+                .spectral_frame_observatory_direction(anchor_time_mjd_seconds, phase.clone())?
+                .with_radial_velocity(velocity),
+        )
+    } else {
+        None
+    };
     let prepared_spectral = prepare_spectral_axis(
         &request,
         &spectral_windows,
@@ -783,6 +981,15 @@ fn prepare(
         phase,
         direction,
         &frame_engine,
+        moving_rest_frame.as_ref(),
+        if matches!(
+            request.spectral_mode,
+            SpectralImagingMode::CubeSource { .. }
+        ) {
+            source_rest_frequency(&ms, field_id, &spectral_windows)?
+        } else {
+            None
+        },
     )?;
     let (continuum_transform, selected_source_channels) = if request.continuum_subtraction.is_some()
     {
@@ -850,6 +1057,15 @@ fn prepare(
         spectral_window_selections,
         correlation_selections,
     );
+    let image_spectral_coordinate = ImageSpectralCoordinate {
+        frequency_reference: prepared_spectral.output_frequency_reference,
+        reference_frequency_hz: prepared_spectral.reference_frequency_hz,
+        increment_hz: prepared_spectral.increment_hz,
+        rest_frequency_hz: coordinate_rest_frequency(
+            prepared_spectral.rest_frequency,
+            prepared_spectral.reference_frequency_hz,
+        ),
+    };
     let mut prepared_domains = vec![PreparedImageDomain {
         role: ImageDomainRole::Main,
         output: request.image_name.clone(),
@@ -858,11 +1074,10 @@ fn prepare(
         coordinates: image_coordinates(
             request.image_size,
             request.cell_arcsec,
+            direction.reference_direction().frame(),
             [right_ascension, declination],
             &request.polarizations,
-            prepared_spectral.output_frequency_reference,
-            prepared_spectral.reference_frequency_hz,
-            prepared_spectral.increment_hz,
+            image_spectral_coordinate,
         ),
         mask: request.mask.clone(),
     }];
@@ -883,11 +1098,10 @@ fn prepare(
                 coordinates: image_coordinates(
                     input.image_size,
                     input.cell_arcsec,
+                    direction.reference_direction().frame(),
                     [centre.longitude_rad(), centre.latitude_rad()],
                     &request.polarizations,
-                    prepared_spectral.output_frequency_reference,
-                    prepared_spectral.reference_frequency_hz,
-                    prepared_spectral.increment_hz,
+                    image_spectral_coordinate,
                 ),
                 mask: input.mask,
             });
@@ -920,7 +1134,7 @@ fn prepare(
             })
             .collect(),
         CentreLaws::new(
-            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
             PointingCentreLaw::PhaseTrackingCentre,
         ),
@@ -1027,8 +1241,9 @@ fn prepare(
             Vec::new(),
             ModelStateIdentity::Empty,
             content_budget,
-            casa_ms::open_measures_runtime()?,
-        ),
+            measures_provider,
+        )
+        .with_ephemeris(ephemeris),
         write_model_column: request.save_model_column,
         write_corrected_data: request.save_continuum_residual,
         task_requirements: request.task_requirements,
@@ -1039,6 +1254,74 @@ fn prepare(
 fn canonicalize_polarizations(polarizations: &mut Vec<PolarizationCoordinate>) {
     polarizations.sort_unstable();
     polarizations.dedup();
+}
+
+fn source_rest_frequency(
+    measurement_set: &MeasurementSet,
+    field_id: usize,
+    spectral_windows: &[SourceSpectralWindow],
+) -> Result<Option<f64>, crate::ApplicationError> {
+    let source_id = measurement_set.field()?.source_id(field_id)?;
+    if source_id < 0 {
+        return Ok(None);
+    }
+    let source = measurement_set.source()?;
+    let selected = spectral_windows
+        .iter()
+        .map(|window| i32::try_from(window.spw_id))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut resolved = None;
+    for row in 0..source.row_count() {
+        if source.i32(row, "SOURCE_ID")? != source_id {
+            continue;
+        }
+        let spectral_window_id = source.i32(row, "SPECTRAL_WINDOW_ID")?;
+        if spectral_window_id >= 0 && !selected.contains(&spectral_window_id) {
+            continue;
+        }
+        let Some(ArrayValue::Float64(values)) = source.optional_array(row, "REST_FREQUENCY")?
+        else {
+            continue;
+        };
+        let Some(value) = values.first().copied().filter(|value| *value > 0.0) else {
+            continue;
+        };
+        if resolved.is_some_and(|prior: f64| prior.to_bits() != value.to_bits()) {
+            return Err(boxed(
+                "selected SOURCE rows disagree on REST_FREQUENCY metadata",
+            ));
+        }
+        resolved = Some(value);
+    }
+    Ok(resolved)
+}
+
+fn attached_field_ephemerides(
+    measurement_set: &MeasurementSet,
+    selected_fields: &BTreeSet<i32>,
+) -> Result<Option<SelectedObservationEphemeris>, crate::ApplicationError> {
+    let field = measurement_set.field()?;
+    let mut attached = Vec::new();
+    for field_id in selected_fields {
+        let field_id = usize::try_from(*field_id)?;
+        if field
+            .ephemeris_id(field_id)?
+            .is_some_and(|value| value >= 0)
+        {
+            attached.push(field_id);
+        }
+    }
+    if attached.is_empty() {
+        return Ok(None);
+    }
+    if attached.len() != selected_fields.len() {
+        return Err(boxed(
+            "moving-source selection mixes FIELD rows with and without attached ephemerides",
+        ));
+    }
+    SelectedObservationEphemeris::tracked_fields(measurement_set, attached)
+        .map(Some)
+        .map_err(Into::into)
 }
 
 fn standard_primary_beam_model(
@@ -1108,7 +1391,10 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         ));
     }
     if request.continuum_subtraction.is_some()
-        && !matches!(request.spectral_mode, SpectralImagingMode::Cube { .. })
+        && !matches!(
+            request.spectral_mode,
+            SpectralImagingMode::Cube { .. } | SpectralImagingMode::CubeSource { .. }
+        )
     {
         return Err(boxed(
             "visibility-domain continuum subtraction requires channel-local cube imaging",
@@ -1263,6 +1549,7 @@ fn imaging_frequency_frame(
     reference: FrequencyRef,
 ) -> Result<FrequencyFrame, crate::ApplicationError> {
     match reference {
+        FrequencyRef::REST => Ok(FrequencyFrame::Rest),
         FrequencyRef::TOPO => Ok(FrequencyFrame::Topocentric),
         FrequencyRef::BARY => Ok(FrequencyFrame::Barycentric),
         FrequencyRef::LSRK => Ok(FrequencyFrame::Lsrk),
@@ -1331,11 +1618,27 @@ fn direction_spec(
     right_ascension: f64,
     declination: f64,
 ) -> DirectionCoordinateSpec {
+    direction_spec_for_frame(
+        image_size,
+        cell_arcsec,
+        DirectionFrame::J2000,
+        right_ascension,
+        declination,
+    )
+}
+
+fn direction_spec_for_frame(
+    image_size: usize,
+    cell_arcsec: f64,
+    frame: DirectionFrame,
+    right_ascension: f64,
+    declination: f64,
+) -> DirectionCoordinateSpec {
     let cell = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
     let reference_pixel = image_reference_pixel(image_size);
     DirectionCoordinateSpec::new(
         Projection::Sin,
-        SkyDirection::new(DirectionFrame::J2000, right_ascension, declination),
+        SkyDirection::new(frame, right_ascension, declination),
         [reference_pixel, reference_pixel],
         [-cell, cell],
         [[1.0, 0.0], [0.0, 1.0]],
@@ -1346,17 +1649,16 @@ fn direction_spec(
 fn image_coordinates(
     image_size: usize,
     cell_arcsec: f64,
+    direction_frame: DirectionFrame,
     phase: [f64; 2],
     polarizations: &[PolarizationCoordinate],
-    frequency_reference: FrequencyRef,
-    reference_frequency: f64,
-    increment_hz: f64,
+    spectral: ImageSpectralCoordinate,
 ) -> CoordinateSystem {
     let cell = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
     let reference_pixel = image_reference_pixel(image_size);
     let mut coordinates = CoordinateSystem::new();
     coordinates.add_coordinate(DirectionCoordinate::new(
-        DirectionRef::J2000,
+        direction_ref(direction_frame),
         CoordinateProjection::new(ProjectionType::SIN),
         phase,
         [-cell, cell],
@@ -1366,13 +1668,37 @@ fn image_coordinates(
         polarizations.iter().copied().map(stokes_type).collect(),
     ));
     coordinates.add_coordinate(SpectralCoordinate::new(
-        frequency_reference,
-        reference_frequency,
-        increment_hz,
+        spectral.frequency_reference,
+        spectral.reference_frequency_hz,
+        spectral.increment_hz,
         0.0,
-        reference_frequency,
+        spectral.rest_frequency_hz,
     ));
     coordinates
+}
+
+#[derive(Clone, Copy)]
+struct ImageSpectralCoordinate {
+    frequency_reference: FrequencyRef,
+    reference_frequency_hz: f64,
+    increment_hz: f64,
+    rest_frequency_hz: f64,
+}
+
+const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
+    match frame {
+        DirectionFrame::J2000 => DirectionRef::J2000,
+        DirectionFrame::Icrs => DirectionRef::ICRS,
+        DirectionFrame::B1950 => DirectionRef::B1950,
+        DirectionFrame::Galactic => DirectionRef::GALACTIC,
+    }
+}
+
+const fn coordinate_rest_frequency(rest: RestFrequency, fallback_hz: f64) -> f64 {
+    match rest {
+        RestFrequency::NotApplicable => fallback_hz,
+        RestFrequency::Line { hertz } => hertz,
+    }
 }
 
 const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
@@ -2179,11 +2505,15 @@ mod tests {
         let coordinates = image_coordinates(
             64,
             8.0,
+            casa_imaging_model::DirectionFrame::J2000,
             [0.0, 0.0],
             &polarizations,
-            FrequencyRef::LSRK,
-            1.0e9,
-            1.0,
+            super::ImageSpectralCoordinate {
+                frequency_reference: FrequencyRef::LSRK,
+                reference_frequency_hz: 1.0e9,
+                increment_hz: 1.0,
+                rest_frequency_hz: 1.0e9,
+            },
         );
         let polarization_coordinate = coordinates
             .find_coordinate(CoordinateType::Stokes)

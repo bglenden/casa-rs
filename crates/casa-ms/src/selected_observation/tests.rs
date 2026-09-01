@@ -1131,6 +1131,7 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
         &expected_measures,
         expected_shared_bytes,
         expected_budget,
+        None,
     )
     .expect("open independent frame-conversion oracle");
     let expected_output_frame = MeasFrame::new()
@@ -1325,6 +1326,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &baseline_measures,
         baseline_shared_bytes,
         baseline_budget,
+        None,
     )
     .expect("bind baseline provider residency");
 
@@ -1345,6 +1347,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
             &large_measures,
             large_shared_bytes,
             baseline_budget,
+            None,
         ),
         Err(super::BoundObservationSourceError::ContentPlan(
             super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
@@ -1361,6 +1364,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &large_measures,
         large_shared_bytes,
         large_budget,
+        None,
     )
     .expect("bind admitted large provider residency");
     assert_eq!(

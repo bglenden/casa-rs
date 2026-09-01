@@ -335,11 +335,21 @@ fn prepared_frequency_conversion_cached(
             frame
         }
         slot => {
-            *slot = Some((
-                metadata.field_id,
-                time_bits,
-                geometry_engine.spectral_frame_observatory(time_mjd_seconds, field_id)?,
-            ));
+            let phase = coordinates.phase_direction;
+            let mut frame = geometry_engine.spectral_frame_observatory_direction(
+                time_mjd_seconds,
+                MDirection::from_angles(
+                    phase.longitude_rad(),
+                    phase.latitude_rad(),
+                    direction_ref(phase.frame()),
+                ),
+            )?;
+            if let Some(velocity) =
+                geometry_engine.moving_radial_velocity(time_mjd_seconds, field_id)?
+            {
+                frame = frame.with_radial_velocity(velocity);
+            }
+            *slot = Some((metadata.field_id, time_bits, frame));
             &slot.as_ref().expect("source frame was inserted").2
         }
     };
@@ -351,18 +361,27 @@ fn prepared_frequency_conversion_cached(
     else {
         return Err(BoundObservationSourceError::SpectralContributionMismatch);
     };
-    let output_frame = output_frame_cache.get_or_insert_with(|| {
-        let [x_metres, y_metres, z_metres] = observatory_position.metres();
-        geometry_engine.spectral_frame_explicit(
-            MEpoch::from_mjd(epoch.mjd_days(), epoch_ref(epoch.scale())),
-            MPosition::new_itrf(x_metres, y_metres, z_metres),
-            MDirection::from_angles(
-                direction.longitude_rad(),
-                direction.latitude_rad(),
-                direction_ref(direction.frame()),
-            ),
-        )
-    });
+    let moving_rest_frame;
+    let output_frame = if output_ref == FrequencyRef::REST {
+        if source_frame.radial_velocity().is_none() {
+            return Err(BoundObservationSourceError::SpectralContributionMismatch);
+        }
+        moving_rest_frame = source_frame.clone();
+        &moving_rest_frame
+    } else {
+        output_frame_cache.get_or_insert_with(|| {
+            let [x_metres, y_metres, z_metres] = observatory_position.metres();
+            geometry_engine.spectral_frame_explicit(
+                MEpoch::from_mjd(epoch.mjd_days(), epoch_ref(epoch.scale())),
+                MPosition::new_itrf(x_metres, y_metres, z_metres),
+                MDirection::from_angles(
+                    direction.longitude_rad(),
+                    direction.latitude_rad(),
+                    direction_ref(direction.frame()),
+                ),
+            )
+        })
+    };
     let conversion = PreparedFrequencyFrameConversion::new(
         source_ref,
         output_ref,
@@ -394,6 +413,7 @@ const fn epoch_ref(scale: TimeScale) -> EpochRef {
 
 const fn frequency_ref(frame: FrequencyFrame) -> FrequencyRef {
     match frame {
+        FrequencyFrame::Rest => FrequencyRef::REST,
         FrequencyFrame::Topocentric => FrequencyRef::TOPO,
         FrequencyFrame::Barycentric => FrequencyRef::BARY,
         FrequencyFrame::Lsrk => FrequencyRef::LSRK,

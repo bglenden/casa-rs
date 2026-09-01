@@ -46,6 +46,7 @@ use super::{
 pub struct ObservationSourceBinding {
     current_state: ObservationSourceState,
     content_budget: SelectedObservationContentBudget,
+    ephemeris: Option<Arc<crate::SelectedObservationEphemeris>>,
 }
 
 /// Opaque storage-owner certificate for one complete selected-observation residency contract.
@@ -313,7 +314,18 @@ impl ObservationSourceBinding {
         Self {
             current_state,
             content_budget,
+            ephemeris: None,
         }
+    }
+
+    /// Attach immutable moving-source data owned by this selected source.
+    #[must_use]
+    pub fn with_ephemeris(
+        mut self,
+        ephemeris: Option<crate::SelectedObservationEphemeris>,
+    ) -> Self {
+        self.ephemeris = ephemeris.map(Arc::new);
+        self
     }
 
     /// Return the canonical logical MeasurementSet identity.
@@ -428,6 +440,11 @@ impl BoundSelectedObservation {
                     .current_state
                     .additional_retained_heap_bytes(already_accounted_rows)
                     .and_then(|additional| bytes.checked_add(additional))
+                    .and_then(|bytes| {
+                        binding.ephemeris.as_ref().map_or(Some(bytes), |ephemeris| {
+                            bytes.checked_add(ephemeris.retained_bytes())
+                        })
+                    })
                     .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)
             },
         )?;
@@ -518,6 +535,7 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
+                    binding.ephemeris.as_ref(),
                 )
             } else {
                 BoundObservationSource::open_with_measures(
@@ -527,6 +545,7 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
+                    binding.ephemeris.as_ref(),
                 )
             };
             sources.push(
@@ -621,11 +640,11 @@ impl BoundSelectedObservation {
                 BoundObservationSource::rebind_with_measures(
                     problem,
                     source,
-                    &binding.current_state,
-                    prior_state,
+                    (&binding.current_state, prior_state),
                     &measures,
                     shared_bytes,
                     binding.content_budget,
+                    binding.ephemeris.as_ref(),
                 )
                 .map_err(|error| BoundSelectedObservationError::Source {
                     measurement_set: identity,

@@ -76,6 +76,18 @@ impl<'a> MsField<'a> {
     pub fn flag_row(&self, row: usize) -> MsResult<bool> {
         get_bool(self.table, row, "FLAG_ROW")
     }
+
+    /// FIELD-linked ephemeris identifier, when the optional column is present.
+    pub fn ephemeris_id(&self, row: usize) -> MsResult<Option<i32>> {
+        let present = self
+            .table
+            .schema()
+            .is_some_and(|schema| schema.contains_column("EPHEMERIS_ID"));
+        if !present || !self.table.is_cell_defined(row, "EPHEMERIS_ID")? {
+            return Ok(None);
+        }
+        get_i32(self.table, row, "EPHEMERIS_ID").map(Some)
+    }
 }
 
 impl SubTable for MsField<'_> {

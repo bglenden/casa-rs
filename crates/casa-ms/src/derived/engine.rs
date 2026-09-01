@@ -20,6 +20,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use crate::SelectedObservationEphemeris;
 use crate::error::{MsError, MsResult};
 use crate::ms::MeasurementSet;
 use crate::subtables::SubTable;
@@ -55,6 +56,7 @@ pub struct MsCalEngine {
     time_reference: EpochRef,
     measures: Option<Arc<dyn MeasuresProvider>>,
     selected_observation_measures_state: Option<MeasuresProviderState>,
+    selected_observation_ephemeris: Option<Arc<SelectedObservationEphemeris>>,
     azel_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     hadec_cache: RwLock<HashMap<GeometryCacheKey, (f64, f64)>>,
     parallactic_angle_cache: RwLock<HashMap<GeometryCacheKey, f64>>,
@@ -183,6 +185,7 @@ impl MsCalEngine {
             time_reference,
             measures: Some(measures),
             selected_observation_measures_state: None,
+            selected_observation_ephemeris: None,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
@@ -196,6 +199,7 @@ impl MsCalEngine {
         ms: &MeasurementSet,
         measures: Arc<dyn MeasuresProvider>,
         measures_state: MeasuresProviderState,
+        ephemeris: Option<Arc<SelectedObservationEphemeris>>,
     ) -> MsResult<Self> {
         let antenna = ms.antenna()?;
         let mut antenna_positions = Vec::with_capacity(antenna.row_count());
@@ -250,6 +254,7 @@ impl MsCalEngine {
             time_reference: detect_time_reference(ms),
             measures: Some(measures),
             selected_observation_measures_state: Some(measures_state),
+            selected_observation_ephemeris: ephemeris,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
@@ -273,6 +278,7 @@ impl MsCalEngine {
             time_reference: EpochRef::UTC,
             measures: Some(measures),
             selected_observation_measures_state: None,
+            selected_observation_ephemeris: None,
             azel_cache: RwLock::new(HashMap::new()),
             hadec_cache: RwLock::new(HashMap::new()),
             parallactic_angle_cache: RwLock::new(HashMap::new()),
@@ -420,6 +426,136 @@ impl MsCalEngine {
         MDirection::from_source_name(source_name, &frame)?
             .convert_to(DirectionRef::J2000, &frame)
             .map_err(Into::into)
+    }
+
+    pub(crate) fn moving_direction_j2000(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        source_name: &str,
+    ) -> MsResult<MDirection> {
+        let Some(ephemeris) = self.selected_observation_ephemeris.as_ref() else {
+            return self.named_direction_j2000(time_mjd_sec, source_name);
+        };
+        if let Some(target) = ephemeris.named_target() {
+            if !target.eq_ignore_ascii_case(source_name) {
+                return Err(MsError::InvalidInput(format!(
+                    "compiled moving target {source_name:?} does not match bound target {target:?}"
+                )));
+            }
+            return self.named_direction_j2000(time_mjd_sec, target);
+        }
+        let sample = ephemeris
+            .sample(field_id, time_mjd_sec / 86_400.0)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        self.topocentric_ephemeris_direction_j2000(time_mjd_sec, sample)
+    }
+
+    pub(crate) fn moving_radial_velocity(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+    ) -> MsResult<Option<casa_types::measures::radial_velocity::MRadialVelocity>> {
+        let Some(ephemeris) = self.selected_observation_ephemeris.as_ref() else {
+            return Ok(None);
+        };
+        if ephemeris.named_target().is_some() {
+            return Ok(None);
+        }
+        ephemeris
+            .sample(field_id, time_mjd_sec / 86_400.0)
+            .map(|sample| {
+                Some(casa_types::measures::radial_velocity::MRadialVelocity::new(
+                    sample.radial_velocity_m_per_s,
+                    sample.velocity_reference,
+                ))
+            })
+            .map_err(|error| MsError::InvalidInput(error.to_string()))
+    }
+
+    /// Evaluate one immutable named, external, or FIELD-attached moving source.
+    pub fn ephemeris_direction_j2000(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+        source_name: &str,
+        ephemeris: &SelectedObservationEphemeris,
+    ) -> MsResult<MDirection> {
+        if let Some(target) = ephemeris.named_target() {
+            if !target.eq_ignore_ascii_case(source_name) {
+                return Err(MsError::InvalidInput(format!(
+                    "moving target {source_name:?} does not match ephemeris target {target:?}"
+                )));
+            }
+            return self.named_direction_j2000(time_mjd_sec, target);
+        }
+        let sample = ephemeris
+            .sample(field_id, time_mjd_sec / 86_400.0)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+        self.topocentric_ephemeris_direction_j2000(time_mjd_sec, sample)
+    }
+
+    fn topocentric_ephemeris_direction_j2000(
+        &self,
+        time_mjd_sec: f64,
+        sample: crate::ephemeris::EvaluatedEphemerisSample,
+    ) -> MsResult<MDirection> {
+        let [x, y, z] = sample.geocentric_position_metres;
+        let distance = x.hypot(y).hypot(z);
+        if !distance.is_finite() || distance <= 0.0 {
+            return Err(MsError::InvalidInput(
+                "ephemeris position has invalid distance".to_string(),
+            ));
+        }
+        let geocentric = MDirection::from_angles(
+            y.atan2(x),
+            (z / distance).clamp(-1.0, 1.0).asin(),
+            sample.position_reference,
+        );
+        let frame =
+            self.make_frame_with_position(time_mjd_sec, self.observatory_position.clone())?;
+        let geocentric_itrf = geocentric.convert_to(DirectionRef::ITRF, &frame)?;
+        let (longitude, latitude) = geocentric_itrf.as_angles();
+        let (sin_longitude, cos_longitude) = longitude.sin_cos();
+        let (sin_latitude, cos_latitude) = latitude.sin_cos();
+        let [observer_x, observer_y, observer_z] = self.observatory_position.as_itrf();
+        let topocentric_itrf = [
+            distance * cos_latitude * cos_longitude - observer_x,
+            distance * cos_latitude * sin_longitude - observer_y,
+            distance * sin_latitude - observer_z,
+        ];
+        let topocentric_distance = topocentric_itrf[0]
+            .hypot(topocentric_itrf[1])
+            .hypot(topocentric_itrf[2]);
+        let direction = MDirection::from_angles(
+            topocentric_itrf[1].atan2(topocentric_itrf[0]),
+            (topocentric_itrf[2] / topocentric_distance)
+                .clamp(-1.0, 1.0)
+                .asin(),
+            DirectionRef::ITRF,
+        );
+        direction
+            .convert_to(DirectionRef::J2000, &frame)
+            .map_err(Into::into)
+    }
+
+    pub(crate) fn observation_direction_j2000(
+        &self,
+        time_mjd_sec: f64,
+        field_id: usize,
+    ) -> MsResult<MDirection> {
+        let Some(ephemeris) = self.selected_observation_ephemeris.as_ref() else {
+            return self.field_dir(field_id).cloned();
+        };
+        let Some(sample) = ephemeris
+            .attached_field_sample(field_id, time_mjd_sec / 86_400.0)
+            .map_err(|error| MsError::InvalidInput(error.to_string()))?
+        else {
+            return self.field_dir(field_id).cloned();
+        };
+        let direction = self.topocentric_ephemeris_direction_j2000(time_mjd_sec, sample)?;
+        let (offset_longitude, offset_latitude) = self.field_dir(field_id)?.as_angles();
+        shift_direction_true_angle(direction, offset_longitude, offset_latitude)
     }
 
     /// Get the field direction for the given field_id.
@@ -692,7 +828,7 @@ impl MsCalEngine {
     ///
     /// Important: CASA's `GridFT` imaging path first applies `negateUV` and is
     /// represented separately by
-    /// [`Self::reproject_raw_uvw_for_gridft_to_j2000`]. This method preserves
+    /// [`Self::reproject_raw_uvw_for_gridft_between_j2000_directions`]. This method preserves
     /// the direct `fixvis` convention only.
     pub fn reproject_raw_uvw_between_fields(
         &self,
@@ -771,6 +907,7 @@ impl MsCalEngine {
     /// [`Self::reproject_raw_uvw_to_direction`]. CASA's gridding phasor is
     /// `exp(-i dphase)` while the reconstruction adjoint consumes
     /// `exp(+i phase_shift)`, so the stored path length is `-dphase`.
+    #[cfg(test)]
     pub(crate) fn reproject_raw_uvw_for_gridft_to_j2000(
         &self,
         raw_uvw_m: [f64; 3],
@@ -792,6 +929,20 @@ impl MsCalEngine {
         ))
     }
 
+    pub(crate) fn reproject_raw_uvw_for_gridft_between_j2000_directions(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_direction_rad: [f64; 2],
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<([f64; 3], f64)> {
+        gridft_projection_between_j2000_directions(
+            raw_uvw_m,
+            source_direction_rad,
+            target_direction_rad,
+            false,
+        )
+    }
+
     /// Reproject raw MS UVW coordinates for one CASA faceted `GridFT` chart.
     ///
     /// CASA constructs every faceted transform with an explicit common
@@ -800,6 +951,7 @@ impl MsCalEngine {
     /// plane is reprojected onto the input observation plane. The latter is
     /// scientifically observable in the facet PSF and must not be collapsed
     /// into the ordinary non-faceted GridFT projection above.
+    #[cfg(test)]
     pub(crate) fn reproject_raw_uvw_for_faceted_gridft_to_j2000(
         &self,
         raw_uvw_m: [f64; 3],
@@ -821,18 +973,32 @@ impl MsCalEngine {
         ))
     }
 
-    /// Reproject raw MS UVW for CASA GridFT density evaluation at a fixed J2000 centre.
-    ///
-    /// Density evaluation consumes the UV coordinates from the same paired
-    /// GridFT projection while deliberately discarding its phase path.
-    pub(crate) fn reproject_raw_uvw_for_density_to_j2000(
+    pub(crate) fn reproject_raw_uvw_for_faceted_gridft_between_j2000_directions(
         &self,
         raw_uvw_m: [f64; 3],
-        source_field_id: usize,
+        source_direction_rad: [f64; 2],
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<([f64; 3], f64)> {
+        gridft_projection_between_j2000_directions(
+            raw_uvw_m,
+            source_direction_rad,
+            target_direction_rad,
+            true,
+        )
+    }
+
+    pub(crate) fn reproject_raw_uvw_for_density_between_j2000_directions(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_direction_rad: [f64; 2],
         target_direction_rad: [f64; 2],
     ) -> MsResult<[f64; 3]> {
-        self.reproject_raw_uvw_for_gridft_to_j2000(raw_uvw_m, source_field_id, target_direction_rad)
-            .map(|(uvw_m, _)| uvw_m)
+        self.reproject_raw_uvw_for_gridft_between_j2000_directions(
+            raw_uvw_m,
+            source_direction_rad,
+            target_direction_rad,
+        )
+        .map(|(uvw_m, _)| uvw_m)
     }
 
     /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
@@ -1144,6 +1310,60 @@ fn casa_dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
 
 fn dot3(left: [f64; 3], right: [f64; 3]) -> f64 {
     left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+}
+
+fn shift_direction_true_angle(
+    direction: MDirection,
+    longitude_offset: f64,
+    latitude_offset: f64,
+) -> MsResult<MDirection> {
+    let (longitude, latitude) = direction.as_angles();
+    let (sin_offset, cos_offset) = longitude_offset.sin_cos();
+    let shifted_latitude = latitude + latitude_offset;
+    let (sin_latitude, cos_latitude) = shifted_latitude.sin_cos();
+    let (sin_longitude, cos_longitude) = longitude.sin_cos();
+    let x = cos_offset * cos_latitude * cos_longitude - sin_offset * sin_longitude;
+    let y = cos_offset * cos_latitude * sin_longitude + sin_offset * cos_longitude;
+    let z = cos_offset * sin_latitude;
+    if [x, y, z].iter().any(|value| !value.is_finite()) {
+        return Err(MsError::InvalidInput(
+            "FIELD moving-source offset is not finite".to_string(),
+        ));
+    }
+    Ok(MDirection::from_angles(
+        y.atan2(x).rem_euclid(std::f64::consts::TAU),
+        z.atan2(x.hypot(y)),
+        DirectionRef::J2000,
+    ))
+}
+
+fn gridft_projection_between_j2000_directions(
+    raw_uvw_m: [f64; 3],
+    source_direction_rad: [f64; 2],
+    target_direction_rad: [f64; 2],
+    projected: bool,
+) -> MsResult<([f64; 3], f64)> {
+    let source = MDirection::from_angles(
+        source_direction_rad[0],
+        source_direction_rad[1],
+        DirectionRef::J2000,
+    );
+    let target = MDirection::from_angles(
+        target_direction_rad[0],
+        target_direction_rad[1],
+        DirectionRef::J2000,
+    );
+    let transform = CasaUvwMachine::new(&target, &source);
+    let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+    let (casa_output, casa_dphase_m) = if projected {
+        transform.convert_uvw_projected(casa_input)
+    } else {
+        transform.convert_uvw(casa_input)
+    };
+    Ok((
+        [-casa_output[0], -casa_output[1], casa_output[2]],
+        -casa_dphase_m,
+    ))
 }
 
 fn identity3() -> [[f64; 3]; 3] {

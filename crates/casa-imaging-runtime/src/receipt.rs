@@ -7617,6 +7617,7 @@ fn visibility_phase(value: VisibilityPhaseConvention) -> &'static str {
 
 fn frequency_frame(value: FrequencyFrame) -> &'static str {
     match value {
+        FrequencyFrame::Rest => "rest",
         FrequencyFrame::Topocentric => "topocentric",
         FrequencyFrame::Barycentric => "barycentric",
         FrequencyFrame::Lsrk => "lsrk",

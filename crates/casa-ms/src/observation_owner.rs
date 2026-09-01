@@ -35,7 +35,7 @@ use crate::selected_observation::validate_selected_coordinates;
 use crate::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     MeasurementSet, MsError, MsSelectionIoBudget, ObservationSourceBinding,
-    SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
     SelectedObservationMeasuresError, SelectedObservationResidencyCertificate,
     SelectedObservationRow, SelectedObservationRowSelection, SubtableId,
 };
@@ -140,6 +140,7 @@ pub struct SelectedObservationResolutionRequest {
     model: ModelStateIdentity,
     content_budget: SelectedObservationContentBudget,
     measures_provider: Arc<dyn MeasuresProvider>,
+    ephemeris: Option<SelectedObservationEphemeris>,
 }
 
 impl SelectedObservationResolutionRequest {
@@ -167,7 +168,15 @@ impl SelectedObservationResolutionRequest {
             model,
             content_budget,
             measures_provider,
+            ephemeris: None,
         }
+    }
+
+    /// Bind immutable moving-source reference data to this owner resolution.
+    #[must_use]
+    pub fn with_ephemeris(mut self, ephemeris: Option<SelectedObservationEphemeris>) -> Self {
+        self.ephemeris = ephemeris;
+        self
     }
 
     /// Return the storage-owner locator used for each fresh resolution.
@@ -708,11 +717,12 @@ pub fn initialize_measurement_set_owner_manifest(
 pub fn resolve_selected_observation(
     request: SelectedObservationResolutionRequest,
 ) -> Result<ResolvedSelectedObservation, ObservationOwnerError> {
-    if request
-        .reference_data
-        .iter()
-        .any(|(kind, _)| *kind == ReferenceDataKind::Measures)
-    {
+    if request.reference_data.iter().any(|(kind, _)| {
+        matches!(
+            kind,
+            ReferenceDataKind::Measures | ReferenceDataKind::Ephemeris
+        )
+    }) {
         return Err(ObservationOwnerError::MeasuresReferenceIsOwnerSupplied);
     }
     let measurement_set = MeasurementSet::open_retained_read(&request.locator)?;
@@ -744,8 +754,12 @@ pub fn resolve_selected_observation(
     let measures = SelectedObservationMeasures::new(request.measures_provider)?;
     let mut reference_data = request.reference_data;
     reference_data.push((ReferenceDataKind::Measures, measures.identity()));
+    if let Some(ephemeris) = request.ephemeris.as_ref() {
+        reference_data.push((ReferenceDataKind::Ephemeris, ephemeris.identity()));
+    }
     let snapshot_input = ObservationSnapshotInput::new(vec![source], reference_data, request.model);
-    let binding = ObservationSourceBinding::new(state, request.content_budget);
+    let binding = ObservationSourceBinding::new(state, request.content_budget)
+        .with_ephemeris(request.ephemeris);
     Ok(ResolvedSelectedObservation {
         snapshot_input,
         access: ResolvedSelectedObservationAccess {

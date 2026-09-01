@@ -727,6 +727,8 @@ impl UvwCoordinateLaw {
 /// Spectral frequency reference frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrequencyFrame {
+    /// Source rest frame.
+    Rest,
     /// Observer topocentric frame.
     Topocentric,
     /// Solar-system barycentric frame.
@@ -1926,6 +1928,7 @@ pub(crate) fn frequency_frame_tag(frame: FrequencyFrame) -> u8 {
         FrequencyFrame::Topocentric => 0,
         FrequencyFrame::Barycentric => 1,
         FrequencyFrame::Lsrk => 2,
+        FrequencyFrame::Rest => 3,
     }
 }
 

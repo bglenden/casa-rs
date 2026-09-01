@@ -15,6 +15,10 @@ pub enum TaskRequirement {
     SpectralCube,
     /// Cubedata task surface.
     SpectralCubedata,
+    /// Moving-source REST-frame cube task surface.
+    SpectralCubeSource,
+    /// Multi-term continuum reconstruction through cube major cycles.
+    SpectralMtmfsViaCube,
     /// Mosaic gridder request.
     MosaicGridder,
     /// W-projection gridder request.
@@ -98,9 +102,11 @@ pub enum TaskRequirement {
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 41] = [
+    pub const ALL: [Self; 43] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
+        Self::SpectralCubeSource,
+        Self::SpectralMtmfsViaCube,
         Self::MosaicGridder,
         Self::WProjection,
         Self::AwProjection,
@@ -148,6 +154,8 @@ impl TaskRequirement {
         match self {
             Self::SpectralCube => "spectral_cube",
             Self::SpectralCubedata => "spectral_cubedata",
+            Self::SpectralCubeSource => "spectral_cubesource",
+            Self::SpectralMtmfsViaCube => "spectral_mtmfs_via_cube",
             Self::MosaicGridder => "mosaic_gridder",
             Self::WProjection => "w_projection",
             Self::AwProjection => "aw_projection",
@@ -450,6 +458,8 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
         requirement,
         TaskRequirement::SpectralCube
             | TaskRequirement::SpectralCubedata
+            | TaskRequirement::SpectralCubeSource
+            | TaskRequirement::SpectralMtmfsViaCube
             | TaskRequirement::PolarizationSelection
             | TaskRequirement::Automasking
             | TaskRequirement::MaskProduct
