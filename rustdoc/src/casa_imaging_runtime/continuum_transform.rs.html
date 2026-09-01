@@ -760,51 +760,52 @@
 <a href=#760 id=760 data-nosnippet>760</a>                time_centroid: Epoch::new(<span class="number">59_000.0</span>, TimeScale::Utc),
 <a href=#761 id=761 data-nosnippet>761</a>                interval_seconds: <span class="number">1.0</span>,
 <a href=#762 id=762 data-nosnippet>762</a>                exposure_seconds: <span class="number">1.0</span>,
-<a href=#763 id=763 data-nosnippet>763</a>                phase_direction: direction,
-<a href=#764 id=764 data-nosnippet>764</a>                delay_direction: direction,
-<a href=#765 id=765 data-nosnippet>765</a>                pointing_directions: SelectedPointingDirections {
-<a href=#766 id=766 data-nosnippet>766</a>                    antenna1: direction,
-<a href=#767 id=767 data-nosnippet>767</a>                    antenna2: direction,
-<a href=#768 id=768 data-nosnippet>768</a>                },
-<a href=#769 id=769 data-nosnippet>769</a>            },
-<a href=#770 id=770 data-nosnippet>770</a>            domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
-<a href=#771 id=771 data-nosnippet>771</a>                SelectedPhaseCentreProjection::new([<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>], <span class="number">0.0</span>)
-<a href=#772 id=772 data-nosnippet>772</a>                    .expect(<span class="string">"finite one-domain projection"</span>),
-<a href=#773 id=773 data-nosnippet>773</a>            ),
-<a href=#774 id=774 data-nosnippet>774</a>            metadata: SelectedSampleMetadata {
-<a href=#775 id=775 data-nosnippet>775</a>                field_id,
-<a href=#776 id=776 data-nosnippet>776</a>                antenna1: <span class="number">0</span>,
-<a href=#777 id=777 data-nosnippet>777</a>                antenna2: <span class="number">1</span>,
-<a href=#778 id=778 data-nosnippet>778</a>                feed1: <span class="number">0</span>,
-<a href=#779 id=779 data-nosnippet>779</a>                feed2: <span class="number">0</span>,
-<a href=#780 id=780 data-nosnippet>780</a>                scan_number: <span class="number">1</span>,
-<a href=#781 id=781 data-nosnippet>781</a>                state_id: <span class="number">0</span>,
-<a href=#782 id=782 data-nosnippet>782</a>                observation_id: <span class="number">0</span>,
-<a href=#783 id=783 data-nosnippet>783</a>                array_id: <span class="number">0</span>,
-<a href=#784 id=784 data-nosnippet>784</a>            },
-<a href=#785 id=785 data-nosnippet>785</a>        }
-<a href=#786 id=786 data-nosnippet>786</a>    }
-<a href=#787 id=787 data-nosnippet>787</a>
-<a href=#788 id=788 data-nosnippet>788</a>    <span class="kw">fn </span>row_plan(
-<a href=#789 id=789 data-nosnippet>789</a>        contract: <span class="kw-2">&amp;</span>SequentialContinuumTransform,
-<a href=#790 id=790 data-nosnippet>790</a>        maximum_samples: usize,
-<a href=#791 id=791 data-nosnippet>791</a>    ) -&gt; ContinuumTransformRowPlan {
-<a href=#792 id=792 data-nosnippet>792</a>        ContinuumTransformRowPlan {
-<a href=#793 id=793 data-nosnippet>793</a>            contract: contract.contract_id(),
-<a href=#794 id=794 data-nosnippet>794</a>            maximum_samples,
-<a href=#795 id=795 data-nosnippet>795</a>            bytes: maximum_samples
-<a href=#796 id=796 data-nosnippet>796</a>                * (size_of::&lt;PendingSample&gt;() + size_of::&lt;ContinuumTransformedSample&gt;()),
-<a href=#797 id=797 data-nosnippet>797</a>        }
-<a href=#798 id=798 data-nosnippet>798</a>    }
-<a href=#799 id=799 data-nosnippet>799</a>
-<a href=#800 id=800 data-nosnippet>800</a>    <span class="kw">fn </span>evaluation(sample: <span class="kw-2">&amp;</span>SelectedObservationSample) -&gt; SelectedSpectralEvaluation {
-<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>interval = SelectedSpectralInterval::new(
-<a href=#802 id=802 data-nosnippet>802</a>            sample.address.frequency_centre_hz,
-<a href=#803 id=803 data-nosnippet>803</a>            sample.address.frequency_lower_hz,
-<a href=#804 id=804 data-nosnippet>804</a>            sample.address.frequency_upper_hz,
-<a href=#805 id=805 data-nosnippet>805</a>        )
-<a href=#806 id=806 data-nosnippet>806</a>        .expect(<span class="string">"finite interval"</span>);
-<a href=#807 id=807 data-nosnippet>807</a>        SelectedSpectralEvaluation::new(interval, interval, <span class="number">1.0</span>, <span class="bool-val">true</span>).expect(<span class="string">"valid evaluation"</span>)
-<a href=#808 id=808 data-nosnippet>808</a>    }
-<a href=#809 id=809 data-nosnippet>809</a>}
+<a href=#763 id=763 data-nosnippet>763</a>                parallactic_angles_rad: [<span class="number">0.0</span>, <span class="number">0.0</span>],
+<a href=#764 id=764 data-nosnippet>764</a>                phase_direction: direction,
+<a href=#765 id=765 data-nosnippet>765</a>                delay_direction: direction,
+<a href=#766 id=766 data-nosnippet>766</a>                pointing_directions: SelectedPointingDirections {
+<a href=#767 id=767 data-nosnippet>767</a>                    antenna1: direction,
+<a href=#768 id=768 data-nosnippet>768</a>                    antenna2: direction,
+<a href=#769 id=769 data-nosnippet>769</a>                },
+<a href=#770 id=770 data-nosnippet>770</a>            },
+<a href=#771 id=771 data-nosnippet>771</a>            domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+<a href=#772 id=772 data-nosnippet>772</a>                SelectedPhaseCentreProjection::new([<span class="number">1.0</span>, <span class="number">2.0</span>, <span class="number">3.0</span>], <span class="number">0.0</span>)
+<a href=#773 id=773 data-nosnippet>773</a>                    .expect(<span class="string">"finite one-domain projection"</span>),
+<a href=#774 id=774 data-nosnippet>774</a>            ),
+<a href=#775 id=775 data-nosnippet>775</a>            metadata: SelectedSampleMetadata {
+<a href=#776 id=776 data-nosnippet>776</a>                field_id,
+<a href=#777 id=777 data-nosnippet>777</a>                antenna1: <span class="number">0</span>,
+<a href=#778 id=778 data-nosnippet>778</a>                antenna2: <span class="number">1</span>,
+<a href=#779 id=779 data-nosnippet>779</a>                feed1: <span class="number">0</span>,
+<a href=#780 id=780 data-nosnippet>780</a>                feed2: <span class="number">0</span>,
+<a href=#781 id=781 data-nosnippet>781</a>                scan_number: <span class="number">1</span>,
+<a href=#782 id=782 data-nosnippet>782</a>                state_id: <span class="number">0</span>,
+<a href=#783 id=783 data-nosnippet>783</a>                observation_id: <span class="number">0</span>,
+<a href=#784 id=784 data-nosnippet>784</a>                array_id: <span class="number">0</span>,
+<a href=#785 id=785 data-nosnippet>785</a>            },
+<a href=#786 id=786 data-nosnippet>786</a>        }
+<a href=#787 id=787 data-nosnippet>787</a>    }
+<a href=#788 id=788 data-nosnippet>788</a>
+<a href=#789 id=789 data-nosnippet>789</a>    <span class="kw">fn </span>row_plan(
+<a href=#790 id=790 data-nosnippet>790</a>        contract: <span class="kw-2">&amp;</span>SequentialContinuumTransform,
+<a href=#791 id=791 data-nosnippet>791</a>        maximum_samples: usize,
+<a href=#792 id=792 data-nosnippet>792</a>    ) -&gt; ContinuumTransformRowPlan {
+<a href=#793 id=793 data-nosnippet>793</a>        ContinuumTransformRowPlan {
+<a href=#794 id=794 data-nosnippet>794</a>            contract: contract.contract_id(),
+<a href=#795 id=795 data-nosnippet>795</a>            maximum_samples,
+<a href=#796 id=796 data-nosnippet>796</a>            bytes: maximum_samples
+<a href=#797 id=797 data-nosnippet>797</a>                * (size_of::&lt;PendingSample&gt;() + size_of::&lt;ContinuumTransformedSample&gt;()),
+<a href=#798 id=798 data-nosnippet>798</a>        }
+<a href=#799 id=799 data-nosnippet>799</a>    }
+<a href=#800 id=800 data-nosnippet>800</a>
+<a href=#801 id=801 data-nosnippet>801</a>    <span class="kw">fn </span>evaluation(sample: <span class="kw-2">&amp;</span>SelectedObservationSample) -&gt; SelectedSpectralEvaluation {
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>interval = SelectedSpectralInterval::new(
+<a href=#803 id=803 data-nosnippet>803</a>            sample.address.frequency_centre_hz,
+<a href=#804 id=804 data-nosnippet>804</a>            sample.address.frequency_lower_hz,
+<a href=#805 id=805 data-nosnippet>805</a>            sample.address.frequency_upper_hz,
+<a href=#806 id=806 data-nosnippet>806</a>        )
+<a href=#807 id=807 data-nosnippet>807</a>        .expect(<span class="string">"finite interval"</span>);
+<a href=#808 id=808 data-nosnippet>808</a>        SelectedSpectralEvaluation::new(interval, interval, <span class="number">1.0</span>, <span class="bool-val">true</span>).expect(<span class="string">"valid evaluation"</span>)
+<a href=#809 id=809 data-nosnippet>809</a>    }
+<a href=#810 id=810 data-nosnippet>810</a>}
 </code></pre></div></section></main></body></html>
