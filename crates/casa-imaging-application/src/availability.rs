@@ -5,7 +5,7 @@ use std::{error::Error, fmt};
 
 use casa_imaging_model::{
     CompiledProblem, ImageDomainRole, InstrumentResponse, ModelStateIdentity, PhaseCentreLaw,
-    ProductKind, ReconstructionBasis, RequiredCapability,
+    PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -390,12 +390,10 @@ pub fn validate_installed_implementation(
     if is_faceted && problem.reconstruction().basis() != ReconstructionBasis::Constant {
         unsupported.push(UnsupportedRequirement::ConstantBasisForFacets);
     }
-    let polarization = problem.reconstruction().polarization().coordinates();
-    if matches!(
+    if coupled_basis_requires_independent_polarization(
         problem.reconstruction().basis(),
-        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::JointContinuumLine { .. }
-    ) && polarization != [casa_imaging_model::PolarizationCoordinate::StokesI]
-    {
+        problem.reconstruction().polarization().coordinates(),
+    ) {
         unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
     }
     if !matches!(
@@ -435,6 +433,16 @@ pub fn validate_installed_implementation(
     } else {
         Err(ImplementationUnavailable { unsupported })
     }
+}
+
+fn coupled_basis_requires_independent_polarization(
+    basis: ReconstructionBasis,
+    coordinates: &[PolarizationCoordinate],
+) -> bool {
+    matches!(
+        basis,
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::JointContinuumLine { .. }
+    ) && coordinates != [PolarizationCoordinate::StokesI]
 }
 
 const fn supports_task(requirement: TaskRequirement) -> bool {
@@ -506,6 +514,37 @@ mod tests {
         assert!(supports_capability(
             RequiredCapability::JointContinuumLineReconstruction
         ));
+    }
+
+    #[test]
+    fn coupled_basis_polarization_constraint_covers_taylor_and_joint() {
+        for basis in [
+            ReconstructionBasis::Taylor { terms: 2 },
+            ReconstructionBasis::JointContinuumLine {
+                continuum_terms: 2,
+                line_terms: 1,
+            },
+        ] {
+            assert!(!coupled_basis_requires_independent_polarization(
+                basis,
+                &[PolarizationCoordinate::StokesI]
+            ));
+            assert!(coupled_basis_requires_independent_polarization(
+                basis,
+                &[PolarizationCoordinate::StokesQ]
+            ));
+            assert!(coupled_basis_requires_independent_polarization(
+                basis,
+                &[PolarizationCoordinate::CircularRl]
+            ));
+            assert!(coupled_basis_requires_independent_polarization(
+                basis,
+                &[
+                    PolarizationCoordinate::StokesI,
+                    PolarizationCoordinate::StokesQ,
+                ]
+            ));
+        }
     }
 
     #[test]

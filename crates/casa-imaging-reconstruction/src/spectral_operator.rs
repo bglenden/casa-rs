@@ -1368,14 +1368,18 @@ impl SpectralOperatorPrimitives {
         &self.sensitivity
     }
 
-    /// Return exact sum weights in flattened `(core channel, polarization)` order.
+    /// Return normal-moment-major, polarization-minor exact sum weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
     #[must_use]
     pub const fn sum_weights(&self) -> &[f64] {
         &self.sum_weights
     }
 
-    /// Return CASA-compatible published sum weights in flattened
-    /// `(core channel, polarization)` order without changing scientific normalization.
+    /// Return CASA-compatible normal-moment-major, polarization-minor sum weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`; publication
+    /// does not change scientific normalization.
     #[must_use]
     pub const fn published_sum_weights(&self) -> &[f64] {
         &self.published_sum_weights
@@ -1387,8 +1391,10 @@ impl SpectralOperatorPrimitives {
         &self.channel_sum_weights
     }
 
-    /// Return validity in flattened `(core channel, polarization)` order, or
-    /// the one order-zero-anchored Taylor support state.
+    /// Return support-entry-major, polarization-minor validity.
+    ///
+    /// The support-entry count is core-channel depth for channel-local state,
+    /// one for Taylor state, or total channel count for joint state.
     #[must_use]
     pub const fn channel_validity(&self) -> &[SpectralChannelValidity] {
         &self.validity

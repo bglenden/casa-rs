@@ -343,14 +343,18 @@ impl FinalNormalState {
         self.primitives.sum_weight()
     }
 
-    /// Return sum weights in flattened `(output channel, polarization)` order.
+    /// Return normal-moment-major, polarization-minor sum weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
     #[must_use]
     pub fn sum_weights(&self) -> &[f64] {
         self.primitives.sum_weights()
     }
 
-    /// Return CASA-compatible published sum weights in flattened
-    /// `(output channel, polarization)` order without changing normal-state scaling.
+    /// Return CASA-compatible normal-moment-major, polarization-minor sum weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`; publication
+    /// does not change normal-state scaling.
     #[must_use]
     pub fn published_sum_weights(&self) -> &[f64] {
         self.primitives.published_sum_weights()
@@ -362,7 +366,10 @@ impl FinalNormalState {
         self.primitives.channel_sum_weights()
     }
 
-    /// Return validity in flattened `(output channel, polarization)` order.
+    /// Return support-entry-major, polarization-minor validity.
+    ///
+    /// The support-entry count is core-channel depth for channel-local state,
+    /// one for Taylor state, or total channel count for joint state.
     #[must_use]
     pub fn channel_validity(&self) -> &[crate::SpectralChannelValidity] {
         self.primitives.channel_validity()
@@ -530,19 +537,26 @@ impl<'a> FinalNormalDomainState<'a> {
         self.domain.primitives().sensitivity()
     }
 
-    /// Return this chart's accumulated normal weights.
+    /// Return this chart's normal-moment-major, polarization-minor weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
     #[must_use]
     pub const fn sum_weights(self) -> &'a [f64] {
         self.domain.primitives().sum_weights()
     }
 
-    /// Return CASA-compatible published sum weights for this image domain.
+    /// Return CASA-compatible normal-moment-major, polarization-minor weights.
+    ///
+    /// The length is `normal_moment_count() * polarization_count()`.
     #[must_use]
     pub const fn published_sum_weights(self) -> &'a [f64] {
         self.domain.primitives().published_sum_weights()
     }
 
-    /// Return this chart's channel validity.
+    /// Return support-entry-major, polarization-minor validity for this chart.
+    ///
+    /// The support-entry count is core-channel depth for channel-local state,
+    /// one for Taylor state, or total channel count for joint state.
     #[must_use]
     pub const fn channel_validity(self) -> &'a [crate::SpectralChannelValidity] {
         self.domain.primitives().channel_validity()
