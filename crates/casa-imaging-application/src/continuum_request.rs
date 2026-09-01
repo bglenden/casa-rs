@@ -20,15 +20,15 @@ use casa_imaging_model::{
     CorrelationProduct, CorrelationSelection, CorrelationType, DeclaredInnerProducts,
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, HogbomIterationAccounting, ImageAxis, ImageDomainRole,
-    ImageDomainSpec, ImageShape, InstrumentResponse, ItrfPosition, LogicalIdentity,
-    MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
+    ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse, ItrfPosition,
+    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
     ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision,
     NumericalStage, NumericsContract, ObservationSelection, ObservationTransactionRequirements,
     PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
     PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
     ScientificContract, SelectedMainRow, SelectedRowsBuilder, SequentialContinuumTransform,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
@@ -308,6 +308,8 @@ pub struct ContinuumImagingRequest {
     pub threshold_jy: f64,
     /// Restoring-beam fit cutoff.
     pub psf_cutoff: f32,
+    /// Positive primary-beam support cutoff corresponding to CASA `abs(pblimit)`.
+    pub primary_beam_cutoff: f32,
     /// Restoring-beam policy.
     pub beam_policy: ContinuumBeamPolicy,
     /// Model-update support policy.
@@ -1012,7 +1014,10 @@ fn prepare(
         },
         |row| {
             if weight_spectrum_complete {
-                match main_table.is_cell_defined(row.physical_row(), "WEIGHT_SPECTRUM") {
+                match main_table
+                    .column_accessor("WEIGHT_SPECTRUM")
+                    .and_then(|column| column.array_cell_is_defined_uncached(row.physical_row()))
+                {
                     Ok(defined) => weight_spectrum_complete = defined,
                     Err(error) => weight_spectrum_error = Some(error),
                 }
@@ -1428,11 +1433,19 @@ fn prepare(
         .checked_mul(reconstruction_planes)
         .and_then(|samples| samples.checked_mul(request.polarizations.len()))
         .ok_or_else(|| boxed("reconstruction model sample count overflowed"))?;
+    let instrument = scientific_instrument_model(&request, &ms)?;
     let specification = match continuum_transform {
-        Some(transform) => {
-            specification(&request, &prepared_spectral)?.with_visibility_transform(transform)
-        }
-        None => specification(&request, &prepared_spectral)?,
+        Some(transform) => specification(
+            &request,
+            &prepared_spectral,
+            instrument.map(|value| value.0),
+        )?
+        .with_visibility_transform(transform),
+        None => specification(
+            &request,
+            &prepared_spectral,
+            instrument.map(|value| value.0),
+        )?,
     };
     let masks = casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new(
         prepared_domains
@@ -1468,7 +1481,9 @@ fn prepare(
             } else {
                 OwnerWeightColumn::Weight
             },
-            Vec::new(),
+            instrument
+                .map(|value| vec![(ReferenceDataKind::Instrument, value.1)])
+                .unwrap_or_default(),
             ModelStateIdentity::Empty,
             content_budget,
             measures_provider,
@@ -1568,6 +1583,53 @@ fn standard_primary_beam_model(
     analytic_primary_beam_model_for_telescopes(&telescopes)
 }
 
+fn scientific_instrument_model(
+    request: &ContinuumImagingRequest,
+    ms: &MeasurementSet,
+) -> Result<Option<(InstrumentModel, LogicalIdentity)>, crate::ApplicationError> {
+    if !matches!(
+        request.spectral_mode,
+        SpectralImagingMode::MtmfsViaCube { .. }
+    ) {
+        return Ok(None);
+    }
+    let observation = ms.observation()?;
+    let telescopes = (0..observation.row_count())
+        .map(|row| {
+            observation
+                .string(row, "TELESCOPE_NAME")
+                .map(|name| name.trim().to_string())
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if telescopes.iter().map(String::as_str).collect::<Vec<_>>() != ["ALMA"] {
+        return Err(boxed(format!(
+            "channel-major primary-beam response requires one ALMA observation; found {telescopes:?}"
+        )));
+    }
+    let antenna = ms.antenna()?;
+    if antenna.row_count() == 0 {
+        return Err(boxed(
+            "channel-major primary-beam response requires ANTENNA dish metadata",
+        ));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs-instrument-reference/casa-alma-aca-direct-pb-v1");
+    hasher.update((antenna.row_count() as u64).to_le_bytes());
+    for row in 0..antenna.row_count() {
+        let diameter = antenna.dish_diameter(row)?;
+        if !diameter.is_finite() || !(6.0..8.0).contains(&diameter) {
+            return Err(boxed(format!(
+                "channel-major ALMA response requires homogeneous 7 m ACA antennas; row {row} has diameter {diameter} m"
+            )));
+        }
+        hasher.update(diameter.to_bits().to_le_bytes());
+    }
+    Ok(Some((
+        InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1,
+        LogicalIdentity::from_sha256(hasher.finalize().into()),
+    )))
+}
+
 fn analytic_primary_beam_model_for_telescopes(
     telescopes: &BTreeSet<String>,
 ) -> Result<casa_imaging_products::AnalyticPrimaryBeamModel, crate::ApplicationError> {
@@ -1600,6 +1662,8 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         || !request.threshold_jy.is_finite()
         || !request.psf_cutoff.is_finite()
         || request.psf_cutoff <= 0.0
+        || !request.primary_beam_cutoff.is_finite()
+        || !(0.0..1.0).contains(&request.primary_beam_cutoff)
         || (request.algorithm != ContinuumAlgorithm::Dirty
             && (request.cycle_iterations == 0 || request.maximum_major_cycles == Some(0)))
         || request
@@ -2199,6 +2263,7 @@ fn direction_model_spec(
 fn specification(
     request: &ContinuumImagingRequest,
     spectral: &PreparedSpectralAxis,
+    instrument_model: Option<InstrumentModel>,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
     let algorithm = reconstruction_algorithm(&request.algorithm);
     let basis = match (&request.spectral_mode, &request.algorithm) {
@@ -2277,27 +2342,35 @@ fn specification(
             ),
         );
     }
-    Ok(ProblemSpecification::new(
-        ScientificContract::new(
-            SpectralContract::new(
-                spectral.sampling,
-                match (&request.algorithm, request.beam_policy) {
-                    (ContinuumAlgorithm::Mtmfs { .. }, _)
-                    | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => {
-                        SpectralCoupling::CommonRestoringBeam
-                    }
-                    (_, ContinuumBeamPolicy::PerPlane) => SpectralCoupling::Independent,
-                    (_, ContinuumBeamPolicy::Common) => SpectralCoupling::CommonRestoringBeam,
-                },
-            ),
-            MeasurementEquationContract::new(
-                InstrumentResponse::Scalar,
-                DeclaredInnerProducts::new(
-                    ModelInnerProduct::HermitianEuclidean,
-                    VisibilityInnerProduct::HermitianEuclidean,
-                ),
+    let mut science = ScientificContract::new(
+        SpectralContract::new(
+            spectral.sampling,
+            match (&request.algorithm, request.beam_policy) {
+                (ContinuumAlgorithm::Mtmfs { .. }, _)
+                | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => {
+                    SpectralCoupling::CommonRestoringBeam
+                }
+                (_, ContinuumBeamPolicy::PerPlane) => SpectralCoupling::Independent,
+                (_, ContinuumBeamPolicy::Common) => SpectralCoupling::CommonRestoringBeam,
+            },
+        ),
+        MeasurementEquationContract::new(
+            if instrument_model.is_some() {
+                InstrumentResponse::PrimaryBeam
+            } else {
+                InstrumentResponse::Scalar
+            },
+            DeclaredInnerProducts::new(
+                ModelInnerProduct::HermitianEuclidean,
+                VisibilityInnerProduct::HermitianEuclidean,
             ),
         ),
+    );
+    if let Some(model) = instrument_model {
+        science = science.with_instrument_model(model);
+    }
+    Ok(ProblemSpecification::new(
+        science,
         reconstruction,
         WeightingContract::new(weighting, density),
         ProductRequirements::new(
@@ -2335,7 +2408,7 @@ fn specification(
             },
             ProductValidityPolicies::new(
                 PrimaryBeamValidityPolicy::new(
-                    0.2,
+                    request.primary_beam_cutoff,
                     ProductSupportComparison::StrictlyGreater,
                     ProductBlankingPolicy::ZeroAndFalseMask,
                 )?,

@@ -198,6 +198,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         gain: f64::from(config.gain),
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
+        primary_beam_cutoff: config.mosaic_pb_limit.abs(),
         beam_policy: match config.restoring_beam_mode {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,

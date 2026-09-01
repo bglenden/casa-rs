@@ -1382,8 +1382,13 @@ fn complete_science_contract_changes_identity_and_capabilities() {
             products(false),
         ),
         inputs(false),
-    )
-    .expect("scalar response may carry an exact instrument model");
+    );
+    assert!(matches!(
+        tagged_scalar,
+        Err(CompileProblemError::InvalidScientificContract {
+            reason: "instrument response and instrument model must form one supported exact pair"
+        })
+    ));
     let widefield_science = ScientificContract::new(
         SpectralContract::new(
             SpectralSamplingLaw::LINEAR,
@@ -1434,7 +1439,6 @@ fn complete_science_contract_changes_identity_and_capabilities() {
     )
     .expect("widefield science");
 
-    assert_ne!(baseline.problem_id(), tagged_scalar.problem_id());
     assert_ne!(baseline.problem_id(), widefield.problem_id());
     for capability in [
         RequiredCapability::FacetedGeometry,
@@ -1472,7 +1476,7 @@ fn primary_beam_response_requires_exact_model_and_instrument_identity() {
             inputs_with_instrument()
         ),
         Err(CompileProblemError::InvalidScientificContract {
-            reason: "primary-beam response requires the CASA ALMA interferometric direct power-response model"
+            reason: "instrument response and instrument model must form one supported exact pair"
         })
     ));
 

@@ -14,8 +14,8 @@ use std::{
 use casa_imaging_model::{
     AntennaSelection, CompiledGeometry, CompiledProblem, CorrelationType, DelayCentreLaw,
     DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame, IdSelection,
-    ImageAxis, ImageDomainRole, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelBounds,
+    ImageAxis, ImageDomainRole, InstrumentModel, InstrumentResponse, IntentSelection,
+    LogicalIdentity, MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelBounds,
     ModelInnerProduct, ModelInputCommitment, ModelInputCommitmentIdentity, ModelReprojectionPolicy,
     ModelStateEncoding, ModelStateIdentity, ModelSupportSemantics, MsColumnKind,
     NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
@@ -5657,12 +5657,22 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
                     reconstruction_basis(*basis),
                 );
             }
-            PairedMeasurementTransform::DirectionDependentResponse { response } => {
+            PairedMeasurementTransform::DirectionDependentResponse {
+                response,
+                instrument_model,
+            } => {
                 evidence_field(
                     fields,
                     format!("{prefix}.response"),
                     instrument_response(*response),
                 );
+                if let Some(model) = instrument_model {
+                    evidence_field(
+                        fields,
+                        format!("{prefix}.instrument_model"),
+                        instrument_model_name(*model),
+                    );
+                }
             }
             PairedMeasurementTransform::PhaseRotation { convention } => {
                 evidence_field(
@@ -7194,6 +7204,14 @@ fn instrument_response(value: InstrumentResponse) -> &'static str {
         InstrumentResponse::Scalar => "scalar",
         InstrumentResponse::PrimaryBeam => "primary_beam",
         InstrumentResponse::FullMueller => "full_mueller",
+    }
+}
+
+const fn instrument_model_name(value: InstrumentModel) -> &'static str {
+    match value {
+        InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1 => {
+            "casa-alma-aca-interferometric-direct-pb-v1"
+        }
     }
 }
 

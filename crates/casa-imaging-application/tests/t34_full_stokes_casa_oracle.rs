@@ -204,6 +204,7 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
         gain: 0.1,
         threshold_jy: 0.0,
         psf_cutoff: 0.35,
+        primary_beam_cutoff: 0.2,
         beam_policy: ContinuumBeamPolicy::PerPlane,
         mask: ContinuumMask::FullPlane,
         save_model_column: false,

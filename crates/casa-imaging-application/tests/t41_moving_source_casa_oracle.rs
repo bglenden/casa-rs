@@ -30,6 +30,7 @@ const SELECTED_SAMPLE_COUNT: u64 = 1_620 * 1_024 * 2;
 const MVC_MS_ENV: &str = "CASA_RS_T41_MVC_MS";
 const MVC_CASA_PREFIX_ENV: &str = "CASA_RS_T41_MVC_CASA_PREFIX";
 const MVC_RUST_PREFIX_ENV: &str = "CASA_RS_T41_MVC_RUST_PREFIX";
+const MVC_TURNAROUND_PREFIX_ENV: &str = "CASA_RS_T41_MVC_TURNAROUND_PREFIX";
 const MVC_SELECTED_SAMPLE_COUNT: u64 = 1_620 * (1_024 + 256) * 2;
 const MVC_PUBLIC_PRODUCTS: [&str; 15] = [
     ".psf.tt0",
@@ -48,6 +49,51 @@ const MVC_PUBLIC_PRODUCTS: [&str; 15] = [
     ".alpha",
     ".alpha.error",
 ];
+
+#[test]
+#[ignore = "requires the frozen CASA T41 MVC primary-beam cube"]
+fn t41_alma_mvc_primary_beam_kernel_matches_frozen_cube() -> Result<(), Box<dyn Error>> {
+    let casa_prefix = required_prefix(MVC_CASA_PREFIX_ENV, ".pb")?;
+    let casa = read_product(&casa_prefix, ".pb")?;
+    assert_eq!(casa.shape, [512, 512, 1, 40]);
+    let direction = casa_imaging_model::DirectionCoordinateSpec::new(
+        casa_imaging_model::Projection::Sin,
+        casa_imaging_model::SkyDirection::new(
+            casa_imaging_model::DirectionFrame::Icrs,
+            0.269_568_703_205_255_06,
+            0.102_658_318_035_190_82,
+        ),
+        [256.0, 256.0],
+        [-4.848_136_811_095_359e-7, 4.848_136_811_095_359e-7],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    let mut generated = vec![0.0; 512 * 512];
+    let mut failures = Vec::new();
+    for channel in [0, 39] {
+        let frequency = 230_449_729_492.188_84 + channel as f64 * 122_982_578.274_169_92;
+        casa_imaging_reconstruction::evaluate_casa_alma_aca_primary_beam_power_plane(
+            direction,
+            [512, 512],
+            frequency,
+            0.1,
+            &mut generated,
+        )?;
+        let expected = (0..512 * 512)
+            .map(|cell| casa.values[cell * 40 + channel])
+            .collect::<Vec<_>>();
+        let valid = (0..512 * 512)
+            .map(|cell| casa.valid[cell * 40 + channel])
+            .collect::<Vec<_>>();
+        let nrms = normalized_rms(&generated, &expected, &valid);
+        eprintln!("t41_mvc_pb_kernel channel={channel} nrms={nrms:.9e}");
+        if nrms > 5.0e-6 {
+            failures.push(format!("channel {channel} PB NRMS {nrms:.6e}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
 
 #[test]
 #[ignore = "requires the representative T41 MS and frozen CASA MVC spectral coordinates"]
@@ -111,9 +157,37 @@ fn t41_mvc_selected_spectral_range_matches_casa_edge_topology() -> Result<(), Bo
 }
 
 #[test]
+#[ignore = "requires the representative T41 MS for a mode-faithful PB/MVC turnaround"]
+fn t41_mvc_primary_beam_turnaround_completes_on_full_selected_data() -> Result<(), Box<dyn Error>> {
+    let source = required_table(MVC_MS_ENV)?;
+    let rust_prefix = output_prefix_for(MVC_TURNAROUND_PREFIX_ENV, &[".psf.tt0"])?;
+    let staging = tempfile::tempdir()?;
+    let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
+    copy_tree(&source, &measurement_set)?;
+    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
+    set_production_io_environment();
+
+    let mut request = mvc_request(measurement_set, rust_prefix);
+    request.image_size = 256;
+    request.threshold_jy = f64::MAX;
+    let result = execute_continuum(request)?;
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .sample_count(),
+        MVC_SELECTED_SAMPLE_COUNT,
+    );
+    assert_eq!(result.minor_iterations, 0);
+    assert_eq!(result.outcome.output.major_cycle_count, 2);
+    Ok(())
+}
+
+#[test]
 #[ignore = "requires slow-parity casatestdata and matching frozen CASA T41 products"]
 fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let source = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
         .ok_or("slow-parity casatestdata root is unavailable")?;
     let casa_prefix = PathBuf::from(
@@ -121,9 +195,9 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
     );
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
-    MeasurementSet::open(&source)?.save_as(&measurement_set)?;
-    copy_attached_ephemerides(&source, &measurement_set)?;
+    copy_tree(&source, &measurement_set)?;
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
+    set_production_io_environment();
     let rust_prefix = staging.path().join("rust-uranus-cubesource");
 
     let result = execute_continuum(request(measurement_set, rust_prefix.clone()))?;
@@ -197,15 +271,14 @@ fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(
 #[test]
 #[ignore = "requires the representative T41 MS and the one frozen CASA multi-SPW MVC oracle"]
 fn t41_multi_spw_mvc_matches_casa_taylor_products() -> Result<(), Box<dyn Error>> {
-    set_production_io_environment();
     let source = required_table(MVC_MS_ENV)?;
     let casa_prefix = required_prefix(MVC_CASA_PREFIX_ENV, ".psf.tt0")?;
     let rust_prefix = output_prefix(MVC_RUST_PREFIX_ENV)?;
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
-    MeasurementSet::open(&source)?.save_as(&measurement_set)?;
-    copy_attached_ephemerides(&source, &measurement_set)?;
+    copy_tree(&source, &measurement_set)?;
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
+    set_production_io_environment();
 
     let result = execute_continuum(mvc_request(measurement_set, rust_prefix.clone()))?;
     assert_eq!(
@@ -333,6 +406,7 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
         gain: 0.1,
         threshold_jy: 0.0,
         psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
+        primary_beam_cutoff: 0.1,
         beam_policy: ContinuumBeamPolicy::PerPlane,
         mask: ContinuumMask::FullPlane,
         save_model_column: false,
@@ -393,6 +467,7 @@ fn mvc_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagin
         gain: 0.1,
         threshold_jy: 0.0,
         psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
+        primary_beam_cutoff: 0.1,
         beam_policy: ContinuumBeamPolicy::Common,
         mask: ContinuumMask::FullPlane,
         save_model_column: false,
@@ -599,28 +674,20 @@ fn required_prefix(name: &str, required_suffix: &str) -> Result<PathBuf, Box<dyn
 }
 
 fn output_prefix(name: &str) -> Result<PathBuf, Box<dyn Error>> {
+    output_prefix_for(name, &MVC_PUBLIC_PRODUCTS)
+}
+
+fn output_prefix_for(name: &str, suffixes: &[&str]) -> Result<PathBuf, Box<dyn Error>> {
     let prefix = PathBuf::from(std::env::var_os(name).ok_or_else(|| format!("{name} is not set"))?);
     let parent = prefix.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    if MVC_PUBLIC_PRODUCTS
+    if suffixes
         .iter()
         .any(|suffix| PathBuf::from(format!("{}{suffix}", prefix.display())).exists())
     {
         return Err(format!("refusing to overwrite MVC products at {}", prefix.display()).into());
     }
     Ok(prefix)
-}
-
-fn copy_attached_ephemerides(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
-    for entry in fs::read_dir(source.join("FIELD"))? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if !name.to_string_lossy().starts_with("EPHEM") || !entry.file_type()?.is_dir() {
-            continue;
-        }
-        copy_tree(&entry.path(), &destination.join("FIELD").join(name))?;
-    }
-    Ok(())
 }
 
 fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {

@@ -35,6 +35,7 @@ mod major_cycle;
 mod mask;
 mod minor_cycle;
 mod polarization_operator;
+mod primary_beam;
 mod psf_beam;
 mod reconstruction_cycle;
 mod spectral_operator;
@@ -99,6 +100,8 @@ pub use minor_cycle::{
 pub use polarization_operator::{
     FeedBasis, MuellerMatrix, PolarizationOperator, PolarizationOperatorError,
 };
+#[doc(hidden)]
+pub use primary_beam::evaluate_casa_alma_aca_primary_beam_power_plane;
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
     fitted_psf_sidelobe_fraction,

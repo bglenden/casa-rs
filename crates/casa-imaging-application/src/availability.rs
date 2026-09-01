@@ -4,8 +4,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, ImageDomainRole, InstrumentResponse, ModelStateIdentity, PhaseCentreLaw,
-    PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
+    CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, ModelStateIdentity,
+    PhaseCentreLaw, PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -413,12 +413,23 @@ pub fn validate_installed_implementation(
     if !matches!(problem.inputs().model(), ModelStateIdentity::Empty) {
         unsupported.push(UnsupportedRequirement::EmptyInitialModel);
     }
-    if problem
-        .science()
-        .measurement_equation()
-        .instrument_response()
-        != InstrumentResponse::Scalar
-    {
+    let installed_response = matches!(
+        (
+            problem
+                .science()
+                .measurement_equation()
+                .instrument_response(),
+            problem.science().instrument_model(),
+            problem.reconstruction().basis(),
+        ),
+        (InstrumentResponse::Scalar, None, _)
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+                ReconstructionBasis::TaylorViaChannelMajor { .. }
+            )
+    );
+    if !installed_response {
         unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
     }
     if !matches!(
@@ -495,6 +506,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
             | RequiredCapability::BriggsBandwidthTaperWeighting
+            | RequiredCapability::PrimaryBeamResponse
             | RequiredCapability::UnitResponseNormalization
             | RequiredCapability::FlatNoiseNormalization
             | RequiredCapability::FlatSkyNormalization
@@ -526,6 +538,11 @@ mod tests {
         assert!(supports_capability(
             RequiredCapability::JointContinuumLineReconstruction
         ));
+    }
+
+    #[test]
+    fn t41_primary_beam_response_is_installed_at_the_application_boundary() {
+        assert!(supports_capability(RequiredCapability::PrimaryBeamResponse));
     }
 
     #[test]

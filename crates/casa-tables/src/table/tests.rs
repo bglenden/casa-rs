@@ -4648,6 +4648,18 @@ fn add_variable_shape_tiled_column_in_place_persists_defined_rows_only() {
         .expect("save added tiled column");
 
     let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
+    let vis = reopened.column_accessor("vis").expect("vis accessor");
+    for (row, expected) in [false, true, true].into_iter().enumerate() {
+        assert_eq!(
+            vis.array_cell_is_defined_uncached(row)
+                .expect("metadata-only definedness"),
+            expected
+        );
+    }
+    assert!(!reopened.inner.has_loaded_rows());
+    assert!(!reopened.inner.has_loaded_array_column("vis"));
+    assert_eq!(reopened.inner.cached_tiled_header_count(), 1);
+
     match table_cell(&reopened, 0, "vis") {
         Ok(None) => {}
         Ok(Some(Value::Array(ArrayValue::Float32(array)))) => {

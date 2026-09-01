@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "947db69654f5c476f2330524b4914a27acc03c508e41873da327a4b50528af18"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "bf67a98b908bee9b0b787bd6bff000820630babad39508ff82c7a55d4691657e"
+    "b138ff42816f8b0c49ceadd4d272be50664c80179fdfca3d11b32a47983a4d89"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 78
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2000,7 +2000,8 @@ def validate_t18_global_weighting_sources(
         or "native_boundaries[0]" not in derivation
         or "native_boundaries[1]" not in derivation
         or "spectral.anchor()" not in evaluation
-        or "spectral_frame_observatory(" not in evaluation
+        or "spectral_frame_observatory_direction(" not in evaluation
+        or "moving_radial_velocity(" not in evaluation
         or "spectral_frame_explicit(" not in evaluation
         or "sample.coordinates()" not in evaluation
         or "sample.metadata()" not in evaluation
@@ -2978,7 +2979,7 @@ def validate_t17_selected_observation_resource_sources(
         or "constfnretained_source_slot_bytes()->usize{size_of::<Self>()}"
         not in compact_access
         or "measures.validate_problem(problem)?;" not in access_open
-        or "Self::from_locked_measurement_set(problem,source,current_state.clone(),measures,shared_bytes,content_budget,measurement_set,)"
+        or "Self::from_locked_measurement_set(problem,source,current_state.clone(),measures,shared_bytes,content_budget,measurement_set,ephemeris,)"
         not in access_open
         or "selected_content_plan(&measurement_set,problem,source,shared_bytes,content_budget,)?"
         not in access_from_locked
@@ -2994,7 +2995,7 @@ def validate_t17_selected_observation_resource_sources(
         not in access_owner_open
         or "validate_rebound_state(prior_state,&fresh_state)?;"
         not in access_rebind
-        or "MsCalEngine::new_selected_observation(&measurement_set,measures.provider(),measures.provider_state(),)?"
+        or "MsCalEngine::new_selected_observation(&measurement_set,measures.provider(),measures.provider_state(),ephemeris.cloned(),)?"
         not in access_from_planned
         or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
         not in plan_admission
@@ -3037,9 +3038,12 @@ def validate_t17_selected_observation_resource_sources(
         engine_fields.get("antenna_positions") != "Box<[MPosition]>"
         or engine_fields.get("antenna_mount_alt_az") != "Box<[bool]>"
         or engine_fields.get("field_directions") != "Box<[MDirection]>"
+        or engine_fields.get("field_phase_offsets") != "Box<[[f64;2]]>"
         or engine_fields.get("measures") != "Option<Arc<dynMeasuresProvider>>"
         or engine_fields.get("selected_observation_measures_state")
         != "Option<MeasuresProviderState>"
+        or engine_fields.get("selected_observation_ephemeris")
+        != "Option<Arc<SelectedObservationEphemeris>>"
         or any(
             forbidden in engine_constructor
             for forbidden in (
@@ -3048,12 +3052,14 @@ def validate_t17_selected_observation_resource_sources(
                 "MeasuresRuntime",
             )
         )
-        or engine_constructor.count(".into_boxed_slice()") != 3
+        or engine_constructor.count(".into_boxed_slice()") != 4
         or "measures:Some(measures)" not in engine_constructor
         or "selected_observation_measures_state:Some(measures_state)"
         not in engine_constructor
+        or "selected_observation_ephemeris:ephemeris" not in engine_constructor
         or "size_of::<MPosition>()+size_of::<bool>()" not in engine_projection
-        or "size_of::<MDirection>()" not in engine_projection
+        or "size_of::<MDirection>()+size_of::<[f64;2]>()"
+        not in engine_projection
         or ".prepare_bounded_state()" not in engine_verify
         or "actual!=Some(expected)" not in engine_verify
     ):

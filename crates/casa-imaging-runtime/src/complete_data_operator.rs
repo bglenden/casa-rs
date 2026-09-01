@@ -1340,6 +1340,7 @@ pub struct CompleteDataResidency {
     fft_resident_bytes: usize,
     fft_planning_bytes: usize,
     forward_workspace_bytes: usize,
+    response_workspace_bytes: usize,
     gridded_route_bytes: usize,
     gridded_replay_schedule_bytes: usize,
     primitive_output_bytes: usize,
@@ -1388,6 +1389,12 @@ impl CompleteDataResidency {
     #[must_use]
     pub const fn forward_workspace_bytes(self) -> usize {
         self.forward_workspace_bytes
+    }
+
+    /// Bytes for one reusable frequency-dependent scalar-response plane.
+    #[must_use]
+    pub const fn response_workspace_bytes(self) -> usize {
+        self.response_workspace_bytes
     }
 
     /// Bytes for the retained schedule route during gridded replay.
@@ -2334,6 +2341,10 @@ fn project_residency(
         .forward_complex_values()
         .checked_mul(complex_bytes)
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+    let response_workspace_bytes = workload
+        .response_f32_values()
+        .checked_mul(size_of::<f32>())
+        .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     let gridded_route_bytes = gridded_route_residency
         .map(GriddedNormalRouteResidency::peak_bytes)
         .unwrap_or(0);
@@ -2375,6 +2386,7 @@ fn project_residency(
         .and_then(|bytes| bytes.checked_add(fft_resident_bytes))
         .and_then(|bytes| bytes.checked_add(fft_planning_bytes))
         .and_then(|bytes| bytes.checked_add(forward_workspace_bytes))
+        .and_then(|bytes| bytes.checked_add(response_workspace_bytes))
         .and_then(|bytes| bytes.checked_add(gridded_route_bytes))
         .and_then(|bytes| bytes.checked_add(gridded_replay_schedule_bytes))
         .and_then(|bytes| bytes.checked_add(primitive_output_bytes))
@@ -2386,6 +2398,7 @@ fn project_residency(
         fft_resident_bytes,
         fft_planning_bytes,
         forward_workspace_bytes,
+        response_workspace_bytes,
         gridded_route_bytes,
         gridded_replay_schedule_bytes,
         primitive_output_bytes,

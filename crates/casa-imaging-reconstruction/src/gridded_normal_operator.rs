@@ -1116,15 +1116,16 @@ impl GriddedNormalOperatorProgram {
         }
         let model_generation = model.generation_id();
         let reusable_domains = prior.into_reusable_domains()?;
+        if reusable_domains.len() != prepared_specification.domain_count() {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         let mut operators = Vec::with_capacity(prepared_specification.chart_count());
         for (chart, fft) in prepared_specification.charts().iter().zip(ffts.drain(..)) {
             let mut operator =
                 SpectralSlabOperator::new_chart(&prepared_specification, chart, workload, fft, 0);
-            operator.prepare_gridded_normal_model(model)?;
+            operator
+                .prepare_gridded_normal_model(model, &reusable_domains[chart.domain_ordinal()])?;
             operators.push(operator);
-        }
-        if reusable_domains.len() != prepared_specification.domain_count() {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
         let core_depth = self.accumulation_width();
         let tile_catalogs = GriddedNormalDomainTileCatalogs::new(
@@ -2921,6 +2922,7 @@ mod tests {
             image_shape: [8, 8],
             grid_shape: [10, 10],
             image_blc: [1, 1],
+            reference_pixel: [4.0, 4.0],
             increment_rad: [-2.0e-3, 2.0e-3],
         }
     }

@@ -8,9 +8,10 @@ use crate::{
 use casa_imaging_model::AntennaBaseline;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use serde::Deserialize;
-use std::{collections::BTreeMap, error::Error, fs, path::Path, sync::Arc};
+use std::{collections::BTreeMap, error::Error, fs, path::Path};
 
 const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
+const MVC_MS_ENV: &str = "CASA_RS_T41_MVC_MS";
 const ORACLE: &str = include_str!("../../../tests/fixtures/t41_trackfield_casa_6_7_6_14.json");
 const FIELD_ID: u32 = 1;
 const DATA_DESCRIPTION_ID: u32 = 0;
@@ -41,8 +42,10 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
     assert_eq!(oracle.casa_version, "6.7.6-14");
     assert_eq!(oracle.samples.len(), 3);
 
-    let source = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
-        .ok_or("slow-parity casatestdata root is unavailable")?;
+    let source = std::env::var_os(MVC_MS_ENV)
+        .map(std::path::PathBuf::from)
+        .or_else(|| casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET))
+        .ok_or("T41 MVC MeasurementSet is unavailable")?;
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
     MeasurementSet::open(&source)?.save_as(&measurement_set)?;
@@ -75,7 +78,7 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
         SelectedObservationEphemeris::tracked_fields(&ms, [usize::try_from(FIELD_ID)?])?;
     let ephemeris_identity = ephemeris.identity();
     drop(ms);
-    let measures = casa_measures_data::MeasuresRuntime::open_discovered(Default::default())?;
+    let measures = crate::test_helpers::production_measures_provider()?;
 
     let rows = SelectedRows::from_ordered_main_rows(
         row_count,
@@ -130,7 +133,7 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
         Vec::new(),
         ModelStateIdentity::Empty,
         SelectedObservationContentBudget::new(64 << 20, 1, 4),
-        Arc::new(measures),
+        measures,
     )
     .with_ephemeris(Some(ephemeris));
     let (snapshot_input, access) = resolve_selected_observation(request)?.into_parts();

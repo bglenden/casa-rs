@@ -20,24 +20,25 @@ use casa_imaging_model::{
     CorrelationType, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    ImagingRequestVersion, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    MetadataTableKind, MissingPointingPolicy, ModelCell, ModelColumnWrite, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelStateIdentity, ModelValue, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
-    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
-    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics,
-    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilitySample,
-    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
-    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ImagingRequestVersion, InstrumentModel, InstrumentResponse, LogicalIdentity,
+    MeasurementEquationContract, MetadataTableKind, MissingPointingPolicy, ModelCell,
+    ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSourceState, ObservationTransactionId,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PreparedArtifactAwInterpretation,
+    PreparedArtifactCellSemantics, PreparedArtifactKernelAlgorithm,
+    PreparedArtifactKernelSemantics, PreparedArtifactScientificIdentity,
+    PreparedArtifactSpectralMapSemantics, ProblemInputIdentities, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SelectedVisibilitySample, SequentialContinuumTransform, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 use casa_imaging_products::{
     ContinuumGenerationDemand, ContinuumProductControls, ContinuumProductInputs,
@@ -9829,6 +9830,66 @@ fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
         Some("f64:3fc999999999999a")
     );
     assert_ne!(unbiased_projection, biased_projection);
+}
+
+#[test]
+fn t41_receipt_projection_records_the_exact_primary_beam_instrument_model() {
+    let specification = ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::PrimaryBeam,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        )
+        .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        ProductRequirements::new(
+            vec![ProductKind::Psf],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        NumericsContract::new(
+            vec![NumericPrecision::F64],
+            ReductionPolicy::Compensated,
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            NumericalStage::ALL
+                .into_iter()
+                .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                .collect(),
+        ),
+    );
+    let problem = compile(ImagingRequest::new(
+        specification,
+        geometry(255.0),
+        problem_inputs(
+            92,
+            vec![
+                (ReferenceDataKind::Measures, identity(90)),
+                (ReferenceDataKind::Instrument, identity(91)),
+            ],
+            ModelStateIdentity::Empty,
+        ),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("logical primary-beam compilation");
+
+    let projection = CompiledProblemEvidence::project(&problem);
+    assert_eq!(
+        projection.field("science.measurement_equation.operator.transforms.3.instrument_model"),
+        Some("casa-alma-aca-interferometric-direct-pb-v1")
+    );
 }
 
 #[test]

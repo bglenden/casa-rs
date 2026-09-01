@@ -10,18 +10,19 @@ use casa_imaging_model::{
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, JointContinuumLineContract,
-    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
+    ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection,
+    JointContinuumLineContract, LogicalIdentity, MeasurementEquationContract,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelBounds, ModelCell,
+    ModelColumnState, ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, ModelValue, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
     SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
@@ -425,6 +426,15 @@ fn problem_with_shape(
     spectral_channels: usize,
     image_shape: ImageShape,
 ) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_and_response(reconstruction, spectral_channels, image_shape, false)
+}
+
+fn problem_with_shape_and_response(
+    reconstruction: ReconstructionContract,
+    spectral_channels: usize,
+    image_shape: ImageShape,
+    primary_beam: bool,
+) -> casa_imaging_model::CompiledProblem {
     let is_joint = matches!(
         reconstruction.basis(),
         ReconstructionBasis::JointContinuumLine { .. }
@@ -499,22 +509,35 @@ fn problem_with_shape(
         } else {
             source()
         }],
-        Vec::new(),
+        if primary_beam {
+            vec![(ReferenceDataKind::Instrument, identity(42, 100))]
+        } else {
+            Vec::new()
+        },
         ModelStateIdentity::Empty,
     ))
     .expect("compile T42 observation");
+    let mut science = ScientificContract::new(
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+        MeasurementEquationContract::new(
+            if primary_beam {
+                InstrumentResponse::PrimaryBeam
+            } else {
+                InstrumentResponse::Scalar
+            },
+            DeclaredInnerProducts::new(
+                ModelInnerProduct::HermitianEuclidean,
+                VisibilityInnerProduct::HermitianEuclidean,
+            ),
+        ),
+    );
+    if primary_beam {
+        science =
+            science.with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
+    }
     compile(ImagingRequest::new(
         ProblemSpecification::new(
-            ScientificContract::new(
-                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(
-                    InstrumentResponse::Scalar,
-                    DeclaredInnerProducts::new(
-                        ModelInnerProduct::HermitianEuclidean,
-                        VisibilityInnerProduct::HermitianEuclidean,
-                    ),
-                ),
-            ),
+            science,
             reconstruction,
             WeightingContract::new(
                 WeightingScheme::Briggs { robust: 0.5 },
@@ -591,6 +614,26 @@ fn channel_major_problem_with_shape(
         ),
         channels,
         image_shape,
+    )
+}
+
+fn channel_major_primary_beam_problem(
+    channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_and_response(
+        ReconstructionContract::new(
+            ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(1, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        channels,
+        image_shape,
+        true,
     )
 }
 
@@ -1759,6 +1802,70 @@ fn t41_channel_major_two_cycle_feedback_and_gridded_replay_stay_dual_space() {
     assert!(
         nrms <= 0.001,
         "channel-keyed gridded replay must match streaming feedback: NRMS={nrms:e}"
+    );
+    assert_eq!(serial.residual, parallel.residual);
+    assert_eq!(serial.grid_residency, parallel.grid_residency);
+}
+
+#[test]
+fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() {
+    let problem = channel_major_primary_beam_problem(4, ImageShape::new(256, 256));
+    let selected = channel_major_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("primary-beam MVC specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        frozen.plan.limits().max_block_samples(),
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("primary-beam MVC workload");
+    assert_eq!(workload.resident_model_terms(), 2);
+    assert_eq!(workload.response_f32_values(), 256 * 256);
+
+    let preparation = nonzero_taylor_model(&problem);
+    let initial = initial_normal_from_frozen(&problem, &frozen);
+    let residual = complete_frozen_taylor_operator(
+        &problem,
+        &frozen,
+        &preparation,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(initial),
+    );
+    let primitives = residual.primitives();
+    assert!(primitives.primary_beam_weighted_sum().is_some());
+    assert!(
+        primitives
+            .dirty()
+            .iter()
+            .all(|value| value.re.is_finite() && value.im.is_finite())
+    );
+    assert_eq!(primitives.slab().core_range(), 0..4);
+
+    let direct_residual = primitives.dirty().to_vec();
+    let (program, blocks) = compile_compact_program(&problem, &frozen);
+    let serial = execute_compact_taylor(
+        &problem,
+        &frozen,
+        &program,
+        &blocks,
+        &preparation,
+        initial_normal_from_frozen(&problem, &frozen),
+        1,
+    );
+    let parallel = execute_compact_taylor(
+        &problem,
+        &frozen,
+        &program,
+        &blocks,
+        &preparation,
+        initial_normal_from_frozen(&problem, &frozen),
+        2,
+    );
+    let nrms = complex_nrms(&serial.residual, &direct_residual);
+    assert!(
+        nrms <= 0.001,
+        "primary-beam gridded replay must match streaming feedback: NRMS={nrms:e}"
     );
     assert_eq!(serial.residual, parallel.residual);
     assert_eq!(serial.grid_residency, parallel.grid_residency);

@@ -1480,6 +1480,41 @@ impl TableImpl {
         Ok(Some(values))
     }
 
+    pub(crate) fn array_cell_is_defined_uncached(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<bool, TableError> {
+        if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
+            return Err(TableError::Storage(format!(
+                "{column} metadata-only definedness requires a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} metadata-only definedness does not support pending array-cell overrides"
+            )));
+        }
+        let source = self
+            .lazy_rows
+            .as_ref()
+            .expect("lazy source checked before metadata-only definedness");
+        let metadata = source.read_metadata()?;
+        CompositeStorage
+            .plain_array_cell_is_defined_uncached(
+                &metadata.table_dat,
+                &metadata.tiled,
+                column,
+                row_index,
+            )
+            .map_err(|error| {
+                TableError::Storage(format!(
+                    "failed to inspect {column} cell {row_index} in table {}: {error}",
+                    source.path.display()
+                ))
+            })
+    }
+
     pub(crate) fn array_cells_2d_channel_range_typed_uncached(
         &self,
         row_indices: &[usize],

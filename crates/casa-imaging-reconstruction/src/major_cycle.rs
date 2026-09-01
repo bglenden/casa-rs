@@ -337,6 +337,13 @@ impl FinalNormalState {
         self.primitives.sensitivity()
     }
 
+    /// Return the completed scalar primary-beam `sum(W B)` statistic, when
+    /// the compiled measurement equation includes that response.
+    #[must_use]
+    pub fn primary_beam_weighted_sum(&self) -> Option<&[f64]> {
+        self.primitives.primary_beam_weighted_sum()
+    }
+
     /// Return the exact accumulated sum weight.
     #[must_use]
     pub fn sum_weight(&self) -> f64 {
@@ -537,6 +544,12 @@ impl<'a> FinalNormalDomainState<'a> {
     #[must_use]
     pub const fn sensitivity(self) -> &'a [f64] {
         self.domain.primitives().sensitivity()
+    }
+
+    /// Return the completed scalar primary-beam `sum(W B)` statistic.
+    #[must_use]
+    pub fn primary_beam_weighted_sum(self) -> Option<&'a [f64]> {
+        self.domain.primitives().primary_beam_weighted_sum()
     }
 
     /// Return this chart's normal-moment-major, polarization-minor weights.

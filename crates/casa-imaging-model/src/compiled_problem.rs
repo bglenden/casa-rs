@@ -2147,12 +2147,19 @@ fn validate_science(
             reason: "spectral channel averaging requires a positive bin width",
         });
     }
-    if science.measurement_equation.instrument_response == InstrumentResponse::PrimaryBeam
-        && science.instrument_model
-            != Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
-    {
+    if !matches!(
+        (
+            science.measurement_equation.instrument_response,
+            science.instrument_model,
+        ),
+        (InstrumentResponse::Scalar, None)
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+            )
+    ) {
         return Err(CompileProblemError::InvalidScientificContract {
-            reason: "primary-beam response requires the CASA ALMA interferometric direct power-response model",
+            reason: "instrument response and instrument model must form one supported exact pair",
         });
     }
     if science.measurement_equation.instrument_response != InstrumentResponse::Scalar

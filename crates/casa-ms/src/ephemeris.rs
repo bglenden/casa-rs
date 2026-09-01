@@ -585,3 +585,160 @@ pub enum SelectedObservationEphemerisError {
     #[error("ephemeris retained byte count overflowed")]
     ByteOverflow,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use casa_tables::{ColumnSchema, TableSchema};
+    use casa_types::{PrimitiveType, RecordField, RecordValue};
+
+    const TARGET: &str = "T41_TEST_TARGET";
+
+    fn scalar_field(name: &str, value: f64) -> RecordField {
+        RecordField::new(name, Value::Scalar(ScalarValue::Float64(value)))
+    }
+
+    fn save_ephemeris_table(path: &Path, rows: &[[f64; 5]]) {
+        let schema = TableSchema::new(
+            ["MJD", "RA", "DEC", "Rho", "RadVel"]
+                .into_iter()
+                .map(|name| ColumnSchema::scalar(name, PrimitiveType::Float64))
+                .collect(),
+        )
+        .expect("valid ephemeris schema");
+        let mut table = Table::with_schema(schema);
+        for [mjd, ra, dec, rho, radial_velocity] in rows {
+            table
+                .add_row(RecordValue::new(vec![
+                    scalar_field("MJD", *mjd),
+                    scalar_field("RA", *ra),
+                    scalar_field("DEC", *dec),
+                    scalar_field("Rho", *rho),
+                    scalar_field("RadVel", *radial_velocity),
+                ]))
+                .expect("valid ephemeris row");
+        }
+        for (name, value) in [
+            ("NAME", TARGET),
+            ("posrefsys", "ICRF/ICRS"),
+            ("obsloc", "GEOCENTRIC"),
+        ] {
+            table.keywords_mut().push(RecordField::new(
+                name,
+                Value::Scalar(ScalarValue::String(value.to_string())),
+            ));
+        }
+        table.keywords_mut().push(RecordField::new(
+            "GeoDist",
+            Value::Scalar(ScalarValue::Float64(0.0)),
+        ));
+        table
+            .save(TableOptions::new(path))
+            .expect("persist ephemeris table");
+    }
+
+    fn sample_bits(sample: EvaluatedEphemerisSample) -> ([u64; 3], u64) {
+        (
+            sample.geocentric_position_metres.map(f64::to_bits),
+            sample.radial_velocity_m_per_s.to_bits(),
+        )
+    }
+
+    #[test]
+    fn t41_external_ephemeris_binding_is_an_immutable_content_snapshot() {
+        let directory = tempfile::tempdir().expect("temporary ephemeris table");
+        let path = directory.path().join("external_ephemeris.tab");
+        save_ephemeris_table(
+            &path,
+            &[
+                [60_000.0, 10.0, -30.0, 2.0, 0.001],
+                [60_001.0, 11.0, -29.0, 2.1, 0.002],
+                [60_002.0, 12.0, -28.0, 2.2, 0.003],
+            ],
+        );
+
+        let bound = SelectedObservationEphemeris::external(&path).expect("bind snapshot");
+        let original_identity = bound.identity();
+        let original_sample = sample_bits(bound.sample(0, 60_001.0).expect("sample snapshot"));
+
+        let mut backing = Table::open(TableOptions::new(&path)).expect("reopen backing table");
+        backing
+            .cell_accessor_mut(1, "RA")
+            .expect("mutable RA cell")
+            .set(Value::Scalar(ScalarValue::Float64(111.0)))
+            .expect("mutate persisted RA");
+        backing
+            .prepare_write()
+            .save_selected_columns(&["RA"])
+            .expect("persist mutated RA");
+
+        assert_eq!(bound.identity(), original_identity);
+        assert_eq!(
+            sample_bits(bound.sample(0, 60_001.0).expect("resample snapshot")),
+            original_sample,
+            "the bound series must not observe later backing-table mutation"
+        );
+
+        let rebound = SelectedObservationEphemeris::external(&path).expect("bind changed table");
+        assert_ne!(rebound.identity(), original_identity);
+        assert_ne!(
+            sample_bits(rebound.sample(0, 60_001.0).expect("sample changed table")),
+            original_sample,
+            "a new binding must observe changed scientific content"
+        );
+    }
+
+    #[test]
+    fn t41_invalid_and_unordered_persisted_rows_fail_closed() {
+        let cases = [
+            (
+                "non_finite",
+                vec![
+                    [60_000.0, 10.0, -30.0, 2.0, 0.001],
+                    [60_001.0, f64::NAN, -29.0, 2.1, 0.002],
+                ],
+            ),
+            (
+                "unordered",
+                vec![
+                    [60_001.0, 10.0, -30.0, 2.0, 0.001],
+                    [60_000.0, 11.0, -29.0, 2.1, 0.002],
+                ],
+            ),
+        ];
+
+        for (case, rows) in cases {
+            let directory = tempfile::tempdir().expect("temporary invalid ephemeris table");
+            let path = directory.path().join(format!("{case}.tab"));
+            save_ephemeris_table(&path, &rows);
+            assert!(matches!(
+                SelectedObservationEphemeris::external(&path),
+                Err(SelectedObservationEphemerisError::InvalidRow { row: 1 })
+            ));
+        }
+    }
+
+    #[test]
+    fn t41_out_of_coverage_epochs_fail_closed_with_exact_error() {
+        let directory = tempfile::tempdir().expect("temporary ephemeris table");
+        let path = directory.path().join("coverage.tab");
+        save_ephemeris_table(
+            &path,
+            &[
+                [60_000.0, 10.0, -30.0, 2.0, 0.001],
+                [60_001.0, 11.0, -29.0, 2.1, 0.002],
+            ],
+        );
+        let bound = SelectedObservationEphemeris::external(&path).expect("bind ephemeris");
+
+        for epoch in [59_999.999, 60_001.001] {
+            match bound.sample(0, epoch) {
+                Err(SelectedObservationEphemerisError::OutsideCoverage { target, mjd_days }) => {
+                    assert_eq!(target, TARGET);
+                    assert_eq!(mjd_days.to_bits(), epoch.to_bits());
+                }
+                other => panic!("expected exact OutsideCoverage error, got {other:?}"),
+            }
+        }
+    }
+}
