@@ -2,8 +2,10 @@
 #![warn(missing_docs)]
 //! Shared numerical algorithms without astronomy-domain ownership.
 
+mod annular_aperture;
 mod elliptical_gaussian;
 
+pub use annular_aperture::AnnularApertureVoltageTable;
 pub use elliptical_gaussian::{
     EllipticalGaussian, EllipticalGaussianError, common_enclosing_gaussian, deconvolving_gaussian,
     gaussian_covariance, normalize_position_angle,

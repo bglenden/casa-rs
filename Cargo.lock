@@ -778,6 +778,7 @@ dependencies = [
 name = "casa-numerics"
 version = "0.27.0"
 dependencies = [
+ "libm",
  "nalgebra",
 ]
 
@@ -795,7 +796,7 @@ dependencies = [
 name = "casa-simulation-synthesis"
 version = "0.27.0"
 dependencies = [
- "libm",
+ "casa-numerics",
  "ndarray",
  "num-complex",
  "rustfft",

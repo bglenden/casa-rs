@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use libm::j1;
+use casa_numerics::AnnularApertureVoltageTable;
 use ndarray::{Array2, Axis};
 use num_complex::Complex32;
 use rustfft::{Fft, FftPlanner};
@@ -81,8 +81,7 @@ pub struct AiryPrimaryBeam {
 /// Cached CASA-compatible Airy voltage-pattern evaluator.
 #[derive(Clone)]
 pub struct AiryVoltagePattern {
-    maximum_radius_arcmin_ghz: f64,
-    values: Vec<f32>,
+    table: AnnularApertureVoltageTable,
 }
 
 impl AiryVoltagePattern {
@@ -90,20 +89,12 @@ impl AiryVoltagePattern {
     pub fn new(model: AiryPrimaryBeam) -> Self {
         let maximum_radius_arcmin_ghz =
             casa_airy_max_radius_arcmin_ghz(model.dish_diameter_m, model.blockage_diameter_m);
-        let sample_count_minus_one = 9_999.0;
-        let values = (0..=sample_count_minus_one as usize)
-            .map(|index| {
-                airy_voltage_pattern_from_table_index(
-                    index as f64,
-                    maximum_radius_arcmin_ghz,
-                    model.dish_diameter_m,
-                    model.blockage_diameter_m,
-                )
-            })
-            .collect();
         Self {
-            maximum_radius_arcmin_ghz,
-            values,
+            table: AnnularApertureVoltageTable::new(
+                model.dish_diameter_m,
+                model.blockage_diameter_m,
+                maximum_radius_arcmin_ghz,
+            ),
         }
     }
 
@@ -122,14 +113,7 @@ impl AiryVoltagePattern {
         let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
         let radius_arcmin_ghz =
             (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
-        if radius_arcmin_ghz > self.maximum_radius_arcmin_ghz {
-            return 0.0;
-        }
-        let sample_count_minus_one = (self.values.len() - 1) as f64;
-        let index = (radius_arcmin_ghz * sample_count_minus_one / self.maximum_radius_arcmin_ghz)
-            .floor()
-            .clamp(0.0, sample_count_minus_one) as usize;
-        self.values[index]
+        self.table.evaluate(radius_arcmin_ghz)
     }
 }
 
@@ -577,29 +561,6 @@ fn grdsf(nu: f64) -> f64 {
     } else {
         numerator / denominator
     }
-}
-
-fn airy_voltage_pattern_from_table_index(
-    index: f64,
-    maximum_radius_arcmin_ghz: f64,
-    dish_diameter_m: f64,
-    blockage_diameter_m: f64,
-) -> f32 {
-    let sample_count_minus_one = 9_999.0;
-    let dimensionless_max_radius =
-        maximum_radius_arcmin_ghz * 7.016 / (1.566 * 60.0) * dish_diameter_m / 24.5;
-    let x = index * dimensionless_max_radius / sample_count_minus_one;
-    if x.abs() <= f64::EPSILON {
-        return 1.0;
-    }
-    if blockage_diameter_m <= 0.0 {
-        return (2.0 * j1(x) / x) as f32;
-    }
-    let area_ratio = (dish_diameter_m / blockage_diameter_m).powi(2);
-    let area_norm = area_ratio - 1.0;
-    let length_ratio = dish_diameter_m / blockage_diameter_m;
-    ((area_ratio * 2.0 * j1(x) / x - 2.0 * j1(x * length_ratio) / (x * length_ratio)) / area_norm)
-        as f32
 }
 
 fn casa_airy_max_radius_arcmin_ghz(dish_diameter_m: f64, blockage_diameter_m: f64) -> f64 {
