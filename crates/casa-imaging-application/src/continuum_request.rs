@@ -639,8 +639,9 @@ fn spectral_frame_anchor(
 }
 
 fn prepare(
-    request: ContinuumImagingRequest,
+    mut request: ContinuumImagingRequest,
 ) -> Result<ApplicationRequest<CasaImageProductSink>, crate::ApplicationError> {
+    canonicalize_polarizations(&mut request.polarizations);
     validate_request(&request)?;
     let ms = MeasurementSet::open(&request.measurement_set)?;
     let data_description = ms.data_description()?;
@@ -1033,6 +1034,11 @@ fn prepare(
         task_requirements: request.task_requirements,
         native,
     })
+}
+
+fn canonicalize_polarizations(polarizations: &mut Vec<PolarizationCoordinate>) {
+    polarizations.sort_unstable();
+    polarizations.dedup();
 }
 
 fn standard_primary_beam_model(
@@ -2126,12 +2132,16 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
+    use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
+    use casa_imaging_model::PolarizationCoordinate;
     use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
+    use casa_types::measures::frequency::FrequencyRef;
 
     use super::{
         ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
-        image_reference_pixel, model_plane_samples, parse_phase_center_direction,
-        planned_minor_cycle_bytes, resource_policy_for_task_requirements,
+        canonicalize_polarizations, image_coordinates, image_reference_pixel, model_plane_samples,
+        parse_phase_center_direction, planned_minor_cycle_bytes,
+        resource_policy_for_task_requirements,
     };
 
     #[test]
@@ -2148,6 +2158,42 @@ mod tests {
         let expected_dec = (40.0 + 55.0 / 60.0 + 58.543 / 3600.0) * std::f64::consts::PI / 180.0;
         assert!((direction.longitude_rad() - expected_ra).abs() < 1.0e-14);
         assert!((direction.latitude_rad() - expected_dec).abs() < 1.0e-14);
+    }
+
+    #[test]
+    fn request_polarizations_are_canonicalized_before_product_wcs_is_built() {
+        let mut polarizations = vec![
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesQ,
+        ];
+        canonicalize_polarizations(&mut polarizations);
+
+        assert_eq!(
+            polarizations,
+            [
+                PolarizationCoordinate::StokesI,
+                PolarizationCoordinate::StokesQ,
+            ]
+        );
+        let coordinates = image_coordinates(
+            64,
+            8.0,
+            [0.0, 0.0],
+            &polarizations,
+            FrequencyRef::LSRK,
+            1.0e9,
+            1.0,
+        );
+        let polarization_coordinate = coordinates
+            .find_coordinate(CoordinateType::Stokes)
+            .expect("polarization coordinate");
+        let CoordinateModel::Stokes(stokes) = coordinates.coordinate(polarization_coordinate)
+        else {
+            panic!("polarization coordinate has the wrong type");
+        };
+        assert_eq!(stokes.stokes(), [StokesType::I, StokesType::Q]);
+        assert_eq!(stokes.n_stokes(), 2);
     }
 
     #[test]

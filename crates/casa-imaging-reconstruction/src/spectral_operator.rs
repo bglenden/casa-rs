@@ -2492,7 +2492,7 @@ impl CompleteDataOwnerState {
         let correlations = group
             .iter()
             .map(|weighted| weighted.selected().address.correlation_type)
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 4]>>();
         let polarization = PolarizationOperator::compile(
             self.specification.polarization_coordinates(),
             &correlations,
@@ -2503,21 +2503,20 @@ impl CompleteDataOwnerState {
         let visibilities = group
             .iter()
             .map(|weighted| selected_visibility(weighted.selected().visibility))
-            .collect::<Vec<_>>();
+            .collect::<SmallVec<[_; 4]>>();
         let flags = group
             .iter()
             .map(|weighted| {
-                self.accept_polarization_input(weighted.selected())
-                    .map(|ok| !ok)
+                accept_polarization_input(weighted.selected(), self.finite_values).map(|ok| !ok)
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
         let flags = polarization_effective_flags(&polarization, flags);
         let predicts_residual = self
             .model_binding
             .is_some_and(ReconstructionModelBinding::is_evaluated);
         let has_spectral_support = first.spectral_values().next().is_some();
-        let mut model_prediction =
-            vec![Complex64::default(); polarization.model_coordinates().len()];
+        let mut model_prediction = SmallVec::<[Complex64; 4]>::new();
+        model_prediction.resize(polarization.model_coordinates().len(), Complex64::default());
         let mut touches_core = false;
         for chart_ordinal in 0..self.operators.len() {
             let chart = &self.specification.charts[chart_ordinal];
@@ -2546,7 +2545,9 @@ impl CompleteDataOwnerState {
                 .predict(&model_prediction)
                 .map_err(|_| SpectralOperatorError::GeneratedNonfinite)?
         } else {
-            vec![Complex64::default(); group.len()]
+            let mut predicted = SmallVec::<[Complex64; 4]>::new();
+            predicted.resize(group.len(), Complex64::default());
+            predicted
         };
         for chart_ordinal in 0..self.operators.len() {
             let chart = &self.specification.charts[chart_ordinal];
@@ -2574,17 +2575,16 @@ impl CompleteDataOwnerState {
                         }
                         final_correlation_weight(weighted, spectral.imaging_weight())
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 let published_weights =
                     polarization_published_weights(&polarization, &correlation_weights, &flags);
-                let weights = polarization_effective_weights(&polarization, correlation_weights);
                 let observed_adjoint = polarization
-                    .weighted_adjoint(&visibilities, &weights, &flags)
+                    .weighted_adjoint(&visibilities, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
                 let predicted_adjoint = polarization
-                    .weighted_adjoint(&predicted_correlations, &weights, &flags)
+                    .weighted_adjoint(&predicted_correlations, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                let diagonal = polarization_diagonal(&polarization, &weights, &flags);
+                let diagonal = polarization_diagonal(&polarization, &correlation_weights, &flags);
                 let contribution = first_spectral.contribution();
                 for coordinate in 0..polarization.model_coordinates().len() {
                     let weight = diagonal[coordinate];
@@ -2656,25 +2656,6 @@ impl CompleteDataOwnerState {
         Ok(())
     }
 
-    fn accept_polarization_input(
-        &self,
-        sample: &crate::weighting::WeightingSelectedSample,
-    ) -> Result<bool, SpectralOperatorError> {
-        let nonfinite = !sample.raw_input_weight().is_finite()
-            || sample.raw_input_weight() < 0.0
-            || match sample.visibility {
-                SelectedVisibilitySample::Float32(value) => !value.is_finite(),
-                SelectedVisibilitySample::Complex32(value) => {
-                    value.into_iter().any(|component| !component.is_finite())
-                }
-            };
-        apply_input_policy(
-            nonfinite,
-            sample.row_flag || sample.channel_flag,
-            self.finite_values,
-        )
-    }
-
     /// Predict one ordered output block without accumulating residual science grids.
     pub fn predict_final_visibility_block(
         &mut self,
@@ -2697,7 +2678,7 @@ impl CompleteDataOwnerState {
             let correlations = group
                 .iter()
                 .map(|weighted| weighted.selected().address.correlation_type)
-                .collect::<Vec<_>>();
+                .collect::<SmallVec<[_; 4]>>();
             let polarization = PolarizationOperator::compile(
                 self.specification.polarization_coordinates(),
                 &correlations,
@@ -2708,12 +2689,12 @@ impl CompleteDataOwnerState {
             let observed = group
                 .iter()
                 .map(|weighted| {
-                    self.accept_polarization_input(weighted.selected())?;
+                    let _ = accept_polarization_input(weighted.selected(), self.finite_values)?;
                     Ok(selected_visibility(weighted.selected().visibility))
                 })
-                .collect::<Result<Vec<_>, SpectralOperatorError>>()?;
-            let mut model_prediction =
-                vec![Complex64::default(); polarization.model_coordinates().len()];
+                .collect::<Result<SmallVec<[_; 4]>, SpectralOperatorError>>()?;
+            let mut model_prediction = SmallVec::<[Complex64; 4]>::new();
+            model_prediction.resize(polarization.model_coordinates().len(), Complex64::default());
             let mut touches_core = false;
             let has_spectral_support = first.spectral_values().next().is_some();
             for domain_ordinal in 0..self.operators.len() {
@@ -2809,7 +2790,7 @@ impl CompleteDataOwnerState {
                 &group
                     .iter()
                     .map(|weighted| weighted.selected().address.correlation_type)
-                    .collect::<Vec<_>>(),
+                    .collect::<SmallVec<[_; 4]>>(),
                 selected.parallactic_angles_rad(),
                 MuellerMatrix::identity(),
             )
@@ -2825,7 +2806,7 @@ impl CompleteDataOwnerState {
             {
                 let model_coordinates = (0..polarization.model_coordinates().len())
                     .map(|coordinate| operator.predict_stencil_polarization(&stencil, coordinate))
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 for predicted in polarization
                     .predict(&model_coordinates)
                     .map_err(|_| SpectralOperatorError::GeneratedNonfinite)?
@@ -3024,9 +3005,10 @@ pub(crate) fn polarization_diagonal(
     operator: &PolarizationOperator,
     weights: &[f64],
     flags: &[bool],
-) -> Vec<f64> {
+) -> SmallVec<[f64; 4]> {
     let columns = operator.model_coordinates().len();
-    let mut diagonal = vec![0.0; columns];
+    let mut diagonal = SmallVec::<[f64; 4]>::new();
+    diagonal.resize(columns, 0.0);
     for (row, (&weight, &flag)) in weights.iter().zip(flags).enumerate() {
         if flag || weight == 0.0 {
             continue;
@@ -3042,7 +3024,7 @@ fn polarization_published_weights(
     operator: &PolarizationOperator,
     weights: &[f64],
     flags: &[bool],
-) -> Vec<f64> {
+) -> SmallVec<[f64; 4]> {
     use casa_imaging_model::PolarizationCoordinate::{StokesI, StokesQ, StokesU, StokesV};
 
     if operator.feed_basis() == crate::polarization_operator::FeedBasis::Stokes
@@ -3077,8 +3059,8 @@ fn polarization_published_weights(
 
 pub(crate) fn polarization_effective_flags(
     operator: &PolarizationOperator,
-    mut flags: Vec<bool>,
-) -> Vec<bool> {
+    mut flags: SmallVec<[bool; 4]>,
+) -> SmallVec<[bool; 4]> {
     if !matches!(
         operator.model_coordinates().first(),
         Some(
@@ -3103,32 +3085,6 @@ pub(crate) fn polarization_effective_flags(
         }
     }
     flags
-}
-
-pub(crate) fn polarization_effective_weights(
-    operator: &PolarizationOperator,
-    mut weights: Vec<f64>,
-) -> Vec<f64> {
-    if !matches!(
-        operator.model_coordinates().first(),
-        Some(
-            PolarizationCoordinate::StokesI
-                | PolarizationCoordinate::StokesQ
-                | PolarizationCoordinate::StokesU
-                | PolarizationCoordinate::StokesV
-        )
-    ) || operator.feed_basis() == crate::polarization_operator::FeedBasis::Stokes
-    {
-        return weights;
-    }
-    for (first, second) in polarization_correlation_pairs(operator) {
-        if let (Some(first), Some(second)) = (first, second) {
-            let paired = 0.5 * (weights[first] + weights[second]);
-            weights[first] = paired;
-            weights[second] = paired;
-        }
-    }
-    weights
 }
 
 fn polarization_correlation_pairs(
@@ -3176,6 +3132,25 @@ pub(crate) fn accept_weighted_input(
     apply_input_policy(
         nonfinite,
         sample.row_flag || sample.parallel_hand_group_flag,
+        finite_values,
+    )
+}
+
+pub(crate) fn accept_polarization_input(
+    sample: &crate::weighting::WeightingSelectedSample,
+    finite_values: FiniteValuePolicy,
+) -> Result<bool, SpectralOperatorError> {
+    let nonfinite = !sample.raw_input_weight().is_finite()
+        || sample.raw_input_weight() < 0.0
+        || match sample.visibility {
+            SelectedVisibilitySample::Float32(value) => !value.is_finite(),
+            SelectedVisibilitySample::Complex32(value) => {
+                value.into_iter().any(|component| !component.is_finite())
+            }
+        };
+    apply_input_policy(
+        nonfinite,
+        sample.row_flag || sample.channel_flag,
         finite_values,
     )
 }
@@ -5385,6 +5360,7 @@ mod tests {
     use ndarray::Array2;
     use num_complex::Complex64;
     use sha2::{Digest, Sha256};
+    use smallvec::SmallVec;
 
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
@@ -5395,8 +5371,8 @@ mod tests {
         SpectralOperatorSample, SpectralOperatorWorkload, SpectralSlabOperator, SpectralSlabPlan,
         StandardConvolution, TapSpan, apply_finite_value_policy, apply_input_policy,
         casa_persistent_complex, checked_cells, polarization_diagonal,
-        polarization_effective_flags, polarization_effective_weights,
-        polarization_published_weights, reconstruction_model_binding, scatter_chart_planes,
+        polarization_effective_flags, polarization_published_weights, reconstruction_model_binding,
+        scatter_chart_planes,
     };
     use crate::block_normal::BlockNormalPlan;
     use crate::{
@@ -6441,15 +6417,26 @@ mod tests {
             MuellerMatrix::identity(),
         )
         .expect("linear full-Stokes operator");
-        let flags = polarization_effective_flags(&operator, vec![false, true, false, false]);
+        let flags = polarization_effective_flags(
+            &operator,
+            SmallVec::from_buf([false, true, false, false]),
+        );
         let published = polarization_published_weights(&operator, &[2.0, 3.0, 5.0, 7.0], &flags);
-        let weights = polarization_effective_weights(&operator, vec![2.0, 3.0, 5.0, 7.0]);
-        assert_eq!(flags, [false, true, true, false]);
-        assert_eq!(published, [2.0, 2.0, 0.0, 0.0]);
-        assert_eq!(weights, [4.5, 4.0, 4.0, 4.5]);
+        assert_eq!(flags.as_slice(), &[false, true, true, false]);
+        assert_eq!(published.as_slice(), &[2.0, 2.0, 0.0, 0.0]);
         assert_eq!(
-            polarization_diagonal(&operator, &weights, &flags),
-            [9.0, 9.0, 0.0, 0.0]
+            polarization_diagonal(&operator, &[2.0, 3.0, 5.0, 7.0], &flags).as_slice(),
+            &[9.0, 9.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            polarization_diagonal(
+                &operator,
+                &[2.0, 3.0, 5.0, 7.0],
+                &[false, false, false, false],
+            )
+            .as_slice(),
+            &[9.0, 9.0, 8.0, 8.0],
+            "the scientific adjoint retains each lane's unequal raw weight",
         );
     }
 

@@ -481,6 +481,7 @@ impl WeightingAlgorithmState {
             problem,
             max_block_samples: plan.limits.max_block_samples,
             block,
+            pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
             coverage: CoverageEncoder::new(),
@@ -513,6 +514,7 @@ impl WeightingAlgorithmState {
             problem,
             max_block_samples: plan.limits.max_block_samples,
             block,
+            pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
             coverage: CoverageEncoder::derived(proof.coverage()),
@@ -856,6 +858,7 @@ impl WeightingSumWeightPhase {
             sum: self,
             density_prepass,
             block: Vec::with_capacity(plan.limits.max_block_samples),
+            pending: None,
             max_block_samples: plan.limits.max_block_samples,
             peak_weighted_capacity: plan.limits.max_block_samples,
             block_sequence: 0,
@@ -940,6 +943,7 @@ pub struct FusedWeightingPhase {
     sum: WeightingSumWeightPhase,
     density_prepass: bool,
     block: Vec<WeightingSampleValue>,
+    pending: Option<WeightingSampleValue>,
     max_block_samples: usize,
     peak_weighted_capacity: usize,
     block_sequence: u64,
@@ -957,20 +961,29 @@ impl FusedWeightingPhase {
         let weighted = self
             .sum
             .weighted_sample(problem, sample.into(), contributions)?;
-        let emitted = self.flush_before_group(&weighted)?;
+        let emitted = self
+            .flush_before_group(&weighted)?
+            .then(|| self.take_block())
+            .transpose()?;
         self.coverage.push(&weighted);
-        self.block.push(weighted);
-        if emitted.is_some() {
-            Ok(emitted)
-        } else if self.block.len() == self.max_block_samples
-            && self
-                .block
-                .last()
-                .is_some_and(|value| value.sample.ends_correlation_group())
-        {
-            self.take_block().map(Some)
+        if let Some(emitted) = emitted {
+            self.pending = Some(weighted);
+            Ok(Some(emitted))
         } else {
-            Ok(None)
+            if self.block.capacity() == 0 {
+                self.block = Vec::with_capacity(self.max_block_samples);
+            }
+            self.block.push(weighted);
+            if self.block.len() == self.max_block_samples
+                && self
+                    .block
+                    .last()
+                    .is_some_and(|value| value.sample.ends_correlation_group())
+            {
+                self.take_block().map(Some)
+            } else {
+                Ok(None)
+            }
         }
     }
 
@@ -991,6 +1004,9 @@ impl FusedWeightingPhase {
             return Err(WeightingError::ReturnedBlockMismatch);
         }
         block.samples.clear();
+        if let Some(pending) = self.pending.take() {
+            block.samples.push(pending);
+        }
         self.block = block.samples;
         Ok(())
     }
@@ -1006,6 +1022,9 @@ impl FusedWeightingPhase {
         ),
         WeightingError,
     > {
+        if self.pending.is_some() {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
         let final_block = if self.block.is_empty() {
             None
         } else {
@@ -1073,10 +1092,7 @@ impl FusedWeightingPhase {
         })
     }
 
-    fn flush_before_group(
-        &mut self,
-        weighted: &WeightingSampleValue,
-    ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
+    fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
         if weighted.sample.correlation_group_size() > self.max_block_samples {
             return Err(WeightingError::ResidencyOverflow);
         }
@@ -1088,9 +1104,9 @@ impl FusedWeightingPhase {
                 .checked_add(weighted.sample.correlation_group_size())
                 .is_none_or(|size| size > self.max_block_samples)
         {
-            self.take_block().map(Some)
+            Ok(true)
         } else {
-            Ok(None)
+            Ok(false)
         }
     }
 }
@@ -1335,6 +1351,7 @@ pub struct WeightingReplayPhase<'a> {
     problem: &'a CompiledProblem,
     max_block_samples: usize,
     block: Vec<WeightingSampleValue>,
+    pending: Option<WeightingSampleValue>,
     peak_weighted_capacity: usize,
     block_sequence: u64,
     coverage: CoverageEncoder,
@@ -1374,27 +1391,33 @@ impl WeightingReplayPhase<'_> {
             sample,
             spectral_values,
         };
-        let emitted = self.flush_before_group(&weighted)?;
+        let emitted = self
+            .flush_before_group(&weighted)?
+            .then(|| self.take_block())
+            .transpose()?;
         self.coverage.push(&weighted);
         self.sample_count = self
             .sample_count
             .checked_add(1)
             .ok_or(WeightingError::SampleCountOverflow)?;
-        if self.block.capacity() == 0 {
-            self.block = Vec::with_capacity(self.max_block_samples);
-        }
-        self.block.push(weighted);
-        if emitted.is_some() {
-            Ok(emitted)
-        } else if self.block.len() == self.max_block_samples
-            && self
-                .block
-                .last()
-                .is_some_and(|value| value.sample.ends_correlation_group())
-        {
-            self.take_block().map(Some)
+        if let Some(emitted) = emitted {
+            self.pending = Some(weighted);
+            Ok(Some(emitted))
         } else {
-            Ok(None)
+            if self.block.capacity() == 0 {
+                self.block = Vec::with_capacity(self.max_block_samples);
+            }
+            self.block.push(weighted);
+            if self.block.len() == self.max_block_samples
+                && self
+                    .block
+                    .last()
+                    .is_some_and(|value| value.sample.ends_correlation_group())
+            {
+                self.take_block().map(Some)
+            } else {
+                Ok(None)
+            }
         }
     }
 
@@ -1411,6 +1434,9 @@ impl WeightingReplayPhase<'_> {
             return Err(WeightingError::ReturnedBlockMismatch);
         }
         block.samples.clear();
+        if let Some(pending) = self.pending.take() {
+            block.samples.push(pending);
+        }
         self.block = block.samples;
         Ok(())
     }
@@ -1419,6 +1445,9 @@ impl WeightingReplayPhase<'_> {
     pub fn finish(
         mut self,
     ) -> Result<(Option<WeightingReplayChunk>, WeightingReplaySummary), WeightingError> {
+        if self.pending.is_some() {
+            return Err(WeightingError::ReturnedBlockMismatch);
+        }
         let final_block = if self.block.is_empty() {
             None
         } else {
@@ -1497,10 +1526,7 @@ impl WeightingReplayPhase<'_> {
         })
     }
 
-    fn flush_before_group(
-        &mut self,
-        weighted: &WeightingSampleValue,
-    ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
+    fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
         if weighted.sample.correlation_group_size() > self.max_block_samples {
             return Err(WeightingError::ResidencyOverflow);
         }
@@ -1512,9 +1538,9 @@ impl WeightingReplayPhase<'_> {
                 .checked_add(weighted.sample.correlation_group_size())
                 .is_none_or(|size| size > self.max_block_samples)
         {
-            self.take_block().map(Some)
+            Ok(true)
         } else {
-            Ok(None)
+            Ok(false)
         }
     }
 }

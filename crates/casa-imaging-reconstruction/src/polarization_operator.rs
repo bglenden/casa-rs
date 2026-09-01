@@ -4,6 +4,7 @@
 
 use casa_imaging_model::{CorrelationType, PolarizationCoordinate};
 use num_complex::Complex64;
+use smallvec::SmallVec;
 use thiserror::Error;
 
 type Coherency = [[Complex64; 2]; 2];
@@ -82,10 +83,10 @@ pub enum PolarizationOperatorError {
 /// silently select a different polarization transform.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PolarizationOperator {
-    model_coordinates: Box<[PolarizationCoordinate]>,
-    correlations: Box<[CorrelationType]>,
+    model_coordinates: SmallVec<[PolarizationCoordinate; 4]>,
+    correlations: SmallVec<[CorrelationType; 4]>,
     feed_basis: FeedBasis,
-    coefficients: Box<[Complex64]>,
+    coefficients: SmallVec<[Complex64; 16]>,
 }
 
 impl PolarizationOperator {
@@ -104,7 +105,7 @@ impl PolarizationOperator {
         {
             return Err(PolarizationOperatorError::InvalidParallacticAngle);
         }
-        let mut coefficients = Vec::with_capacity(correlations.len() * model_coordinates.len());
+        let mut coefficients = SmallVec::<[Complex64; 16]>::new();
         if feed_basis == FeedBasis::Stokes {
             if coordinate_category(model_coordinates[0]) != PolarizationFamily::Stokes
                 || mueller != MuellerMatrix::identity()
@@ -133,10 +134,10 @@ impl PolarizationOperator {
             }
         }
         Ok(Self {
-            model_coordinates: model_coordinates.into(),
-            correlations: correlations.into(),
+            model_coordinates: model_coordinates.iter().copied().collect(),
+            correlations: correlations.iter().copied().collect(),
             feed_basis,
-            coefficients: coefficients.into_boxed_slice(),
+            coefficients,
         })
     }
 
@@ -148,19 +149,19 @@ impl PolarizationOperator {
 
     /// Return requested reconstruction coordinates in operator-column order.
     #[must_use]
-    pub const fn model_coordinates(&self) -> &[PolarizationCoordinate] {
+    pub fn model_coordinates(&self) -> &[PolarizationCoordinate] {
         &self.model_coordinates
     }
 
     /// Return selected correlations in operator-row order.
     #[must_use]
-    pub const fn correlations(&self) -> &[CorrelationType] {
+    pub fn correlations(&self) -> &[CorrelationType] {
         &self.correlations
     }
 
     /// Return the compiled row-major correlation-by-model coefficient matrix.
     #[must_use]
-    pub const fn coefficients(&self) -> &[Complex64] {
+    pub fn coefficients(&self) -> &[Complex64] {
         &self.coefficients
     }
 
@@ -168,7 +169,7 @@ impl PolarizationOperator {
     pub fn predict(
         &self,
         model: &[Complex64],
-    ) -> Result<Vec<Complex64>, PolarizationOperatorError> {
+    ) -> Result<SmallVec<[Complex64; 4]>, PolarizationOperatorError> {
         if model.len() != self.model_coordinates.len() {
             return Err(PolarizationOperatorError::ShapeMismatch);
         }
@@ -196,14 +197,15 @@ impl PolarizationOperator {
         visibilities: &[Complex64],
         weights: &[f64],
         flags: &[bool],
-    ) -> Result<Vec<Complex64>, PolarizationOperatorError> {
+    ) -> Result<SmallVec<[Complex64; 4]>, PolarizationOperatorError> {
         if visibilities.len() != self.correlations.len()
             || weights.len() != self.correlations.len()
             || flags.len() != self.correlations.len()
         {
             return Err(PolarizationOperatorError::ShapeMismatch);
         }
-        let mut result = vec![Complex64::default(); self.model_coordinates.len()];
+        let mut result = SmallVec::<[Complex64; 4]>::new();
+        result.resize(self.model_coordinates.len(), Complex64::default());
         for (row_index, ((visibility, weight), flagged)) in
             visibilities.iter().zip(weights).zip(flags).enumerate()
         {
@@ -553,7 +555,7 @@ mod tests {
                 &[true, false, false, false],
             )
             .unwrap();
-        assert_eq!(adjoint, [Complex64::default(); 4]);
+        assert_eq!(adjoint.as_slice(), &[Complex64::default(); 4]);
     }
 
     #[test]

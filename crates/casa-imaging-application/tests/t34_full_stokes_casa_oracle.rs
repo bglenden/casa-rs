@@ -16,6 +16,7 @@ use casa_imaging_application::{
 };
 use casa_ms::MeasurementSet;
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
+use casa_types::ArrayValue;
 
 const DATASET: &str = "measurementset/vla/refim_point_stokes.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T34_CASA_PREFIX";
@@ -30,6 +31,7 @@ fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> 
     );
     let source = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
         .ok_or("slow-parity casatestdata root is unavailable")?;
+    let selected = selected_correlation_contract(&source)?;
     let staging = tempfile::tempdir()?;
     let measurement_set = staging.path().join("refim_point_stokes.ms");
     MeasurementSet::open(&source)?.save_as(&measurement_set)?;
@@ -39,6 +41,16 @@ fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> 
     let result = execute_continuum(request(measurement_set, rust_prefix.clone()))?;
     assert_eq!(result.minor_iterations, 20);
     assert!(result.outcome.output.major_cycle_count >= 2);
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .sample_count(),
+        selected.sample_count,
+        "Rust selected exactly the CASA RR/RL/LR/LL cells",
+    );
 
     let mut failures = Vec::new();
     for product in PRODUCTS {
@@ -79,6 +91,13 @@ fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> 
         let nrms = normalized_rms(&rust.values, &casa.values, &common_valid);
         if product == ".sumwt" {
             eprintln!("t34_sumwt rust={:?} casa={:?}", rust.values, casa.values);
+            for (actual, expected) in rust.values.iter().zip(selected.sum_weights) {
+                if (f64::from(*actual) - expected).abs() > 1.0e-5 * expected.max(1.0) {
+                    failures.push(format!(
+                        ".sumwt Rust value {actual} != selected CASA flag/weight reduction {expected}"
+                    ));
+                }
+            }
         }
         eprintln!(
             "t34_casa_parity product={product} nrms={nrms:.9e} rust_units={:?} casa_units={:?}",
@@ -90,6 +109,60 @@ fn t34_full_stokes_hogbom_matches_casa_products() -> Result<(), Box<dyn Error>> 
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
+}
+
+struct SelectedCorrelationContract {
+    sample_count: u64,
+    sum_weights: [f64; 4],
+}
+
+fn selected_correlation_contract(
+    source: &Path,
+) -> Result<SelectedCorrelationContract, Box<dyn Error>> {
+    let measurement_set = MeasurementSet::open(source)?;
+    let polarization_id = usize::try_from(measurement_set.data_description()?.polarization_id(0)?)?;
+    assert_eq!(
+        measurement_set.polarization()?.corr_type(polarization_id)?,
+        [5, 6, 7, 8],
+        "CASA source correlation order must be RR/RL/LR/LL",
+    );
+    let mut sum_weights = [0.0_f64; 4];
+    let flag_column = measurement_set.flag_column();
+    let flag_row_column = measurement_set.flag_row_column();
+    let weight_column = measurement_set.weight_column();
+    for row in 0..measurement_set.row_count() {
+        let ArrayValue::Bool(flags) = flag_column.get(row)? else {
+            return Err("CASA FLAG cell is not boolean".into());
+        };
+        let ArrayValue::Float32(weights) = weight_column.get(row)? else {
+            return Err("CASA WEIGHT cell is not float32".into());
+        };
+        if flags.shape().first().copied() != Some(4) || weights.len() != 4 {
+            return Err("CASA correlation cell does not contain four selected lanes".into());
+        }
+        let row_flag = flag_row_column.get(row)?;
+        let paired = |first: usize, second: usize| {
+            if row_flag || flags[[first, 0]] || flags[[second, 0]] {
+                0.0
+            } else {
+                f64::from(weights[first].min(weights[second]))
+            }
+        };
+        let parallel = paired(0, 3);
+        let cross = paired(1, 2);
+        for (sum, value) in sum_weights
+            .iter_mut()
+            .zip([parallel, cross, cross, parallel])
+        {
+            *sum += value;
+        }
+    }
+    Ok(SelectedCorrelationContract {
+        sample_count: u64::try_from(measurement_set.row_count())?
+            .checked_mul(4)
+            .ok_or("selected sample count overflow")?,
+        sum_weights,
+    })
 }
 
 fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingRequest {

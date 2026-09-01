@@ -793,7 +793,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                         .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                 );
             }
-            if self.frame_sequences.is_empty() || self.groups.is_empty() {
+            if self.frame_sequences.is_empty() {
                 return Err(SpectralOperatorError::IncompleteCoverage);
             }
             self.prepare_prediction_lanes()?;

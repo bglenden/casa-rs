@@ -157,7 +157,7 @@ fn populate_fixture(
     let direction = ArrayValue::Float64(
         ArrayD::from_shape_vec(vec![2, 1], vec![1.0, 0.5]).expect("direction shape"),
     );
-    let correlation_codes = if polarized { vec![5, 6, 7, 8] } else { vec![5] };
+    let correlation_codes = if polarized { vec![5, 6, 7, 8] } else { vec![1] };
     let correlation_count = correlation_codes.len();
     let correlation_products = if polarized {
         vec![0, 0, 0, 1, 1, 0, 1, 1]

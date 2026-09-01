@@ -16,6 +16,7 @@ use casa_imaging_model::{
 use ndarray::Array2;
 use num_complex::Complex64;
 use sha2::{Digest, Sha256};
+use smallvec::SmallVec;
 
 mod two_domain;
 use two_domain::{
@@ -32,8 +33,8 @@ use crate::{
         PreparedSpectralOperator, ReusableNormalState, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps,
         SpectralOperatorError, SpectralOperatorPass, SpectralOperatorSpecification,
         SpectralPrimitiveCatalog, SpectralSlabOperator, StandardConvolution, TapSpan,
-        accept_weighted_input, combine_chart_updates, final_correlation_weight,
-        polarization_diagonal, polarization_effective_flags, polarization_effective_weights,
+        accept_polarization_input, accept_weighted_input, combine_chart_updates,
+        final_correlation_weight, polarization_diagonal, polarization_effective_flags,
         selected_model_projection,
     },
     weighting::{
@@ -632,7 +633,7 @@ impl GriddedNormalOperatorCompiler {
                 &correlations
                     .iter()
                     .map(|weighted| weighted.selected().address().correlation_type)
-                    .collect::<Vec<_>>(),
+                    .collect::<SmallVec<[_; 4]>>(),
                 selected.parallactic_angles_rad(),
                 MuellerMatrix::identity(),
             )
@@ -640,9 +641,9 @@ impl GriddedNormalOperatorCompiler {
             let flags = correlations
                 .iter()
                 .map(|weighted| {
-                    accept_weighted_input(weighted.selected(), self.finite_values).map(|ok| !ok)
+                    accept_polarization_input(weighted.selected(), self.finite_values).map(|ok| !ok)
                 })
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<SmallVec<[_; 4]>, _>>()?;
             let flags = polarization_effective_flags(&operator, flags);
             for spectral_ordinal in 0..first.spectral_values().count() {
                 let first_spectral = first
@@ -661,8 +662,7 @@ impl GriddedNormalOperatorCompiler {
                         }
                         final_correlation_weight(weighted, spectral.imaging_weight())
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
-                let weights = polarization_effective_weights(&operator, weights);
+                    .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 let diagonal = polarization_diagonal(&operator, &weights, &flags);
                 for (polarization, imaging_weight) in diagonal.into_iter().enumerate() {
                     if imaging_weight == 0.0 {
