@@ -107,76 +107,73 @@
 <a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub </span>cf_cache: PathBuf,
 <a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Requested resident cache ceiling.
 <a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub </span>cf_resident_bytes: usize,
-<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Requested facet count.
-<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub </span>facets: usize,
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Explicit W-plane count.
-<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub </span>w_plane_count: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="doccomment">/// Optional PSF phase centre in radians.
-<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">pub </span>psf_phase_center_direction_rad: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;,
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Optional voltage-pattern table.
-<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">pub </span>vp_table: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="doccomment">/// Enable the aperture term.
-<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub </span>a_term: bool,
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Enable the prolate-spheroidal term.
-<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub </span>ps_term: bool,
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Enable wideband A-projection.
-<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="kw">pub </span>wb_awp: bool,
-<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Select conjugate-frequency beams.
-<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub </span>conjugate_beams: bool,
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Parallactic-angle computation step in degrees.
-<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">pub </span>compute_pa_step_deg: f64,
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// Parallactic-angle rotation step in degrees.
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub </span>rotate_pa_step_deg: f64,
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Pointing-offset standard deviations in arcseconds.
-<a href=#131 id=131 data-nosnippet>131</a>    </span><span class="kw">pub </span>pointing_offset_sigdev: Vec&lt;f64&gt;,
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="doccomment">/// Use POINTING-table directions.
-<a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">pub </span>use_pointing: bool,
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Enable mosaic weight-density behavior.
-<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">pub </span>mosaic_weighting: bool,
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="doccomment">/// Requested image normalization.
-<a href=#137 id=137 data-nosnippet>137</a>    </span><span class="kw">pub </span>normalization: AwProjectNormalization,
-<a href=#138 id=138 data-nosnippet>138</a>}
-<a href=#139 id=139 data-nosnippet>139</a>
-<a href=#140 id=140 data-nosnippet>140</a><span class="kw">impl </span>AwProjectControls {
-<a href=#141 id=141 data-nosnippet>141</a>    <span class="doccomment">/// CASA task defaults, transported without executing A/W projection.
-<a href=#142 id=142 data-nosnippet>142</a>    </span><span class="kw">pub fn </span>casa_defaults(cf_cache: PathBuf) -&gt; <span class="self">Self </span>{
-<a href=#143 id=143 data-nosnippet>143</a>        <span class="self">Self </span>{
-<a href=#144 id=144 data-nosnippet>144</a>            cf_cache,
-<a href=#145 id=145 data-nosnippet>145</a>            cf_resident_bytes: <span class="number">256 </span>* <span class="number">1024 </span>* <span class="number">1024</span>,
-<a href=#146 id=146 data-nosnippet>146</a>            facets: <span class="number">1</span>,
-<a href=#147 id=147 data-nosnippet>147</a>            w_plane_count: <span class="prelude-val">None</span>,
-<a href=#148 id=148 data-nosnippet>148</a>            psf_phase_center_direction_rad: <span class="prelude-val">None</span>,
-<a href=#149 id=149 data-nosnippet>149</a>            vp_table: <span class="prelude-val">None</span>,
-<a href=#150 id=150 data-nosnippet>150</a>            a_term: <span class="bool-val">true</span>,
-<a href=#151 id=151 data-nosnippet>151</a>            ps_term: <span class="bool-val">false</span>,
-<a href=#152 id=152 data-nosnippet>152</a>            wb_awp: <span class="bool-val">true</span>,
-<a href=#153 id=153 data-nosnippet>153</a>            conjugate_beams: <span class="bool-val">true</span>,
-<a href=#154 id=154 data-nosnippet>154</a>            compute_pa_step_deg: <span class="number">360.0</span>,
-<a href=#155 id=155 data-nosnippet>155</a>            rotate_pa_step_deg: <span class="number">360.0</span>,
-<a href=#156 id=156 data-nosnippet>156</a>            pointing_offset_sigdev: <span class="macro">vec!</span>[<span class="number">0.0</span>],
-<a href=#157 id=157 data-nosnippet>157</a>            use_pointing: <span class="bool-val">false</span>,
-<a href=#158 id=158 data-nosnippet>158</a>            mosaic_weighting: <span class="bool-val">false</span>,
-<a href=#159 id=159 data-nosnippet>159</a>            normalization: AwProjectNormalization::FlatNoise,
-<a href=#160 id=160 data-nosnippet>160</a>        }
-<a href=#161 id=161 data-nosnippet>161</a>    }
-<a href=#162 id=162 data-nosnippet>162</a>}
-<a href=#163 id=163 data-nosnippet>163</a>
-<a href=#164 id=164 data-nosnippet>164</a><span class="doccomment">/// Final native continuum stop reason projected to the task surface.
-<a href=#165 id=165 data-nosnippet>165</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-<a href=#166 id=166 data-nosnippet>166</a></span><span class="kw">pub enum </span>CleanStopReason {
-<a href=#167 id=167 data-nosnippet>167</a>    <span class="doccomment">/// Global threshold satisfied.
-<a href=#168 id=168 data-nosnippet>168</a>    </span>GlobalThresholdReached,
-<a href=#169 id=169 data-nosnippet>169</a>    <span class="doccomment">/// Noise-derived threshold satisfied.
-<a href=#170 id=170 data-nosnippet>170</a>    </span>NsigmaThresholdReached,
-<a href=#171 id=171 data-nosnippet>171</a>    <span class="doccomment">/// Current cycle threshold satisfied.
-<a href=#172 id=172 data-nosnippet>172</a>    </span>CycleThresholdReached,
-<a href=#173 id=173 data-nosnippet>173</a>    <span class="doccomment">/// Iteration budget exhausted.
-<a href=#174 id=174 data-nosnippet>174</a>    </span>IterationLimitReached,
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="doccomment">/// Major-cycle budget exhausted.
-<a href=#176 id=176 data-nosnippet>176</a>    </span>MajorCycleLimitReached,
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="doccomment">/// No eligible pixel remained.
-<a href=#178 id=178 data-nosnippet>178</a>    </span>NoCleanablePixels,
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="doccomment">/// Residual behavior indicated divergence.
-<a href=#180 id=180 data-nosnippet>180</a>    </span>DivergenceDetected,
-<a href=#181 id=181 data-nosnippet>181</a>}
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Explicit W-plane count.
+<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub </span>w_plane_count: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Optional PSF phase centre in radians.
+<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub </span>psf_phase_center_direction_rad: <span class="prelude-ty">Option</span>&lt;[f64; <span class="number">2</span>]&gt;,
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="doccomment">/// Optional voltage-pattern table.
+<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">pub </span>vp_table: <span class="prelude-ty">Option</span>&lt;PathBuf&gt;,
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Enable the aperture term.
+<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="kw">pub </span>a_term: bool,
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="doccomment">/// Enable the prolate-spheroidal term.
+<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub </span>ps_term: bool,
+<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// Enable wideband A-projection.
+<a href=#121 id=121 data-nosnippet>121</a>    </span><span class="kw">pub </span>wb_awp: bool,
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Select conjugate-frequency beams.
+<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="kw">pub </span>conjugate_beams: bool,
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Parallactic-angle computation step in degrees.
+<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="kw">pub </span>compute_pa_step_deg: f64,
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="doccomment">/// Parallactic-angle rotation step in degrees.
+<a href=#127 id=127 data-nosnippet>127</a>    </span><span class="kw">pub </span>rotate_pa_step_deg: f64,
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="doccomment">/// Pointing-offset standard deviations in arcseconds.
+<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">pub </span>pointing_offset_sigdev: Vec&lt;f64&gt;,
+<a href=#130 id=130 data-nosnippet>130</a>    <span class="doccomment">/// Use POINTING-table directions.
+<a href=#131 id=131 data-nosnippet>131</a>    </span><span class="kw">pub </span>use_pointing: bool,
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="doccomment">/// Enable mosaic weight-density behavior.
+<a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">pub </span>mosaic_weighting: bool,
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Requested image normalization.
+<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">pub </span>normalization: AwProjectNormalization,
+<a href=#136 id=136 data-nosnippet>136</a>}
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a><span class="kw">impl </span>AwProjectControls {
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// CASA task defaults, transported without executing A/W projection.
+<a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">pub fn </span>casa_defaults(cf_cache: PathBuf) -&gt; <span class="self">Self </span>{
+<a href=#141 id=141 data-nosnippet>141</a>        <span class="self">Self </span>{
+<a href=#142 id=142 data-nosnippet>142</a>            cf_cache,
+<a href=#143 id=143 data-nosnippet>143</a>            cf_resident_bytes: <span class="number">256 </span>* <span class="number">1024 </span>* <span class="number">1024</span>,
+<a href=#144 id=144 data-nosnippet>144</a>            w_plane_count: <span class="prelude-val">None</span>,
+<a href=#145 id=145 data-nosnippet>145</a>            psf_phase_center_direction_rad: <span class="prelude-val">None</span>,
+<a href=#146 id=146 data-nosnippet>146</a>            vp_table: <span class="prelude-val">None</span>,
+<a href=#147 id=147 data-nosnippet>147</a>            a_term: <span class="bool-val">true</span>,
+<a href=#148 id=148 data-nosnippet>148</a>            ps_term: <span class="bool-val">false</span>,
+<a href=#149 id=149 data-nosnippet>149</a>            wb_awp: <span class="bool-val">true</span>,
+<a href=#150 id=150 data-nosnippet>150</a>            conjugate_beams: <span class="bool-val">true</span>,
+<a href=#151 id=151 data-nosnippet>151</a>            compute_pa_step_deg: <span class="number">360.0</span>,
+<a href=#152 id=152 data-nosnippet>152</a>            rotate_pa_step_deg: <span class="number">360.0</span>,
+<a href=#153 id=153 data-nosnippet>153</a>            pointing_offset_sigdev: <span class="macro">vec!</span>[<span class="number">0.0</span>],
+<a href=#154 id=154 data-nosnippet>154</a>            use_pointing: <span class="bool-val">false</span>,
+<a href=#155 id=155 data-nosnippet>155</a>            mosaic_weighting: <span class="bool-val">false</span>,
+<a href=#156 id=156 data-nosnippet>156</a>            normalization: AwProjectNormalization::FlatNoise,
+<a href=#157 id=157 data-nosnippet>157</a>        }
+<a href=#158 id=158 data-nosnippet>158</a>    }
+<a href=#159 id=159 data-nosnippet>159</a>}
+<a href=#160 id=160 data-nosnippet>160</a>
+<a href=#161 id=161 data-nosnippet>161</a><span class="doccomment">/// Final native continuum stop reason projected to the task surface.
+<a href=#162 id=162 data-nosnippet>162</a></span><span class="attr">#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+<a href=#163 id=163 data-nosnippet>163</a></span><span class="kw">pub enum </span>CleanStopReason {
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="doccomment">/// Global threshold satisfied.
+<a href=#165 id=165 data-nosnippet>165</a>    </span>GlobalThresholdReached,
+<a href=#166 id=166 data-nosnippet>166</a>    <span class="doccomment">/// Noise-derived threshold satisfied.
+<a href=#167 id=167 data-nosnippet>167</a>    </span>NsigmaThresholdReached,
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="doccomment">/// Current cycle threshold satisfied.
+<a href=#169 id=169 data-nosnippet>169</a>    </span>CycleThresholdReached,
+<a href=#170 id=170 data-nosnippet>170</a>    <span class="doccomment">/// Iteration budget exhausted.
+<a href=#171 id=171 data-nosnippet>171</a>    </span>IterationLimitReached,
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="doccomment">/// Major-cycle budget exhausted.
+<a href=#173 id=173 data-nosnippet>173</a>    </span>MajorCycleLimitReached,
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="doccomment">/// No eligible pixel remained.
+<a href=#175 id=175 data-nosnippet>175</a>    </span>NoCleanablePixels,
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="doccomment">/// Residual behavior indicated divergence.
+<a href=#177 id=177 data-nosnippet>177</a>    </span>DivergenceDetected,
+<a href=#178 id=178 data-nosnippet>178</a>}
 </code></pre></div></section></main></body></html>

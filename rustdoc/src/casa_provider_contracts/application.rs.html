@@ -245,14 +245,14 @@
 <a href=#245 id=245 data-nosnippet>245</a>    <span class="attr">#[test]
 <a href=#246 id=246 data-nosnippet>246</a>    </span><span class="kw">fn </span>builtin_catalog_covers_every_surface_and_one_launcher() {
 <a href=#247 id=247 data-nosnippet>247</a>        <span class="kw">let </span>catalog = builtin_application_catalog().expect(<span class="string">"valid application catalog"</span>);
-<a href=#248 id=248 data-nosnippet>248</a>        <span class="macro">assert_eq!</span>(catalog.applications.len(), <span class="number">43</span>);
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="macro">assert_eq!</span>(catalog.applications.len(), <span class="number">42</span>);
 <a href=#249 id=249 data-nosnippet>249</a>        <span class="macro">assert_eq!</span>(
 <a href=#250 id=250 data-nosnippet>250</a>            catalog
 <a href=#251 id=251 data-nosnippet>251</a>                .applications
 <a href=#252 id=252 data-nosnippet>252</a>                .iter()
 <a href=#253 id=253 data-nosnippet>253</a>                .filter(|application| application.kind == ApplicationKind::Task)
 <a href=#254 id=254 data-nosnippet>254</a>                .count(),
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="number">42
+<a href=#255 id=255 data-nosnippet>255</a>            <span class="number">41
 <a href=#256 id=256 data-nosnippet>256</a>        </span>);
 <a href=#257 id=257 data-nosnippet>257</a>        <span class="kw">let </span>launcher = catalog.application(<span class="string">"casars"</span>).expect(<span class="string">"launcher entry"</span>);
 <a href=#258 id=258 data-nosnippet>258</a>        <span class="macro">assert_eq!</span>(launcher.kind, ApplicationKind::Launcher);

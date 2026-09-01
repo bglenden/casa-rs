@@ -863,8 +863,10 @@ manifest runner stable while the lower-level commands evolve.</p>
 <h2 id="measurementset-staging">MeasurementSet Staging<a class="headerlink" href="#measurementset-staging" title="Permanent link">&para;</a></h2>
 <p>The benchmark script supports two MeasurementSet staging modes:</p>
 <ul>
-<li><code>copy</code>: copy the input MS into the script temp directory before timing. This
-  is appropriate only for small, intentionally disposable workloads.</li>
+<li><code>copy</code>: copy the input MS into the script temp directory, explicitly
+  initialize that disposable copy's casa-rs imaging-owner manifest, and use it
+  for Rust while CASA reads the unchanged source. This is appropriate only for
+  small, intentionally disposable workloads.</li>
 <li><code>direct</code>: read the manifest MS path in place. This is the default. It can
   also be set explicitly through <code>CASA_RS_BENCH_MS_STAGING=direct</code> when
   invoking <code>run_workload.py</code>, or through <code>run.ms_staging: "direct"</code> in a

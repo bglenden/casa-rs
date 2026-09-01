@@ -721,7 +721,7 @@
 <a href=#721 id=721 data-nosnippet>721</a>                            <span class="kw">let </span>group_ordinal = u32::try_from(<span class="self">self</span>.groups.len())
 <a href=#722 id=722 data-nosnippet>722</a>                                .map_err(|<span class="kw">_</span>| SpectralOperatorError::CoverageOverflow)<span class="question-mark">?</span>;
 <a href=#723 id=723 data-nosnippet>723</a>                            <span class="kw">let </span>tile_ordinal =
-<a href=#724 id=724 data-nosnippet>724</a>                                catalogs.tile_ordinal(record.domain_ordinal, record.taps)<span class="question-mark">?</span>;
+<a href=#724 id=724 data-nosnippet>724</a>                                catalogs.tile_ordinal(record.chart_ordinal, record.taps)<span class="question-mark">?</span>;
 <a href=#725 id=725 data-nosnippet>725</a>                            <span class="self">self</span>.classifications.push(GriddedNormalClassification {
 <a href=#726 id=726 data-nosnippet>726</a>                                tile_ordinal: u32::try_from(tile_ordinal)
 <a href=#727 id=727 data-nosnippet>727</a>                                    .map_err(|<span class="kw">_</span>| SpectralOperatorError::CoverageOverflow)<span class="question-mark">?</span>,
@@ -1330,7 +1330,7 @@
 <a href=#1330 id=1330 data-nosnippet>1330</a>                                )<span class="question-mark">?</span>;
 <a href=#1331 id=1331 data-nosnippet>1331</a>                                prediction += <span class="self">self
 <a href=#1332 id=1332 data-nosnippet>1332</a>                                    </span>.operators
-<a href=#1333 id=1333 data-nosnippet>1333</a>                                    .get(record.domain_ordinal)
+<a href=#1333 id=1333 data-nosnippet>1333</a>                                    .get(record.chart_ordinal)
 <a href=#1334 id=1334 data-nosnippet>1334</a>                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)<span class="question-mark">?
 <a href=#1335 id=1335 data-nosnippet>1335</a>                                    </span>.predict_gridded_normal(
 <a href=#1336 id=1336 data-nosnippet>1336</a>                                        record.output_channel,
@@ -1466,7 +1466,7 @@
 <a href=#1466 id=1466 data-nosnippet>1466</a>                                        <span class="kw-2">&amp;</span><span class="self">self</span>.tile_catalogs,
 <a href=#1467 id=1467 data-nosnippet>1467</a>                                        <span class="self">self</span>.program.manifest.specification.slab().total_channels(),
 <a href=#1468 id=1468 data-nosnippet>1468</a>                                    )<span class="question-mark">?</span>;
-<a href=#1469 id=1469 data-nosnippet>1469</a>                                    <span class="kw">if </span>record.domain_ordinal != domain_ordinal {
+<a href=#1469 id=1469 data-nosnippet>1469</a>                                    <span class="kw">if </span>record.chart_ordinal != domain_ordinal {
 <a href=#1470 id=1470 data-nosnippet>1470</a>                                        <span class="kw">return </span><span class="prelude-val">Err</span>(SpectralOperatorError::GriddedRecordMismatch);
 <a href=#1471 id=1471 data-nosnippet>1471</a>                                    }
 <a href=#1472 id=1472 data-nosnippet>1472</a>                                    <span class="kw">let </span>predicted = predicted
