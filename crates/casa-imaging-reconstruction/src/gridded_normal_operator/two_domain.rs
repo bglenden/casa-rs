@@ -8,6 +8,7 @@ use ndarray::Array2;
 use num_complex::Complex64;
 
 use super::*;
+use crate::spectral_operator::GriddedNormalLocalContribution;
 
 fn planned_vec<T>(capacity: usize) -> Result<Vec<T>, SpectralOperatorError> {
     let mut values = Vec::new();
@@ -1484,11 +1485,13 @@ impl GriddedNormalOperatorApply {
                                         .grid_gridded_normal_local_polarization(
                                             grids,
                                             compensations,
-                                            geometry.translated_taps(record.taps)?,
-                                            record.output_channel / polarizations,
-                                            record.output_channel % polarizations,
-                                            predicted,
-                                            record.forward_scale.conj() * record.imaging_weight,
+                                            GriddedNormalLocalContribution::new(
+                                                geometry.translated_taps(record.taps)?,
+                                                record.output_channel / polarizations,
+                                                record.output_channel % polarizations,
+                                                predicted,
+                                                record.forward_scale.conj() * record.imaging_weight,
+                                            ),
                                         )?;
                                 }
                                 GriddedNormalRecordLayout::Taylor(plan) => {

@@ -1471,7 +1471,7 @@ impl SpectralOperatorPrimitives {
             encoder.usize(continuum.coefficient_term_count());
             encoder.usize(line_terms);
             for line in &self.joint_line_term_by_channel {
-                encoder.usize(line.map_or(usize::MAX, |term| term));
+                encoder.usize(line.unwrap_or(usize::MAX));
             }
         }
         for value in &self.dirty {
@@ -3223,6 +3223,46 @@ pub(crate) struct SpectralSlabOperator {
     measurements: SpectralOperatorMeasurements,
 }
 
+struct SpectralSlabDefinition {
+    specification: Option<SpectralOperatorSpecification>,
+    chart_ordinal: usize,
+    domain_ordinal: usize,
+    facet_ordinal: usize,
+    window: Option<FacetWindow>,
+    geometry: SpectralOperatorGeometry,
+    slab: SpectralSlabPlan,
+    basis: SpectralBasisPlan,
+    polarization_count: usize,
+    joint_line_term_by_channel: Box<[Option<usize>]>,
+    output_channel_frequencies_hz: Box<[f64]>,
+}
+
+pub(crate) struct GriddedNormalLocalContribution {
+    local_taps: SampleTaps,
+    output_channel: usize,
+    polarization: usize,
+    predicted: Complex64,
+    adjoint_scale: Complex64,
+}
+
+impl GriddedNormalLocalContribution {
+    pub(crate) const fn new(
+        local_taps: SampleTaps,
+        output_channel: usize,
+        polarization: usize,
+        predicted: Complex64,
+        adjoint_scale: Complex64,
+    ) -> Self {
+        Self {
+            local_taps,
+            output_channel,
+            polarization,
+            predicted,
+            adjoint_scale,
+        }
+    }
+}
+
 impl fmt::Debug for SpectralSlabOperator {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -3247,23 +3287,25 @@ impl SpectralSlabOperator {
         fft: PreparedFft,
     ) -> Self {
         Self::new_inner(
-            None,
-            0,
-            0,
-            0,
-            None,
-            geometry,
-            slab,
-            if slab.total_channels() == 1 {
-                SpectralBasisPlan::Polynomial(
-                    BlockNormalPlan::constant(1.0).expect("positive test reference frequency"),
-                )
-            } else {
-                SpectralBasisPlan::ChannelLocal
+            SpectralSlabDefinition {
+                specification: None,
+                chart_ordinal: 0,
+                domain_ordinal: 0,
+                facet_ordinal: 0,
+                window: None,
+                geometry,
+                slab,
+                basis: if slab.total_channels() == 1 {
+                    SpectralBasisPlan::Polynomial(
+                        BlockNormalPlan::constant(1.0).expect("positive test reference frequency"),
+                    )
+                } else {
+                    SpectralBasisPlan::ChannelLocal
+                },
+                polarization_count: 1,
+                joint_line_term_by_channel: vec![None; slab.total_channels()].into_boxed_slice(),
+                output_channel_frequencies_hz: vec![1.0; slab.total_channels()].into_boxed_slice(),
             },
-            1,
-            vec![None; slab.total_channels()].into_boxed_slice(),
-            vec![1.0; slab.total_channels()].into_boxed_slice(),
             workload,
             fft,
             workload.max_replay_block_samples,
@@ -3271,21 +3313,24 @@ impl SpectralSlabOperator {
     }
 
     fn new_inner(
-        specification: Option<SpectralOperatorSpecification>,
-        chart_ordinal: usize,
-        domain_ordinal: usize,
-        facet_ordinal: usize,
-        window: Option<FacetWindow>,
-        geometry: SpectralOperatorGeometry,
-        slab: SpectralSlabPlan,
-        basis: SpectralBasisPlan,
-        polarization_count: usize,
-        joint_line_term_by_channel: Box<[Option<usize>]>,
-        output_channel_frequencies_hz: Box<[f64]>,
+        definition: SpectralSlabDefinition,
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
         prediction_capacity: usize,
     ) -> Self {
+        let SpectralSlabDefinition {
+            specification,
+            chart_ordinal,
+            domain_ordinal,
+            facet_ordinal,
+            window,
+            geometry,
+            slab,
+            basis,
+            polarization_count,
+            joint_line_term_by_channel,
+            output_channel_frequencies_hz,
+        } = definition;
         let gridder = StandardConvolution::new(&geometry);
         let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
         let plane_grids =
@@ -3351,17 +3396,19 @@ impl SpectralSlabOperator {
         prediction_capacity: usize,
     ) -> Self {
         Self::new_inner(
-            Some(specification.clone()),
-            chart.ordinal,
-            chart.domain_ordinal,
-            chart.facet_ordinal,
-            Some(chart.window),
-            chart.geometry,
-            specification.slab,
-            specification.basis,
-            specification.polarization_count(),
-            specification.joint_line_term_by_channel.clone(),
-            specification.output_channel_frequencies_hz.clone(),
+            SpectralSlabDefinition {
+                specification: Some(specification.clone()),
+                chart_ordinal: chart.ordinal,
+                domain_ordinal: chart.domain_ordinal,
+                facet_ordinal: chart.facet_ordinal,
+                window: Some(chart.window),
+                geometry: chart.geometry,
+                slab: specification.slab,
+                basis: specification.basis,
+                polarization_count: specification.polarization_count(),
+                joint_line_term_by_channel: specification.joint_line_term_by_channel.clone(),
+                output_channel_frequencies_hz: specification.output_channel_frequencies_hz.clone(),
+            },
             workload,
             fft,
             prediction_capacity,
@@ -4381,12 +4428,15 @@ impl SpectralSlabOperator {
         &self,
         grids: &mut [Array2<Complex64>],
         compensations: &mut [Array2<Complex64>],
-        local_taps: SampleTaps,
-        output_channel: usize,
-        polarization: usize,
-        predicted: Complex64,
-        adjoint_scale: Complex64,
+        contribution: GriddedNormalLocalContribution,
     ) -> Result<(), SpectralOperatorError> {
+        let GriddedNormalLocalContribution {
+            local_taps,
+            output_channel,
+            polarization,
+            predicted,
+            adjoint_scale,
+        } = contribution;
         if polarization >= self.polarization_count {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }

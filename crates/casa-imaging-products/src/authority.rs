@@ -1837,7 +1837,7 @@ fn domain_beam_slice(
     if beams.is_empty() {
         return Ok(beams);
     }
-    if domain_count == 0 || !beams.len().is_multiple_of(domain_count) {
+    if domain_count == 0 || beams.len() % domain_count != 0 {
         return Err(ProductsError::SourceLineageMismatch);
     }
     let channels = beams.len() / domain_count;

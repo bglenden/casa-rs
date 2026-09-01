@@ -1238,7 +1238,8 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
             first_round.join.final_model(),
             first_round.join.normal_state(),
         )
-        .expect("domain masks");
+        .expect("domain masks")
+        .into_parts();
     let alternate_plans = ImageDomainReconstructionMaskPlans::new([
         ReconstructionMaskPlan::FullPlane {
             coordinate: main_direction,
@@ -1254,7 +1255,8 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
             first_round.join.final_model(),
             first_round.join.normal_state(),
         )
-        .expect("alternate domain masks");
+        .expect("alternate domain masks")
+        .into_parts();
     assert_ne!(masks.generation_id(), alternate_masks.generation_id());
     let round = rerun_two_domain_with_masks(&problem, 143, first_round.join, &masks);
     let normal = round.join.normal_state();

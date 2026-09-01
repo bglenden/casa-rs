@@ -662,9 +662,8 @@ fn run_round_with_terms(
         ReconstructionBasis::JointContinuumLine { .. }
     ) {
         owner = owner
-            .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(joint_product_masks(
-                problem,
-                final_model_generation,
+            .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(Box::new(
+                joint_product_masks(problem, final_model_generation),
             )))
             .expect("bind joint final masks");
     }

@@ -32,52 +32,104 @@ const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 fn tiny_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "input.ms", false, false, 1, 2, 1, false)
+    measurement_set_fixture(
+        root,
+        "input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, false),
+    )
 }
 
 fn multi_row_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "multi-row-input.ms", false, false, 1, 2, 8, false)
+    measurement_set_fixture(
+        root,
+        "multi-row-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 1, 2, 8, false),
+    )
 }
 
 fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "polarized-input.ms", true, true, 2, 2, 1, false)
+    measurement_set_fixture(
+        root,
+        "polarized-input.ms",
+        MeasurementSetFixtureOptions::new(true, true, 2, 2, 1, false),
+    )
 }
 
 fn full_stokes_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "full-stokes-input.ms", true, false, 2, 27, 702, false)
+    measurement_set_fixture(
+        root,
+        "full-stokes-input.ms",
+        MeasurementSetFixtureOptions::new(true, false, 2, 27, 702, false),
+    )
 }
 
 fn spectral_line_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "line-input.ms", true, true, 4, 2, 1, false)
+    measurement_set_fixture(
+        root,
+        "line-input.ms",
+        MeasurementSetFixtureOptions::new(true, true, 4, 2, 1, false),
+    )
 }
 
 fn joint_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(root, "joint-input.ms", false, false, 4, 2, 1, false)
+    measurement_set_fixture(
+        root,
+        "joint-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 4, 2, 1, false),
+    )
 }
 
 fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "undefined-weight-spectrum.ms",
-        false,
-        false,
-        1,
-        2,
-        1,
-        true,
+        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, true),
     )
 }
 
-fn measurement_set_fixture(
-    root: &Path,
-    name: &str,
+#[derive(Clone, Copy)]
+struct MeasurementSetFixtureOptions {
     polarized: bool,
     flag_cross_hand: bool,
     channel_count: usize,
     antenna_count: usize,
     main_row_count: usize,
     undefined_weight_spectrum: bool,
+}
+
+impl MeasurementSetFixtureOptions {
+    const fn new(
+        polarized: bool,
+        flag_cross_hand: bool,
+        channel_count: usize,
+        antenna_count: usize,
+        main_row_count: usize,
+        undefined_weight_spectrum: bool,
+    ) -> Self {
+        Self {
+            polarized,
+            flag_cross_hand,
+            channel_count,
+            antenna_count,
+            main_row_count,
+            undefined_weight_spectrum,
+        }
+    }
+}
+
+fn measurement_set_fixture(
+    root: &Path,
+    name: &str,
+    options: MeasurementSetFixtureOptions,
 ) -> PathBuf {
+    let MeasurementSetFixtureOptions {
+        polarized,
+        flag_cross_hand,
+        channel_count,
+        antenna_count,
+        main_row_count,
+        undefined_weight_spectrum,
+    } = options;
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
     if undefined_weight_spectrum {

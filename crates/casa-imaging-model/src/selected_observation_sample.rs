@@ -1684,7 +1684,7 @@ mod tests {
             ("observation", |s| s.metadata.observation_id += 1),
             ("array", |s| s.metadata.array_id += 1),
         ];
-        let baseline = generation(&[&[first.clone()]]);
+        let baseline = generation(&[std::slice::from_ref(first)]);
         for (name, mutate) in mutations {
             let mut changed = first.clone();
             mutate(&mut changed);

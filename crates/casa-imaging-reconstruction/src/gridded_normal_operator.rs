@@ -43,6 +43,9 @@ use crate::{
     },
 };
 
+#[cfg(test)]
+use crate::spectral_operator::GriddedNormalLocalContribution;
+
 const RECORD_DOMAIN: &[u8] = b"casa-rs-gridded-normal-operator";
 const RECORD_VERSION: u32 = 5;
 const TAP_KEY_BITS: u32 = 38;
@@ -1601,6 +1604,17 @@ struct GriddedNormalSectorAccumulator {
 }
 
 #[cfg(test)]
+struct GriddedNormalSectorRouteContext<'a> {
+    operator: &'a SpectralSlabOperator,
+    encoded: &'a [u8],
+    grid_shape: [usize; 2],
+    output_channels: usize,
+    polarizations: usize,
+    sector_id: usize,
+    prepared: &'a PreparedGriddedNormalBlock,
+}
+
+#[cfg(test)]
 impl GriddedNormalSectorAccumulator {
     fn new(grid_shape: [usize; 2], core_depth: usize, sector_id: usize) -> Self {
         let geometry = GriddedNormalSectorGeometry::new(grid_shape, sector_id)
@@ -1617,14 +1631,17 @@ impl GriddedNormalSectorAccumulator {
     #[inline(never)]
     fn execute_routes(
         &mut self,
-        operator: &SpectralSlabOperator,
-        encoded: &[u8],
-        grid_shape: [usize; 2],
-        output_channels: usize,
-        polarizations: usize,
-        sector_id: usize,
-        prepared: &PreparedGriddedNormalBlock,
+        context: GriddedNormalSectorRouteContext<'_>,
     ) -> Result<(), SpectralOperatorError> {
+        let GriddedNormalSectorRouteContext {
+            operator,
+            encoded,
+            grid_shape,
+            output_channels,
+            polarizations,
+            sector_id,
+            prepared,
+        } = context;
         if sector_id >= GRIDDED_NORMAL_SECTOR_COUNT
             || encoded.len() % GRIDDED_NORMAL_OPERATOR_RECORD_BYTES != 0
         {
@@ -1659,11 +1676,13 @@ impl GriddedNormalSectorAccumulator {
             operator.grid_gridded_normal_local_polarization(
                 &mut self.grids,
                 &mut self.compensations,
-                self.geometry.translated_taps(record.taps)?,
-                record.output_channel / polarizations,
-                record.output_channel % polarizations,
-                predicted,
-                record.forward_scale.conj() * record.imaging_weight,
+                GriddedNormalLocalContribution::new(
+                    self.geometry.translated_taps(record.taps)?,
+                    record.output_channel / polarizations,
+                    record.output_channel % polarizations,
+                    predicted,
+                    record.forward_scale.conj() * record.imaging_weight,
+                ),
             )?;
         }
         Ok(())
@@ -1983,15 +2002,15 @@ impl GriddedNormalOperatorApply {
             if block.sequence != Some(sequence) {
                 return Err(SpectralOperatorError::BlockSequence);
             }
-            sector.execute_routes(
+            sector.execute_routes(GriddedNormalSectorRouteContext {
                 operator,
                 encoded,
-                self.program.manifest.specification.grid_shape(),
-                self.program.output_plane_count()?,
-                self.program.manifest.specification.polarization_count(),
-                work.sector_id,
-                block,
-            )?;
+                grid_shape: self.program.manifest.specification.grid_shape(),
+                output_channels: self.program.output_plane_count()?,
+                polarizations: self.program.manifest.specification.polarization_count(),
+                sector_id: work.sector_id,
+                prepared: block,
+            })?;
             frame_count = ordinal + 1;
         }
         if u64::try_from(frame_count).map_err(|_| SpectralOperatorError::CoverageOverflow)?
