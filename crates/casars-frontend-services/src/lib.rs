@@ -4655,9 +4655,18 @@ impl From<RunSafetyClass> for SurfaceRunSafetyClass {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
+pub struct SurfaceProviderUnsupportedReason {
+    pub kind: String,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, uniffi::Record)]
 pub struct SurfaceProviderInvocation {
+    pub protocol_name: Option<String>,
+    pub protocol_version: Option<u32>,
     pub args: Vec<String>,
     pub stdin: Option<String>,
+    pub unsupported_reasons: Vec<SurfaceProviderUnsupportedReason>,
 }
 
 fn snake_case_debug(value: impl std::fmt::Debug) -> String {
@@ -5667,6 +5676,7 @@ pub fn parameter_provider_invocation(
     session
         .render_sparse()
         .map_err(|error| parameter_error("validate provider invocation parameters", error))?;
+    let provider_family = session.bundle().surface.provider_family().to_string();
     let invocation = project_provider_invocation(&session, |family, values, direct| match family {
         "imager" => casars_imager::imager_provider_invocation(values, direct.args),
         "simobserve" => {
@@ -5675,9 +5685,49 @@ pub fn parameter_provider_invocation(
         _ => Ok(ProviderInvocationAdaptation::direct(direct)),
     })
     .map_err(|error| parameter_error("project provider invocation", error))?;
+    let (protocol_name, protocol_version, unsupported_reasons) = match provider_family.as_str() {
+        "imager" => {
+            let descriptor = casars_imager::imager_protocol_descriptor();
+            let stdin = invocation.stdin.as_deref().ok_or_else(|| {
+                parameter_error(
+                    "project provider invocation",
+                    "imager provider omitted its canonical request",
+                )
+            })?;
+            let request: casars_imager::ImagerTaskRequest = serde_json::from_str(stdin)
+                .map_err(|error| parameter_error("decode canonical imager request", error))?;
+            let casars_imager::ImagerTaskRequest::Run(request) = request;
+            let reasons = request
+                .unsupported_reasons()
+                .map_err(|error| parameter_error("evaluate imager capabilities", error))?
+                .into_iter()
+                .map(|reason| SurfaceProviderUnsupportedReason {
+                    kind: reason.kind,
+                    id: reason.id,
+                })
+                .collect();
+            (
+                Some(descriptor.protocol_name),
+                Some(descriptor.protocol_version),
+                reasons,
+            )
+        }
+        "simobserve" => {
+            let descriptor = casa_ms::simulation_task::simobserve_protocol_descriptor();
+            (
+                Some(descriptor.protocol_name),
+                Some(descriptor.protocol_version),
+                Vec::new(),
+            )
+        }
+        _ => (None, None, Vec::new()),
+    };
     Ok(SurfaceProviderInvocation {
+        protocol_name,
+        protocol_version,
         args: invocation.args,
         stdin: invocation.stdin,
+        unsupported_reasons,
     })
 }
 
@@ -9748,6 +9798,10 @@ mod tests {
                 "parallel".to_string(),
                 SurfaceParameterValue::Bool { value: false },
             ),
+            (
+                "write_preview_pngs".to_string(),
+                SurfaceParameterValue::Bool { value: false },
+            ),
         ]);
         let invocation = parameter_provider_invocation("imager".to_string(), values)
             .expect("typed imager invocation");
@@ -9755,6 +9809,12 @@ mod tests {
             invocation.args,
             ["--managed-output", "true", "--json-run", "-"]
         );
+        assert_eq!(
+            invocation.protocol_name.as_deref(),
+            Some("casa_imager_task")
+        );
+        assert_eq!(invocation.protocol_version, Some(6));
+        assert!(invocation.unsupported_reasons.is_empty());
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
         assert_eq!(request["kind"], "run");
@@ -9786,15 +9846,15 @@ mod tests {
         assert_eq!(
             direct.states()["imsize"].value,
             Some(ParameterValue::Array(vec![
-                ParameterValue::Integer(1024),
-                ParameterValue::Integer(1024),
+                ParameterValue::Integer(12150),
+                ParameterValue::Integer(12150),
             ]))
         );
         assert_eq!(
             direct.states()["cell"].value,
             Some(ParameterValue::Array(vec![
-                ParameterValue::String("1arcsec".to_string()),
-                ParameterValue::String("1arcsec".to_string()),
+                ParameterValue::String("0.6arcsec".to_string()),
+                ParameterValue::String("0.6arcsec".to_string()),
             ]))
         );
 
@@ -9808,8 +9868,8 @@ mod tests {
             uniffi_snapshot.states["imsize"].value,
             Some(SurfaceParameterValue::Array {
                 values: vec![
-                    SurfaceParameterValue::Integer { value: 1024 },
-                    SurfaceParameterValue::Integer { value: 1024 },
+                    SurfaceParameterValue::Integer { value: 12150 },
+                    SurfaceParameterValue::Integer { value: 12150 },
                 ],
             })
         );
@@ -9817,12 +9877,56 @@ mod tests {
             uniffi_snapshot.diagnostics.len(),
             direct.diagnostics().len()
         );
+        let invocation = parameter_provider_invocation(
+            "imager".to_string(),
+            uniffi_snapshot
+                .states
+                .iter()
+                .filter_map(|(name, state)| state.value.clone().map(|value| (name.clone(), value)))
+                .collect(),
+        )
+        .expect("Python-facing canonical provider invocation");
+        let expected: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../resources/test-profiles/imager-cross-surface.expected.json"
+        )))
+        .expect("shared imager request baseline");
+        let request: serde_json::Value = serde_json::from_str(
+            invocation
+                .stdin
+                .as_deref()
+                .expect("canonical imager request stdin"),
+        )
+        .expect("canonical imager request JSON");
+        assert_eq!(request, expected["request"]);
+        assert_eq!(
+            invocation.protocol_name.as_deref(),
+            Some("casa_imager_task")
+        );
+        assert_eq!(invocation.protocol_version, Some(6));
+        let reasons = invocation
+            .unsupported_reasons
+            .iter()
+            .map(|reason| reason.id.as_str())
+            .collect::<Vec<_>>();
+        for expected in [
+            "task.aw_projection",
+            "task.per_channel_weight_density",
+            "task.grid_threads",
+            "task.memory_target",
+            "task.memory_pressure_policy",
+        ] {
+            assert!(
+                reasons.contains(&expected),
+                "missing {expected}: {reasons:?}"
+            );
+        }
         let canonical_profile = uniffi_snapshot
             .profile_toml
             .as_deref()
             .expect("canonical profile TOML");
-        assert!(canonical_profile.contains("imsize = [1024, 1024]"));
-        assert!(!canonical_profile.contains("cell ="));
+        assert!(canonical_profile.contains("imsize = [12150, 12150]"));
+        assert!(canonical_profile.contains("cell = [\"0.6arcsec\", \"0.6arcsec\"]"));
 
         let uniffi_ui = task_ui_schema("imager".to_string()).expect("UniFFI form projection");
         let arguments = uniffi_ui.arguments;
@@ -9873,8 +9977,6 @@ mod tests {
                 "conservative-no-swap",
                 "aggressive",
                 "oversubscribe",
-                "stage-aware",
-                "hybrid",
             ])
         );
     }

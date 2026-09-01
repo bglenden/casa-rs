@@ -212,10 +212,16 @@ result = tasks.run(
 Companion constructors are `parameters.last(...)`,
 `parameters.last_successful(...)`, and `parameters.load(path, ...)`.
 `TaskParameters` supports mapping-style updates, `reset(name)`, `reload()`,
-`save(path)`, and `run()`. `tasks.run()` accepts every catalog task and routes
-through the common runner. Catalog-generated CASA-named keyword wrappers and
-type stubs are available directly under `casars.tasks` without copying defaults
-into Python signatures; there is no second provider-specific task API.
+`save(path)`, `provider_invocation()`, and `run()`. The invocation exposes the
+provider protocol name/version, exact canonical request stdin, and typed
+owner-defined unsupported reasons. `tasks.run()` accepts every catalog task and
+routes through the common runner; a known ineligible imager request raises
+`TaskCapabilityError` before launch without Python interpreting programme or
+backend state. Successful completions retain the same provider invocation while
+result and receipt projection remains Rust-owned. Catalog-generated CASA-named
+keyword wrappers and type stubs are available directly under `casars.tasks`
+without copying defaults into Python signatures; there is no second
+provider-specific task API.
 
 Session profiles for `imexplore` and `tablebrowser` use the same constructors
 and validation model. Open them with `sessions.open(surface, parameters=p)` or
