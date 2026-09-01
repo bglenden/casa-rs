@@ -206,6 +206,18 @@ fn problem_with(
     reconstruction: ReconstructionContract,
     spectral_channels: usize,
 ) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape(
+        reconstruction,
+        spectral_channels,
+        ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH),
+    )
+}
+
+fn problem_with_shape(
+    reconstruction: ReconstructionContract,
+    spectral_channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
     let is_joint = matches!(
         reconstruction.basis(),
         ReconstructionBasis::JointContinuumLine { .. }
@@ -230,11 +242,11 @@ fn problem_with(
     ) {
         product_kinds.push(ProductKind::TaylorTerms);
     }
-    let centre = IMAGE_WIDTH as f64 / 2.0;
+    let [width, height] = image_shape.pixels();
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [centre, centre],
+        [width as f64 / 2.0, height as f64 / 2.0],
         [-1.0e-6, 1.0e-6],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -242,7 +254,7 @@ fn problem_with(
     let geometry = GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH),
+            image_shape,
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -321,7 +333,15 @@ fn problem_with(
         geometry,
         ProblemInputIdentities::new(snapshot),
         ModelLifecycleRequirements::new(
-            ModelBounds::new(1_024, 1_024, 1_024, 1_024, 1.0e30, 1.0e30).expect("T42 model bounds"),
+            ModelBounds::new(
+                width * height * 2,
+                width * height * 2,
+                width * height * 2,
+                1_024,
+                1.0e30,
+                1.0e30,
+            )
+            .expect("T42 model bounds"),
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
@@ -345,7 +365,14 @@ fn problem() -> casa_imaging_model::CompiledProblem {
 }
 
 fn channel_major_problem(channels: usize) -> casa_imaging_model::CompiledProblem {
-    problem_with(
+    channel_major_problem_with_shape(channels, ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH))
+}
+
+fn channel_major_problem_with_shape(
+    channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape(
         ReconstructionContract::new(
             ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
             ReconstructionAlgorithm::Mtmfs {
@@ -356,6 +383,7 @@ fn channel_major_problem(channels: usize) -> casa_imaging_model::CompiledProblem
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         channels,
+        image_shape,
     )
 }
 
@@ -795,7 +823,25 @@ fn complete_frozen_taylor_operator(
     pass: SpectralOperatorPass,
     prior: Option<FinalNormalState>,
 ) -> CompleteDataOwnerResult {
-    let specification = SpectralOperatorSpecification::new(problem).expect("Taylor operator");
+    let channels = match problem.reconstruction().basis() {
+        ReconstructionBasis::TaylorViaChannelMajor { channels, .. } => channels,
+        _ => 1,
+    };
+    complete_frozen_taylor_operator_slab(problem, frozen, preparation, pass, prior, 0, channels)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_frozen_taylor_operator_slab(
+    problem: &casa_imaging_model::CompiledProblem,
+    frozen: &FrozenTaylorReplay,
+    preparation: &MajorCyclePreparation,
+    pass: SpectralOperatorPass,
+    prior: Option<FinalNormalState>,
+    core_start: usize,
+    core_depth: usize,
+) -> CompleteDataOwnerResult {
+    let specification = SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)
+        .expect("Taylor operator slab");
     let workload = spectral_operator_workload(
         &specification,
         frozen.plan.limits().max_block_samples(),
@@ -1123,6 +1169,61 @@ fn t41_channel_major_sampling_fold_and_residency_preserve_all_channels() {
             .normal_state_content_identity(),
         one_full_block.primitives().normal_state_content_identity(),
         "block and density partitions cannot change the channel fold"
+    );
+}
+
+#[test]
+fn t41_channel_major_ordered_slab_fold_matches_one_window() {
+    let problem = channel_major_problem_with_shape(4, ImageShape::new(256, 256));
+    let selected = channel_major_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let preparation = nonzero_taylor_model(&problem);
+    let run = |depth: usize| {
+        let mut slabs = (0..4).step_by(depth).map(|start| {
+            complete_frozen_taylor_operator_slab(
+                &problem,
+                &frozen,
+                &preparation,
+                SpectralOperatorPass::InitialMajor,
+                None,
+                start,
+                depth.min(4 - start),
+            )
+        });
+        let mut folded = slabs.next().expect("at least one MVC slab");
+        for slab in slabs {
+            folded = CompleteDataOwnerResult::fold_channel_major_slab_prefix(folded, slab)
+                .expect("fold adjacent ordered MVC slab");
+        }
+        assert_eq!(folded.primitives().slab().core_range(), 0..4);
+        folded
+    };
+    let full = run(4);
+    let depth_one = run(1);
+    let depth_two = run(2);
+    for bounded in [&depth_one, &depth_two] {
+        assert_eq!(bounded.primitives().slab().core_range(), 0..4);
+        assert_eq!(
+            bounded.primitives().channel_validity(),
+            full.primitives().channel_validity()
+        );
+        assert!(
+            complex_nrms(bounded.primitives().dirty(), full.primitives().dirty()) <= 1.0e-13,
+            "bounded MVC dirty fold changed the complete Taylor result"
+        );
+        assert!(
+            complex_nrms(bounded.primitives().psf(), full.primitives().psf()) <= 1.0e-13,
+            "bounded MVC PSF fold changed the complete Taylor result"
+        );
+        assert_eq!(
+            bounded.primitives().sum_weights(),
+            full.primitives().sum_weights()
+        );
+    }
+    assert_eq!(
+        run(2).primitives().normal_state_content_identity(),
+        depth_two.primitives().normal_state_content_identity(),
+        "the ordered multi-slab fold must be deterministic"
     );
 }
 

@@ -474,6 +474,24 @@ impl SpectralCyclePlan {
         };
         let preparation_node = pass_node("spectral-operator-fft-plan", pass);
         let complete_data = match pass.phase() {
+            SpectralPassPhase::InitialMajor
+                if matches!(
+                    problem.reconstruction().basis(),
+                    casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
+                ) =>
+            {
+                let working_set_bytes = gridded_normal_storage
+                    .as_ref()
+                    .and_then(GriddedNormalReplayStorage::cpu_replay_capacity)
+                    .map(|(bytes, _)| bytes);
+                CompleteDataPlanFragment::mvc_with_preparation_node(
+                    problem,
+                    weighting.limits().max_block_samples(),
+                    replay.clone(),
+                    preparation_node,
+                    working_set_bytes,
+                )?
+            }
             SpectralPassPhase::InitialMajor => CompleteDataPlanFragment::new_with_preparation_node(
                 problem,
                 weighting.limits().max_block_samples(),

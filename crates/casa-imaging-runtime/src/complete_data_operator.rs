@@ -28,9 +28,10 @@ use casa_imaging_reconstruction::{
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorProgram, GriddedNormalPartial, GriddedNormalRoutingMeasurements,
         GriddedNormalSourceCardinality, GriddedNormalWork, PreparedSpectralOperator,
-        SourceCardinalityObservation, SpectralOperatorPass, SpectralOperatorWorkload,
-        gridded_normal_domain_execution_residency, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
+        PreparedSpectralOperatorRecycle, SourceCardinalityObservation, SpectralOperatorPass,
+        SpectralOperatorWorkload, gridded_normal_domain_execution_residency,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -46,8 +47,8 @@ use crate::{
     AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime,
     ExecutionAttemptId, ExecutionDag, ExecutionDagSpecification, ExecutionError, FenceId,
     FenceKind, InitializationPolicy, LeaseResource, LogicalAllocation, MemoryDemand, PhysicalSlot,
-    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction, ResourceClaim,
-    SlotCompatibility, StagePrediction, StorageMode, WeightedObservationBlock,
+    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction, QuiescencePoint,
+    ResourceClaim, SlotCompatibility, StagePrediction, StorageMode, WeightedObservationBlock,
     WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext, WorkKind,
     WorkNode, WorkNodeId,
 };
@@ -1347,6 +1348,18 @@ pub struct CompleteDataResidency {
 }
 
 impl CompleteDataResidency {
+    fn with_sequential_fold_accumulator(mut self) -> Result<Self, CompleteDataPlanError> {
+        self.peak_bytes = self
+            .peak_bytes
+            .checked_add(self.primitive_output_bytes)
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        self.primitive_output_bytes = self
+            .primitive_output_bytes
+            .checked_mul(2)
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        Ok(self)
+    }
+
     /// Bytes for pass-required accumulation and compensation grids.
     #[must_use]
     pub const fn grid_bytes(self) -> usize {
@@ -1418,6 +1431,10 @@ enum CompleteDataExecution<'a> {
 pub struct CompleteDataPlanFragment {
     specification: SpectralOperatorSpecification,
     workload: SpectralOperatorWorkload,
+    slab_specifications: Box<[SpectralOperatorSpecification]>,
+    slab_workloads: Box<[SpectralOperatorWorkload]>,
+    admitted_slab_depth: usize,
+    sequential_mvc: bool,
     execution_role: CompleteDataExecutionRole,
     gridded_route_residency: Option<GriddedNormalRouteResidency>,
     residency: CompleteDataResidency,
@@ -1504,6 +1521,112 @@ impl CompleteDataPlanFragment {
         )
     }
 
+    /// Compile the ordered, planner-bounded initial MVC slab schedule.
+    ///
+    /// `working_set_bytes` is the Resource Authority's calibrated CPU data
+    /// working-set ceiling when one is available. The schedule selects the
+    /// deepest slab whose complete operator residency fits that ceiling and
+    /// reuses that one peak allocation for every ordered slab. Without a
+    /// calibrated ceiling, the planner emits the minimum one-channel schedule
+    /// and leaves hard admission to the composed physical demand.
+    pub(crate) fn mvc_with_preparation_node(
+        problem: &CompiledProblem,
+        max_replay_block_samples: usize,
+        replay_node: WorkNodeId,
+        preparation_node: WorkNodeId,
+        working_set_bytes: Option<u64>,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let full = SpectralOperatorSpecification::new(problem)?;
+        let total_channels = full.slab().total_channels();
+        let mut admitted_depth = 0;
+        for depth in 1..=total_channels {
+            let specification = SpectralOperatorSpecification::for_slab(problem, 0, depth)?;
+            let workload = spectral_operator_workload(
+                &specification,
+                max_replay_block_samples,
+                SpectralOperatorPass::InitialMajor,
+            )?;
+            let mut residency = project_residency(
+                problem,
+                &specification,
+                workload,
+                CompleteDataExecutionRole::SelectedObservation,
+                None,
+                0,
+            )?;
+            if depth < total_channels {
+                residency = residency.with_sequential_fold_accumulator()?;
+            }
+            let peak = u64::try_from(residency.peak_bytes())
+                .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+            if working_set_bytes.is_some_and(|ceiling| peak > ceiling) {
+                continue;
+            }
+            admitted_depth = depth;
+            if working_set_bytes.is_none() {
+                break;
+            }
+        }
+        if admitted_depth == 0 {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let mut specifications = Vec::new();
+        let mut workloads = Vec::new();
+        let mut peak_residency = None;
+        for core_start in (0..total_channels).step_by(admitted_depth) {
+            let core_depth = admitted_depth.min(total_channels - core_start);
+            let specification =
+                SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)?;
+            let workload = spectral_operator_workload(
+                &specification,
+                max_replay_block_samples,
+                SpectralOperatorPass::InitialMajor,
+            )?;
+            let mut residency = project_residency(
+                problem,
+                &specification,
+                workload,
+                CompleteDataExecutionRole::SelectedObservation,
+                None,
+                0,
+            )?;
+            if admitted_depth < total_channels {
+                residency = residency.with_sequential_fold_accumulator()?;
+            }
+            if peak_residency
+                .as_ref()
+                .is_none_or(|peak: &CompleteDataResidency| {
+                    residency.peak_bytes() > peak.peak_bytes()
+                })
+            {
+                peak_residency = Some(residency);
+            }
+            specifications.push(specification);
+            workloads.push(workload);
+        }
+        let specification = specifications
+            .first()
+            .cloned()
+            .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        let workload = *workloads
+            .first()
+            .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        Ok(Self {
+            specification,
+            workload,
+            slab_specifications: specifications.into_boxed_slice(),
+            slab_workloads: workloads.into_boxed_slice(),
+            admitted_slab_depth: admitted_depth,
+            sequential_mvc: true,
+            execution_role: CompleteDataExecutionRole::SelectedObservation,
+            gridded_route_residency: None,
+            residency: peak_residency.ok_or(CompleteDataPlanError::PlanMismatch)?,
+            preparation_node,
+            replay_node,
+            reconciliation_node: None,
+        })
+    }
+
     pub(crate) fn gridded_replay_with_preparation_node(
         problem: &CompiledProblem,
         max_replay_block_samples: usize,
@@ -1563,6 +1686,10 @@ impl CompleteDataPlanFragment {
             gridded_replay_schedule_bytes,
         )?;
         Ok(Self {
+            slab_specifications: vec![specification.clone()].into_boxed_slice(),
+            slab_workloads: vec![workload].into_boxed_slice(),
+            admitted_slab_depth: specification.slab().core_depth(),
+            sequential_mvc: false,
             specification,
             workload,
             execution_role,
@@ -1608,6 +1735,21 @@ impl CompleteDataPlanFragment {
         self.specification.slab()
     }
 
+    pub(crate) fn slab_count(&self) -> usize {
+        self.slab_specifications.len()
+    }
+
+    pub(crate) fn slab_specification(
+        &self,
+        ordinal: usize,
+    ) -> Option<&SpectralOperatorSpecification> {
+        self.slab_specifications.get(ordinal)
+    }
+
+    pub(crate) fn slab_workload(&self, ordinal: usize) -> Option<SpectralOperatorWorkload> {
+        self.slab_workloads.get(ordinal).copied()
+    }
+
     /// Prepare reusable FFT state only at the planned FFT node.
     pub fn prepare(
         &self,
@@ -1624,6 +1766,33 @@ impl CompleteDataPlanFragment {
         self.validate_fft_capability(context)?;
         Ok(CompleteDataPreparedState {
             owner: prepare_spectral_operator(self.specification.clone(), self.workload)?,
+            problem: self.specification.problem_id(),
+            attempt: context.attempt_id(),
+            preparation_node: self.preparation_node.clone(),
+            replay_node: self.replay_node.clone(),
+            reconciliation_node: self.reconciliation_node.clone(),
+            lease_epoch: context.lease_epoch(),
+        })
+    }
+
+    pub(crate) fn reprepare_slab(
+        &self,
+        context: WorkExecutionContext<'_>,
+        ordinal: usize,
+        recycle: PreparedSpectralOperatorRecycle,
+    ) -> Result<CompleteDataPreparedState, CompleteDataPlanError> {
+        if context.node().id != self.replay_node || ordinal == 0 {
+            return Err(CompleteDataPlanError::WrongExecutionNode);
+        }
+        let specification = self
+            .slab_specification(ordinal)
+            .cloned()
+            .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        let workload = self
+            .slab_workload(ordinal)
+            .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        Ok(CompleteDataPreparedState {
+            owner: reprepare_spectral_operator(specification, workload, recycle)?,
             problem: self.specification.problem_id(),
             attempt: context.attempt_id(),
             preparation_node: self.preparation_node.clone(),
@@ -1901,6 +2070,13 @@ impl CompleteDataPlanFragment {
             .overhead
             .fft_workspace_bytes
             .max(fft_planning_bytes);
+        let mut initial_knobs = base.execution_dag().initial_knobs().clone();
+        if self.sequential_mvc {
+            alternative.scaling.maximum_slab_depth = u64::try_from(self.admitted_slab_depth)
+                .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+            alternative.quiescence_points.insert(QuiescencePoint::Slab);
+            initial_knobs.slab_depth = alternative.scaling.maximum_slab_depth;
+        }
         let dag = ExecutionDag::new(ExecutionDagSpecification {
             required_resource_capabilities: base
                 .execution_dag()
@@ -1932,7 +2108,7 @@ impl CompleteDataPlanFragment {
                         .map(CompleteDataAllocation::physical_slot),
                 )
                 .collect(),
-            initial_knobs: base.execution_dag().initial_knobs().clone(),
+            initial_knobs,
             adaptations: base
                 .execution_dag()
                 .adaptations()
@@ -2740,6 +2916,56 @@ struct CompleteDataExecutionBinding {
     observation_predecessor_required: bool,
 }
 
+pub(crate) struct PendingCompleteDataSlabFold {
+    evidence: CompleteDataOwnerResult,
+    binding: CompleteDataExecutionBinding,
+}
+
+impl PendingCompleteDataSlabFold {
+    pub(crate) fn fold(self, next: Self) -> Result<Self, CompleteDataOperatorError> {
+        if self.binding.problem != next.binding.problem
+            || self.binding.attempt != next.binding.attempt
+            || self.binding.replay_node != next.binding.replay_node
+            || self.binding.reconciliation_node != next.binding.reconciliation_node
+            || self.binding.lease_epoch != next.binding.lease_epoch
+        {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        Ok(Self {
+            evidence: CompleteDataOwnerResult::fold_channel_major_slab_prefix(
+                self.evidence,
+                next.evidence,
+            )?,
+            binding: self.binding,
+        })
+    }
+
+    pub(crate) fn complete(
+        self,
+        replay: &WeightingReplayCompletion,
+    ) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
+        if self.binding.problem != replay.problem_id()
+            || self.binding.attempt != replay.attempt_id()
+            || self.binding.replay_node != *replay.owner_node()
+            || self.binding.lease_epoch != replay.lease_epoch()
+            || self.evidence.primitives().slab().core_range()
+                != (0..self.evidence.primitives().slab().total_channels())
+            || self.evidence.completion().replay_id() != replay.reconstruction_summary().replay_id()
+            || self.evidence.completion().coverage() != replay.reconstruction_summary().coverage()
+        {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        Ok(CompleteDataOperatorResult {
+            evidence: self.evidence,
+            attempt: self.binding.attempt,
+            replay_node: self.binding.replay_node,
+            reconciliation_node: self.binding.reconciliation_node,
+            lease_epoch: self.binding.lease_epoch,
+            observation_predecessor_required: self.binding.observation_predecessor_required,
+        })
+    }
+}
+
 impl SpectralOperatorState {
     pub(crate) fn authorize_derived_coverage(
         &mut self,
@@ -2854,6 +3080,29 @@ impl SpectralOperatorState {
             lease_epoch: self.binding.lease_epoch,
             observation_predecessor_required: self.binding.observation_predecessor_required,
         })
+    }
+
+    pub(crate) fn complete_initial_slab_recycled(
+        self,
+        replay: &casa_imaging_reconstruction::WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
+        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    ) -> Result<
+        (PendingCompleteDataSlabFold, PreparedSpectralOperatorRecycle),
+        CompleteDataOperatorError,
+    > {
+        let (evidence, recycle) = self.state.complete_initial_slab_recycled(
+            replay,
+            selected_generation,
+            continuum_transform_generation,
+        )?;
+        Ok((
+            PendingCompleteDataSlabFold {
+                evidence,
+                binding: self.binding,
+            },
+            recycle,
+        ))
     }
 }
 

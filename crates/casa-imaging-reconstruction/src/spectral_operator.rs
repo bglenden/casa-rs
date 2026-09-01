@@ -1277,6 +1277,12 @@ pub struct PreparedSpectralOperator {
     ffts: Vec<PreparedFft>,
 }
 
+/// Opaque reusable FFT plans and workspaces returned between ordered slabs.
+#[doc(hidden)]
+pub struct PreparedSpectralOperatorRecycle {
+    ffts: Vec<PreparedFft>,
+}
+
 impl fmt::Debug for PreparedSpectralOperator {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -1345,6 +1351,30 @@ pub fn prepare_spectral_operator(
         specification,
         workload,
         ffts,
+    })
+}
+
+/// Rebind already-planned FFT state to the next ordered slab specification.
+#[doc(hidden)]
+pub fn reprepare_spectral_operator(
+    specification: SpectralOperatorSpecification,
+    workload: SpectralOperatorWorkload,
+    recycle: PreparedSpectralOperatorRecycle,
+) -> Result<PreparedSpectralOperator, SpectralOperatorError> {
+    if workload
+        != spectral_operator_workload(
+            &specification,
+            workload.max_replay_block_samples,
+            workload.pass,
+        )?
+        || recycle.ffts.len() != specification.chart_count()
+    {
+        return Err(SpectralOperatorError::ProblemMismatch);
+    }
+    Ok(PreparedSpectralOperator {
+        specification,
+        workload,
+        ffts: recycle.ffts,
     })
 }
 
@@ -2331,11 +2361,200 @@ impl CompleteDataOwnerResult {
         &self.completion
     }
 
+    /// Deterministically combine adjacent channel-major MVC slab results.
+    ///
+    /// Every slab must describe the same exhaustive weighted replay and the
+    /// ordered core ranges must cover the complete channel axis exactly once.
+    /// The fold remains reconstruction-owned because it combines scientific
+    /// normal-state primitives, not runtime buffers or application products.
+    pub fn fold_channel_major_slabs(
+        slabs: impl IntoIterator<Item = Self>,
+    ) -> Result<Self, SpectralOperatorError> {
+        Self::fold_channel_major_slabs_inner(slabs, true)
+    }
+
+    /// Extend one deterministic ordered MVC prefix by its adjacent slab.
+    #[doc(hidden)]
+    pub fn fold_channel_major_slab_prefix(
+        prefix: Self,
+        next: Self,
+    ) -> Result<Self, SpectralOperatorError> {
+        Self::fold_channel_major_slabs_inner([prefix, next], false)
+    }
+
+    fn fold_channel_major_slabs_inner(
+        slabs: impl IntoIterator<Item = Self>,
+        require_complete_coverage: bool,
+    ) -> Result<Self, SpectralOperatorError> {
+        let mut slabs = slabs.into_iter();
+        let first = slabs
+            .next()
+            .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+        let total_channels = first.primitives().slab().total_channels();
+        let mut next_channel = first.primitives().slab().core_range().end;
+        if first.primitives().slab().core_range().start != 0
+            || !matches!(
+                first.primitives().basis,
+                SpectralBasisPlan::TaylorViaChannelMajor(_)
+            )
+        {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
+        let mut completion = Some(first.completion);
+        let mut domains = first.domains;
+        for next in slabs {
+            let range = next.primitives().slab().core_range();
+            if range.start != next_channel
+                || next.primitives().slab().total_channels() != total_channels
+                || !same_complete_data_completion(
+                    completion
+                        .as_ref()
+                        .expect("fold retains one canonical completion"),
+                    &next.completion,
+                )
+                || next.domains.len() != domains.len()
+            {
+                return Err(SpectralOperatorError::IncompleteCoverage);
+            }
+            next_channel = range.end;
+            for (destination, source) in domains.domains.iter_mut().zip(next.domains.domains) {
+                let source = source.primitives;
+                let destination = &mut destination.primitives;
+                if destination.shape != source.shape
+                    || destination.basis != source.basis
+                    || destination.polarizations != source.polarizations
+                    || destination.joint_line_term_by_channel != source.joint_line_term_by_channel
+                    || destination.channel_sum_weights != source.channel_sum_weights
+                    || destination.residual_model != source.residual_model
+                    || destination.major_cycle_residual_promoted
+                        != source.major_cycle_residual_promoted
+                {
+                    return Err(SpectralOperatorError::ProblemMismatch);
+                }
+                accumulate_complex_slice(&mut destination.dirty, &source.dirty)?;
+                accumulate_optional_complex_slice(
+                    destination.invariant_dirty.as_deref_mut(),
+                    source.invariant_dirty.as_deref(),
+                )?;
+                accumulate_complex_slice(&mut destination.psf, &source.psf)?;
+                accumulate_f64_slice(&mut destination.sensitivity, &source.sensitivity)?;
+                accumulate_f64_slice(&mut destination.sum_weights, &source.sum_weights)?;
+                accumulate_f64_slice(
+                    &mut destination.published_sum_weights,
+                    &source.published_sum_weights,
+                )?;
+                accumulate_optional_complex_slice(
+                    destination.major_cycle_residual.as_deref_mut(),
+                    source.major_cycle_residual.as_deref(),
+                )?;
+                if destination.validity.len() != source.validity.len() {
+                    return Err(SpectralOperatorError::ProblemMismatch);
+                }
+                for (destination, source) in destination.validity.iter_mut().zip(source.validity) {
+                    *destination = combine_validity(*destination, source);
+                }
+            }
+        }
+        if require_complete_coverage && next_channel != total_channels {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        let folded_slab = SpectralSlabPlan {
+            total_channels,
+            core_start: 0,
+            core_end: next_channel,
+            resident_start: 0,
+            resident_end: next_channel,
+        };
+        for domain in &mut domains.domains {
+            domain.primitives.slab = folded_slab;
+        }
+        Ok(Self {
+            domains,
+            completion: completion
+                .take()
+                .expect("fold retains one canonical completion"),
+        })
+    }
+
     /// Consume the pairing without exposing either member separately outside
     /// this crate; the Major-Cycle owner is the only split consumer.
     #[must_use]
     pub(crate) fn into_parts(self) -> (SpectralPrimitiveDomains, CompleteDataOwnerCompletion) {
         (self.domains, self.completion)
+    }
+}
+
+fn same_complete_data_completion(
+    left: &CompleteDataOwnerCompletion,
+    right: &CompleteDataOwnerCompletion,
+) -> bool {
+    left.problem == right.problem
+        && left.geometry == right.geometry
+        && left.numerics == right.numerics
+        && left.weighting_commitment == right.weighting_commitment
+        && left.weighting_generation == right.weighting_generation
+        && left.replay == right.replay
+        && left.coverage == right.coverage
+        && left.coverage_proof_bytes == right.coverage_proof_bytes
+        && left.coverage_proof_hash_calls == right.coverage_proof_hash_calls
+        && left.primitives == right.primitives
+        && left.selected_generation == right.selected_generation
+        && left.continuum_transform_generation == right.continuum_transform_generation
+        && left.sample_count == right.sample_count
+        && left.block_count == right.block_count
+}
+
+fn accumulate_complex_slice(
+    destination: &mut [Complex64],
+    source: &[Complex64],
+) -> Result<(), SpectralOperatorError> {
+    if destination.len() != source.len() {
+        return Err(SpectralOperatorError::ProblemMismatch);
+    }
+    for (sum, value) in destination.iter_mut().zip(source) {
+        *sum += *value;
+    }
+    Ok(())
+}
+
+fn accumulate_optional_complex_slice(
+    destination: Option<&mut [Complex64]>,
+    source: Option<&[Complex64]>,
+) -> Result<(), SpectralOperatorError> {
+    match (destination, source) {
+        (Some(destination), Some(source)) => accumulate_complex_slice(destination, source),
+        (None, None) => Ok(()),
+        _ => Err(SpectralOperatorError::ProblemMismatch),
+    }
+}
+
+fn accumulate_f64_slice(
+    destination: &mut [f64],
+    source: &[f64],
+) -> Result<(), SpectralOperatorError> {
+    if destination.len() != source.len() {
+        return Err(SpectralOperatorError::ProblemMismatch);
+    }
+    for (sum, value) in destination.iter_mut().zip(source) {
+        *sum += *value;
+    }
+    Ok(())
+}
+
+const fn combine_validity(
+    left: SpectralChannelValidity,
+    right: SpectralChannelValidity,
+) -> SpectralChannelValidity {
+    match (left, right) {
+        (SpectralChannelValidity::Valid, _) | (_, SpectralChannelValidity::Valid) => {
+            SpectralChannelValidity::Valid
+        }
+        (SpectralChannelValidity::Blank, _) | (_, SpectralChannelValidity::Blank) => {
+            SpectralChannelValidity::Blank
+        }
+        (SpectralChannelValidity::Unmapped, SpectralChannelValidity::Unmapped) => {
+            SpectralChannelValidity::Unmapped
+        }
     }
 }
 
@@ -2406,12 +2625,18 @@ impl CompleteDataOwnerState {
         weighting: &WeightingAlgorithmState,
         prepared: PreparedSpectralOperator,
     ) -> Result<Self, SpectralOperatorError> {
-        let specification = SpectralOperatorSpecification::new(problem)?;
-        if specification != prepared.specification || !weighting.matches_problem(problem) {
+        let (specification, workload, ffts) = prepared.into_parts();
+        let slab = specification.slab();
+        if SpectralOperatorSpecification::for_slab(
+            problem,
+            slab.core_range().start,
+            slab.core_depth(),
+        )? != specification
+            || !weighting.matches_problem(problem)
+        {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
-        let (prepared_specification, workload, ffts) = prepared.into_parts();
-        if specification != prepared_specification || ffts.len() != specification.chart_count() {
+        if ffts.len() != specification.chart_count() {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
         let operators = specification
@@ -2445,9 +2670,15 @@ impl CompleteDataOwnerState {
         problem: &CompiledProblem,
         prepared: PreparedSpectralOperator,
     ) -> Result<Self, SpectralOperatorError> {
-        let specification = SpectralOperatorSpecification::new(problem)?;
-        let (prepared_specification, workload, ffts) = prepared.into_parts();
-        if specification != prepared_specification || ffts.len() != specification.chart_count() {
+        let (specification, workload, ffts) = prepared.into_parts();
+        let slab = specification.slab();
+        if SpectralOperatorSpecification::for_slab(
+            problem,
+            slab.core_range().start,
+            slab.core_depth(),
+        )? != specification
+            || ffts.len() != specification.chart_count()
+        {
             return Err(SpectralOperatorError::ProblemMismatch);
         }
         let operators = specification
@@ -3011,6 +3242,76 @@ impl CompleteDataOwnerState {
                 block_count: replay.block_count(),
             },
         })
+    }
+
+    /// Finish one initial MVC slab while returning its reusable FFT state.
+    ///
+    /// Runtime uses this only between adjacent ordered slabs under the same
+    /// replay-node lease; the scientific result is still sealed against the
+    /// same terminal replay summary before it can leave the runtime.
+    pub fn complete_initial_slab_recycled(
+        self,
+        replay: &WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
+        continuum_transform_generation: Option<ContinuumTransformGenerationId>,
+    ) -> Result<(CompleteDataOwnerResult, PreparedSpectralOperatorRecycle), SpectralOperatorError>
+    {
+        if !matches!(
+            self.specification.basis,
+            SpectralBasisPlan::TaylorViaChannelMajor(_)
+        ) || self.reusable_domains.is_some()
+            || self
+                .weighting_generation
+                .is_some_and(|generation| generation != replay.weighting_generation())
+            || self.sample_count != replay.sample_count()
+            || self.next_block_sequence != replay.block_count()
+        {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        let (coverage, coverage_proof_work) = self
+            .coverage
+            .finish(replay.weighting_generation(), self.sample_count);
+        if coverage != replay.coverage() {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        for operator in &self.operators {
+            operator.validate_reused_lineage(
+                replay.weighting_generation(),
+                selected_generation,
+                continuum_transform_generation,
+            )?;
+        }
+        let mut primitives = Vec::with_capacity(self.operators.len());
+        let mut ffts = Vec::with_capacity(self.operators.len());
+        for operator in self.operators {
+            let (primitive, fft) = operator.finish_bound_recycled(self.model_binding)?;
+            primitives.push(primitive);
+            ffts.push(fft);
+        }
+        let domains =
+            combine_initial_chart_primitives(&self.specification, primitives.into_iter().map(Ok))?;
+        Ok((
+            CompleteDataOwnerResult {
+                domains,
+                completion: CompleteDataOwnerCompletion {
+                    problem: self.problem,
+                    geometry: self.geometry,
+                    numerics: self.numerics,
+                    weighting_commitment: self.weighting_commitment,
+                    weighting_generation: replay.weighting_generation(),
+                    replay: replay.replay_id(),
+                    coverage,
+                    coverage_proof_bytes: coverage_proof_work.bytes,
+                    coverage_proof_hash_calls: coverage_proof_work.hash_calls,
+                    primitives: SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1,
+                    selected_generation,
+                    continuum_transform_generation,
+                    sample_count: replay.sample_count(),
+                    block_count: replay.block_count(),
+                },
+            },
+            PreparedSpectralOperatorRecycle { ffts },
+        ))
     }
 }
 
@@ -4972,9 +5273,17 @@ impl SpectralSlabOperator {
     }
 
     fn finish_bound(
-        mut self,
+        self,
         model_binding: Option<ReconstructionModelBinding>,
     ) -> Result<SpectralOperatorPrimitives, SpectralOperatorError> {
+        self.finish_bound_recycled(model_binding)
+            .map(|(primitives, _)| primitives)
+    }
+
+    fn finish_bound_recycled(
+        mut self,
+        model_binding: Option<ReconstructionModelBinding>,
+    ) -> Result<(SpectralOperatorPrimitives, PreparedFft), SpectralOperatorError> {
         let residual_model = model_binding.map(ReconstructionModelBinding::generation);
         let initial_empty = model_binding.is_some_and(|binding| {
             matches!(binding, ReconstructionModelBinding::InitialCertifiedZero(_))
@@ -5151,7 +5460,8 @@ impl SpectralSlabOperator {
                 planes,
                 formation_started,
             );
-            return Ok(primitives);
+            let fft = self.fft;
+            return Ok((primitives, fft));
         }
         let dirty_grids = self
             .dirty_grids
@@ -5267,7 +5577,8 @@ impl SpectralSlabOperator {
             planes,
             formation_started,
         );
-        Ok(primitives)
+        let fft = self.fft;
+        Ok((primitives, fft))
     }
 }
 

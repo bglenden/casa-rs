@@ -697,7 +697,15 @@ fn channel_local_request(observation: u8, channels: usize) -> ImagingRequest {
 }
 
 fn channel_major_taylor_request(observation: u8, channels: usize) -> ImagingRequest {
-    spectral_request_with_inputs(
+    channel_major_taylor_request_with_shape(observation, channels, ImageShape::new(8, 8))
+}
+
+fn channel_major_taylor_request_with_shape(
+    observation: u8,
+    channels: usize,
+    shape: ImageShape,
+) -> ImagingRequest {
+    spectral_request_with_inputs_and_shape(
         problem_inputs_with_channels(
             observation,
             default_references(),
@@ -712,6 +720,7 @@ fn channel_major_taylor_request(observation: u8, channels: usize) -> ImagingRequ
         },
         ReconstructionControls::new(1, 0.1, 0.0),
         None,
+        shape,
     )
 }
 
@@ -793,8 +802,33 @@ fn spectral_request_with_inputs(
     controls: ReconstructionControls,
     visibility_transform: Option<SequentialContinuumTransform>,
 ) -> ImagingRequest {
-    let geometry =
-        geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]);
+    spectral_request_with_inputs_and_shape(
+        inputs,
+        channels,
+        basis,
+        algorithm,
+        controls,
+        visibility_transform,
+        ImageShape::new(8, 8),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spectral_request_with_inputs_and_shape(
+    inputs: ProblemInputIdentities,
+    channels: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    visibility_transform: Option<SequentialContinuumTransform>,
+    shape: ImageShape,
+) -> ImagingRequest {
+    let pixels = shape.pixels();
+    let geometry = geometry_with_shape_and_increment(
+        [pixels[0] as f64 / 2.0, pixels[1] as f64 / 2.0],
+        shape,
+        [-1.0e-6, 1.0e-6],
+    );
     let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
         channels,
         reference_pixel: 0.0,
@@ -8688,6 +8722,55 @@ fn t41_runtime_residency_bounds_channel_major_windows_without_expanding_the_tayl
     assert_eq!(two.major_cycle_model_bytes(), all.major_cycle_model_bytes());
     assert!(one.peak_bytes() < two.peak_bytes());
     assert!(two.peak_bytes() < all.peak_bytes());
+}
+
+#[test]
+fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_shape() {
+    let problem = compile(channel_major_taylor_request_with_shape(
+        242,
+        8,
+        ImageShape::new(512, 512),
+    ))
+    .expect("realistically shaped Taylor-via-channel-major problem");
+    let registry = test_registry(&problem, 3, 6, None);
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(6),
+        WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
+        selected_content_residency(&problem),
+        serial_storage_io(),
+        1_000,
+        512 * 512 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+        900_000,
+    )
+    .with_gridded_normal_storage(artifact_storage());
+    let plan =
+        SpectralCyclePlan::initial(&problem, &registry, policy).expect("production MVC plan");
+    let knobs = plan.physical_work().execution_dag().initial_knobs();
+    assert_eq!(knobs.slab_depth, 1, "the 1 MiB fixture admits one channel");
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .quiescence_points
+            .contains(&QuiescencePoint::Slab)
+    );
+    let complete = plan.into_parts().complete_data;
+    assert_eq!(complete.slab().core_range(), 0..1);
+
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        256,
+        WorkNodeId::new("t41-realistic-full-depth"),
+        0,
+        8,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full-depth comparison fragment");
+    assert!(complete.residency().peak_bytes() < full.residency().peak_bytes());
+    assert!(
+        complete.residency().grid_bytes() * 8 <= full.residency().grid_bytes(),
+        "one admitted shared slab grid cannot retain the complete 8-channel cube"
+    );
 }
 
 #[test]

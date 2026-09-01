@@ -11,7 +11,8 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
+    CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId,
+    ModelInputCommitment, ReconstructionBasis,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
@@ -21,7 +22,7 @@ use casa_imaging_reconstruction::{
     ReconstructionMaskSet,
 };
 
-use crate::complete_data_operator::GriddedNormalReplayCompilation;
+use crate::complete_data_operator::{GriddedNormalReplayCompilation, PendingCompleteDataSlabFold};
 use crate::{
     AttemptBoundObservationCompletion, CompleteDataOperatorResult, CompleteDataPlanFragment,
     CompleteDataPreparedState, FenceKind, FrozenGriddedNormalReplay, FrozenWeightingArtifact,
@@ -926,6 +927,7 @@ struct SpectralCycleExecutorState {
     prepared: Option<CompleteDataPreparedState>,
     operator: Option<SpectralOperatorState>,
     complete_data: Option<CompleteDataOperatorResult>,
+    pending_complete_data_slabs: Option<PendingCompleteDataSlabFold>,
     lifecycle: Option<ModelLifecycle>,
     prepared_model: Option<PreparedFinalModel>,
     result: Option<MajorCycleOperatorResult>,
@@ -1180,6 +1182,7 @@ impl SpectralCycleExecutor {
                 prepared: None,
                 operator: None,
                 complete_data: None,
+                pending_complete_data_slabs: None,
                 lifecycle: None,
                 prepared_model: None,
                 result: None,
@@ -1243,6 +1246,7 @@ impl SpectralCycleExecutor {
                 prepared: None,
                 operator: None,
                 complete_data: None,
+                pending_complete_data_slabs: None,
                 lifecycle: None,
                 prepared_model: None,
                 result: None,
@@ -1296,6 +1300,7 @@ impl SpectralCycleExecutor {
                 prepared: None,
                 operator: None,
                 complete_data: None,
+                pending_complete_data_slabs: None,
                 lifecycle: None,
                 prepared_model: None,
                 result: None,
@@ -1547,32 +1552,32 @@ impl SpectralCycleExecutor {
             .prepared
             .take()
             .ok_or_else(|| io::Error::other("FFT preparation did not run"))?;
-        let mut operator = prepared
-            .begin_streaming(context, &self.problem, &self.complete_data)
-            .map_err(io::Error::other)?;
-        if self.final_visibility_sink.is_some() {
-            operator.enable_final_visibility_samples();
-        }
-        let (preparation, prior_normal_state) = state
-            .prepared_model
-            .as_mut()
-            .ok_or_else(|| io::Error::other("final-model preparation missing"))?
-            .take_for_replay(context)?;
-        operator
-            .bind_major_cycle_model(preparation, prior_normal_state)
-            .map_err(io::Error::other)?;
-        state
-            .weighting
-            .authorize_imported_operator(&mut operator)
-            .map_err(io::Error::other)?;
-        state.operator = Some(operator);
         let SpectralCycleExecutorState {
             weighting,
             operator,
             gridded_compilation,
             complete_data_source_pass_count,
+            pending_complete_data_slabs,
+            prepared_model,
             ..
         } = state;
+        let (preparation, prior_normal_state) = prepared_model
+            .as_mut()
+            .ok_or_else(|| io::Error::other("final-model preparation missing"))?
+            .take_for_replay(context)?;
+        let mut first_operator = prepared
+            .begin_streaming(context, &self.problem, &self.complete_data)
+            .map_err(io::Error::other)?;
+        if self.final_visibility_sink.is_some() {
+            first_operator.enable_final_visibility_samples();
+        }
+        first_operator
+            .bind_major_cycle_model(preparation, prior_normal_state)
+            .map_err(io::Error::other)?;
+        weighting
+            .authorize_imported_operator(&mut first_operator)
+            .map_err(io::Error::other)?;
+        *operator = Some(first_operator);
         let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
             let predicted = operator
                 .as_mut()
@@ -1622,7 +1627,75 @@ impl SpectralCycleExecutor {
             }
             self.log_stream_measurements(weighting, "weighted-replay");
         }
-        result
+        result?;
+
+        if !matches!(
+            self.problem.reconstruction().basis(),
+            ReconstructionBasis::TaylorViaChannelMajor { .. }
+        ) {
+            return Ok(());
+        }
+        let (replay, selected_generation, continuum_generation) = weighting
+            .pending_replay_inputs()
+            .ok_or_else(|| io::Error::other("initial MVC replay summary missing"))?;
+        let first_operator = operator
+            .take()
+            .ok_or_else(|| io::Error::other("initial MVC operator missing"))?;
+        let (mut folded, mut recycle) = first_operator
+            .complete_initial_slab_recycled(replay, selected_generation, continuum_generation)
+            .map_err(io::Error::other)?;
+
+        for ordinal in 1..self.complete_data.slab_count() {
+            let prepared = self
+                .complete_data
+                .reprepare_slab(context, ordinal, recycle)
+                .map_err(io::Error::other)?;
+            let mut next_operator = prepared
+                .begin_streaming(context, &self.problem, &self.complete_data)
+                .map_err(io::Error::other)?;
+            next_operator
+                .bind_major_cycle_model(preparation, None)
+                .map_err(io::Error::other)?;
+            *operator = Some(next_operator);
+            let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
+                operator
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("MVC slab operator missing"))?
+                    .consume_bounded_replay_chunk(block)
+                    .map(|_| ())
+                    .map_err(io::Error::other)
+            };
+            weighting
+                .traverse_additional_initial_slab_stream(
+                    context,
+                    fragment,
+                    &self.problem,
+                    &mut consume,
+                )
+                .map_err(io::Error::other)?;
+            *complete_data_source_pass_count = complete_data_source_pass_count
+                .checked_add(
+                    weighting
+                        .latest_traversal_measurements()
+                        .ok_or_else(|| io::Error::other("MVC source-pass measurements missing"))?
+                        .source_pass_count(),
+                )
+                .ok_or_else(|| io::Error::other("MVC source-pass measurements overflow"))?;
+            let (replay, selected_generation, continuum_generation) = weighting
+                .pending_replay_inputs()
+                .ok_or_else(|| io::Error::other("MVC replay summary missing"))?;
+            let next_operator = operator
+                .take()
+                .ok_or_else(|| io::Error::other("MVC slab operator missing"))?;
+            let (next, next_recycle) = next_operator
+                .complete_initial_slab_recycled(replay, selected_generation, continuum_generation)
+                .map_err(io::Error::other)?;
+            folded = folded.fold(next).map_err(io::Error::other)?;
+            recycle = next_recycle;
+            self.log_stream_measurements(weighting, "weighted-replay-mvc-slab");
+        }
+        *pending_complete_data_slabs = Some(folded);
+        Ok(())
     }
 
     fn run_selected_output(
@@ -2408,50 +2481,63 @@ impl WorkImplementation for SpectralCycleExecutor {
                 }
                 return result;
             }
-            let result = (|| {
-                let predecessor = state
-                    .weighting
-                    .complete_replay(completion)
-                    .map_err(io::Error::other)?;
-                let operator = state
-                    .operator
-                    .take()
-                    .ok_or_else(|| io::Error::other("complete-data operator missing"))?;
-                let frozen_weighting = match state.weighting.frozen_artifact() {
-                    Some(artifact) => {
-                        if let Some(reservation) = state.pending_frozen_reservation.take() {
-                            Some(
-                                artifact
-                                    .with_cross_plan_reservation(reservation)
-                                    .map_err(io::Error::other)?,
-                            )
-                        } else {
-                            artifact.has_cross_plan_reservation().then_some(artifact)
+            let result =
+                (|| {
+                    let predecessor = state
+                        .weighting
+                        .complete_replay(completion)
+                        .map_err(io::Error::other)?;
+                    let frozen_weighting = match state.weighting.frozen_artifact() {
+                        Some(artifact) => {
+                            if let Some(reservation) = state.pending_frozen_reservation.take() {
+                                Some(
+                                    artifact
+                                        .with_cross_plan_reservation(reservation)
+                                        .map_err(io::Error::other)?,
+                                )
+                            } else {
+                                artifact.has_cross_plan_reservation().then_some(artifact)
+                            }
                         }
+                        None => None,
+                    };
+                    let compilation = state.gridded_compilation.take();
+                    let folded = state.pending_complete_data_slabs.take();
+                    let serial_operator =
+                        if folded.is_none() {
+                            Some(state.operator.take().ok_or_else(|| {
+                                io::Error::other("complete-data operator missing")
+                            })?)
+                        } else {
+                            None
+                        };
+                    let replay = state
+                        .weighting
+                        .replay_completion()
+                        .ok_or_else(|| io::Error::other("replay completion missing"))?;
+                    // All fallible scientific validation precedes the in-place
+                    // visibility writer's durable completion boundary.
+                    let complete_data = if let Some(folded) = folded {
+                        folded.complete(replay).map_err(io::Error::other)?
+                    } else {
+                        serial_operator
+                            .expect("serial operator exists when no MVC fold exists")
+                            .complete(replay)
+                            .map_err(io::Error::other)?
+                    };
+                    let gridded_replay = compilation
+                        .map(|compilation| compilation.complete(replay))
+                        .transpose()?;
+                    if let Some(sink) = &self.final_visibility_sink {
+                        sink.lock()
+                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                            .finish(replay)?;
                     }
-                    None => None,
-                };
-                let compilation = state.gridded_compilation.take();
-                let replay = state
-                    .weighting
-                    .replay_completion()
-                    .ok_or_else(|| io::Error::other("replay completion missing"))?;
-                // All fallible scientific validation precedes the in-place
-                // visibility writer's durable completion boundary.
-                let complete_data = operator.complete(replay).map_err(io::Error::other)?;
-                let gridded_replay = compilation
-                    .map(|compilation| compilation.complete(replay))
-                    .transpose()?;
-                if let Some(sink) = &self.final_visibility_sink {
-                    sink.lock()
-                        .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                        .finish(replay)?;
-                }
-                state.frozen_weighting = frozen_weighting;
-                state.gridded_replay = gridded_replay;
-                state.complete_data = Some(complete_data);
-                Ok(predecessor)
-            })();
+                    state.frozen_weighting = frozen_weighting;
+                    state.gridded_replay = gridded_replay;
+                    state.complete_data = Some(complete_data);
+                    Ok(predecessor)
+                })();
             if result.is_err() {
                 drop(state);
                 let _ = self.abort_final_visibility_replay();
