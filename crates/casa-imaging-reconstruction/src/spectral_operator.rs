@@ -2409,7 +2409,7 @@ impl CompleteDataOwnerResult {
             let range = next.primitives().slab().core_range();
             if range.start != next_channel
                 || next.primitives().slab().total_channels() != total_channels
-                || !same_complete_data_completion(
+                || !same_complete_data_authority(
                     completion
                         .as_ref()
                         .expect("fold retains one canonical completion"),
@@ -2487,7 +2487,10 @@ impl CompleteDataOwnerResult {
     }
 }
 
-fn same_complete_data_completion(
+// Derived slab replays reuse the sealed coverage identity without repeating
+// its hashing work. Those work counters are receipts, not completion authority;
+// the ordered fold retains the encoded prefix completion and its counters.
+fn same_complete_data_authority(
     left: &CompleteDataOwnerCompletion,
     right: &CompleteDataOwnerCompletion,
 ) -> bool {
@@ -2498,8 +2501,6 @@ fn same_complete_data_completion(
         && left.weighting_generation == right.weighting_generation
         && left.replay == right.replay
         && left.coverage == right.coverage
-        && left.coverage_proof_bytes == right.coverage_proof_bytes
-        && left.coverage_proof_hash_calls == right.coverage_proof_hash_calls
         && left.primitives == right.primitives
         && left.selected_generation == right.selected_generation
         && left.continuum_transform_generation == right.continuum_transform_generation

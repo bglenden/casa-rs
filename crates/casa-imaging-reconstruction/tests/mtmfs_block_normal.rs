@@ -35,9 +35,9 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
-    MajorCycleOwner, MajorCyclePreparation, MinorCycleError, MinorCycleProgram, ModelGeneration,
-    ModelLifecycle, NormalStateCatalog, ReconstructionCycle, ReconstructionCycleError,
-    ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
+    FrozenWeightingCoverageProof, MajorCycleOwner, MajorCyclePreparation, MinorCycleError,
+    MinorCycleProgram, ModelGeneration, ModelLifecycle, NormalStateCatalog, ReconstructionCycle,
+    ReconstructionCycleError, ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralStencilValidity,
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
     WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil, plan_weighting,
@@ -816,6 +816,57 @@ fn freeze_taylor_replay(
     }
 }
 
+fn derive_taylor_replay_blocks(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: &[SelectedObservationSample],
+    frozen: &FrozenTaylorReplay,
+) -> Vec<WeightingReplayChunk> {
+    let proof = FrozenWeightingCoverageProof::seal(
+        problem,
+        &frozen.weighting,
+        &frozen.summary,
+        frozen.selected_generation,
+        samples.len() as u64,
+        None,
+    )
+    .expect("seal encoded Taylor replay coverage");
+    let stencils = samples
+        .iter()
+        .map(|sample| stencil(problem, sample))
+        .collect::<Vec<_>>();
+    let mut replay = frozen
+        .weighting
+        .begin_derived_replay(problem, &frozen.plan, proof, None)
+        .expect("begin derived Taylor replay");
+    let mut blocks = Vec::new();
+    for (sample, stencil) in samples.iter().zip(&stencils) {
+        if let Some(block) = replay
+            .consume(problem, sample, stencil.clone())
+            .expect("consume derived Taylor replay")
+        {
+            blocks.push(block);
+        }
+    }
+    let (tail, summary) = replay.finish().expect("finish derived Taylor replay");
+    if let Some(block) = tail {
+        blocks.push(block);
+    }
+    proof
+        .validate_derived_replay(
+            frozen.selected_generation,
+            samples.len() as u64,
+            None,
+            &summary,
+        )
+        .expect("validate derived Taylor replay");
+    assert_eq!(summary.coverage(), frozen.summary.coverage());
+    assert_eq!(summary.sample_count(), frozen.summary.sample_count());
+    assert_eq!(summary.block_count(), frozen.summary.block_count());
+    assert_eq!(summary.coverage_proof_bytes(), 0);
+    assert_eq!(summary.coverage_proof_hash_calls(), 0);
+    blocks
+}
+
 fn complete_frozen_taylor_operator(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
@@ -866,6 +917,46 @@ fn complete_frozen_taylor_operator_slab(
     owner
         .complete(&frozen.summary, frozen.selected_generation, None)
         .expect("complete frozen Taylor normal state")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_derived_taylor_operator_slab(
+    problem: &casa_imaging_model::CompiledProblem,
+    frozen: &FrozenTaylorReplay,
+    blocks: &[WeightingReplayChunk],
+    preparation: &MajorCyclePreparation,
+    pass: SpectralOperatorPass,
+    prior: Option<FinalNormalState>,
+    core_start: usize,
+    core_depth: usize,
+) -> CompleteDataOwnerResult {
+    let specification = SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)
+        .expect("derived Taylor operator slab");
+    let workload = spectral_operator_workload(
+        &specification,
+        frozen.plan.limits().max_block_samples(),
+        pass,
+    )
+    .expect("derived Taylor workload");
+    let prepared =
+        prepare_spectral_operator(specification, workload).expect("prepare derived Taylor FFT");
+    let mut owner = prepared
+        .begin_streaming(problem)
+        .expect("begin derived Taylor owner");
+    owner
+        .bind_major_cycle_model(preparation.final_model(), prior)
+        .expect("bind derived Taylor model");
+    for block in blocks {
+        assert!(
+            owner
+                .consume_block(block)
+                .expect("consume derived Taylor block")
+                .is_empty()
+        );
+    }
+    owner
+        .complete(&frozen.summary, frozen.selected_generation, None)
+        .expect("complete derived Taylor normal state against canonical replay")
 }
 
 fn initial_normal_from_frozen(
@@ -1224,6 +1315,134 @@ fn t41_channel_major_ordered_slab_fold_matches_one_window() {
         run(2).primitives().normal_state_content_identity(),
         depth_two.primitives().normal_state_content_identity(),
         "the ordered multi-slab fold must be deterministic"
+    );
+}
+
+#[test]
+fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
+    let problem = channel_major_problem(4);
+    let mut selected = channel_major_samples(&problem);
+    for sample in &mut selected[2..] {
+        sample.channel_flag = true;
+    }
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let derived_blocks = derive_taylor_replay_blocks(&problem, &selected, &frozen);
+    let preparation = nonzero_taylor_model(&problem);
+    let first = complete_frozen_taylor_operator_slab(
+        &problem,
+        &frozen,
+        &preparation,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        0,
+        1,
+    );
+    let second = complete_derived_taylor_operator_slab(
+        &problem,
+        &frozen,
+        &derived_blocks,
+        &preparation,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        1,
+        1,
+    );
+    let gap = complete_derived_taylor_operator_slab(
+        &problem,
+        &frozen,
+        &derived_blocks,
+        &preparation,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        2,
+        1,
+    );
+
+    assert_eq!(
+        first.primitives().channel_validity(),
+        &[SpectralChannelValidity::Valid]
+    );
+    assert_eq!(
+        second.primitives().channel_validity(),
+        &[SpectralChannelValidity::Valid]
+    );
+    assert_eq!(
+        gap.primitives().channel_validity(),
+        &[SpectralChannelValidity::Unmapped]
+    );
+    assert!(
+        gap.primitives()
+            .dirty()
+            .iter()
+            .all(|value| *value == num_complex::Complex64::new(0.0, 0.0))
+    );
+    assert!(
+        gap.primitives()
+            .psf()
+            .iter()
+            .all(|value| *value == num_complex::Complex64::new(0.0, 0.0))
+    );
+    assert!(
+        gap.primitives()
+            .sum_weights()
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+
+    let canonical = first.completion();
+    for derived in [second.completion(), gap.completion()] {
+        assert_eq!(derived.problem_id(), canonical.problem_id());
+        assert_eq!(derived.geometry_id(), canonical.geometry_id());
+        assert_eq!(derived.numerics_id(), canonical.numerics_id());
+        assert_eq!(
+            derived.weighting_commitment_id(),
+            canonical.weighting_commitment_id()
+        );
+        assert_eq!(
+            derived.weighting_generation(),
+            canonical.weighting_generation()
+        );
+        assert_eq!(derived.replay_id(), canonical.replay_id());
+        assert_eq!(derived.coverage(), canonical.coverage());
+        assert_eq!(derived.primitive_catalog(), canonical.primitive_catalog());
+        assert_eq!(
+            derived.selected_generation(),
+            canonical.selected_generation()
+        );
+        assert_eq!(
+            derived.continuum_transform_generation(),
+            canonical.continuum_transform_generation()
+        );
+        assert_eq!(derived.sample_count(), canonical.sample_count());
+        assert_eq!(derived.block_count(), canonical.block_count());
+        assert_eq!(derived.coverage_proof_bytes(), 0);
+        assert_eq!(derived.coverage_proof_hash_calls(), 0);
+    }
+    let expected_proof_bytes = canonical.coverage_proof_bytes();
+    let expected_proof_hash_calls = canonical.coverage_proof_hash_calls();
+    let expected_replay = canonical.replay_id();
+    let expected_coverage = canonical.coverage();
+    let expected_samples = canonical.sample_count();
+    let expected_blocks = canonical.block_count();
+    assert!(expected_proof_bytes > 0);
+    assert!(expected_proof_hash_calls > 0);
+
+    let folded = CompleteDataOwnerResult::fold_channel_major_slab_prefix(first, second)
+        .expect("derived supported MVC slab retains canonical completion");
+    let folded = CompleteDataOwnerResult::fold_channel_major_slab_prefix(folded, gap)
+        .expect("zero-weight MVC gap is a neutral Taylor contribution");
+    assert_eq!(folded.primitives().slab().core_range(), 0..3);
+    assert_eq!(folded.completion().replay_id(), expected_replay);
+    assert_eq!(folded.completion().coverage(), expected_coverage);
+    assert_eq!(folded.completion().sample_count(), expected_samples);
+    assert_eq!(folded.completion().block_count(), expected_blocks);
+    assert_eq!(
+        folded.completion().coverage_proof_bytes(),
+        expected_proof_bytes
+    );
+    assert_eq!(
+        folded.completion().coverage_proof_hash_calls(),
+        expected_proof_hash_calls
     );
 }
 

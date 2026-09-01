@@ -933,6 +933,14 @@ fn t41_taylor_via_channel_major_is_distinct_and_channel_bounded() {
             channels: 4,
         }
     );
+    assert!(
+        dual.product_graph()
+            .nodes()
+            .iter()
+            .filter(|node| node.schema() == ProductSchema::ImageF32V1)
+            .all(|node| node.axes().shape()[3] == 1),
+        "public MT-MFS products retain singleton Taylor axes while the major cycle uses channels"
+    );
     assert_ne!(dual.problem_id(), direct.problem_id());
     assert!(matches!(
         compile_with_geometry(

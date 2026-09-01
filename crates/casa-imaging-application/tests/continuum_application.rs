@@ -10,10 +10,9 @@ use casa_coordinates::{
 };
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    ApplicationDispatchError, ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy,
-    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
-    ContinuumWeighting, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
-    execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
+    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
+    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
 };
 use casa_imaging_model::ImageDomainRole;
 use casa_ms::{
@@ -1264,7 +1263,7 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
 }
 
 #[test]
-fn mtmfs_via_cube_compiles_one_sixteen_channel_axis_from_four_spectral_windows() {
+fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_windows() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -1272,7 +1271,7 @@ fn mtmfs_via_cube_compiles_one_sixteen_channel_axis_from_four_spectral_windows()
     let image_name = root.path().join("four-spw-mvc");
     let mut imaging = request(
         measurement_set,
-        image_name,
+        image_name.clone(),
         ContinuumAlgorithm::Mtmfs {
             terms: 2,
             scales_px: vec![0.0],
@@ -1282,11 +1281,9 @@ fn mtmfs_via_cube_compiles_one_sixteen_channel_axis_from_four_spectral_windows()
     imaging.data_description = None;
     imaging.channel_count = Some(8);
     imaging.maximum_major_cycles = Some(1);
-    // Stop after backend-independent compilation so this spectral-axis test
-    // does not depend on the separately owned MVC runtime/publication lane.
     imaging.task_requirements = vec![
         TaskRequirement::SpectralMtmfsViaCube,
-        TaskRequirement::MosaicGridder,
+        TaskRequirement::SerialCpu,
     ];
     imaging.spectral_mode = SpectralImagingMode::MtmfsViaCube {
         axis: CubeAxisConfig {
@@ -1296,10 +1293,51 @@ fn mtmfs_via_cube_compiles_one_sixteen_channel_axis_from_four_spectral_windows()
         output_channels: Some(16),
     };
 
-    assert!(matches!(
-        execute_continuum(imaging),
-        Err(ApplicationDispatchError::Unavailable(_))
-    ));
+    let result = execute_continuum(imaging).expect("bounded multi-SPW MVC execution");
+    assert_eq!(
+        result.product_names,
+        [
+            ".psf.tt0",
+            ".psf.tt1",
+            ".psf.tt2",
+            ".residual.tt0",
+            ".residual.tt1",
+            ".model.tt0",
+            ".model.tt1",
+            ".image.tt0",
+            ".image.tt1",
+            ".sumwt.tt0",
+            ".sumwt.tt1",
+            ".sumwt.tt2",
+            ".mask",
+            ".alpha",
+            ".alpha.error",
+        ]
+        .map(str::to_string),
+    );
+    assert!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .sample_count()
+            > 0
+    );
+    for suffix in &result.product_names {
+        let product =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
+                .expect("reopen MVC Taylor product");
+        assert_eq!(
+            product.shape(),
+            if suffix.starts_with(".sumwt.") {
+                &[1, 1, 1, 1]
+            } else {
+                &[16, 16, 1, 1]
+            },
+            "{suffix}"
+        );
+    }
 }
 
 #[test]

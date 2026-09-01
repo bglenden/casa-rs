@@ -1335,9 +1335,10 @@ fn product_axes(
     let spectral = match kind {
         ProductAxisKind::Metadata => 0,
         ProductAxisKind::CoefficientImage | ProductAxisKind::CoefficientPlaneState => 1,
-        ProductAxisKind::SkyImage | ProductAxisKind::PlaneState => {
-            geometry.spectral().output_channels()
-        }
+        ProductAxisKind::SkyImage | ProductAxisKind::PlaneState => match reconstruction.basis() {
+            ReconstructionBasis::TaylorViaChannelMajor { .. } => 1,
+            _ => geometry.spectral().output_channels(),
+        },
     };
     let mut shape = [0; 4];
     for (position, axis) in domain.axes().positions().iter().enumerate() {
