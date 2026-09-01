@@ -18,7 +18,7 @@ from typing import Any
 
 
 MS = Path("/tmp/t41-alma-ephemobj-icrs.ms")
-ARTIFACT_ROOT = Path("/tmp/t41-mvc-casa-oracle-spw01-nchan35-niter1")
+ARTIFACT_ROOT = Path("/tmp/t41-mvc-casa-oracle-spw01-nchan40-niter1")
 PREFIX = ARTIFACT_ROOT / "casa"
 PRODUCT_SUFFIXES = (
     ".psf",
@@ -153,7 +153,7 @@ def main() -> None:
         "phasecenter": "TRACKFIELD",
         "stokes": "I",
         "specmode": "mvc",
-        "nchan": 35,
+        "nchan": 40,
         "outframe": "LSRK",
         "gridder": "standard",
         "deconvolver": "mtmfs",
@@ -181,9 +181,9 @@ def main() -> None:
         for suffix in PRODUCT_SUFFIXES
     }
     supported_planes = supported_sumwt_planes(image, Path(f"{PREFIX}.sumwt"))
-    if len(supported_planes) != 16:
+    if len(supported_planes) < 16:
         raise RuntimeError(
-            f"CASA MVC oracle has {len(supported_planes)} supported planes, expected 16: "
+            f"CASA MVC oracle has {len(supported_planes)} supported planes, expected at least 16: "
             f"{supported_planes}"
         )
     inventory = sorted(

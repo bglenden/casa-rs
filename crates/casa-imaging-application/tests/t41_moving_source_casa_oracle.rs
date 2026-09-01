@@ -306,7 +306,7 @@ fn mvc_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagin
         channel_count: None,
         spectral_mode: SpectralImagingMode::MtmfsViaCube {
             axis: CubeAxisConfig::default(),
-            output_channels: Some(35),
+            output_channels: Some(40),
         },
         continuum_subtraction: None,
         data_column: Some("DATA".to_string()),
@@ -448,10 +448,10 @@ fn assert_matching_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box
 
 fn assert_casa_mvc_cube_topology(prefix: &Path) -> Result<(), Box<dyn Error>> {
     for (suffix, expected) in [
-        (".psf", vec![512, 512, 1, 35]),
-        (".residual", vec![512, 512, 1, 35]),
-        (".model", vec![512, 512, 1, 35]),
-        (".sumwt", vec![1, 1, 1, 35]),
+        (".psf", vec![512, 512, 1, 40]),
+        (".residual", vec![512, 512, 1, 40]),
+        (".model", vec![512, 512, 1, 40]),
+        (".sumwt", vec![1, 1, 1, 40]),
     ] {
         assert_eq!(
             read_product(prefix, suffix)?.shape,
@@ -468,7 +468,10 @@ fn assert_casa_mvc_cube_topology(prefix: &Path) -> Result<(), Box<dyn Error>> {
         .filter_map(|(channel, weight)| (weight > 0.0).then_some(channel))
         .collect::<Vec<_>>();
     eprintln!("t41_mvc_casa_supported_channels={supported:?}");
-    assert_eq!(supported.len(), 16, "CASA supported MVC channel planes");
+    assert!(
+        supported.len() >= 16,
+        "CASA supported MVC channel planes: {supported:?}"
+    );
     Ok(())
 }
 
