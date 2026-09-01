@@ -108,6 +108,10 @@ fn matrix(transform: PairedMeasurementTransform) -> Matrix {
             [Complex::new(0.5, 0.0), Complex::new(0.0, 0.5)],
             [Complex::new(0.5, 0.0), Complex::new(0.0, -0.5)],
         ],
+        PairedMeasurementTransform::FeedResponse => [
+            [Complex::new(0.6, 0.2), Complex::new(-0.1, 0.3)],
+            [Complex::new(0.4, -0.2), Complex::new(0.7, 0.1)],
+        ],
         PairedMeasurementTransform::DirectionDependentResponse { .. } => [
             [Complex::new(0.9, 0.1), Complex::new(0.0, 0.0)],
             [Complex::new(0.0, 0.0), Complex::new(0.7, -0.2)],
@@ -349,6 +353,7 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
                 basis: ReconstructionBasis::Constant,
             },
             PairedMeasurementTransform::PolarizationMapping,
+            PairedMeasurementTransform::FeedResponse,
             PairedMeasurementTransform::DirectionDependentResponse {
                 response: InstrumentResponse::PrimaryBeam,
             },
@@ -447,6 +452,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
         BTreeSet::from([
             casa_imaging_model::PairedTransformKind::SpectralBasis,
             casa_imaging_model::PairedTransformKind::Polarization,
+            casa_imaging_model::PairedTransformKind::FeedResponse,
             casa_imaging_model::PairedTransformKind::DirectionDependentResponse,
             casa_imaging_model::PairedTransformKind::Phase,
             casa_imaging_model::PairedTransformKind::SpectralResampling,
@@ -459,7 +465,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 fn problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSamplingLaw::LINEAR);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 14);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 16);
     assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 4);
     assert_eq!(
         (
@@ -471,8 +477,8 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "02e3cf7d7596da3d281f63035901968007ae6ca79ef32beacc0b0408d7e6f7ba".to_string(),
-            "26ff6c4035c543bd03ded0cf6e962272fd1457a7793b2f5c6cb09af2a0413687".to_string(),
+            "5ed03cee235bac5ad5ec54ab5f00c0a80b5b5f1e6a2e3398f0223d4824b4e168".to_string(),
+            "1135b569d7fa70062caa4f09b38de8bda8b0f176647ca26f48f81a8c268d87d3".to_string(),
         )
     );
 }

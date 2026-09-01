@@ -947,6 +947,16 @@ fn project_stored_run_row(
     geometry: &EvaluatedRowGeometry,
 ) -> Result<SelectedObservationRunRow, BoundObservationSourceError> {
     let time_scale = time_scale(geometry_engine.time_reference().as_str())?;
+    let field_id = usize::try_from(stored.field_id())
+        .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+    let antenna1 = usize::try_from(stored.antenna1())
+        .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+    let antenna2 = usize::try_from(stored.antenna2())
+        .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+    let parallactic_angles_rad = [
+        geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna1)?,
+        geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna2)?,
+    ];
     let physical_row = u64::try_from(stored.physical_row())
         .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?;
     let prediction_target = if problem
@@ -980,6 +990,7 @@ fn project_stored_run_row(
             time_centroid: Epoch::new(stored.time_centroid_mjd_seconds() / 86_400.0, time_scale),
             interval_seconds: stored.interval_seconds(),
             exposure_seconds: stored.exposure_seconds(),
+            parallactic_angles_rad,
             phase_direction: geometry.phase_direction,
             delay_direction: geometry.delay_direction,
             pointing_directions: geometry.pointing_directions,

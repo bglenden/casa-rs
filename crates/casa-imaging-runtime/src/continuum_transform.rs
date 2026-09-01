@@ -760,6 +760,7 @@ mod tests {
                 time_centroid: Epoch::new(59_000.0, TimeScale::Utc),
                 interval_seconds: 1.0,
                 exposure_seconds: 1.0,
+                parallactic_angles_rad: [0.0, 0.0],
                 phase_direction: direction,
                 delay_direction: direction,
                 pointing_directions: SelectedPointingDirections {

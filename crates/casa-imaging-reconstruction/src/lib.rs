@@ -34,6 +34,7 @@ mod gridded_normal_operator;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
+mod polarization_operator;
 mod psf_beam;
 mod reconstruction_cycle;
 mod spectral_operator;
@@ -93,6 +94,9 @@ pub use minor_cycle::{
     MinorCycleError, MinorCycleEvidence, MinorCycleEvidenceId, MinorCycleModelPlane,
     MinorCycleProgram, MinorCycleResult, MinorCycleStopReason, MinorCycleValidity,
     minor_cycle_workspace_bytes, run_joint_minor_cycle, run_minor_cycle,
+};
+pub use polarization_operator::{
+    FeedBasis, MuellerMatrix, PolarizationOperator, PolarizationOperatorError,
 };
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,

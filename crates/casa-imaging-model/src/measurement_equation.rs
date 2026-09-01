@@ -135,6 +135,8 @@ pub enum PairedTransformKind {
     SpectralBasis,
     /// Polarization synthesis/analysis mapping.
     Polarization,
+    /// Source-backed feed-basis and parallactic-angle response.
+    FeedResponse,
     /// Direction-dependent or scalar instrument response.
     DirectionDependentResponse,
     /// Visibility phase rotation and its conjugate adjoint.
@@ -155,6 +157,8 @@ pub enum PairedMeasurementTransform {
     },
     /// Map model polarization coordinates to/from selected correlations.
     PolarizationMapping,
+    /// Rotate the sky coherency into/out of the source-backed feed basis.
+    FeedResponse,
     /// Apply the declared instrument response and its adjoint.
     DirectionDependentResponse {
         /// Exact response included in both directions.
@@ -184,6 +188,7 @@ impl PairedMeasurementTransform {
         match self {
             Self::SpectralBasis { .. } => PairedTransformKind::SpectralBasis,
             Self::PolarizationMapping => PairedTransformKind::Polarization,
+            Self::FeedResponse => PairedTransformKind::FeedResponse,
             Self::DirectionDependentResponse { .. } => {
                 PairedTransformKind::DirectionDependentResponse
             }
@@ -534,6 +539,7 @@ pub(crate) fn compile_normal_equation(
             basis: reconstruction.basis(),
         },
         PairedMeasurementTransform::PolarizationMapping,
+        PairedMeasurementTransform::FeedResponse,
         PairedMeasurementTransform::DirectionDependentResponse {
             response: science.measurement_equation().instrument_response(),
         },

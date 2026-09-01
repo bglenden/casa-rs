@@ -10936,6 +10936,7 @@ fn sealed_products_samples(
                 time_centroid: FixtureEpoch::new(59_000.0, TimeScale::Utc),
                 interval_seconds: 1.0,
                 exposure_seconds: 1.0,
+                parallactic_angles_rad: [0.0, 0.0],
                 phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                 delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
                 pointing_directions: casa_imaging_model::SelectedPointingDirections {

@@ -314,6 +314,7 @@ fn sample(
         ),
         interval_seconds: 1.0,
         exposure_seconds: 0.8,
+        parallactic_angles_rad: [0.2, 0.25],
         phase_direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
         delay_direction: SkyDirection::new(DirectionFrame::J2000, 1.000_5, -0.500_5),
         pointing_directions: casa_imaging_model::SelectedPointingDirections {

@@ -492,6 +492,40 @@ mod tests {
     }
 
     #[test]
+    fn t33_polarization_operator_does_not_claim_the_t34_production_route() {
+        for coordinate in [
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesU,
+            PolarizationCoordinate::StokesV,
+            PolarizationCoordinate::LinearXy,
+            PolarizationCoordinate::CircularRl,
+        ] {
+            assert!(!supports_capability(RequiredCapability::Polarization(
+                coordinate
+            )));
+        }
+        assert!(!supports_capability(
+            RequiredCapability::FullMuellerResponse
+        ));
+
+        let catalog = installed_imaging_capability_catalog();
+        for requirement in [
+            RequiredCapability::Polarization(PolarizationCoordinate::StokesQ),
+            RequiredCapability::FullMuellerResponse,
+        ] {
+            assert_eq!(
+                catalog
+                    .iter()
+                    .find(|entry| {
+                        entry.requirement() == ImagingCapabilityRequirement::Scientific(requirement)
+                    })
+                    .and_then(ImagingCapabilityCatalogEntry::unsupported),
+                Some(UnsupportedRequirement::Capability(requirement))
+            );
+        }
+    }
+
+    #[test]
     fn capability_catalog_is_complete_unique_and_exactly_typed() {
         let catalog = installed_imaging_capability_catalog();
         let ids = catalog
