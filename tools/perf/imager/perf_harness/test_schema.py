@@ -151,7 +151,9 @@ def _legacy_casa_tclean_result() -> dict[str, object]:
 
 
 class SchemaTests(unittest.TestCase):
-    def test_current_comparison_product_accepts_neutral_existence_evidence(self) -> None:
+    def test_current_comparison_product_accepts_neutral_existence_evidence(
+        self,
+    ) -> None:
         product = {
             "status": "missing",
             "left_path": "/tmp/left.image",
@@ -179,6 +181,8 @@ class SchemaTests(unittest.TestCase):
     ) -> None:
         product = {
             "status": "compared",
+            "metadata_parity_required": False,
+            "metadata": {"status": "not_required", "parity": None},
             "review_panel": {
                 "status": "written",
                 "zoom_panel": {
@@ -230,6 +234,29 @@ class SchemaTests(unittest.TestCase):
                 malformed,
                 protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
                 source="malformed product",
+            )
+
+    def test_current_product_contract_accepts_shape_mismatch_dimensions(self) -> None:
+        product = {
+            "status": "shape_mismatch",
+            "left_path": "/tmp/left.image",
+            "right_path": "/tmp/right.image",
+            "left_shape": [512, 512, 1, 1],
+            "right_shape": [2, 2, 1, 1],
+        }
+
+        schema_contract._validate_comparison_product(
+            product,
+            protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+            source="shape mismatch product",
+        )
+
+        product["right_shape"][0] = 0
+        with self.assertRaisesRegex(ContractError, "must be a positive integer"):
+            schema_contract._validate_comparison_product(
+                product,
+                protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+                source="shape mismatch product",
             )
 
     def test_workload_rejects_unknown_and_unversioned_shapes(self) -> None:
@@ -969,7 +996,7 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "lowercase SHA-256"):
             validate_workload_manifest(workload)
 
-    def test_full_comparison_requires_bounded_exact_metadata_contract(self) -> None:
+    def test_full_comparison_requires_bounded_inventory_and_wcs_policy(self) -> None:
         workload = {
             "schema_version": 1,
             "id": "full-comparison",
@@ -996,6 +1023,12 @@ class SchemaTests(unittest.TestCase):
             },
         }
         validate_workload_manifest(workload)
+
+        direction_scoped = copy.deepcopy(workload)
+        direction_scoped["comparison"]["require_exact_product_inventory"] = False
+        direction_scoped["comparison"]["require_metadata_parity"] = False
+        direction_scoped["comparison"]["require_direction_wcs_parity"] = True
+        validate_workload_manifest(direction_scoped)
 
         for key, message in (
             ("full_chunk_elements", "full_chunk_elements"),

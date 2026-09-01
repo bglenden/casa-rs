@@ -445,9 +445,12 @@ def _source_region_checks(
     expected_regions: list[dict[str, Any]],
     beam_info: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
+    if not expected_regions:
+        return []
     names = {
         "centroid_beams",
         "centroid_pixels",
+        "diff_rms_over_right_rms",
         "integrated_flux_relative",
         "peak_relative",
     } & set(thresholds)
@@ -569,6 +572,14 @@ def _source_region_checks(
                     f"{suffix}.source[{region_id}].centroid_pixels",
                     distance,
                     thresholds["centroid_pixels"],
+                )
+            )
+        if "diff_rms_over_right_rms" in names:
+            checks.append(
+                _ceiling_check(
+                    f"{suffix}.source[{region_id}].diff_rms_over_right_rms",
+                    _nested(region, "difference", "diff_rms_over_right_rms"),
+                    thresholds["diff_rms_over_right_rms"],
                 )
             )
         if "centroid_beams" in names:

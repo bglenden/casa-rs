@@ -657,6 +657,11 @@
       "fingerprint": "bf7d536e17f347990826491f21b56f321c435e8b06176bb4d4c32811a6757492"
     },
     {
+      "id": "parameter.facets",
+      "semantic_revision": 2,
+      "fingerprint": "0d15bb270d62dce34ba158e4567ba0b9c823754aa9a8eea76f485952bcee9062"
+    },
+    {
       "id": "parameter.featherimage",
       "semantic_revision": 1,
       "fingerprint": "0f70d8ca8ce36b0e9579b244d0ec8daedeba4d883deb185418c56fe0694c9439"
@@ -2387,6 +2392,11 @@
       "id": "imager",
       "contract_version": 11,
       "fingerprint": "ee76d12e9ce530fd9b99eb9726b684c84086cdbf0d68a4f5cc33f37ddb29c160"
+    },
+    {
+      "id": "imager",
+      "contract_version": 12,
+      "fingerprint": "c20d1664021fb7c474f5de4b0fc59a2a48a0dc46fa482672496e1730255c1bc2"
     },
     {
       "id": "imcollapse",

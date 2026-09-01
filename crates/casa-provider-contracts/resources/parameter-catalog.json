@@ -9087,7 +9087,7 @@
     },
     {
       "id": "parameter.facets",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "facets",
       "value_domain": {
         "kind": "integer"
@@ -9104,9 +9104,10 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Number of wide-field image facets",
-        "details": "Unsupported facet layouts fail with a capability diagnostic instead of being reduced to one facet.",
+        "details": "Constant-basis MFS uses an exact regular facets-by-facets chart layout. Non-divisible geometry and unsupported spectral-basis combinations fail closed.",
         "examples": [
-          "1"
+          "1",
+          "2"
         ]
       },
       "persistence_class": "profile"

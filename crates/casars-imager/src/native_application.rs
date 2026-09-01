@@ -136,6 +136,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         measurement_set: config.ms.clone(),
         image_name: config.imagename.clone(),
         image_size: config.imsize,
+        facets: config.facets,
         cell_arcsec: config.cell_arcsec,
         phase_center_field: config.phasecenter_field,
         phase_center: config.phasecenter.clone(),
@@ -309,7 +310,7 @@ fn unsupported_native_controls(config: &CliConfig) -> Vec<TaskRequirement> {
         TaskRequirement::PerChannelWeightDensity,
     );
     require(
-        config.w_project_planes.is_some(),
+        config.w_project_planes.is_some_and(|planes| planes > 1),
         TaskRequirement::WProjectionPlanes,
     );
     require(
@@ -373,11 +374,14 @@ fn unsupported_native_controls(config: &CliConfig) -> Vec<TaskRequirement> {
 mod tests {
     use std::ffi::OsString;
 
-    use casa_imaging_application::ResourcePolicy;
+    use casa_imaging_application::{
+        ImagingCapabilityRequirement, ResourcePolicy, installed_imaging_capability_catalog,
+    };
 
     use super::{
-        CliConfig, HogbomIterationAccounting, StandardMfsAccelerationPolicy, TaskRequirement,
-        application_request, backend_requirements, task_requirements, unsupported_native_controls,
+        CliConfig, HogbomIterationAccounting, ImagingFftPrecisionPolicy,
+        StandardMfsAccelerationPolicy, TaskRequirement, WeightingMode, application_request,
+        backend_requirements, task_requirements, unsupported_native_controls,
     };
 
     fn config(extra: &[&str]) -> CliConfig {
@@ -484,6 +488,60 @@ mod tests {
         ]));
 
         assert!(!requirements.contains(&TaskRequirement::UnknownBackend));
+    }
+
+    #[test]
+    fn t32_faceted_serial_gate_uses_only_installed_task_controls() {
+        let config = config(&[
+            "--field",
+            "0",
+            "--spw",
+            "0",
+            "--channel-start",
+            "0",
+            "--channel-count",
+            "24",
+            "--imsize",
+            "512",
+            "--cell-arcsec",
+            "0.35",
+            "--weighting",
+            "natural",
+            "--robust",
+            "0.5",
+            "--dirty-only",
+            "--gridder",
+            "widefield",
+            "--facets",
+            "2",
+            "--wprojplanes",
+            "1",
+            "--standard-mfs-acceleration",
+            "cpu",
+            "--imaging-fft-backend",
+            "rustfft",
+            "--imaging-fft-precision",
+            "auto",
+            "--no-parallel",
+            "--no-preview-pngs",
+        ]);
+
+        assert_eq!(
+            config.imaging_fft_precision,
+            ImagingFftPrecisionPolicy::Auto
+        );
+        assert_eq!(config.weighting, WeightingMode::Natural);
+        let requirements = task_requirements(&config);
+        assert_eq!(requirements, vec![TaskRequirement::SerialCpu]);
+        let catalog = installed_imaging_capability_catalog();
+        assert!(
+            requirements
+                .into_iter()
+                .all(|requirement| catalog.iter().any(|entry| {
+                    entry.requirement() == ImagingCapabilityRequirement::Task(requirement)
+                        && entry.unsupported().is_none()
+                }))
+        );
     }
 
     #[test]

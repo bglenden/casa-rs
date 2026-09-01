@@ -436,6 +436,7 @@ fn request(
         measurement_set,
         image_name,
         image_size: 16,
+        facets: 1,
         cell_arcsec: 1.0,
         phase_center_field: None,
         phase_center: None,

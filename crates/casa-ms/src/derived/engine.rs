@@ -773,6 +773,35 @@ impl MsCalEngine {
         ))
     }
 
+    /// Reproject raw MS UVW coordinates for one CASA faceted `GridFT` chart.
+    ///
+    /// CASA constructs every faceted transform with an explicit common
+    /// tangent plane. That selects casacore `UVWMachine(project=true)`: phase
+    /// rotation is evaluated on the ordinary output-centre UVW, then the UV
+    /// plane is reprojected onto the input observation plane. The latter is
+    /// scientifically observable in the facet PSF and must not be collapsed
+    /// into the ordinary non-faceted GridFT projection above.
+    pub(crate) fn reproject_raw_uvw_for_faceted_gridft_to_j2000(
+        &self,
+        raw_uvw_m: [f64; 3],
+        source_field_id: usize,
+        target_direction_rad: [f64; 2],
+    ) -> MsResult<([f64; 3], f64)> {
+        let source = self.field_dir(source_field_id)?;
+        let target = MDirection::from_angles(
+            target_direction_rad[0],
+            target_direction_rad[1],
+            DirectionRef::J2000,
+        );
+        let transform = CasaUvwMachine::new(&target, source);
+        let casa_input = [-raw_uvw_m[0], -raw_uvw_m[1], raw_uvw_m[2]];
+        let (casa_output, casa_dphase_m) = transform.convert_uvw_projected(casa_input);
+        Ok((
+            [-casa_output[0], -casa_output[1], casa_output[2]],
+            -casa_dphase_m,
+        ))
+    }
+
     /// Reproject raw MS UVW for CASA GridFT density evaluation at a fixed J2000 centre.
     ///
     /// Density evaluation consumes the UV coordinates from the same paired
@@ -905,6 +934,7 @@ fn uvw_phase_rotation_vector(
 #[derive(Debug, Clone, Copy)]
 struct CasaUvwMachine {
     uvrot: [[f64; 3]; 3],
+    input_plane_projection: [[f64; 3]; 3],
     phrot: [f64; 3],
 }
 
@@ -927,6 +957,21 @@ impl CasaUvwMachine {
             (-(output_ra - std::f64::consts::FRAC_PI_2), Axis::Z),
         ]);
         let uvrot = mat3_transpose(casa_mat3_mul(casa_mat3_mul(rot3, identity3()), rot1));
+        // casacore UVWMachine's `project=true` path reprojects the rotated UV
+        // plane onto the input-direction reference plane. Preserve its
+        // literal Euler construction and sparse matrix assignment so faceted
+        // GridFT follows the same arithmetic boundary.
+        let projection_rotation = casa_euler_rotation(&[
+            (-(std::f64::consts::FRAC_PI_2 - output_dec), Axis::X),
+            (output_ra - input_ra, Axis::Z),
+            (std::f64::consts::FRAC_PI_2 - input_dec, Axis::X),
+        ]);
+        let denominator = projection_rotation[2][2];
+        let mut input_plane_projection = identity3();
+        input_plane_projection[0][0] = projection_rotation[1][1] / denominator;
+        input_plane_projection[1][1] = projection_rotation[0][0] / denominator;
+        input_plane_projection[0][1] = projection_rotation[1][0] / denominator;
+        input_plane_projection[1][0] = projection_rotation[0][1] / denominator;
         let output_cosines = output_direction.cosines();
         let input_cosines = input_direction.cosines();
         let phrot = casa_mat3_mul_vec3(
@@ -937,13 +982,26 @@ impl CasaUvwMachine {
                 output_cosines[2] - input_cosines[2],
             ],
         );
-        Self { uvrot, phrot }
+        Self {
+            uvrot,
+            input_plane_projection,
+            phrot,
+        }
     }
 
     fn convert_uvw(self, uvw_m: [f64; 3]) -> ([f64; 3], f64) {
         let converted = casa_row_vec3_mul_mat3(uvw_m, self.uvrot);
         let phase_shift_m = casa_dot3(self.phrot, converted);
         (converted, phase_shift_m)
+    }
+
+    fn convert_uvw_projected(self, uvw_m: [f64; 3]) -> ([f64; 3], f64) {
+        let rotated = casa_row_vec3_mul_mat3(uvw_m, self.uvrot);
+        let phase_shift_m = casa_dot3(self.phrot, rotated);
+        (
+            casa_row_vec3_mul_mat3(rotated, self.input_plane_projection),
+            phase_shift_m,
+        )
     }
 }
 
@@ -2010,6 +2068,46 @@ mod tests {
         assert!((uvw_m[1] - -29.526_408_975_072_36).abs() < 1.0e-12);
         assert!((uvw_m[2] - 16.032_371_216_641_046).abs() < 1.0e-12);
         assert!((phase_shift_m - -0.038_910_833_675_543_17).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn faceted_gridft_reprojects_uv_plane_like_casacore_project_true() {
+        let target = MDirection::from_angles(
+            -1.058_214_942_099_811_3,
+            0.702_211_407_924_268_5,
+            DirectionRef::J2000,
+        );
+        let target_angles = target.as_angles();
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![
+                target,
+                MDirection::from_angles(
+                    -1.053_851_618_969_825_7,
+                    0.706_574_731_054_254_4,
+                    DirectionRef::J2000,
+                ),
+            ],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
+        );
+        let (uvw_m, phase_shift_m) = engine
+            .reproject_raw_uvw_for_faceted_gridft_to_j2000(
+                [
+                    27.073_056_790_908_41,
+                    -29.672_968_936_171_65,
+                    15.993_460_382_965_498,
+                ],
+                1,
+                [target_angles.0, target_angles.1],
+            )
+            .expect("project facet UVW");
+        // Captured from casacore UVWMachine(out, in, EW=false, project=true)
+        // after CASA GridFT's negate-UV boundary and casa-rs' adjoint sign.
+        assert!((uvw_m[0] - 27.126_332_109_240_163).abs() < 1.0e-12);
+        assert!((uvw_m[1] - -29.603_258_931_514_546).abs() < 1.0e-12);
+        assert!((uvw_m[2] - 16.032_371_216_641_046).abs() < 1.0e-12);
+        assert!((phase_shift_m - -0.038_910_833_675_545_334).abs() < 1.0e-12);
     }
 
     #[test]

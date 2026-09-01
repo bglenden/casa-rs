@@ -1272,12 +1272,15 @@ fn project_gridded_normal_frame_bounds(
         ReconstructionBasis::Taylor { .. } => 1,
         ReconstructionBasis::JointContinuumLine { .. } => 1,
     };
+    let physical_chart_count = SpectralOperatorSpecification::new(problem)
+        .map_err(io::Error::other)?
+        .chart_count();
     let maximum_contributions_per_sample = spectral_contributions_per_sample
-        .checked_mul(problem.geometry().domains().len())
+        .checked_mul(physical_chart_count)
         .ok_or_else(|| io::Error::other("image-domain contribution bound overflow"))?;
     // Compilation contributes at most one prediction group per weighted sample;
     // BTree reduction can only lower that count. Each group contains at most the
-    // product of the spectral-kernel and image-domain contribution bounds.
+    // product of the spectral-kernel and physical-chart contribution bounds.
     let maximum_frame_groups = usize::try_from(maximum_samples.min(max_block))
         .map_err(|_| io::Error::other("gridded-normal frame group bound overflow"))?
         .max(1);
@@ -2128,7 +2131,7 @@ fn project_residency(
                 _ => workload.coefficient_terms(),
             };
             let residency = gridded_normal_domain_execution_residency(
-                specification.domain_grid_shapes(),
+                specification.chart_grid_shapes(),
                 accumulation_terms,
             )?;
             residency

@@ -173,6 +173,7 @@ fn base_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagi
         measurement_set,
         image_name,
         image_size: IMAGE_SIZE,
+        facets: 1,
         cell_arcsec: 0.01,
         phase_center_field: None,
         phase_center: None,

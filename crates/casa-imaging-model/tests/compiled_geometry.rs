@@ -558,10 +558,55 @@ fn facet_windows_cover_the_domain_exactly_and_non_divisible_layouts_fail_closed(
         },
     )]);
     let compiled = compile(request(faceted, Vec::new())).expect("compile facets");
-    let facets = compiled.geometry().domains()[0].facets();
+    let domain = &compiled.geometry().domains()[0];
+    let facets = domain.facets();
     assert_eq!(facets.len(), 8);
-    assert_eq!(facets.first().expect("first").origin(), [0, 0]);
-    assert_eq!(facets.last().expect("last").end_exclusive(), [512, 512]);
+    let expected_windows = [
+        ([0, 0], [256, 128]),
+        ([256, 0], [512, 128]),
+        ([0, 128], [256, 256]),
+        ([256, 128], [512, 256]),
+        ([0, 256], [256, 384]),
+        ([256, 256], [512, 384]),
+        ([0, 384], [256, 512]),
+        ([256, 384], [512, 512]),
+    ];
+    assert_eq!(
+        facets
+            .iter()
+            .map(|facet| (facet.origin(), facet.end_exclusive()))
+            .collect::<Vec<_>>(),
+        expected_windows
+    );
+    assert_eq!(
+        facets
+            .iter()
+            .map(|facet| {
+                let origin = facet.origin();
+                let end = facet.end_exclusive();
+                (end[0] - origin[0]) * (end[1] - origin[1])
+            })
+            .sum::<usize>(),
+        domain.shape().pixels()[0] * domain.shape().pixels()[1]
+    );
+    assert!(
+        facets
+            .iter()
+            .all(|facet| facet.local_centre_pixel() == [128, 64])
+    );
+    assert_eq!(facets[0].direction().reference_pixel(), [255.0, 255.0]);
+    assert_eq!(facets[1].direction().reference_pixel(), [-1.0, 255.0]);
+    assert_eq!(facets[7].direction().reference_pixel(), [-1.0, -129.0]);
+    assert_eq!(
+        facets[0].direction().reference_direction(),
+        domain.direction().reference_direction(),
+        "facet subwindows retain the common tangent"
+    );
+    assert_ne!(facets[0].phase_centre(), facets[1].phase_centre());
+    assert_ne!(
+        facets[0].phase_centre(),
+        domain.direction().reference_direction()
+    );
 
     let invalid = geometry().with_domains(vec![geometry().domains()[0].clone().with_facets(
         FacetLayout::Regular {
@@ -575,6 +620,18 @@ fn facet_windows_cover_the_domain_exactly_and_non_divisible_layouts_fail_closed(
             CompileGeometryError::NonDivisibleFacetLayout { .. }
         ))
     ));
+}
+
+#[test]
+fn one_facet_preserves_the_domain_chart_and_phase_centre() {
+    let compiled = compile(request(geometry(), Vec::new())).expect("compile one facet");
+    let domain = &compiled.geometry().domains()[0];
+    let facet = domain.facets()[0];
+
+    assert_eq!(facet.origin(), [0, 0]);
+    assert_eq!(facet.end_exclusive(), [512, 512]);
+    assert_eq!(facet.direction(), domain.direction());
+    assert_eq!(facet.phase_centre(), domain.model_phase_centre());
 }
 
 #[test]

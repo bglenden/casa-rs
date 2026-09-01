@@ -127,7 +127,9 @@ class FakeMetadataFactory:
 
 
 class ImageComparisonProtocolTests(unittest.TestCase):
-    def test_missing_product_reports_neutral_existence_without_legacy_aliases(self) -> None:
+    def test_missing_product_reports_neutral_existence_without_legacy_aliases(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             left = root / "left.image"
@@ -149,6 +151,31 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertFalse(result["right_exists"])
         self.assertNotIn("rust_exists", result)
         self.assertNotIn("casa_exists", result)
+
+    def test_shape_mismatch_uses_canonical_shapes_and_validates_derivation(
+        self,
+    ) -> None:
+        request = normalize_comparison_request(comparison_request())
+        output = comparison_output(request)
+        suffix = ".image.tt0"
+        output["products"][suffix] = {
+            "status": "shape_mismatch",
+            "left_path": request["left_prefix"] + suffix,
+            "right_path": request["right_prefix"] + suffix,
+            "left_shape": [512, 512, 1, 1],
+            "right_shape": [2, 2, 1, 1],
+        }
+        output["status"] = "comparison_failed"
+        output["reason"] = f"product comparison failed for {suffix}"
+        output["structured_difference_review"] = comparator.summarize_product_reviews(
+            output["products"]
+        )
+
+        validate_comparison_output(output, request)
+
+        output["products"][suffix]["right_shape"] = [512, 512, 1, 1]
+        with self.assertRaisesRegex(ValueError, "equal operand shapes"):
+            validate_comparison_output(output, request)
 
     def test_host_and_casa_schema_v4_bind_the_same_workspace_request(self) -> None:
         request = normalize_comparison_request(comparison_request())
@@ -477,6 +504,7 @@ class ImageComparisonProtocolTests(unittest.TestCase):
 
         beamless = comparison_output(request)
         beamless_region = beamless["products"][".image.tt0"]["source_regions"][0]
+        self.assertIsNone(beamless_region["left"]["centroid_pixels"])
         for side in ("left", "right"):
             beamless_region[side]["beam_area_pixels"] = None
             beamless_region[side]["integrated_flux"] = None
@@ -501,6 +529,13 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "source-region trc"):
             validate_comparison_output(bad_source_box, request)
+
+        bad_source_difference = comparison_output(request)
+        bad_source_difference["products"][".image.tt0"]["source_regions"][0][
+            "difference"
+        ]["diff_rms_over_right_rms"] = 1.0
+        with self.assertRaisesRegex(ValueError, "ratio is not derived"):
+            validate_comparison_output(bad_source_difference, request)
 
         bad_classification = comparison_output(request)
         product = bad_classification["products"][".image.tt0"]
@@ -983,6 +1018,94 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertEqual("mismatch", result["status"])
         self.assertFalse(result["field_parity"]["coordinates"])
 
+    def test_direction_wcs_parity_ignores_singleton_spectral_sampling_values(
+        self,
+    ) -> None:
+        coordinates = {
+            "direction0": {
+                "axes": ["Right Ascension", "Declination"],
+                "cdelt": [-1.0e-6, 1.0e-6],
+                "conversionSystem": "J2000",
+                "crpix": [256.0, 256.0],
+                "crval": [1.0, -0.5],
+                "latpole": -28.0,
+                "longpole": 180.0,
+                "pc": [[1.0, 0.0], [0.0, 1.0]],
+                "projection": "SIN",
+                "projection_parameters": [0.0, 0.0],
+                "system": "J2000",
+                "units": ["rad", "rad"],
+            },
+            "pixelmap0": [0, 1],
+            "pixelmap1": [2],
+            "pixelmap2": [3],
+            "worldmap0": [0, 1],
+            "worldmap1": [2],
+            "worldmap2": [3],
+            "stokes1": {
+                "axes": ["Stokes"],
+                "cdelt": [1.0],
+                "crpix": [0.0],
+                "crval": [1.0],
+                "pc": [[1.0]],
+                "stokes": ["I"],
+            },
+            "spectral2": {
+                "name": "Frequency",
+                "system": "LSRK",
+                "unit": "Hz",
+                "restfreq": 45.0e9,
+                "conversion": {"system": "LSRK"},
+                "wcs": {"ctype": "FREQ", "crval": 45.0e9, "cdelt": 1.0},
+            },
+            "obsdate": {"refer": "LAST"},
+            "telescope": "",
+        }
+        common = {
+            "shape": [512, 512, 1, 1],
+            "unit": "Jy/beam",
+            "restoring_beam": {},
+            "masks": [],
+        }
+        records = {
+            "left": {**common, "coordinates": copy.deepcopy(coordinates)},
+            "right": {**common, "coordinates": copy.deepcopy(coordinates)},
+        }
+        records["right"]["coordinates"]["spectral2"]["restfreq"] = 46.0e9
+        records["right"]["coordinates"]["spectral2"]["wcs"]["crval"] = 46.0e9
+        records["right"]["coordinates"]["spectral2"]["wcs"]["cdelt"] = 3.0e9
+        records["right"]["coordinates"]["obsdate"] = {"refer": "UTC"}
+        records["right"]["coordinates"]["telescope"] = "VLA"
+
+        result = comparator.compare_direction_wcs(
+            "left", "right", image_factory=FakeMetadataFactory(records)
+        )
+        self.assertEqual("matched", result["status"])
+
+        records["right"]["coordinates"]["direction0"]["crval"][0] += 1.0e-5
+        result = comparator.compare_direction_wcs(
+            "left", "right", image_factory=FakeMetadataFactory(records)
+        )
+        self.assertEqual("mismatch", result["status"])
+        self.assertFalse(result["field_parity"]["direction"])
+
+    def test_direction_wcs_receipt_is_derived_when_broad_metadata_is_disabled(
+        self,
+    ) -> None:
+        raw_request = comparison_request()
+        raw_request["require_direction_wcs_parity"] = True
+        raw_request["require_metadata_parity"] = False
+        request = normalize_comparison_request(raw_request)
+        output = comparison_output(request)
+
+        validate_comparison_output(output, request)
+
+        output["products"][".image.tt0"]["direction_wcs"]["field_parity"][
+            "direction"
+        ] = False
+        with self.assertRaisesRegex(ValueError, "not derived from operands"):
+            validate_comparison_output(output, request)
+
     def test_metadata_validator_uses_coordinate_roundoff_policy(self) -> None:
         request = normalize_comparison_request(comparison_request())
         output = comparison_output(request)
@@ -1173,6 +1296,10 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertEqual(5.5, result["right"]["integrated_flux"])
         self.assertAlmostEqual(2.0 + 2.0 / 12.0, result["left"]["centroid_pixels"][0])
         self.assertEqual([2, 2], result["right"]["peak_abs"]["location"])
+        self.assertAlmostEqual(
+            1.0 / math.sqrt(101.0),
+            result["difference"]["diff_rms_over_right_rms"],
+        )
         self.assertGreater(result["left"]["chunks"], 1)
         self.assertLessEqual(max(factory.chunk_sizes), 4)
 
@@ -1193,6 +1320,27 @@ class ImageComparisonProtocolTests(unittest.TestCase):
 
         self.assertEqual(22, result["finite_unmasked_count"])
         self.assertLessEqual(max(factory.chunk_sizes), 4)
+
+    def test_source_region_exact_zero_difference_has_zero_relative_rms(self) -> None:
+        data = np.zeros((4, 4, 1, 1), dtype=np.float64)
+        masks = np.ones_like(data, dtype=bool)
+        factory = FakeImageFactory(
+            {"left": data, "right": data.copy()},
+            {"left": masks, "right": masks.copy()},
+        )
+
+        result = comparator.source_region_difference(
+            "left",
+            "right",
+            [0, 0],
+            [3, 3],
+            max_elements=5,
+            image_factory=factory,
+        )
+
+        self.assertEqual(0.0, result["right_rms"])
+        self.assertEqual(0.0, result["difference_rms"])
+        self.assertEqual(0.0, result["diff_rms_over_right_rms"])
 
     def test_restoring_beam_area_is_converted_to_direction_pixels(self) -> None:
         metadata = {
@@ -1297,6 +1445,7 @@ def comparison_request(*, tolerances=...):
         "max_elements_per_product": 31,
         "full_chunk_elements": 17,
         "require_exact_product_inventory": True,
+        "require_direction_wcs_parity": False,
         "require_metadata_parity": True,
         "source_regions": [
             {
@@ -1360,7 +1509,11 @@ def comparison_output(request):
             "diff_abs_max_over_right_peak": 0.0,
             "correlation": None,
             "metadata_parity_required": request["require_metadata_parity"],
-            "metadata": matched_metadata([1, 1]),
+            "metadata": (
+                matched_metadata([1, 1])
+                if request["require_metadata_parity"]
+                else {"status": "not_required", "parity": None}
+            ),
             "source_regions": [
                 source_region_result(region, request["full_chunk_elements"])
                 for region in request["source_regions"]
@@ -1368,6 +1521,13 @@ def comparison_output(request):
             ],
             "structured_difference": structure,
         }
+        if request["require_direction_wcs_parity"]:
+            products[suffix].update(
+                {
+                    "direction_wcs_parity_required": True,
+                    "direction_wcs": matched_direction_wcs([1, 1]),
+                }
+            )
     for product in products.values():
         product["full_array"] = {
             "status": "compared",
@@ -1447,6 +1607,7 @@ def comparison_output(request):
         "right_label": request["right_label"],
         "requested_products": list(request["products"]),
         "require_exact_product_inventory": request["require_exact_product_inventory"],
+        "require_direction_wcs_parity": request["require_direction_wcs_parity"],
         "require_metadata_parity": request["require_metadata_parity"],
         "legacy_operand_aliases": request["legacy_operand_aliases"],
         "source_regions": copy.deepcopy(request["source_regions"]),
@@ -1537,6 +1698,65 @@ def matched_metadata(shape):
     }
 
 
+def matched_direction_wcs(shape):
+    operand = {
+        "status": "complete",
+        "shape": list(shape),
+        "direction": {
+            "axes": ["Right Ascension", "Declination"],
+            "cdelt": [-1.0e-6, 1.0e-6],
+            "conversionSystem": "J2000",
+            "crpix": [0.0, 0.0],
+            "crval": [1.0, -0.5],
+            "latpole": -28.0,
+            "longpole": 180.0,
+            "pc": [[1.0, 0.0], [0.0, 1.0]],
+            "projection": "SIN",
+            "projection_parameters": [0.0, 0.0],
+            "system": "J2000",
+            "units": ["rad", "rad"],
+        },
+        "axis_topology": {
+            "pixelmap0": [0, 1],
+            "pixelmap1": [2],
+            "pixelmap2": [3],
+            "worldmap0": [0, 1],
+            "worldmap1": [2],
+            "worldmap2": [3],
+        },
+        "stokes": {
+            "axes": ["Stokes"],
+            "cdelt": [1.0],
+            "crpix": [0.0],
+            "crval": [1.0],
+            "pc": [[1.0]],
+            "stokes": ["I"],
+        },
+        "spectral_axis": {
+            "record": "spectral2",
+            "name": "Frequency",
+            "system": "LSRK",
+            "conversion_system": "LSRK",
+            "unit": "Hz",
+            "wcs_type": "FREQ",
+        },
+        "missing_fields": [],
+    }
+    return {
+        "status": "matched",
+        "parity": True,
+        "field_parity": {
+            "shape": True,
+            "direction": True,
+            "axis_topology": True,
+            "stokes": True,
+            "spectral_axis": True,
+        },
+        "left": copy.deepcopy(operand),
+        "right": copy.deepcopy(operand),
+    }
+
+
 def source_region_result(region, chunk_elements):
     measurement = {
         "status": "measured",
@@ -1544,7 +1764,7 @@ def source_region_result(region, chunk_elements):
         "integrated_pixel_sum": 0.0,
         "beam_area_pixels": 1.0,
         "integrated_flux": 0.0,
-        "centroid_pixels": [0.0, 0.0],
+        "centroid_pixels": None,
         "peak_abs": {"location": [0, 0], "value": 0.0, "abs_value": 0.0},
         "chunks": 1,
         "max_chunk_elements": chunk_elements,
@@ -1557,6 +1777,15 @@ def source_region_result(region, chunk_elements):
         ),
         "left": copy.deepcopy(measurement),
         "right": copy.deepcopy(measurement),
+        "difference": {
+            "status": "measured",
+            "finite_unmasked_count": 1,
+            "right_rms": 0.0,
+            "difference_rms": 0.0,
+            "diff_rms_over_right_rms": 0.0,
+            "chunks": 1,
+            "max_chunk_elements": chunk_elements,
+        },
     }
 
 

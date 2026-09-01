@@ -55,6 +55,8 @@ pub struct ManagedImagingRequest {
     pub save_continuum_residual: bool,
     /// Image size in pixels.
     pub imsize: usize,
+    /// Number of regular facets along each direction axis.
+    pub facets: usize,
     /// Cell size in arcseconds.
     pub cell_arcsec: f64,
     /// Image direction-coordinate projection.
@@ -145,6 +147,7 @@ impl ManagedImagingOutput {
                 .to_string(),
                 save_continuum_residual: config.save_continuum_residual,
                 imsize: config.imsize,
+                facets: config.facets,
                 cell_arcsec: config.cell_arcsec,
                 projection: "SIN".to_string(),
                 dirty_only: config.dirty_only,
@@ -222,6 +225,7 @@ impl ManagedImagingOutput {
                 .to_string(),
                 save_continuum_residual: request.save_continuum_residual,
                 imsize: request.image_size,
+                facets: request.facets,
                 cell_arcsec: request.cell_arcsec,
                 projection: request.projection.as_cli_text().to_string(),
                 dirty_only: request.dirty_only,
@@ -293,15 +297,10 @@ fn managed_gridder_from_config(config: &CliConfig) -> &'static str {
         "awproject"
     } else if config.force_standard_gridder {
         "standard"
-    } else if matches!(
-        config.w_term_mode,
-        crate::WTermMode::WProject | crate::WTermMode::Direct
-    ) {
-        if matches!(config.w_term_mode, crate::WTermMode::Direct) {
-            "widefield"
-        } else {
-            "wproject"
-        }
+    } else if matches!(config.w_term_mode, crate::WTermMode::WProject) {
+        "wproject"
+    } else if config.facets > 1 {
+        "widefield"
     } else if config.use_pointing
         || config
             .field_ids
@@ -321,6 +320,8 @@ fn managed_gridder_from_request(
         "awproject"
     } else if matches!(request.w_term_mode, ImagerWTermMode::Wproject) {
         "wproject"
+    } else if request.facets > 1 {
+        "widefield"
     } else if request.use_pointing
         || request
             .field_ids
@@ -396,6 +397,7 @@ mod tests {
             imagename,
             imsize: 256,
             cell_arcsec: 1.5,
+            facets: 1,
             field_ids: None,
             uvrange: None,
             intent: None,
@@ -509,7 +511,8 @@ mod tests {
         assert_eq!(output.request.spectral_mode, "mfs");
         assert_eq!(output.request.weighting, "natural");
         assert_eq!(output.request.deconvolver, "mtmfs");
-        assert_eq!(output.request.gridder, "widefield");
+        assert_eq!(output.request.gridder, "standard");
+        assert_eq!(output.request.facets, 1);
         assert_eq!(output.request.w_term_mode, "direct");
         assert_eq!(output.request.restoring_beam_mode, "common");
         assert_eq!(output.request.output_channels, 1);
@@ -552,7 +555,6 @@ mod tests {
         config.aw_project = Some(AwProjectControls {
             cf_cache: PathBuf::from("/tmp/vlass-cf-cache"),
             cf_resident_bytes: 512 * 1024 * 1024,
-            facets: 1,
             w_plane_count: Some(32),
             psf_phase_center_direction_rad: None,
             vp_table: None,
@@ -591,6 +593,7 @@ mod tests {
                 measurement_set: PathBuf::from("/tmp/from-task.ms"),
                 image_name: PathBuf::from("/tmp/from-task"),
                 image_size: 512,
+                facets: 1,
                 cell_arcsec: 2.5,
                 projection: crate::ImagerProjection::Sin,
                 field_ids: Some(vec![3]),

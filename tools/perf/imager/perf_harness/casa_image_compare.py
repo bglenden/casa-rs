@@ -23,6 +23,29 @@ SCIENTIFIC_BEAM_TOLERANCE_FIELDS = {
 }
 COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
 COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
+DIRECTION_WCS_FIELDS = (
+    "axes",
+    "cdelt",
+    "conversionSystem",
+    "crpix",
+    "crval",
+    "latpole",
+    "longpole",
+    "pc",
+    "projection",
+    "projection_parameters",
+    "system",
+    "units",
+)
+DIRECTION_AXIS_TOPOLOGY_FIELDS = (
+    "pixelmap0",
+    "pixelmap1",
+    "pixelmap2",
+    "worldmap0",
+    "worldmap1",
+    "worldmap2",
+)
+STOKES_WCS_FIELDS = ("axes", "cdelt", "crpix", "crval", "pc", "stokes")
 
 
 # Keep this module importable by the ordinary Python test runner.  The
@@ -85,6 +108,7 @@ def main():
                 panel_displays.get(suffix),
                 mode=request["mode"],
                 full_chunk_elements=request["full_chunk_elements"],
+                require_direction_wcs_parity=request["require_direction_wcs_parity"],
                 require_metadata_parity=request["require_metadata_parity"],
                 allow_scientific_beam_equivalence=(allow_scientific_beam_equivalence),
                 allow_bounded_mask_topology=has_bounded_mask_topology_contract(
@@ -131,6 +155,7 @@ def main():
         "right_label": request["right_label"],
         "requested_products": request["products"],
         "require_exact_product_inventory": request["require_exact_product_inventory"],
+        "require_direction_wcs_parity": request["require_direction_wcs_parity"],
         "require_metadata_parity": request["require_metadata_parity"],
         "legacy_operand_aliases": request["legacy_operand_aliases"],
         "source_regions": request["source_regions"],
@@ -170,6 +195,7 @@ def normalized_request(request):
         "max_elements_per_product",
         "full_chunk_elements",
         "require_exact_product_inventory",
+        "require_direction_wcs_parity",
         "require_metadata_parity",
         "legacy_operand_aliases",
         "source_regions",
@@ -218,7 +244,11 @@ def normalized_request(request):
         )
     ):
         raise ValueError("image comparator products must be a non-empty suffix list")
-    for key in ("require_exact_product_inventory", "require_metadata_parity"):
+    for key in (
+        "require_exact_product_inventory",
+        "require_direction_wcs_parity",
+        "require_metadata_parity",
+    ):
         if not isinstance(request.get(key), bool):
             raise ValueError(f"image comparator {key} must be a boolean")
     if not isinstance(request.get("legacy_operand_aliases"), bool):
@@ -249,6 +279,7 @@ def normalized_request(request):
             "require_exact_product_inventory": request[
                 "require_exact_product_inventory"
             ],
+            "require_direction_wcs_parity": request["require_direction_wcs_parity"],
             "require_metadata_parity": request["require_metadata_parity"],
             "legacy_operand_aliases": request["legacy_operand_aliases"],
             "source_regions": source_regions,
@@ -281,6 +312,7 @@ def comparison_request_binding(request):
         "max_elements_per_product",
         "full_chunk_elements",
         "require_exact_product_inventory",
+        "require_direction_wcs_parity",
         "require_metadata_parity",
         "legacy_operand_aliases",
         "source_regions",
@@ -609,6 +641,7 @@ def compare_one(
     panel_display=None,
     mode="sampled",
     full_chunk_elements=1_000_000,
+    require_direction_wcs_parity=False,
     require_metadata_parity=False,
     allow_scientific_beam_equivalence=False,
     allow_bounded_mask_topology=False,
@@ -641,17 +674,23 @@ def compare_one(
     left = load_image(left_path, max_elements)
     right = load_image(right_path, max_elements)
     if left["shape"] != right["shape"]:
-        return {
+        result = {
             "status": "shape_mismatch",
             "left_path": left_path,
             "right_path": right_path,
             "left_shape": left["shape"],
             "right_shape": right["shape"],
-            "rust_path": left_path,
-            "casa_path": right_path,
-            "rust_shape": left["shape"],
-            "casa_shape": right["shape"],
         }
+        if legacy_operand_aliases:
+            result.update(
+                {
+                    "rust_path": left_path,
+                    "casa_path": right_path,
+                    "rust_shape": left["shape"],
+                    "casa_shape": right["shape"],
+                }
+            )
+        return result
     left_data = left["data"]
     right_data = right["data"]
     mask = np.isfinite(left_data) & np.isfinite(right_data)
@@ -753,8 +792,23 @@ def compare_one(
             and is_restoring_beam_only_metadata_mismatch(metadata)
         )
     )
+    direction_wcs = (
+        compare_direction_wcs(left_path, right_path)
+        if require_direction_wcs_parity
+        else None
+    )
+    direction_wcs_mismatch = require_direction_wcs_parity and not (
+        direction_wcs["status"] == "matched"
+    )
+    status = (
+        "direction_wcs_mismatch"
+        if direction_wcs_mismatch
+        else "metadata_mismatch"
+        if metadata_mismatch
+        else "compared"
+    )
     result = {
-        "status": "metadata_mismatch" if metadata_mismatch else "compared",
+        "status": status,
         "comparison_mode": mode,
         "left_label": left_label,
         "right_label": right_label,
@@ -787,6 +841,13 @@ def compare_one(
         "structured_difference": structure,
         "review_panel": panel,
     }
+    if require_direction_wcs_parity:
+        result.update(
+            {
+                "direction_wcs_parity_required": True,
+                "direction_wcs": direction_wcs,
+            }
+        )
     # Existing ledger and report readers still consume the historical names.
     if legacy_operand_aliases:
         result.update(
@@ -900,6 +961,8 @@ def compare_one(
                 result["source_regions"] = []
                 result["source_region_failure"] = str(error)
                 result["status"] = "source_region_failed"
+    if direction_wcs_mismatch:
+        result["status"] = "direction_wcs_mismatch"
     return result
 
 
@@ -943,9 +1006,113 @@ def compare_source_regions(
                 image_factory=image_factory,
                 beam_area_pixels=right_beam_area_pixels,
             ),
+            "difference": source_region_difference(
+                left_path,
+                right_path,
+                region["blc"],
+                region["trc"],
+                max_elements=max_elements,
+                image_factory=image_factory,
+            ),
         }
         for region in regions
     ]
+
+
+def source_region_difference(
+    left_path,
+    right_path,
+    blc_xy,
+    trc_xy,
+    max_elements,
+    image_factory=None,
+):
+    """Compare a frozen source box without materializing either full image."""
+
+    if max_elements < 1:
+        raise ValueError("source-region chunk budget must be >= 1")
+    left_tool = new_image_tool(image_factory)
+    right_tool = new_image_tool(image_factory)
+    left_tool.open(left_path)
+    right_tool.open(right_path)
+    try:
+        left_shape = [int(value) for value in left_tool.shape()]
+        right_shape = [int(value) for value in right_tool.shape()]
+        if left_shape != right_shape:
+            raise ValueError(
+                f"source-region images have different shapes: {left_shape} != {right_shape}"
+            )
+        if len(left_shape) < 2:
+            raise ValueError("source region requires at least two image axes")
+        if trc_xy[0] >= left_shape[0] or trc_xy[1] >= left_shape[1]:
+            raise ValueError(
+                f"source region is outside image shape {left_shape}: {blc_xy}..{trc_xy}"
+            )
+        other_axes = [0] * (len(left_shape) - 2)
+        y_count = trc_xy[1] - blc_xy[1] + 1
+        y_chunk = min(y_count, max_elements)
+        x_chunk = max(1, max_elements // y_chunk)
+        right_squares = []
+        difference_squares = []
+        count = 0
+        chunks = 0
+        for x_start in range(blc_xy[0], trc_xy[0] + 1, x_chunk):
+            x_end = min(trc_xy[0], x_start + x_chunk - 1)
+            for y_start in range(blc_xy[1], trc_xy[1] + 1, y_chunk):
+                y_end = min(trc_xy[1], y_start + y_chunk - 1)
+                blc = [x_start, y_start, *other_axes]
+                trc = [x_end, y_end, *other_axes]
+                inc = [1] * len(left_shape)
+                left = np.asarray(
+                    left_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=False
+                    ),
+                    dtype=np.float64,
+                )
+                right = np.asarray(
+                    right_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=False
+                    ),
+                    dtype=np.float64,
+                )
+                left_mask = np.asarray(
+                    left_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=True
+                    ),
+                    dtype=bool,
+                )
+                right_mask = np.asarray(
+                    right_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=True
+                    ),
+                    dtype=bool,
+                )
+                valid = left_mask & right_mask & np.isfinite(left) & np.isfinite(right)
+                if np.any(valid):
+                    left_values = left[valid]
+                    right_values = right[valid]
+                    differences = left_values - right_values
+                    count += int(right_values.size)
+                    right_squares.extend(float(value) for value in right_values**2)
+                    difference_squares.extend(float(value) for value in differences**2)
+                chunks += 1
+        right_rms = math.sqrt(math.fsum(right_squares) / count) if count else None
+        difference_rms = (
+            math.sqrt(math.fsum(difference_squares) / count) if count else None
+        )
+        ratio = relative_difference_ratio(difference_rms, right_rms)
+        return {
+            "status": "measured" if count else "no_finite_overlap",
+            "finite_unmasked_count": count,
+            "right_rms": finite_float(right_rms),
+            "difference_rms": finite_float(difference_rms),
+            "diff_rms_over_right_rms": finite_float(ratio),
+            "chunks": chunks,
+            "max_chunk_elements": max_elements,
+        }
+    finally:
+        left_tool.close()
+        right_tool.close()
 
 
 def source_region_statistics(
@@ -1242,6 +1409,102 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
         "field_parity": parity,
         "left": left,
         "right": right,
+    }
+
+
+def compare_direction_wcs(left_path, right_path, image_factory=None):
+    """Compare only direction geometry and the image-axis mapping contract."""
+
+    try:
+        left = direction_wcs_projection(
+            image_metadata(left_path, image_factory=image_factory)
+        )
+        right = direction_wcs_projection(
+            image_metadata(right_path, image_factory=image_factory)
+        )
+    except Exception as error:
+        return {
+            "status": "unavailable",
+            "reason": str(error),
+            "parity": False,
+        }
+    field_parity = {
+        "shape": left["shape"] == right["shape"],
+        "direction": coordinate_records_equivalent(
+            left["direction"], right["direction"]
+        ),
+        "axis_topology": left["axis_topology"] == right["axis_topology"],
+        "stokes": coordinate_records_equivalent(left["stokes"], right["stokes"]),
+        "spectral_axis": left["spectral_axis"] == right["spectral_axis"],
+    }
+    parity = (
+        left["status"] == "complete"
+        and right["status"] == "complete"
+        and all(field_parity.values())
+    )
+    return {
+        "status": "matched" if parity else "mismatch",
+        "parity": parity,
+        "field_parity": field_parity,
+        "left": left,
+        "right": right,
+    }
+
+
+def direction_wcs_projection(metadata):
+    coordinates = metadata.get("coordinates")
+    if not isinstance(coordinates, dict):
+        coordinates = {}
+    direction_record = coordinates.get("direction0")
+    if not isinstance(direction_record, dict):
+        direction_record = {}
+    stokes_record = coordinates.get("stokes1")
+    if not isinstance(stokes_record, dict):
+        stokes_record = {}
+    spectral_record = coordinates.get("spectral2")
+    if not isinstance(spectral_record, dict):
+        spectral_record = {}
+    spectral_conversion = spectral_record.get("conversion")
+    if not isinstance(spectral_conversion, dict):
+        spectral_conversion = {}
+    spectral_wcs = spectral_record.get("wcs")
+    if not isinstance(spectral_wcs, dict):
+        spectral_wcs = {}
+
+    shape = metadata.get("shape")
+    direction = {field: direction_record.get(field) for field in DIRECTION_WCS_FIELDS}
+    axis_topology = {
+        field: coordinates.get(field) for field in DIRECTION_AXIS_TOPOLOGY_FIELDS
+    }
+    stokes = {field: stokes_record.get(field) for field in STOKES_WCS_FIELDS}
+    spectral_axis = {
+        "record": "spectral2" if spectral_record else None,
+        "name": spectral_record.get("name"),
+        "system": spectral_record.get("system"),
+        "conversion_system": spectral_conversion.get("system"),
+        "unit": spectral_record.get("unit"),
+        "wcs_type": spectral_wcs.get("ctype"),
+    }
+    missing_fields = []
+    if shape is None:
+        missing_fields.append("shape")
+    for section, values in (
+        ("direction", direction),
+        ("axis_topology", axis_topology),
+        ("stokes", stokes),
+        ("spectral_axis", spectral_axis),
+    ):
+        missing_fields.extend(
+            f"{section}.{field}" for field, value in values.items() if value is None
+        )
+    return {
+        "status": "complete" if not missing_fields else "incomplete",
+        "shape": shape,
+        "direction": direction,
+        "axis_topology": axis_topology,
+        "stokes": stokes,
+        "spectral_axis": spectral_axis,
+        "missing_fields": missing_fields,
     }
 
 
@@ -1652,8 +1915,8 @@ class FullArrayReducer:
         self.right_masked += int(right.size - np.count_nonzero(right_mask))
         mask_mismatch = left_mask != right_mask
         self.mask_mismatch += int(np.count_nonzero(mask_mismatch))
-        remaining_sample_capacity = (
-            self.MASK_MISMATCH_SAMPLE_LIMIT - len(self.mask_mismatch_samples)
+        remaining_sample_capacity = self.MASK_MISMATCH_SAMPLE_LIMIT - len(
+            self.mask_mismatch_samples
         )
         if remaining_sample_capacity > 0 and np.any(mask_mismatch):
             for local_location in np.argwhere(mask_mismatch)[

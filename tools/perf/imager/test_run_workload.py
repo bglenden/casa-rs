@@ -881,6 +881,62 @@ real 1.145408
             plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
         )
 
+    def test_faceted_widefield_plan_preserves_exact_command_controls(self) -> None:
+        manifest_path = (
+            run_workload.WORKLOAD_DIR / "issue518-t32-vla-faceted-clean.json"
+        )
+        manifest = run_workload.load_manifest(manifest_path)
+        plan = run_workload.build_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            repeats_override=None,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        env = plan["command"]["env"]
+        self.assertEqual("widefield", env["IMAGER_BENCH_GRIDDER"])
+        self.assertEqual("widefield", env["IMAGER_BENCH_CASA_GRIDDER"])
+        self.assertEqual("2", env["IMAGER_BENCH_FACETS"])
+        self.assertEqual("1", env["IMAGER_BENCH_WPROJPLANES"])
+        self.assertEqual("1", env["IMAGER_BENCH_CASA_WPROJPLANES"])
+        self.assertEqual("cpu", env["IMAGER_BENCH_STANDARD_MFS_ACCELERATION"])
+        self.assertEqual("rustfft", env["IMAGER_BENCH_IMAGING_FFT_BACKEND"])
+        self.assertEqual("auto", env["IMAGER_BENCH_IMAGING_FFT_PRECISION"])
+        self.assertEqual("0", env["IMAGER_BENCH_PARALLEL"])
+        self.assertEqual(2, plan["mode"]["facets"])
+        self.assertEqual(24, plan["mode"]["channel_count"])
+        self.assertEqual("copy", plan["run"]["ms_staging"])
+        self.assertEqual("copy", env["IMAGER_BENCH_MS_STAGING"])
+        self.assertEqual("full", plan["comparison"]["mode"])
+        self.assertEqual(
+            [".image", ".residual", ".model", ".psf"],
+            plan["comparison"]["products"],
+        )
+        self.assertFalse(plan["comparison"]["require_exact_product_inventory"])
+        self.assertFalse(plan["comparison"]["require_metadata_parity"])
+        self.assertTrue(plan["comparison"]["require_direction_wcs_parity"])
+        self.assertEqual(
+            ["facet-seam-x", "facet-seam-y"],
+            [region["id"] for region in plan["comparison"]["source_regions"]],
+        )
+        self.assertTrue(
+            all(
+                ".model" in region["products"]
+                for region in plan["comparison"]["source_regions"]
+            )
+        )
+
+        bench = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text()
+        self.assertIn('--facets "$facets"', bench)
+        self.assertIn("facets=facets,", bench)
+        self.assertIn(
+            'initialize_imaging_owner "$rust_ms_path"',
+            bench,
+        )
+        self.assertIn('CASA_RS_BENCH_MS_PATH="$casa_ms_path"', bench)
+
     def test_reuse_prefixes_imply_skipping_the_reused_implementation(self) -> None:
         manifest = {
             "id": "reuse-both",
@@ -987,6 +1043,52 @@ real 1.145408
             )
             self.assertTrue(Path(request["structure_workspace_dir"]).is_absolute())
             self.assertEqual(str(root / "comparisons" / "panels"), result["panel_dir"])
+
+    def test_generic_comparison_failure_closes_to_terminal_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            plan = {
+                "artifacts": {"comparison_root": str(root / "comparisons")},
+                "products": {
+                    "rust_prefix": str(root / "rust"),
+                    "casa_prefix": str(root / "casa"),
+                },
+                "environment": {
+                    "executables": {"casa_python": {"path": sys.executable}}
+                },
+                "comparison": {
+                    "products": [".model"],
+                    "max_elements_per_product": 100,
+                    "mode": "full",
+                    "full_chunk_elements": 50,
+                    "require_exact_product_inventory": False,
+                    "require_direction_wcs_parity": True,
+                    "require_metadata_parity": False,
+                    "source_regions": [],
+                    "tolerances": None,
+                },
+            }
+            runner = mock.Mock(
+                return_value={
+                    "status": "failed_validation",
+                    "reason": "exact-zero centroid was rejected",
+                    "failure": {"kind": "comparison_protocol_binding"},
+                    "products": {},
+                    "input": "/comparison/input.json",
+                }
+            )
+
+            with mock.patch.object(run_workload, "compare_image_products", runner):
+                result = run_workload.compare_products(plan, {}, root / "run.log")
+
+            self.assertEqual(
+                {
+                    "status": "failed_validation",
+                    "reason": "exact-zero centroid was rejected",
+                    "products": {},
+                },
+                result,
+            )
 
     def test_vlass_recipe_plan_preserves_real_aw_and_reports_rust_unavailable(
         self,
@@ -1497,9 +1599,7 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
 
         self.assertNotIn("imaging_gridded_replay", parsed)
         self.assertNotIn("imaging_gridded_replay", parsed["collection_stats"])
-        receipt = canonical_workload_result(
-            extra_results={"backend_plan_logs": parsed}
-        )
+        receipt = canonical_workload_result(extra_results={"backend_plan_logs": parsed})
         run_workload.validate_run_result(
             receipt,
             source="gridded replay summary remains log-only",

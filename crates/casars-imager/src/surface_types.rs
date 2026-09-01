@@ -107,8 +107,6 @@ pub struct AwProjectControls {
     pub cf_cache: PathBuf,
     /// Requested resident cache ceiling.
     pub cf_resident_bytes: usize,
-    /// Requested facet count.
-    pub facets: usize,
     /// Explicit W-plane count.
     pub w_plane_count: Option<usize>,
     /// Optional PSF phase centre in radians.
@@ -143,7 +141,6 @@ impl AwProjectControls {
         Self {
             cf_cache,
             cf_resident_bytes: 256 * 1024 * 1024,
-            facets: 1,
             w_plane_count: None,
             psf_phase_center_direction_rad: None,
             vp_table: None,

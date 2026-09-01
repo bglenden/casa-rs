@@ -1760,36 +1760,62 @@ fn evaluate_row_geometry(
                 .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target)?;
             (density_uvw_m, transformed_uvw_m, phase_shift_m)
         };
-    let domain_projections = problem
-        .geometry()
-        .domains()
-        .iter()
-        .enumerate()
-        .map(|(domain_ordinal, domain)| {
-            let domain_ordinal = u32::try_from(domain_ordinal)
+    let domains = problem.geometry().domains();
+    let chart_count = domains.iter().try_fold(0_usize, |count, domain| {
+        count.checked_add(domain.facets().len())
+    });
+    let mut domain_projections = Vec::new();
+    domain_projections
+        .try_reserve_exact(chart_count.ok_or(BoundObservationSourceError::InvalidRowGeometry)?)
+        .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+    for (domain_ordinal, domain) in domains.iter().enumerate() {
+        let domain_ordinal = u32::try_from(domain_ordinal)
+            .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+        let shared_psf = domain.psf_phase_centre() == domain.model_phase_centre();
+        let distinct_psf = if shared_psf {
+            None
+        } else {
+            Some(evaluate_phase_centre_projection(
+                source,
+                stored,
+                field_id,
+                observation_direction,
+                domain.psf_phase_centre(),
+                domain.facets().len() > 1,
+            )?)
+        };
+        for (facet_ordinal, facet) in domain.facets().iter().enumerate() {
+            let facet_ordinal = u32::try_from(facet_ordinal)
                 .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+            let model_phase_centre = if domain.facets().len() == 1 {
+                domain.model_phase_centre()
+            } else {
+                facet.phase_centre()
+            };
             let model = evaluate_phase_centre_projection(
                 source,
                 stored,
                 field_id,
                 observation_direction,
-                domain.model_phase_centre(),
+                model_phase_centre,
+                domain.facets().len() > 1,
             )?;
-            let projection = if domain.psf_phase_centre() == domain.model_phase_centre() {
-                SelectedImageDomainProjection::with_shared_psf(domain_ordinal, model)
-            } else {
-                let psf = evaluate_phase_centre_projection(
-                    source,
-                    stored,
-                    field_id,
-                    observation_direction,
-                    domain.psf_phase_centre(),
-                )?;
-                SelectedImageDomainProjection::new(domain_ordinal, model, psf)
+            let projection = match distinct_psf {
+                Some(psf) => SelectedImageDomainProjection::new_facet(
+                    domain_ordinal,
+                    facet_ordinal,
+                    model,
+                    psf,
+                ),
+                None => SelectedImageDomainProjection::facet_with_shared_psf(
+                    domain_ordinal,
+                    facet_ordinal,
+                    model,
+                ),
             };
-            Ok(projection)
-        })
-        .collect::<Result<Vec<_>, BoundObservationSourceError>>()?;
+            domain_projections.push(projection);
+        }
+    }
     let domain_projections = SelectedImageDomainProjections::new(domain_projections)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
     Ok(EvaluatedRowGeometry {
@@ -1809,6 +1835,7 @@ fn evaluate_phase_centre_projection(
     field_id: usize,
     observation_direction: SkyDirection,
     target_direction: SkyDirection,
+    project_to_observation_plane: bool,
 ) -> Result<SelectedPhaseCentreProjection, BoundObservationSourceError> {
     let target_angles = source.geometry_engine.direction_angles_j2000(
         stored.time_mjd_seconds(),
@@ -1819,13 +1846,22 @@ fn evaluate_phase_centre_projection(
         direction_ref(target_direction.frame()),
     )?;
     let target_j2000 = SkyDirection::new(DirectionFrame::J2000, target_angles[0], target_angles[1]);
-    let (transformed_uvw_m, phase_shift_m) = if target_j2000 == observation_direction {
-        (stored.uvw_m(), 0.0)
-    } else {
-        source
-            .geometry_engine
-            .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target_angles)?
-    };
+    let (transformed_uvw_m, phase_shift_m) =
+        if target_j2000 == observation_direction && !project_to_observation_plane {
+            (stored.uvw_m(), 0.0)
+        } else if project_to_observation_plane {
+            source
+                .geometry_engine
+                .reproject_raw_uvw_for_faceted_gridft_to_j2000(
+                    stored.uvw_m(),
+                    field_id,
+                    target_angles,
+                )?
+        } else {
+            source
+                .geometry_engine
+                .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target_angles)?
+        };
     SelectedPhaseCentreProjection::new(transformed_uvw_m, phase_shift_m)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)
 }

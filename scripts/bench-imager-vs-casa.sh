@@ -49,6 +49,7 @@ cube_width="${IMAGER_BENCH_CUBE_WIDTH:-}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
 gridder="${IMAGER_BENCH_GRIDDER:-standard}"
 casa_gridder="${IMAGER_BENCH_CASA_GRIDDER:-$gridder}"
+facets="${IMAGER_BENCH_FACETS:-1}"
 interpolation="${IMAGER_BENCH_INTERPOLATION:-linear}"
 imsize="${IMAGER_BENCH_IMSIZE:-128}"
 cell_arcsec="${IMAGER_BENCH_CELL_ARCSEC:-30}"
@@ -177,6 +178,10 @@ if [[ -n "$imaging_read_ahead_blocks" && ! "$imaging_read_ahead_blocks" =~ ^[0-9
 fi
 if [[ -n "$chanchunks" && ! "$chanchunks" =~ ^[0-9]+$ ]]; then
   echo "error: IMAGER_BENCH_CHANCHUNKS must be an unsigned integer" >&2
+  exit 2
+fi
+if [[ ! "$facets" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: IMAGER_BENCH_FACETS must be an integer >= 1" >&2
   exit 2
 fi
 
@@ -416,19 +421,25 @@ emit_rust_backend_diagnostics() {
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder facets=$facets field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
   cargo build --release -p casars-imager --bin casars-imager >/dev/null
+  if [[ "$ms_staging" == "copy" ]]; then
+    cargo build --release -p casa-ms --example initialize_imaging_owner >/dev/null
+  fi
 fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
-if [[ "$ms_staging" == "copy" ]]; then
-  staged_ms_path="$tmpdir/benchmark.ms"
-  cp -R "$ms_path" "$staged_ms_path"
-  ms_path="$staged_ms_path"
+source_ms_path="$ms_path"
+rust_ms_path="$source_ms_path"
+casa_ms_path="$source_ms_path"
+if [[ "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" ]]; then
+  rust_ms_path="$tmpdir/benchmark.ms"
+  cp -R "$source_ms_path" "$rust_ms_path"
+  target/release/examples/initialize_imaging_owner "$rust_ms_path" >/dev/null
 fi
 if [[ -n "$keep_output_root" ]]; then
   mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
@@ -514,7 +525,7 @@ for run in $(seq 1 "$repeats"); do
   rust_stderr="$tmpdir/rust-$run.stderr"
   if [[ -n "$scales" ]]; then
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$ms_path" \
+      --ms "$rust_ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
@@ -524,6 +535,7 @@ for run in $(seq 1 "$repeats"); do
       --channel-count "$channel_count" \
       --specmode "$specmode" \
       --gridder "$gridder" \
+      --facets "$facets" \
       --interpolation "$interpolation" \
       ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
       --datacolumn DATA \
@@ -561,7 +573,7 @@ for run in $(seq 1 "$repeats"); do
     fi
   else
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$ms_path" \
+      --ms "$rust_ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
@@ -571,6 +583,7 @@ for run in $(seq 1 "$repeats"); do
       --channel-count "$channel_count" \
       --specmode "$specmode" \
       --gridder "$gridder" \
+      --facets "$facets" \
       --interpolation "$interpolation" \
       ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
       --datacolumn DATA \
@@ -625,13 +638,14 @@ elif [[ "$skip_profile_enabled" == "1" ]]; then
   echo "  skipped=1"
 elif [[ -n "$scales" ]]; then
   run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$ms_path" \
+    "$rust_ms_path" \
     --field "$field" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
     --gridder "$gridder" \
+    --facets "$facets" \
     --interpolation "$interpolation" \
     ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
     --datacolumn DATA \
@@ -668,13 +682,14 @@ elif [[ -n "$scales" ]]; then
     | sed 's/^/  /'
 else
   run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$ms_path" \
+    "$rust_ms_path" \
     --field "$field" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
     --gridder "$gridder" \
+    --facets "$facets" \
     --interpolation "$interpolation" \
     ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
     --datacolumn DATA \
@@ -749,6 +764,7 @@ perchanweightdensity = os.environ["CASA_RS_BENCH_PERCHANWEIGHTDENSITY"].lower() 
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
 nterms = int(os.environ["CASA_RS_BENCH_NTERMS"])
 casa_gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER", os.environ["CASA_RS_BENCH_GRIDDER"])
+facets = int(os.environ["CASA_RS_BENCH_FACETS"])
 wprojplanes_env = os.environ.get("CASA_RS_BENCH_WPROJPLANES", "")
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
 smallscalebias = float(os.environ["CASA_RS_BENCH_SMALL_SCALE_BIAS"])
@@ -793,6 +809,7 @@ with tempfile.TemporaryDirectory() as td:
             stokes="I",
             specmode=specmode,
             gridder=casa_gridder,
+            facets=facets,
             weighting=weighting,
             perchanweightdensity=perchanweightdensity,
             deconvolver=deconvolver,
@@ -872,7 +889,7 @@ if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || 
 else
   echo "CASA tclean timings (seconds):"
   echo "casa_run_start repeats=$repeats"
-  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
@@ -884,6 +901,7 @@ else
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
   CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
+  CASA_RS_BENCH_FACETS="$facets" \
   CASA_RS_BENCH_WPROJPLANES="$casa_wprojplanes" \
   CASA_RS_BENCH_IMSIZE="$imsize" \
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
@@ -933,7 +951,7 @@ fi
 
 if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
   echo "CASA PySynthesisImager stage medians (milliseconds):"
-  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
@@ -945,6 +963,7 @@ if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_cas
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
   CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
+  CASA_RS_BENCH_FACETS="$facets" \
   CASA_RS_BENCH_WPROJPLANES="$wprojplanes" \
   CASA_RS_BENCH_IMSIZE="$imsize" \
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \

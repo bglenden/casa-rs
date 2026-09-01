@@ -721,7 +721,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                             let group_ordinal = u32::try_from(self.groups.len())
                                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
                             let tile_ordinal =
-                                catalogs.tile_ordinal(record.domain_ordinal, record.taps)?;
+                                catalogs.tile_ordinal(record.chart_ordinal, record.taps)?;
                             self.classifications.push(GriddedNormalClassification {
                                 tile_ordinal: u32::try_from(tile_ordinal)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
@@ -1330,7 +1330,7 @@ impl GriddedNormalOperatorApply {
                                 )?;
                                 prediction += self
                                     .operators
-                                    .get(record.domain_ordinal)
+                                    .get(record.chart_ordinal)
                                     .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
                                     .predict_gridded_normal(
                                         record.output_channel,
@@ -1466,7 +1466,7 @@ impl GriddedNormalOperatorApply {
                                         &self.tile_catalogs,
                                         self.program.manifest.specification.slab().total_channels(),
                                     )?;
-                                    if record.domain_ordinal != domain_ordinal {
+                                    if record.chart_ordinal != domain_ordinal {
                                         return Err(SpectralOperatorError::GriddedRecordMismatch);
                                     }
                                     let predicted = predicted

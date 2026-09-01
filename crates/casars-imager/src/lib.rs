@@ -242,6 +242,8 @@ pub struct CliConfig {
     pub imsize: usize,
     /// Direction cell size in arcseconds.
     pub cell_arcsec: f64,
+    /// Number of regular image facets along each direction axis.
+    pub facets: usize,
     /// Selected fields.
     pub field_ids: Option<Vec<i32>>,
     /// UV-distance selector.
@@ -397,6 +399,7 @@ impl CliConfig {
     /// this method by `TaskCliHost`.
     pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let mut config = Self::defaults();
+        let mut robust = None;
         let args = args.into_iter().collect::<Vec<_>>();
         let mut index = 0;
         while index < args.len() {
@@ -481,8 +484,7 @@ impl CliConfig {
                 }
                 "--weighting" => config.weighting = parse_weighting(value(1)?, None)?,
                 "--robust" => {
-                    let robust = parse(value(1)?, flag)?;
-                    config.weighting = parse_weighting("briggs", Some(robust))?;
+                    robust = Some(parse(value(1)?, flag)?);
                 }
                 "--deconvolver" => config.deconvolver = parse_deconvolver(value(1)?)?,
                 "--nterms" => config.nterms = parse(value(1)?, flag)?,
@@ -584,7 +586,7 @@ impl CliConfig {
                     aw_controls(&mut config).cf_resident_bytes =
                         parse::<usize>(value(1)?, flag)?.saturating_mul(1024 * 1024)
                 }
-                "--facets" => aw_controls(&mut config).facets = parse(value(1)?, flag)?,
+                "--facets" => config.facets = parse(value(1)?, flag)?,
                 "--psfphasecenter" => {
                     let direction = parse_csv::<f64>(value(1)?, flag)?;
                     aw_controls(&mut config).psf_phase_center_direction_rad = Some(
@@ -685,11 +687,26 @@ impl CliConfig {
             }
             index += consumed;
         }
+        config.weighting = match (config.weighting, robust) {
+            (WeightingMode::Briggs { robust }, None) => WeightingMode::Briggs { robust },
+            (WeightingMode::BriggsBwTaper { robust }, None) => {
+                WeightingMode::BriggsBwTaper { robust }
+            }
+            (WeightingMode::Briggs { .. }, Some(robust)) => WeightingMode::Briggs { robust },
+            (WeightingMode::BriggsBwTaper { .. }, Some(robust)) => {
+                WeightingMode::BriggsBwTaper { robust }
+            }
+            (weighting, _) => weighting,
+        };
         if config.ms.as_os_str().is_empty() || config.imagename.as_os_str().is_empty() {
             return Err("--ms and --imagename are required".to_string());
         }
-        if config.imsize == 0 || config.cell_arcsec <= 0.0 || !config.cell_arcsec.is_finite() {
-            return Err("--imsize and --cell-arcsec must be positive".to_string());
+        if config.imsize == 0
+            || config.facets == 0
+            || config.cell_arcsec <= 0.0
+            || !config.cell_arcsec.is_finite()
+        {
+            return Err("--imsize, --cell-arcsec, and --facets must be positive".to_string());
         }
         Ok(config)
     }
@@ -700,6 +717,7 @@ impl CliConfig {
             imagename: PathBuf::new(),
             imsize: 0,
             cell_arcsec: 0.0,
+            facets: 1,
             field_ids: None,
             uvrange: None,
             intent: None,
@@ -901,6 +919,7 @@ impl CliConfig {
         config.mask_image = optional_text("mask_image")?.map(PathBuf::from);
         config.weighting = parse_weighting(&text("weighting")?, Some(float("robust")? as f32))?;
         config.w_project_planes = optional_usize(values, "wprojplanes")?;
+        config.facets = usize::try_from(integer("facets")?).map_err(|error| error.to_string())?;
         config.use_pointing = boolean("usepointing")?;
         config.uv_taper = optional_text("uvtaper")?
             .map(|value| parse_uv_taper(&value))
@@ -924,8 +943,6 @@ impl CliConfig {
             controls.cf_resident_bytes = usize::try_from(integer("cf_resident_mb")?)
                 .map_err(|error| error.to_string())?
                 .saturating_mul(1024 * 1024);
-            controls.facets =
-                usize::try_from(integer("facets")?).map_err(|error| error.to_string())?;
             controls.psf_phase_center_direction_rad = optional_text("psfphasecenter")?
                 .map(|value| {
                     let values = parse_csv::<f64>(&value, "psfphasecenter")?;
@@ -1458,6 +1475,7 @@ fn set_gridder(config: &mut CliConfig, value: &str) -> Result<(), String> {
         "standard" => config.force_standard_gridder = true,
         "mosaic" => config.use_pointing = true,
         "wproject" => config.w_term_mode = WTermMode::WProject,
+        "widefield" => {}
         "awproject" => {
             let _ = aw_controls(config);
         }

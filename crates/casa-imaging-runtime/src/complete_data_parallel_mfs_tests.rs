@@ -4,6 +4,7 @@
 
 use std::{collections::BTreeMap, convert::Infallible, fs, io, path::PathBuf, sync::OnceLock};
 
+use crate::complete_data_operator::project_gridded_normal_artifact_budget;
 use crate::spectral_cycle::CompleteDataStreamEvidence;
 use crate::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
@@ -164,8 +165,71 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
 }
 
 #[test]
+fn faceted_complete_data_products_are_exact_across_distinct_admitted_plans() {
+    let serial = execute_faceted_complete_data_mfs(1);
+    let parallel = execute_faceted_complete_data_mfs(2);
+
+    assert_eq!(serial.dirty, parallel.dirty, "faceted dirty changed");
+    assert_eq!(serial.psf, parallel.psf, "faceted PSF changed");
+    assert_eq!(serial.model, parallel.model, "faceted model changed");
+    assert_eq!(
+        serial.residual, parallel.residual,
+        "faceted residual changed"
+    );
+    assert_eq!(
+        serial.sum_weights, parallel.sum_weights,
+        "faceted sum weights changed"
+    );
+    assert_worker_independent_stream(&serial.initial_stream, &parallel.initial_stream, "initial");
+    assert_worker_independent_stream(&serial.final_stream, &parallel.final_stream, "replay");
+    assert_eq!(serial.final_stream.planned_workers, 1);
+    assert_eq!(parallel.final_stream.planned_workers, 2);
+    assert_ne!(
+        serial.final_stream.peak_worker_stack_capacity_bytes,
+        parallel.final_stream.peak_worker_stack_capacity_bytes,
+        "the compared plans must reserve distinct worker-memory envelopes",
+    );
+}
+
+#[test]
+fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
+    let weighting =
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable);
+    let (snapshot_input, _) = resolve_selected_observation(observation_resolution())
+        .expect("resolve three-baseline fixture")
+        .into_parts();
+    let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
+    let problem = compile(ImagingRequest::new(
+        problem_specification(weighting),
+        geometry_with_facets(FacetLayout::Regular {
+            columns: 2,
+            rows: 2,
+        }),
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("compile four-chart MFS problem");
+    let maximum_block_samples = 4_096;
+    let record_bytes =
+        casa_imaging_reconstruction::runtime_adapter::gridded_normal_operator_record_bytes(
+            &problem,
+        )
+        .expect("scalar record width");
+
+    let budget = project_gridded_normal_artifact_budget(&problem, maximum_block_samples)
+        .expect("faceted replay budget");
+
+    assert_eq!(
+        budget.maximum_frame_payload_bytes(),
+        3 * 4 * record_bytes,
+        "one weighted sample may produce one record in each physical facet chart",
+    );
+}
+
+#[test]
 fn balanced_policy_selects_the_largest_feasible_production_replay_team() {
-    let run = execute_complete_data_mfs_with_policy(ResourcePolicy::Balanced, 17);
+    let run =
+        execute_complete_data_mfs_with_policy(ResourcePolicy::Balanced, 17, FacetLayout::Single);
     assert_eq!(run.initial_stream.planned_workers, 1);
     assert_eq!(run.final_stream.planned_workers, 3);
     assert_eq!(run.final_stream.actual_workers, 3);
@@ -219,12 +283,28 @@ fn execute_complete_data_mfs(worker_count: u64) -> RunEvidence {
             ..ResourceOverride::default()
         }),
         worker_count,
+        FacetLayout::Single,
+    )
+}
+
+fn execute_faceted_complete_data_mfs(worker_count: u64) -> RunEvidence {
+    execute_complete_data_mfs_with_policy(
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(worker_count),
+            ..ResourceOverride::default()
+        }),
+        100 + worker_count,
+        FacetLayout::Regular {
+            columns: 2,
+            rows: 2,
+        },
     )
 }
 
 fn execute_complete_data_mfs_with_policy(
     resource_policy: ResourcePolicy,
     execution_id: u64,
+    facets: FacetLayout,
 ) -> RunEvidence {
     let authority = ResourceAuthority::with_inventory_and_cpu_replay_capacity(
         runtime_inventory(),
@@ -242,7 +322,7 @@ fn execute_complete_data_mfs_with_policy(
     let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
     let problem = compile(ImagingRequest::new(
         problem_specification(weighting),
-        geometry(),
+        geometry_with_facets(facets),
         ProblemInputIdentities::new(snapshot),
         model_lifecycle(ModelStateIdentity::Empty),
     ))
@@ -509,7 +589,7 @@ fn observation_resolution() -> SelectedObservationResolutionRequest {
     )
 }
 
-fn geometry() -> GeometryInput {
+fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -523,7 +603,7 @@ fn geometry() -> GeometryInput {
             ImageDomainRole::Main,
             ImageShape::new(16, 16),
             direction,
-            FacetLayout::Single,
+            facets,
             AxisOrder::new([
                 ImageAxis::DirectionLongitude,
                 ImageAxis::DirectionLatitude,
