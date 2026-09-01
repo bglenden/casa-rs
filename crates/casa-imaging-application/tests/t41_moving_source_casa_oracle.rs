@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Focused T41 moving-source gate against CASA's pinned Venus regression.
+//! Focused T41 moving-source gate against a frozen CASA Uranus cube.
 
 use std::{
     error::Error,
@@ -8,99 +8,120 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use casa_coordinates::CoordinateModel;
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
     ContinuumWeighting, HogbomIterationAccounting, PolarizationCoordinate, SpectralImagingMode,
     TaskRequirement, execute_continuum,
 };
-use casa_ms::CubeAxisConfig;
+use casa_ms::{CubeAxisConfig, CubeAxisValue, MeasurementSet};
+use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
+use casa_types::measures::frequency::FrequencyRef;
 
-const MS_ENV: &str = "CASA_RS_T41_VENUS_MS";
-const EPHEMERIS_ENV: &str = "CASA_RS_T41_VENUS_EPHEMERIS";
-const CASA_RESIDUAL_ENV: &str = "CASA_RS_T41_CASA_RESIDUAL";
+const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
+const CASA_PREFIX_ENV: &str = "CASA_RS_T41_CASA_PREFIX";
+const PRODUCTS: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
+const SELECTED_SAMPLE_COUNT: u64 = 1_620 * 1_024 * 2;
 
 #[test]
-#[ignore = "requires pinned Venus MeasurementSet, external ephemeris, and CASA residual"]
-fn t41_external_ephemeris_cubesource_matches_casa_geometry_and_dirty_image()
--> Result<(), Box<dyn Error>> {
+#[ignore = "requires slow-parity casatestdata and matching frozen CASA T41 products"]
+fn t41_tracked_cubesource_matches_casa_geometry_and_dirty_products() -> Result<(), Box<dyn Error>> {
     set_production_io_environment();
-    let source = required_path(MS_ENV)?;
-    let ephemeris = required_path(EPHEMERIS_ENV)?;
-    let casa_residual = required_path(CASA_RESIDUAL_ENV)?;
+    let source = casatestdata_path_for_tier(CasaTestDataTier::SlowParity, DATASET)
+        .ok_or("slow-parity casatestdata root is unavailable")?;
+    let casa_prefix = PathBuf::from(
+        std::env::var_os(CASA_PREFIX_ENV).ok_or("CASA_RS_T41_CASA_PREFIX is not set")?,
+    );
     let staging = tempfile::tempdir()?;
-    let measurement_set = staging.path().join("venus.ms");
-    casa_ms::MeasurementSet::open(&source)?.save_as(&measurement_set)?;
+    let measurement_set = staging.path().join("alma_ephemobj_icrs.ms");
+    MeasurementSet::open(&source)?.save_as(&measurement_set)?;
     copy_attached_ephemerides(&source, &measurement_set)?;
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
-    let rust_prefix = staging.path().join("rust-venus");
+    let rust_prefix = staging.path().join("rust-uranus-cubesource");
 
-    let result = execute_continuum(request(
-        measurement_set,
-        ephemeris.display().to_string(),
-        rust_prefix.clone(),
-    ))?;
-    assert!(
+    let result = execute_continuum(request(measurement_set, rust_prefix.clone()))?;
+    assert_eq!(
         result
             .outcome
             .output
             .scientific
             .normal_state()
-            .sample_count()
-            > 0
+            .sample_count(),
+        SELECTED_SAMPLE_COUNT,
+        "production traversal must retain all 1,024 channels and both parallel hands",
     );
 
-    let rust =
-        PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", rust_prefix.display())))?;
-    let casa = PagedImage::<f32>::open(casa_residual)?;
-    assert_eq!(rust.shape(), casa.shape(), "CASA and Rust residual shape");
-    let rust_values = rust.get_slice(&vec![0; rust.shape().len()], rust.shape())?;
-    let casa_values = casa.get_slice(&vec![0; casa.shape().len()], casa.shape())?;
-    let rust_stats = statistics(rust_values.iter().copied());
-    let casa_stats = statistics(casa_values.iter().copied());
-    let nrms = normalized_rms(rust_values.iter().copied(), casa_values.iter().copied());
-    assert!(
-        nrms <= 0.001,
-        "dirty image normalized RMS {nrms} exceeds 0.1%; Rust peak {} at {}, CASA peak {} at {}",
-        rust_stats.maximum,
-        rust_stats.maximum_position,
-        casa_stats.maximum,
-        casa_stats.maximum_position,
-    );
-    assert!(
-        relative_difference(rust_stats.maximum, casa_stats.maximum) <= 0.01,
-        "dirty peak flux differs: Rust {} CASA {}",
-        rust_stats.maximum,
-        casa_stats.maximum,
-    );
-    assert_eq!(rust_stats.maximum_position, casa_stats.maximum_position);
+    assert_matching_wcs(&rust_prefix, &casa_prefix)?;
+    let mut failures = Vec::new();
+    for suffix in PRODUCTS {
+        let rust = read_product(&rust_prefix, suffix)?;
+        let casa = read_product(&casa_prefix, suffix)?;
+        assert_eq!(rust.shape, [512, 512, 1, 16], "Rust {suffix} shape");
+        assert_eq!(rust.shape, casa.shape, "CASA and Rust {suffix} shape");
+        if rust.valid != casa.valid {
+            failures.push(format!("{suffix} validity/support differs"));
+        }
+        let common_valid = rust
+            .valid
+            .iter()
+            .zip(&casa.valid)
+            .map(|(rust, casa)| *rust && *casa)
+            .collect::<Vec<_>>();
+        let nrms = normalized_rms(&rust.values, &casa.values, &common_valid);
+        let rust_stats = statistics(&rust.values, &common_valid);
+        let casa_stats = statistics(&casa.values, &common_valid);
+        eprintln!(
+            "t41_casa_parity product={suffix} nrms={nrms:.9e} rust_peak={} casa_peak={}",
+            rust_stats.maximum, casa_stats.maximum,
+        );
+        if nrms > 0.001 {
+            failures.push(format!("{suffix} normalized RMS {nrms:.6e} exceeds 0.1%"));
+        }
+        if matches!(suffix, ".psf" | ".residual") {
+            if relative_difference(rust_stats.maximum, casa_stats.maximum) > 0.001 {
+                failures.push(format!(
+                    "{suffix} peak flux differs: Rust {} CASA {}",
+                    rust_stats.maximum, casa_stats.maximum,
+                ));
+            }
+            if rust_stats.maximum_position != casa_stats.maximum_position {
+                failures.push(format!(
+                    "{suffix} peak position differs: Rust {} CASA {}",
+                    rust_stats.maximum_position, casa_stats.maximum_position,
+                ));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }
 
-fn request(
-    measurement_set: PathBuf,
-    ephemeris: String,
-    image_name: PathBuf,
-) -> ContinuumImagingRequest {
+fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingRequest {
     ContinuumImagingRequest {
         measurement_set,
         image_name,
-        image_size: 288,
+        image_size: 512,
         facets: 1,
-        cell_arcsec: 0.14,
+        cell_arcsec: 0.1,
         phase_center_field: None,
-        phase_center: Some(ephemeris),
+        phase_center: Some("TRACKFIELD".to_string()),
         outlier_file: None,
-        field_ids: Some(vec![0]),
+        field_ids: Some(vec![1]),
         uv_range: None,
         intent: None,
         data_description: None,
-        spectral_window: None,
+        spectral_window: Some("0".to_string()),
         channel_start: None,
         channel_count: None,
         spectral_mode: SpectralImagingMode::CubeSource {
-            axis: CubeAxisConfig::default(),
-            output_channels: None,
+            axis: CubeAxisConfig {
+                outframe: FrequencyRef::REST,
+                start: Some(CubeAxisValue::Channel(0)),
+                width: Some(CubeAxisValue::Channel(64)),
+                ..CubeAxisConfig::default()
+            },
+            output_channels: Some(16),
         },
         continuum_subtraction: None,
         data_column: Some("DATA".to_string()),
@@ -142,12 +163,12 @@ struct Statistics {
     maximum_position: usize,
 }
 
-fn statistics(values: impl Iterator<Item = f32>) -> Statistics {
+fn statistics(values: &[f32], valid: &[bool]) -> Statistics {
     let mut maximum = f32::NEG_INFINITY;
     let mut maximum_position = 0;
-    for (position, value) in values.enumerate() {
-        if value > maximum {
-            maximum = value;
+    for (position, (value, valid)) in values.iter().zip(valid).enumerate() {
+        if *valid && *value > maximum {
+            maximum = *value;
             maximum_position = position;
         }
     }
@@ -157,17 +178,20 @@ fn statistics(values: impl Iterator<Item = f32>) -> Statistics {
     }
 }
 
-fn normalized_rms(rust: impl Iterator<Item = f32>, casa: impl Iterator<Item = f32>) -> f64 {
-    let (error, reference) =
-        rust.zip(casa)
-            .fold((0.0, 0.0), |(error, reference), (actual, expected)| {
-                let actual = f64::from(actual);
-                let expected = f64::from(expected);
-                (
-                    error + (actual - expected).powi(2),
-                    reference + expected.powi(2),
-                )
-            });
+fn normalized_rms(rust: &[f32], casa: &[f32], valid: &[bool]) -> f64 {
+    let (error, reference) = rust
+        .iter()
+        .zip(casa)
+        .zip(valid)
+        .filter(|(_, valid)| **valid)
+        .fold((0.0, 0.0), |(error, reference), ((actual, expected), _)| {
+            let actual = f64::from(*actual);
+            let expected = f64::from(*expected);
+            (
+                error + (actual - expected).powi(2),
+                reference + expected.powi(2),
+            )
+        });
     (error / reference.max(f64::MIN_POSITIVE)).sqrt()
 }
 
@@ -175,12 +199,61 @@ fn relative_difference(actual: f64, expected: f64) -> f64 {
     (actual - expected).abs() / expected.abs().max(f64::MIN_POSITIVE)
 }
 
-fn required_path(name: &str) -> Result<PathBuf, Box<dyn Error>> {
-    let path = PathBuf::from(std::env::var_os(name).ok_or_else(|| format!("{name} is not set"))?);
-    if !path.is_dir() {
-        return Err(format!("{name} does not name a table: {}", path.display()).into());
+struct Product {
+    shape: Vec<usize>,
+    values: Vec<f32>,
+    valid: Vec<bool>,
+}
+
+fn read_product(prefix: &Path, suffix: &str) -> Result<Product, Box<dyn Error>> {
+    let image = PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefix.display())))?;
+    let shape = image.shape().to_vec();
+    let values = image
+        .get_slice(&vec![0; shape.len()], &shape)?
+        .iter()
+        .copied()
+        .collect();
+    let valid = image
+        .get_mask_slice(&vec![0; shape.len()], &shape, &vec![1; shape.len()])?
+        .map_or_else(
+            || vec![true; shape.iter().product()],
+            |mask| mask.iter().copied().collect(),
+        );
+    Ok(Product {
+        shape,
+        values,
+        valid,
+    })
+}
+
+fn assert_matching_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box<dyn Error>> {
+    let rust =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", rust_prefix.display())))?;
+    let casa =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", casa_prefix.display())))?;
+    for pixel in [[256.0, 256.0, 0.0, 0.0], [256.0, 256.0, 0.0, 15.0]] {
+        let rust_world = rust.coordinates().to_world(&pixel)?;
+        let casa_world = casa.coordinates().to_world(&pixel)?;
+        for axis in 0..2 {
+            assert!(
+                (rust_world[axis] - casa_world[axis]).abs() <= 1.0e-10,
+                "tracked direction WCS axis {axis} differs at {pixel:?}"
+            );
+        }
+        assert!(
+            (rust_world[3] - casa_world[3]).abs() <= 1.0e-3,
+            "REST spectral WCS differs at {pixel:?}: Rust {} CASA {}",
+            rust_world[3],
+            casa_world[3],
+        );
     }
-    Ok(path)
+    for image in [&rust, &casa] {
+        let CoordinateModel::Spectral(spectral) = image.coordinates().coordinate(2) else {
+            return Err("T41 product has no spectral coordinate".into());
+        };
+        assert_eq!(spectral.world_frequency_ref(), FrequencyRef::REST);
+    }
+    Ok(())
 }
 
 fn copy_attached_ephemerides(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
