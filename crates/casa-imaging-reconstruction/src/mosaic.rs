@@ -284,6 +284,22 @@ impl MosaicProjector {
             )?;
             Some(find_support(&family_weight, 1))
         };
+        // Resolve a distinct support-frequency crop to a scalar before
+        // retaining either science-frequency crop. This keeps the build peak
+        // at the planner's two temporary crops instead of allowing imaging,
+        // weight, and support crops to overlap.
+        let support_frequency_support = if frequency_hz.to_bits() == support_frequency_hz.to_bits()
+        {
+            None
+        } else {
+            Some(screen_support(
+                geometry,
+                response,
+                antenna_responses,
+                support_frequency_hz,
+                conv_size,
+            )?)
+        };
         let imaging = screen_fft_temp(
             geometry,
             response,
@@ -300,19 +316,8 @@ impl MosaicProjector {
             conv_size,
             2,
         )?;
-        let normalization_support = if frequency_hz.to_bits() == support_frequency_hz.to_bits() {
-            find_support(&weight, 1)
-        } else {
-            let support_weight = screen_fft_temp(
-                geometry,
-                response,
-                antenna_responses,
-                support_frequency_hz,
-                conv_size,
-                2,
-            )?;
-            find_support(&support_weight, 1)
-        };
+        let normalization_support =
+            support_frequency_support.unwrap_or_else(|| find_support(&weight, 1));
         if normalization_support == 0 {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
@@ -632,6 +637,24 @@ fn screen_fft_temp(
         }
     }
     Ok(output)
+}
+
+fn screen_support(
+    geometry: SpectralOperatorGeometry,
+    response: &PreparedPrimaryBeamPower,
+    antenna_responses: SelectedAntennaResponses,
+    frequency_hz: f64,
+    conv_size: usize,
+) -> Result<usize, SpectralOperatorError> {
+    let support_weight = screen_fft_temp(
+        geometry,
+        response,
+        antenna_responses,
+        frequency_hz,
+        conv_size,
+        2,
+    )?;
+    Ok(find_support(&support_weight, 1))
 }
 
 fn find_support(weights: &Array2<Complex32>, sampling: usize) -> usize {
@@ -1114,6 +1137,48 @@ mod tests {
         assert_eq!(supports.map(|entry| entry.0), [29, 24, 18]);
         assert_eq!(supports.map(|entry| entry.1), [29; 3]);
         assert_eq!(supports.map(|entry| entry.2), [(620, 620); 3]);
+    }
+
+    #[test]
+    fn distinct_support_frequency_is_scalarized_before_retained_kernel_construction() {
+        let (geometry, response) = projector_inputs();
+        let conv_size = mosaic_convolution_size(geometry.image_shape);
+        let support_frequency_hz = 115.0e9;
+        let expected_support = screen_support(
+            geometry,
+            &response,
+            aca_pair(),
+            support_frequency_hz,
+            conv_size,
+        )
+        .expect("support-frequency scalar");
+        let projector = MosaicProjector::new(
+            geometry,
+            &response,
+            aca_pair(),
+            230.0e9,
+            support_frequency_hz,
+            8,
+        )
+        .expect("projector with distinct support frequency");
+        assert_eq!(projector.normalization_support, expected_support);
+
+        let residency = residency_projection(geometry.image_shape, [16, 16], 1, 1, 100, 100, 1)
+            .expect("mosaic residency");
+        let temp_side = conv_size / 4;
+        let temp_bytes = temp_side * temp_side * size_of::<Complex32>();
+        let screen_bytes = conv_size * conv_size * size_of::<Complex64>();
+        let fft_bytes = fft_resident_complex_values_for_shape([conv_size, conv_size])
+            .expect("FFT residency")
+            * size_of::<Complex64>();
+        let planning_bytes = fft_planning_words_for_shape([conv_size, conv_size])
+            .expect("FFT planning residency")
+            * size_of::<usize>();
+        let charged_screen_peak = screen_bytes + fft_bytes + planning_bytes + 2 * temp_bytes;
+        assert!(
+            residency.workspace_bytes >= charged_screen_peak,
+            "the workspace must charge the retained science crop and the support FFT output crop"
+        );
     }
 
     #[test]
