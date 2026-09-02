@@ -147,6 +147,8 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
             1_000,
             16 << 20,
             900_000,
+            authority.clone(),
+            resource_policy.clone(),
         )
         .with_gridded_normal_storage(storage.clone())
     };

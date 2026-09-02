@@ -726,12 +726,17 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     };
 
     let interactive = make_authority();
-    let host_view = CapacityViewId::new("host-memory");
+    let mut planning_base = demand("planning-base", 100);
+    planning_base.alternatives[0].headroom.memory_bytes =
+        BTreeMap::from([(CapacityDomainId::new("unified-memory"), 100)]);
     assert_eq!(
         interactive
-            .planning_memory_bytes(&ResourcePolicy::Interactive, &host_view)
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Interactive,
+                &planning_base.alternatives[0],
+            )
             .expect("interactive planning capacity"),
-        500
+        300
     );
     let error = interactive
         .acquire(
@@ -745,9 +750,12 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
         .expect("first interactive lease fits");
     assert_eq!(
         interactive
-            .planning_memory_bytes(&ResourcePolicy::Interactive, &host_view)
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Interactive,
+                &planning_base.alternatives[0],
+            )
             .expect("active leases reduce planning capacity"),
-        250
+        50
     );
     let _interactive_b = interactive
         .acquire(ResourcePolicy::Interactive, demand("interactive-b", 250))
@@ -763,9 +771,12 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let balanced = make_authority();
     assert_eq!(
         balanced
-            .planning_memory_bytes(&ResourcePolicy::Balanced, &host_view)
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Balanced,
+                &planning_base.alternatives[0],
+            )
             .expect("balanced planning capacity"),
-        750
+        550
     );
     assert_eq!(
         balanced
@@ -781,9 +792,12 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let exclusive = make_authority();
     assert_eq!(
         exclusive
-            .planning_memory_bytes(&ResourcePolicy::Exclusive, &host_view)
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Exclusive,
+                &planning_base.alternatives[0],
+            )
             .expect("exclusive planning capacity"),
-        1_000
+        800
     );
     exclusive
         .acquire(ResourcePolicy::Exclusive, demand("exclusive", 1_000))

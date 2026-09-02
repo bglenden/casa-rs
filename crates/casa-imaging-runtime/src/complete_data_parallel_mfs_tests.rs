@@ -354,6 +354,8 @@ fn execute_complete_data_mfs_with_policy(
             1_000,
             (IMAGE_PIXELS * std::mem::size_of::<Complex64>() * 3) as u64,
             900_000,
+            authority.clone(),
+            resource_policy.clone(),
         )
         .with_gridded_normal_storage(gridded_storage.clone())
     };

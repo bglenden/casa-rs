@@ -354,7 +354,7 @@ where
         matches!(algorithm, ReconstructionAlgorithm::Dirty) && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let mut policy = execution_policy(&runtime, residency.clone())?;
+    let mut policy = execution_policy(&runtime, residency.clone());
     if initial_write {
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
@@ -625,7 +625,7 @@ where
                 };
                 minor_outcomes.push(minor_outcome);
                 let final_input = minor.into_final_major_input();
-                let final_policy = execution_policy(&runtime, residency.clone())?;
+                let final_policy = execution_policy(&runtime, residency.clone());
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let final_planned = if continue_cleaning {
@@ -742,7 +742,7 @@ where
                 let (_, access) = resolved.into_parts();
                 let output_residency = access.certify_residency(problem)?;
                 let source_state = access.source_state().clone();
-                let output_policy = execution_policy(&runtime, output_residency)?
+                let output_policy = execution_policy(&runtime, output_residency)
                     .with_visibility_write(access.selected_visibility_storage_plan(write_targets)?);
                 let output_planned = SpectralCyclePlan::selected_output(
                     problem,
@@ -903,12 +903,8 @@ struct PriorPhaseOutcome {
 fn execution_policy(
     runtime: &ApplicationRuntime,
     residency: casa_ms::SelectedObservationResidencyCertificate,
-) -> Result<SpectralCycleExecutionPolicy, ApplicationError> {
-    let complete_data_memory_ceiling = runtime.authority.planning_memory_bytes(
-        &runtime.resource_policy,
-        &casa_imaging_runtime::CapacityViewId::new("host-memory"),
-    )?;
-    Ok(SpectralCycleExecutionPolicy::new(
+) -> SpectralCycleExecutionPolicy {
+    SpectralCycleExecutionPolicy::new(
         runtime.implementation.clone(),
         runtime.weighting_limits,
         residency,
@@ -916,9 +912,10 @@ fn execution_policy(
         runtime.stage_nanos,
         runtime.minor_cycle_bytes,
         runtime.confidence_parts_per_million,
+        runtime.authority.clone(),
+        runtime.resource_policy.clone(),
     )
     .with_gridded_normal_storage(runtime.gridded_normal_storage.clone())
-    .with_complete_data_memory_ceiling(complete_data_memory_ceiling))
 }
 
 fn run_phase(

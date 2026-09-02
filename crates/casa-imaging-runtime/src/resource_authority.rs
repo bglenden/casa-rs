@@ -1842,30 +1842,38 @@ impl ResourceAuthority {
         self.inner.cpu_replay_capacity
     }
 
-    /// Return the memory currently available through one host-visible view
-    /// after applying the requested policy, concurrent policies, pressure, and
-    /// active leases.
-    ///
-    /// Physical planners use this snapshot to choose a bounded shape. The
-    /// resulting demand is still admitted atomically before execution, so a
-    /// later pressure change fails closed instead of exceeding this capacity.
-    pub fn planning_memory_bytes(
+    /// Return host memory remaining for an extension of one already composed
+    /// physical alternative after policy, pressure, active leases, its base
+    /// demand, and its reserved headroom.
+    pub(crate) fn remaining_planning_memory_bytes(
         &self,
         policy: &ResourcePolicy,
-        view: &CapacityViewId,
+        base: &DemandAlternative,
     ) -> Result<u64, ResourceError> {
         validate_policy(&self.inner.topology, policy)?;
+        validate_alternative(&self.inner.topology, base)?;
+        let totals = base.demand.resource_totals(&self.inner.topology)?;
+        let mut reserved = totals.hard;
+        let headroom = headroom_grant(
+            &self.inner.topology,
+            &base.headroom,
+            &base.demand.host_memory_view,
+        )?;
+        add_grant(&mut reserved, &headroom)?;
         let domain = self
             .inner
             .topology
             .memory_views
             .iter()
-            .find(|candidate| &candidate.id == view && candidate.kind == MemoryViewKind::Host)
+            .find(|candidate| {
+                candidate.id == base.demand.host_memory_view
+                    && candidate.kind == MemoryViewKind::Host
+            })
             .map(|candidate| candidate.domain.clone())
             .ok_or_else(|| {
                 ResourceError::Invalid(format!(
                     "planning memory view {} is not host-visible",
-                    view.as_str()
+                    base.demand.host_memory_view.as_str()
                 ))
             })?;
         let state = self
@@ -1877,7 +1885,15 @@ impl ResourceAuthority {
         let policy_capacity =
             apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
         let available = available_after_active_leases(&state, policy_capacity)?;
-        Ok(available.hard.memory_bytes(&domain))
+        let reservation = ResourceTotals {
+            hard: reserved.clone(),
+            preferred: reserved.clone(),
+        };
+        admit_totals(&reservation, &available)?;
+        Ok(available
+            .hard
+            .memory_bytes(&domain)
+            .saturating_sub(reserved.memory_bytes(&domain)))
     }
 
     /// Atomically selects, admits, and reserves one complete demand alternative.

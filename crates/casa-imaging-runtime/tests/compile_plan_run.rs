@@ -2528,6 +2528,8 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         1_000,
         8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
         900_000,
+        authority().clone(),
+        ResourcePolicy::Balanced,
     )
     .with_gridded_normal_storage(artifact_storage());
     let plan = SpectralCyclePlan::initial(&problem, &registry, policy)
@@ -2588,6 +2590,8 @@ fn spectral_cycle_dirty_plan_omits_minor_cycle_work() {
             1_000,
             8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
+            authority().clone(),
+            ResourcePolicy::Balanced,
         ),
     )
     .expect("production dirty plan");
@@ -2640,6 +2644,8 @@ fn spectral_cycle_claims_the_compiled_continuum_row_buffer() {
             1_000,
             8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
+            authority().clone(),
+            ResourcePolicy::Balanced,
         ),
     )
     .expect("transformed dirty plan");
@@ -2711,6 +2717,8 @@ fn spectral_cycle_initial_plan_bounds_selected_payload_traversals_by_weighting_s
                 1_000,
                 1_000,
                 900_000,
+                authority().clone(),
+                ResourcePolicy::Balanced,
             ),
         )
         .expect("streaming plan");
@@ -2841,6 +2849,8 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
             1_000,
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
+            authority().clone(),
+            ResourcePolicy::Balanced,
         ),
     )
     .expect("dirty density plan");
@@ -2999,6 +3009,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             1_000,
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
+            authority().clone(),
+            ResourcePolicy::Balanced,
         )
         .with_gridded_normal_storage(gridded_storage.clone()),
     )
@@ -3200,6 +3212,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
             1_000,
             4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
             900_000,
+            authority().clone(),
+            ResourcePolicy::Balanced,
         )
         .with_gridded_normal_storage(gridded_storage),
         &final_input,
@@ -3552,6 +3566,8 @@ fn execute_initial_reconstruction_cycle(
         1_000,
         (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
         900_000,
+        authority().clone(),
+        ResourcePolicy::Balanced,
     )
     .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(problem, &planning_registry, policy)
@@ -8757,19 +8773,37 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
         SpectralOperatorPass::InitialMajor,
     )
     .expect("full-depth comparison fragment");
+    let storage_root = tempfile::tempdir().expect("MVC storage root");
+    let storage = ProductionStorageProfile::new(
+        storage_root.path(),
+        1 << 30,
+        1 << 30,
+        1_000_000,
+        1_000_000,
+        64,
+        8,
+    )
+    .expect("MVC storage profile");
+    let mvc_authority = ResourceAuthority::detected_with_storage_profile(&storage)
+        .expect("dedicated MVC authority");
+    let gridded_storage = GriddedNormalReplayStorage::bind(
+        &mvc_authority,
+        storage.io_resources(),
+        storage_root.path(),
+    )
+    .expect("MVC gridded storage");
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(6),
         WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
         selected_content_residency(&problem),
-        serial_storage_io(),
+        storage.io_resources(),
         1_000,
         512 * 512 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
         900_000,
+        mvc_authority,
+        ResourcePolicy::Exclusive,
     )
-    .with_gridded_normal_storage(artifact_storage())
-    .with_complete_data_memory_ceiling(
-        u64::try_from(full.residency().peak_bytes()).expect("full residency fits u64"),
-    );
+    .with_gridded_normal_storage(gridded_storage);
     let plan =
         SpectralCyclePlan::initial(&problem, &registry, policy).expect("production MVC plan");
     let knobs = plan.physical_work().execution_dag().initial_knobs();
@@ -11798,6 +11832,8 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
             1_000,
             1,
             900_000,
+            authority.clone(),
+            ResourcePolicy::Balanced,
         ),
     )
     .expect("production scientific plan");
@@ -11937,6 +11973,8 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
                 1_000,
                 1,
                 900_000,
+                authority.clone(),
+                ResourcePolicy::Balanced,
             ),
         )
         .expect("scientific plan construction");

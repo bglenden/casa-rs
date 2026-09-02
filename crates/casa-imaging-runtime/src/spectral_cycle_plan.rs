@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
+    sync::OnceLock,
 };
 
 use casa_imaging_model::CompiledProblem;
@@ -37,6 +38,11 @@ const GRIDDED_SPILL_WRITE_RATE_DEMAND: &str = "gridded-normal-spill-write-rate";
 const GRIDDED_SPILL_QUEUE_DEMAND: &str = "gridded-normal-spill-queue";
 const GRIDDED_SPILL_STORAGE_DEMAND: &str = "gridded-normal-spill-storage";
 
+fn imaging_plan_diagnostics_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some())
+}
+
 fn bounded_worker_stack_bytes(workers: u64) -> Result<u64, SpectralCyclePlanError> {
     if workers == 1 {
         return Ok(0);
@@ -56,13 +62,14 @@ pub struct SpectralCycleExecutionPolicy {
     stage_nanos: u64,
     minor_cycle_bytes: u64,
     confidence_parts_per_million: u32,
+    authority: ResourceAuthority,
+    resource_policy: ResourcePolicy,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
-    complete_data_memory_ceiling: Option<u64>,
 }
 
 impl SpectralCycleExecutionPolicy {
-    /// Construct explicit execution limits; no machine estimate is inferred.
+    /// Construct explicit execution limits bound to runtime-owned resource planning.
     #[must_use]
     pub fn new(
         implementation: WorkImplementationId,
@@ -72,6 +79,8 @@ impl SpectralCycleExecutionPolicy {
         stage_nanos: u64,
         minor_cycle_bytes: u64,
         confidence_parts_per_million: u32,
+        authority: ResourceAuthority,
+        resource_policy: ResourcePolicy,
     ) -> Self {
         Self {
             implementation,
@@ -81,9 +90,10 @@ impl SpectralCycleExecutionPolicy {
             stage_nanos,
             minor_cycle_bytes,
             confidence_parts_per_million,
+            authority,
+            resource_policy,
             visibility_write: None,
             gridded_normal_storage: None,
-            complete_data_memory_ceiling: None,
         }
     }
 
@@ -91,14 +101,6 @@ impl SpectralCycleExecutionPolicy {
     #[must_use]
     pub fn with_gridded_normal_storage(mut self, storage: GriddedNormalReplayStorage) -> Self {
         self.gridded_normal_storage = Some(storage);
-        self
-    }
-
-    /// Bind the Resource Authority's policy-adjusted host-memory ceiling used
-    /// to choose bounded complete-data operator residency.
-    #[must_use]
-    pub fn with_complete_data_memory_ceiling(mut self, bytes: u64) -> Self {
-        self.complete_data_memory_ceiling = Some(bytes);
         self
     }
 
@@ -490,15 +492,35 @@ impl SpectralCyclePlan {
                     casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
                 ) =>
             {
-                CompleteDataPlanFragment::mvc_with_preparation_node(
+                let memory_ceiling = policy.authority.remaining_planning_memory_bytes(
+                    &policy.resource_policy,
+                    physical.execution_dag().resource_alternative(),
+                )?;
+                let fragment = CompleteDataPlanFragment::mvc_with_preparation_node(
                     problem,
                     weighting.limits().max_block_samples(),
                     replay.clone(),
                     preparation_node,
-                    policy
-                        .complete_data_memory_ceiling
-                        .ok_or(SpectralCyclePlanError::MissingCompleteDataMemoryCeiling)?,
-                )?
+                    memory_ceiling,
+                )?;
+                if imaging_plan_diagnostics_enabled() {
+                    let residency = fragment.residency();
+                    eprintln!(
+                        "imaging_mvc_plan_summary available_after_base_bytes={} admitted_slab_depth={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} primitive_output_bytes={} major_cycle_model_bytes={}",
+                        memory_ceiling,
+                        fragment.slab().core_depth(),
+                        residency.peak_bytes(),
+                        residency.grid_bytes(),
+                        residency.convolution_cache_bytes(),
+                        residency.fft_resident_bytes(),
+                        residency.fft_planning_bytes(),
+                        residency.forward_workspace_bytes(),
+                        residency.response_workspace_bytes(),
+                        residency.primitive_output_bytes(),
+                        residency.major_cycle_model_bytes(),
+                    );
+                }
+                fragment
             }
             SpectralPassPhase::InitialMajor => CompleteDataPlanFragment::new_with_preparation_node(
                 problem,
@@ -2018,8 +2040,6 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
-    /// An MVC plan omitted the Resource Authority's host-memory ceiling.
-    MissingCompleteDataMemoryCeiling,
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
     /// A later-major plan received replay state outside its retained storage authority.
@@ -2040,6 +2060,8 @@ pub enum SpectralCyclePlanError {
     Execution(ExecutionError),
     /// Physical work, prediction, or transaction binding failed.
     Physical(PhysicalWorkBindingError),
+    /// Whole-plan Resource Authority feasibility failed.
+    Resource(ResourceError),
 }
 impl fmt::Display for SpectralCyclePlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2065,6 +2087,11 @@ impl From<crate::ContinuumTransformError> for SpectralCyclePlanError {
 impl From<CompleteDataPlanError> for SpectralCyclePlanError {
     fn from(v: CompleteDataPlanError) -> Self {
         Self::Complete(v)
+    }
+}
+impl From<ResourceError> for SpectralCyclePlanError {
+    fn from(value: ResourceError) -> Self {
+        Self::Resource(value)
     }
 }
 impl From<ExecutionError> for SpectralCyclePlanError {
