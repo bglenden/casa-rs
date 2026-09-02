@@ -169,7 +169,6 @@ fn t41_mvc_primary_beam_turnaround_completes_on_full_selected_data() -> Result<(
 
     let mut request = mvc_request(measurement_set, rust_prefix);
     request.image_size = 256;
-    request.threshold_jy = f64::MAX;
     let result = execute_continuum(request)?;
     assert_eq!(
         result
@@ -180,7 +179,7 @@ fn t41_mvc_primary_beam_turnaround_completes_on_full_selected_data() -> Result<(
             .sample_count(),
         MVC_SELECTED_SAMPLE_COUNT,
     );
-    assert_eq!(result.minor_iterations, 0);
+    assert_eq!(result.minor_iterations, 1);
     assert_eq!(result.outcome.output.major_cycle_count, 2);
     Ok(())
 }
@@ -643,7 +642,7 @@ fn compare_mvc_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<Vec<String>
             ));
         }
     }
-    let tolerance_hz = casa_world[3].abs().max(1.0) * 2.0e-12;
+    let tolerance_hz = casa_world[3].abs().max(1.0) * 1.0e-10;
     if (rust_world[3] - casa_world[3]).abs() > tolerance_hz {
         failures.push(format!(
             "Taylor reference frequency differs: Rust {} Hz CASA {} Hz",

@@ -22,12 +22,13 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
-    ModelGeneration, ModelGenerationId, ModelGenerationOrigin, ModelSupport,
+    ModelGeneration, ModelGenerationId, ModelGenerationOrigin, ModelSupport, ScienceTraceDigest,
     block_normal::BlockNormalPlan,
-    canonical_f64_bits,
+    canonical_f64_bits, imaging_science_trace_enabled,
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     primary_beam::PreparedPrimaryBeamPower,
     spectral_sampling::{CasaWideLinearGrid, CasaWideLinearSample},
+    trace_complex_values,
     weighting::{
         CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
         WeightingGenerationId, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -2580,7 +2581,7 @@ impl CompleteDataOwnerResult {
         for domain in &mut domains.domains {
             domain.primitives.slab = folded_slab;
             if next_channel == total_channels {
-                normalize_completed_primary_beam_fold(&mut domain.primitives)?;
+                normalize_completed_primary_beam_psf_fold(&mut domain.primitives)?;
             }
         }
         Ok(Self {
@@ -2688,33 +2689,16 @@ fn normalize_response_family(
     Ok(())
 }
 
-fn normalize_completed_primary_beam_fold(
+fn normalize_completed_primary_beam_psf_fold(
     primitives: &mut SpectralOperatorPrimitives,
 ) -> Result<(), SpectralOperatorError> {
     let Some(primary_beam_weighted_sum) = primitives.primary_beam_weighted_sum.as_deref() else {
         return Ok(());
     };
     let cells = checked_cells(primitives.shape)?;
-    let coefficient_terms = primitives.basis.coefficient_terms(primitives.slab);
     let normal_moments = primitives.basis.normal_moments(primitives.slab);
-    normalize_response_family(
-        &mut primitives.dirty,
-        coefficient_terms,
-        primitives.polarizations,
-        cells,
-        &primitives.sum_weights,
-        primary_beam_weighted_sum,
-    )?;
-    if let Some(invariant) = primitives.invariant_dirty.as_deref_mut() {
-        normalize_response_family(
-            invariant,
-            coefficient_terms,
-            primitives.polarizations,
-            cells,
-            &primitives.sum_weights,
-            primary_beam_weighted_sum,
-        )?;
-    }
+    trace_complex_values("publication_coefficient_before", &primitives.dirty);
+    trace_complex_values("publication_psf_before", &primitives.psf);
     normalize_response_family(
         &mut primitives.psf,
         normal_moments,
@@ -2723,16 +2707,8 @@ fn normalize_completed_primary_beam_fold(
         &primitives.sum_weights,
         primary_beam_weighted_sum,
     )?;
-    if let Some(residual) = primitives.major_cycle_residual.as_deref_mut() {
-        normalize_response_family(
-            residual,
-            coefficient_terms,
-            primitives.polarizations,
-            cells,
-            &primitives.sum_weights,
-            primary_beam_weighted_sum,
-        )?;
-    }
+    trace_complex_values("publication_coefficient_after", &primitives.dirty);
+    trace_complex_values("publication_psf_after", &primitives.psf);
     Ok(())
 }
 
@@ -5002,6 +4978,9 @@ impl SpectralSlabOperator {
         {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
+        if imaging_science_trace_enabled() {
+            self.trace_primary_beam_forward_generation(generation, &response, plan, replay)?;
+        }
         let origin = self.window.map_or([0, 0], FacetWindow::origin);
         let mut primary_beam_plane = vec![0.0; cells];
         let mut basis = vec![0.0; plan.coefficient_term_count()];
@@ -5064,6 +5043,69 @@ impl SpectralSlabOperator {
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
+        Ok(())
+    }
+
+    fn trace_primary_beam_forward_generation(
+        &self,
+        generation: &ModelGeneration,
+        response: &PreparedPrimaryBeamPower,
+        plan: BlockNormalPlan,
+        replay: &PrimaryBeamReplayState,
+    ) -> Result<(), SpectralOperatorError> {
+        let width = self.geometry.image_shape[0];
+        let height = self.geometry.image_shape[1];
+        let cells = checked_cells(self.geometry.image_shape)?;
+        let origin = self.window.map_or([0, 0], FacetWindow::origin);
+        let mut primary_beam_plane = vec![0.0; cells];
+        let mut basis = vec![0.0; plan.coefficient_term_count()];
+        let mut before = ScienceTraceDigest::new();
+        let mut after = ScienceTraceDigest::new();
+        for output_channel in self.slab.resident_range() {
+            let frequency = *self
+                .output_channel_frequencies_hz
+                .get(output_channel)
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            response.fill_power_plane_into(frequency, &mut primary_beam_plane)?;
+            plan.fill_coefficient_basis(frequency, &mut basis)
+                .map_err(|_| SpectralOperatorError::InvalidSample)?;
+            for polarization in 0..self.polarization_count {
+                let total_weight = replay.sum_weights[polarization];
+                let response_start = polarization * cells;
+                for x in 0..width {
+                    for y in 0..height {
+                        let cell = x * height + y;
+                        let mut value = 0.0;
+                        for (coefficient, basis) in basis.iter().copied().enumerate() {
+                            let index = generation
+                                .shape()
+                                .flat_index(casa_imaging_model::ModelCell::new(
+                                    self.domain_ordinal,
+                                    coefficient,
+                                    polarization,
+                                    [origin[0] + x, origin[1] + y],
+                                ))
+                                .ok_or(SpectralOperatorError::ModelShape)?;
+                            let sample = generation.samples()[index];
+                            if sample.support() != ModelSupport::Invalid {
+                                value += sample.value().value() * basis;
+                            }
+                        }
+                        let denominator = replay.weighted_sum[response_start + cell];
+                        let channel_response = f64::from(primary_beam_plane[cell]);
+                        let staged = if denominator > 0.0 && channel_response > 0.0 {
+                            value * channel_response * total_weight / denominator
+                        } else {
+                            0.0
+                        };
+                        before.push_real(value);
+                        after.push_real(staged);
+                    }
+                }
+            }
+        }
+        before.emit("channel_model_before_pbc_pbbar");
+        after.emit("channel_model_after_pbc_pbbar");
         Ok(())
     }
 
@@ -5881,6 +5923,9 @@ impl SpectralSlabOperator {
         let mut output = vec![Complex64::default(); output_len];
         let mut compensation = vec![Complex64::default(); output_len];
         let mut powers = vec![0.0; output_terms];
+        // CASA removes PBc/PBbar before residual Taylor folding and reapplies it
+        // while forming the Taylor sum. The response amplitude therefore
+        // cancels from coefficient families, but its cutoff support remains.
         let mut primary_beam_plane = self.primary_beam.as_ref().map(|_| vec![0.0; cells]);
         for (local_channel, output_channel) in self.slab.core_range().enumerate() {
             let frequency = *self
@@ -5910,9 +5955,13 @@ impl SpectralSlabOperator {
                         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
                     for cell in 0..cells {
                         let index = output_start + cell;
-                        let response = primary_beam_plane
-                            .as_ref()
-                            .map_or(1.0, |plane| f64::from(plane[cell]));
+                        let response = primary_beam_plane.as_ref().map_or(1.0, |plane| {
+                            if normal_moments {
+                                f64::from(plane[cell])
+                            } else {
+                                f64::from(plane[cell] > 0.0)
+                            }
+                        });
                         let value = channel_values[input_start + cell] * (power * response);
                         let corrected = value - compensation[index];
                         let updated = output[index] + corrected;
@@ -6073,23 +6122,17 @@ impl SpectralSlabOperator {
         }
         let values = collect_image_planes(Some(&grids), &self.geometry, &self.gridder)?
             .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
-        let mut values = if self.basis.channel_major_taylor().is_some() {
+        let values = if self.basis.channel_major_taylor().is_some() {
             self.fold_channel_major_values(&values, false)?
         } else {
             values
         };
         match (&self.primary_beam, &self.primary_beam_replay) {
-            (Some(_), Some(replay)) => normalize_response_family(
-                &mut values,
-                self.basis.coefficient_terms(self.slab),
-                self.polarization_count,
-                checked_cells(self.geometry.image_shape)?,
-                &replay.sum_weights,
-                &replay.weighted_sum,
-            )?,
+            (Some(_), Some(_)) => {}
             (None, None) => {}
             _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
         }
+        trace_complex_values("final_replay_residual", &values);
         let common_values = collect_image_planes(
             self.common_residual_grids.as_deref(),
             &self.geometry,
@@ -6245,21 +6288,12 @@ impl SpectralSlabOperator {
             let residual =
                 collect_image_planes(Some(residual_grids), &self.geometry, &self.gridder)?
                     .ok_or(SpectralOperatorError::MissingMajorCycleResidual)?;
-            let mut residual = if self.basis.channel_major_taylor().is_some() {
+            let residual = if self.basis.channel_major_taylor().is_some() {
                 self.fold_channel_major_values(&residual, false)?
             } else {
                 residual
             };
-            if let Some(primary_beam_weighted_sum) = reused.primary_beam_weighted_sum.as_deref() {
-                normalize_response_family(
-                    &mut residual,
-                    self.basis.coefficient_terms(self.slab),
-                    self.polarization_count,
-                    checked_cells(self.geometry.image_shape)?,
-                    &reused.sum_weights,
-                    primary_beam_weighted_sum,
-                )?;
-            }
+            trace_complex_values("streaming_replay_residual", &residual);
             if residual.len() != output_cells {
                 return Err(SpectralOperatorError::ProblemMismatch);
             }
@@ -6424,7 +6458,7 @@ impl SpectralSlabOperator {
             measurements: self.measurements,
         };
         if self.slab.core_range() == (0..self.slab.total_channels()) {
-            normalize_completed_primary_beam_fold(&mut primitives)?;
+            normalize_completed_primary_beam_psf_fold(&mut primitives)?;
         }
         log_imaging_stage_timing(
             "initial_primitive_formation",

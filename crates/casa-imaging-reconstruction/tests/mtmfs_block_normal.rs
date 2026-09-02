@@ -1825,6 +1825,23 @@ fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() 
 
     let preparation = nonzero_taylor_model(&problem);
     let initial = initial_normal_from_frozen(&problem, &frozen);
+    let scalar_problem = channel_major_problem_with_shape(4, ImageShape::new(256, 256));
+    let scalar_selected = channel_major_samples(&scalar_problem);
+    let scalar_frozen = freeze_taylor_replay(&scalar_problem, &scalar_selected);
+    let scalar_initial = initial_normal_from_frozen(&scalar_problem, &scalar_frozen);
+    let residual_nrms = complex_nrms(initial.residual(), scalar_initial.residual());
+    assert!(
+        residual_nrms <= 1.0e-15,
+        "CASA MVC removes the frequency-dependent PB before folding the residual family: NRMS={residual_nrms:e}",
+    );
+    let psf_nrms = complex_nrms(
+        initial.normal_approximation(),
+        scalar_initial.normal_approximation(),
+    );
+    assert!(
+        psf_nrms > 1.0e-8,
+        "CASA MVC retains the frequency-dependent PB in the PSF family: NRMS={psf_nrms:e}",
+    );
     let residual = complete_frozen_taylor_operator(
         &problem,
         &frozen,

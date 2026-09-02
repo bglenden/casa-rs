@@ -26,7 +26,7 @@ use two_domain::{
 pub use two_domain::{GriddedNormalPartial, GriddedNormalWork};
 
 use crate::{
-    Encoder, FinalNormalState, ModelGeneration,
+    Encoder, FinalNormalState, ModelGeneration, ScienceTraceDigest, imaging_science_trace_enabled,
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, OVERSAMPLING,
@@ -1169,6 +1169,7 @@ impl GriddedNormalOperatorProgram {
             tile_accumulators,
             normal_grids: domain_planes(),
             normal_compensations: domain_planes(),
+            science_prediction_trace: imaging_science_trace_enabled().then(ScienceTraceDigest::new),
             #[cfg(test)]
             next_sector_commit: 0,
             #[cfg(test)]
@@ -1202,6 +1203,7 @@ pub struct GriddedNormalOperatorApply {
     tile_accumulators: Vec<Mutex<GriddedNormalTileAccumulator>>,
     normal_grids: Vec<Vec<Array2<Complex64>>>,
     normal_compensations: Vec<Vec<Array2<Complex64>>>,
+    science_prediction_trace: Option<ScienceTraceDigest>,
     #[cfg(test)]
     next_sector_commit: usize,
     #[cfg(test)]
@@ -2091,7 +2093,7 @@ impl GriddedNormalOperatorApply {
 
     /// Finish and return the final immutable route-once measurement snapshot.
     pub fn finish_with_routing_measurements(
-        self,
+        mut self,
     ) -> Result<(CompleteDataOwnerResult, GriddedNormalRoutingMeasurements), SpectralOperatorError>
     {
         let active_frames = self
@@ -2105,6 +2107,9 @@ impl GriddedNormalOperatorApply {
             || active_frames != 0
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        if let Some(trace) = self.science_prediction_trace.take() {
+            trace.emit("predicted_visibility");
         }
         let measurements = self.routing_measurements();
         let Self {
