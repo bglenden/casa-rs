@@ -103,7 +103,7 @@ imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix mvc_ms mvc_c
     test -d "{{mvc_ms}}"
     output_root="$(mktemp -d "{{justfile_directory()}}/target/t41-casa-oracle.XXXXXX")"
     CASA_RS_T41_MVC_MS="{{mvc_ms}}" CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_observation::tests::t41_ephemeris_oracle::t41_trackfield_phase_centre_matches_casa_at_three_row_times -- --ignored --exact --nocapture
-    CASA_RS_T41_MVC_CASA_PREFIX="{{mvc_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_alma_mvc_primary_beam_kernel_matches_frozen_cube --release -- --ignored --exact --nocapture
+    CASA_RS_T41_MVC_CASA_PREFIX="{{mvc_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction primary_beam::tests::t41_alma_mvc_primary_beam_owner_matches_frozen_cube --release -- --ignored --exact --nocapture
     CASA_RS_T41_MVC_MS="{{mvc_ms}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_mvc_selected_spectral_range_matches_casa_edge_topology --release -- --ignored --exact --nocapture
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T41_CASA_PREFIX="{{cubesource_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_tracked_cubesource_matches_casa_geometry_and_dirty_products --release -- --ignored --exact --nocapture
     CASA_RS_T41_MVC_MS="{{mvc_ms}}" CASA_RS_T41_MVC_CASA_PREFIX="{{mvc_casa_prefix}}" CASA_RS_T41_MVC_RUST_PREFIX="$output_root/rust" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_multi_spw_mvc_matches_casa_taylor_products --release -- --ignored --exact --nocapture

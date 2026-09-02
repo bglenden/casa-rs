@@ -26,20 +26,23 @@ use super::row_selection::CompiledRowPredicate;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SelectedObservationSharedBytes {
     shared_measures_retained_bytes: usize,
+    shared_reference_data_retained_bytes: usize,
     shared_source_slots_retained_bytes: usize,
     shared_binding_graph_initialization_bytes: usize,
 }
 
 impl SelectedObservationSharedBytes {
-    pub(crate) const NONE: Self = Self::new(0, 0, 0);
+    pub(crate) const NONE: Self = Self::new(0, 0, 0, 0);
 
     pub(crate) const fn new(
         shared_measures_retained_bytes: usize,
+        shared_reference_data_retained_bytes: usize,
         shared_source_slots_retained_bytes: usize,
         shared_binding_graph_initialization_bytes: usize,
     ) -> Self {
         Self {
             shared_measures_retained_bytes,
+            shared_reference_data_retained_bytes,
             shared_source_slots_retained_bytes,
             shared_binding_graph_initialization_bytes,
         }
@@ -52,6 +55,16 @@ pub struct SelectedObservationContentBudget {
     available_bytes: usize,
     maximum_live_blocks: usize,
     maximum_pointing_polynomial_terms: usize,
+}
+
+/// Explicit retained-byte ceiling for selected-observation reference data.
+///
+/// This capability can only be derived from a selected-content budget, keeping
+/// reference-data loading under the same resource authority as later source
+/// planning and traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedObservationReferenceDataBudget {
+    available_bytes: usize,
 }
 
 impl SelectedObservationContentBudget {
@@ -75,6 +88,14 @@ impl SelectedObservationContentBudget {
         self.available_bytes
     }
 
+    /// Derive the reference-data admission ceiling from this content authority.
+    #[must_use]
+    pub const fn reference_data_budget(self) -> SelectedObservationReferenceDataBudget {
+        SelectedObservationReferenceDataBudget {
+            available_bytes: self.available_bytes,
+        }
+    }
+
     /// Return the exact maximum simultaneously live content blocks.
     #[must_use]
     pub const fn maximum_live_blocks(self) -> usize {
@@ -85,6 +106,14 @@ impl SelectedObservationContentBudget {
     #[must_use]
     pub const fn maximum_pointing_polynomial_terms(self) -> usize {
         self.maximum_pointing_polynomial_terms
+    }
+}
+
+impl SelectedObservationReferenceDataBudget {
+    /// Return the retained bytes available for immutable reference data.
+    #[must_use]
+    pub const fn available_bytes(self) -> usize {
+        self.available_bytes
     }
 }
 
@@ -243,6 +272,7 @@ pub(crate) fn selected_content_plan(
             problem,
             source,
             shared_bytes.shared_measures_retained_bytes,
+            shared_bytes.shared_reference_data_retained_bytes,
             shared_bytes.shared_source_slots_retained_bytes,
         )?;
     let initialization_scratch_bytes = coordinate_construction_scratch_bytes
@@ -505,6 +535,7 @@ fn retained_metadata_bytes(
     problem: &CompiledProblem,
     source: &ObservationSource,
     shared_measures_retained_bytes: usize,
+    shared_reference_data_retained_bytes: usize,
     shared_source_slots_retained_bytes: usize,
 ) -> Result<(usize, usize, usize), SelectedObservationContentPlanError> {
     let storage_bytes = measurement_set
@@ -628,6 +659,7 @@ fn retained_metadata_bytes(
     maximum_scratch_bytes = maximum_scratch_bytes.max(predicate_construction_scratch);
     let retained_bytes = shared_source_slots_retained_bytes
         .checked_add(shared_measures_retained_bytes)
+        .and_then(|bytes| bytes.checked_add(shared_reference_data_retained_bytes))
         .and_then(|bytes| bytes.checked_add(storage_bytes))
         .and_then(|bytes| bytes.checked_add(geometry_bytes))
         .and_then(|bytes| bytes.checked_add(manifest_bytes))

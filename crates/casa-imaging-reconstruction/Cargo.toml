@@ -26,5 +26,6 @@ smallvec.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+casa-images = { path = "../casa-images" }
 casa-test-support = { path = "../casa-test-support" }
 serde_json = "1"

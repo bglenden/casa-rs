@@ -278,6 +278,7 @@ impl BoundObservationSource {
             &measures,
             SelectedObservationSharedBytes::new(
                 measures.retained_bytes(),
+                0,
                 Self::retained_source_slot_bytes(),
                 current_state_heap_bytes,
             ),

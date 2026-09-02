@@ -1117,6 +1117,7 @@ fn prepare(
                 selected_fields
                     .iter()
                     .map(|field| usize::try_from(*field).expect("validated FIELD_ID")),
+                content_budget.reference_data_budget(),
             )?;
             let direction = frame_engine.ephemeris_direction_j2000(
                 anchor_time_mjd_seconds,
@@ -1133,12 +1134,24 @@ fn prepare(
         }
         Some(text) => {
             let mut ephemeris = if Path::new(text).is_dir() {
-                SelectedObservationEphemeris::external(text)?
+                SelectedObservationEphemeris::external(
+                    text,
+                    content_budget.reference_data_budget(),
+                )?
             } else {
-                SelectedObservationEphemeris::named(text, measures_identity)?
+                SelectedObservationEphemeris::named(
+                    text,
+                    measures_identity,
+                    content_budget.reference_data_budget(),
+                )?
             };
-            if let Some(attached) = attached_field_ephemerides(&ms, &selected_fields)? {
-                ephemeris = ephemeris.with_attached_fields(attached)?;
+            if let Some(attached) = attached_field_ephemerides(
+                &ms,
+                &selected_fields,
+                content_budget.reference_data_budget(),
+            )? {
+                ephemeris = ephemeris
+                    .with_attached_fields(attached, content_budget.reference_data_budget())?;
             }
             let direction = frame_engine.ephemeris_direction_j2000(
                 anchor_time_mjd_seconds,
@@ -1544,6 +1557,7 @@ fn source_rest_frequency(
 fn attached_field_ephemerides(
     measurement_set: &MeasurementSet,
     selected_fields: &BTreeSet<i32>,
+    budget: casa_ms::SelectedObservationReferenceDataBudget,
 ) -> Result<Option<SelectedObservationEphemeris>, crate::ApplicationError> {
     let field = measurement_set.field()?;
     let mut attached = Vec::new();
@@ -1564,7 +1578,7 @@ fn attached_field_ephemerides(
             "moving-source selection mixes FIELD rows with and without attached ephemerides",
         ));
     }
-    SelectedObservationEphemeris::tracked_fields(measurement_set, attached)
+    SelectedObservationEphemeris::tracked_fields(measurement_set, attached, budget)
         .map(Some)
         .map_err(Into::into)
 }

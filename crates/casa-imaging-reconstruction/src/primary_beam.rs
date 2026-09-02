@@ -86,25 +86,12 @@ impl PreparedPrimaryBeamPower {
     }
 }
 
-#[doc(hidden)]
-pub fn evaluate_casa_alma_aca_primary_beam_power_plane(
-    direction: casa_imaging_model::DirectionCoordinateSpec,
-    shape: [usize; 2],
-    frequency_hz: f64,
-    cutoff: f32,
-    output: &mut [f32],
-) -> Result<(), SpectralOperatorError> {
-    PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
-        direction.reference_pixel(),
-        direction.increment_rad(),
-        shape,
-        cutoff,
-    )?
-    .fill_power_plane_into(frequency_hz, output)
-}
-
 #[cfg(test)]
 mod tests {
+    use std::{error::Error, path::PathBuf};
+
+    use casa_images::PagedImage;
+
     use super::*;
 
     #[test]
@@ -123,5 +110,51 @@ mod tests {
         assert_eq!(plane[4 * 8 + 4], 1.0);
         assert!(plane.iter().all(|value| value.is_finite()));
         assert!(plane[0] < 1.0);
+    }
+
+    #[test]
+    #[ignore = "requires the frozen CASA T41 MVC primary-beam cube"]
+    fn t41_alma_mvc_primary_beam_owner_matches_frozen_cube() -> Result<(), Box<dyn Error>> {
+        let prefix = PathBuf::from(
+            std::env::var_os("CASA_RS_T41_MVC_CASA_PREFIX")
+                .ok_or("CASA_RS_T41_MVC_CASA_PREFIX is not set")?,
+        );
+        let casa = PagedImage::<f32>::open(PathBuf::from(format!("{}.pb", prefix.display())))?;
+        assert_eq!(casa.shape(), [512, 512, 1, 40]);
+        let shape = casa.shape().to_vec();
+        let expected = casa.get_slice(&vec![0; shape.len()], &shape)?;
+        let valid = casa
+            .get_mask_slice(&vec![0; shape.len()], &shape, &vec![1; shape.len()])?
+            .map_or_else(
+                || vec![true; shape.iter().product()],
+                |mask| mask.iter().copied().collect(),
+            );
+        let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
+            [256.0, 256.0],
+            [-4.848_136_811_095_359e-7, 4.848_136_811_095_359e-7],
+            [512, 512],
+            0.1,
+        )?;
+        let mut generated = vec![0.0; 512 * 512];
+        for channel in [0, 39] {
+            let frequency = 230_449_729_492.188_84 + channel as f64 * 122_982_578.274_169_92;
+            response.fill_power_plane_into(frequency, &mut generated)?;
+            let (error, reference) = generated
+                .iter()
+                .enumerate()
+                .filter(|(cell, _)| valid[cell * 40 + channel])
+                .fold((0.0, 0.0), |(error, reference), (cell, actual)| {
+                    let actual = f64::from(*actual);
+                    let expected = f64::from(expected[[cell / 512, cell % 512, 0, channel]]);
+                    (
+                        error + (actual - expected).powi(2),
+                        reference + expected.powi(2),
+                    )
+                });
+            let nrms = (error / reference.max(f64::MIN_POSITIVE)).sqrt();
+            eprintln!("t41_mvc_pb_owner channel={channel} nrms={nrms:.9e}");
+            assert!(nrms <= 5.0e-6, "channel {channel} PB NRMS {nrms:.6e}");
+        }
+        Ok(())
     }
 }

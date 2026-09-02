@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use std::{
+    alloc::Layout,
     collections::{BTreeMap, BTreeSet},
     fs,
+    mem::size_of,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicUsize},
 };
 
 use casa_imaging_model::LogicalIdentity;
@@ -15,7 +17,7 @@ use casa_types::{ScalarValue, Value};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{MeasurementSet, MsError};
+use crate::{MeasurementSet, MsError, SelectedObservationReferenceDataBudget};
 
 const EPHEMERIS_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-ephemeris-v1";
 const AU_METRES: f64 = 149_597_870_700.0;
@@ -38,10 +40,18 @@ struct EphemerisRow {
 #[derive(Debug)]
 struct EphemerisSeries {
     identity: LogicalIdentity,
-    name: String,
+    name: Box<str>,
     position_reference: DirectionRef,
     velocity_reference: RadialVelocityRef,
     rows: Box<[EphemerisRow]>,
+}
+
+struct EphemerisSeriesPreflight {
+    table: Table,
+    row_count: usize,
+    position_reference: DirectionRef,
+    velocity_reference: RadialVelocityRef,
+    geo_distance_km: f64,
     retained_bytes: usize,
 }
 
@@ -54,7 +64,7 @@ struct FieldEphemerisBinding {
 #[derive(Debug, Clone)]
 enum EphemerisKind {
     Named {
-        target: String,
+        target: Box<str>,
     },
     External {
         series: Arc<EphemerisSeries>,
@@ -88,26 +98,39 @@ impl Eq for SelectedObservationEphemeris {}
 impl SelectedObservationEphemeris {
     /// Bind a named CASA/casacore moving target to the immutable Measures snapshot.
     pub fn named(
-        target: impl Into<String>,
+        target: impl AsRef<str>,
         measures_identity: LogicalIdentity,
+        budget: SelectedObservationReferenceDataBudget,
     ) -> Result<Self, SelectedObservationEphemerisError> {
-        let target = target.into();
+        let target = target.as_ref();
         if target.trim().is_empty() {
             return Err(SelectedObservationEphemerisError::InvalidTarget);
         }
-        let retained_bytes = target.capacity();
+        let retained_bytes = selected_ephemeris_allocation_bytes()?
+            .checked_add(target.len())
+            .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
+        admit_reference_data(budget, retained_bytes)?;
         Ok(Self {
             identity: measures_identity,
-            kind: EphemerisKind::Named { target },
+            kind: EphemerisKind::Named {
+                target: target.into(),
+            },
             attached_fields: Box::new([]),
             retained_bytes,
         })
     }
 
     /// Bind one external CASA ephemeris table by exact scientific content.
-    pub fn external(path: impl AsRef<Path>) -> Result<Self, SelectedObservationEphemerisError> {
-        let series = Arc::new(EphemerisSeries::open(path.as_ref())?);
-        let retained_bytes = series.retained_bytes;
+    pub fn external(
+        path: impl AsRef<Path>,
+        budget: SelectedObservationReferenceDataBudget,
+    ) -> Result<Self, SelectedObservationEphemerisError> {
+        let preflight = EphemerisSeriesPreflight::open(path.as_ref())?;
+        let retained_bytes = selected_ephemeris_allocation_bytes()?
+            .checked_add(preflight.retained_bytes)
+            .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
+        admit_reference_data(budget, retained_bytes)?;
+        let series = Arc::new(preflight.load()?);
         Ok(Self {
             identity: series.identity,
             kind: EphemerisKind::External { series },
@@ -120,13 +143,13 @@ impl SelectedObservationEphemeris {
     pub fn tracked_fields(
         measurement_set: &MeasurementSet,
         field_ids: impl IntoIterator<Item = usize>,
+        budget: SelectedObservationReferenceDataBudget,
     ) -> Result<Self, SelectedObservationEphemerisError> {
         let field = measurement_set.field()?;
         let root = measurement_set
             .path()
             .ok_or(SelectedObservationEphemerisError::UnbackedMeasurementSet)?;
-        let mut unique = BTreeMap::<PathBuf, Arc<EphemerisSeries>>::new();
-        let mut bindings = Vec::new();
+        let mut requested = Vec::new();
         let mut selected = BTreeSet::new();
         for field_id in field_ids {
             if !selected.insert(field_id) {
@@ -137,30 +160,48 @@ impl SelectedObservationEphemeris {
                 .filter(|value| *value >= 0)
                 .ok_or(SelectedObservationEphemerisError::MissingTrackedField { field_id })?;
             let path = find_field_ephemeris(root, ephemeris_id)?;
-            let series = match unique.get(&path) {
-                Some(series) => Arc::clone(series),
-                None => {
-                    let series = Arc::new(EphemerisSeries::open(&path)?);
-                    unique.insert(path, Arc::clone(&series));
-                    series
-                }
-            };
-            bindings.push(FieldEphemerisBinding { field_id, series });
+            requested.push((field_id, path));
         }
-        if bindings.is_empty() {
+        if requested.is_empty() {
             return Err(SelectedObservationEphemerisError::EmptyTrackedFieldSet);
         }
-        bindings.sort_by_key(|binding| binding.field_id);
-        let identity = tracked_identity(&bindings);
-        let retained_bytes = unique
+
+        let mut preflights = BTreeMap::new();
+        for (_, path) in &requested {
+            if !preflights.contains_key(path) {
+                preflights.insert(path.clone(), EphemerisSeriesPreflight::open(path)?);
+            }
+        }
+        let field_binding_bytes = requested
+            .len()
+            .checked_mul(size_of::<FieldEphemerisBinding>())
+            .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
+        let retained_bytes = preflights
             .values()
-            .try_fold(0_usize, |bytes, series| {
+            .try_fold(selected_ephemeris_allocation_bytes()?, |bytes, series| {
                 bytes.checked_add(series.retained_bytes)
             })
-            .and_then(|bytes| {
-                bytes.checked_add(bindings.len() * size_of::<FieldEphemerisBinding>())
-            })
+            .and_then(|bytes| bytes.checked_add(field_binding_bytes))
             .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
+        admit_reference_data(budget, retained_bytes)?;
+
+        let unique = preflights
+            .into_iter()
+            .map(|(path, preflight)| preflight.load().map(|series| (path, Arc::new(series))))
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let mut bindings = requested
+            .into_iter()
+            .map(|(field_id, path)| FieldEphemerisBinding {
+                field_id,
+                series: Arc::clone(
+                    unique
+                        .get(&path)
+                        .expect("every requested ephemeris path was preflighted"),
+                ),
+            })
+            .collect::<Vec<_>>();
+        bindings.sort_by_key(|binding| binding.field_id);
+        let identity = tracked_identity(&bindings);
         Ok(Self {
             identity,
             kind: EphemerisKind::TrackedField {
@@ -175,6 +216,7 @@ impl SelectedObservationEphemeris {
     pub fn with_attached_fields(
         mut self,
         attached: Self,
+        budget: SelectedObservationReferenceDataBudget,
     ) -> Result<Self, SelectedObservationEphemerisError> {
         let EphemerisKind::TrackedField { fields } = attached.kind else {
             return Err(SelectedObservationEphemerisError::AttachedFieldsRequired);
@@ -185,10 +227,13 @@ impl SelectedObservationEphemeris {
         hasher.update(self.identity.as_bytes());
         hasher.update(attached.identity.as_bytes());
         self.identity = LogicalIdentity::from_sha256(hasher.finalize().into());
+        let shared_owner_bytes = selected_ephemeris_allocation_bytes()?;
         self.retained_bytes = self
             .retained_bytes
             .checked_add(attached.retained_bytes)
+            .and_then(|bytes| bytes.checked_sub(shared_owner_bytes))
             .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
+        admit_reference_data(budget, self.retained_bytes)?;
         self.attached_fields = fields;
         Ok(self)
     }
@@ -250,7 +295,7 @@ impl SelectedObservationEphemeris {
     }
 }
 
-impl EphemerisSeries {
+impl EphemerisSeriesPreflight {
     fn open(path: &Path) -> Result<Self, SelectedObservationEphemerisError> {
         let table = Table::open(TableOptions::new(path))?;
         for column in ["MJD", "RA", "DEC", "Rho", "RadVel"] {
@@ -263,24 +308,26 @@ impl EphemerisSeries {
                 });
             }
         }
-        let name = keyword_string(&table, "NAME")?;
-        let position_reference_name = keyword_string(&table, "posrefsys")?;
-        let position_reference = match position_reference_name.to_ascii_uppercase().as_str() {
-            "ICRF/ICRS" | "ICRS" => DirectionRef::ICRS,
-            "ICRF/J2000.0" => DirectionRef::J2000,
-            _ => {
-                return Err(
-                    SelectedObservationEphemerisError::UnsupportedPositionReference {
-                        reference: position_reference_name,
-                    },
-                );
-            }
+        let name_bytes = keyword_str(&table, "NAME")?.len();
+        let position_reference_name = keyword_str(&table, "posrefsys")?;
+        let position_reference = if position_reference_name.eq_ignore_ascii_case("ICRF/ICRS")
+            || position_reference_name.eq_ignore_ascii_case("ICRS")
+        {
+            DirectionRef::ICRS
+        } else if position_reference_name.eq_ignore_ascii_case("ICRF/J2000.0") {
+            DirectionRef::J2000
+        } else {
+            return Err(
+                SelectedObservationEphemerisError::UnsupportedPositionReference {
+                    reference: position_reference_name.to_string(),
+                },
+            );
         };
-        let observer_location = keyword_string(&table, "obsloc")?;
+        let observer_location = keyword_str(&table, "obsloc")?;
         if !observer_location.eq_ignore_ascii_case("GEOCENTRIC") {
             return Err(
                 SelectedObservationEphemerisError::UnsupportedObserverLocation {
-                    location: observer_location,
+                    location: observer_location.to_string(),
                 },
             );
         }
@@ -290,12 +337,33 @@ impl EphemerisSeries {
         } else {
             RadialVelocityRef::GEO
         };
-        let mut rows = Vec::with_capacity(table.row_count());
-        for row in 0..table.row_count() {
-            let mjd_days = scalar_f64(&table, row, "MJD")?;
-            let longitude_rad = scalar_f64(&table, row, "RA")?.to_radians();
-            let latitude_rad = scalar_f64(&table, row, "DEC")?.to_radians();
-            let distance_metres = scalar_f64(&table, row, "Rho")? * AU_METRES;
+        let row_count = table.row_count();
+        let retained_bytes = arc_allocation_bytes::<EphemerisSeries>()?
+            .checked_add(name_bytes)
+            .and_then(|bytes| {
+                row_count
+                    .checked_mul(size_of::<EphemerisRow>())
+                    .and_then(|rows| bytes.checked_add(rows))
+            })
+            .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
+        Ok(Self {
+            table,
+            row_count,
+            position_reference,
+            velocity_reference,
+            geo_distance_km,
+            retained_bytes,
+        })
+    }
+
+    fn load(self) -> Result<EphemerisSeries, SelectedObservationEphemerisError> {
+        let name: Box<str> = keyword_str(&self.table, "NAME")?.into();
+        let mut rows = Vec::with_capacity(self.row_count);
+        for row in 0..self.row_count {
+            let mjd_days = scalar_f64(&self.table, row, "MJD")?;
+            let longitude_rad = scalar_f64(&self.table, row, "RA")?.to_radians();
+            let latitude_rad = scalar_f64(&self.table, row, "DEC")?.to_radians();
+            let distance_metres = scalar_f64(&self.table, row, "Rho")? * AU_METRES;
             let (sin_longitude, cos_longitude) = longitude_rad.sin_cos();
             let (sin_latitude, cos_latitude) = latitude_rad.sin_cos();
             let geocentric_position_metres = [
@@ -303,7 +371,8 @@ impl EphemerisSeries {
                 distance_metres * cos_latitude * sin_longitude,
                 distance_metres * sin_latitude,
             ];
-            let radial_velocity_m_per_s = scalar_f64(&table, row, "RadVel")? * AU_METRES / 86_400.0;
+            let radial_velocity_m_per_s =
+                scalar_f64(&self.table, row, "RadVel")? * AU_METRES / 86_400.0;
             if !mjd_days.is_finite()
                 || !longitude_rad.is_finite()
                 || !latitude_rad.is_finite()
@@ -329,25 +398,22 @@ impl EphemerisSeries {
         }
         let identity = series_identity(
             &name,
-            position_reference,
-            velocity_reference,
-            geo_distance_km,
+            self.position_reference,
+            self.velocity_reference,
+            self.geo_distance_km,
             &rows,
         );
-        let retained_bytes = name
-            .capacity()
-            .checked_add(rows.len() * size_of::<EphemerisRow>())
-            .ok_or(SelectedObservationEphemerisError::ByteOverflow)?;
-        Ok(Self {
+        Ok(EphemerisSeries {
             identity,
             name,
-            position_reference,
-            velocity_reference,
+            position_reference: self.position_reference,
+            velocity_reference: self.velocity_reference,
             rows: rows.into_boxed_slice(),
-            retained_bytes,
         })
     }
+}
 
+impl EphemerisSeries {
     fn sample(
         &self,
         mjd_days: f64,
@@ -357,7 +423,7 @@ impl EphemerisSeries {
             || mjd_days > self.rows[self.rows.len() - 1].mjd_days
         {
             return Err(SelectedObservationEphemerisError::OutsideCoverage {
-                target: self.name.clone(),
+                target: self.name.to_string(),
                 mjd_days,
             });
         }
@@ -415,13 +481,44 @@ fn find_field_ephemeris(
     }
 }
 
-fn keyword_string(table: &Table, name: &str) -> Result<String, SelectedObservationEphemerisError> {
+fn keyword_str<'a>(
+    table: &'a Table,
+    name: &str,
+) -> Result<&'a str, SelectedObservationEphemerisError> {
     match table.keywords().get(name) {
-        Some(Value::Scalar(ScalarValue::String(value))) => Ok(value.clone()),
+        Some(Value::Scalar(ScalarValue::String(value))) => Ok(value),
         _ => Err(SelectedObservationEphemerisError::InvalidKeyword {
             keyword: name.to_string(),
         }),
     }
+}
+
+fn arc_allocation_bytes<T>() -> Result<usize, SelectedObservationEphemerisError> {
+    let header = Layout::array::<AtomicUsize>(2)
+        .map_err(|_| SelectedObservationEphemerisError::ByteOverflow)?;
+    let (allocation, _) = header
+        .extend(Layout::new::<T>())
+        .map_err(|_| SelectedObservationEphemerisError::ByteOverflow)?;
+    Ok(allocation.pad_to_align().size())
+}
+
+fn selected_ephemeris_allocation_bytes() -> Result<usize, SelectedObservationEphemerisError> {
+    arc_allocation_bytes::<SelectedObservationEphemeris>()
+}
+
+fn admit_reference_data(
+    budget: SelectedObservationReferenceDataBudget,
+    required_bytes: usize,
+) -> Result<(), SelectedObservationEphemerisError> {
+    if required_bytes > budget.available_bytes() {
+        return Err(
+            SelectedObservationEphemerisError::InsufficientReferenceDataBudget {
+                required_bytes,
+                available_bytes: budget.available_bytes(),
+            },
+        );
+    }
+    Ok(())
 }
 
 fn keyword_f64(table: &Table, name: &str) -> Result<f64, SelectedObservationEphemerisError> {
@@ -581,6 +678,16 @@ pub enum SelectedObservationEphemerisError {
     /// FIELD phase-centre attachment requires a TRACKFIELD binding.
     #[error("attached FIELD ephemerides require a TRACKFIELD binding")]
     AttachedFieldsRequired,
+    /// Immutable reference data exceeds its selected-content-derived ceiling.
+    #[error(
+        "ephemeris reference data requires {required_bytes} retained bytes but the explicit budget has {available_bytes} bytes"
+    )]
+    InsufficientReferenceDataBudget {
+        /// Exact retained allocation graph required by the ephemeris binding.
+        required_bytes: usize,
+        /// Reference-data bytes authorized by the selected-content owner.
+        available_bytes: usize,
+    },
     /// Retained ephemeris residency overflowed the host byte domain.
     #[error("ephemeris retained byte count overflowed")]
     ByteOverflow,
@@ -593,6 +700,10 @@ mod tests {
     use casa_types::{PrimitiveType, RecordField, RecordValue};
 
     const TARGET: &str = "T41_TEST_TARGET";
+
+    fn reference_budget(bytes: usize) -> SelectedObservationReferenceDataBudget {
+        crate::SelectedObservationContentBudget::new(bytes, 1, 1).reference_data_budget()
+    }
 
     fn scalar_field(name: &str, value: f64) -> RecordField {
         RecordField::new(name, Value::Scalar(ScalarValue::Float64(value)))
@@ -657,7 +768,8 @@ mod tests {
             ],
         );
 
-        let bound = SelectedObservationEphemeris::external(&path).expect("bind snapshot");
+        let budget = reference_budget(1 << 20);
+        let bound = SelectedObservationEphemeris::external(&path, budget).expect("bind snapshot");
         let original_identity = bound.identity();
         let original_sample = sample_bits(bound.sample(0, 60_001.0).expect("sample snapshot"));
 
@@ -679,13 +791,53 @@ mod tests {
             "the bound series must not observe later backing-table mutation"
         );
 
-        let rebound = SelectedObservationEphemeris::external(&path).expect("bind changed table");
+        let rebound =
+            SelectedObservationEphemeris::external(&path, budget).expect("bind changed table");
         assert_ne!(rebound.identity(), original_identity);
         assert_ne!(
             sample_bits(rebound.sample(0, 60_001.0).expect("sample changed table")),
             original_sample,
             "a new binding must observe changed scientific content"
         );
+    }
+
+    #[test]
+    fn t41_oversized_ephemeris_fails_before_row_allocation_or_read() {
+        let directory = tempfile::tempdir().expect("temporary oversized ephemeris table");
+        let path = directory.path().join("oversized.tab");
+        save_ephemeris_table(
+            &path,
+            &[
+                [60_000.0, f64::NAN, -30.0, 2.0, 0.001],
+                [60_001.0, 11.0, -29.0, 2.1, 0.002],
+            ],
+        );
+        let preflight = EphemerisSeriesPreflight::open(&path).expect("preflight table metadata");
+        let required_bytes = selected_ephemeris_allocation_bytes()
+            .and_then(|bytes| {
+                bytes
+                    .checked_add(preflight.retained_bytes)
+                    .ok_or(SelectedObservationEphemerisError::ByteOverflow)
+            })
+            .expect("finite fixture reference-data charge");
+        drop(preflight);
+
+        assert!(matches!(
+            SelectedObservationEphemeris::external(
+                &path,
+                reference_budget(required_bytes - 1),
+            ),
+            Err(
+                SelectedObservationEphemerisError::InsufficientReferenceDataBudget {
+                    required_bytes: required,
+                    available_bytes,
+                }
+            ) if required == required_bytes && available_bytes == required_bytes - 1
+        ));
+        assert!(matches!(
+            SelectedObservationEphemeris::external(&path, reference_budget(required_bytes)),
+            Err(SelectedObservationEphemerisError::InvalidRow { row: 0 })
+        ));
     }
 
     #[test]
@@ -712,7 +864,7 @@ mod tests {
             let path = directory.path().join(format!("{case}.tab"));
             save_ephemeris_table(&path, &rows);
             assert!(matches!(
-                SelectedObservationEphemeris::external(&path),
+                SelectedObservationEphemeris::external(&path, reference_budget(1 << 20)),
                 Err(SelectedObservationEphemerisError::InvalidRow { row: 1 })
             ));
         }
@@ -729,7 +881,8 @@ mod tests {
                 [60_001.0, 11.0, -29.0, 2.1, 0.002],
             ],
         );
-        let bound = SelectedObservationEphemeris::external(&path).expect("bind ephemeris");
+        let bound = SelectedObservationEphemeris::external(&path, reference_budget(1 << 20))
+            .expect("bind ephemeris");
 
         for epoch in [59_999.999, 60_001.001] {
             match bound.sample(0, epoch) {

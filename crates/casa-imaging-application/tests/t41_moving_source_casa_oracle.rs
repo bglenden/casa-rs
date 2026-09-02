@@ -8,7 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use casa_coordinates::CoordinateModel;
+use casa_coordinates::{
+    Coordinate, CoordinateModel, CoordinateType, DirectionCoordinate, ProjectionType,
+    SpectralCoordinate,
+};
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
@@ -18,10 +21,12 @@ use casa_imaging_application::{
 use casa_imaging_model::SpectralWindowSelection;
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MsSelectionIoBudget,
-    SelectedObservationEphemeris, SelectedObservationRow,
+    SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationRow,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
-use casa_types::measures::frequency::FrequencyRef;
+use casa_types::{ScalarValue, Value, measures::frequency::FrequencyRef};
+use serde_json::Value as JsonValue;
+use sha2::{Digest, Sha256};
 
 const DATASET: &str = "measurementset/alma/alma_ephemobj_icrs.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T41_CASA_PREFIX";
@@ -32,6 +37,11 @@ const MVC_CASA_PREFIX_ENV: &str = "CASA_RS_T41_MVC_CASA_PREFIX";
 const MVC_RUST_PREFIX_ENV: &str = "CASA_RS_T41_MVC_RUST_PREFIX";
 const MVC_TURNAROUND_PREFIX_ENV: &str = "CASA_RS_T41_MVC_TURNAROUND_PREFIX";
 const MVC_SELECTED_SAMPLE_COUNT: u64 = 1_620 * (1_024 + 256) * 2;
+// The T41 cubesource gate below already accepts this direction-world bound.
+const DIRECTION_WORLD_TOLERANCE_RAD: f64 = 1.0e-10;
+const COORDINATE_COEFFICIENT_TOLERANCE: f64 = 1.0e-12;
+// The selected-range gate above predeclares this Measures conversion bound.
+const SPECTRAL_WCS_TOLERANCE_HZ: f64 = 5.0;
 const MVC_PUBLIC_PRODUCTS: [&str; 15] = [
     ".psf.tt0",
     ".psf.tt1",
@@ -49,51 +59,6 @@ const MVC_PUBLIC_PRODUCTS: [&str; 15] = [
     ".alpha",
     ".alpha.error",
 ];
-
-#[test]
-#[ignore = "requires the frozen CASA T41 MVC primary-beam cube"]
-fn t41_alma_mvc_primary_beam_kernel_matches_frozen_cube() -> Result<(), Box<dyn Error>> {
-    let casa_prefix = required_prefix(MVC_CASA_PREFIX_ENV, ".pb")?;
-    let casa = read_product(&casa_prefix, ".pb")?;
-    assert_eq!(casa.shape, [512, 512, 1, 40]);
-    let direction = casa_imaging_model::DirectionCoordinateSpec::new(
-        casa_imaging_model::Projection::Sin,
-        casa_imaging_model::SkyDirection::new(
-            casa_imaging_model::DirectionFrame::Icrs,
-            0.269_568_703_205_255_06,
-            0.102_658_318_035_190_82,
-        ),
-        [256.0, 256.0],
-        [-4.848_136_811_095_359e-7, 4.848_136_811_095_359e-7],
-        [[1.0, 0.0], [0.0, 1.0]],
-        [180.0, 0.0],
-    );
-    let mut generated = vec![0.0; 512 * 512];
-    let mut failures = Vec::new();
-    for channel in [0, 39] {
-        let frequency = 230_449_729_492.188_84 + channel as f64 * 122_982_578.274_169_92;
-        casa_imaging_reconstruction::evaluate_casa_alma_aca_primary_beam_power_plane(
-            direction,
-            [512, 512],
-            frequency,
-            0.1,
-            &mut generated,
-        )?;
-        let expected = (0..512 * 512)
-            .map(|cell| casa.values[cell * 40 + channel])
-            .collect::<Vec<_>>();
-        let valid = (0..512 * 512)
-            .map(|cell| casa.valid[cell * 40 + channel])
-            .collect::<Vec<_>>();
-        let nrms = normalized_rms(&generated, &expected, &valid);
-        eprintln!("t41_mvc_pb_kernel channel={channel} nrms={nrms:.9e}");
-        if nrms > 5.0e-6 {
-            failures.push(format!("channel {channel} PB NRMS {nrms:.6e}"));
-        }
-    }
-    assert!(failures.is_empty(), "{}", failures.join("\n"));
-    Ok(())
-}
 
 #[test]
 #[ignore = "requires the representative T41 MS and frozen CASA MVC spectral coordinates"]
@@ -114,7 +79,11 @@ fn t41_mvc_selected_spectral_range_matches_casa_edge_topology() -> Result<(), Bo
     })?;
     let first_time_mjd_seconds = first_time_mjd_seconds.ok_or("empty T41 selection")?;
     let engine = casa_ms::derived::engine::MsCalEngine::new(&measurement_set)?;
-    let ephemeris = SelectedObservationEphemeris::tracked_fields(&measurement_set, [1])?;
+    let ephemeris = SelectedObservationEphemeris::tracked_fields(
+        &measurement_set,
+        [1],
+        SelectedObservationContentBudget::new(64 << 20, 2, 4).reference_data_budget(),
+    )?;
     let phase =
         engine.ephemeris_direction_j2000(first_time_mjd_seconds, 1, "TRACKFIELD", &ephemeris)?;
     let range = measurement_set.selected_observation_spectral_range(
@@ -359,6 +328,16 @@ fn t41_multi_spw_mvc_matches_casa_taylor_products() -> Result<(), Box<dyn Error>
             }
         }
     }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires existing Rust MVC products and the frozen CASA MVC oracle"]
+fn t41_existing_mvc_products_match_frozen_casa_metadata() -> Result<(), Box<dyn Error>> {
+    let rust_prefix = required_prefix(MVC_RUST_PREFIX_ENV, ".residual.tt0")?;
+    let casa_prefix = required_prefix(MVC_CASA_PREFIX_ENV, ".residual.tt0")?;
+    let failures = compare_mvc_wcs(&rust_prefix, &casa_prefix)?;
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }
@@ -623,9 +602,11 @@ fn compare_mvc_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<Vec<String>
         "{}.residual.tt0",
         casa_prefix.display()
     )))?;
+    let rust_coordinates = rust.coordinates();
+    let casa_coordinates = casa.coordinates();
     let pixel = [256.0, 256.0, 0.0, 0.0];
-    let rust_world = rust.coordinates().to_world(&pixel)?;
-    let casa_world = casa.coordinates().to_world(&pixel)?;
+    let rust_world = rust_coordinates.to_world(&pixel)?;
+    let casa_world = casa_coordinates.to_world(&pixel)?;
     eprintln!(
         "t41_mvc_wcs rust_direction_rad={:?} casa_direction_rad={:?} rust_spectral_hz={} casa_spectral_hz={}",
         &rust_world[..2],
@@ -634,22 +615,519 @@ fn compare_mvc_wcs(rust_prefix: &Path, casa_prefix: &Path) -> Result<Vec<String>
         casa_world[3],
     );
     let mut failures = Vec::new();
-    for axis in 0..2 {
-        if (rust_world[axis] - casa_world[axis]).abs() > 1.0e-10 {
+    if rust.units() != "Jy/beam" {
+        failures.push(format!(
+            "Rust residual.tt0 brightness semantics differ: expected \"Jy/beam\", found {:?}",
+            rust.units(),
+        ));
+    }
+    if !casa.units().is_empty() {
+        failures.push(format!(
+            "frozen CASA residual.tt0 brightness serialization differs: expected an empty label, found {:?}",
+            casa.units()
+        ));
+    }
+    let expected_coordinate_types = [
+        CoordinateType::Direction,
+        CoordinateType::Stokes,
+        CoordinateType::Spectral,
+    ];
+    for (label, coordinates) in [("Rust", rust_coordinates), ("CASA", casa_coordinates)] {
+        let coordinate_types = (0..coordinates.n_coordinates())
+            .map(|index| coordinates.coordinate(index).coordinate_type())
+            .collect::<Vec<_>>();
+        if coordinate_types != expected_coordinate_types {
             failures.push(format!(
-                "tracked direction WCS axis {axis} differs: Rust {} CASA {}",
-                rust_world[axis], casa_world[axis]
+                "{label} coordinate topology differs: {coordinate_types:?}"
             ));
         }
     }
-    let tolerance_hz = casa_world[3].abs().max(1.0) * 1.0e-10;
-    if (rust_world[3] - casa_world[3]).abs() > tolerance_hz {
+    if rust_coordinates.n_coordinates() != casa_coordinates.n_coordinates() {
         failures.push(format!(
-            "Taylor reference frequency differs: Rust {} Hz CASA {} Hz",
-            rust_world[3], casa_world[3]
+            "coordinate count differs: Rust {} CASA {}",
+            rust_coordinates.n_coordinates(),
+            casa_coordinates.n_coordinates()
+        ));
+    } else {
+        for coordinate_index in 0..rust_coordinates.n_coordinates() {
+            let rust_coordinate = rust_coordinates.coordinate(coordinate_index);
+            let casa_coordinate = casa_coordinates.coordinate(coordinate_index);
+            if rust_coordinate.coordinate_type() != casa_coordinate.coordinate_type() {
+                failures.push(format!(
+                    "coordinate {coordinate_index} type differs: Rust {} CASA {}",
+                    rust_coordinate.coordinate_type(),
+                    casa_coordinate.coordinate_type()
+                ));
+                continue;
+            }
+            if rust_coordinate.axis_names() != casa_coordinate.axis_names() {
+                failures.push(format!("coordinate {coordinate_index} axis names differ"));
+            }
+            if rust_coordinate.axis_units() != casa_coordinate.axis_units() {
+                failures.push(format!("coordinate {coordinate_index} axis units differ"));
+            }
+            if rust_coordinate.reference_pixel() != casa_coordinate.reference_pixel() {
+                failures.push(format!(
+                    "coordinate {coordinate_index} reference pixel differs: Rust {:?} CASA {:?}",
+                    rust_coordinate.reference_pixel(),
+                    casa_coordinate.reference_pixel(),
+                ));
+            }
+            match (rust_coordinate, casa_coordinate) {
+                (
+                    CoordinateModel::Direction(rust_direction),
+                    CoordinateModel::Direction(casa_direction),
+                ) => compare_mvc_direction_coordinate(
+                    coordinate_index,
+                    rust_direction,
+                    casa_direction,
+                    &mut failures,
+                ),
+                (
+                    CoordinateModel::Stokes(rust_stokes),
+                    CoordinateModel::Stokes(casa_stokes),
+                ) => {
+                    if rust_stokes.stokes() != casa_stokes.stokes() {
+                        failures.push(format!(
+                            "coordinate {coordinate_index} Stokes values differ"
+                        ));
+                    }
+                    compare_exact_coordinate_values(
+                        coordinate_index,
+                        "reference value",
+                        &rust_coordinate.reference_value(),
+                        &casa_coordinate.reference_value(),
+                        &mut failures,
+                    );
+                    compare_exact_coordinate_values(
+                        coordinate_index,
+                        "increment",
+                        &rust_coordinate.increment(),
+                        &casa_coordinate.increment(),
+                        &mut failures,
+                    );
+                }
+                (
+                    CoordinateModel::Spectral(rust_spectral),
+                    CoordinateModel::Spectral(casa_spectral),
+                ) => compare_mvc_spectral_coordinate(
+                    coordinate_index,
+                    rust_spectral,
+                    casa_spectral,
+                    &mut failures,
+                ),
+                _ => failures.push(format!(
+                    "coordinate {coordinate_index} is outside the T41 Direction/Stokes/Spectral contract"
+                )),
+            }
+        }
+    }
+    compare_mvc_sampled_world_coordinates(&rust, &casa, &mut failures)?;
+    compare_rust_product_provenance(&rust, &mut failures);
+    compare_frozen_mvc_manifest(casa_prefix, &casa, &mut failures)?;
+    Ok(failures)
+}
+
+fn compare_mvc_direction_coordinate(
+    coordinate: usize,
+    rust: &DirectionCoordinate,
+    casa: &DirectionCoordinate,
+    failures: &mut Vec<String>,
+) {
+    compare_coordinate_values(
+        coordinate,
+        "reference value",
+        &rust.reference_value(),
+        &casa.reference_value(),
+        DIRECTION_WORLD_TOLERANCE_RAD,
+        failures,
+    );
+    compare_coordinate_values(
+        coordinate,
+        "increment",
+        &rust.increment(),
+        &casa.increment(),
+        COORDINATE_COEFFICIENT_TOLERANCE,
+        failures,
+    );
+    if rust.direction_ref() != casa.direction_ref() {
+        failures.push(format!(
+            "coordinate {coordinate} direction frame differs: Rust {:?} CASA {:?}",
+            rust.direction_ref(),
+            casa.direction_ref(),
         ));
     }
-    Ok(failures)
+    if rust.projection().projection_type() != casa.projection().projection_type() {
+        failures.push(format!(
+            "coordinate {coordinate} projection differs: Rust {:?} CASA {:?}",
+            rust.projection().projection_type(),
+            casa.projection().projection_type(),
+        ));
+    } else if rust.projection().parameters() != casa.projection().parameters()
+        && !(rust.projection().projection_type() == ProjectionType::SIN
+            && is_zero_sin_projection(rust.projection().parameters())
+            && is_zero_sin_projection(casa.projection().parameters()))
+    {
+        failures.push(format!(
+            "coordinate {coordinate} projection parameters differ: Rust {:?} CASA {:?}",
+            rust.projection().parameters(),
+            casa.projection().parameters(),
+        ));
+    }
+    if rust.pc_matrix() != casa.pc_matrix() {
+        failures.push(format!(
+            "coordinate {coordinate} direction PC matrix differs: Rust {:?} CASA {:?}",
+            rust.pc_matrix(),
+            casa.pc_matrix(),
+        ));
+    }
+    if (rust.longpole() - casa.longpole()).abs() > COORDINATE_COEFFICIENT_TOLERANCE {
+        failures.push(format!(
+            "coordinate {coordinate} direction LONGPOLE differs: Rust {} CASA {}",
+            rust.longpole(),
+            casa.longpole(),
+        ));
+    }
+    if (rust.latpole() - casa.latpole()).abs() > COORDINATE_COEFFICIENT_TOLERANCE
+        && !equivalent_zenithal_sin_latpoles(rust, casa)
+    {
+        failures.push(format!(
+            "coordinate {coordinate} direction LATPOLE differs: Rust {} CASA {}",
+            rust.latpole(),
+            casa.latpole(),
+        ));
+    }
+}
+
+fn is_zero_sin_projection(parameters: &[f64]) -> bool {
+    parameters.is_empty() || (parameters.len() == 2 && parameters == [0.0, 0.0])
+}
+
+fn equivalent_zenithal_sin_latpoles(
+    rust: &DirectionCoordinate,
+    casa: &DirectionCoordinate,
+) -> bool {
+    if rust.projection().projection_type() != ProjectionType::SIN
+        || casa.projection().projection_type() != ProjectionType::SIN
+        || !is_zero_sin_projection(rust.projection().parameters())
+        || !is_zero_sin_projection(casa.projection().parameters())
+    {
+        return false;
+    }
+    let accepted_latpole = |coordinate: &DirectionCoordinate| {
+        let reference_latitude = coordinate.reference_value()[1];
+        (coordinate.latpole() - std::f64::consts::FRAC_PI_2).abs()
+            <= COORDINATE_COEFFICIENT_TOLERANCE
+            || (coordinate.latpole() - reference_latitude).abs() <= COORDINATE_COEFFICIENT_TOLERANCE
+    };
+    accepted_latpole(rust) && accepted_latpole(casa)
+}
+
+fn compare_mvc_spectral_coordinate(
+    coordinate: usize,
+    rust: &SpectralCoordinate,
+    casa: &SpectralCoordinate,
+    failures: &mut Vec<String>,
+) {
+    compare_coordinate_values(
+        coordinate,
+        "reference value",
+        &rust.reference_value(),
+        &casa.reference_value(),
+        SPECTRAL_WCS_TOLERANCE_HZ,
+        failures,
+    );
+    compare_coordinate_values(
+        coordinate,
+        "increment",
+        &rust.increment(),
+        &casa.increment(),
+        SPECTRAL_WCS_TOLERANCE_HZ,
+        failures,
+    );
+    if rust.frequency_ref() != FrequencyRef::LSRK
+        || casa.frequency_ref() != FrequencyRef::LSRK
+        || rust.frequency_ref() != casa.frequency_ref()
+    {
+        failures.push(format!(
+            "coordinate {coordinate} spectral storage frame differs: Rust {:?} CASA {:?}",
+            rust.frequency_ref(),
+            casa.frequency_ref(),
+        ));
+    }
+    if rust.world_frequency_ref() != FrequencyRef::LSRK
+        || casa.world_frequency_ref() != FrequencyRef::LSRK
+        || rust.world_frequency_ref() != casa.world_frequency_ref()
+    {
+        failures.push(format!(
+            "coordinate {coordinate} effective spectral frame differs: Rust {:?} CASA {:?}",
+            rust.world_frequency_ref(),
+            casa.world_frequency_ref(),
+        ));
+    }
+}
+
+fn compare_mvc_sampled_world_coordinates(
+    rust: &PagedImage<f32>,
+    casa: &PagedImage<f32>,
+    failures: &mut Vec<String>,
+) -> Result<(), Box<dyn Error>> {
+    let last_x = (rust.shape()[0] - 1) as f64;
+    let last_y = (rust.shape()[1] - 1) as f64;
+    for pixel in [
+        [256.0, 256.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 0.0],
+        [last_x, last_y, 0.0, 0.0],
+        [0.0, last_y, 0.0, 0.0],
+        [last_x, 0.0, 0.0, 0.0],
+    ] {
+        let rust_world = rust.coordinates().to_world(&pixel)?;
+        let casa_world = casa.coordinates().to_world(&pixel)?;
+        for axis in 0..2 {
+            if (rust_world[axis] - casa_world[axis]).abs() > DIRECTION_WORLD_TOLERANCE_RAD {
+                failures.push(format!(
+                    "sampled direction WCS axis {axis} differs at {pixel:?}: Rust {} CASA {}",
+                    rust_world[axis], casa_world[axis],
+                ));
+            }
+        }
+        if (rust_world[3] - casa_world[3]).abs() > SPECTRAL_WCS_TOLERANCE_HZ {
+            failures.push(format!(
+                "sampled spectral WCS differs at {pixel:?}: Rust {} Hz CASA {} Hz",
+                rust_world[3], casa_world[3],
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn compare_rust_product_provenance(image: &PagedImage<f32>, failures: &mut Vec<String>) {
+    let misc_info = image.misc_info();
+    if record_string(&misc_info, "casars_imager_role") != Some("residual") {
+        failures.push("Rust residual.tt0 product role provenance differs".to_string());
+    }
+    for field in [
+        "casa_rs_planned_product_identity",
+        "casa_rs_observed_product_identity",
+    ] {
+        if !record_string(&misc_info, field).is_some_and(is_sha256_hex) {
+            failures.push(format!("Rust residual.tt0 {field} provenance is invalid"));
+        }
+    }
+}
+
+fn record_string<'a>(record: &'a casa_types::RecordValue, name: &str) -> Option<&'a str> {
+    match record.get(name) {
+        Some(Value::Scalar(ScalarValue::String(value))) => Some(value),
+        _ => None,
+    }
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn compare_coordinate_values(
+    coordinate: usize,
+    field: &str,
+    rust: &[f64],
+    casa: &[f64],
+    tolerance: f64,
+    failures: &mut Vec<String>,
+) {
+    if rust.len() != casa.len()
+        || rust
+            .iter()
+            .zip(casa)
+            .any(|(rust, casa)| (rust - casa).abs() > tolerance)
+    {
+        failures.push(format!(
+            "coordinate {coordinate} {field} differs: Rust {rust:?} CASA {casa:?} tolerance {tolerance}"
+        ));
+    }
+}
+
+fn compare_exact_coordinate_values(
+    coordinate: usize,
+    field: &str,
+    rust: &[f64],
+    casa: &[f64],
+    failures: &mut Vec<String>,
+) {
+    if rust != casa {
+        failures.push(format!(
+            "coordinate {coordinate} {field} differs: Rust {rust:?} CASA {casa:?}"
+        ));
+    }
+}
+
+fn compare_frozen_mvc_manifest(
+    casa_prefix: &Path,
+    casa: &PagedImage<f32>,
+    failures: &mut Vec<String>,
+) -> Result<(), Box<dyn Error>> {
+    let manifest_path = casa_prefix
+        .parent()
+        .ok_or("CASA MVC prefix has no parent")?
+        .join("manifest.json");
+    let manifest: JsonValue = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+    if manifest["kind"] != "casa_rs_t41_multi_spw_mvc_oracle" {
+        failures.push("CASA MVC manifest kind differs".to_string());
+    }
+    for (field, expected) in [
+        ("casatasks_version", "6.7.6.14"),
+        ("casatools_version", "6.7.6-14"),
+        ("measurement_set", "/tmp/t41-alma-ephemobj-icrs.ms"),
+    ] {
+        if manifest[field].as_str() != Some(expected) {
+            failures.push(format!("CASA MVC manifest {field} provenance differs"));
+        }
+    }
+    let parameters = &manifest["parameters"];
+    for (field, expected) in [
+        ("field", "1"),
+        ("spw", "0,1"),
+        ("phasecenter", "TRACKFIELD"),
+        ("specmode", "mvc"),
+        ("outframe", "LSRK"),
+        ("gridder", "standard"),
+        ("deconvolver", "mtmfs"),
+        ("stokes", "I"),
+        ("weighting", "natural"),
+    ] {
+        if parameters[field].as_str() != Some(expected) {
+            failures.push(format!("CASA MVC manifest parameter {field} differs"));
+        }
+    }
+    for (field, expected) in [("nchan", 40), ("nterms", 2), ("niter", 1)] {
+        if parameters[field].as_u64() != Some(expected) {
+            failures.push(format!("CASA MVC manifest parameter {field} differs"));
+        }
+    }
+    let recipe_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tools/perf/imager/experiments/issue527_t41_mvc_casa_oracle.py");
+    let recipe_digest = format!("{:x}", Sha256::digest(fs::read(recipe_path)?));
+    if manifest["recipe_sha256"].as_str() != Some(&recipe_digest) {
+        failures.push("CASA MVC manifest recipe identity differs".to_string());
+    }
+    let product = &manifest["products"][".residual.tt0"];
+    let shape = json_usize_array(&product["shape"])?;
+    if shape != casa.shape() {
+        failures.push(format!(
+            "CASA MVC manifest shape differs: manifest {shape:?} image {:?}",
+            casa.shape()
+        ));
+    }
+    if product["brightness_unit"].as_str() != Some(casa.units()) {
+        failures.push("CASA MVC manifest brightness unit differs".to_string());
+    }
+    let manifest_types = product["axis_coordinate_types"]
+        .as_array()
+        .ok_or("manifest axis_coordinate_types is not an array")?
+        .iter()
+        .map(|value| value.as_str().ok_or("manifest coordinate type is not text"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let image_types = (0..casa.coordinates().n_coordinates())
+        .flat_map(|index| {
+            let coordinate = casa.coordinates().coordinate(index);
+            std::iter::repeat_n(
+                coordinate.coordinate_type().to_string(),
+                coordinate.n_world_axes(),
+            )
+        })
+        .collect::<Vec<_>>();
+    if manifest_types != image_types {
+        failures.push("CASA MVC manifest coordinate types differ".to_string());
+    }
+    let manifest_units = product["axis_units"]
+        .as_array()
+        .ok_or("manifest axis_units is not an array")?
+        .iter()
+        .map(|value| value.as_str().ok_or("manifest axis unit is not text"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let image_units = (0..casa.coordinates().n_coordinates())
+        .flat_map(|index| casa.coordinates().coordinate(index).axis_units())
+        .collect::<Vec<_>>();
+    if manifest_units != image_units {
+        failures.push("CASA MVC manifest axis units differ".to_string());
+    }
+    let image_reference_pixels = (0..casa.coordinates().n_coordinates())
+        .flat_map(|index| casa.coordinates().coordinate(index).reference_pixel())
+        .collect::<Vec<_>>();
+    let image_reference_values = (0..casa.coordinates().n_coordinates())
+        .flat_map(|index| casa.coordinates().coordinate(index).reference_value())
+        .collect::<Vec<_>>();
+    let image_increments = (0..casa.coordinates().n_coordinates())
+        .flat_map(|index| casa.coordinates().coordinate(index).increment())
+        .collect::<Vec<_>>();
+    compare_manifest_coordinate_record(
+        product,
+        "reference_pixel",
+        "pixel",
+        &image_reference_pixels,
+        failures,
+    )?;
+    compare_manifest_coordinate_record(
+        product,
+        "reference_value",
+        "world",
+        &image_reference_values,
+        failures,
+    )?;
+    compare_manifest_coordinate_record(product, "increment", "world", &image_increments, failures)?;
+    Ok(())
+}
+
+fn compare_manifest_coordinate_record(
+    product: &JsonValue,
+    field: &str,
+    coordinate_kind: &str,
+    image_values: &[f64],
+    failures: &mut Vec<String>,
+) -> Result<(), String> {
+    let record = &product[field];
+    if record["ar_type"].as_str() != Some("absolute")
+        || record["pw_type"].as_str() != Some(coordinate_kind)
+    {
+        failures.push(format!("CASA MVC manifest {field} topology differs"));
+    }
+    let manifest_values = json_f64_array(&record["numeric"])?;
+    if manifest_values != image_values {
+        failures.push(format!(
+            "CASA MVC manifest {field} differs: manifest {manifest_values:?} image {image_values:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn json_usize_array(value: &JsonValue) -> Result<Vec<usize>, String> {
+    value
+        .as_array()
+        .ok_or_else(|| "manifest value is not an array".to_string())?
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| "manifest array value is not unsigned".to_string())
+                .and_then(|value| usize::try_from(value).map_err(|error| error.to_string()))
+        })
+        .collect()
+}
+
+fn json_f64_array(value: &JsonValue) -> Result<Vec<f64>, String> {
+    value
+        .as_array()
+        .ok_or_else(|| "manifest value is not an array".to_string())?
+        .iter()
+        .map(|value| {
+            value
+                .as_f64()
+                .ok_or_else(|| "manifest array value is not numeric".to_string())
+        })
+        .collect()
 }
 
 fn required_table(name: &str) -> Result<PathBuf, Box<dyn Error>> {

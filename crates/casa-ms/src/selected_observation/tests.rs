@@ -851,6 +851,139 @@ fn selected_observation_rejects_opaque_foreign_and_mutated_measures_providers() 
 }
 
 #[test]
+fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_before_source_open() {
+    let directory = tempfile::tempdir().expect("temporary ephemeris-binding fixture");
+    let absent_path = directory.path().join("source-must-not-open.ms");
+    let moving = compiled_problem_with_centres(
+        &absent_path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let moving_source = &moving.inputs().observation_snapshot().sources()[0];
+    let budget = SelectedObservationContentBudget::new(1 << 20, 1, 4);
+
+    let missing = BoundSelectedObservation::open(
+        &moving,
+        test_measures(&moving),
+        vec![ObservationSourceBinding::new(
+            source_state(moving_source),
+            budget,
+        )],
+    )
+    .err()
+    .expect("required ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        missing,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: Some(expected),
+            actual: None,
+        } if measurement_set == moving_source.identity() && expected == identity(90)
+    ));
+
+    let substituted = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(91),
+        budget.reference_data_budget(),
+    )
+    .expect("admit substituted ephemeris fixture");
+    let substituted = BoundSelectedObservation::open(
+        &moving,
+        test_measures(&moving),
+        vec![
+            ObservationSourceBinding::new(source_state(moving_source), budget)
+                .with_ephemeris(Some(substituted)),
+        ],
+    )
+    .err()
+    .expect("substituted ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        substituted,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: Some(expected),
+            actual: Some(actual),
+        } if measurement_set == moving_source.identity()
+            && expected == identity(90)
+            && actual == identity(91)
+    ));
+
+    let fixed = compiled_problem(&absent_path, 2);
+    let fixed_source = &fixed.inputs().observation_snapshot().sources()[0];
+    let unexpected = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(90),
+        budget.reference_data_budget(),
+    )
+    .expect("admit unexpected ephemeris fixture");
+    let unexpected = BoundSelectedObservation::open(
+        &fixed,
+        test_measures(&fixed),
+        vec![
+            ObservationSourceBinding::new(source_state(fixed_source), budget)
+                .with_ephemeris(Some(unexpected)),
+        ],
+    )
+    .err()
+    .expect("unexpected ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        unexpected,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: None,
+            actual: Some(actual),
+        } if measurement_set == fixed_source.identity() && actual == identity(90)
+    ));
+}
+
+#[test]
+fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charge() {
+    let directory = tempfile::tempdir().expect("temporary exact ephemeris fixture");
+    let path = directory.path().join("exact-ephemeris.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
+    let ephemeris = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(90),
+        budget.reference_data_budget(),
+    )
+    .expect("admit exact ephemeris fixture");
+    let binding =
+        ObservationSourceBinding::new(source_state(source), budget).with_ephemeris(Some(ephemeris));
+    let reference_data_bytes = binding.reference_data_bytes();
+    let certificate =
+        BoundSelectedObservation::certify_residency(&problem, std::slice::from_ref(&binding))
+            .expect("certify exact ephemeris binding");
+
+    assert!(reference_data_bytes > 0);
+    assert_eq!(
+        certificate.reference_data_bytes(source.identity()),
+        Some(reference_data_bytes)
+    );
+    assert_eq!(
+        certificate.aggregate_reference_data_bytes(),
+        reference_data_bytes
+    );
+    let bound = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+        .expect("open exact ephemeris binding");
+    assert_eq!(bound.residency_certificate(), &certificate);
+}
+
+#[test]
 fn measures_provider_growth_during_traversal_prevents_owner_completion() {
     let directory = tempfile::tempdir().expect("temporary Measures-mutation fixture");
     let path = directory.path().join("measures-mutation.ms");
@@ -1459,7 +1592,7 @@ fn retained_source_slots_are_charged_once_and_rejected_under_a_tight_budget() {
         &measurement_set,
         &problem,
         source,
-        super::content_plan::SelectedObservationSharedBytes::new(measures_retained_bytes, 0, 0),
+        super::content_plan::SelectedObservationSharedBytes::new(measures_retained_bytes, 0, 0, 0),
         admitted_budget,
     )
     .expect("plan the same retained state without the source-slot owner");
@@ -1547,6 +1680,7 @@ fn consumed_binding_graph_is_charged_once_at_actual_capacity_under_a_tight_budge
         source,
         super::content_plan::SelectedObservationSharedBytes::new(
             measures_retained_bytes,
+            0,
             source_slot_bytes,
             0,
         ),
@@ -1705,6 +1839,7 @@ fn later_binding_generation_allocations_are_included_in_the_once_only_graph_peak
         &sources[0],
         super::content_plan::SelectedObservationSharedBytes::new(
             measures_retained_bytes,
+            0,
             source_slot_bytes,
             0,
         ),
@@ -3949,6 +4084,7 @@ fn selected_observation_shared_bytes(
 ) -> super::content_plan::SelectedObservationSharedBytes {
     super::content_plan::SelectedObservationSharedBytes::new(
         measures.retained_bytes(),
+        0,
         source_slots_retained_bytes,
         binding_graph_initialization_bytes,
     )

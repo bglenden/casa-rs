@@ -600,6 +600,7 @@ dependencies = [
  "casa-types",
  "libc",
  "ndarray",
+ "serde_json",
  "sha2",
  "tempfile",
 ]
@@ -631,6 +632,7 @@ dependencies = [
 name = "casa-imaging-reconstruction"
 version = "0.27.0"
 dependencies = [
+ "casa-images",
  "casa-imaging-model",
  "casa-numerics",
  "casa-test-support",

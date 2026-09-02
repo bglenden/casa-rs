@@ -74,8 +74,12 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
             .all(|baseline| *baseline == representative_baselines[0]),
         "the three CASA oracle rows must use one baseline for exact predicate replay",
     );
-    let ephemeris =
-        SelectedObservationEphemeris::tracked_fields(&ms, [usize::try_from(FIELD_ID)?])?;
+    let content_budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
+    let ephemeris = SelectedObservationEphemeris::tracked_fields(
+        &ms,
+        [usize::try_from(FIELD_ID)?],
+        content_budget.reference_data_budget(),
+    )?;
     let ephemeris_identity = ephemeris.identity();
     drop(ms);
     let measures = crate::test_helpers::production_measures_provider()?;
@@ -132,7 +136,7 @@ fn t41_trackfield_phase_centre_matches_casa_at_three_row_times() -> Result<(), B
         WeightColumn::Weight,
         Vec::new(),
         ModelStateIdentity::Empty,
-        SelectedObservationContentBudget::new(64 << 20, 1, 4),
+        content_budget,
         measures,
     )
     .with_ephemeris(Some(ephemeris));
