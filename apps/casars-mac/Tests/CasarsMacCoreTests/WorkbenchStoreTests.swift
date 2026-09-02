@@ -1275,8 +1275,9 @@ final class WorkbenchStoreTests: XCTestCase {
             profileTOML: profile,
             sourcePath: profileURL.path
         )
+        let bundle = try client.loadBundle(surfaceID: "imager")
 
-        XCTAssertEqual(snapshot.contractVersion, 12)
+        XCTAssertEqual(snapshot.contractVersion, bundle.surface.contractVersion)
         XCTAssertEqual(snapshot.states["gridder"]?.value, .string(value: "awproject"))
         XCTAssertFalse(snapshot.diagnostics.contains { $0.level == "error" }, "\(snapshot.diagnostics)")
         XCTAssertTrue(snapshot.diagnostics.contains { $0.code == "migrated" })
@@ -1284,7 +1285,6 @@ final class WorkbenchStoreTests: XCTestCase {
         for name in wideFieldNames + ["usepointing", "normtype"] {
             XCTAssertTrue(try XCTUnwrap(snapshot.states[name]).active, "\(name) must activate for AWProject")
         }
-        let bundle = try client.loadBundle(surfaceID: "imager")
         for name in wideFieldNames {
             let presentation = try XCTUnwrap(
                 bundle.surface.bindings.first { $0.name == name }?.projections.presentation
@@ -4435,11 +4435,11 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(store.state.tabs.last?.title, "Imager: probed.ms")
         XCTAssertEqual(store.state.activeTaskID, "imager")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["vis"], "probed.ms")
-        XCTAssertEqual(store.state.genericTaskValues["imager"]?["field"], "0")
+        XCTAssertEqual(store.state.genericTaskValues["imager"]?["field"], "none")
         XCTAssertEqual(store.state.genericTaskValues["imager"]?["phasecenter_field"], "none")
-        XCTAssertEqual(store.state.genericTaskValues["imager"]?["spw"], "0")
-        XCTAssertEqual(store.state.genericTaskValues["imager"]?["imagename"], "casa-rs-runs/imager-1/probed.ms-imager")
-        XCTAssertEqual(store.state.genericTaskToggles["imager"]?["dirty_only"], true)
+        XCTAssertEqual(store.state.genericTaskValues["imager"]?["spw"], "none")
+        XCTAssertNil(store.state.genericTaskValues["imager"]?["imagename"])
+        XCTAssertEqual(store.state.genericTaskToggles["imager"]?["dirty_only"], false)
         XCTAssertFalse(store.state.lastErrors.contains("AI chat is not connected yet"))
         XCTAssertTrue(store.state.lastErrors.contains("Python is not connected yet"))
         XCTAssertFalse(store.state.lastErrors.contains("Task panels are not connected for real projects yet"))
@@ -4502,7 +4502,7 @@ final class WorkbenchStoreTests: XCTestCase {
         let store = WorkbenchStore(
             state: FixtureWorkbench.makeState(),
             applicationCatalogClient: StubApplicationCatalogClient(tasks: [makeApplicationCatalogEntry(id: "imager", displayName: "Imager")]),
-            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImheadTaskUISchema()),
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema()),
         )
 
         store.openImagerProgressMockup()
@@ -4510,6 +4510,10 @@ final class WorkbenchStoreTests: XCTestCase {
         let snapshot = store.debugSnapshot()
         let progress = try XCTUnwrap(snapshot.taskImagerProgress)
         XCTAssertEqual(snapshot.activeTaskID, "imager")
+        XCTAssertEqual(
+            store.state.genericTaskValues["imager"]?["imagename"],
+            "casa-rs-runs/imager-progress-mockup"
+        )
         XCTAssertEqual(store.state.taskRun.state, .running)
         XCTAssertEqual(store.state.taskRun.progress, progress.workEstimate.fraction, accuracy: 0.001)
         XCTAssertEqual(progress.state, .running)
@@ -4900,7 +4904,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertFalse(store.state.lastErrors.contains("Dataset output.image is not a MeasurementSet"))
     }
 
-    func testDirectMeasurementSetLaunchConfiguresFullMosaicSchemaRun() throws {
+    func testDirectMeasurementSetLaunchBindsOnlyDatasetAndUsesCanonicalImagerDefaults() throws {
         let probedDataset = DatasetSummary(
             id: "exact-large-ms",
             name: "large.ms",
@@ -4948,23 +4952,23 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(dataset.notes.contains("parent project probe skipped"))
         XCTAssertEqual(store.state.tabs.first(where: { $0.kind == .task })?.title, "Imager: large.ms")
         XCTAssertEqual(values["vis"], "large.ms")
-        XCTAssertEqual(values["imagename"], "casa-rs-runs/imager-1/large.ms-imager")
+        XCTAssertNil(values["imagename"])
         XCTAssertEqual(values["field"], "none")
-        XCTAssertEqual(values["phasecenter_field"], "0")
-        XCTAssertEqual(values["specmode"], "cube")
-        XCTAssertEqual(values["gridder"], "mosaic")
-        XCTAssertEqual(values["interpolation"], "nearest")
-        XCTAssertEqual(values["channel_start"], "0")
-        XCTAssertEqual(values["channel_count"], "512")
-        XCTAssertEqual(values["imsize"], "1024,1024")
+        XCTAssertEqual(values["phasecenter_field"], "none")
+        XCTAssertEqual(values["specmode"], "mfs")
+        XCTAssertEqual(values["gridder"], "standard")
+        XCTAssertEqual(values["interpolation"], "none")
+        XCTAssertEqual(values["channel_start"], "none")
+        XCTAssertEqual(values["channel_count"], "none")
+        XCTAssertEqual(values["imsize"], "512,512")
         XCTAssertEqual(values["cell"], "1arcsec,1arcsec")
-        XCTAssertEqual(values["weighting"], "briggs")
-        XCTAssertEqual(values["niter"], "2048")
+        XCTAssertEqual(values["weighting"], "natural")
+        XCTAssertEqual(values["niter"], "0")
         XCTAssertEqual(values["threshold"], "0Jy")
         XCTAssertEqual(toggles["dirty_only"], false)
-        XCTAssertEqual(toggles["perchanweightdensity"], true)
-        XCTAssertEqual(toggles["write_pb"], true)
-        XCTAssertEqual(toggles["pbcor"], true)
+        XCTAssertEqual(toggles["perchanweightdensity"], false)
+        XCTAssertEqual(toggles["write_pb"], false)
+        XCTAssertEqual(toggles["pbcor"], false)
     }
 
     func testSchemaDrivenImagerRunUsesGenericTaskClientAndRecordsProducts() throws {
@@ -5120,6 +5124,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openImagerTaskForSelectedDataset()
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+        store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: "casa-rs-runs/progress")
         store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
@@ -5195,6 +5200,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openImagerTaskForSelectedDataset()
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+        store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: "casa-rs-runs/success")
         store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
@@ -5231,7 +5237,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertTrue(retainedProgress.runtime.gpuActive)
     }
 
-    func testBundledSampleImagerDefaultsChooseLineTarget() throws {
+    func testBundledSampleImagerDoesNotInferScienceSelectionFromDatasetName() throws {
         let first = DatasetSummary(
             id: "/data/mssel_test_small_multifield_spw.ms",
             name: "mssel_test_small_multifield_spw.ms",
@@ -5285,13 +5291,15 @@ final class WorkbenchStoreTests: XCTestCase {
             store.state.genericTaskValues["imager"],
             "parameter session errors: \(store.state.lastErrors)"
         )
-        XCTAssertEqual(values["field"], "5")
+        XCTAssertEqual(values["vis"], "mssel_test_small_multifield_spw.ms")
+        XCTAssertNil(values["imagename"])
+        XCTAssertEqual(values["field"], "none")
         XCTAssertEqual(values["phasecenter_field"], "none")
-        XCTAssertEqual(values["spw"], "5")
-        XCTAssertEqual(values["stokes"], "YY")
+        XCTAssertEqual(values["spw"], "none")
+        XCTAssertEqual(values["stokes"], "I")
     }
 
-    func testTWHyaTutorialImagerDefaultsUseKnownMFSParameters() throws {
+    func testTWHyaImagerUsesCanonicalDefaultsWithoutDatasetSpecificInference() throws {
         let tutorial = DatasetSummary(
             id: "/data/twhya_calibrated.ms",
             name: "twhya_calibrated.ms",
@@ -5334,14 +5342,16 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openImagerTaskForSelectedDataset()
 
         let values = try XCTUnwrap(store.state.genericTaskValues["imager"])
-        XCTAssertEqual(values["field"], "5")
+        XCTAssertEqual(values["vis"], "twhya_calibrated.ms")
+        XCTAssertNil(values["imagename"])
+        XCTAssertEqual(values["field"], "none")
         XCTAssertEqual(values["phasecenter_field"], "none")
-        XCTAssertEqual(values["spw"], "0")
+        XCTAssertEqual(values["spw"], "none")
         XCTAssertEqual(values["stokes"], "I")
-        XCTAssertEqual(values["imsize"], "250,250")
-        XCTAssertEqual(values["cell"], "0.1arcsec,0.1arcsec")
+        XCTAssertEqual(values["imsize"], "512,512")
+        XCTAssertEqual(values["cell"], "1arcsec,1arcsec")
         XCTAssertEqual(values["specmode"], "mfs")
-        XCTAssertEqual(values["weighting"], "briggs")
+        XCTAssertEqual(values["weighting"], "natural")
     }
 
     func testRealMeasurementSetPlotRunUsesPlotClientAndDebugState() {
@@ -5668,6 +5678,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openDefaultTab(kind: .task)
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+        store.setGenericTaskValue(taskID: "imager", argumentID: "imagename", value: "casa-rs-runs/cancel")
         store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 

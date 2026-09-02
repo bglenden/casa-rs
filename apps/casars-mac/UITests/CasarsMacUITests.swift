@@ -53,6 +53,7 @@ final class CasarsMacUITests: XCTestCase {
             "--show-imager-progress-mockup",
         ]
         launchTestApplication()
+        app.activate()
 
         XCTAssertTrue(
             app.windows["casa-rs Workbench"].waitForExistence(timeout: GUIWaitPolicy.applicationLaunch),
