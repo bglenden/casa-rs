@@ -40,6 +40,8 @@ repeats="${BENCH_REPEATS:-${IMAGER_BENCH_REPEATS:-5}}"
 profile_repeats="${BENCH_PROFILE_REPEATS:-${IMAGER_BENCH_PROFILE_REPEATS:-$repeats}}"
 profile_warmups="${BENCH_PROFILE_WARMUPS:-${IMAGER_BENCH_PROFILE_WARMUPS:-0}}"
 field="${IMAGER_BENCH_FIELD:-0}"
+stokes="${IMAGER_BENCH_STOKES:-I}"
+usepointing="${IMAGER_BENCH_USEPOINTING:-}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
 channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
@@ -49,6 +51,25 @@ cube_width="${IMAGER_BENCH_CUBE_WIDTH:-}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
 gridder="${IMAGER_BENCH_GRIDDER:-standard}"
 casa_gridder="${IMAGER_BENCH_CASA_GRIDDER:-$gridder}"
+if [[ -z "$usepointing" ]]; then
+  if [[ "$gridder" == "mosaic" ]]; then
+    usepointing=1
+  else
+    usepointing=0
+  fi
+fi
+case "$usepointing" in
+  1|true|TRUE|yes|YES|on|ON)
+    usepointing_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF)
+    usepointing_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_USEPOINTING must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
 facets="${IMAGER_BENCH_FACETS:-1}"
 interpolation="${IMAGER_BENCH_INTERPOLATION:-linear}"
 imsize="${IMAGER_BENCH_IMSIZE:-128}"
@@ -421,7 +442,7 @@ emit_rust_backend_diagnostics() {
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder facets=$facets field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder facets=$facets field=$field stokes=$stokes usepointing=$usepointing_enabled phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
@@ -475,6 +496,10 @@ if [[ "$perchanweightdensity_enabled" == "1" ]]; then
   rust_density_flags+=(--perchanweightdensity)
 else
   rust_density_flags+=(--no-perchanweightdensity)
+fi
+rust_pointing_flags=()
+if [[ "$usepointing_enabled" == "1" ]]; then
+  rust_pointing_flags+=(--usepointing)
 fi
 rust_source_stream_flags=()
 if [[ -n "$imaging_memory_target_mb" ]]; then
@@ -530,6 +555,7 @@ for run in $(seq 1 "$repeats"); do
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
+      --stokes "$stokes" \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -542,6 +568,7 @@ for run in $(seq 1 "$repeats"); do
       --weighting "$weighting" \
       --robust "$robust" \
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+      ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
@@ -578,6 +605,7 @@ for run in $(seq 1 "$repeats"); do
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
+      --stokes "$stokes" \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -590,6 +618,7 @@ for run in $(seq 1 "$repeats"); do
       --weighting "$weighting" \
       --robust "$robust" \
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+      ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
@@ -640,6 +669,7 @@ elif [[ -n "$scales" ]]; then
   run_with_optional_phasecenter target/release/examples/profile_imager \
     "$rust_ms_path" \
     --field "$field" \
+    --stokes "$stokes" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
@@ -652,6 +682,7 @@ elif [[ -n "$scales" ]]; then
     --weighting "$weighting" \
     --robust "$robust" \
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+    ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
@@ -684,6 +715,7 @@ else
   run_with_optional_phasecenter target/release/examples/profile_imager \
     "$rust_ms_path" \
     --field "$field" \
+    --stokes "$stokes" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
@@ -696,6 +728,7 @@ else
     --weighting "$weighting" \
     --robust "$robust" \
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+    ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
@@ -738,6 +771,8 @@ from casatasks import casalog, tclean
 vis = os.environ["CASA_RS_BENCH_MS_PATH"]
 repeats = int(os.environ["CASA_RS_BENCH_REPEATS"])
 field = os.environ["CASA_RS_BENCH_FIELD"]
+stokes = os.environ["CASA_RS_BENCH_STOKES"]
+usepointing = os.environ["CASA_RS_BENCH_USEPOINTING"].lower() in ("1", "true", "yes", "on")
 phasecenter_field = os.environ["CASA_RS_BENCH_PHASECENTER_FIELD"]
 spw = os.environ["CASA_RS_BENCH_SPW"]
 chan_start = int(os.environ["CASA_RS_BENCH_CHANNEL_START"])
@@ -806,7 +841,8 @@ with tempfile.TemporaryDirectory() as td:
             imagename=prefix,
             datacolumn="data",
             field=field,
-            stokes="I",
+            stokes=stokes,
+            usepointing=usepointing,
             specmode=specmode,
             gridder=casa_gridder,
             facets=facets,
@@ -892,6 +928,8 @@ else
   CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
+  CASA_RS_BENCH_STOKES="$stokes" \
+  CASA_RS_BENCH_USEPOINTING="$usepointing_enabled" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \
@@ -954,6 +992,8 @@ if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_cas
   CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
+  CASA_RS_BENCH_STOKES="$stokes" \
+  CASA_RS_BENCH_USEPOINTING="$usepointing_enabled" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \

@@ -566,6 +566,10 @@ def build_plan(
         "IMAGER_BENCH_FACETS": str(int_value(imaging, "facets", 1)),
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
+        "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
+        "IMAGER_BENCH_USEPOINTING": boolean_env_value(
+            imaging, "usepointing", gridder == "mosaic"
+        ),
         "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(
             imaging, "phasecenter_field"
         ),
