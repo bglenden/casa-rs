@@ -63,6 +63,7 @@ final class CasarsMacUITests: XCTestCase {
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES",
             "--open-imager-ms", measurementSet.path,
+            "--imagename", "products/t64-readiness",
             "--set-task-toggle", "write_preview_pngs", "true",
         ]
         launchTestApplication()
