@@ -110,6 +110,7 @@ def main():
                 full_chunk_elements=request["full_chunk_elements"],
                 require_direction_wcs_parity=request["require_direction_wcs_parity"],
                 require_metadata_parity=request["require_metadata_parity"],
+                metadata_contract=request.get("metadata_contract"),
                 allow_scientific_beam_equivalence=(allow_scientific_beam_equivalence),
                 allow_bounded_mask_topology=has_bounded_mask_topology_contract(
                     request.get("tolerances"), suffix
@@ -167,6 +168,8 @@ def main():
         "products": products,
         "structured_difference_review": summarize_product_reviews(products),
     }
+    if "metadata_contract" in request:
+        output["metadata_contract"] = request["metadata_contract"]
     with open(sys.argv[2], "w", encoding="utf-8") as handle:
         json.dump(output, handle, indent=2, sort_keys=True)
         handle.write("\n")
@@ -205,6 +208,8 @@ def normalized_request(request):
         "request_binding",
         "request_sha256",
     }
+    if "metadata_contract" in request:
+        expected_fields.add("metadata_contract")
     if set(request) != expected_fields:
         missing = sorted(expected_fields - set(request))
         unknown = sorted(set(request) - expected_fields)
@@ -285,6 +290,12 @@ def normalized_request(request):
             "source_regions": source_regions,
         }
     )
+    metadata_contract = request.get("metadata_contract")
+    if metadata_contract is not None:
+        _, normalize_contract = metadata_contract_functions()
+        metadata_contract = normalize_contract(metadata_contract, products=products)
+    if metadata_contract is not None:
+        normalized["metadata_contract"] = metadata_contract
     binding = comparison_request_binding(normalized)
     if request.get("request_binding") != binding:
         raise ValueError(
@@ -320,7 +331,10 @@ def comparison_request_binding(request):
         "panel_dir",
         "structure_workspace_dir",
     )
-    return {field: request[field] for field in fields}
+    binding = {field: request[field] for field in fields}
+    if "metadata_contract" in request:
+        binding["metadata_contract"] = request["metadata_contract"]
+    return binding
 
 
 def canonical_sha256(value):
@@ -643,6 +657,7 @@ def compare_one(
     full_chunk_elements=1_000_000,
     require_direction_wcs_parity=False,
     require_metadata_parity=False,
+    metadata_contract=None,
     allow_scientific_beam_equivalence=False,
     allow_bounded_mask_topology=False,
     source_regions=None,
@@ -780,15 +795,22 @@ def compare_one(
         panel_arguments["right_label"] = right_label
     panel = write_review_panel(**panel_arguments)
 
+    metadata_required = require_metadata_parity or metadata_contract is not None
     metadata = (
-        compare_image_metadata(left_path, right_path)
-        if require_metadata_parity
+        compare_image_metadata(
+            left_path,
+            right_path,
+            contract=metadata_contract,
+            suffix=suffix,
+        )
+        if metadata_required
         else {"status": "not_required", "parity": None}
     )
-    metadata_mismatch = require_metadata_parity and not (
+    metadata_mismatch = metadata_required and not (
         metadata["status"] == "matched"
         or (
-            allow_scientific_beam_equivalence
+            metadata_contract is None
+            and allow_scientific_beam_equivalence
             and is_restoring_beam_only_metadata_mismatch(metadata)
         )
     )
@@ -837,7 +859,7 @@ def compare_one(
         "right_peak_abs": right_peak_summary,
         "diff_peak_abs": diff_peak,
         "metadata": metadata,
-        "metadata_parity_required": bool(require_metadata_parity),
+        "metadata_parity_required": bool(metadata_required),
         "structured_difference": structure,
         "review_panel": panel,
     }
@@ -1383,7 +1405,9 @@ def image_metadata(path, image_factory=None):
     }
 
 
-def compare_image_metadata(left_path, right_path, image_factory=None):
+def compare_image_metadata(
+    left_path, right_path, image_factory=None, *, contract=None, suffix=None
+):
     try:
         left = image_metadata(left_path, image_factory=image_factory)
         right = image_metadata(right_path, image_factory=image_factory)
@@ -1393,15 +1417,19 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
             "reason": str(error),
             "parity": False,
         }
-    fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
-    parity = {
-        name: (
-            coordinate_records_equivalent(left.get(name), right.get(name))
-            if name == "coordinates"
-            else left.get(name) == right.get(name)
-        )
-        for name in fields
-    }
+    if contract is not None:
+        field_parity, _ = metadata_contract_functions()
+        parity = field_parity(left, right, suffix=suffix, contract=contract)
+    else:
+        fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
+        parity = {
+            name: (
+                coordinate_records_equivalent(left.get(name), right.get(name))
+                if name == "coordinates"
+                else left.get(name) == right.get(name)
+            )
+            for name in fields
+        }
     complete = left["status"] == "complete" and right["status"] == "complete"
     return {
         "status": "matched" if complete and all(parity.values()) else "mismatch",
@@ -1410,6 +1438,17 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
         "left": left,
         "right": right,
     }
+
+
+def metadata_contract_functions():
+    try:
+        from .metadata_contract import (
+            metadata_field_parity,
+            normalize_metadata_contract,
+        )
+    except ImportError:
+        from metadata_contract import metadata_field_parity, normalize_metadata_contract
+    return metadata_field_parity, normalize_metadata_contract
 
 
 def compare_direction_wcs(left_path, right_path, image_factory=None):

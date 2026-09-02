@@ -118,7 +118,7 @@ imaging-t48-heterogeneous-response:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction mosaic_response_routes_use_full_nonuniform_spw_and_ignore_replay_partitions -- --nocapture
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction polarization_operator::tests::parallactic_rotation_changes_linear_qu_but_not_unpolarized_i -- --exact --nocapture
 
-# Regenerate and compare the representative #534 2,016,000-sample fixture with CASA.
+# Regenerate and compare the representative #534 2,016,000-sample dirty response with CASA.
 imaging-t48-heterogeneous-response-casa:
     #!/usr/bin/env bash
     set -euo pipefail

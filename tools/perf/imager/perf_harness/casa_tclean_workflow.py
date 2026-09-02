@@ -1948,7 +1948,7 @@ def casa_repeatability_comparison_request(
     comparison_root = pathlib.Path(plan["artifacts"]["comparison_root"])
     target_name = str(target["name"])
     self_contract = target is baseline or target_name == str(baseline["name"])
-    return {
+    request = {
         "left_prefix": baseline["prefix"],
         "right_prefix": target["prefix"],
         "left_label": "CASA measured 1",
@@ -1975,6 +1975,9 @@ def casa_repeatability_comparison_request(
             comparison_root / f"casa-{target_name}-structure-workspace"
         ),
     }
+    if plan["comparison"].get("metadata_contract") is not None:
+        request["metadata_contract"] = plan["comparison"]["metadata_contract"]
+    return request
 
 
 def summarize_casa_repeatability(

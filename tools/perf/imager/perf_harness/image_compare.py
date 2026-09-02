@@ -16,6 +16,11 @@ from .tolerances import (
     validate_tolerance_contract,
 )
 from .tree_identity import sha256_file
+from .metadata_contract import (
+    metadata_field_parity,
+    normalize_metadata_contract,
+    scientific_beam_products,
+)
 
 
 CASA_IMAGE_COMPARATOR = pathlib.Path(__file__).with_name("casa_image_compare.py")
@@ -212,6 +217,7 @@ COMPARISON_REQUEST_FIELDS = {
     "require_exact_product_inventory",
     "require_direction_wcs_parity",
     "require_metadata_parity",
+    "metadata_contract",
     "source_regions",
     "tolerances",
     "panel_dir",
@@ -291,6 +297,15 @@ def normalize_comparison_request(request: dict[str, Any]) -> dict[str, Any]:
         except ToleranceContractError as error:
             raise ValueError(str(error)) from error
     products = _normalize_product_suffixes(normalized.get("products"))
+    metadata_contract = normalize_metadata_contract(
+        normalized.get("metadata_contract"), products=products
+    )
+    for suffix in scientific_beam_products(metadata_contract):
+        if not _has_scientific_beam_tolerance(tolerances, suffix):
+            raise ValueError(
+                f"metadata_contract product {suffix} requires beam_area_relative "
+                "and beam_kernel_nrmse tolerances"
+            )
     source_regions = _normalize_source_regions(
         normalized.get("source_regions", []), products
     )
@@ -335,6 +350,8 @@ def normalize_comparison_request(request: dict[str, Any]) -> dict[str, Any]:
         "panel_dir": panel_dir,
         "structure_workspace_dir": structure_workspace_dir,
     }
+    if metadata_contract is not None:
+        normalized["metadata_contract"] = metadata_contract
     binding = comparison_request_binding(normalized)
     normalized["request_binding"] = binding
     normalized["request_sha256"] = _canonical_sha256(binding)
@@ -367,6 +384,8 @@ def comparison_request_binding(request: dict[str, Any]) -> dict[str, Any]:
             fields.index("require_metadata_parity"),
             "require_direction_wcs_parity",
         )
+    if "metadata_contract" in request:
+        fields.insert(fields.index("legacy_operand_aliases"), "metadata_contract")
     missing = [field for field in fields if field not in request]
     if missing:
         raise ValueError(
@@ -413,6 +432,8 @@ def validate_comparison_output(
         "panel_dir": request["panel_dir"],
         "structure_workspace_dir": request["structure_workspace_dir"],
     }
+    if "metadata_contract" in request:
+        exact_fields["metadata_contract"] = request["metadata_contract"]
     if "require_direction_wcs_parity" in request:
         exact_fields["require_direction_wcs_parity"] = request[
             "require_direction_wcs_parity"
@@ -460,9 +481,12 @@ def validate_comparison_output(
             _validate_product_metadata(
                 product,
                 suffix=suffix,
-                required=request["require_metadata_parity"],
+                required=(
+                    request["require_metadata_parity"] or "metadata_contract" in request
+                ),
                 products=products,
                 tolerance_contract=request["tolerances"],
+                metadata_contract=request.get("metadata_contract"),
             )
             _validate_product_source_regions(
                 product,
@@ -588,6 +612,7 @@ def _validate_product_metadata(
     required: bool,
     products: dict[str, Any],
     tolerance_contract: dict[str, Any] | None,
+    metadata_contract: dict[str, Any] | None,
 ) -> None:
     label = f"image comparison product {suffix}"
     if product.get("metadata_parity_required") is not required:
@@ -624,14 +649,23 @@ def _validate_product_metadata(
             raise ValueError(f"{label} {side} metadata capture is incomplete")
         if value.get("shape") != product.get("shape"):
             raise ValueError(f"{label} {side} metadata shape does not match product")
-    expected_parity = {
-        field: (
-            _coordinate_records_equivalent(left.get(field), right.get(field))
-            if field == "coordinates"
-            else left.get(field) == right.get(field)
+    expected_parity = (
+        metadata_field_parity(
+            left,
+            right,
+            suffix=suffix,
+            contract=metadata_contract,
         )
-        for field in fields
-    }
+        if metadata_contract is not None
+        else {
+            field: (
+                _coordinate_records_equivalent(left.get(field), right.get(field))
+                if field == "coordinates"
+                else left.get(field) == right.get(field)
+            )
+            for field in fields
+        }
+    )
     exact = all(expected_parity.values())
     expected_status = "matched" if exact else "mismatch"
     if (
@@ -640,7 +674,7 @@ def _validate_product_metadata(
         or metadata.get("parity") is not exact
     ):
         raise ValueError(f"{label} metadata parity is not derived from operands")
-    if exact:
+    if exact or metadata_contract is not None:
         return
     beam_only = expected_parity == {
         "shape": True,

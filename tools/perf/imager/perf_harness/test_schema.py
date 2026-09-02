@@ -859,6 +859,67 @@ class SchemaTests(unittest.TestCase):
             self.assertEqual("full", comparison["mode"])
             self.assertTrue(comparison["tolerances"]["require_full_array"])
 
+    def test_t48_manifest_pins_dirty_response_scope(self) -> None:
+        manifest = load_workload_manifest(
+            REPO_ROOT / "tools/perf/imager/workloads/t48-heterogeneous-mosaic-mfs.json"
+        )
+
+        self.assertEqual("dirty", manifest["imaging"]["mode"])
+        self.assertEqual(0, manifest["imaging"]["niter"])
+        self.assertEqual("I", manifest["imaging"]["stokes"])
+        self.assertTrue(manifest["imaging"]["usepointing"])
+        self.assertTrue(manifest["comparison"]["require_direction_wcs_parity"])
+        self.assertFalse(manifest["comparison"]["require_metadata_parity"])
+        metadata = manifest["comparison"]["metadata_contract"]
+        self.assertEqual(
+            [
+                "obsdate",
+                "observer",
+                "pointingcenter",
+                "telescope",
+                "telescopeposition",
+            ],
+            metadata["coordinates"]["excluded_fields"],
+        )
+        parity_units = {
+            suffix
+            for suffix, policy in metadata["products"].items()
+            if policy["unit"]["comparison"] == "parity"
+        }
+        self.assertEqual(
+            {".image", ".image.pbcor", ".model", ".pb", ".sumwt", ".weight"},
+            parity_units,
+        )
+        for suffix in (".psf", ".residual"):
+            self.assertEqual(
+                {
+                    "comparison": "expected",
+                    "left": "Jy/beam",
+                    "right": "",
+                },
+                metadata["products"][suffix]["unit"],
+            )
+        for suffix in (".image", ".image.pbcor", ".psf"):
+            self.assertEqual(
+                "scientific",
+                metadata["products"][suffix]["restoring_beam"]["comparison"],
+            )
+            self.assertEqual(
+                {"beam_area_relative": 0.001, "beam_kernel_nrmse": 0.001},
+                manifest["comparison"]["tolerances"]["products"][suffix],
+            )
+        self.assertEqual(
+            {
+                "comparison": "presence",
+                "left": "present",
+                "right": "absent",
+            },
+            metadata["products"][".residual"]["restoring_beam"],
+        )
+        self.assertTrue(
+            manifest["comparison"]["tolerances"]["default"]["require_topology_parity"]
+        )
+
     def test_nmajor_accepts_casa_unlimited_and_rejects_lower_values(self) -> None:
         workload = explicit_aw_workload()
         workload["imaging"]["nmajor"] = -1

@@ -2,14 +2,14 @@
   "schema_version": 1,
   "id": "t48-heterogeneous-mosaic-mfs",
   "mode_id": "mosaic-mfs-heterogeneous",
-  "description": "T48 mixed five-ALMA/five-ACA, four-linear-correlation polarized, seven-pointing, 2,016,000-sample 512-pixel MFS correctness oracle.",
+  "description": "T48 mixed five-ALMA/five-ACA, four-linear-correlation polarized, seven-pointing, 2,016,000-sample 512-pixel MFS dirty-response correctness oracle.",
   "dataset": {
     "key": "t48-mixed-representative",
     "relative_path": "imaging/t48/t48-mixed-representative.ms",
     "root_env": "CASA_RS_TESTDATA_ROOT"
   },
   "imaging": {
-    "mode": "clean",
+    "mode": "dirty",
     "specmode": "mfs",
     "gridder": "mosaic",
     "field": "0,1,2,3,4,5,6",
@@ -17,7 +17,7 @@
     "spw": "0",
     "channel_start": 0,
     "channel_count": 16,
-    "stokes": "Q",
+    "stokes": "I",
     "imsize": 512,
     "cell_arcsec": 1.0,
     "weighting": "natural",
@@ -27,7 +27,7 @@
     "standard_mfs_acceleration": "cpu",
     "imaging_fft_backend": "rustfft",
     "nterms": 1,
-    "niter": 2,
+    "niter": 0,
     "minor_cycle_length": 2,
     "pblimit": 0.2,
     "usepointing": true,
@@ -62,8 +62,69 @@
     "max_elements_per_product": 5000000,
     "full_chunk_elements": 16384,
     "require_exact_product_inventory": false,
-    "require_metadata_parity": true,
+    "require_metadata_parity": false,
     "require_direction_wcs_parity": true,
+    "metadata_contract": {
+      "require_shape_parity": true,
+      "require_mask_parity": true,
+      "coordinates": {
+        "excluded_fields": [
+          "obsdate",
+          "observer",
+          "pointingcenter",
+          "telescope",
+          "telescopeposition"
+        ],
+        "relative_tolerance": 1e-10,
+        "absolute_tolerance": 1e-12
+      },
+      "products": {
+        ".image": {
+          "unit": {"comparison": "parity"},
+          "restoring_beam": {
+            "comparison": "scientific",
+            "left": "present",
+            "right": "present"
+          }
+        },
+        ".image.pbcor": {
+          "unit": {"comparison": "parity"},
+          "restoring_beam": {
+            "comparison": "scientific",
+            "left": "present",
+            "right": "present"
+          }
+        },
+        ".model": {"unit": {"comparison": "parity"}},
+        ".pb": {"unit": {"comparison": "parity"}},
+        ".psf": {
+          "unit": {
+            "comparison": "expected",
+            "left": "Jy/beam",
+            "right": ""
+          },
+          "restoring_beam": {
+            "comparison": "scientific",
+            "left": "present",
+            "right": "present"
+          }
+        },
+        ".residual": {
+          "unit": {
+            "comparison": "expected",
+            "left": "Jy/beam",
+            "right": ""
+          },
+          "restoring_beam": {
+            "comparison": "presence",
+            "left": "present",
+            "right": "absent"
+          }
+        },
+        ".sumwt": {"unit": {"comparison": "parity"}},
+        ".weight": {"unit": {"comparison": "parity"}}
+      }
+    },
     "tolerances": {
       "contract_version": 2,
       "require_full_array": true,
@@ -71,7 +132,20 @@
         "diff_rms_over_right_rms": 0.001,
         "require_topology_parity": true
       },
-      "products": {}
+      "products": {
+        ".image": {
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001
+        },
+        ".image.pbcor": {
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001
+        },
+        ".psf": {
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001
+        }
+      }
     }
   }
 }

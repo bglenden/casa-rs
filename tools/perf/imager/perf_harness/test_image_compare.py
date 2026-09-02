@@ -1018,6 +1018,93 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertEqual("mismatch", result["status"])
         self.assertFalse(result["field_parity"]["coordinates"])
 
+    def test_manifest_metadata_contract_excludes_only_named_coordinates_and_binds_units(
+        self,
+    ) -> None:
+        contract = {
+            "require_shape_parity": True,
+            "require_mask_parity": True,
+            "coordinates": {
+                "excluded_fields": ["obsdate", "telescopeposition"],
+                "relative_tolerance": 1.0e-10,
+                "absolute_tolerance": 1.0e-12,
+            },
+            "products": {
+                ".residual": {
+                    "unit": {
+                        "comparison": "expected",
+                        "left": "Jy/beam",
+                        "right": "",
+                    },
+                    "restoring_beam": {
+                        "comparison": "presence",
+                        "left": "present",
+                        "right": "absent",
+                    },
+                }
+            },
+        }
+        common = {
+            "shape": [512, 512, 1, 1],
+            "masks": ["mask0"],
+        }
+        records = {
+            "left": {
+                **common,
+                "unit": "Jy/beam",
+                "restoring_beam": {"major": {"value": 1.0, "unit": "arcsec"}},
+                "coordinates": {
+                    "direction0": {"crval": [1.0, -0.5]},
+                    "spectral2": {"wcs": {"cdelt": 16_074_499.349853516}},
+                    "obsdate": {"refer": "LAST"},
+                },
+            },
+            "right": {
+                **common,
+                "unit": "",
+                "restoring_beam": {},
+                "coordinates": {
+                    "direction0": {"crval": [1.0, -0.5]},
+                    "spectral2": {"wcs": {"cdelt": 16_074_499.349060059}},
+                    "obsdate": {"refer": "UTC"},
+                    "telescopeposition": {"refer": "ITRF"},
+                },
+            },
+        }
+
+        result = comparator.compare_image_metadata(
+            "left",
+            "right",
+            image_factory=FakeMetadataFactory(records),
+            contract=contract,
+            suffix=".residual",
+        )
+
+        self.assertEqual("matched", result["status"])
+        self.assertTrue(all(result["field_parity"].values()))
+        records["right"]["coordinates"]["direction0"]["crval"][0] += 1.0e-6
+        result = comparator.compare_image_metadata(
+            "left",
+            "right",
+            image_factory=FakeMetadataFactory(records),
+            contract=contract,
+            suffix=".residual",
+        )
+        self.assertEqual("mismatch", result["status"])
+        self.assertFalse(result["field_parity"]["coordinates"])
+
+        records["right"]["coordinates"]["direction0"]["crval"][0] -= 1.0e-6
+        records["left"]["unit"] = ""
+        result = comparator.compare_image_metadata(
+            "left",
+            "right",
+            image_factory=FakeMetadataFactory(records),
+            contract=contract,
+            suffix=".residual",
+        )
+        self.assertEqual("mismatch", result["status"])
+        self.assertFalse(result["field_parity"]["unit"])
+
     def test_direction_wcs_parity_ignores_singleton_spectral_sampling_values(
         self,
     ) -> None:

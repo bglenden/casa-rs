@@ -786,6 +786,11 @@ def build_plan(
             "require_metadata_parity": bool_value(
                 comparison, "require_metadata_parity", False
             ),
+            **(
+                {"metadata_contract": comparison["metadata_contract"]}
+                if "metadata_contract" in comparison
+                else {}
+            ),
             "source_regions": comparison.get("source_regions", []),
             "tolerances": comparison.get("tolerances"),
         },
@@ -3117,6 +3122,8 @@ def compare_products(
         "panel_dir": str(panel_dir),
         "structure_workspace_dir": str(structure_workspace_dir),
     }
+    if plan["comparison"].get("metadata_contract") is not None:
+        request["metadata_contract"] = plan["comparison"]["metadata_contract"]
     comparison = compare_image_products(
         casa_python=casa_python,
         request=request,
