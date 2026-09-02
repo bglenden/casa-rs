@@ -228,9 +228,19 @@ struct SpectralOperatorSample {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct MosaicResponse {
-    key: u128,
+    key: MosaicProjectorKey,
     frequency_hz: f64,
+    support_frequency_hz: f64,
     antenna_responses: SelectedAntennaResponses,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MosaicProjectorKey {
+    frequency_bits: u64,
+    support_frequency_bits: u64,
+    antenna1: casa_imaging_model::AntennaResponseClass,
+    antenna2: casa_imaging_model::AntennaResponseClass,
+    family_envelope: casa_imaging_model::AntennaResponseClass,
 }
 
 impl SpectralOperatorSample {
@@ -447,6 +457,7 @@ struct MosaicResponsePlan {
             u32,
             casa_imaging_model::AntennaResponseClass,
             casa_imaging_model::AntennaResponseClass,
+            casa_imaging_model::AntennaResponseClass,
         ),
         MosaicResponse,
     >,
@@ -479,6 +490,7 @@ impl MosaicResponsePlan {
             address.channel_index,
             antenna_responses.antenna1,
             antenna_responses.antenna2,
+            antenna_responses.family_envelope,
         );
         if let Some(response) = self.responses.get(&route) {
             return Ok(Some(*response));
@@ -527,6 +539,11 @@ impl MosaicResponsePlan {
             &selection.channel_indices,
             &evaluation_frequencies,
         )?;
+        let support_frequency_hz = response_frequencies
+            .iter()
+            .copied()
+            .reduce(f64::max)
+            .ok_or(SpectralOperatorError::InvalidSample)?;
         if self
             .responses
             .len()
@@ -544,10 +561,12 @@ impl MosaicResponsePlan {
                     *channel,
                     antenna_responses.antenna1,
                     antenna_responses.antenna2,
+                    antenna_responses.family_envelope,
                 ),
                 MosaicResponse {
-                    key: mosaic_response_key(frequency_hz, antenna_responses),
+                    key: mosaic_response_key(frequency_hz, support_frequency_hz, antenna_responses),
                     frequency_hz,
+                    support_frequency_hz,
                     antenna_responses,
                 },
             );
@@ -560,14 +579,23 @@ impl MosaicResponsePlan {
     }
 }
 
-fn mosaic_response_key(frequency_hz: f64, responses: SelectedAntennaResponses) -> u128 {
-    let tag = |class| match class {
-        casa_imaging_model::AntennaResponseClass::CasaAlma12m => 0_u128,
-        casa_imaging_model::AntennaResponseClass::CasaAca7m => 1_u128,
+pub(crate) fn mosaic_response_key(
+    frequency_hz: f64,
+    support_frequency_hz: f64,
+    responses: SelectedAntennaResponses,
+) -> MosaicProjectorKey {
+    let (antenna1, antenna2) = if responses.antenna1 <= responses.antenna2 {
+        (responses.antenna1, responses.antenna2)
+    } else {
+        (responses.antenna2, responses.antenna1)
     };
-    (u128::from(frequency_hz.to_bits()) << 16)
-        | (tag(responses.antenna1) << 8)
-        | tag(responses.antenna2)
+    MosaicProjectorKey {
+        frequency_bits: frequency_hz.to_bits(),
+        support_frequency_bits: support_frequency_hz.to_bits(),
+        antenna1,
+        antenna2,
+        family_envelope: responses.family_envelope,
+    }
 }
 
 fn casa_useful_mosaic_channels(
@@ -987,12 +1015,19 @@ impl SpectralOperatorSpecification {
         self.charts.len()
     }
 
-    fn mosaic_response_capacity(&self) -> usize {
+    fn mosaic_selected_channel_capacity(&self) -> usize {
         self.mosaic_response_selections
             .iter()
             .map(|selection| selection.channel_indices.len())
-            .sum::<usize>()
-            .saturating_mul(3)
+            .sum()
+    }
+
+    fn mosaic_response_route_capacity(&self) -> usize {
+        self.mosaic_selected_channel_capacity().saturating_mul(4)
+    }
+
+    fn mosaic_projector_capacity(&self) -> usize {
+        self.mosaic_selected_channel_capacity().saturating_mul(3)
     }
 
     fn selected_spectral_channel_count(
@@ -1584,14 +1619,18 @@ pub fn spectral_operator_workload(
             ))
         })?
         .ok_or(SpectralOperatorError::UnsupportedGeometry)?;
-    let mosaic_response_capacity = specification
+    let mosaic_selected_channel_capacity = specification
         .mosaic_response_selections
         .iter()
         .try_fold(0_usize, |total, selection| {
             total
                 .checked_add(selection.channel_indices.len())
                 .ok_or(SpectralOperatorError::ResidencyOverflow)
-        })?
+        })?;
+    let mosaic_response_route_capacity = mosaic_selected_channel_capacity
+        .checked_mul(4)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let mosaic_projector_capacity = mosaic_selected_channel_capacity
         .checked_mul(3)
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let maximum_mosaic_selection_channels = specification
@@ -1605,13 +1644,13 @@ pub fn spectral_operator_workload(
         .len()
         .checked_mul(size_of::<MosaicResponseSelection>())
         .and_then(|bytes| {
-            mosaic_response_capacity
+            mosaic_selected_channel_capacity
                 .checked_mul(size_of::<u32>())
                 .and_then(|channels| bytes.checked_add(channels))
         })
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let response_residency = crate::mosaic::response_residency_projection(
-        mosaic_response_capacity,
+        mosaic_response_route_capacity,
         mosaic_selection_bytes,
         maximum_mosaic_selection_channels,
     )?;
@@ -1624,7 +1663,7 @@ pub fn spectral_operator_workload(
             let chart = crate::mosaic::residency_projection(
                 chart.geometry.image_shape,
                 chart.geometry.grid_shape,
-                mosaic_response_capacity,
+                mosaic_projector_capacity,
                 specification.mosaic_field_capacity,
                 specification.mosaic_normal_entry_capacity,
                 specification.mosaic_normal_entry_capacity,
@@ -3493,7 +3532,7 @@ impl CompleteDataOwnerState {
             })
             .collect();
         let linear_rows = CasaLinearRowResampler::new();
-        let mosaic_response_capacity = specification.mosaic_response_capacity();
+        let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -3540,7 +3579,7 @@ impl CompleteDataOwnerState {
             })
             .collect();
         let linear_rows = CasaLinearRowResampler::new();
-        let mosaic_response_capacity = specification.mosaic_response_capacity();
+        let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -4683,7 +4722,7 @@ pub(crate) struct SpectralSlabOperator {
     reused_normal_state: Option<ReusableNormalState>,
     primary_beam: Option<PreparedPrimaryBeamPower>,
     mosaic_normal: Option<Vec<MosaicNormalAccumulator>>,
-    mosaic_projectors: BTreeMap<u128, MosaicProjector>,
+    mosaic_projectors: BTreeMap<MosaicProjectorKey, MosaicProjector>,
     primary_beam_replay: Option<PrimaryBeamReplayState>,
     forward_grids: Vec<Array2<Complex64>>,
     predictions: Box<[Complex64]>,
@@ -5172,13 +5211,7 @@ impl SpectralSlabOperator {
                 .specification
                 .as_ref()
                 .ok_or(SpectralOperatorError::UnsupportedProblem)?;
-            let response_capacity = specification
-                .mosaic_response_selections
-                .iter()
-                .try_fold(0_usize, |total, selection| {
-                    total.checked_add(selection.channel_indices.len())
-                })
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+            let response_capacity = specification.mosaic_projector_capacity();
             if self.mosaic_projectors.len() == response_capacity {
                 return Err(SpectralOperatorError::ResidencyOverflow);
             }
@@ -5189,6 +5222,7 @@ impl SpectralSlabOperator {
                     response,
                     mosaic_response.antenna_responses,
                     mosaic_response.frequency_hz,
+                    mosaic_response.support_frequency_hz,
                     specification.mosaic_field_capacity,
                 )?,
             );
@@ -7366,7 +7400,7 @@ pub(crate) struct SampleTaps {
 enum OperatorTaps {
     Standard(SampleTaps),
     Mosaic {
-        response_key: u128,
+        response_key: MosaicProjectorKey,
         plan: MosaicSamplePlan,
     },
 }
@@ -7382,7 +7416,7 @@ impl OperatorTaps {
 
 fn grid_operator_compensated(
     standard: &StandardConvolution,
-    mosaic: &BTreeMap<u128, MosaicProjector>,
+    mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
     grid: &mut Array2<Complex64>,
     compensation: &mut Array2<Complex64>,
     taps: OperatorTaps,
@@ -7402,7 +7436,7 @@ fn grid_operator_compensated(
 
 fn degrid_operator(
     standard: &StandardConvolution,
-    mosaic: &BTreeMap<u128, MosaicProjector>,
+    mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
     grid: &Array2<Complex64>,
     taps: OperatorTaps,
 ) -> Result<Complex64, SpectralOperatorError> {
@@ -8016,6 +8050,7 @@ mod tests {
             let antenna_responses = SelectedAntennaResponses {
                 antenna1: casa_imaging_model::AntennaResponseClass::CasaAlma12m,
                 antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+                family_envelope: casa_imaging_model::AntennaResponseClass::CasaAlma12m,
             };
             for channel in chunks.iter().flat_map(|chunk| chunk.iter().copied()) {
                 let selected_ordinal = selected
@@ -8080,6 +8115,37 @@ mod tests {
             expected, inferred,
             "unselected nonuniform coordinates must affect CASA response placement"
         );
+
+        let mut reversal_plan = MosaicResponsePlan::with_capacity(selected.len() * 4);
+        let address = mosaic_address(
+            measurement_set,
+            7,
+            selected[0],
+            full_spw[selected[0] as usize],
+            first_width_hz,
+        );
+        let forward = SelectedAntennaResponses {
+            antenna1: casa_imaging_model::AntennaResponseClass::CasaAlma12m,
+            antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            family_envelope: casa_imaging_model::AntennaResponseClass::CasaAlma12m,
+        };
+        let reverse = SelectedAntennaResponses {
+            antenna1: forward.antenna2,
+            antenna2: forward.antenna1,
+            family_envelope: forward.family_envelope,
+        };
+        let forward_response = reversal_plan
+            .response(&selections, address, frequencies[0], Some(forward))
+            .unwrap()
+            .unwrap();
+        let reverse_response = reversal_plan
+            .response(&selections, address, frequencies[0], Some(reverse))
+            .unwrap()
+            .unwrap();
+        assert_eq!(forward_response.key, reverse_response.key);
+        assert_eq!(forward_response.antenna_responses, forward);
+        assert_eq!(reverse_response.antenna_responses, reverse);
+        assert_eq!(reversal_plan.responses.len(), selected.len() * 2);
     }
 
     fn workload() -> SpectralOperatorWorkload {

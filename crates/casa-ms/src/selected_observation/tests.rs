@@ -3731,6 +3731,7 @@ fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointin
             .expect("direction-dependent rows carry response classes");
         assert_eq!(responses.antenna1, AntennaResponseClass::CasaAlma12m);
         assert_eq!(responses.antenna2, AntennaResponseClass::CasaAca7m);
+        assert_eq!(responses.family_envelope, AntennaResponseClass::CasaAlma12m);
         assert_eq!(sample.metadata.antenna1, 0);
         assert_eq!(sample.metadata.antenna2, 1);
     }

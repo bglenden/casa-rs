@@ -1721,9 +1721,10 @@ fn scientific_instrument_model(
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
     let telescope_names = telescopes.iter().map(String::as_str).collect::<Vec<_>>();
-    let supported_telescope = telescope_names
-        .iter()
-        .all(|name| matches!(*name, "ALMA" | "ACA"));
+    let supported_telescope = !telescope_names.is_empty()
+        && telescope_names
+            .iter()
+            .all(|name| matches!(*name, "ALMA" | "ACA"));
     if !supported_telescope {
         return Err(boxed(format!(
             "primary-beam response requires ALMA/ACA observation metadata; found {telescopes:?}"

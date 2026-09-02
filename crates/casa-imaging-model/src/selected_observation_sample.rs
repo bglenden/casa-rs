@@ -385,6 +385,11 @@ pub struct SelectedAntennaResponses {
     pub antenna1: AntennaResponseClass,
     /// Response class of MAIN `ANTENNA2`.
     pub antenna2: AntennaResponseClass,
+    /// Largest response class present in this MeasurementSet response family.
+    ///
+    /// CASA crops every heterogeneous convolution plane to one family-wide
+    /// extent so resampling has the same boundary domain for every pair.
+    pub family_envelope: AntennaResponseClass,
 }
 
 /// Reported per-sample MeasurementSet provenance.

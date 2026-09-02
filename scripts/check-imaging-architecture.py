@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "d92fb2cbe6e143638603cfafb704dac797b459a83edff1ca3fe20e0e65dfc530"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "8122b8bbdded2cce4654ae6742c93c161ebf0d34b5417b5bf67899d3b14a352c"
+    "a6923b1e919d5a4a479cd35ba8f8707f513e49baca99c61e4ea1d79af5cfac6f"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 80
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2242,6 +2242,7 @@ def validate_t18_global_weighting_sources(
             "output_frame_frequency_hz": "f64",
             "field_id": "i32",
             "pointing_directions": "SelectedPointingDirections",
+            "antenna_responses": "Option<SelectedAntennaResponses>",
             "domain_projections": "SelectedImageDomainProjections",
         }
         or "input" in replay_phase_fields

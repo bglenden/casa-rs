@@ -15,7 +15,7 @@ use crate::{
     SpectralOperatorError,
     primary_beam::PreparedPrimaryBeamPower,
     spectral_operator::{
-        PreparedFft, SpectralOperatorGeometry, fft_planning_words_for_shape,
+        MosaicProjectorKey, PreparedFft, SpectralOperatorGeometry, fft_planning_words_for_shape,
         fft_resident_complex_values_for_shape,
     },
     weighting::ExactF64Sum,
@@ -79,8 +79,14 @@ pub(crate) fn response_residency_projection(
             u32,
             casa_imaging_model::AntennaResponseClass,
             casa_imaging_model::AntennaResponseClass,
+            casa_imaging_model::AntennaResponseClass,
         ),
-        (u128, f64, casa_imaging_model::SelectedAntennaResponses),
+        (
+            MosaicProjectorKey,
+            f64,
+            f64,
+            casa_imaging_model::SelectedAntennaResponses,
+        ),
     >(response_capacity, 1)?;
     let channel_map_bytes =
         bounded_tree_bytes::<u32, (f64, f64, f64)>(maximum_selection_channels, 1)?;
@@ -125,7 +131,8 @@ pub(crate) fn residency_projection(
         .and_then(|values| values.checked_mul(size_of::<Complex32>()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     // Two base kernels and one reusable active phased data kernel per response.
-    let projector_tree_bytes = bounded_tree_bytes::<u128, MosaicProjector>(response_capacity, 1)?;
+    let projector_tree_bytes =
+        bounded_tree_bytes::<MosaicProjectorKey, MosaicProjector>(response_capacity, 1)?;
     let projector_bytes = kernel_bytes
         .checked_mul(3)
         .and_then(|bytes| bytes.checked_mul(response_capacity))
@@ -230,6 +237,8 @@ pub(crate) struct MosaicProjector {
     grid_shape: [usize; 2],
     du_lambda: f64,
     dv_lambda: f64,
+    #[cfg(test)]
+    normalization_support: usize,
     support: usize,
     kernel_center: usize,
     kernel: Array2<Complex32>,
@@ -245,6 +254,7 @@ impl MosaicProjector {
         response: &PreparedPrimaryBeamPower,
         antenna_responses: SelectedAntennaResponses,
         frequency_hz: f64,
+        support_frequency_hz: f64,
         field_capacity: usize,
     ) -> Result<Self, SpectralOperatorError> {
         if field_capacity == 0 {
@@ -254,6 +264,26 @@ impl MosaicProjector {
         if conv_size < 16 || conv_size % 2 != 0 {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
+        let family_pair = SelectedAntennaResponses {
+            antenna1: antenna_responses.family_envelope,
+            antenna2: antenna_responses.family_envelope,
+            family_envelope: antenna_responses.family_envelope,
+        };
+        let family_support = if antenna_responses.antenna1 == antenna_responses.family_envelope
+            && antenna_responses.antenna2 == antenna_responses.family_envelope
+        {
+            None
+        } else {
+            let family_weight = screen_fft_temp(
+                geometry,
+                response,
+                family_pair,
+                support_frequency_hz,
+                conv_size,
+                2,
+            )?;
+            Some(find_support(&family_weight, 1))
+        };
         let imaging = screen_fft_temp(
             geometry,
             response,
@@ -270,16 +300,32 @@ impl MosaicProjector {
             conv_size,
             2,
         )?;
-        let support = find_support(&weight, 1);
-        if support == 0 {
+        let normalization_support = if frequency_hz.to_bits() == support_frequency_hz.to_bits() {
+            find_support(&weight, 1)
+        } else {
+            let support_weight = screen_fft_temp(
+                geometry,
+                response,
+                antenna_responses,
+                support_frequency_hz,
+                conv_size,
+                2,
+            )?;
+            find_support(&support_weight, 1)
+        };
+        if normalization_support == 0 {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
         let center = imaging.dim().0 / 2;
-        let normalization = plane_sum(&imaging, center, support, 1).re;
+        let normalization = plane_sum(&imaging, center, normalization_support, 1).re;
         if !normalization.is_finite() || normalization <= 1.0e-6 {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        let cropped_size = 2 * (support + 2);
+        let family_support = family_support.unwrap_or(normalization_support);
+        if family_support < normalization_support {
+            return Err(SpectralOperatorError::UnsupportedGeometry);
+        }
+        let cropped_size = 2 * (family_support + 2);
         let cropped_center = cropped_size / 2;
         let mut cropped = Array2::zeros((cropped_size, cropped_size));
         for y in 0..cropped_size {
@@ -293,7 +339,7 @@ impl MosaicProjector {
         let weight_center = weight.dim().0 / 2;
         // ACA mosaic execution uses CASA HetArrayConvFunc, whose lattice path
         // normalizes the weight convolution function by its own support sum.
-        let weight_normalization = plane_sum(&weight, weight_center, support, 1).re;
+        let weight_normalization = plane_sum(&weight, weight_center, normalization_support, 1).re;
         if !weight_normalization.is_finite() || weight_normalization <= 1.0e-6 {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
@@ -311,7 +357,9 @@ impl MosaicProjector {
             grid_shape: geometry.grid_shape,
             du_lambda: 1.0 / (geometry.grid_shape[0] as f64 * geometry.increment_rad[0].abs()),
             dv_lambda: 1.0 / (geometry.grid_shape[1] as f64 * geometry.increment_rad[1].abs()),
-            support,
+            #[cfg(test)]
+            normalization_support,
+            support: family_support,
             kernel_center: kernel.dim().0 / 2,
             kernel,
             weight_kernel,
@@ -708,7 +756,7 @@ fn casa_sinc(value: f32) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct PointingKey {
     field_id: i32,
-    response_key: u128,
+    response_key: MosaicProjectorKey,
     frame: DirectionFrame,
     longitude_bits: u64,
     latitude_bits: u64,
@@ -716,7 +764,12 @@ struct PointingKey {
 }
 
 impl PointingKey {
-    fn new(field_id: i32, response_key: u128, pointing: SkyDirection, frequency_hz: f64) -> Self {
+    fn new(
+        field_id: i32,
+        response_key: MosaicProjectorKey,
+        pointing: SkyDirection,
+        frequency_hz: f64,
+    ) -> Self {
         Self {
             field_id,
             response_key,
@@ -811,7 +864,7 @@ impl MosaicNormalAccumulator {
     pub(crate) fn accumulate(
         &mut self,
         field_id: i32,
-        response_key: u128,
+        response_key: MosaicProjectorKey,
         pointings: SelectedPointingDirections,
         frequency_hz: f64,
         plan: MosaicSamplePlan,
@@ -869,7 +922,7 @@ impl MosaicNormalAccumulator {
         self,
         image_shape: [usize; 2],
         image_blc: [usize; 2],
-        projectors: &BTreeMap<u128, MosaicProjector>,
+        projectors: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
         fft: &mut PreparedFft,
     ) -> Result<Vec<f64>, SpectralOperatorError> {
         let grid_shape = projectors
@@ -922,14 +975,20 @@ mod tests {
 
     fn projector() -> MosaicProjector {
         let (geometry, response) = projector_inputs();
-        MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 8).expect("projector")
+        MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 230.0e9, 8)
+            .expect("projector")
     }
 
     fn aca_pair() -> SelectedAntennaResponses {
         SelectedAntennaResponses {
             antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
             antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            family_envelope: casa_imaging_model::AntennaResponseClass::CasaAca7m,
         }
+    }
+
+    fn response_key() -> MosaicProjectorKey {
+        crate::spectral_operator::mosaic_response_key(230.0e9, 230.0e9, aca_pair())
     }
 
     fn projector_inputs() -> (SpectralOperatorGeometry, PreparedPrimaryBeamPower) {
@@ -1014,10 +1073,54 @@ mod tests {
     }
 
     #[test]
+    fn heterogeneous_supports_match_casa_512_pixel_oracle() {
+        let (mut geometry, _) = projector_inputs();
+        geometry.image_shape = [512, 512];
+        geometry.grid_shape = [640, 640];
+        geometry.image_blc = [64, 64];
+        geometry.reference_pixel = [256.0, 256.0];
+        let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
+            geometry.reference_pixel,
+            geometry.increment_rad,
+            geometry.image_shape,
+            0.0,
+        )
+        .unwrap()
+        .with_casa_aca_hetarray_convolution();
+        let alma = casa_imaging_model::AntennaResponseClass::CasaAlma12m;
+        let aca = casa_imaging_model::AntennaResponseClass::CasaAca7m;
+        let supports = [(alma, alma), (alma, aca), (aca, aca)].map(|(antenna1, antenna2)| {
+            MosaicProjector::new(
+                geometry,
+                &response,
+                SelectedAntennaResponses {
+                    antenna1,
+                    antenna2,
+                    family_envelope: alma,
+                },
+                230.0e9,
+                230.0e9,
+                7,
+            )
+            .map(|projector| {
+                (
+                    projector.normalization_support,
+                    projector.support,
+                    projector.kernel.dim(),
+                )
+            })
+            .unwrap()
+        });
+        assert_eq!(supports.map(|entry| entry.0), [29, 24, 18]);
+        assert_eq!(supports.map(|entry| entry.1), [29; 3]);
+        assert_eq!(supports.map(|entry| entry.2), [(620, 620); 3]);
+    }
+
+    #[test]
     fn weight_convolution_function_uses_casa_hetarray_weight_sum() {
         let (geometry, response) = projector_inputs();
-        let projector =
-            MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 8).expect("projector");
+        let projector = MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 230.0e9, 8)
+            .expect("projector");
         let conv_size = mosaic_convolution_size(geometry.image_shape);
         let imaging = screen_fft_temp(geometry, &response, aca_pair(), 230.0e9, conv_size, 1)
             .expect("imaging CF");
@@ -1082,19 +1185,19 @@ mod tests {
         };
         let mut additions = MosaicNormalAccumulator::with_capacity(2, 1);
         additions
-            .accumulate(0, 0, point(1.0), 1.0e9, plan, 1.0)
+            .accumulate(0, response_key(), point(1.0), 1.0e9, plan, 1.0)
             .unwrap();
         assert_eq!(
-            additions.accumulate(0, 0, point(1.0), 1.0e9, plan, 1.0),
+            additions.accumulate(0, response_key(), point(1.0), 1.0e9, plan, 1.0),
             Err(SpectralOperatorError::ResidencyOverflow)
         );
 
         let mut entries = MosaicNormalAccumulator::with_capacity(1, 2);
         entries
-            .accumulate(0, 0, point(1.0), 1.0e9, plan, 1.0)
+            .accumulate(0, response_key(), point(1.0), 1.0e9, plan, 1.0)
             .unwrap();
         assert_eq!(
-            entries.accumulate(1, 0, point(1.1), 1.0e9, plan, 1.0),
+            entries.accumulate(1, response_key(), point(1.1), 1.0e9, plan, 1.0),
             Err(SpectralOperatorError::ResidencyOverflow)
         );
     }
@@ -1157,7 +1260,7 @@ mod tests {
         let mut serial = MosaicNormalAccumulator::default();
         for (field, pointing, frequency, weight) in samples {
             serial
-                .accumulate(field, 0, pointing, frequency, plan, weight)
+                .accumulate(field, response_key(), pointing, frequency, plan, weight)
                 .expect("serial sample");
         }
         let mut left = MosaicNormalAccumulator::default();
@@ -1168,7 +1271,7 @@ mod tests {
             } else {
                 &mut right
             })
-            .accumulate(field, 0, pointing, frequency, plan, weight)
+            .accumulate(field, response_key(), pointing, frequency, plan, weight)
             .expect("partition sample");
         }
         left.merge(right).expect("deterministic merge");

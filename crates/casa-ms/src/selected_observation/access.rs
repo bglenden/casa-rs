@@ -983,6 +983,9 @@ fn project_stored_run_row(
                 antenna2: geometry_engine
                     .antenna_response_class(antenna2)
                     .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
+                family_envelope: geometry_engine
+                    .antenna_response_family_envelope()
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
             })
         }
     };

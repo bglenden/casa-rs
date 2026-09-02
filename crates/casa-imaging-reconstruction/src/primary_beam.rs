@@ -31,20 +31,16 @@ impl PreparedPrimaryBeamPower {
         m_rad: f64,
         frequency_hz: f64,
     ) -> Result<f32, SpectralOperatorError> {
-        if !l_rad.is_finite()
-            || !m_rad.is_finite()
-            || !frequency_hz.is_finite()
-            || frequency_hz <= 0.0
-        {
-            return Err(SpectralOperatorError::InvalidSample);
-        }
-        let l_deg = l_rad.to_degrees() as f32;
-        let m_deg = m_rad.to_degrees() as f32;
-        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
-        let radius_arcmin_ghz =
-            (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
-        let voltage = self.aca_table.evaluate(radius_arcmin_ghz);
-        Ok(voltage * voltage)
+        self.paired_voltage_at_offsets(
+            SelectedAntennaResponses {
+                antenna1: AntennaResponseClass::CasaAca7m,
+                antenna2: AntennaResponseClass::CasaAca7m,
+                family_envelope: AntennaResponseClass::CasaAca7m,
+            },
+            [l_rad, m_rad],
+            [l_rad, m_rad],
+            frequency_hz,
+        )
     }
 
     pub(crate) fn paired_voltage_at_offsets(
@@ -153,8 +149,9 @@ impl PreparedPrimaryBeamPower {
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        let radius_deg =
-            (offsets_rad[0].to_degrees() as f32).hypot(offsets_rad[1].to_degrees() as f32);
+        let l_deg = offsets_rad[0].to_degrees() as f32;
+        let m_deg = offsets_rad[1].to_degrees() as f32;
+        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
         let radius_arcmin_ghz =
             (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
         let table = match (class, mosaic) {
@@ -272,6 +269,7 @@ mod tests {
                     SelectedAntennaResponses {
                         antenna1: AntennaResponseClass::CasaAca7m,
                         antenna2: AntennaResponseClass::CasaAca7m,
+                        family_envelope: AntennaResponseClass::CasaAca7m,
                     },
                     [offset, 0.0],
                     [offset, 0.0],
@@ -298,6 +296,7 @@ mod tests {
         let pair = SelectedAntennaResponses {
             antenna1: AntennaResponseClass::CasaAlma12m,
             antenna2: AntennaResponseClass::CasaAca7m,
+            family_envelope: AntennaResponseClass::CasaAlma12m,
         };
         let first_offset = [0.0004, -0.0002];
         let second_offset = [-0.0001, 0.0003];
@@ -309,6 +308,7 @@ mod tests {
                 SelectedAntennaResponses {
                     antenna1: pair.antenna2,
                     antenna2: pair.antenna1,
+                    family_envelope: pair.family_envelope,
                 },
                 second_offset,
                 first_offset,

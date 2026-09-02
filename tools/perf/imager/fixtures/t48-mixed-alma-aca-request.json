@@ -1,0 +1,39 @@
+{
+  "kind": "family",
+  "request": {
+    "source_model": {
+      "kind": "analytic_components",
+      "path": "tools/perf/imager/models/t48-mixed-components.json",
+      "components": []
+    },
+    "telescope": "ACA",
+    "array_config": "tools/perf/imager/fixtures/t48-mixed-alma-aca.cfg",
+    "band": "Band 6",
+    "target_ms_size_gib": 0.02,
+    "polarizations": 2,
+    "ms_channels": 16,
+    "image_channels": 16,
+    "pointing_count": 7,
+    "field_phase_centers_rad": [
+      [4.712391234768306, -0.4014237887039714],
+      [4.712494094227909, -0.4014237887039714],
+      [4.712442664498108, -0.40134179107204826],
+      [4.712339805038504, -0.40134179107204826],
+      [4.712288375308703, -0.4014237887039714],
+      [4.712339805038504, -0.4015057863358945],
+      [4.712442664498108, -0.4015057863358945]
+    ],
+    "phase_center_rad": [4.712391234768306, -0.4014237887039714],
+    "start_frequency_hz": 230000000000.0,
+    "channel_width_hz": 1000000.0,
+    "time_sample_count": 700,
+    "integration_seconds": 10.0,
+    "start_time_mjd_seconds": 4895229577.784943,
+    "imaging_mode": "mosaic",
+    "observation_mode": "interferometric",
+    "output_ms": "target/t48-testdata/imaging/t48/t48-mixed-representative.ms",
+    "overwrite": true,
+    "measure_actual_size": true,
+    "worker_policy": "auto"
+  }
+}

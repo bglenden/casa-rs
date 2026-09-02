@@ -51,6 +51,8 @@ pub struct MsCalEngine {
     antenna_mount_alt_az: Box<[bool]>,
     /// CASA aperture response class derived from ANTENNA and OBSERVATION metadata.
     antenna_response_classes: Box<[Option<AntennaResponseClass>]>,
+    /// Largest aperture response represented by the complete antenna family.
+    antenna_response_family_envelope: Option<AntennaResponseClass>,
     /// Field phase directions (constant term, J2000).
     field_directions: Box<[MDirection]>,
     /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
@@ -174,6 +176,8 @@ impl MsCalEngine {
         let observatory_position =
             resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
         let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
+        let antenna_response_family_envelope =
+            casa_alma_aca_family_envelope(&antenna_response_classes);
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
@@ -194,6 +198,7 @@ impl MsCalEngine {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
             antenna_response_classes,
+            antenna_response_family_envelope,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             observatory_position,
@@ -251,6 +256,8 @@ impl MsCalEngine {
         let observatory_position =
             resolve_observatory_position_selected(ms, &antenna_positions, measures.as_ref());
         let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
+        let antenna_response_family_envelope =
+            casa_alma_aca_family_envelope(&antenna_response_classes);
         let field = ms.field()?;
         let mut field_directions = Vec::with_capacity(field.row_count());
         let mut field_phase_offsets = Vec::with_capacity(field.row_count());
@@ -270,6 +277,7 @@ impl MsCalEngine {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
             antenna_response_classes,
+            antenna_response_family_envelope,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             observatory_position,
@@ -290,6 +298,11 @@ impl MsCalEngine {
             .get(antenna_id)
             .copied()
             .flatten()
+    }
+
+    /// Return the family-wide aperture envelope used by CASA for shared crops.
+    pub(crate) const fn antenna_response_family_envelope(&self) -> Option<AntennaResponseClass> {
+        self.antenna_response_family_envelope
     }
 
     /// Create an engine with explicit data (useful for testing).
@@ -313,6 +326,7 @@ impl MsCalEngine {
             antenna_mount_alt_az,
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_response_classes,
+            antenna_response_family_envelope: None,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
             observatory_position,
@@ -1178,6 +1192,18 @@ fn casa_alma_aca_response_classes(
         })
         .collect::<MsResult<Vec<_>>>()
         .map(Vec::into_boxed_slice)
+}
+
+fn casa_alma_aca_family_envelope(
+    classes: &[Option<AntennaResponseClass>],
+) -> Option<AntennaResponseClass> {
+    if classes.contains(&Some(AntennaResponseClass::CasaAlma12m)) {
+        Some(AntennaResponseClass::CasaAlma12m)
+    } else if classes.contains(&Some(AntennaResponseClass::CasaAca7m)) {
+        Some(AntennaResponseClass::CasaAca7m)
+    } else {
+        None
+    }
 }
 
 fn uvw_rotation_matrix(
