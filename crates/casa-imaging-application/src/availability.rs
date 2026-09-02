@@ -413,32 +413,17 @@ pub fn validate_installed_implementation(
     if !matches!(problem.inputs().model(), ModelStateIdentity::Empty) {
         unsupported.push(UnsupportedRequirement::EmptyInitialModel);
     }
-    let installed_response = matches!(
-        (
-            problem
-                .science()
-                .measurement_equation()
-                .instrument_response(),
-            problem.science().instrument_model(),
-            problem.reconstruction().basis(),
-            matches!(
-                problem.geometry().centres().pointing(),
-                casa_imaging_model::PointingCentreLaw::Observation(_)
-            ),
+    let installed_response = instrument_response_is_installed(
+        problem
+            .science()
+            .measurement_equation()
+            .instrument_response(),
+        problem.science().instrument_model(),
+        problem.reconstruction().basis(),
+        matches!(
+            problem.geometry().centres().pointing(),
+            casa_imaging_model::PointingCentreLaw::Observation(_)
         ),
-        (InstrumentResponse::Scalar, None, _, _)
-            | (
-                InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
-                ReconstructionBasis::TaylorViaChannelMajor { .. },
-                false,
-            )
-            | (
-                InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
-                ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. },
-                true,
-            )
     );
     if !installed_response {
         unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
@@ -450,6 +435,30 @@ pub fn validate_installed_implementation(
     } else {
         Err(ImplementationUnavailable { unsupported })
     }
+}
+
+fn instrument_response_is_installed(
+    response: InstrumentResponse,
+    model: Option<InstrumentModel>,
+    basis: ReconstructionBasis,
+    observation_pointing: bool,
+) -> bool {
+    matches!(
+        (response, model, basis, observation_pointing),
+        (InstrumentResponse::Scalar, None, _, _)
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
+                ReconstructionBasis::TaylorViaChannelMajor { .. },
+                false,
+            )
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
+                ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. },
+                true,
+            )
+    )
 }
 
 fn coupled_basis_requires_independent_polarization(
@@ -567,6 +576,34 @@ mod tests {
     #[test]
     fn t41_primary_beam_response_is_installed_at_the_application_boundary() {
         assert!(supports_capability(RequiredCapability::PrimaryBeamResponse));
+    }
+
+    #[test]
+    fn direct_and_heterogeneous_primary_beams_have_disjoint_installed_routes() {
+        assert!(instrument_response_is_installed(
+            InstrumentResponse::PrimaryBeam,
+            Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
+            ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 2,
+                channels: 16,
+            },
+            false,
+        ));
+        assert!(!instrument_response_is_installed(
+            InstrumentResponse::PrimaryBeam,
+            Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
+            ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 2,
+                channels: 16,
+            },
+            false,
+        ));
+        assert!(instrument_response_is_installed(
+            InstrumentResponse::PrimaryBeam,
+            Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
+            ReconstructionBasis::Constant,
+            true,
+        ));
     }
 
     #[test]

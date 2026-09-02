@@ -1721,10 +1721,14 @@ fn scientific_instrument_model(
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
     let telescope_names = telescopes.iter().map(String::as_str).collect::<Vec<_>>();
-    let supported_telescope = !telescope_names.is_empty()
-        && telescope_names
-            .iter()
-            .all(|name| matches!(*name, "ALMA" | "ACA"));
+    let supported_telescope = if mosaic {
+        !telescope_names.is_empty()
+            && telescope_names
+                .iter()
+                .all(|name| matches!(*name, "ALMA" | "ACA"))
+    } else {
+        telescope_names == ["ALMA"]
+    };
     if !supported_telescope {
         return Err(boxed(format!(
             "primary-beam response requires ALMA/ACA observation metadata; found {telescopes:?}"
@@ -1737,7 +1741,13 @@ fn scientific_instrument_model(
         ));
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"casa-rs-instrument-reference/casa-alma-aca-heterogeneous-response-v1");
+    let instrument_model = if mosaic {
+        hasher.update(b"casa-rs-instrument-reference/casa-alma-aca-heterogeneous-response-v1");
+        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+    } else {
+        hasher.update(b"casa-rs-instrument-reference/casa-aca7m-direct-pb-v1");
+        InstrumentModel::CasaAca7mInterferometricDirectPbV1
+    };
     hasher.update((telescopes.len() as u64).to_le_bytes());
     for telescope in &telescopes {
         hasher.update((telescope.len() as u64).to_le_bytes());
@@ -1746,18 +1756,32 @@ fn scientific_instrument_model(
     hasher.update((antenna.row_count() as u64).to_le_bytes());
     for row in 0..antenna.row_count() {
         let diameter = antenna.dish_diameter(row)?;
-        let supported_diameter = (diameter - 12.0).abs() < 0.5 || (diameter - 7.0).abs() < 1.0;
-        if !diameter.is_finite() || !supported_diameter {
+        let supported_diameter = instrument_model_supports_diameter(mosaic, diameter);
+        if !supported_diameter {
+            let expected = if mosaic {
+                "CASA 12 m or 7 m antenna classes"
+            } else {
+                "one homogeneous ACA 7 m antenna class"
+            };
             return Err(boxed(format!(
-                "ALMA/ACA response requires CASA 12 m or 7 m antenna classes; row {row} has diameter {diameter} m"
+                "ALMA/ACA response requires {expected}; row {row} has diameter {diameter} m"
             )));
         }
         hasher.update(diameter.to_bits().to_le_bytes());
     }
     Ok(Some((
-        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+        instrument_model,
         LogicalIdentity::from_sha256(hasher.finalize().into()),
     )))
+}
+
+fn instrument_model_supports_diameter(mosaic: bool, diameter_m: f64) -> bool {
+    diameter_m.is_finite()
+        && if mosaic {
+            (diameter_m - 12.0).abs() < 0.5 || (diameter_m - 7.0).abs() < 1.0
+        } else {
+            (6.0..8.0).contains(&diameter_m)
+        }
 }
 
 fn analytic_primary_beam_model_for_telescopes(
@@ -2935,9 +2959,9 @@ mod tests {
 
     use super::{
         ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
-        canonicalize_polarizations, image_coordinates, image_reference_pixel, model_plane_samples,
-        parse_phase_center_direction, planned_minor_cycle_bytes, requested_products,
-        resource_policy_for_task_requirements,
+        canonicalize_polarizations, image_coordinates, image_reference_pixel,
+        instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
+        planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
     };
 
     #[test]
@@ -3058,6 +3082,14 @@ mod tests {
         assert!(
             analytic_primary_beam_model_for_telescopes(&std::collections::BTreeSet::new()).is_err()
         );
+    }
+
+    #[test]
+    fn non_mosaic_direct_pb_accepts_only_the_homogeneous_aca7m_class() {
+        assert!(instrument_model_supports_diameter(false, 7.0));
+        assert!(!instrument_model_supports_diameter(false, 12.0));
+        assert!(instrument_model_supports_diameter(true, 7.0));
+        assert!(instrument_model_supports_diameter(true, 12.0));
     }
 
     #[test]

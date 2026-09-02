@@ -828,7 +828,7 @@ impl SpectralOperatorSpecification {
             (InstrumentResponse::Scalar, None, _, false) => {}
             (
                 InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
+                Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
                 SpectralBasisPlan::TaylorViaChannelMajor(_),
                 false,
             ) => {}
@@ -4939,22 +4939,28 @@ impl SpectralSlabOperator {
                 && matches!(basis, SpectralBasisPlan::Joint { .. }))
             .then(|| plane_grids(slab.total_channels() * polarization_count)),
             reused_normal_state: None,
-            primary_beam: instrument_model.map(
-                |InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1| {
-                    let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
-                        geometry.reference_pixel,
-                        geometry.increment_rad,
-                        geometry.image_shape,
-                        if mosaic { 0.0 } else { primary_beam_cutoff },
-                    )
-                    .expect("compiled response geometry is valid");
-                    if mosaic {
-                        response.with_casa_aca_hetarray_convolution()
+            primary_beam: instrument_model.map(|instrument_model| {
+                let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
+                    geometry.reference_pixel,
+                    geometry.increment_rad,
+                    geometry.image_shape,
+                    if matches!(
+                        instrument_model,
+                        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                    ) {
+                        0.0
                     } else {
-                        response
+                        primary_beam_cutoff
+                    },
+                )
+                .expect("compiled response geometry is valid");
+                match instrument_model {
+                    InstrumentModel::CasaAca7mInterferometricDirectPbV1 => response,
+                    InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => {
+                        response.with_casa_aca_hetarray_convolution()
                     }
-                },
-            ),
+                }
+            }),
             mosaic_normal: mosaic.then(|| {
                 (0..normal_moments)
                     .map(|_| {

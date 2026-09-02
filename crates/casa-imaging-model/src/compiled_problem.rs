@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 18;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 19;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -450,6 +450,9 @@ pub enum InstrumentResponse {
 /// identities cannot silently change meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InstrumentModel {
+    /// CASA-compatible direct scalar power response for a homogeneous ACA
+    /// 7 m interferometric array, version 1.
+    CasaAca7mInterferometricDirectPbV1,
     /// CASA-compatible paired voltage response for heterogeneous ALMA 12 m
     /// and ACA 7 m interferometric baselines, version 1.
     CasaAlmaAcaHeterogeneousInterferometricResponseV1,
@@ -2155,7 +2158,10 @@ fn validate_science(
         (InstrumentResponse::Scalar, None)
             | (
                 InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
+                Some(
+                    InstrumentModel::CasaAca7mInterferometricDirectPbV1
+                        | InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                )
             )
     ) {
         return Err(CompileProblemError::InvalidScientificContract {
@@ -3306,6 +3312,7 @@ fn encode_instrument_model(encoder: &mut CanonicalEncoder, model: Option<Instrum
 
 const fn instrument_model_tag(model: InstrumentModel) -> u8 {
     match model {
+        InstrumentModel::CasaAca7mInterferometricDirectPbV1 => 3,
         // Tag 1 is reserved for the retired homogeneous direct-PB v1 model.
         InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => 2,
     }
@@ -3410,6 +3417,10 @@ mod encoding_tests {
                 InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
             ),
             2
+        );
+        assert_eq!(
+            instrument_model_tag(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
+            3
         );
     }
 }

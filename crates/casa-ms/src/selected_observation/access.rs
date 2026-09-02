@@ -983,6 +983,13 @@ fn project_stored_run_row(
     ];
     let antenna_responses = match problem.science().instrument_model() {
         None => None,
+        Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
+            Some(SelectedAntennaResponses {
+                antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+                antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+                family_envelope: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            })
+        }
         Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1) => {
             Some(SelectedAntennaResponses {
                 antenna1: geometry_engine
