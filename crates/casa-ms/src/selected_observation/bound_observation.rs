@@ -1863,13 +1863,15 @@ pub enum SelectedObservationTraversalError<E> {
     MeasurementOverflow,
 }
 
-impl<E> fmt::Display for SelectedObservationTraversalError<E> {
+impl<E: fmt::Display> fmt::Display for SelectedObservationTraversalError<E> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Binding(error) => error.fmt(formatter),
             Self::Source(error) => error.fmt(formatter),
             Self::Inspection(error) => error.fmt(formatter),
-            Self::Consumer(_) => formatter.write_str("selected-observation consumer failed"),
+            Self::Consumer(error) => {
+                write!(formatter, "selected-observation consumer failed: {error}")
+            }
             Self::TraversalIdentityExhausted => {
                 formatter.write_str("selected-observation traversal identity exhausted")
             }

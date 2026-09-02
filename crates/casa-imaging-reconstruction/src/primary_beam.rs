@@ -7,10 +7,13 @@ use casa_numerics::AnnularApertureVoltageTable;
 use crate::SpectralOperatorError;
 
 const CASA_ALMA_ACA_DIRECT_PB_SUPPORT_ARCMIN_GHZ: f64 = 3.568 * 60.0;
+const CASA_ACA_HETARRAY_MINIMUM_RADIUS_ARCSEC: f64 = 300.0;
+const CASA_ACA_HETARRAY_REFERENCE_FREQUENCY_GHZ: f64 = 100.0;
 
 #[derive(Clone)]
 pub(crate) struct PreparedPrimaryBeamPower {
     table: AnnularApertureVoltageTable,
+    mosaic_convolution_table: Option<AnnularApertureVoltageTable>,
     reference_pixel: [f64; 2],
     increment_rad: [f64; 2],
     pc: [[f64; 2]; 2],
@@ -19,6 +22,54 @@ pub(crate) struct PreparedPrimaryBeamPower {
 }
 
 impl PreparedPrimaryBeamPower {
+    pub(crate) fn power_at_offsets(
+        &self,
+        l_rad: f64,
+        m_rad: f64,
+        frequency_hz: f64,
+    ) -> Result<f32, SpectralOperatorError> {
+        if !l_rad.is_finite()
+            || !m_rad.is_finite()
+            || !frequency_hz.is_finite()
+            || frequency_hz <= 0.0
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let l_deg = l_rad.to_degrees() as f32;
+        let m_deg = m_rad.to_degrees() as f32;
+        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
+        let radius_arcmin_ghz =
+            (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+        let voltage = self.table.evaluate(radius_arcmin_ghz);
+        Ok(voltage * voltage)
+    }
+
+    pub(crate) fn mosaic_convolution_power_at_offsets(
+        &self,
+        l_rad: f64,
+        m_rad: f64,
+        frequency_hz: f64,
+    ) -> Result<f32, SpectralOperatorError> {
+        if !l_rad.is_finite()
+            || !m_rad.is_finite()
+            || !frequency_hz.is_finite()
+            || frequency_hz <= 0.0
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let l_deg = l_rad.to_degrees() as f32;
+        let m_deg = m_rad.to_degrees() as f32;
+        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
+        let radius_arcmin_ghz =
+            (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+        let table = self
+            .mosaic_convolution_table
+            .as_ref()
+            .ok_or(SpectralOperatorError::ProblemMismatch)?;
+        let voltage = table.evaluate(radius_arcmin_ghz);
+        Ok(voltage * voltage)
+    }
+
     pub(crate) fn casa_alma_aca_interferometric_direct(
         reference_pixel: [f64; 2],
         increment_rad: [f64; 2],
@@ -34,6 +85,7 @@ impl PreparedPrimaryBeamPower {
                 0.75,
                 CASA_ALMA_ACA_DIRECT_PB_SUPPORT_ARCMIN_GHZ,
             ),
+            mosaic_convolution_table: None,
             reference_pixel,
             increment_rad,
             pc: [[1.0, 0.0], [0.0, 1.0]],
@@ -42,34 +94,64 @@ impl PreparedPrimaryBeamPower {
         })
     }
 
+    pub(crate) fn with_casa_aca_hetarray_convolution(mut self) -> Self {
+        let field_of_view_arcsec = self
+            .shape
+            .into_iter()
+            .zip(self.increment_rad)
+            .map(|(pixels, increment)| (pixels as f64 * increment.abs()).to_degrees() * 3_600.0)
+            .fold(0.0_f64, f64::max);
+        let maximum_radius_arcsec =
+            CASA_ACA_HETARRAY_MINIMUM_RADIUS_ARCSEC.max(field_of_view_arcsec / 3.0);
+        let maximum_radius_arcmin_ghz =
+            maximum_radius_arcsec * CASA_ACA_HETARRAY_REFERENCE_FREQUENCY_GHZ / 60.0;
+        self.mosaic_convolution_table = Some(AnnularApertureVoltageTable::new(
+            6.25,
+            0.75,
+            maximum_radius_arcmin_ghz,
+        ));
+        self
+    }
+
+    pub(crate) const fn casa_aca_mosaic_retained_table_bytes() -> usize {
+        2 * AnnularApertureVoltageTable::table_resident_bytes()
+    }
+
     pub(crate) fn fill_power_plane_into(
         &self,
         frequency_hz: f64,
         output: &mut [f32],
     ) -> Result<(), SpectralOperatorError> {
+        self.fill_power_plane_at_pixel(frequency_hz, self.reference_pixel, output)
+    }
+
+    pub(crate) fn fill_power_plane_at_pixel(
+        &self,
+        frequency_hz: f64,
+        pointing_pixel: [f64; 2],
+        output: &mut [f32],
+    ) -> Result<(), SpectralOperatorError> {
         let cells = self.shape[0]
             .checked_mul(self.shape[1])
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        if output.len() != cells || !frequency_hz.is_finite() || frequency_hz <= 0.0 {
+        if output.len() != cells
+            || !frequency_hz.is_finite()
+            || frequency_hz <= 0.0
+            || pointing_pixel.iter().any(|value| !value.is_finite())
+        {
             return Err(SpectralOperatorError::InvalidSample);
         }
         let mut maximum = 0.0_f32;
         for x in 0..self.shape[0] {
-            let pixel_x = x as f64 - self.reference_pixel[0];
+            let pixel_x = x as f64 - pointing_pixel[0];
             for y in 0..self.shape[1] {
-                let pixel_y = y as f64 - self.reference_pixel[1];
+                let pixel_y = y as f64 - pointing_pixel[1];
                 let axis_x = pixel_x * self.increment_rad[0];
                 let axis_y = pixel_y * self.increment_rad[1];
                 let l_rad = self.pc[0][0] * axis_x + self.pc[0][1] * axis_y;
                 let m_rad = self.pc[1][0] * axis_x + self.pc[1][1] * axis_y;
                 // PBMath1D stores the two angular offsets and radius as Float.
-                let l_deg = l_rad.to_degrees() as f32;
-                let m_deg = m_rad.to_degrees() as f32;
-                let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
-                let radius_arcmin_ghz =
-                    (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
-                let voltage = self.table.evaluate(radius_arcmin_ghz);
-                let power = voltage * voltage;
+                let power = self.power_at_offsets(l_rad, m_rad, frequency_hz)?;
                 output[x * self.shape[1] + y] = power;
                 maximum = maximum.max(power);
             }
@@ -110,6 +192,35 @@ mod tests {
         assert_eq!(plane[4 * 8 + 4], 1.0);
         assert!(plane.iter().all(|value| value.is_finite()));
         assert!(plane[0] < 1.0);
+    }
+
+    #[test]
+    fn aca_mosaic_convolution_uses_hetarray_support_without_widening_direct_pb() {
+        let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
+            [256.0, 256.0],
+            [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+            [512, 512],
+            0.0,
+        )
+        .expect("direct response")
+        .with_casa_aca_hetarray_convolution();
+        let offset = 0.05_f64.to_radians();
+        assert_eq!(
+            response
+                .power_at_offsets(offset, 0.0, 100.0e9)
+                .expect("direct power"),
+            0.0
+        );
+        assert!(
+            response
+                .mosaic_convolution_power_at_offsets(offset, 0.0, 100.0e9)
+                .expect("convolution power")
+                > 0.0
+        );
+        assert_eq!(
+            PreparedPrimaryBeamPower::casa_aca_mosaic_retained_table_bytes(),
+            80_000
+        );
     }
 
     #[test]

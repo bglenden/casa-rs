@@ -25,7 +25,7 @@ use casa_imaging_model::{
     SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn,
     WeightColumn,
 };
-use casa_types::measures::direction::DirectionRef;
+use casa_types::measures::direction::{DirectionRef, MDirection};
 use thiserror::Error;
 
 use super::bound_observation::SelectedObservationTraversalMeasurementsBuilder;
@@ -1842,11 +1842,14 @@ fn evaluate_row_geometry(
             Some(evaluate_phase_centre_projection(
                 source,
                 stored,
-                field_id,
                 observation_direction,
-                domain.psf_phase_centre(),
-                domain.facets().len() > 1,
-                moving_direction_shift,
+                PhaseCentreProjectionRequest {
+                    field_id,
+                    target_direction: domain.psf_phase_centre(),
+                    project_to_observation_plane: domain.facets().len() > 1,
+                    moving_direction_shift,
+                    uvw_law: problem.geometry().uvw(),
+                },
             )?)
         };
         for (facet_ordinal, facet) in domain.facets().iter().enumerate() {
@@ -1860,11 +1863,14 @@ fn evaluate_row_geometry(
             let model = evaluate_phase_centre_projection(
                 source,
                 stored,
-                field_id,
                 observation_direction,
-                model_phase_centre,
-                domain.facets().len() > 1,
-                moving_direction_shift,
+                PhaseCentreProjectionRequest {
+                    field_id,
+                    target_direction: model_phase_centre,
+                    project_to_observation_plane: domain.facets().len() > 1,
+                    moving_direction_shift,
+                    uvw_law: problem.geometry().uvw(),
+                },
             )?;
             let projection = match distinct_psf {
                 Some(psf) => SelectedImageDomainProjection::new_facet(
@@ -1895,54 +1901,74 @@ fn evaluate_row_geometry(
     })
 }
 
-fn evaluate_phase_centre_projection(
-    source: &BoundObservationSource,
-    stored: SelectedStoredSample,
-    _field_id: usize,
-    observation_direction: SkyDirection,
+struct PhaseCentreProjectionRequest {
+    field_id: usize,
     target_direction: SkyDirection,
     project_to_observation_plane: bool,
     moving_direction_shift: Option<[f64; 2]>,
+    uvw_law: casa_imaging_model::UvwCoordinateLaw,
+}
+
+fn evaluate_phase_centre_projection(
+    source: &BoundObservationSource,
+    stored: SelectedStoredSample,
+    observation_direction: SkyDirection,
+    request: PhaseCentreProjectionRequest,
 ) -> Result<SelectedPhaseCentreProjection, BoundObservationSourceError> {
     let mut target_angles = source.geometry_engine.direction_angles_j2000(
         stored.time_mjd_seconds(),
         [
-            target_direction.longitude_rad(),
-            target_direction.latitude_rad(),
+            request.target_direction.longitude_rad(),
+            request.target_direction.latitude_rad(),
         ],
-        direction_ref(target_direction.frame()),
+        direction_ref(request.target_direction.frame()),
     )?;
-    if let Some([longitude, latitude]) = moving_direction_shift {
+    if let Some([longitude, latitude]) = request.moving_direction_shift {
         target_angles[0] += longitude;
         target_angles[1] += latitude;
     }
     let target_j2000 = SkyDirection::new(DirectionFrame::J2000, target_angles[0], target_angles[1]);
-    let (transformed_uvw_m, phase_shift_m) =
-        if target_j2000 == observation_direction && !project_to_observation_plane {
-            (stored.uvw_m(), 0.0)
-        } else if project_to_observation_plane {
-            source
-                .geometry_engine
-                .reproject_raw_uvw_for_faceted_gridft_between_j2000_directions(
-                    stored.uvw_m(),
-                    [
-                        observation_direction.longitude_rad(),
-                        observation_direction.latitude_rad(),
-                    ],
-                    target_angles,
-                )?
-        } else {
-            source
-                .geometry_engine
-                .reproject_raw_uvw_for_gridft_between_j2000_directions(
-                    stored.uvw_m(),
-                    [
-                        observation_direction.longitude_rad(),
-                        observation_direction.latitude_rad(),
-                    ],
-                    target_angles,
-                )?
-        };
+    let (transformed_uvw_m, phase_shift_m) = if matches!(
+        request.uvw_law,
+        casa_imaging_model::UvwCoordinateLaw::MosaicPhaseTrackingCentre
+    ) {
+        if request.project_to_observation_plane {
+            return Err(BoundObservationSourceError::InvalidRowGeometry);
+        }
+        let target = MDirection::from_angles(
+            target_j2000.longitude_rad(),
+            target_j2000.latitude_rad(),
+            DirectionRef::J2000,
+        );
+        let (uvw_m, casa_dphase_m) = source
+            .geometry_engine
+            .reproject_raw_uvw_for_mosaic_to_direction(stored.uvw_m(), request.field_id, &target)?;
+        (uvw_m, -casa_dphase_m)
+    } else if target_j2000 == observation_direction && !request.project_to_observation_plane {
+        (stored.uvw_m(), 0.0)
+    } else if request.project_to_observation_plane {
+        source
+            .geometry_engine
+            .reproject_raw_uvw_for_faceted_gridft_between_j2000_directions(
+                stored.uvw_m(),
+                [
+                    observation_direction.longitude_rad(),
+                    observation_direction.latitude_rad(),
+                ],
+                target_angles,
+            )?
+    } else {
+        source
+            .geometry_engine
+            .reproject_raw_uvw_for_gridft_between_j2000_directions(
+                stored.uvw_m(),
+                [
+                    observation_direction.longitude_rad(),
+                    observation_direction.latitude_rad(),
+                ],
+                target_angles,
+            )?
+    };
     SelectedPhaseCentreProjection::new(transformed_uvw_m, phase_shift_m)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)
 }

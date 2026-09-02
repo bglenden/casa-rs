@@ -688,13 +688,23 @@ fn run_two_domain_round(
     let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
     for run in &runs {
         density
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("density sample");
     }
     let mut sum_weight = density.finish(problem).expect("sum-weight phase");
     for run in &runs {
         sum_weight
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("sum-weight sample");
     }
     let generation = sum_weight.finish().expect("weighting generation");
@@ -704,7 +714,12 @@ fn run_two_domain_round(
     let mut blocks = Vec::new();
     for run in &runs {
         if let Some(block) = replay
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("replay sample")
         {
             blocks.push(block);
@@ -775,13 +790,23 @@ fn rerun_two_domain_with_masks(
     let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
     for run in &runs {
         density
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("density sample");
     }
     let mut sum_weight = density.finish(problem).expect("sum-weight phase");
     for run in &runs {
         sum_weight
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("sum-weight sample");
     }
     let generation = sum_weight.finish().expect("weighting generation");
@@ -791,7 +816,12 @@ fn rerun_two_domain_with_masks(
     let mut blocks = Vec::new();
     for run in &runs {
         if let Some(block) = replay
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("replay sample")
         {
             blocks.push(block);
@@ -839,11 +869,21 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, sample, contributions(sample))?;
+        density.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            contributions(sample),
+        )?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, sample, contributions(sample))?;
+        sum_weight.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            contributions(sample),
+        )?;
     }
     sum_weight.finish()
 }
@@ -861,7 +901,12 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, sample, contributions(sample))
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                contributions(sample),
+            )
             .expect("weight sample")
         {
             blocks.push(block);

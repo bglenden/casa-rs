@@ -516,6 +516,7 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::Residual => {
+                let validity = self.normalized_image_validity();
                 for term in self.residual_terms() {
                     self.add_image(
                         domain_index,
@@ -526,7 +527,7 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::JyPerBeam,
                         Some(self.products.normalization()),
                         ProductBeamRule::Fitted,
-                        ProductValidityRule::FinalNormalState,
+                        validity,
                         [],
                     );
                 }
@@ -548,6 +549,7 @@ impl<'a> GraphBuilder<'a> {
                 }
             }
             ProductKind::RestoredImage => {
+                let validity = self.normalized_image_validity();
                 for term in self.restored_terms() {
                     let residual = if matches!(
                         self.reconstruction.basis(),
@@ -570,7 +572,7 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::JyPerBeam,
                         Some(self.products.normalization()),
                         ProductBeamRule::Restoring(self.products.restoring_beam()),
-                        ProductValidityRule::FinalNormalState,
+                        validity,
                         dependencies,
                     );
                 }
@@ -650,7 +652,7 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::Dimensionless,
                         None,
                         ProductBeamRule::None,
-                        ProductValidityRule::All,
+                        ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam()),
                         [],
                     );
                     if term == self.primary_beam_term() {
@@ -831,6 +833,15 @@ impl<'a> GraphBuilder<'a> {
                     ProductBeamRule::Metadata(self.products.restoring_beam()),
                     dependencies,
                 );
+            }
+        }
+    }
+
+    fn normalized_image_validity(&self) -> ProductValidityRule {
+        match self.products.normalization() {
+            ProductNormalization::UnitResponse => ProductValidityRule::FinalNormalState,
+            ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
+                ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
             }
         }
     }

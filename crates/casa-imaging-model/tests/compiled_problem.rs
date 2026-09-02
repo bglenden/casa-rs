@@ -519,7 +519,10 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         restored.beam(),
         ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
     );
-    assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
+    assert_eq!(
+        restored.validity(),
+        ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
+    );
     assert_eq!(restored.schema(), ProductSchema::ImageF32V1);
 
     let spectral_index = graph
@@ -702,6 +705,13 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
             .node_id()]
     );
     assert!(!graph.publication().members().contains(&pb_alpha.node_id()));
+    assert_eq!(
+        graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+            .expect("primary-beam Taylor-zero product")
+            .validity(),
+        ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
+    );
     assert!(
         graph
             .nodes()

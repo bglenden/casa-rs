@@ -412,6 +412,47 @@ fn bounded_replay_retains_mosaic_routing_facts() {
     );
 }
 
+#[test]
+fn natural_replay_retains_source_frequency_and_weight_without_an_output_stencil() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let sample = exact_samples(&problem).remove(0);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("single-sample limits"),
+    )
+    .expect("natural weighting plan");
+    let output_frame_frequency_hz = 1.234_567_89e9;
+    let mut stream = begin_natural_weighting_stream(&problem, &plan).expect("natural stream");
+
+    let emitted = stream
+        .consume(
+            &problem,
+            &sample,
+            output_frame_frequency_hz,
+            SelectedSpectralContributions::empty(),
+        )
+        .expect("retain a source sample without an output stencil");
+    let (final_block, _, _) = stream.finish().expect("finish natural stream");
+    let block = emitted
+        .or(final_block)
+        .expect("one retained weighted sample");
+    let weighted = &block.samples()[0];
+
+    assert_eq!(
+        weighted.selected().output_frame_frequency_hz().to_bits(),
+        output_frame_frequency_hz.to_bits()
+    );
+    assert_eq!(
+        weighted.source_imaging_weight(),
+        Some(f64::from(sample.input_weight))
+    );
+    assert_eq!(weighted.spectral_values().count(), 0);
+}
+
 fn freeze_weighting_generation(
     problem: &casa_imaging_model::CompiledProblem,
     plan: &casa_imaging_reconstruction::WeightingPlan,
@@ -419,11 +460,21 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, casa_imaging_reconstruction::WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, sample, exact_contributions(sample))?;
+        density.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            exact_contributions(sample),
+        )?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, sample, exact_contributions(sample))?;
+        sum_weight.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            exact_contributions(sample),
+        )?;
     }
     sum_weight.finish()
 }
@@ -440,7 +491,12 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, sample, exact_contributions(sample))
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
             .expect("weight sample")
         {
             blocks.push(block);
@@ -474,7 +530,7 @@ fn replay_with_evaluation_frequency(
         ])
         .expect("one shifted-frame contribution");
         phase
-            .consume(problem, sample, contributions)
+            .consume(problem, sample, evaluation_frequency_hz, contributions)
             .expect("weight shifted-frame sample");
     }
     phase.finish().expect("finish shifted-frame replay").1
@@ -512,6 +568,7 @@ fn grouped_weighting(
             .consume(
                 problem,
                 sample.as_view().with_input_weight_group(group),
+                sample.address.frequency_centre_hz,
                 exact_contributions(sample),
             )
             .expect("grouped density sample");
@@ -522,6 +579,7 @@ fn grouped_weighting(
             .consume(
                 problem,
                 sample.as_view().with_input_weight_group(group),
+                sample.address.frequency_centre_hz,
                 exact_contributions(sample),
             )
             .expect("grouped sum-weight sample");
@@ -537,6 +595,7 @@ fn grouped_weighting(
             .consume(
                 problem,
                 sample.as_view().with_input_weight_group(group),
+                sample.address.frequency_centre_hz,
                 exact_contributions(sample),
             )
             .expect("grouped replay sample")
@@ -572,7 +631,12 @@ fn fused_stream(
         let mut density = begin_weighting_generation(problem, plan).expect("begin density pass");
         for sample in samples {
             density
-                .consume(problem, sample, exact_contributions(sample))
+                .consume(
+                    problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
                 .expect("density sample");
         }
         density
@@ -582,7 +646,12 @@ fn fused_stream(
     let mut blocks = Vec::new();
     for sample in samples {
         if let Some(block) = stream
-            .consume(problem, sample, exact_contributions(sample))
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
             .expect("fused weighted sample")
         {
             blocks.push(block);
@@ -848,26 +917,51 @@ fn fit_only_samples_cannot_change_density_dependent_output_weights() {
     let output_weight = |include_fit_only: bool| {
         let mut density = begin_weighting_generation(&problem, &plan).expect("density");
         density
-            .consume(&problem, &target, exact_contributions(&target))
+            .consume(
+                &problem,
+                &target,
+                target.address.frequency_centre_hz,
+                exact_contributions(&target),
+            )
             .expect("target density");
         if include_fit_only {
             density
-                .consume(&problem, &fit_only, SelectedSpectralContributions::empty())
+                .consume(
+                    &problem,
+                    &fit_only,
+                    fit_only.address.frequency_centre_hz,
+                    SelectedSpectralContributions::empty(),
+                )
                 .expect("fit-only density exclusion");
         }
         let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
         sum_weight
-            .consume(&problem, &target, exact_contributions(&target))
+            .consume(
+                &problem,
+                &target,
+                target.address.frequency_centre_hz,
+                exact_contributions(&target),
+            )
             .expect("target sum weight");
         if include_fit_only {
             sum_weight
-                .consume(&problem, &fit_only, SelectedSpectralContributions::empty())
+                .consume(
+                    &problem,
+                    &fit_only,
+                    fit_only.address.frequency_centre_hz,
+                    SelectedSpectralContributions::empty(),
+                )
                 .expect("fit-only sum-weight exclusion");
         }
         let generation = sum_weight.finish().expect("freeze weighting");
         let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
         replay
-            .consume(&problem, &target, exact_contributions(&target))
+            .consume(
+                &problem,
+                &target,
+                target.address.frequency_centre_hz,
+                exact_contributions(&target),
+            )
             .expect("target replay")
             .expect("single-sample block")
             .samples()[0]
@@ -1045,7 +1139,12 @@ fn derived_coverage_preserves_encoded_identity_across_block_shapes_and_rejects_m
             .expect("authorize matching frozen state and transform");
         for sample in &samples {
             phase
-                .consume(&problem, sample, exact_contributions(sample))
+                .consume(
+                    &problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
                 .expect("derive weighted sample");
         }
         let (_, summary) = phase.finish().expect("finish derived replay");
@@ -1147,7 +1246,12 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             fused
-                .consume(&problem, sample, exact_contributions(sample))
+                .consume(
+                    &problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
                 .expect("first fused block")
         })
         .expect("full first fused block");
@@ -1159,7 +1263,12 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             fused
-                .consume(&problem, sample, exact_contributions(sample))
+                .consume(
+                    &problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
                 .expect("second fused block")
         })
         .expect("full second fused block");
@@ -1174,7 +1283,12 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             replay
-                .consume(&problem, sample, exact_contributions(sample))
+                .consume(
+                    &problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
                 .expect("first replay block")
         })
         .expect("full first replay block");
@@ -1186,7 +1300,12 @@ fn fused_and_replay_streams_reuse_returned_weighted_block_storage() {
         .iter()
         .find_map(|sample| {
             replay
-                .consume(&problem, sample, exact_contributions(sample))
+                .consume(
+                    &problem,
+                    sample,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
                 .expect("second replay block")
         })
         .expect("full second replay block");
@@ -1247,6 +1366,7 @@ fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
                 .consume(
                     &problem,
                     sample.as_view().with_input_weight_group(group),
+                    sample.address.frequency_centre_hz,
                     exact_contributions(sample),
                 )
                 .expect("fused sample")
@@ -1272,6 +1392,7 @@ fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
             .consume(
                 &problem,
                 sample.as_view().with_input_weight_group(group),
+                sample.address.frequency_centre_hz,
                 exact_contributions(sample),
             )
             .expect("replay sample")
@@ -1381,16 +1502,31 @@ fn linear_contribution_coefficients_drive_per_output_density_and_replay() {
     .expect("plan");
     let mut density = begin_weighting_generation(&problem, &plan).expect("density");
     density
-        .consume(&problem, &sample, contributions.clone())
+        .consume(
+            &problem,
+            &sample,
+            sample.address.frequency_centre_hz,
+            contributions.clone(),
+        )
         .expect("accumulate split density");
     let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
     sum_weight
-        .consume(&problem, &sample, contributions.clone())
+        .consume(
+            &problem,
+            &sample,
+            sample.address.frequency_centre_hz,
+            contributions.clone(),
+        )
         .expect("accumulate split sum weights");
     let generation = sum_weight.finish().expect("freeze split generation");
     let mut replay = generation.begin_replay(&problem, &plan).expect("replay");
     let block = replay
-        .consume(&problem, &sample, contributions)
+        .consume(
+            &problem,
+            &sample,
+            sample.address.frequency_centre_hz,
+            contributions,
+        )
         .expect("weight split sample")
         .expect("one-sample block");
     let weighted = block.samples()[0].spectral_values().collect::<Vec<_>>();
@@ -1657,13 +1793,23 @@ fn incomplete_callback_phase_cannot_finalize_weighting_state() {
     let mut density = begin_weighting_generation(&problem, &plan).expect("density phase");
     for sample in &samples {
         density
-            .consume(&problem, sample, exact_contributions(sample))
+            .consume(
+                &problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
             .expect("density sample");
     }
     let mut sum_weight = density.finish(&problem).expect("sum-weight phase");
     for sample in &samples[..samples.len() - 1] {
         sum_weight
-            .consume(&problem, sample, exact_contributions(sample))
+            .consume(
+                &problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
             .expect("sum-weight sample");
     }
     assert!(matches!(

@@ -1119,10 +1119,16 @@ impl GriddedNormalOperatorProgram {
         if reusable_domains.len() != prepared_specification.domain_count() {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
+        let prepared_specification = Arc::new(prepared_specification);
         let mut operators = Vec::with_capacity(prepared_specification.chart_count());
         for (chart, fft) in prepared_specification.charts().iter().zip(ffts.drain(..)) {
-            let mut operator =
-                SpectralSlabOperator::new_chart(&prepared_specification, chart, workload, fft, 0);
+            let mut operator = SpectralSlabOperator::new_chart(
+                Arc::clone(&prepared_specification),
+                chart,
+                workload,
+                fft,
+                0,
+            );
             operator
                 .prepare_gridded_normal_model(model, &reusable_domains[chart.domain_ordinal()])?;
             operators.push(operator);
@@ -2929,6 +2935,18 @@ mod tests {
             image_blc: [1, 1],
             reference_pixel: [4.0, 4.0],
             increment_rad: [-2.0e-3, 2.0e-3],
+            direction: casa_imaging_model::DirectionCoordinateSpec::new(
+                casa_imaging_model::Projection::Sin,
+                casa_imaging_model::SkyDirection::new(
+                    casa_imaging_model::DirectionFrame::J2000,
+                    1.0,
+                    -0.5,
+                ),
+                [4.0, 4.0],
+                [-2.0e-3, 2.0e-3],
+                [[1.0, 0.0], [0.0, 1.0]],
+                [180.0, 0.0],
+            ),
         }
     }
 

@@ -38,6 +38,7 @@ mod gridded_normal_operator;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
+mod mosaic;
 mod polarization_operator;
 mod primary_beam;
 mod psf_beam;

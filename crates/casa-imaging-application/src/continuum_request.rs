@@ -21,10 +21,12 @@ use casa_imaging_model::{
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, HogbomIterationAccounting, ImageAxis, ImageDomainRole,
     ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse, ItrfPosition,
-    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationSelection, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
+    LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelBounds,
+    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSelection, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
@@ -310,6 +312,8 @@ pub struct ContinuumImagingRequest {
     pub psf_cutoff: f32,
     /// Positive primary-beam support cutoff corresponding to CASA `abs(pblimit)`.
     pub primary_beam_cutoff: f32,
+    /// Direction-dependent image normalization selected by the task surface.
+    pub normalization: ProductNormalization,
     /// Restoring-beam policy.
     pub beam_policy: ContinuumBeamPolicy,
     /// Model-update support policy.
@@ -1356,6 +1360,9 @@ fn prepare(
         }
     }
     prepared_domains.sort_by(|left, right| left.role.cmp(&right.role));
+    let mosaic = request
+        .task_requirements
+        .contains(&TaskRequirement::MosaicGridder);
     let geometry = casa_imaging_model::GeometryInput::new(
         prepared_domains
             .iter()
@@ -1384,9 +1391,24 @@ fn prepare(
         CentreLaws::new(
             phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::PhaseTrackingCentre,
+            if mosaic {
+                PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                    PointingDirectionColumn::Direction,
+                    PointingDirectionSemantic::AntennaBoresight,
+                    PointingTimeSampling::VisibilityTimeCentroid,
+                    PointingInterpolation::GreatCircleShortestArc,
+                    PointingExtrapolation::Reject,
+                    MissingPointingPolicy::Reject,
+                ))
+            } else {
+                PointingCentreLaw::PhaseTrackingCentre
+            },
         ),
-        UvwCoordinateLaw::PhaseTrackingCentre,
+        if mosaic {
+            UvwCoordinateLaw::MosaicPhaseTrackingCentre
+        } else {
+            UvwCoordinateLaw::PhaseTrackingCentre
+        },
         SpectralCoordinateSpec::new(
             prepared_spectral.source_frame,
             prepared_spectral.output_frame,
@@ -1396,7 +1418,7 @@ fn prepare(
             prepared_spectral.doppler,
         ),
     );
-    let primary_beam_model = (request.write_primary_beam || request.pbcor)
+    let primary_beam_model = (!mosaic && (request.write_primary_beam || request.pbcor))
         .then(|| standard_primary_beam_model(&ms))
         .transpose()?;
     let mut product_controls =
@@ -1601,10 +1623,15 @@ fn scientific_instrument_model(
     request: &ContinuumImagingRequest,
     ms: &MeasurementSet,
 ) -> Result<Option<(InstrumentModel, LogicalIdentity)>, crate::ApplicationError> {
-    if !matches!(
-        request.spectral_mode,
-        SpectralImagingMode::MtmfsViaCube { .. }
-    ) {
+    let mosaic = request
+        .task_requirements
+        .contains(&TaskRequirement::MosaicGridder);
+    if !mosaic
+        && !matches!(
+            request.spectral_mode,
+            SpectralImagingMode::MtmfsViaCube { .. }
+        )
+    {
         return Ok(None);
     }
     let observation = ms.observation()?;
@@ -1615,9 +1642,15 @@ fn scientific_instrument_model(
                 .map(|name| name.trim().to_string())
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
-    if telescopes.iter().map(String::as_str).collect::<Vec<_>>() != ["ALMA"] {
+    let telescope_names = telescopes.iter().map(String::as_str).collect::<Vec<_>>();
+    let supported_telescope = if mosaic {
+        matches!(telescope_names.as_slice(), ["ALMA"] | ["ACA"])
+    } else {
+        matches!(telescope_names.as_slice(), ["ALMA"])
+    };
+    if !supported_telescope {
         return Err(boxed(format!(
-            "channel-major primary-beam response requires one ALMA observation; found {telescopes:?}"
+            "primary-beam response requires one supported homogeneous observation; found {telescopes:?}"
         )));
     }
     let antenna = ms.antenna()?;
@@ -2405,6 +2438,9 @@ fn specification(
                         ProductKind::SpectralIndexError,
                     ]);
                 }
+                if !matches!(request.normalization, ProductNormalization::UnitResponse) {
+                    products.push(ProductKind::Sensitivity);
+                }
                 if request.write_primary_beam || request.pbcor {
                     products.push(ProductKind::PrimaryBeam);
                 }
@@ -2413,7 +2449,7 @@ fn specification(
                 }
                 products
             },
-            ProductNormalization::UnitResponse,
+            request.normalization,
             match (&request.algorithm, request.beam_policy) {
                 (ContinuumAlgorithm::Mtmfs { .. }, _)
                 | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => RestoringBeamPolicy::Common,

@@ -524,7 +524,7 @@ impl SpectralCyclePlan {
                 if imaging_plan_diagnostics_enabled() {
                     let residency = fragment.residency();
                     eprintln!(
-                        "imaging_mvc_plan_summary available_after_base_bytes={} admitted_slab_depth={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} primitive_output_bytes={} major_cycle_model_bytes={}",
+                        "imaging_mvc_plan_summary available_after_base_bytes={} admitted_slab_depth={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} mosaic_state_bytes={} mosaic_workspace_bytes={} primitive_output_bytes={} major_cycle_model_bytes={}",
                         memory_ceiling,
                         fragment.slab().core_depth(),
                         residency.peak_bytes(),
@@ -534,6 +534,8 @@ impl SpectralCyclePlan {
                         residency.fft_planning_bytes(),
                         residency.forward_workspace_bytes(),
                         residency.response_workspace_bytes(),
+                        residency.mosaic_state_bytes(),
+                        residency.mosaic_workspace_bytes(),
                         residency.primitive_output_bytes(),
                         residency.major_cycle_model_bytes(),
                     );

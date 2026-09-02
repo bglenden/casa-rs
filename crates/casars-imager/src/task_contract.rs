@@ -2605,6 +2605,12 @@ impl ImagerRunTaskRequest {
             nsigma: self.nsigma,
             psf_cutoff: self.psf_cutoff,
             mosaic_pb_limit: self.mosaic_pb_limit,
+            normalization: self
+                .aw_project
+                .as_ref()
+                .map_or(AwProjectNormalization::FlatNoise, |controls| {
+                    controls.normalization.into()
+                }),
             pbcor: self.pbcor,
             write_pb: self.write_pb,
             minor_cycle_length: self.minor_cycle_length,

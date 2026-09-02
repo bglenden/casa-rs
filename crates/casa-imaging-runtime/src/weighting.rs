@@ -189,6 +189,7 @@ trait StreamingWeightPhase: Send {
         &mut self,
         problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'_>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError>;
 
@@ -209,9 +210,10 @@ impl StreamingWeightPhase for FusedWeightingPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'_>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
-        self.consume(problem, sample, contributions)
+        self.consume(problem, sample, output_frame_frequency_hz, contributions)
     }
 
     fn reuse_emitted_block(
@@ -236,9 +238,10 @@ impl StreamingWeightPhase for WeightingReplayPhase<'_> {
         &mut self,
         problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'_>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
-        self.consume(problem, sample, contributions)
+        self.consume(problem, sample, output_frame_frequency_hz, contributions)
     }
 
     fn reuse_emitted_block(
@@ -364,7 +367,12 @@ impl DensityBlockKernel<'_> {
                             .map_err(ContinuumDensityCallbackError::Owner)?,
                     };
                     density
-                        .consume(problem, reported.selected(), contributions)
+                        .consume(
+                            problem,
+                            reported.selected(),
+                            reported.spectral_evaluation().output_frame().centre_hz(),
+                            contributions,
+                        )
                         .map_err(ContinuumDensityCallbackError::Owner)?;
                 }
                 Ok(())
@@ -474,7 +482,12 @@ where
                     )?;
             }
             if let Some(block) = weights
-                .consume_sample(problem, transformed.selected_view(), contributions)
+                .consume_sample(
+                    problem,
+                    transformed.selected_view(),
+                    transformed.spectral_evaluation().output_frame().centre_hz(),
+                    contributions,
+                )
                 .map_err(ReplayCallbackError::Owner)?
             {
                 emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -488,7 +501,12 @@ where
             .compile(problem, &reported)
             .map_err(ReplayCallbackError::Owner)?;
         if let Some(block) = weights
-            .consume_sample(problem, reported.selected(), contributions)
+            .consume_sample(
+                problem,
+                reported.selected(),
+                reported.spectral_evaluation().output_frame().centre_hz(),
+                contributions,
+            )
             .map_err(ReplayCallbackError::Owner)?
         {
             emit(&block).map_err(ReplayCallbackError::Consumer)?;
@@ -563,7 +581,12 @@ where
                 }
                 if let Some(block) = self
                     .weights
-                    .consume_sample(self.problem, transformed.selected_view(), contributions)
+                    .consume_sample(
+                        self.problem,
+                        transformed.selected_view(),
+                        transformed.spectral_evaluation().output_frame().centre_hz(),
+                        contributions,
+                    )
                     .map_err(WeightingBlockKernelError::Owner)?
                 {
                     (self.emit)(&block).map_err(WeightingBlockKernelError::Consumer)?;
@@ -3574,7 +3597,12 @@ impl FrozenWeightingGeneration {
                     .compile(problem, &reported)
                     .map_err(ReplayCallbackError::Owner)?;
                 if let Some(block) = phase
-                    .consume(problem, reported.selected(), contributions)
+                    .consume(
+                        problem,
+                        reported.selected(),
+                        reported.spectral_evaluation().output_frame().centre_hz(),
+                        contributions,
+                    )
                     .map_err(ReplayCallbackError::Owner)?
                 {
                     let block = WeightedObservationBlock::authorize(self.generation_id(), block);
@@ -3641,7 +3669,12 @@ fn traverse_weighting_generation(
     let density_completion = selected
         .traverse(problem, |reported| {
             let contributions = spectral_contributions.compile(problem, &reported)?;
-            density.consume(problem, reported.selected(), contributions)
+            density.consume(
+                problem,
+                reported.selected(),
+                reported.spectral_evaluation().output_frame().centre_hz(),
+                contributions,
+            )
         })
         .map_err(WeightingGenerationError::DensityTraversal)?;
     let sum_weight = density
@@ -3652,7 +3685,12 @@ fn traverse_weighting_generation(
     let sum_weight_completion = selected
         .traverse(problem, |reported| {
             let contributions = spectral_contributions.compile(problem, &reported)?;
-            sum_weight.consume(problem, reported.selected(), contributions)
+            sum_weight.consume(
+                problem,
+                reported.selected(),
+                reported.spectral_evaluation().output_frame().centre_hz(),
+                contributions,
+            )
         })
         .map_err(WeightingGenerationError::SumWeightTraversal)?;
     let state = sum_weight

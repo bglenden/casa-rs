@@ -27,7 +27,7 @@ use crate::digest::{
 };
 use crate::error::ProductsError;
 use crate::restore::{
-    fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
+    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
 };
 use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
 use crate::taylor::TaylorProducts;
@@ -814,7 +814,9 @@ pub fn produce_continuum_members(
                     return Err(ProductsError::SourceLineageMismatch);
                 }
                 let output_channel = plane.output_channel;
-                if member.validity != ProductValidityRule::All {
+                let plane_validity = if member.validity == ProductValidityRule::All {
+                    None
+                } else {
                     let plane_validity = product_plane_validity(member.validity, &plane)?;
                     scatter_image_polarization_plane(
                         &mut validity,
@@ -824,7 +826,8 @@ pub fn produce_continuum_members(
                         plane_shape,
                         &plane_validity,
                     )?;
-                }
+                    Some(plane_validity)
+                };
                 if matches!(member.role, ProductRole::SumWeights(_)) {
                     scatter_polarization_plane_state(
                         &mut payload,
@@ -837,7 +840,7 @@ pub fn produce_continuum_members(
                 }
                 let beam_index =
                     beam_offset + local_channel * normal_state.polarization_count() + polarization;
-                let plane_payload = produce_plane_member(
+                let mut plane_payload = produce_plane_member(
                     member,
                     inputs,
                     &plane,
@@ -846,6 +849,9 @@ pub fn produce_continuum_members(
                     fitted_beams.get(beam_index).copied().flatten(),
                     restoring_beams.get(beam_index).copied().flatten(),
                 )?;
+                if let Some(plane_validity) = plane_validity.as_deref() {
+                    zero_invalid_plane_values(&mut plane_payload, plane_validity)?;
+                }
                 scatter_image_polarization_plane(
                     &mut payload,
                     member.axes(),
@@ -1370,10 +1376,10 @@ fn produce_plane_member(
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
 ) -> Result<Vec<f32>, ProductsError> {
-    let sensitivity = plane.sum_weight;
+    let scalar_sensitivity = plane.sum_weight;
     let valid = plane.validity == SpectralChannelValidity::Valid
-        && sensitivity.is_finite()
-        && sensitivity > 0.0;
+        && scalar_sensitivity.is_finite()
+        && scalar_sensitivity > 0.0;
     let shape = plane.shape;
     let cells = shape[0] * shape[1];
     let invalid_residual = || vec![0.0; cells];
@@ -1381,12 +1387,12 @@ fn produce_plane_member(
         ProductRole::Psf(casa_imaging_model::ProductTerm::Single)
         | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(0)) => {
             if valid {
-                normalize_plane(
+                normalize_domain_plane(
                     &psf_real_plane(plane),
                     member
                         .normalization
                         .unwrap_or(ProductNormalization::UnitResponse),
-                    sensitivity,
+                    plane,
                 )
             } else {
                 Ok(vec![0.0; cells])
@@ -1396,10 +1402,10 @@ fn produce_plane_member(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
             if valid {
-                normalize_plane(
+                normalize_domain_plane(
                     &residual_real_plane(plane),
                     required_normalization(member)?,
-                    sensitivity,
+                    plane,
                 )
             } else {
                 Ok(invalid_residual())
@@ -1443,10 +1449,10 @@ fn produce_plane_member(
             let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
             let kernel = gaussian_beam_image(shape, beam, cell_size);
             let mut restored = fft_convolve(&model, kernel.as_slice().expect("contiguous"), shape);
-            let residual = normalize_plane(
+            let residual = normalize_domain_plane(
                 &residual_real_plane(plane),
                 required_normalization(member)?,
-                sensitivity,
+                plane,
             )?;
             let fitted_beam = fitted_beam.ok_or_else(|| {
                 ProductsError::BeamFitFailed(
@@ -1460,6 +1466,29 @@ fn produce_plane_member(
                 *restored += residual;
             }
             Ok(restored)
+        }
+        ProductRole::PrimaryBeam(
+            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
+        ) => Ok(MosaicSensitivity::new(plane.sensitivity)?.primary_beam()),
+        ProductRole::PbCorrectedImage(
+            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
+        ) => {
+            if !valid {
+                return Ok(invalid_residual());
+            }
+            let restored = restored_plane(
+                member,
+                inputs,
+                plane,
+                domain_ordinal,
+                polarization,
+                fitted_beam,
+                restoring_beam,
+            )?;
+            MosaicSensitivity::new(plane.sensitivity)?.correct_primary_beam(
+                &restored,
+                inputs.problem().products().validity().primary_beam(),
+            )
         }
         ProductRole::CleanMask => {
             let mask = reconstruction_mask_for_domain(inputs, member.axes().domain())?;
@@ -1482,6 +1511,64 @@ fn produce_plane_member(
             catalog: CONTINUUM_ALGORITHM_CATALOG_VERSION,
         }),
     }
+}
+
+fn normalize_domain_plane(
+    values: &[f32],
+    normalization: ProductNormalization,
+    plane: &DomainPlane<'_>,
+) -> Result<Vec<f32>, ProductsError> {
+    match normalization {
+        ProductNormalization::UnitResponse => {
+            normalize_plane(values, normalization, plane.sum_weight)
+        }
+        ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
+            MosaicSensitivity::new(plane.sensitivity)?.normalize(values, normalization)
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restored_plane(
+    member: &PlannedMember,
+    inputs: &ContinuumProductInputs<'_>,
+    plane: &DomainPlane<'_>,
+    domain_ordinal: usize,
+    polarization: usize,
+    fitted_beam: Option<RestoringBeam>,
+    restoring_beam: Option<RestoringBeam>,
+) -> Result<Vec<f32>, ProductsError> {
+    let beam = restoring_beam.ok_or_else(|| {
+        ProductsError::BeamFitFailed(
+            "restoration requires a fitted beam for every valid plane".to_string(),
+        )
+    })?;
+    let model = model_real_plane(
+        inputs.final_model(),
+        domain_ordinal,
+        plane.output_channel,
+        polarization,
+        plane.shape,
+    )?;
+    let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
+    let kernel = gaussian_beam_image(plane.shape, &beam, cell_size);
+    let mut restored = fft_convolve(&model, kernel.as_slice().expect("contiguous"), plane.shape);
+    let residual = normalize_domain_plane(
+        &residual_real_plane(plane),
+        required_normalization(member)?,
+        plane,
+    )?;
+    let fitted_beam = fitted_beam.ok_or_else(|| {
+        ProductsError::BeamFitFailed(
+            "restoration requires a fitted beam for every valid plane".to_string(),
+        )
+    })?;
+    let residual = rescale_residual_to_beam(&residual, plane.shape, cell_size, fitted_beam, beam)?
+        .into_values();
+    for (restored, residual) in restored.iter_mut().zip(residual) {
+        *restored += residual;
+    }
+    Ok(restored)
 }
 
 fn reconstruction_mask_for_domain<'a>(
@@ -1539,12 +1626,25 @@ fn product_plane_validity(
                 && plane.sum_weight > 0.0;
             Ok(vec![valid; shape[0] * shape[1]])
         }
-        ProductValidityRule::PrimaryBeam(_)
-        | ProductValidityRule::Taylor(_)
-        | ProductValidityRule::TaylorAndPrimaryBeam { .. } => {
+        ProductValidityRule::PrimaryBeam(policy) => {
+            Ok(MosaicSensitivity::new(plane.sensitivity)?.validity(policy))
+        }
+        ProductValidityRule::Taylor(_) | ProductValidityRule::TaylorAndPrimaryBeam { .. } => {
             Err(ProductsError::UnsupportedProblem)
         }
     }
+}
+
+fn zero_invalid_plane_values(payload: &mut [f32], validity: &[bool]) -> Result<(), ProductsError> {
+    if payload.len() != validity.len() {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    for (value, valid) in payload.iter_mut().zip(validity) {
+        if !*valid {
+            *value = 0.0;
+        }
+    }
+    Ok(())
 }
 
 fn model_real_plane(

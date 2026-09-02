@@ -391,13 +391,23 @@ fn run_operator(
     let mut density = begin_weighting_generation(problem, &plan).expect("begin density pass");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         density
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume density sample");
     }
     let mut sum_weight = density.finish(problem).expect("finish density pass");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         sum_weight
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume sum-weight sample");
     }
     let generation = sum_weight.finish().expect("freeze global weighting");
@@ -408,7 +418,12 @@ fn run_operator(
         .expect("begin weighted replay");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         if let Some(block) = replay
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("weight replay sample")
         {
             blocks.push(block);

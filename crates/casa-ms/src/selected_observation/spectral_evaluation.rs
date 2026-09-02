@@ -2,19 +2,12 @@
 //! Storage-owned source and output-frame spectral evaluation.
 
 use casa_imaging_model::{
-    CompiledProblem, DirectionFrame, FrequencyFrame, SelectedInputWeightGroup,
-    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
-    SelectedObservationSampleView, SelectedSpectralEvaluation, SelectedSpectralInterval,
-    SpectralFrameAnchor, SpectralWindowSelection, TimeScale,
+    CompiledProblem, FrequencyFrame, SelectedInputWeightGroup, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSampleView,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SpectralWindowSelection,
 };
 
-use casa_types::measures::{
-    direction::{DirectionRef, MDirection},
-    epoch::{EpochRef, MEpoch},
-    frame::MeasFrame,
-    frequency::FrequencyRef,
-    position::MPosition,
-};
+use casa_types::measures::{direction::MDirection, frame::MeasFrame, frequency::FrequencyRef};
 
 use crate::{
     MeasurementSet, MsError, MsResult, MsSelectionIoBudget, SelectedObservationEphemeris,
@@ -476,7 +469,6 @@ struct SpectralTransformKey {
 /// change forces a fresh owner evaluation.
 pub(super) struct SpectralEvaluationProjector {
     last_source: Option<casa_imaging_model::MeasurementSetIdentity>,
-    output_frame: Option<MeasFrame>,
     source_frame: Option<(i32, u64, MeasFrame)>,
     last_transform: Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
     last_projection: Option<(
@@ -490,7 +482,6 @@ impl SpectralEvaluationProjector {
     pub(super) const fn new() -> Self {
         Self {
             last_source: None,
-            output_frame: None,
             source_frame: None,
             last_transform: None,
             last_projection: None,
@@ -507,7 +498,6 @@ impl SpectralEvaluationProjector {
         let address = sample.address();
         if self.last_source != Some(address.measurement_set) {
             self.last_source = Some(address.measurement_set);
-            self.output_frame = None;
             self.source_frame = None;
             self.last_transform = None;
             self.last_projection = None;
@@ -522,7 +512,6 @@ impl SpectralEvaluationProjector {
                 sample,
                 geometry_engine,
                 &mut self.source_frame,
-                &mut self.output_frame,
                 &mut self.last_transform,
             )?;
             self.last_projection = Some((key, intervals.0, intervals.1));
@@ -550,7 +539,6 @@ fn derive_spectral_intervals_cached(
     sample: SelectedObservationSampleView<'_>,
     geometry_engine: &MsCalEngine,
     source_frame: &mut Option<(i32, u64, MeasFrame)>,
-    output_frame: &mut Option<MeasFrame>,
     last_transform: &mut Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
 ) -> Result<(SelectedSpectralInterval, SelectedSpectralInterval), BoundObservationSourceError> {
     let address = sample.address();
@@ -570,7 +558,6 @@ fn derive_spectral_intervals_cached(
         sample,
         geometry_engine,
         source_frame,
-        output_frame,
         last_transform,
     )?;
     let output_centre_hz = conversion.convert_hz(native.centre_hz());
@@ -586,7 +573,6 @@ fn prepared_frequency_conversion_cached(
     sample: SelectedObservationSampleView<'_>,
     geometry_engine: &MsCalEngine,
     source_frame_cache: &mut Option<(i32, u64, MeasFrame)>,
-    output_frame_cache: &mut Option<MeasFrame>,
     last_transform: &mut Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
 ) -> Result<PreparedFrequencyFrameConversion, BoundObservationSourceError> {
     let spectral = problem.geometry().spectral();
@@ -624,15 +610,12 @@ fn prepared_frequency_conversion_cached(
             frame
         }
         slot => {
-            let phase = coordinates.phase_direction;
-            let mut frame = geometry_engine.spectral_frame_observatory_direction(
-                time_mjd_seconds,
-                MDirection::from_angles(
-                    phase.longitude_rad(),
-                    phase.latitude_rad(),
-                    direction_ref(phase.frame()),
-                ),
-            )?;
+            // Frequency conversion follows the native FIELD direction, as CASA's
+            // visibility iterator does. The selected phase direction may already
+            // be rephased to the common imaging centre for mosaic gridding.
+            let phase = geometry_engine.observation_direction_j2000(time_mjd_seconds, field_id)?;
+            let mut frame =
+                geometry_engine.spectral_frame_observatory_direction(time_mjd_seconds, phase)?;
             if let Some(velocity) =
                 geometry_engine.moving_radial_velocity(time_mjd_seconds, field_id)?
             {
@@ -642,62 +625,27 @@ fn prepared_frequency_conversion_cached(
             &slot.as_ref().expect("source frame was inserted").2
         }
     };
-    let SpectralFrameAnchor::Conversion {
-        epoch,
-        direction,
-        observatory_position,
-    } = spectral.anchor()
-    else {
-        return Err(BoundObservationSourceError::SpectralContributionMismatch);
-    };
     let moving_rest_frame;
-    let output_frame = if output_ref == FrequencyRef::REST {
+    let target_frame = if output_ref == FrequencyRef::REST {
         if source_frame.radial_velocity().is_none() {
             return Err(BoundObservationSourceError::SpectralContributionMismatch);
         }
         moving_rest_frame = source_frame.clone();
         &moving_rest_frame
     } else {
-        output_frame_cache.get_or_insert_with(|| {
-            let [x_metres, y_metres, z_metres] = observatory_position.metres();
-            geometry_engine.spectral_frame_explicit(
-                MEpoch::from_mjd(epoch.mjd_days(), epoch_ref(epoch.scale())),
-                MPosition::new_itrf(x_metres, y_metres, z_metres),
-                MDirection::from_angles(
-                    direction.longitude_rad(),
-                    direction.latitude_rad(),
-                    direction_ref(direction.frame()),
-                ),
-            )
-        })
+        // CASA requests the target reference type from the visibility iterator;
+        // it does not substitute the image-axis anchor as a second measures frame.
+        source_frame
     };
     let conversion = PreparedFrequencyFrameConversion::new(
         source_ref,
         output_ref,
         Some(source_frame),
-        Some(output_frame),
+        Some(target_frame),
     )
     .map_err(BoundObservationSourceError::from)?;
     *last_transform = Some((key, conversion));
     Ok(conversion)
-}
-
-const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
-    match frame {
-        DirectionFrame::Icrs => DirectionRef::ICRS,
-        DirectionFrame::J2000 => DirectionRef::J2000,
-        DirectionFrame::B1950 => DirectionRef::B1950,
-        DirectionFrame::Galactic => DirectionRef::GALACTIC,
-    }
-}
-
-const fn epoch_ref(scale: TimeScale) -> EpochRef {
-    match scale {
-        TimeScale::Utc => EpochRef::UTC,
-        TimeScale::Tai => EpochRef::TAI,
-        TimeScale::Tt => EpochRef::TT,
-        TimeScale::Tdb => EpochRef::TDB,
-    }
 }
 
 const fn frequency_ref(frame: FrequencyFrame) -> FrequencyRef {

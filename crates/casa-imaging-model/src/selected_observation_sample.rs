@@ -1386,6 +1386,7 @@ fn encode_generation_row_content(encoder: &mut CanonicalEncoder, content: &Gener
     }
     encoder.u8(match coordinates.uvw_law {
         UvwCoordinateLaw::PhaseTrackingCentre => 0,
+        UvwCoordinateLaw::MosaicPhaseTrackingCentre => 1,
     });
     encode_epoch(encoder, coordinates.time);
     encode_epoch(encoder, coordinates.time_centroid);

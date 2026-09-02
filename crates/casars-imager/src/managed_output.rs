@@ -437,6 +437,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            normalization: AwProjectNormalization::FlatNoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
