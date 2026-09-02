@@ -726,6 +726,13 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     };
 
     let interactive = make_authority();
+    let host_view = CapacityViewId::new("host-memory");
+    assert_eq!(
+        interactive
+            .planning_memory_bytes(&ResourcePolicy::Interactive, &host_view)
+            .expect("interactive planning capacity"),
+        500
+    );
     let error = interactive
         .acquire(
             ResourcePolicy::Interactive,
@@ -736,6 +743,12 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let _interactive_a = interactive
         .acquire(ResourcePolicy::Interactive, demand("interactive-a", 250))
         .expect("first interactive lease fits");
+    assert_eq!(
+        interactive
+            .planning_memory_bytes(&ResourcePolicy::Interactive, &host_view)
+            .expect("active leases reduce planning capacity"),
+        250
+    );
     let _interactive_b = interactive
         .acquire(ResourcePolicy::Interactive, demand("interactive-b", 250))
         .expect("second interactive lease reaches the aggregate cap");
@@ -750,6 +763,12 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let balanced = make_authority();
     assert_eq!(
         balanced
+            .planning_memory_bytes(&ResourcePolicy::Balanced, &host_view)
+            .expect("balanced planning capacity"),
+        750
+    );
+    assert_eq!(
+        balanced
             .acquire(ResourcePolicy::Balanced, demand("balanced-too-large", 751))
             .expect_err("balanced admission caps memory at seventy-five percent")
             .available(),
@@ -759,7 +778,14 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
         .acquire(ResourcePolicy::Balanced, demand("balanced", 750))
         .expect("balanced hard cap is usable");
 
-    make_authority()
+    let exclusive = make_authority();
+    assert_eq!(
+        exclusive
+            .planning_memory_bytes(&ResourcePolicy::Exclusive, &host_view)
+            .expect("exclusive planning capacity"),
+        1_000
+    );
+    exclusive
         .acquire(ResourcePolicy::Exclusive, demand("exclusive", 1_000))
         .expect("exclusive admission may consume all pressured capacity");
 }

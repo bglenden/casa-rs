@@ -58,6 +58,7 @@ pub struct SpectralCycleExecutionPolicy {
     confidence_parts_per_million: u32,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
+    complete_data_memory_ceiling: Option<u64>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -82,6 +83,7 @@ impl SpectralCycleExecutionPolicy {
             confidence_parts_per_million,
             visibility_write: None,
             gridded_normal_storage: None,
+            complete_data_memory_ceiling: None,
         }
     }
 
@@ -89,6 +91,14 @@ impl SpectralCycleExecutionPolicy {
     #[must_use]
     pub fn with_gridded_normal_storage(mut self, storage: GriddedNormalReplayStorage) -> Self {
         self.gridded_normal_storage = Some(storage);
+        self
+    }
+
+    /// Bind the Resource Authority's policy-adjusted host-memory ceiling used
+    /// to choose bounded complete-data operator residency.
+    #[must_use]
+    pub fn with_complete_data_memory_ceiling(mut self, bytes: u64) -> Self {
+        self.complete_data_memory_ceiling = Some(bytes);
         self
     }
 
@@ -480,16 +490,14 @@ impl SpectralCyclePlan {
                     casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
                 ) =>
             {
-                let working_set_bytes = gridded_normal_storage
-                    .as_ref()
-                    .and_then(GriddedNormalReplayStorage::cpu_replay_capacity)
-                    .map(|(bytes, _)| bytes);
                 CompleteDataPlanFragment::mvc_with_preparation_node(
                     problem,
                     weighting.limits().max_block_samples(),
                     replay.clone(),
                     preparation_node,
-                    working_set_bytes,
+                    policy
+                        .complete_data_memory_ceiling
+                        .ok_or(SpectralCyclePlanError::MissingCompleteDataMemoryCeiling)?,
                 )?
             }
             SpectralPassPhase::InitialMajor => CompleteDataPlanFragment::new_with_preparation_node(
@@ -2010,6 +2018,8 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
+    /// An MVC plan omitted the Resource Authority's host-memory ceiling.
+    MissingCompleteDataMemoryCeiling,
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
     /// A later-major plan received replay state outside its retained storage authority.

@@ -8748,30 +8748,6 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
     ))
     .expect("realistically shaped Taylor-via-channel-major problem");
     let registry = test_registry(&problem, 3, 6, None);
-    let policy = SpectralCycleExecutionPolicy::new(
-        implementation(6),
-        WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
-        selected_content_residency(&problem),
-        serial_storage_io(),
-        1_000,
-        512 * 512 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
-        900_000,
-    )
-    .with_gridded_normal_storage(artifact_storage());
-    let plan =
-        SpectralCyclePlan::initial(&problem, &registry, policy).expect("production MVC plan");
-    let knobs = plan.physical_work().execution_dag().initial_knobs();
-    assert_eq!(knobs.slab_depth, 1, "the 1 MiB fixture admits one channel");
-    assert!(
-        plan.physical_work()
-            .execution_dag()
-            .resource_alternative()
-            .quiescence_points
-            .contains(&QuiescencePoint::Slab)
-    );
-    let complete = plan.into_parts().complete_data;
-    assert_eq!(complete.slab().core_range(), 0..1);
-
     let full = CompleteDataPlanFragment::for_slab(
         &problem,
         256,
@@ -8781,11 +8757,36 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
         SpectralOperatorPass::InitialMajor,
     )
     .expect("full-depth comparison fragment");
-    assert!(complete.residency().peak_bytes() < full.residency().peak_bytes());
-    assert!(
-        complete.residency().grid_bytes() * 8 <= full.residency().grid_bytes(),
-        "one admitted shared slab grid cannot retain the complete 8-channel cube"
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(6),
+        WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
+        selected_content_residency(&problem),
+        serial_storage_io(),
+        1_000,
+        512 * 512 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+        900_000,
+    )
+    .with_gridded_normal_storage(artifact_storage())
+    .with_complete_data_memory_ceiling(
+        u64::try_from(full.residency().peak_bytes()).expect("full residency fits u64"),
     );
+    let plan =
+        SpectralCyclePlan::initial(&problem, &registry, policy).expect("production MVC plan");
+    let knobs = plan.physical_work().execution_dag().initial_knobs();
+    assert_eq!(
+        knobs.slab_depth, 8,
+        "the operator-memory ceiling admits the complete channel cube"
+    );
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .quiescence_points
+            .contains(&QuiescencePoint::Slab)
+    );
+    let complete = plan.into_parts().complete_data;
+    assert_eq!(complete.slab().core_range(), 0..8);
+    assert_eq!(complete.residency(), full.residency());
 }
 
 #[test]

@@ -1530,18 +1530,17 @@ impl CompleteDataPlanFragment {
 
     /// Compile the ordered, planner-bounded initial MVC slab schedule.
     ///
-    /// `working_set_bytes` is the Resource Authority's calibrated CPU data
-    /// working-set ceiling when one is available. The schedule selects the
+    /// `working_set_bytes` is the Resource Authority's policy-adjusted
+    /// host-memory ceiling. The schedule selects the
     /// deepest slab whose complete operator residency fits that ceiling and
-    /// reuses that one peak allocation for every ordered slab. Without a
-    /// calibrated ceiling, the planner emits the minimum one-channel schedule
-    /// and leaves hard admission to the composed physical demand.
+    /// reuses that one peak allocation for every ordered slab. A ceiling below
+    /// the minimum one-channel residency fails planning.
     pub(crate) fn mvc_with_preparation_node(
         problem: &CompiledProblem,
         max_replay_block_samples: usize,
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
-        working_set_bytes: Option<u64>,
+        working_set_bytes: u64,
     ) -> Result<Self, CompleteDataPlanError> {
         let full = SpectralOperatorSpecification::new(problem)?;
         let total_channels = full.slab().total_channels();
@@ -1566,13 +1565,10 @@ impl CompleteDataPlanFragment {
             }
             let peak = u64::try_from(residency.peak_bytes())
                 .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
-            if working_set_bytes.is_some_and(|ceiling| peak > ceiling) {
+            if peak > working_set_bytes {
                 continue;
             }
             admitted_depth = depth;
-            if working_set_bytes.is_none() {
-                break;
-            }
         }
         if admitted_depth == 0 {
             return Err(CompleteDataPlanError::PlanMismatch);

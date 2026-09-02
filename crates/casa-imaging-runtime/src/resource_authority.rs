@@ -1842,6 +1842,44 @@ impl ResourceAuthority {
         self.inner.cpu_replay_capacity
     }
 
+    /// Return the memory currently available through one host-visible view
+    /// after applying the requested policy, concurrent policies, pressure, and
+    /// active leases.
+    ///
+    /// Physical planners use this snapshot to choose a bounded shape. The
+    /// resulting demand is still admitted atomically before execution, so a
+    /// later pressure change fails closed instead of exceeding this capacity.
+    pub fn planning_memory_bytes(
+        &self,
+        policy: &ResourcePolicy,
+        view: &CapacityViewId,
+    ) -> Result<u64, ResourceError> {
+        validate_policy(&self.inner.topology, policy)?;
+        let domain = self
+            .inner
+            .topology
+            .memory_views
+            .iter()
+            .find(|candidate| &candidate.id == view && candidate.kind == MemoryViewKind::Host)
+            .map(|candidate| candidate.domain.clone())
+            .ok_or_else(|| {
+                ResourceError::Invalid(format!(
+                    "planning memory view {} is not host-visible",
+                    view.as_str()
+                ))
+            })?;
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let pressured = capacity_under_pressure(&self.inner.topology, &state);
+        let policy_capacity =
+            apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
+        let available = available_after_active_leases(&state, policy_capacity)?;
+        Ok(available.hard.memory_bytes(&domain))
+    }
+
     /// Atomically selects, admits, and reserves one complete demand alternative.
     pub(crate) fn acquire(
         &self,
