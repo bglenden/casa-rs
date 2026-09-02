@@ -1313,7 +1313,6 @@ public final class WorkbenchStore: ObservableObject {
         state.leftDockCollapsed = false
         state.inspectorCollapsed = false
         openImagerTaskForSelectedDataset()
-        seedDirectMeasurementSetImagerDefaults(for: dataset)
         state.history.append(
             ProcessingHistoryEvent(
                 id: "hist-project-open-\(state.history.count + 1)",
@@ -5192,6 +5191,12 @@ public final class WorkbenchStore: ObservableObject {
             openDefaultTab(kind: .task)
         }
         selectTask("imager")
+        setGenericTaskValue(
+            taskID: "imager",
+            instanceID: state.activeTabID,
+            argumentID: "imagename",
+            value: "casa-rs-runs/imager-progress-mockup"
+        )
         let mockRunID = state.taskRun.runID ?? "imager-progress-mockup"
         let requestSummary = state.taskRun.requestSummary
         let progressSnapshot = ImagerProgressSnapshot.stub(request: ImagerProgressRequest(
@@ -5248,11 +5253,10 @@ public final class WorkbenchStore: ObservableObject {
                 )
             )
             loadTaskUISchemaIfNeeded("imager", instanceID: tabID)
-            seedImagerTaskDefaults(for: dataset, instanceID: tabID, preserveExistingEdits: false)
             state.taskRun = TaskRun(
                 state: .idle,
                 progress: 0,
-                logLines: ["Imager task initialized from selected MeasurementSet metadata."],
+                logLines: ["Imager task initialized from the canonical catalog and selected MeasurementSet binding."],
                 warnings: [],
                 products: [],
                 requestSummary: genericTaskRequestSummary(taskID: "imager", instanceID: tabID),
@@ -6396,9 +6400,6 @@ public final class WorkbenchStore: ObservableObject {
             state.tabs[index].title = taskTitle(taskID)
         }
         loadTaskUISchemaIfNeeded(taskID, instanceID: resolvedTabID)
-        if taskID == "imager", let dataset = state.selectedDataset, dataset.kind == .measurementSet {
-            seedImagerTaskDefaults(for: dataset, instanceID: resolvedTabID, preserveExistingEdits: true)
-        }
         state.taskRun.imagerProgress = imagerProgressSnapshot(
             taskID: taskID,
             runID: state.taskRun.runID,
@@ -6700,6 +6701,51 @@ public final class WorkbenchStore: ObservableObject {
         return try? surfaceParameterClient.runSafety(surfaceID: surfaceID, values: session.values)
     }
 
+    public func taskLaunchReadiness(
+        taskID: String? = nil,
+        instanceID: String? = nil
+    ) -> TaskLaunchReadiness {
+        let surfaceID = taskID ?? state.activeTaskID
+        guard let session = parameterSession(surfaceID: surfaceID, instanceID: instanceID) else {
+            return TaskLaunchReadiness(
+                status: .unavailable,
+                diagnostics: ["The canonical parameter session is unavailable."]
+            )
+        }
+        let parameterErrors = session.snapshot.diagnostics
+            .filter { $0.level == "error" }
+            .map(\.message)
+        guard parameterErrors.isEmpty else {
+            return TaskLaunchReadiness(status: .invalid, diagnostics: parameterErrors)
+        }
+        do {
+            let invocation = try surfaceParameterClient.providerInvocation(
+                surfaceID: surfaceID,
+                values: session.values
+            )
+            return TaskLaunchReadiness(
+                status: invocation.unsupportedReasons.isEmpty ? .ready : .infeasible,
+                protocolName: invocation.protocolName,
+                protocolVersion: invocation.protocolVersion,
+                unsupportedReasons: invocation.unsupportedReasons
+            )
+        } catch {
+            return TaskLaunchReadiness(
+                status: .invalid,
+                diagnostics: ["Project canonical provider invocation: \(error)"]
+            )
+        }
+    }
+
+    public func taskReceipt(runID: String?) -> NotebookExecutionReceipt? {
+        guard let runID else { return nil }
+        return state.scientificNotebooks?.notebooks
+            .lazy
+            .flatMap(\.receipts)
+            .filter { $0.runId == runID }
+            .max { $0.revision < $1.revision }
+    }
+
     public func taskRequiresConfirmation(taskID: String? = nil, instanceID: String? = nil) -> Bool {
         taskRunSafety(taskID: taskID, instanceID: instanceID)?.requiresInteractiveConfirmation ?? false
     }
@@ -6851,6 +6897,41 @@ public final class WorkbenchStore: ObservableObject {
                 diagnostics: ["Project provider invocation: \(error)"]
             )
             state.lastErrors.append("Project provider invocation for \(taskID): \(error)")
+            return
+        }
+        if !providerInvocation.unsupportedReasons.isEmpty {
+            let diagnostics = providerInvocation.unsupportedReasons.map {
+                "Unsupported \($0.kind): \($0.id)"
+            }
+            beginNotebookTaskRecording(
+                runID: runID,
+                tabID: tabID,
+                taskID: taskID,
+                session: parameterSession,
+                runSafety: runSafety
+            )
+            finalizeNotebookTaskRecording(
+                runID: runID,
+                status: "failed",
+                diagnostics: diagnostics
+            )
+            state.taskRun = TaskRun(
+                runID: runID,
+                state: .failed,
+                progress: 1.0,
+                logLines: [],
+                warnings: [],
+                products: [],
+                diagnostics: diagnostics,
+                requestSummary: genericTaskRequestSummary(taskID: taskID, instanceID: instanceID),
+                imagerProgress: imagerProgressSnapshot(
+                    taskID: taskID,
+                    runID: runID,
+                    taskState: .failed,
+                    progress: 1.0
+                )
+            )
+            state.lastErrors.append("The installed build cannot run this \(task.displayName) request.")
             return
         }
         let summary = genericTaskRequestSummary(taskID: taskID, instanceID: instanceID)
@@ -8081,7 +8162,8 @@ public final class WorkbenchStore: ObservableObject {
                 suggestions[binding.name] = projectRelativePath(dataset.path)
                 continue
             }
-            if concept.semanticRole == "output_data",
+            if surfaceID != "imager",
+               concept.semanticRole == "output_data",
                session.snapshot.states[binding.name]?.value == nil {
                 suggestions[binding.name] = suggestedOutputPath(
                     taskID: surfaceID,
@@ -8208,76 +8290,6 @@ public final class WorkbenchStore: ObservableObject {
         } catch {
             state.lastErrors.append("Automatic Last save failed for \(surfaceID): \(error)")
         }
-    }
-
-    private func seedImagerTaskDefaults(
-        for dataset: DatasetSummary,
-        instanceID: String? = nil,
-        preserveExistingEdits: Bool
-    ) {
-        loadTaskUISchemaIfNeeded("imager", instanceID: instanceID)
-        let defaultField = defaultImagerField(for: dataset)
-        let defaultSpectralWindow = defaultImagerSpectralWindow(for: dataset)
-        let defaultCorrelation = defaultImagerCorrelation(for: dataset)
-        var contextValues = [
-            "vis": projectRelativePath(dataset.path),
-            "imagename": projectRelativePath(defaultImagerOutputPrefix(for: dataset)),
-            "datacolumn": dataset.dataColumns.first ?? "DATA",
-        ]
-        if isTWHyaTutorialDataset(dataset) {
-            contextValues["imsize"] = "250"
-            contextValues["cell"] = "0.1arcsec"
-            contextValues["weighting"] = "briggs"
-        }
-        if let defaultField {
-            contextValues["field"] = selectorToken(defaultField) ?? defaultField
-        }
-        if let defaultSpectralWindow {
-            contextValues["spw"] = selectorToken(defaultSpectralWindow) ?? defaultSpectralWindow
-        }
-        if let defaultCorrelation {
-            contextValues["stokes"] = selectorToken(defaultCorrelation) ?? defaultCorrelation
-        }
-        applyParameterContext(
-            surfaceID: "imager",
-            instanceID: instanceID,
-            textValues: contextValues,
-            boolValues: ["dirty_only": true],
-            preserveOverrides: preserveExistingEdits
-        )
-        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: "imager", instanceID: instanceID)
-    }
-
-    private func seedDirectMeasurementSetImagerDefaults(for dataset: DatasetSummary, instanceID: String? = nil) {
-        seedImagerTaskDefaults(for: dataset, instanceID: instanceID, preserveExistingEdits: false)
-        let phaseCenterField = dataset.fields.count > 1 ? dataset.fields.first.flatMap(selectorToken) : nil
-        applyParameterContext(
-            surfaceID: "imager",
-            instanceID: instanceID,
-            textValues: [
-                "field": "",
-                "phasecenter_field": phaseCenterField ?? "",
-                "specmode": "cube",
-                "gridder": "mosaic",
-                "interpolation": "nearest",
-                "channel_start": "0",
-                "channel_count": "512",
-                "imsize": "1024",
-                "cell": "1.0arcsec",
-                "weighting": "briggs",
-                "robust": "0.5",
-                "niter": "2048",
-                "threshold": "0.0Jy",
-            ],
-            boolValues: [
-                "dirty_only": false,
-                "perchanweightdensity": true,
-                "write_pb": true,
-                "pbcor": true,
-            ],
-            preserveOverrides: false
-        )
-        state.taskRun.requestSummary = genericTaskRequestSummary(taskID: "imager", instanceID: instanceID)
     }
 
     private func genericTaskRequestSummary(taskID: String, instanceID: String? = nil) -> String {
@@ -8963,80 +8975,6 @@ public final class WorkbenchStore: ObservableObject {
 
     private static func minimumBoundedMeasurementSetPlotMaxPoints(_ value: UInt64) -> UInt64 {
         max(WorkbenchState.minimumMeasurementSetPlotMaxPoints, value)
-    }
-
-    private func defaultImagerField(for dataset: DatasetSummary) -> String? {
-        if isTWHyaTutorialDataset(dataset),
-           let tutorialField = dataset.fields.first(where: { selectorToken($0) == "5" }) {
-            return tutorialField
-        }
-        if dataset.name == "mssel_test_small_multifield_spw.ms",
-           let sampleField = dataset.fields.first(where: { selectorToken($0) == "5" }) {
-            return sampleField
-        }
-        if let scienceLikeField = dataset.fields.first(where: { field in
-            let normalized = field.lowercased()
-            return normalized.contains("ngc") || normalized.contains("target")
-        }) {
-            return scienceLikeField
-        }
-        return dataset.fields.first
-    }
-
-    private func defaultImagerSpectralWindow(for dataset: DatasetSummary) -> String? {
-        if isTWHyaTutorialDataset(dataset),
-           let tutorialSpectralWindow = dataset.spectralWindows.first(where: { selectorToken($0) == "0" }) {
-            return tutorialSpectralWindow
-        }
-        if dataset.name == "mssel_test_small_multifield_spw.ms",
-           let sampleSpectralWindow = dataset.spectralWindows.first(where: { selectorToken($0) == "5" }) {
-            return sampleSpectralWindow
-        }
-        return dataset.spectralWindows.first(where: spectralWindowHasMultipleChannels) ?? dataset.spectralWindows.first
-    }
-
-    private func isTWHyaTutorialDataset(_ dataset: DatasetSummary) -> Bool {
-        dataset.name.lowercased().contains("twhya_calibrated.ms")
-    }
-
-    private func defaultImagerCorrelation(for dataset: DatasetSummary) -> String? {
-        let rawCorrelations = dataset.correlations.map { $0.uppercased() }
-        if rawCorrelations.count == 1,
-           ["XX", "YY", "RR", "LL"].contains(rawCorrelations[0]) {
-            return rawCorrelations[0]
-        }
-        return nil
-    }
-
-    private func spectralWindowHasMultipleChannels(_ spectralWindow: String) -> Bool {
-        guard let channelCount = spectralWindowChannelCount(spectralWindow) else {
-            return false
-        }
-        return channelCount > 1
-    }
-
-    private func spectralWindowChannelCount(_ spectralWindow: String) -> Int? {
-        guard let channelRange = spectralWindow.range(of: #"(\d+)\s+chan"#, options: .regularExpression) else {
-            return nil
-        }
-        let token = spectralWindow[channelRange].split(separator: " ").first
-        return token.flatMap { Int($0) }
-    }
-
-    private func defaultImagerOutputPrefix(for dataset: DatasetSummary) -> String {
-        defaultImagerOutputPrefix(baseName: dataset.name)
-    }
-
-    private func defaultImagerOutputPrefix(baseName: String) -> String {
-        let root = state.project.rootPath.isEmpty ? FileManager.default.currentDirectoryPath : state.project.rootPath
-        let runDirectory = URL(fileURLWithPath: root)
-            .appendingPathComponent("casa-rs-runs", isDirectory: true)
-            .appendingPathComponent("imager-\(nextImagerRunIndex())", isDirectory: true)
-        return runDirectory.appendingPathComponent("\(sanitizedPathComponent(baseName))-imager").path
-    }
-
-    private func nextImagerRunIndex() -> Int {
-        state.history.filter { $0.title.hasPrefix("Imager") }.count + 1
     }
 
     private func sanitizedPathComponent(_ value: String) -> String {

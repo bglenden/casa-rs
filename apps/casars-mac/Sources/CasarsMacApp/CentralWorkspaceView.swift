@@ -7762,6 +7762,10 @@ struct GenericTaskPanel: View {
         store.taskID(forTab: tabID)
     }
 
+    private var launchReadiness: TaskLaunchReadiness {
+        store.taskLaunchReadiness(taskID: activeTaskID, instanceID: tabID)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -7790,6 +7794,7 @@ struct GenericTaskPanel: View {
                     showingTaskList
                         || store.state.taskRun.state == .running
                         || schema == nil
+                        || !launchReadiness.canLaunch
                         || (store.taskRequiresConfirmation(taskID: activeTaskID, instanceID: tabID)
                             && !store.taskHasConfirmation(taskID: activeTaskID, instanceID: tabID))
                 )
@@ -7823,6 +7828,7 @@ struct GenericTaskPanel: View {
                         }
                     } else if let schema {
                         parameterProfileBlock
+                        imagingReadinessBlock
                         genericParameterBlock(schema: schema)
                         genericSafetyBlock
                     } else {
@@ -7848,6 +7854,139 @@ struct GenericTaskPanel: View {
         }
         .onChange(of: activeTaskID) { _ in
             revealActiveTaskIfNeeded()
+        }
+    }
+
+    @ViewBuilder
+    private var imagingReadinessBlock: some View {
+        if activeTaskID == "imager" {
+            let readiness = launchReadiness
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Imaging Readiness")
+                        .workbenchFont(.headline)
+                    Spacer()
+                    Label(readinessLabel(readiness.status), systemImage: readinessIcon(readiness.status))
+                        .workbenchFont(.caption, weight: .semibold)
+                        .foregroundStyle(readinessColor(readiness.status))
+                        .accessibilityIdentifier("task.imagerReadiness.status")
+                }
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 210), alignment: .topLeading)],
+                    alignment: .leading,
+                    spacing: 8
+                ) {
+                    readinessMetric(
+                        title: "Capability",
+                        value: readiness.status == .infeasible ? "Unsupported request" : readinessLabel(readiness.status),
+                        identifier: "task.imagerReadiness.capability"
+                    )
+                    readinessMetric(
+                        title: "Runtime plan",
+                        value: runtimePlanLabel,
+                        identifier: "task.imagerReadiness.plan"
+                    )
+                    readinessMetric(
+                        title: "Cache",
+                        value: cacheStateLabel,
+                        identifier: "task.imagerReadiness.cache"
+                    )
+                    readinessMetric(
+                        title: "Provider",
+                        value: providerLabel(readiness),
+                        identifier: "task.imagerReadiness.provider"
+                    )
+                }
+                ForEach(readiness.unsupportedReasons, id: \.id) { reason in
+                    HStack(spacing: 6) {
+                        Image(systemName: "xmark.octagon.fill")
+                            .accessibilityHidden(true)
+                        Text("\(reason.kind): \(reason.id)")
+                    }
+                    .workbenchFont(.caption, design: .monospaced)
+                    .foregroundStyle(.red)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(reason.kind): \(reason.id)")
+                    .accessibilityIdentifier("task.imagerReadiness.unsupported.\(reason.id)")
+                }
+                ForEach(readiness.diagnostics, id: \.self) { diagnostic in
+                    Label(diagnostic, systemImage: "exclamationmark.triangle.fill")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.orange)
+                }
+                if store.state.taskRun.imagerProgress == nil {
+                    Text("The canonical runtime publishes the selected backend, bounded memory plan, cache residency, and execution resources after launch.")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .taskCard()
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("task.imagerReadiness")
+        }
+    }
+
+    private func readinessMetric(title: String, value: String, identifier: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .workbenchFont(.caption2, weight: .semibold)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .workbenchFont(.caption, design: .monospaced)
+                .lineLimit(2)
+                .accessibilityIdentifier(identifier)
+        }
+    }
+
+    private var runtimePlanLabel: String {
+        store.state.taskRun.imagerProgress?.runtime.backend ?? "Pending launch"
+    }
+
+    private var cacheStateLabel: String {
+        if let memory = store.state.taskRun.imagerProgress?.runtime.memory {
+            return "\(byteSizeLabel(memory.plannedActiveBytes)) / \(byteSizeLabel(memory.memoryTargetBytes))"
+        }
+        let configured = store.parameterText(
+            surfaceID: activeTaskID,
+            instanceID: tabID,
+            name: "cfcache"
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return configured.isEmpty ? "Runtime-managed" : configured
+    }
+
+    private func byteSizeLabel(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .binary)
+    }
+
+    private func providerLabel(_ readiness: TaskLaunchReadiness) -> String {
+        guard let name = readiness.protocolName else { return "Unavailable" }
+        return readiness.protocolVersion.map { "\(name) v\($0)" } ?? name
+    }
+
+    private func readinessLabel(_ status: TaskLaunchReadinessStatus) -> String {
+        switch status {
+        case .unavailable: "Unavailable"
+        case .invalid: "Invalid"
+        case .infeasible: "Infeasible"
+        case .ready: "Ready"
+        }
+    }
+
+    private func readinessIcon(_ status: TaskLaunchReadinessStatus) -> String {
+        switch status {
+        case .ready: "checkmark.circle.fill"
+        case .infeasible: "xmark.octagon.fill"
+        case .invalid: "exclamationmark.triangle.fill"
+        case .unavailable: "questionmark.circle"
+        }
+    }
+
+    private func readinessColor(_ status: TaskLaunchReadinessStatus) -> Color {
+        switch status {
+        case .ready: .green
+        case .infeasible: .red
+        case .invalid: .orange
+        case .unavailable: .secondary
         }
     }
 
@@ -8792,6 +8931,23 @@ struct GenericTaskPanel: View {
             valueList("Log", values: store.state.taskRun.logLines)
             valueList("Diagnostics", values: store.state.taskRun.diagnostics)
             valueList("Products", values: store.state.taskRun.products.map(displayPath))
+            if let receipt = store.taskReceipt(runID: store.state.taskRun.runID) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Notebook Receipt")
+                        .workbenchFont(.caption, weight: .semibold)
+                    Text("\(receipt.runId) · revision \(receipt.revision) · \(receipt.status)")
+                        .workbenchFont(.caption, design: .monospaced)
+                    Text("\(receipt.products.count) products · \(receipt.diagnostics.count) diagnostics")
+                        .workbenchFont(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("task.run.receipt")
+            } else if store.state.taskRun.runID != nil {
+                Text("Notebook receipt pending or skipped for this run.")
+                    .workbenchFont(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("task.run.receipt.pending")
+            }
             Button {
                 saveTaskOutput()
             } label: {
