@@ -7878,11 +7878,24 @@ struct GenericTaskPanel: View {
                 ) {
                     readinessMetric(
                         title: "Capability",
-                        value: readiness.status == .infeasible ? "Unsupported request" : readinessLabel(readiness.status)
+                        value: readiness.status == .infeasible ? "Unsupported request" : readinessLabel(readiness.status),
+                        identifier: "task.imagerReadiness.capability"
                     )
-                    readinessMetric(title: "Runtime plan", value: runtimePlanLabel)
-                    readinessMetric(title: "Cache", value: cacheStateLabel)
-                    readinessMetric(title: "Provider", value: providerLabel(readiness))
+                    readinessMetric(
+                        title: "Runtime plan",
+                        value: runtimePlanLabel,
+                        identifier: "task.imagerReadiness.plan"
+                    )
+                    readinessMetric(
+                        title: "Cache",
+                        value: cacheStateLabel,
+                        identifier: "task.imagerReadiness.cache"
+                    )
+                    readinessMetric(
+                        title: "Provider",
+                        value: providerLabel(readiness),
+                        identifier: "task.imagerReadiness.provider"
+                    )
                 }
                 ForEach(readiness.unsupportedReasons, id: \.id) { reason in
                     Label("\(reason.kind): \(reason.id)", systemImage: "xmark.octagon.fill")
@@ -7906,7 +7919,7 @@ struct GenericTaskPanel: View {
         }
     }
 
-    private func readinessMetric(title: String, value: String) -> some View {
+    private func readinessMetric(title: String, value: String, identifier: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .workbenchFont(.caption2, weight: .semibold)
@@ -7914,6 +7927,7 @@ struct GenericTaskPanel: View {
             Text(value)
                 .workbenchFont(.caption, design: .monospaced)
                 .lineLimit(2)
+                .accessibilityIdentifier(identifier)
         }
     }
 

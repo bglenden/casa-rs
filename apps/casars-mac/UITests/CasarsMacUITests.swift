@@ -45,6 +45,28 @@ final class CasarsMacUITests: XCTestCase {
         }
     }
 
+    func testT64CanonicalImagingReadinessIsVisibleAndBlocksInfeasibleLaunch() throws {
+        app = makeTestApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--show-imager-progress-mockup",
+        ]
+        launchTestApplication()
+
+        XCTAssertTrue(
+            app.windows["casa-rs Workbench"].waitForExistence(timeout: GUIWaitPolicy.applicationLaunch),
+            app.debugDescription
+        )
+        XCTAssertTrue(try require("task.imagerReadiness").exists)
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.capability")).contains("Unsupported request"))
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.plan")).contains("Pending launch"))
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.cache")).contains("auto"))
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v6"))
+        XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.preview_png").exists)
+        XCTAssertFalse(app.buttons["Run"].isEnabled)
+    }
+
     func testCompleteDocumentEditingAndTaskProjection() throws {
         launchPrototype()
 
