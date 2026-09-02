@@ -648,8 +648,8 @@ Reusable buffers may reduce allocation churn but do not form a second memory
 budget or admission authority.
 
 The app uses one shared bounded producer/consumer primitive for source
-read-ahead across standard MFS, mosaic MFS replay, supported mosaic MT-MFS,
-standard and mosaic cube slabs, cubedata preparation, and trace preparation.
+read-ahead across standard and mosaic MFS replay, standard MT-MFS, standard
+and mosaic cube slabs, cubedata preparation, and trace preparation.
 `imaging_read_ahead_blocks` is a maximum live row-block count, not a queue-depth
 request. The default is two: one producer-owned block and one consumer-owned
 block. An explicit larger cap is admitted only within the assigned CPU and
@@ -662,17 +662,22 @@ sets a shared cancellation token, drops the rendezvous receiver to wake a
 blocked producer, and prevents another bounded source read after the current
 in-flight read; the original consumer error remains the returned context.
 
-The bounded mosaic MT-MFS path supports one MeasurementSet, `specmode='mfs'`,
-`nterms <= 2`, natural, uniform, or Briggs weighting, user masks, clean or
-dirty products, and optional PB/PB-corrected products. The ordinary mosaic
-gridder remains a no-W path. The EVLA AWProject specialization additionally
-consumes a validated CASA CF cache, aligned RR/LL hands, POINTING-derived phase
-gradients, wideband conjugate-frequency selection, A/W terms, and its distinct
-imaging, PSF, and weight projections. Each weighting, initial-dirty, and
-residual-refresh pass replays the same bounded row stream; Briggs density uses
-a raw-UVW sidecar so CASA's density cell conventions remain independent of
-mosaic projection coordinates. Start-model, outlier, multi-MS, and higher-term
-combinations outside those admitted slices still reject during planning.
+The bounded mosaic application path supports one MeasurementSet, constant-basis
+`specmode='mfs'` and channel-local cube reconstruction, natural, uniform, or
+Briggs weighting, user masks, clean or dirty products, and optional
+PB/PB-corrected products. Taylor-basis mosaic requests are not an installed
+production capability: observation-pointing mosaics require a
+pointing-dependent primary-beam response for which neither direct Taylor nor
+Taylor-via-channel-major execution is admitted. They fail closed during
+installed-implementation validation. Reconstruction and product owners retain
+the reusable Taylor mosaic accumulation, sensitivity, PB, PB-correction, and
+masking mechanics, but those lower-layer mechanics do not make the application
+route available. The ordinary mosaic gridder remains a no-W path. Each
+weighting, initial-dirty, and residual-refresh pass replays the same bounded row
+stream; Briggs density uses a raw-UVW sidecar so CASA's density cell conventions
+remain independent of mosaic projection coordinates. Start-model, outlier,
+multi-MS, and higher-term combinations outside those admitted slices still
+reject during planning.
 
 Imager task protocol v3 carries the local execution controls (`parallel`,
 `chanchunks`, shared source memory/row-block/worker/read-ahead settings, and
@@ -700,87 +705,27 @@ planner-charged shape holds all output planes. A requested CLEAN that would
 require multiple slabs fails during planning instead of accumulating uncharged
 plane state across slabs.
 
-On Apple platforms, eligible f32 standard and single-term mosaic dirty products
-can keep grids resident through MPSGraph FFT, correction, normalization, and
-peak reduction. Mosaic MT-MFS keeps its multi-plane input resident through the
-batched inverse FFT, then performs Taylor-term image correction and PB
-normalization on the CPU. Explicit `metal-mpsgraph` requests select the resident
-path when supported and fail closed on backend errors. `auto` compares exact
-input-boundary movement from shape, batch, precision, and placement instead of
-using an image-size crossover: host-resident grids stay on CPU, while
-Metal-shared grids stay on Metal and avoid host materialization. Under `auto`,
-unsupported shapes, unavailable devices, resident-command failures, and f64
-product transforms use the CPU finisher. Standard and mosaic MFS recover
-retained shared grids directly. When `auto` must recover an MT-MFS Metal
-attempt, it replays the bounded source stream to rebuild equivalent host grids;
-that recovery route does not alter the normal direct Metal-shared MT-MFS
-accumulation path. Backend and fallback decisions are reported in diagnostic
-telemetry rather than changing product membership or persistence semantics.
+Metal gridding and Metal MPSGraph FFT are not installed at the application
+boundary. Their task controls remain part of the transported surface until the
+later backend tickets transfer them, but requests for those implementations
+fail availability validation. Runtime Metal resource and receipt types define a
+future execution contract; they do not constitute a production imaging route.
 
-W-projection Auto plane selection follows the CASA geometric relation using
-the selected rows' observed maximum absolute projected W, CASA's 1.05 W-range
-safety factor, and the actual rectangular half-field angle. It does not use the
-array's longest physical baseline as a proxy, round to a power of two, or clamp
-to a tested image-size regime; like CASA, the positive plane-count expression
-is truncated to an integer. Auto plans scale their quadratic W coordinates to
-that safety-expanded observed W range. Explicit `wprojplanes` remains an
-accuracy/cost choice and, matching CASA's explicit-plane path, spans the
-cell-size-derived W range instead of the selected-data range.
+W-projection and AW-projection are likewise not installed application
+capabilities. Their controls may be parsed and transported, but production
+requests fail closed rather than selecting a displaced CPU, Metal, CF-cache, or
+grouped-replay implementation. The deleted pre-cutover AWProject cache reader
+and grouped Metal MT-MFS compiler are not retained owners. Future W/AW tickets
+must install their operators through the current model, reconstruction,
+runtime, and application boundaries without restoring those displaced routes.
 
-W-projection has one Metal dispatch and reduction implementation for both
-materialized sample slices and bounded replay chunks. The partial-grid count is
-derived from sample count, grid cells, convolution-kernel cells, output-grid
-count, and live Metal working-set headroom. Its square-root update-density
-balance minimizes the sum of per-partial atomic depth and final reduction
-depth; it is not selected by dataset or image identity. Each replay chunk uses
-that shared plan, and completed chunk grids are combined in deterministic host
-f64 order before the one final f32 narrowing. The replay producer includes any
-already prepared first block in the same bounded stream as later source blocks,
-so the normal two-live-block policy can overlap the next source read with CPU
-or Metal gridding without a separate cached-block execution path.
-
-Large mosaic MFS and MT-MFS can write directly into the Metal-shared f32 FFT
-input through disjoint output-owned tiles. CPU workers route exact convolution
-plan records to disjoint tiles and convolve without atomics or full-grid worker
-replicas. Standard MFS retains its established 256-pixel tiling; MT-MFS derives
-its tile edge and count from grid geometry, kernel support, requested workers,
-and the available scratch budget. MT-MFS keeps f64 PSF moments and Complex64
-dirty moments per complete plan key, applies the Taylor residual identity before
-gridding, and narrows only at the bounded f32 tile. The complete key includes
-grid location, subpixel offset, support, and clipped tap ranges; projector/PB
-identity remains fixed by the metadata group. Ordinary mosaic MT-MFS processes
-one metadata group and bounded compaction chunk at a time. Eligible Metal
-AWProject MT-MFS clean runs instead compile each admitted source-order segment
-once after bounded effective-support specialization. The compiler preserves
-the original sample/role order, records the final group ordinal for each role,
-and persists the sorted group plans and grouped tile route. Major-cycle replay
-then performs only the exact-order f64 residual reduction, one f32 narrowing,
-and the unchanged grouped Metal dispatch; it does not rebuild grouping, sorting,
-or route topology. The private spill is integrity-checked, unlinked, and owned
-only for the lifetime of the imaging execution. It is an internal execution
-representation, not a reusable public cache format.
-
-The frontend derives requested scratch from image cells, Taylor plane count,
-and planned workers, then caps it by the run-level memory target after fixed
-products, caches, and one source row block are reserved. For grouped AWProject
-replay it separately admits persistent residual-stage replay bytes and
-capture-time compiler bytes from the initial-grid lifetime ledger. Segment size
-is the remaining compiler headroom after persistent replay retention, bounded
-between 512 MiB and 8 GiB; allocator uncertainty is charged explicitly. The
-spill directory is the output image directory, so the task's output-volume
-choice also owns temporary replay I/O. Existing memory-target and
-memory-pressure parameters govern admission; grouped replay is not a separate
-user-facing science parameter. AWProject charges its full-cell LRU and compact
-tap ceiling as independent allocations; neither may consume the remaining
-safety reserve. The core reduces worker count when a support-sized tile cannot
-fit, subtracts exact worker-tile storage, and converts the remainder into a
-raw-sample limit from the actual compact record layout and geometry-derived
-route-copy bound. Reusable standard-MFS tap plans likewise receive an exact byte
-budget instead of a sample-count cutoff. The frontend memory planner and core
-executor share these formulas; no dataset identity or benchmark-specific sample
-threshold participates in the decision. Image-domain correction, PB
-normalization, and product semantics stay after the FFT. No generic
-compatibility block facade or normal-path host full-grid upload is retained.
+The installed mosaic execution route therefore consists of bounded serial CPU
+constant-basis MFS and channel-local cube reconstruction. Standard MT-MFS
+remains installed through its non-mosaic Taylor route. Reconstruction and
+product crates may own reusable mosaic/Taylor data structures and product
+semantics, but application availability is the capability boundary: component
+presence alone never makes mosaic Taylor, W/AW projection, Metal execution, or
+automatic backend selection available.
 
 ## Persistence / external systems
 
