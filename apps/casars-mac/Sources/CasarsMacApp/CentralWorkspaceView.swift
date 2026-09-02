@@ -7898,10 +7898,14 @@ struct GenericTaskPanel: View {
                     )
                 }
                 ForEach(readiness.unsupportedReasons, id: \.id) { reason in
-                    Label("\(reason.kind): \(reason.id)", systemImage: "xmark.octagon.fill")
-                        .workbenchFont(.caption, design: .monospaced)
-                        .foregroundStyle(.red)
-                        .accessibilityIdentifier("task.imagerReadiness.unsupported.\(reason.id)")
+                    HStack(spacing: 6) {
+                        Image(systemName: "xmark.octagon.fill")
+                            .accessibilityHidden(true)
+                        Text("\(reason.kind): \(reason.id)")
+                            .accessibilityIdentifier("task.imagerReadiness.unsupported.\(reason.id)")
+                    }
+                    .workbenchFont(.caption, design: .monospaced)
+                    .foregroundStyle(.red)
                 }
                 ForEach(readiness.diagnostics, id: \.self) { diagnostic in
                     Label(diagnostic, systemImage: "exclamationmark.triangle.fill")
