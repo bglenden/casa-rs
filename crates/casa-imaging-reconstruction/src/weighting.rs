@@ -1182,6 +1182,7 @@ pub struct WeightingSelectedSample {
     pub(crate) visibility: SelectedVisibilitySample,
     pub(crate) channel_flag: bool,
     pub(crate) parallel_hand_group_flag: bool,
+    pub(crate) input_weight_group_flag: bool,
     pub(crate) row_flag: bool,
     // Reconstruction-derived CASA imaging weight, not raw per-correlation storage weight.
     pub(crate) input_weight: f32,
@@ -1210,6 +1211,7 @@ impl WeightingSelectedSample {
             visibility: sample.visibility(),
             channel_flag: sample.channel_flag(),
             parallel_hand_group_flag: sample.parallel_hand_group_flag(),
+            input_weight_group_flag: input_weight_group.imaging_flag(),
             row_flag: sample.row_flag(),
             input_weight: casa_unpolarized_input_weight(input_weight_group),
             raw_input_weight: sample.input_weight(),
@@ -1922,7 +1924,7 @@ fn input_weight(
     problem: &CompiledProblem,
     sample: &WeightingSelectedSample,
 ) -> Result<f64, WeightingError> {
-    if sample.parallel_hand_group_flag || sample.row_flag {
+    if sample.input_weight_group_flag || sample.parallel_hand_group_flag || sample.row_flag {
         return Ok(0.0);
     }
     let weight = f64::from(sample.input_weight);

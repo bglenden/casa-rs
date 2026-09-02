@@ -748,6 +748,7 @@ impl SelectedObservationSample {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedInputWeightGroup {
     kind: SelectedInputWeightGroupKind,
+    imaging_flag: bool,
     density_owner: bool,
     terminal_member: bool,
     members: usize,
@@ -765,6 +766,7 @@ impl SelectedInputWeightGroup {
     pub const fn single(input_weight: f32) -> Self {
         Self {
             kind: SelectedInputWeightGroupKind::Single(input_weight),
+            imaging_flag: false,
             density_owner: true,
             terminal_member: true,
             members: 1,
@@ -776,6 +778,7 @@ impl SelectedInputWeightGroup {
     pub const fn parallel_hands(first: f32, last: f32) -> Self {
         Self {
             kind: SelectedInputWeightGroupKind::ParallelHands { first, last },
+            imaging_flag: false,
             density_owner: true,
             terminal_member: false,
             members: 2,
@@ -792,10 +795,26 @@ impl SelectedInputWeightGroup {
             } else {
                 SelectedInputWeightGroupKind::ParallelHands { first, last }
             },
+            imaging_flag: false,
             density_owner: true,
             terminal_member: members == 1,
             members,
         }
+    }
+
+    /// Apply CASA's row/channel imaging flag shared by every correlation member.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_imaging_flag(mut self, imaging_flag: bool) -> Self {
+        self.imaging_flag = imaging_flag;
+        self
+    }
+
+    /// Return CASA's OR-reduced flag for this complete correlation group.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn imaging_flag(self) -> bool {
+        self.imaging_flag
     }
 
     /// Mark whether this member canonically owns the group's one density contribution.

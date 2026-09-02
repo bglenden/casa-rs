@@ -14,6 +14,7 @@ use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
 use crate::restore::{MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane};
 use crate::source::ContinuumProductInputs;
+use casa_numerics::AnnularApertureVoltageTable;
 
 pub(crate) struct TaylorProducts {
     shape: [usize; 2],
@@ -333,6 +334,12 @@ impl TaylorProducts {
             Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
                 analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
             }
+            Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
+                analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 10.7)?
+            }
+            Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
+                analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
+            }
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
                 primary_beam_from_weight(&weight[0])?
             }
@@ -586,6 +593,47 @@ pub(crate) fn analytic_evla_primary_beam(
             let latitude = (y as f64 - reference_pixel[1]) * increment_rad[1];
             values[x * shape[1] + y] =
                 evla_common_power_pattern(longitude.hypot(latitude), frequency_hz, coefficients);
+        }
+    }
+    Ok(values)
+}
+
+pub(crate) fn analytic_alma_airy_primary_beam(
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &casa_imaging_model::ImageDomainRole,
+    shape: [usize; 2],
+    output_channel: usize,
+    effective_diameter_m: f64,
+) -> Result<Vec<f32>, ProductsError> {
+    let domain = inputs
+        .problem()
+        .geometry()
+        .domains()
+        .iter()
+        .find(|domain| domain.role() == domain_role)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let direction = domain.direction();
+    let reference_pixel = direction.reference_pixel();
+    let increment_rad = direction.increment_rad();
+    let frequency_hz = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(output_channel)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
+    let mut values = vec![0.0; shape[0] * shape[1]];
+    for x in 0..shape[0] {
+        let pixel_x = x as f64 - reference_pixel[0];
+        for y in 0..shape[1] {
+            let pixel_y = y as f64 - reference_pixel[1];
+            let longitude_deg = (pixel_x * increment_rad[0]).to_degrees() as f32;
+            let latitude_deg = (pixel_y * increment_rad[1]).to_degrees() as f32;
+            let radius_deg = longitude_deg.hypot(latitude_deg);
+            let radius_arcmin_ghz =
+                (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+            let voltage = table.evaluate(radius_arcmin_ghz);
+            values[x * shape[1] + y] = voltage * voltage;
         }
     }
     Ok(values)

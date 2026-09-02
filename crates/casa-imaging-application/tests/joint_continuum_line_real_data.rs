@@ -18,10 +18,13 @@ use casa_imaging_application::{
 use casa_ms::{CubeAxisConfig, CubeAxisValue};
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 use casa_types::measures::frequency::FrequencyRef;
+use ndarray::Dimension;
 use sha2::{Digest, Sha256};
 
 const DATASET: &str = "unittest/uvcontsub/sim_alma_cont_poly_order_0_nonoise.ms";
 const OUTPUT_ENV: &str = "CASA_RS_JOINT_REAL_DATA_PREFIX";
+const REPRESENTATIVE_MS_ENV: &str = "CASA_RS_ISSUE607_JOINT_MS";
+const REPRESENTATIVE_OUTPUT_ENV: &str = "CASA_RS_ISSUE607_JOINT_PREFIX";
 const IMAGE_SIZE: usize = 32;
 const CHANNELS: usize = 16;
 const SOURCE_TREE_SHA256: &str = "ae80d9199e2d313e951b650ed670881bebc8d686eff4b38c017d3df917fb2710";
@@ -165,6 +168,191 @@ fn joint_continuum_line_recovers_the_noiseless_alma_simulation() -> Result<(), B
         continuum_prefix.display(),
         line_prefix.display()
     );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the frozen issue #607 real-observation-shaped joint fixture"]
+fn issue607_representative_joint_continuum_line_recovers_analytic_sky() -> Result<(), Box<dyn Error>>
+{
+    const REPRESENTATIVE_IMAGE_SIZE: usize = 512;
+    const REPRESENTATIVE_CHANNELS: usize = 256;
+    const LINE_CHANNELS: std::ops::Range<usize> = 124..132;
+    const LINE_FLUX_JY: [f32; 8] = [0.2, 0.4, 0.6, 0.8, 1.0, 0.8, 0.6, 0.4];
+    const FIXTURE_SHA256: &str = "7ad5d0d257cb6498c5c2755db0c27c1806377dfecb6ba2b1d8fe26c9ee90d326";
+
+    set_production_io_environment();
+    let source = PathBuf::from(
+        std::env::var_os(REPRESENTATIVE_MS_ENV).ok_or("CASA_RS_ISSUE607_JOINT_MS is not set")?,
+    );
+    let output = PathBuf::from(
+        std::env::var_os(REPRESENTATIVE_OUTPUT_ENV)
+            .ok_or("CASA_RS_ISSUE607_JOINT_PREFIX is not set")?,
+    );
+    assert_eq!(tree_sha256(&source)?, FIXTURE_SHA256);
+    for suffix in [
+        ".total.residual",
+        ".continuum.model.ct0",
+        ".line.model",
+        ".total.model",
+        ".line.image",
+        ".total.image",
+        ".continuum.mask",
+        ".line.mask",
+    ] {
+        if product_path(&output, suffix).exists() {
+            return Err(format!("representative output already exists: {suffix}").into());
+        }
+    }
+
+    let output_parent = output
+        .parent()
+        .ok_or("representative joint output has no parent directory")?;
+    fs::create_dir_all(output_parent)?;
+    let staging = tempfile::Builder::new()
+        .prefix("issue607-joint-staging-")
+        .tempdir_in(output_parent)?;
+    let staged = staging.path().join("issue607-joint.ms");
+    let mut measurement_set = casa_ms::MeasurementSet::open(&source)?;
+    measurement_set.save_as(&staged)?;
+    casa_ms::initialize_measurement_set_owner_manifest(&staged)?;
+    let continuum_anchor_channels = (0..REPRESENTATIVE_CHANNELS)
+        .filter(|channel| !LINE_CHANNELS.contains(channel))
+        .collect::<Vec<_>>();
+    let line_channels = LINE_CHANNELS.collect::<Vec<_>>();
+    let mut request = base_request(staged, output.clone());
+    request.image_size = REPRESENTATIVE_IMAGE_SIZE;
+    request.cell_arcsec = 0.1;
+    request.spectral_window = Some("0:0~255".to_string());
+    request.channel_count = Some(REPRESENTATIVE_CHANNELS);
+    request.spectral_mode = SpectralImagingMode::JointContinuumLine;
+    request.algorithm = ContinuumAlgorithm::JointContinuumLine {
+        continuum_terms: 1,
+        continuum_anchor_channels,
+        line_channels: line_channels.clone(),
+        maximum_condition_number: 1.0e12,
+        scales_px: vec![0.0],
+        small_scale_bias: 0.0,
+    };
+    request.iterations = 128;
+    request.cycle_iterations = 32;
+    request.maximum_major_cycles = Some(8);
+    request.threshold_jy = 1.0e-5;
+    request.hogbom_iteration_accounting = HogbomIterationAccounting::Strict;
+    request.beam_policy = ContinuumBeamPolicy::Common;
+    request.mask = ContinuumMask::Coupled {
+        continuum: Box::new(ContinuumMask::FullPlane),
+        line: Box::new(ContinuumMask::Boxes(vec![ContinuumMaskBox {
+            blc: [256, 256],
+            trc: [256, 256],
+        }])),
+    };
+    let result = execute_continuum(request)?;
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .sample_count(),
+        1_228_800,
+        "representative joint selected sample count changed",
+    );
+    let mut expected_products = Vec::new();
+    for row in 0..9 {
+        for column in 0..9 {
+            expected_products.push(format!(".psf.joint{row}_{column}"));
+        }
+    }
+    expected_products.extend(
+        [
+            ".total.residual",
+            ".continuum.model.ct0",
+            ".line.model",
+            ".total.model",
+            ".line.image",
+            ".total.image",
+        ]
+        .map(str::to_string),
+    );
+    for row in 0..9 {
+        for column in 0..9 {
+            expected_products.push(format!(".sumwt.joint{row}_{column}"));
+        }
+    }
+    expected_products.extend([".continuum.mask", ".line.mask"].map(str::to_string));
+    assert_eq!(result.product_names, expected_products);
+
+    let continuum = product_values(&output, ".continuum.model.ct0")?;
+    let continuum_flux = continuum.iter().copied().map(f64::from).sum::<f64>();
+    assert!(
+        (continuum_flux - 1.0).abs() <= 1.0e-3,
+        "representative continuum flux changed: {continuum_flux}",
+    );
+    assert_eq!(
+        continuum
+            .indexed_iter()
+            .max_by(|left, right| left.1.abs().total_cmp(&right.1.abs()))
+            .map(|(index, _)| index.slice().to_vec()),
+        Some(vec![256, 256, 0, 0]),
+        "representative continuum centroid moved",
+    );
+
+    let line = product_values(&output, ".line.model")?;
+    let total = product_values(&output, ".total.model")?;
+    for channel in 0..REPRESENTATIVE_CHANNELS {
+        let line_value = line[[256, 256, 0, channel]];
+        let expected_line = line_channels
+            .iter()
+            .position(|candidate| *candidate == channel)
+            .map_or(0.0, |index| LINE_FLUX_JY[index]);
+        assert!(
+            (line_value - expected_line).abs() <= 1.0e-3,
+            "representative line flux changed at channel {channel}: {line_value}",
+        );
+        assert!(
+            (total[[256, 256, 0, channel]] - (1.0 + expected_line)).abs() <= 1.0e-3,
+            "representative total flux changed at channel {channel}",
+        );
+    }
+    for ((index, total_value), line_value) in total.indexed_iter().zip(line.iter()) {
+        let expected = continuum[[index[0], index[1], 0, 0]] + line_value;
+        assert_eq!(*total_value, expected, "joint model decomposition changed");
+    }
+    drop(total);
+    drop(line);
+
+    let residual = product_values(&output, ".total.residual")?;
+    let residual_peak = residual
+        .iter()
+        .copied()
+        .map(f32::abs)
+        .fold(0.0_f32, f32::max);
+    assert!(
+        residual_peak <= 1.0e-3,
+        "representative joint residual peak is {residual_peak}",
+    );
+    assert!(residual.iter().all(|value| value.is_finite()));
+    drop(residual);
+
+    let continuum_mask = product_values(&output, ".continuum.mask")?;
+    let line_mask = product_values(&output, ".line.mask")?;
+    assert_eq!(
+        continuum_mask.iter().filter(|value| **value != 0.0).count(),
+        REPRESENTATIVE_IMAGE_SIZE * REPRESENTATIVE_IMAGE_SIZE * REPRESENTATIVE_CHANNELS,
+    );
+    assert_eq!(
+        line_mask.iter().filter(|value| **value != 0.0).count(),
+        REPRESENTATIVE_CHANNELS,
+    );
+    assert_ne!(continuum_mask, line_mask);
+
+    let line_beam = open_product(&output, ".line.image")?.image_info()?.beam_set;
+    let total_beam = open_product(&output, ".total.image")?
+        .image_info()?
+        .beam_set;
+    assert!(line_beam.has_single_beam());
+    assert!(total_beam.equivalent(&line_beam));
     Ok(())
 }
 

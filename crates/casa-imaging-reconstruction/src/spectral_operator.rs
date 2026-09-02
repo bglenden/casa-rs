@@ -3765,13 +3765,10 @@ impl CompleteDataOwnerState {
             .iter()
             .map(|weighted| weighted.selected().address.correlation_type)
             .collect::<SmallVec<[_; 4]>>();
-        let polarization = PolarizationOperator::compile(
+        let polarization = direction_independent_polarization(
             self.specification.polarization_coordinates(),
             &correlations,
-            selected.parallactic_angles_rad(),
-            MuellerMatrix::identity(),
-        )
-        .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        )?;
         let visibilities = group
             .iter()
             .map(|weighted| selected_visibility(weighted.selected().visibility))
@@ -3978,13 +3975,10 @@ impl CompleteDataOwnerState {
             .iter()
             .map(|weighted| weighted.selected().address.correlation_type)
             .collect::<SmallVec<[_; 4]>>();
-        let polarization = PolarizationOperator::compile(
+        let polarization = direction_independent_polarization(
             self.specification.polarization_coordinates(),
             &correlations,
-            selected.parallactic_angles_rad(),
-            MuellerMatrix::identity(),
-        )
-        .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        )?;
         let predicts_residual = self
             .model_binding
             .is_some_and(ReconstructionModelBinding::is_evaluated);
@@ -4062,13 +4056,10 @@ impl CompleteDataOwnerState {
         predicts_residual: bool,
     ) -> Result<(), SpectralOperatorError> {
         let mosaic_response = self.mosaic_response(&resampled.selected)?;
-        let polarization = PolarizationOperator::compile(
+        let polarization = direction_independent_polarization(
             self.specification.polarization_coordinates(),
             &resampled.correlations,
-            resampled.selected.parallactic_angles_rad(),
-            MuellerMatrix::identity(),
-        )
-        .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        )?;
         let flags = polarization_effective_flags(&polarization, resampled.flags);
         let published_weights =
             polarization_published_weights(&polarization, &resampled.weights, &flags);
@@ -4159,13 +4150,10 @@ impl CompleteDataOwnerState {
                 .iter()
                 .map(|weighted| weighted.selected().address.correlation_type)
                 .collect::<SmallVec<[_; 4]>>();
-            let polarization = PolarizationOperator::compile(
+            let polarization = direction_independent_polarization(
                 self.specification.polarization_coordinates(),
                 &correlations,
-                selected.parallactic_angles_rad(),
-                MuellerMatrix::identity(),
-            )
-            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+            )?;
             let observed = group
                 .iter()
                 .map(|weighted| {
@@ -4271,16 +4259,13 @@ impl CompleteDataOwnerState {
             for weighted in group {
                 let _ = accept_weighted_input(weighted.selected(), self.finite_values)?;
             }
-            let polarization = PolarizationOperator::compile(
+            let polarization = direction_independent_polarization(
                 self.specification.polarization_coordinates(),
                 &group
                     .iter()
                     .map(|weighted| weighted.selected().address.correlation_type)
                     .collect::<SmallVec<[_; 4]>>(),
-                selected.parallactic_angles_rad(),
-                MuellerMatrix::identity(),
-            )
-            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+            )?;
             let stencil = spectral_stencil(
                 first,
                 selected.transformed_uvw_m(),
@@ -4543,6 +4528,24 @@ fn spectral_stencil(
             })
         })
         .collect()
+}
+
+/// Compile CASA's standard direction-independent correlation-to-image map.
+///
+/// Calibrated MeasurementSet correlations are already in the sky frame for
+/// standard imaging. Parallactic-angle and Mueller responses belong to an
+/// explicitly selected direction-dependent operator, not this identity path.
+fn direction_independent_polarization(
+    coordinates: &[PolarizationCoordinate],
+    correlations: &[casa_imaging_model::CorrelationType],
+) -> Result<PolarizationOperator, SpectralOperatorError> {
+    PolarizationOperator::compile(
+        coordinates,
+        correlations,
+        [0.0, 0.0],
+        MuellerMatrix::identity(),
+    )
+    .map_err(|_| SpectralOperatorError::InvalidSample)
 }
 
 pub(crate) fn polarization_diagonal(

@@ -1031,6 +1031,18 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
         .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
         .expect("Taylor-zero PB");
     assert_eq!(pb0.unit(), ProductUnit::Dimensionless);
+    assert_eq!(
+        pb0.validity(),
+        ProductValidityRule::PrimaryBeam(validity().primary_beam())
+    );
+    assert_eq!(
+        graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+            .expect("Taylor-one PB")
+            .validity(),
+        ProductValidityRule::All,
+        "CASA masks only the principal primary-beam Taylor term",
+    );
     for term in 0..TERMS {
         let restored = graph
             .node(ProductRole::RestoredImage(ProductTerm::Taylor(term)))
@@ -1084,6 +1096,7 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     let pb1 = member(&sealed, ".pb.tt1");
     assert_eq!(pb0.payload()[4 * SHAPE[1] + 4], 1.0);
     assert!(pb1.payload().iter().all(|value| *value == 0.0));
+    assert!(pb1.validity().iter().all(|valid| *valid));
     for term in 0..TERMS {
         let restored = member(&sealed, &format!(".image.tt{term}"));
         let corrected = member(&sealed, &format!(".image.tt{term}.pbcor"));

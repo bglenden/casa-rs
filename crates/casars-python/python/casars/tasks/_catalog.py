@@ -275,7 +275,7 @@ def imager(
     channel_start: int | Literal['none'] | object = _UNSET,
     channel_count: int | Literal['none'] | object = _UNSET,
     stokes: str | object = _UNSET,
-    specmode: Literal['cube', 'cubedata', 'mfs'] | object = _UNSET,
+    specmode: Literal['cube', 'cubedata', 'cubesource', 'mvc', 'mfs'] | object = _UNSET,
     start: str | object = _UNSET,
     width: int | Literal['none'] | object = _UNSET,
     outframe: Literal['BARY', 'CMB', 'GALACTO', 'GEO', 'LGROUP', 'LSRD', 'LSRK', 'REST', 'TOPO', 'none'] | object = _UNSET,

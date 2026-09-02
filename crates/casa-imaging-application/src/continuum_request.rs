@@ -1694,7 +1694,46 @@ fn standard_primary_beam_model(
                 .map(|name| name.trim().to_string())
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
-    analytic_primary_beam_model_for_telescopes(&telescopes)
+    match telescopes
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["ALMA"] => homogeneous_alma_primary_beam_model(
+            ms,
+            10.0..13.0,
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaAlma12mAiry,
+        ),
+        ["ACA"] => homogeneous_alma_primary_beam_model(
+            ms,
+            6.0..8.0,
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaAca7mAiry,
+        ),
+        _ => analytic_primary_beam_model_for_telescopes(&telescopes),
+    }
+}
+
+fn homogeneous_alma_primary_beam_model(
+    ms: &MeasurementSet,
+    diameter_range_m: std::ops::Range<f64>,
+    model: casa_imaging_products::AnalyticPrimaryBeamModel,
+) -> Result<casa_imaging_products::AnalyticPrimaryBeamModel, crate::ApplicationError> {
+    let antenna = ms.antenna()?;
+    if antenna.row_count() == 0 {
+        return Err(boxed(
+            "ALMA primary-beam publication requires ANTENNA dish metadata",
+        ));
+    }
+    for row in 0..antenna.row_count() {
+        let diameter = antenna.dish_diameter(row)?;
+        if !diameter.is_finite() || !diameter_range_m.contains(&diameter) {
+            return Err(boxed(format!(
+                "ALMA primary-beam publication requires one homogeneous dish class; row {row} has diameter {diameter} m"
+            )));
+        }
+    }
+    Ok(model)
 }
 
 fn scientific_instrument_model(

@@ -716,6 +716,13 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
             .validity(),
         ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
     );
+    assert_eq!(
+        graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+            .expect("primary-beam Taylor-one product")
+            .validity(),
+        ProductValidityRule::All
+    );
     assert!(
         graph
             .nodes()

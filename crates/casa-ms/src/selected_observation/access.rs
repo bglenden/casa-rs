@@ -1095,6 +1095,15 @@ fn selected_input_weight_group(
     row: usize,
 ) -> Option<SelectedInputWeightGroup> {
     let channel = channel?;
+    let imaging_flag =
+        coordinates
+            .products
+            .iter()
+            .copied()
+            .try_fold(false, |flagged, product| {
+                let correlation = usize::try_from(product.correlation_index()).ok()?;
+                Some(flagged || buffer.sample(channel, row, correlation)?.channel_flag())
+            })?;
     let first = coordinates.products.first()?;
     let first_weight = buffer
         .sample(
@@ -1104,7 +1113,9 @@ fn selected_input_weight_group(
         )?
         .input_weight();
     if coordinates.products.len() == 1 {
-        return Some(SelectedInputWeightGroup::single(first_weight));
+        return Some(
+            SelectedInputWeightGroup::single(first_weight).with_imaging_flag(imaging_flag),
+        );
     }
     let last = coordinates.products.last()?;
     let last_weight = buffer
@@ -1114,11 +1125,14 @@ fn selected_input_weight_group(
             usize::try_from(last.correlation_index()).ok()?,
         )?
         .input_weight();
-    Some(SelectedInputWeightGroup::correlation_run(
-        first_weight,
-        last_weight,
-        coordinates.products.len(),
-    ))
+    Some(
+        SelectedInputWeightGroup::correlation_run(
+            first_weight,
+            last_weight,
+            coordinates.products.len(),
+        )
+        .with_imaging_flag(imaging_flag),
+    )
 }
 
 /// Opaque caller-owned selected-observation storage block.

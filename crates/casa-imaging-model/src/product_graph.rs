@@ -643,6 +643,11 @@ impl<'a> GraphBuilder<'a> {
             ProductKind::PrimaryBeam => {
                 let mut primary_beam = None;
                 for term in self.image_terms() {
+                    let validity = if term == self.primary_beam_term() {
+                        ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
+                    } else {
+                        ProductValidityRule::All
+                    };
                     let node = self.add_image(
                         domain_index,
                         domain,
@@ -652,7 +657,7 @@ impl<'a> GraphBuilder<'a> {
                         ProductUnit::Dimensionless,
                         None,
                         ProductBeamRule::None,
-                        ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam()),
+                        validity,
                         [],
                     );
                     if term == self.primary_beam_term() {
@@ -838,6 +843,9 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn normalized_image_validity(&self) -> ProductValidityRule {
+        if self.products.contains(ProductKind::PrimaryBeam) {
+            return ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam());
+        }
         match self.products.normalization() {
             ProductNormalization::UnitResponse => ProductValidityRule::FinalNormalState,
             ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
