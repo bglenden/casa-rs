@@ -934,7 +934,7 @@ impl WorkImplementation for PlanningImplementation {
         &self,
         _context: WorkExecutionContext<'_>,
         _fence: FenceKind,
-    ) -> Result<(), Self::Error> {
+    ) -> Result<WorkMeasurements, Self::Error> {
         unreachable!("contract-only implementation owns no fence")
     }
 

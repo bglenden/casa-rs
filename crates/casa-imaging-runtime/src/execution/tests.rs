@@ -1123,8 +1123,8 @@ impl crate::WorkImplementation for MalformedRejectionImplementation {
         &self,
         _context: crate::WorkExecutionContext<'_>,
         _fence: FenceKind,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+    ) -> Result<crate::WorkMeasurements, Self::Error> {
+        Ok(crate::WorkMeasurements::default())
     }
 
     fn complete_observation_read(
@@ -2146,6 +2146,11 @@ fn scheduler_rejects_discrete_metal_memory_instead_of_inventing_a_mac_model() {
         slots: CountDemand::new(1, 1),
         command_queue_slots: CountDemand::new(1, 1),
     }];
+    specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
+        driver_bytes: 1,
+        command_buffer_bytes: 1,
+        ..RuntimeOverheadDemand::zero()
+    };
     let plan = ExecutionDag::new(specification).expect("valid declared Metal work");
 
     assert!(matches!(
@@ -2249,6 +2254,7 @@ fn fence_context_exposes_only_capabilities_live_for_that_fence() {
                 lifetime: ClaimLifetime::through_fence(FenceKind::Io),
             },
         ],
+        metal_execution: None,
     };
 
     let fence = context.for_fence(FenceKind::Io);
@@ -2428,6 +2434,11 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
         slots: CountDemand::new(1, 1),
         command_queue_slots: CountDemand::new(1, 1),
     }];
+    specification.resource_alternative.demand.overhead = RuntimeOverheadDemand {
+        driver_bytes: 1,
+        command_buffer_bytes: 1,
+        ..RuntimeOverheadDemand::zero()
+    };
     specification.resource_alternative.demand.rates = vec![RateDemand {
         demand_id: "output-rate".to_string(),
         resource: RateResourceId::new("io-rate"),

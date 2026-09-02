@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::rc::Rc;
 
 use crate::execution_bindings::CanonicalEncoder;
 use crate::{
@@ -846,7 +847,7 @@ impl WorkAllocationCapability {
 }
 
 /// Non-constructible, lease-scoped execution context for one exact plan node.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct WorkExecutionContext {
     node: WorkNode,
     knobs: ExecutionKnobs,
@@ -854,7 +855,22 @@ pub(crate) struct WorkExecutionContext {
     cleanup: bool,
     resources: Vec<WorkResourceCapability>,
     allocations: Vec<WorkAllocationCapability>,
+    metal_execution: Option<Rc<crate::metal_runtime::MetalExecutionState>>,
 }
+
+impl PartialEq for WorkExecutionContext {
+    fn eq(&self, other: &Self) -> bool {
+        self.node == other.node
+            && self.knobs == other.knobs
+            && self.lease_epoch == other.lease_epoch
+            && self.cleanup == other.cleanup
+            && self.resources == other.resources
+            && self.allocations == other.allocations
+            && self.metal_execution.is_some() == other.metal_execution.is_some()
+    }
+}
+
+impl Eq for WorkExecutionContext {}
 
 impl WorkExecutionContext {
     /// Returns the exact planned work declaration.
@@ -893,6 +909,10 @@ impl WorkExecutionContext {
         &self.allocations
     }
 
+    pub(crate) fn metal_execution(&self) -> Option<&crate::metal_runtime::MetalExecutionState> {
+        self.metal_execution.as_deref()
+    }
+
     pub(crate) fn for_fence(&self, kind: FenceKind) -> Self {
         Self {
             node: self.node.clone(),
@@ -920,6 +940,7 @@ impl WorkExecutionContext {
                     lifetime: capability.lifetime.clone(),
                 })
                 .collect(),
+            metal_execution: self.metal_execution.clone(),
         }
     }
 }
@@ -1019,6 +1040,7 @@ struct ActiveAllocation {
 pub(crate) struct ExecutionScheduler<'plan> {
     dag: &'plan ExecutionDag,
     lease: Option<ResourceLease>,
+    metal_execution: Option<Rc<crate::metal_runtime::MetalExecutionState>>,
     states: BTreeMap<WorkNodeId, NodeState>,
     running: BTreeMap<WorkNodeId, ActiveWork>,
     outstanding_fences: BTreeMap<FenceId, ResourceFence>,
@@ -1079,6 +1101,22 @@ impl<'plan> ExecutionScheduler<'plan> {
             ));
         }
         validate_lease_claims(dag, &lease)?;
+        let metal_execution = if dag
+            .nodes()
+            .values()
+            .any(|node| matches!(node.domain, WorkDomain::Metal { .. }))
+        {
+            Some(Rc::new(
+                crate::metal_runtime::MetalExecutionState::bind(
+                    dag,
+                    authority.topology(),
+                    lease.epoch(),
+                )
+                .map_err(|error| ExecutionError::invalid_plan(error.to_string()))?,
+            ))
+        } else {
+            None
+        };
         let states = dag
             .nodes
             .keys()
@@ -1097,6 +1135,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         Ok(Self {
             dag,
             lease: Some(lease),
+            metal_execution,
             states,
             running: BTreeMap::new(),
             outstanding_fences: BTreeMap::new(),
@@ -1815,6 +1854,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             cleanup,
             resources,
             allocations: allocation_capabilities,
+            metal_execution: self.metal_execution.clone(),
         }))
     }
 
@@ -2049,6 +2089,12 @@ impl<'plan> ExecutionScheduler<'plan> {
                 "quarantined terminal scheduler still owns unclassified resources",
             ));
         }
+        if let Some(metal_execution) = &self.metal_execution {
+            metal_execution
+                .close()
+                .map_err(|error| ExecutionError::invalid_state(error.to_string()))?;
+        }
+        self.metal_execution = None;
         let lease = self
             .lease
             .take()
@@ -2142,6 +2188,12 @@ impl<'plan> ExecutionScheduler<'plan> {
                 "terminal scheduler still owns work, fences, permits, or allocations",
             ));
         }
+        if let Some(metal_execution) = &self.metal_execution {
+            metal_execution
+                .close()
+                .map_err(|error| ExecutionError::invalid_state(error.to_string()))?;
+        }
+        self.metal_execution = None;
         let lease = self
             .lease
             .take()

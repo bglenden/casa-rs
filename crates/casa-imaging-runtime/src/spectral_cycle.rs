@@ -2437,8 +2437,8 @@ impl WorkImplementation for SpectralCycleExecutor {
         &self,
         _context: WorkExecutionContext<'_>,
         _fence: FenceKind,
-    ) -> Result<(), Self::Error> {
-        Ok(())
+    ) -> Result<WorkMeasurements, Self::Error> {
+        Ok(WorkMeasurements::default())
     }
 
     fn complete_observation_read(
