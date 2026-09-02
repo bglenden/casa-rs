@@ -203,6 +203,7 @@ struct LeftDockView: View {
                     Text(store.state.project.name)
                         .workbenchFont(.headline)
                         .lineLimit(1)
+                        .accessibilityIdentifier("project.name")
 
                     Spacer()
 
@@ -226,6 +227,7 @@ struct LeftDockView: View {
                 Text(projectSourceLabel)
                     .workbenchFont(.caption2, weight: .semibold)
                     .foregroundStyle(Color(nsColor: .labelColor))
+                    .accessibilityIdentifier("project.source")
 
                 if store.isNotebookPrototypeRuntime {
                     Text("Production boundary calls: \(store.prototypeProductionBoundaryInvocationCount)")
