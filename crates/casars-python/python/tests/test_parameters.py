@@ -164,11 +164,10 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
     if surface == "imager":
         invocation = loaded.provider_invocation()
         assert invocation.protocol_name == "casa_imager_task"
-        assert invocation.protocol_version == 6
+        assert invocation.protocol_version == 7
         assert json.loads(invocation.stdin or "null") == expected["request"]
         assert {reason.id for reason in invocation.unsupported_reasons} >= {
             "task.aw_projection",
-            "task.per_channel_weight_density",
             "task.grid_threads",
             "task.memory_target",
             "task.memory_pressure_policy",
@@ -189,11 +188,11 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
             },
             None,
         ),
-        (
-            "mosaic",
-            {"gridder": "mosaic", "usepointing": True, "write_preview_pngs": False},
-            "task.mosaic_gridder",
-        ),
+            (
+                "mosaic",
+                {"gridder": "mosaic", "usepointing": True, "write_preview_pngs": False},
+                None,
+            ),
     ],
 )
 def test_imager_python_profiles_round_trip_exact_provider_requests(
@@ -212,7 +211,7 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
 
     assert before == after
     assert before.protocol_name == "casa_imager_task"
-    assert before.protocol_version == 6
+    assert before.protocol_version == 7
     assert json.loads(before.stdin or "null")["request"]["measurement_set"] == f"{name}.ms"
     assert [reason.id for reason in before.unsupported_reasons] == (
         [] if expected_reason is None else [expected_reason]

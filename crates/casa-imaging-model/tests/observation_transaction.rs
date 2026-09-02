@@ -209,7 +209,7 @@ fn selected_model_column_writes_have_a_pinned_schema_three_identity() {
     );
     assert_eq!(
         writable.transaction_id().to_string(),
-        "b618683b850ebaddc2632a495a401266048f9b3caa2f6dd6aaed6cb8dd28d6b7"
+        "ae6dee9cca924c8f3048b569efb1f00c19e662648141235517599c6b8d7ab998"
     );
     assert_eq!(writable.write_set().visibility_columns().len(), 1);
     let write = &writable.write_set().visibility_columns()[0];

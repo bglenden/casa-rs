@@ -16,7 +16,8 @@ use casa_imaging_model::{
     LogicalIdentity, MeasurementSetIdentity, NumericPrecision, NumericsContractId,
     PointingCentreLaw, PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
     SelectedObservationGenerationId, SelectedPointingDirections, SelectedSampleAddress,
-    SelectedVisibilitySample, SpectralKernel, SpectralWcs, UvwCoordinateLaw, WeightingCommitmentId,
+    SelectedVisibilitySample, SpectralKernel, SpectralWcs, SpectralWindowCoordinateCatalog,
+    UvwCoordinateLaw, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::{Complex32, Complex64};
@@ -31,7 +32,7 @@ use crate::{
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     primary_beam::PreparedPrimaryBeamPower,
-    spectral_sampling::{CasaLinearGrid, CasaLinearSample},
+    spectral_sampling::{CasaLinearGrid, CasaLinearOutputGrid, CasaLinearSample},
     trace_complex_values,
     weighting::{
         CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
@@ -433,6 +434,7 @@ struct MosaicResponseSelection {
     measurement_set: MeasurementSetIdentity,
     spectral_window_id: u32,
     channel_indices: Box<[u32]>,
+    coordinate_catalog: SpectralWindowCoordinateCatalog,
 }
 
 #[derive(Debug)]
@@ -478,27 +480,36 @@ impl MosaicResponsePlan {
             || evaluation_frequency_hz <= 0.0
             || !address.frequency_centre_hz.is_finite()
             || address.frequency_centre_hz <= 0.0
-            || !address.channel_width_hz.is_finite()
-            || address.channel_width_hz == 0.0
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        let frame_scale = evaluation_frequency_hz / address.frequency_centre_hz;
-        let native_frequencies = selection
+        let native_frequency_hz = selection
+            .coordinate_catalog
+            .channel_frequency_hz(
+                usize::try_from(address.channel_index)
+                    .map_err(|_| SpectralOperatorError::InvalidSample)?,
+            )
+            .filter(|frequency_hz| frequency_hz.to_bits() == address.frequency_centre_hz.to_bits())
+            .ok_or(SpectralOperatorError::InvalidSample)?;
+        let frame_scale = evaluation_frequency_hz / native_frequency_hz;
+        let evaluation_frequencies = selection
             .channel_indices
             .iter()
             .map(|channel| {
-                let offset = i64::from(*channel) - i64::from(address.channel_index);
-                address.frequency_centre_hz + offset as f64 * address.channel_width_hz
+                selection
+                    .coordinate_catalog
+                    .channel_frequency_hz(
+                        usize::try_from(*channel)
+                            .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                    )
+                    .map(|frequency_hz| frequency_hz * frame_scale)
+                    .ok_or(SpectralOperatorError::InvalidSample)
             })
-            .collect::<Vec<_>>();
-        let evaluation_frequencies = native_frequencies
-            .iter()
-            .map(|frequency| frequency * frame_scale)
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         let (mapping, response_frequencies) = casa_useful_mosaic_channels(
-            &native_frequencies,
-            address.channel_width_hz.abs(),
+            selection.coordinate_catalog.channel_frequencies_hz(),
+            selection.coordinate_catalog.first_channel_width_hz().abs(),
+            &selection.channel_indices,
             &evaluation_frequencies,
         )?;
         if self
@@ -532,18 +543,25 @@ impl MosaicResponsePlan {
 }
 
 fn casa_useful_mosaic_channels(
-    native_frequencies_hz: &[f64],
-    native_width_hz: f64,
+    full_spw_frequencies_hz: &[f64],
+    first_native_width_hz: f64,
+    selected_channel_indices: &[u32],
     evaluation_frequencies_hz: &[f64],
 ) -> Result<(Vec<usize>, Vec<f64>), SpectralOperatorError> {
-    if native_frequencies_hz.is_empty()
-        || native_frequencies_hz.len() != evaluation_frequencies_hz.len()
-        || native_frequencies_hz
+    if full_spw_frequencies_hz.is_empty()
+        || selected_channel_indices.is_empty()
+        || selected_channel_indices.len() != evaluation_frequencies_hz.len()
+        || full_spw_frequencies_hz
             .iter()
             .chain(evaluation_frequencies_hz)
             .any(|frequency| !frequency.is_finite() || *frequency <= 0.0)
-        || !native_width_hz.is_finite()
-        || native_width_hz <= 0.0
+        || !first_native_width_hz.is_finite()
+        || first_native_width_hz <= 0.0
+        || selected_channel_indices.iter().any(|channel| {
+            usize::try_from(*channel)
+                .ok()
+                .is_none_or(|channel| channel >= full_spw_frequencies_hz.len())
+        })
     {
         return Err(SpectralOperatorError::InvalidSample);
     }
@@ -560,7 +578,7 @@ fn casa_useful_mosaic_channels(
     } else {
         (max_frequency - min_frequency) / (evaluation_frequencies_hz.len() - 1) as f64
     };
-    let native_max = native_frequencies_hz
+    let native_max = full_spw_frequencies_hz
         .iter()
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
@@ -582,12 +600,12 @@ fn casa_useful_mosaic_channels(
         response_count -= 1;
         bottom_frequency += tolerance;
     }
-    if response_count > native_frequencies_hz.len() {
-        response_count = native_frequencies_hz.len();
-        tolerance = native_width_hz;
-        bottom_frequency = native_frequencies_hz
+    if response_count > evaluation_frequencies_hz.len() {
+        response_count = evaluation_frequencies_hz.len();
+        tolerance = first_native_width_hz;
+        bottom_frequency = selected_channel_indices
             .iter()
-            .copied()
+            .map(|channel| full_spw_frequencies_hz[*channel as usize])
             .fold(f64::INFINITY, f64::min);
     }
     if response_count >= evaluation_frequencies_hz.len().saturating_sub(1) {
@@ -834,6 +852,10 @@ impl SpectralOperatorSpecification {
                             measurement_set: source.identity(),
                             spectral_window_id: spectral_window.spectral_window_id(),
                             channel_indices: spectral_window.channel_indices().into(),
+                            coordinate_catalog: spectral_window
+                                .coordinate_catalog()
+                                .cloned()
+                                .ok_or(SpectralOperatorError::UnsupportedProblem)?,
                         });
                     }
                     let source_fields = selection
@@ -3240,7 +3262,7 @@ impl NativeSpectralRowKey {
 struct NativeSpectralGroup {
     key: NativeSpectralRowKey,
     frequency_hz: f64,
-    samples: Vec<crate::weighting::WeightingSampleValue>,
+    samples: SmallVec<[crate::weighting::WeightingSampleValue; 4]>,
     observed: SmallVec<[Complex64; 4]>,
     predicted: SmallVec<[Complex64; 4]>,
 }
@@ -3276,50 +3298,53 @@ impl CasaLinearRowResampler {
     fn push(
         &mut self,
         current: NativeSpectralGroup,
-        output_centres_hz: &[f64],
+        output: CasaLinearOutputGrid,
         finite_values: FiniteValuePolicy,
-    ) -> Result<Vec<CasaResampledGroup>, SpectralOperatorError> {
+        mut emit: impl FnMut(CasaResampledGroup) -> Result<(), SpectralOperatorError>,
+    ) -> Result<(), SpectralOperatorError> {
         let Some(previous) = self.pending.take() else {
             self.pending = Some(current);
-            return Ok(Vec::new());
+            return Ok(());
         };
         if previous.key != current.key {
             self.grid = None;
             self.next_fine_channel = 0;
             self.pending = Some(current);
-            return Ok(Vec::new());
+            return Ok(());
         }
         let grid = match self.grid {
             Some(grid) => grid,
-            None => CasaLinearGrid::compile(
-                output_centres_hz,
+            None => CasaLinearGrid::compile_for_output(
+                output,
                 previous.frequency_hz,
                 current.frequency_hz,
             )
             .ok_or(SpectralOperatorError::InvalidSample)?,
         };
-        let fine = grid
-            .consume_pair(
+        let result = grid
+            .samples_for_pair(
                 &mut self.next_fine_channel,
                 previous.frequency_hz,
                 current.frequency_hz,
             )
-            .map_err(|_| SpectralOperatorError::InvalidSample)?;
-        let resampled = fine
-            .into_iter()
-            .map(|sample| resample_native_pair(&previous, &current, sample, finite_values))
-            .collect::<Result<Vec<_>, _>>()?;
+            .map_err(|_| SpectralOperatorError::InvalidSample)?
+            .try_for_each(|sample| {
+                emit(resample_native_pair(
+                    &previous,
+                    &current,
+                    sample,
+                    finite_values,
+                )?)
+            });
         self.grid = Some(grid);
         self.pending = Some(current);
-        Ok(resampled)
+        result
     }
 
-    fn finish(
-        &mut self,
-        _output_centres_hz: &[f64],
-        _finite_values: FiniteValuePolicy,
-    ) -> Result<Vec<CasaResampledGroup>, SpectralOperatorError> {
-        Ok(Vec::new())
+    fn finish(&mut self) {
+        self.pending = None;
+        self.grid = None;
+        self.next_fine_channel = 0;
     }
 }
 
@@ -3545,7 +3570,7 @@ impl CompleteDataOwnerState {
         for operator in &mut self.operators {
             if let Some(domain) = prior.get(operator.domain_ordinal) {
                 operator.prepare_primary_beam_replay(domain)?;
-            } else if operator.primary_beam.is_some()
+            } else if operator.requires_primary_beam_replay()
                 && operator.workload.pass == SpectralOperatorPass::ResidualRefresh
             {
                 return Err(SpectralOperatorError::ReusableNormalStateMismatch);
@@ -3617,16 +3642,7 @@ impl CompleteDataOwnerState {
     }
 
     fn finish_casa_linear_rows(&mut self) -> Result<(), SpectralOperatorError> {
-        let resampled = self.linear_rows.finish(
-            &self.specification.output_channel_frequencies_hz,
-            self.finite_values,
-        )?;
-        let predicts_residual = self
-            .model_binding
-            .is_some_and(ReconstructionModelBinding::is_evaluated);
-        for group in resampled {
-            self.accumulate_casa_resampled_group(group, predicts_residual)?;
-        }
+        self.linear_rows.finish();
         Ok(())
     }
 
@@ -3854,6 +3870,9 @@ impl CompleteDataOwnerState {
         &mut self,
         group: &[crate::weighting::WeightingSampleValue],
     ) -> Result<(), SpectralOperatorError> {
+        if group.len() > 4 {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
         let first = group.first().ok_or(SpectralOperatorError::InvalidSample)?;
         let selected = first.selected();
         let mosaic_response = self.mosaic_response(selected)?;
@@ -3927,19 +3946,20 @@ impl CompleteDataOwnerState {
         let native = NativeSpectralGroup {
             key: NativeSpectralRowKey::from_sample(selected),
             frequency_hz,
-            samples: group.to_vec(),
+            samples: group.iter().cloned().collect(),
             observed,
             predicted,
         };
-        let resampled = self.linear_rows.push(
-            native,
-            &self.specification.output_channel_frequencies_hz,
-            self.finite_values,
-        )?;
-        for resampled in resampled {
-            self.accumulate_casa_resampled_group(resampled, predicts_residual)?;
-        }
-        Ok(())
+        let output =
+            CasaLinearOutputGrid::compile(&self.specification.output_channel_frequencies_hz)
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+        let mut linear_rows =
+            std::mem::replace(&mut self.linear_rows, CasaLinearRowResampler::new());
+        let result = linear_rows.push(native, output, self.finite_values, |resampled| {
+            self.accumulate_casa_resampled_group(resampled, predicts_residual)
+        });
+        self.linear_rows = linear_rows;
+        result
     }
 
     fn accumulate_casa_resampled_group(
@@ -5385,7 +5405,7 @@ impl SpectralSlabOperator {
         &mut self,
         prior: &ReusableNormalState,
     ) -> Result<(), SpectralOperatorError> {
-        if self.primary_beam.is_none() {
+        if !self.requires_primary_beam_replay() {
             self.primary_beam_replay = None;
             return Ok(());
         }
@@ -5430,6 +5450,10 @@ impl SpectralSlabOperator {
             sum_weights: prior.sum_weights[..self.polarization_count].into(),
         });
         Ok(())
+    }
+
+    fn requires_primary_beam_replay(&self) -> bool {
+        self.primary_beam.is_some() && self.basis.channel_major_taylor().is_some()
     }
 
     fn prepare_bound_residual_model(
@@ -6832,9 +6856,11 @@ impl SpectralSlabOperator {
         } else {
             values
         };
-        match (&self.primary_beam, &self.primary_beam_replay) {
-            (Some(_), Some(_)) => {}
-            (None, None) => {}
+        match (
+            self.requires_primary_beam_replay(),
+            self.primary_beam_replay.is_some(),
+        ) {
+            (true, true) | (false, false) => {}
             _ => return Err(SpectralOperatorError::ReusableNormalStateMismatch),
         }
         trace_complex_values("final_replay_residual", &values);
@@ -7271,21 +7297,23 @@ fn normalize_mosaic_psf(
     if psf.len() != cells * sum_weights.len() {
         return Err(SpectralOperatorError::ProblemMismatch);
     }
-    for (plane, sum_weight) in psf.chunks_exact_mut(cells).zip(sum_weights) {
-        if *sum_weight == 0.0 {
-            continue;
-        }
-        let peak = plane
-            .iter()
-            .max_by(|left, right| left.norm().total_cmp(&right.norm()))
-            .copied()
-            .ok_or(SpectralOperatorError::ProblemMismatch)?;
-        if !peak.re.is_finite() || !peak.im.is_finite() || peak.norm() <= f64::MIN_POSITIVE {
-            return Err(SpectralOperatorError::GeneratedNonfinite);
-        }
-        let scale = Complex64::new(*sum_weight, 0.0) / peak;
-        plane.iter_mut().for_each(|value| *value *= scale);
+    let Some(principal_sum_weight) = sum_weights.first().copied() else {
+        return Err(SpectralOperatorError::ProblemMismatch);
+    };
+    if principal_sum_weight == 0.0 {
+        return Ok(());
     }
+    let principal = &psf[..cells];
+    let peak = principal
+        .iter()
+        .max_by(|left, right| left.norm().total_cmp(&right.norm()))
+        .copied()
+        .ok_or(SpectralOperatorError::ProblemMismatch)?;
+    if !peak.re.is_finite() || !peak.im.is_finite() || peak.norm() <= f64::MIN_POSITIVE {
+        return Err(SpectralOperatorError::GeneratedNonfinite);
+    }
+    let scale = Complex64::new(principal_sum_weight, 0.0) / peak;
+    psf.iter_mut().for_each(|value| *value *= scale);
     Ok(())
 }
 
@@ -7791,6 +7819,7 @@ mod tests {
     use casa_imaging_model::{
         CorrelationType, FiniteValuePolicy, FrequencyFrame, LogicalIdentity,
         MeasurementSetIdentity, PolarizationCoordinate, SelectedSampleAddress, SpectralKernel,
+        SpectralWindowCoordinateCatalog,
     };
     #[cfg(feature = "cpp-interop-tests")]
     use casa_test_support::gridder_interop::GridderOracle;
@@ -7807,8 +7836,8 @@ mod tests {
         SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
         apply_finite_value_policy, apply_input_policy, casa_persistent_complex,
         casa_useful_mosaic_channels, checked_cells, compile_operator_geometry,
-        polarization_diagonal, polarization_effective_flags, polarization_published_weights,
-        reconstruction_model_binding, scatter_chart_planes,
+        normalize_mosaic_psf, polarization_diagonal, polarization_effective_flags,
+        polarization_published_weights, reconstruction_model_binding, scatter_chart_planes,
     };
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
@@ -7852,6 +7881,39 @@ mod tests {
     }
 
     #[test]
+    fn mosaic_taylor_psf_uses_one_principal_moment_scale() {
+        let mut psf = vec![
+            Complex64::new(1.0, 0.0),
+            Complex64::new(4.0, 0.0),
+            Complex64::new(2.0, 0.0),
+            Complex64::new(10.0, 0.0),
+            Complex64::new(2.0, 0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(0.0, 0.0),
+            Complex64::new(8.0, 0.0),
+            Complex64::new(1.0, 0.0),
+        ];
+
+        normalize_mosaic_psf(&mut psf, 3, &[20.0, 999.0, 888.0]).expect("finite mosaic Taylor PSF");
+
+        assert_eq!(
+            psf,
+            [
+                Complex64::new(5.0, 0.0),
+                Complex64::new(20.0, 0.0),
+                Complex64::new(10.0, 0.0),
+                Complex64::new(50.0, 0.0),
+                Complex64::new(10.0, 0.0),
+                Complex64::new(5.0, 0.0),
+                Complex64::new(0.0, 0.0),
+                Complex64::new(40.0, 0.0),
+                Complex64::new(5.0, 0.0),
+            ]
+        );
+        assert_eq!(psf[4].re / psf[1].re, 0.5);
+    }
+
+    #[test]
     fn casa_mosaic_response_plan_collapses_a_narrow_spectral_window() {
         let native = (0..16)
             .map(|channel| 230.0e9 + f64::from(channel) * 1.0e6)
@@ -7860,7 +7922,9 @@ mod tests {
             .map(|channel| 229.986_867_803e9 + f64::from(channel) * 1.0e6)
             .collect::<Vec<_>>();
 
-        let (mapping, responses) = casa_useful_mosaic_channels(&native, 1.0e6, &evaluated).unwrap();
+        let selected = (0..16).collect::<Vec<_>>();
+        let (mapping, responses) =
+            casa_useful_mosaic_channels(&native, 1.0e6, &selected, &evaluated).unwrap();
 
         assert_eq!(mapping, vec![0; 16]);
         assert_eq!(responses, vec![228.864_925e9]);
@@ -7871,8 +7935,9 @@ mod tests {
         measurement_set: MeasurementSetIdentity,
         physical_row: u64,
         channel_index: u32,
+        frequency_centre_hz: f64,
+        channel_width_hz: f64,
     ) -> SelectedSampleAddress {
-        let frequency_centre_hz = 230.0e9 + f64::from(channel_index) * 1.0e6;
         SelectedSampleAddress {
             measurement_set,
             physical_row,
@@ -7880,9 +7945,9 @@ mod tests {
             spectral_window_id: 3,
             channel_index,
             frequency_centre_hz,
-            frequency_lower_hz: frequency_centre_hz - 0.5e6,
-            frequency_upper_hz: frequency_centre_hz + 0.5e6,
-            channel_width_hz: 1.0e6,
+            frequency_lower_hz: frequency_centre_hz - channel_width_hz / 2.0,
+            frequency_upper_hz: frequency_centre_hz + channel_width_hz / 2.0,
+            channel_width_hz,
             frequency_frame: FrequencyFrame::Topocentric,
             polarization_id: 0,
             correlation_index: 0,
@@ -7891,23 +7956,46 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_response_routes_are_invariant_when_one_row_is_split_at_every_channel() {
+    fn mosaic_response_routes_use_full_nonuniform_spw_and_ignore_replay_partitions() {
         let measurement_set = MeasurementSetIdentity::new(LogicalIdentity::from_sha256([47; 32]));
+        let full_spw = [
+            230.0e9,
+            230.000_4e9,
+            230.007e9,
+            230.025e9,
+            230.08e9,
+            400.0e9,
+        ];
+        let selected = [1_u32, 3, 4];
+        let first_width_hz = 1.0e6;
         let selections = [MosaicResponseSelection {
             measurement_set,
             spectral_window_id: 3,
-            channel_indices: vec![0, 1, 2, 3].into_boxed_slice(),
+            channel_indices: selected.into(),
+            coordinate_catalog: SpectralWindowCoordinateCatalog::new(full_spw, first_width_hz)
+                .expect("valid physical SPW catalog"),
         }];
-        let frequencies = [229.9e9, 229.901e9, 229.902e9, 229.903e9];
+        let frame_scale = 0.999_95;
+        let frequencies = selected.map(|channel| full_spw[channel as usize] * frame_scale);
         let run = |chunks: &[&[u32]]| {
-            let mut plan = MosaicResponsePlan::with_capacity(4);
+            let mut plan = MosaicResponsePlan::with_capacity(selected.len());
             let mut responses = Vec::new();
             for channel in chunks.iter().flat_map(|chunk| chunk.iter().copied()) {
+                let selected_ordinal = selected
+                    .iter()
+                    .position(|candidate| *candidate == channel)
+                    .expect("selected channel");
                 responses.push(
                     plan.response(
                         &selections,
-                        mosaic_address(measurement_set, 7, channel),
-                        frequencies[channel as usize],
+                        mosaic_address(
+                            measurement_set,
+                            7,
+                            channel,
+                            full_spw[channel as usize],
+                            first_width_hz,
+                        ),
+                        frequencies[selected_ordinal],
                     )
                     .expect("selected channel has a bounded mosaic route")
                     .expect("mosaic response is active"),
@@ -7916,12 +8004,12 @@ mod tests {
             (responses, plan.responses)
         };
 
-        let whole_row = run(&[&[0, 1, 2, 3]]);
-        let split_every_channel = run(&[&[0], &[1], &[2], &[3]]);
+        let whole_row = run(&[&selected]);
+        let split_every_channel = run(&[&[1], &[3], &[4]]);
         assert_eq!(split_every_channel, whole_row);
         assert_eq!(
             whole_row.1.len(),
-            4,
+            selected.len(),
             "one bounded route per selected channel"
         );
         assert!(
@@ -7931,15 +8019,28 @@ mod tests {
                 .all(|pair| pair[0].key == pair[1].key),
             "a narrow spectral window reuses one CASA-scale response bin"
         );
-        let native = (0..4)
-            .map(|channel| 230.0e9 + f64::from(channel) * 1.0e6)
-            .collect::<Vec<_>>();
-        let (_, expected) = casa_useful_mosaic_channels(&native, 1.0e6, &frequencies).unwrap();
+        let (_, expected) =
+            casa_useful_mosaic_channels(&full_spw, first_width_hz, &selected, &frequencies)
+                .unwrap();
         assert!(
             whole_row
                 .0
                 .iter()
                 .all(|response| response.frequency_hz == expected[0])
+        );
+        let inferred_selected =
+            selected.map(|channel| full_spw[1] + f64::from(channel - 1) * first_width_hz);
+        let inferred_indices = [0, 1, 2];
+        let (_, inferred) = casa_useful_mosaic_channels(
+            &inferred_selected,
+            first_width_hz,
+            &inferred_indices,
+            &frequencies,
+        )
+        .unwrap();
+        assert_ne!(
+            expected, inferred,
+            "unselected nonuniform coordinates must affect CASA response placement"
         );
     }
 

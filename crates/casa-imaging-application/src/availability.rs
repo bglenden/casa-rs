@@ -426,7 +426,7 @@ pub fn validate_installed_implementation(
                 casa_imaging_model::PointingCentreLaw::Observation(_)
             ),
         ),
-        (InstrumentResponse::Scalar, None, _, false)
+        (InstrumentResponse::Scalar, None, _, _)
             | (
                 InstrumentResponse::PrimaryBeam,
                 Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),

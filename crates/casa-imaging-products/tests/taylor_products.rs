@@ -1108,6 +1108,7 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
         ProductKind::RestoredImage,
         ProductKind::SumWeights,
         ProductKind::Weight,
+        ProductKind::Sensitivity,
         ProductKind::PrimaryBeam,
         ProductKind::PbCorrectedImage,
         ProductKind::TaylorTerms,
@@ -1121,15 +1122,55 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::MosaicSensitivity);
     let sealed = seal_with_controls(&problem, &join, controls);
-    let weight = member(&sealed, ".weight.tt0");
+    let weight0 = member(&sealed, ".weight.tt0");
+    let weight1 = member(&sealed, ".weight.tt1");
+    let sensitivity = member(&sealed, ".sensitivity");
+    let alpha = member(&sealed, ".alpha");
     let alpha_pbcor = member(&sealed, ".alpha.pbcor");
-    let image0 = member(&sealed, ".image.tt0.pbcor");
-    let image1 = member(&sealed, ".image.tt1.pbcor");
 
-    assert!(weight.payload().iter().any(|value| *value > 0.0));
+    assert!(weight0.payload().iter().any(|value| *value > 0.0));
+    let principal_sum_weight = join
+        .normal_state()
+        .normal_moment(0)
+        .expect("principal normal moment")
+        .sum_weight() as f32;
+    let raw_sensitivity = join
+        .normal_state()
+        .normal_moment(0)
+        .expect("principal normal moment")
+        .sensitivity();
+    for (index, raw) in raw_sensitivity.iter().copied().enumerate() {
+        assert_eq!(sensitivity.payload()[index], raw as f32);
+        assert_close(
+            weight0.payload()[index],
+            sensitivity.payload()[index] / principal_sum_weight,
+            "normalized principal mosaic weight",
+        );
+    }
+    assert_ne!(
+        weight0.payload(),
+        sensitivity.payload(),
+        "normalized Weight must not alias raw Sensitivity"
+    );
+    let raw_weight1 = join
+        .normal_state()
+        .normal_moment(1)
+        .expect("first signed normal moment")
+        .sensitivity();
+    assert_eq!(
+        weight1.payload(),
+        raw_weight1
+            .iter()
+            .map(|value| *value as f32)
+            .collect::<Vec<_>>(),
+        "higher Taylor weights retain CASA's raw signed sensitivity moments"
+    );
     for index in 0..alpha_pbcor.payload().len() {
-        let expected = if alpha_pbcor.validity()[index] && image0.payload()[index] != 0.0 {
-            image1.payload()[index] / image0.payload()[index]
+        let expected = if alpha_pbcor.validity()[index] {
+            // This scalar-response fixture has no PB spectral slope. The
+            // non-zero spectral-slope law is covered by the product-owner unit
+            // test rather than by cancelling two tt0-PB-corrected images.
+            alpha.payload()[index]
         } else {
             0.0
         };
@@ -1169,11 +1210,11 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     assert_eq!(demand.maximum_member_validity_bytes(), maximum);
     assert_eq!(
         demand.algorithm_scratch_bytes(),
-        8_588,
+        9_100,
         "8x8, two-term Taylor owner retains exact families, solve and rustfft buffers"
     );
     assert_eq!(
         demand.peak_residency_bytes(),
-        (values * 10).max(values * 5 + 8_588)
+        (values * 10).max(values * 5 + 9_100)
     );
 }

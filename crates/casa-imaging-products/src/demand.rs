@@ -192,14 +192,15 @@ fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, Prod
         .map_err(|_| ProductsError::ResourceDemandOverflow("Taylor cell count"))?;
 
     // TaylorProducts retains PSF and weight moments; residual, model,
-    // restored, PB and PB-corrected term families; alpha, alpha-error and mask;
+    // restored, PB and PB-corrected term families; alpha, PB-corrected alpha,
+    // alpha-error, sensitivity and mask;
     // two validity planes; and scalar sum weights until every planned member
     // has been copied into the produced generation.
     let retained_f32_planes = checked_add(
         checked_mul(moments, 2, "Taylor PSF and weight planes")?,
         checked_add(
             checked_mul(terms, 5, "Taylor term families")?,
-            3,
+            5,
             "Taylor scalar product planes",
         )?,
         "Taylor retained plane count",

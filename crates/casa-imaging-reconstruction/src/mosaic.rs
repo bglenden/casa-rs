@@ -127,7 +127,7 @@ pub(crate) fn residency_projection(
         bounded_tree_bytes::<i32, ([u64; 2], [f64; 2])>(field_capacity, response_capacity)?;
     let normal_entry_bytes = bounded_tree_bytes::<
         (PointingKey, MosaicWeightSupportKey),
-        ExactF64Sum,
+        SignedExactF64Sum,
     >(normal_entry_capacity, normal_accumulator_count)?;
     let normal_accumulator_bytes = size_of::<MosaicNormalAccumulator>()
         .checked_mul(normal_accumulator_count)
@@ -268,6 +268,8 @@ impl MosaicProjector {
         }
         let kernel = lanczos_resample(&cropped, MOSAIC_OVERSAMPLING);
         let weight_center = weight.dim().0 / 2;
+        // ACA mosaic execution uses CASA HetArrayConvFunc, whose lattice path
+        // normalizes the weight convolution function by its own support sum.
         let weight_normalization = plane_sum(&weight, weight_center, support, 1).re;
         if !weight_normalization.is_finite() || weight_normalization <= 1.0e-6 {
             return Err(SpectralOperatorError::GeneratedNonfinite);
@@ -705,6 +707,32 @@ struct MosaicWeightSupportKey {
     max_y: isize,
 }
 
+#[derive(Default)]
+struct SignedExactF64Sum {
+    positive: ExactF64Sum,
+    negative: ExactF64Sum,
+}
+
+impl SignedExactF64Sum {
+    fn add(&mut self, value: f64) -> Result<(), crate::WeightingError> {
+        if value.is_sign_negative() {
+            self.negative.add(-value)
+        } else {
+            self.positive.add(value)
+        }
+    }
+
+    fn value(&self) -> f64 {
+        self.positive.value() - self.negative.value()
+    }
+
+    #[cfg(test)]
+    fn merge(&mut self, other: Self) -> Result<(), crate::WeightingError> {
+        self.positive.merge(other.positive)?;
+        self.negative.merge(other.negative)
+    }
+}
+
 impl From<MosaicSamplePlan> for MosaicWeightSupportKey {
     fn from(plan: MosaicSamplePlan) -> Self {
         Self {
@@ -724,7 +752,7 @@ impl From<MosaicSamplePlan> for MosaicWeightSupportKey {
 /// pairs; T47 deliberately requires the two evaluated antenna pointings to be
 /// identical.
 pub(crate) struct MosaicNormalAccumulator {
-    weights: BTreeMap<(PointingKey, MosaicWeightSupportKey), ExactF64Sum>,
+    weights: BTreeMap<(PointingKey, MosaicWeightSupportKey), SignedExactF64Sum>,
     entry_capacity: usize,
     addition_capacity: usize,
     additions: usize,
@@ -764,7 +792,6 @@ impl MosaicNormalAccumulator {
             || !frequency_hz.is_finite()
             || frequency_hz <= 0.0
             || !weight.is_finite()
-            || weight < 0.0
         {
             return Err(SpectralOperatorError::UnsupportedProblem);
         }
@@ -865,6 +892,11 @@ mod tests {
     }
 
     fn projector() -> MosaicProjector {
+        let (geometry, response) = projector_inputs();
+        MosaicProjector::new(geometry, &response, 230.0e9, 8).expect("projector")
+    }
+
+    fn projector_inputs() -> (SpectralOperatorGeometry, PreparedPrimaryBeamPower) {
         let image_shape = [128, 128];
         let reference_pixel = [64.0, 64.0];
         let increment_rad = [
@@ -895,7 +927,7 @@ mod tests {
         )
         .expect("response")
         .with_casa_aca_hetarray_convolution();
-        MosaicProjector::new(geometry, &response, 230.0e9, 8).expect("projector")
+        (geometry, response)
     }
 
     #[test]
@@ -943,6 +975,42 @@ mod tests {
         assert_eq!(mosaic_convolution_size([128, 128]), 144);
         assert_eq!(mosaic_convolution_size([512, 512]), 528);
         assert_eq!(mosaic_convolution_size([63, 48]), 64);
+    }
+
+    #[test]
+    fn weight_convolution_function_uses_casa_hetarray_weight_sum() {
+        let (geometry, response) = projector_inputs();
+        let projector = MosaicProjector::new(geometry, &response, 230.0e9, 8).expect("projector");
+        let conv_size = mosaic_convolution_size(geometry.image_shape);
+        let imaging =
+            screen_fft_temp(geometry, &response, 230.0e9, conv_size, 1).expect("imaging CF");
+        let weight =
+            screen_fft_temp(geometry, &response, 230.0e9, conv_size, 2).expect("weight CF");
+        let support = find_support(&weight, 1);
+        let center = imaging.dim().0 / 2;
+        let imaging_pb_sum = plane_sum(&imaging, center, support, 1).re;
+        let weight_pb_sum = plane_sum(&weight, center, support, 1).re;
+        assert!(
+            (imaging_pb_sum - weight_pb_sum).abs() > 1.0e-3,
+            "fixture must distinguish CASA's shared pbSum from independent normalization"
+        );
+
+        let cropped_size = 2 * (support + 2);
+        let cropped_center = cropped_size / 2;
+        let mut shared_pb_sum = Array2::zeros((cropped_size, cropped_size));
+        let mut casa_weight = Array2::zeros((cropped_size, cropped_size));
+        for y in 0..cropped_size {
+            for x in 0..cropped_size {
+                let value = weight[(center + x - cropped_center, center + y - cropped_center)];
+                shared_pb_sum[(x, y)] = value / imaging_pb_sum;
+                casa_weight[(x, y)] = value / weight_pb_sum;
+            }
+        }
+        let casa_weight = lanczos_resample(&casa_weight, MOSAIC_OVERSAMPLING);
+        let shared_pb_sum = lanczos_resample(&shared_pb_sum, MOSAIC_OVERSAMPLING);
+
+        assert_eq!(projector.weight_kernel, casa_weight);
+        assert_ne!(projector.weight_kernel, shared_pb_sum);
     }
 
     #[test]
@@ -1035,9 +1103,9 @@ mod tests {
     fn field_pointing_reduction_is_partition_invariant() {
         let samples = [
             (0, point(1.0), 1.0e9, 1.0),
-            (1, point(1.1), 1.0e9, 2.0),
+            (1, point(1.1), 1.0e9, -2.0),
             (0, point(1.0), 1.0e9, 3.0),
-            (1, point(1.1), 1.0e9, 4.0),
+            (1, point(1.1), 1.0e9, -4.0),
         ];
         let plan = MosaicSamplePlan {
             field_id: 0,

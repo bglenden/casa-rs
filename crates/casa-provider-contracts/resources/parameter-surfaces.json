@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 13,
+      "contract_version": 14,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -12131,12 +12131,25 @@
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "gridder",
-            "value": {
-              "kind": "string",
-              "value": "awproject"
-            }
+            "kind": "any",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "mosaic"
+                }
+              }
+            ]
           },
           "projections": {
             "cli": {
@@ -12153,7 +12166,7 @@
               "name": "normtype"
             },
             "presentation": {
-              "label": "AW Normalization",
+              "label": "Mosaic / AW Normalization",
               "group": "Advanced Wide-Field",
               "advanced": true,
               "hidden": false
@@ -12738,6 +12751,12 @@
         {
           "from_contract": 12,
           "to_contract": 13,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 13,
+          "to_contract": 14,
           "steps": [],
           "changed_defaults": []
         }

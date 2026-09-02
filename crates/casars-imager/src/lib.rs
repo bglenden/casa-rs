@@ -948,7 +948,11 @@ impl CliConfig {
         config.write_pb = boolean("write_pb")?;
         config.pbcor = boolean("pbcor")?;
         config.mosaic_pb_limit = float("pblimit")? as f32;
-        config.normalization = parse_aw_normalization(&text("normtype")?)?;
+        config.normalization = values
+            .get("normtype")
+            .map(|_| text("normtype").and_then(|value| parse_aw_normalization(&value)))
+            .transpose()?
+            .unwrap_or(AwProjectNormalization::FlatNoise);
         config.w_term_mode = parse_w_term(&text("wterm")?)?;
         set_gridder(&mut config, &text("gridder")?)?;
         config.standard_mfs_acceleration = parse_acceleration(&text("standard_mfs_acceleration")?)?;

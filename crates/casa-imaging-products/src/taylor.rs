@@ -12,7 +12,7 @@ use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 use crate::AnalyticPrimaryBeamModel;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
-use crate::restore::{fft_convolve, gaussian_beam_image, normalize_plane};
+use crate::restore::{MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane};
 use crate::source::ContinuumProductInputs;
 
 pub(crate) struct TaylorProducts {
@@ -22,6 +22,7 @@ pub(crate) struct TaylorProducts {
     model: Vec<Vec<f32>>,
     restored: Vec<Vec<f32>>,
     weight: Vec<Vec<f32>>,
+    sensitivity: Vec<f32>,
     sum_weights: Vec<f32>,
     primary_beam: Vec<Vec<f32>>,
     pb_corrected: Vec<Vec<f32>>,
@@ -44,6 +45,81 @@ fn normalize_channel_major_sum_weight(
         .is_finite()
         .then_some(published)
         .ok_or(ProductsError::GeneratedNonfinite)
+}
+
+fn normalize_taylor_plane(
+    values: &[f32],
+    normalization: ProductNormalization,
+    principal_sum_weight: f64,
+    mosaic_sensitivity: Option<MosaicSensitivity<'_>>,
+) -> Result<Vec<f32>, ProductsError> {
+    match (mosaic_sensitivity, normalization) {
+        (Some(sensitivity), ProductNormalization::FlatNoise | ProductNormalization::FlatSky) => {
+            sensitivity.normalize(values, normalization)
+        }
+        _ => normalize_plane(values, normalization, principal_sum_weight),
+    }
+}
+
+fn primary_beam_correct_spectral_index(
+    alpha: &[f32],
+    principal_sensitivity: &[f32],
+    weight_moments: &[Vec<f32>],
+    inverse_normal: &[f64],
+    terms: usize,
+    alpha_validity: &[bool],
+    primary_beam_validity: &[bool],
+) -> Result<Vec<f32>, ProductsError> {
+    let cells = alpha.len();
+    if terms < 2
+        || principal_sensitivity.len() != cells
+        || weight_moments.len() < terms
+        || inverse_normal.len() != terms * terms
+        || alpha_validity.len() != cells
+        || primary_beam_validity.len() != cells
+        || weight_moments
+            .iter()
+            .take(terms)
+            .any(|moment| moment.len() != cells)
+    {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+
+    let mut corrected = vec![0.0; cells];
+    for cell in 0..cells {
+        if !alpha_validity[cell] || !primary_beam_validity[cell] {
+            continue;
+        }
+        let sensitivity_moment = |moment: usize| {
+            if moment == 0 {
+                principal_sensitivity[cell]
+            } else {
+                weight_moments[moment][cell]
+            }
+        };
+        let power_taylor0 = (0..terms)
+            .map(|moment| inverse_normal[moment] * f64::from(sensitivity_moment(moment)))
+            .sum::<f64>();
+        let power_taylor1 = (0..terms)
+            .map(|moment| inverse_normal[terms + moment] * f64::from(sensitivity_moment(moment)))
+            .sum::<f64>();
+        if !(power_taylor0.is_finite()
+            && power_taylor0 > 0.0
+            && power_taylor1.is_finite()
+            && alpha[cell].is_finite())
+        {
+            return Err(ProductsError::GeneratedNonfinite);
+        }
+        // Mosaic sensitivity is a power response. Its fitted voltage/power-beam
+        // Taylor ratio is therefore half the fitted power-response ratio.
+        let primary_beam_alpha = 0.5 * power_taylor1 / power_taylor0;
+        let value = f64::from(alpha[cell]) - primary_beam_alpha;
+        corrected[cell] = value
+            .is_finite()
+            .then_some(value as f32)
+            .ok_or(ProductsError::GeneratedNonfinite)?;
+    }
+    Ok(corrected)
 }
 
 impl TaylorProducts {
@@ -70,14 +146,25 @@ impl TaylorProducts {
         {
             return Err(ProductsError::SourceLineageMismatch);
         }
-        let principal_sum_weight = state
+        let principal_normal = state
             .normal_moment(0)
-            .ok_or(ProductsError::SourceLineageMismatch)?
-            .sum_weight();
+            .ok_or(ProductsError::SourceLineageMismatch)?;
+        let principal_sum_weight = principal_normal.sum_weight();
         if !(principal_sum_weight.is_finite() && principal_sum_weight > 0.0) {
             return Err(ProductsError::SourceLineageMismatch);
         }
         let normalization = inputs.problem().products().normalization();
+        let mosaic_sensitivity =
+            if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+                Some(MosaicSensitivity::new(principal_normal.sensitivity())?)
+            } else {
+                None
+            };
+        let sensitivity = principal_normal
+            .sensitivity()
+            .iter()
+            .map(|value| *value as f32)
+            .collect::<Vec<_>>();
         let channel_major_publication = matches!(
             inputs.problem().reconstruction().basis(),
             ReconstructionBasis::TaylorViaChannelMajor { .. }
@@ -103,12 +190,15 @@ impl TaylorProducts {
                 ProductNormalization::UnitResponse,
                 principal_sum_weight,
             )?);
-            let weight_scale =
-                if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
-                    principal_sum_weight
-                } else {
-                    1.0
-                };
+            // CASA divides only weight.tt0 by the principal sum weight. Higher
+            // Taylor weight images retain their raw signed sensitivity moments.
+            let weight_scale = if moment == 0
+                && primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+            {
+                principal_sum_weight
+            } else {
+                1.0
+            };
             weight.push(
                 source
                     .sensitivity()
@@ -134,7 +224,7 @@ impl TaylorProducts {
                 let source = state
                     .coefficient_term(term)
                     .ok_or(ProductsError::SourceLineageMismatch)?;
-                normalize_plane(
+                normalize_taylor_plane(
                     &source
                         .residual()
                         .iter()
@@ -142,6 +232,7 @@ impl TaylorProducts {
                         .collect::<Vec<_>>(),
                     normalization,
                     principal_sum_weight,
+                    mosaic_sensitivity,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -289,19 +380,32 @@ impl TaylorProducts {
             &restored[1],
             taylor_policy.peak_fraction(),
         );
-        let alpha_pbcor = pb_corrected[0]
+        let requests_pb_corrected_alpha = inputs
+            .problem()
+            .product_graph()
+            .publication()
+            .members()
             .iter()
-            .zip(&pb_corrected[1])
-            .zip(&alpha_validity)
-            .zip(&primary_beam_validity)
-            .map(|(((image0, image1), alpha_valid), pb_valid)| {
-                if *alpha_valid && *pb_valid && image0.is_finite() && *image0 != 0.0 {
-                    *image1 / *image0
-                } else {
-                    0.0
-                }
-            })
-            .collect();
+            .any(|ordinal| {
+                inputs.problem().product_graph().nodes()[ordinal.ordinal()].role()
+                    == ProductRole::PbCorrectedSpectralIndex
+            });
+        let alpha_pbcor = if requests_pb_corrected_alpha {
+            if primary_beam_model != Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+                return Err(ProductsError::UnsupportedProblem);
+            }
+            primary_beam_correct_spectral_index(
+                &alpha,
+                &sensitivity,
+                &weight,
+                &inverse,
+                terms,
+                &alpha_validity,
+                &primary_beam_validity,
+            )?
+        } else {
+            vec![0.0; cells]
+        };
         let clean_mask = weight[0]
             .iter()
             .enumerate()
@@ -320,6 +424,7 @@ impl TaylorProducts {
             model,
             restored,
             weight,
+            sensitivity,
             sum_weights,
             primary_beam,
             pb_corrected,
@@ -366,7 +471,7 @@ impl TaylorProducts {
             ProductRole::PbCorrectedSpectralIndex => return Ok(self.alpha_pbcor.clone()),
             ProductRole::SpectralIndexError => return Ok(self.alpha_error.clone()),
             ProductRole::CleanMask => return Ok(self.clean_mask.clone()),
-            ProductRole::Sensitivity => self.weight.first(),
+            ProductRole::Sensitivity => return Ok(self.sensitivity.clone()),
             ProductRole::SumWeights(value) => {
                 return self
                     .sum_weights
@@ -440,18 +545,13 @@ fn taylor_alpha_products(
 fn primary_beam_from_weight(weight: &[f32]) -> Result<Vec<f32>, ProductsError> {
     // Retained only for product graphs that do not publish PB: CASA
     // SIImageStore::makePBFromWeight normalizes the principal weight image.
-    let scale = weight
-        .iter()
-        .copied()
-        .map(f32::abs)
-        .fold(0.0_f32, f32::max)
-        .sqrt();
+    let scale = weight.iter().copied().fold(0.0_f32, f32::max).sqrt();
     if !(scale.is_finite() && scale > 0.0) {
         return Err(ProductsError::GeneratedNonfinite);
     }
     Ok(weight
         .iter()
-        .map(|value| value.abs().sqrt() / scale)
+        .map(|value| value.max(0.0).sqrt() / scale)
         .collect())
 }
 
@@ -661,6 +761,71 @@ fn model_term(
 
 #[cfg(test)]
 mod tests {
+    use casa_imaging_model::ProductNormalization;
+
+    #[test]
+    fn mosaic_primary_beam_excludes_negative_fft_ringing() {
+        let beam = super::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
+            .expect("positive mosaic support");
+        assert_eq!(beam, vec![0.0, 0.0, 1.0, 0.5]);
+    }
+
+    #[test]
+    fn mosaic_taylor_planes_use_flatnoise_and_flatsky_sensitivity_laws() {
+        let sensitivity =
+            crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("mosaic sensitivity");
+        let raw = [32.0, 16.0, 8.0, 4.0];
+        assert_eq!(
+            super::normalize_taylor_plane(
+                &raw,
+                ProductNormalization::FlatNoise,
+                8.0,
+                Some(sensitivity),
+            )
+            .expect("flat-noise Taylor normalization"),
+            [2.0, 2.0, 2.0, 0.0]
+        );
+        assert_eq!(
+            super::normalize_taylor_plane(
+                &raw,
+                ProductNormalization::FlatSky,
+                8.0,
+                Some(sensitivity),
+            )
+            .expect("flat-sky Taylor normalization"),
+            [2.0, 4.0, 8.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn mosaic_alpha_pbcor_uses_raw_scale_invariant_sensitivity_moments() {
+        let inverse = [25.0 / 23.0, -10.0 / 23.0, -10.0 / 23.0, 50.0 / 23.0];
+        let published_weights = [vec![0.44, 0.36, 0.0], vec![1.8, -0.2, 0.0]];
+        let corrected = super::primary_beam_correct_spectral_index(
+            &[1.0, -0.5, 7.0],
+            &[4.4, 3.6, 0.0],
+            &published_weights,
+            &inverse,
+            2,
+            &[true, true, false],
+            &[true, true, false],
+        )
+        .expect("PB spectral correction");
+        assert_eq!(corrected, [0.75, -0.25, 0.0]);
+
+        let scaled = super::primary_beam_correct_spectral_index(
+            &[1.0, -0.5, 7.0],
+            &[44.0, 36.0, 0.0],
+            &[vec![0.44, 0.36, 0.0], vec![18.0, -2.0, 0.0]],
+            &inverse,
+            2,
+            &[true, true, false],
+            &[true, true, false],
+        )
+        .expect("scale-invariant PB spectral correction");
+        assert_eq!(scaled, corrected);
+    }
+
     #[test]
     fn channel_major_sum_weight_uses_complete_family_denominator() {
         assert_eq!(

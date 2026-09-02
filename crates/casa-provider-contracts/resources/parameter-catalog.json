@@ -9343,7 +9343,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "AWProject sensitivity normalization policy",
+        "summary": "Mosaic and AWProject sensitivity normalization policy",
         "details": null,
         "examples": [
           "flatnoise"

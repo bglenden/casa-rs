@@ -355,7 +355,7 @@ mod tests {
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 13);
+        assert_eq!(surface.contract_version(), 14);
         assert_eq!(surface.bindings().len(), 94);
         for binding in surface.bindings() {
             let concept = catalog
@@ -405,7 +405,6 @@ mod tests {
             "rotatepastep",
             "pointingoffsetsigdev",
             "mosweight",
-            "normtype",
         ] {
             let binding = surface
                 .bindings()
@@ -421,6 +420,24 @@ mod tests {
             assert!(binding.projections.cli.is_some(), "{name}");
             assert!(binding.projections.python.is_some(), "{name}");
         }
+
+        let normtype = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "normtype")
+            .expect("missing imager normalization binding");
+        assert_eq!(
+            normtype.active_when,
+            Predicate::Any {
+                predicates: vec![
+                    awproject.clone(),
+                    Predicate::Equals {
+                        parameter: "gridder".to_string(),
+                        value: ParameterValue::String("mosaic".to_string()),
+                    },
+                ],
+            }
+        );
 
         let facet_concepts = catalog
             .catalog

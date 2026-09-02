@@ -1545,6 +1545,22 @@ fn selected_coordinates(
                 spectral_window_id: data_description.spectral_window_id(),
             });
         };
+        if let Some(catalog) = spectral_window.coordinate_catalog()
+            && (catalog.channel_count() != centres.len()
+                || widths.first().is_none_or(|width| {
+                    width.to_bits() != catalog.first_channel_width_hz().to_bits()
+                })
+                || catalog
+                    .channel_frequencies_hz()
+                    .iter()
+                    .copied()
+                    .zip(centres.iter().copied())
+                    .any(|(expected, actual)| expected.to_bits() != actual.to_bits()))
+        {
+            return Err(BoundObservationSourceError::SpectralCoordinateMismatch {
+                spectral_window_id: data_description.spectral_window_id(),
+            });
+        }
         let frame = frequency_frame(selected_i32_scalar(
             spectral_windows.table(),
             "MEAS_FREQ_REF",

@@ -50,7 +50,9 @@ use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
     SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
     SelectedObservationResolutionRequest, SelectedObservationRow, SelectedObservationRowSelection,
-    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
+    SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
+    SelectedObservationSpectralWindow, VisibilityDataColumn, parse_spw_selector,
+    resolve_channel_selector_selection,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::{
@@ -417,6 +419,7 @@ struct PreparedImageDomain {
 
 struct SourceSpectralWindow {
     spw_id: usize,
+    frequency_reference: FrequencyRef,
     frequencies_hz: Vec<f64>,
     channel_widths_hz: Vec<f64>,
 }
@@ -438,33 +441,22 @@ fn prepare_spectral_axis(
     frame_engine: &casa_ms::derived::engine::MsCalEngine,
     moving_rest_frame: Option<&MeasFrame>,
     source_rest_frequency_hz: Option<f64>,
+    continuum_selected_source_channels: Option<BTreeMap<usize, Vec<usize>>>,
+    continuum_spectral_envelope: Option<SelectedObservationSpectralEnvelope>,
 ) -> Result<PreparedSpectralAxis, crate::ApplicationError> {
     let source_frame = imaging_frequency_frame(source_frequency_reference)?;
     match &request.spectral_mode {
         SpectralImagingMode::Continuum => {
-            let mut selected_source_channels = BTreeMap::new();
-            let mut source_frequency_sum = 0.0;
-            let mut source_frequency_count = 0_usize;
-            for window in spectral_windows {
-                let selected = selected_channels(request, window.spw_id, &window.frequencies_hz)?;
-                source_frequency_sum += selected
-                    .iter()
-                    .map(|channel| window.frequencies_hz[*channel])
-                    .sum::<f64>();
-                source_frequency_count += selected.len();
-                selected_source_channels.insert(window.spw_id, selected);
-            }
-            let source_reference_frequency = source_frequency_sum / source_frequency_count as f64;
+            let selected_source_channels = continuum_selected_source_channels.ok_or_else(|| {
+                boxed("continuum imaging requires a prepared selected-channel map")
+            })?;
+            let spectral_envelope = continuum_spectral_envelope
+                .ok_or_else(|| boxed("continuum imaging requires a selected spectral envelope"))?;
+            let [lower_hz, upper_hz] = spectral_envelope.edges_hz();
             let output_frequency_reference = FrequencyRef::LSRK;
             let output_frame = imaging_frequency_frame(output_frequency_reference)?;
-            let reference_frequency_hz = casa_ms::convert_frequency_to_frame(
-                source_frequency_reference,
-                output_frequency_reference,
-                source_reference_frequency,
-                anchor_time_mjd_seconds,
-                field_id,
-                frame_engine,
-            )?;
+            let reference_frequency_hz = spectral_envelope.midpoint_hz();
+            let increment_hz = upper_hz - lower_hz;
             Ok(PreparedSpectralAxis {
                 selected_source_channels,
                 source_frame,
@@ -481,7 +473,7 @@ fn prepare_spectral_axis(
                     channels: 1,
                     reference_pixel: 0.0,
                     reference_frequency_hz,
-                    increment_hz: 1.0,
+                    increment_hz,
                 },
                 rest_frequency: RestFrequency::NotApplicable,
                 doppler: DopplerConvention::NotApplicable,
@@ -489,7 +481,7 @@ fn prepare_spectral_axis(
                 basis: ReconstructionBasis::Constant,
                 output_channels: 1,
                 reference_frequency_hz,
-                increment_hz: 1.0,
+                increment_hz,
             })
         }
         SpectralImagingMode::JointContinuumLine => {
@@ -996,6 +988,78 @@ fn prepare(
         request.intent.as_deref(),
     )?;
     let content_budget = SelectedObservationContentBudget::new(64 << 20, 2, 4);
+    let candidate_bindings = ddids
+        .iter()
+        .copied()
+        .map(|ddid| {
+            usize::try_from(ddid)
+                .map_err(|_| boxed("selected DATA_DESC_ID is negative"))
+                .and_then(|ddid| data_description_binding(&data_description, ddid))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let candidate_spw_ids = candidate_bindings
+        .iter()
+        .map(|(spw_id, _)| *spw_id)
+        .collect::<BTreeSet<_>>();
+    let mut spectral_windows = Vec::with_capacity(candidate_spw_ids.len());
+    for spw_id in candidate_spw_ids {
+        let frequency_reference =
+            FrequencyRef::from_casacore_code(spectral_window.meas_freq_ref(spw_id)?)
+                .ok_or_else(|| boxed("selected SPW has an unsupported frequency frame"))?;
+        spectral_windows.push(SourceSpectralWindow {
+            spw_id,
+            frequency_reference,
+            frequencies_hz: spectral_window.chan_freq(spw_id)?,
+            channel_widths_hz: spectral_window.chan_width(spw_id)?,
+        });
+    }
+    let mut continuum_selected_source_channels =
+        if matches!(request.spectral_mode, SpectralImagingMode::Continuum) {
+            Some(
+                spectral_windows
+                    .iter()
+                    .map(|window| {
+                        Ok((
+                            window.spw_id,
+                            selected_channels(&request, window.spw_id, &window.frequencies_hz)?,
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, crate::ApplicationError>>()?,
+            )
+        } else {
+            None
+        };
+    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
+    let mut continuum_spectral_reducer = continuum_selected_source_channels
+        .as_ref()
+        .map(|selected| {
+            ms.selected_observation_spectral_envelope_reducer(
+                &row_selection,
+                spectral_windows.iter().map(|window| {
+                    SelectedObservationSpectralWindow::borrow_selected(
+                        u32::try_from(window.spw_id).expect("nonnegative i32 SPW fits u32"),
+                        window.frequency_reference,
+                        &window.frequencies_hz,
+                        &window.channel_widths_hz,
+                        selected
+                            .get(&window.spw_id)
+                            .expect("selected every candidate spectral window"),
+                    )
+                }),
+                FrequencyRef::LSRK,
+                &frame_engine,
+                content_budget.available_bytes(),
+            )
+        })
+        .transpose()?;
+    let spectral_reducer_bytes = continuum_spectral_reducer.as_ref().map_or(
+        0,
+        SelectedObservationSpectralEnvelopeReducer::retained_bytes,
+    );
+    let row_available_bytes = content_budget
+        .available_bytes()
+        .checked_sub(spectral_reducer_bytes)
+        .ok_or_else(|| boxed("selected spectral envelope exhausts the row traversal budget"))?;
     let mut selected_rows = SelectedRowsBuilder::with_data_description_capacity(
         u64::try_from(ms.row_count()).map_err(|_| boxed("MS row count exceeds u64"))?,
         ddids.len(),
@@ -1008,15 +1072,21 @@ fn prepare(
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut weight_spectrum_error = None;
+    let mut spectral_envelope_error = None;
     ms.visit_selected_observation_rows(
         &row_selection,
         MsSelectionIoBudget {
-            available_bytes: content_budget.available_bytes(),
+            available_bytes: row_available_bytes,
             maximum_live_blocks: content_budget.maximum_live_blocks(),
             requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
             storage_alignment_rows: None,
         },
         |row| {
+            if spectral_envelope_error.is_none()
+                && let Some(reducer) = continuum_spectral_reducer.as_mut()
+            {
+                spectral_envelope_error = reducer.observe(row).err();
+            }
             if weight_spectrum_complete {
                 match main_table
                     .column_accessor("WEIGHT_SPECTRUM")
@@ -1050,6 +1120,12 @@ fn prepare(
     if let Some(error) = weight_spectrum_error {
         return Err(Box::new(error));
     }
+    if let Some(error) = spectral_envelope_error {
+        return Err(Box::new(error));
+    }
+    let continuum_spectral_envelope = continuum_spectral_reducer
+        .map(SelectedObservationSpectralEnvelopeReducer::finish)
+        .transpose()?;
     let rows = selected_rows.finish();
     if rows.selected_row_count() == 0 {
         return Err(boxed("selection resolved to no rows"));
@@ -1076,22 +1152,19 @@ fn prepare(
         .iter()
         .map(|(spw_id, _)| *spw_id)
         .collect::<BTreeSet<_>>();
+    spectral_windows.retain(|window| spw_ids.contains(&window.spw_id));
+    if let Some(selected) = continuum_selected_source_channels.as_mut() {
+        selected.retain(|spw_id, _| spw_ids.contains(spw_id));
+    }
     let mut source_frequency_reference = None;
-    let mut spectral_windows = Vec::with_capacity(spw_ids.len());
-    for spw_id in spw_ids {
-        let reference = FrequencyRef::from_casacore_code(spectral_window.meas_freq_ref(spw_id)?)
-            .ok_or_else(|| boxed("selected SPW has an unsupported frequency frame"))?;
+    for window in &spectral_windows {
+        let reference = window.frequency_reference;
         if source_frequency_reference.is_some_and(|selected| selected != reference) {
             return Err(boxed(
                 "selected spectral windows use different source frequency frames",
             ));
         }
         source_frequency_reference.get_or_insert(reference);
-        spectral_windows.push(SourceSpectralWindow {
-            spw_id,
-            frequencies_hz: spectral_window.chan_freq(spw_id)?,
-            channel_widths_hz: spectral_window.chan_width(spw_id)?,
-        });
     }
     let phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(&ms, field_id)?;
     let default_main_direction = SkyDirection::new(
@@ -1104,7 +1177,6 @@ fn prepare(
     let measures_provider = casa_ms::open_measures_runtime()?;
     let measures_identity =
         SelectedObservationMeasures::new(Arc::clone(&measures_provider))?.identity();
-    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
     let (phase_centre_law, ephemeris, main_direction) = match request.phase_center.as_deref() {
         None => (
             PhaseCentreLaw::Fixed(default_main_direction),
@@ -1242,6 +1314,8 @@ fn prepare(
         } else {
             None
         },
+        continuum_selected_source_channels,
+        continuum_spectral_envelope,
     )?;
     let (continuum_transform, selected_source_channels) = if request.continuum_subtraction.is_some()
     {

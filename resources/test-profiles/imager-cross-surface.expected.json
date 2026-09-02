@@ -52,6 +52,7 @@
       "multiscale_scales": [0.0, 5.0, 12.0],
       "niter": 7,
       "nmajor": null,
+      "normalization": "flatnoise",
       "nsigma": 5.0,
       "nterms": 2,
       "outlier_file": null,
