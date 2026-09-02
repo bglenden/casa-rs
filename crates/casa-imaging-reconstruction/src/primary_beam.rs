@@ -2,6 +2,7 @@
 
 //! Bounded evaluation of compiled scalar primary-beam power responses.
 
+use casa_imaging_model::{AntennaResponseClass, SelectedAntennaResponses};
 use casa_numerics::AnnularApertureVoltageTable;
 
 use crate::SpectralOperatorError;
@@ -12,8 +13,10 @@ const CASA_ACA_HETARRAY_REFERENCE_FREQUENCY_GHZ: f64 = 100.0;
 
 #[derive(Clone)]
 pub(crate) struct PreparedPrimaryBeamPower {
-    table: AnnularApertureVoltageTable,
-    mosaic_convolution_table: Option<AnnularApertureVoltageTable>,
+    aca_table: AnnularApertureVoltageTable,
+    alma_table: AnnularApertureVoltageTable,
+    aca_mosaic_table: Option<AnnularApertureVoltageTable>,
+    alma_mosaic_table: Option<AnnularApertureVoltageTable>,
     reference_pixel: [f64; 2],
     increment_rad: [f64; 2],
     pc: [[f64; 2]; 2],
@@ -28,46 +31,52 @@ impl PreparedPrimaryBeamPower {
         m_rad: f64,
         frequency_hz: f64,
     ) -> Result<f32, SpectralOperatorError> {
-        if !l_rad.is_finite()
-            || !m_rad.is_finite()
-            || !frequency_hz.is_finite()
-            || frequency_hz <= 0.0
-        {
-            return Err(SpectralOperatorError::InvalidSample);
-        }
-        let l_deg = l_rad.to_degrees() as f32;
-        let m_deg = m_rad.to_degrees() as f32;
-        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
-        let radius_arcmin_ghz =
-            (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
-        let voltage = self.table.evaluate(radius_arcmin_ghz);
-        Ok(voltage * voltage)
+        self.paired_voltage_at_offsets(
+            SelectedAntennaResponses {
+                antenna1: AntennaResponseClass::CasaAca7m,
+                antenna2: AntennaResponseClass::CasaAca7m,
+                family_envelope: AntennaResponseClass::CasaAca7m,
+            },
+            [l_rad, m_rad],
+            [l_rad, m_rad],
+            frequency_hz,
+        )
     }
 
-    pub(crate) fn mosaic_convolution_power_at_offsets(
+    pub(crate) fn paired_voltage_at_offsets(
         &self,
-        l_rad: f64,
-        m_rad: f64,
+        responses: SelectedAntennaResponses,
+        antenna1_offsets_rad: [f64; 2],
+        antenna2_offsets_rad: [f64; 2],
         frequency_hz: f64,
     ) -> Result<f32, SpectralOperatorError> {
-        if !l_rad.is_finite()
-            || !m_rad.is_finite()
-            || !frequency_hz.is_finite()
-            || frequency_hz <= 0.0
-        {
-            return Err(SpectralOperatorError::InvalidSample);
-        }
-        let l_deg = l_rad.to_degrees() as f32;
-        let m_deg = m_rad.to_degrees() as f32;
-        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
-        let radius_arcmin_ghz =
-            (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
-        let table = self
-            .mosaic_convolution_table
-            .as_ref()
-            .ok_or(SpectralOperatorError::ProblemMismatch)?;
-        let voltage = table.evaluate(radius_arcmin_ghz);
-        Ok(voltage * voltage)
+        let first = self.voltage_at_offsets(
+            responses.antenna1,
+            antenna1_offsets_rad,
+            frequency_hz,
+            false,
+        )?;
+        let second = self.voltage_at_offsets(
+            responses.antenna2,
+            antenna2_offsets_rad,
+            frequency_hz,
+            false,
+        )?;
+        Ok(first * second)
+    }
+
+    pub(crate) fn paired_mosaic_voltage_at_offsets(
+        &self,
+        responses: SelectedAntennaResponses,
+        antenna1_offsets_rad: [f64; 2],
+        antenna2_offsets_rad: [f64; 2],
+        frequency_hz: f64,
+    ) -> Result<f32, SpectralOperatorError> {
+        let first =
+            self.voltage_at_offsets(responses.antenna1, antenna1_offsets_rad, frequency_hz, true)?;
+        let second =
+            self.voltage_at_offsets(responses.antenna2, antenna2_offsets_rad, frequency_hz, true)?;
+        Ok(first * second)
     }
 
     pub(crate) fn casa_alma_aca_interferometric_direct(
@@ -80,12 +89,18 @@ impl PreparedPrimaryBeamPower {
             return Err(SpectralOperatorError::UnsupportedProblem);
         }
         Ok(Self {
-            table: AnnularApertureVoltageTable::new(
+            aca_table: AnnularApertureVoltageTable::new(
                 6.25,
                 0.75,
                 CASA_ALMA_ACA_DIRECT_PB_SUPPORT_ARCMIN_GHZ,
             ),
-            mosaic_convolution_table: None,
+            alma_table: AnnularApertureVoltageTable::new(
+                10.7,
+                0.75,
+                CASA_ALMA_ACA_DIRECT_PB_SUPPORT_ARCMIN_GHZ,
+            ),
+            aca_mosaic_table: None,
+            alma_mosaic_table: None,
             reference_pixel,
             increment_rad,
             pc: [[1.0, 0.0], [0.0, 1.0]],
@@ -101,20 +116,57 @@ impl PreparedPrimaryBeamPower {
             .zip(self.increment_rad)
             .map(|(pixels, increment)| (pixels as f64 * increment.abs()).to_degrees() * 3_600.0)
             .fold(0.0_f64, f64::max);
-        let maximum_radius_arcsec =
+        let aca_maximum_radius_arcsec =
             CASA_ACA_HETARRAY_MINIMUM_RADIUS_ARCSEC.max(field_of_view_arcsec / 3.0);
-        let maximum_radius_arcmin_ghz =
-            maximum_radius_arcsec * CASA_ACA_HETARRAY_REFERENCE_FREQUENCY_GHZ / 60.0;
-        self.mosaic_convolution_table = Some(AnnularApertureVoltageTable::new(
+        let alma_maximum_radius_arcsec = 150.0_f64.max(field_of_view_arcsec / 5.0);
+        self.aca_mosaic_table = Some(AnnularApertureVoltageTable::new(
             6.25,
             0.75,
-            maximum_radius_arcmin_ghz,
+            aca_maximum_radius_arcsec * CASA_ACA_HETARRAY_REFERENCE_FREQUENCY_GHZ / 60.0,
+        ));
+        self.alma_mosaic_table = Some(AnnularApertureVoltageTable::new(
+            10.7,
+            0.75,
+            alma_maximum_radius_arcsec * CASA_ACA_HETARRAY_REFERENCE_FREQUENCY_GHZ / 60.0,
         ));
         self
     }
 
     pub(crate) const fn casa_aca_mosaic_retained_table_bytes() -> usize {
-        2 * AnnularApertureVoltageTable::table_resident_bytes()
+        4 * AnnularApertureVoltageTable::table_resident_bytes()
+    }
+
+    fn voltage_at_offsets(
+        &self,
+        class: AntennaResponseClass,
+        offsets_rad: [f64; 2],
+        frequency_hz: f64,
+        mosaic: bool,
+    ) -> Result<f32, SpectralOperatorError> {
+        if offsets_rad.iter().any(|value| !value.is_finite())
+            || !frequency_hz.is_finite()
+            || frequency_hz <= 0.0
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let l_deg = offsets_rad[0].to_degrees() as f32;
+        let m_deg = offsets_rad[1].to_degrees() as f32;
+        let radius_deg = (l_deg * l_deg + m_deg * m_deg).sqrt();
+        let radius_arcmin_ghz =
+            (f64::from(radius_deg) * 60.0 * (frequency_hz / 1.0e9)) as f32 as f64;
+        let table = match (class, mosaic) {
+            (AntennaResponseClass::CasaAlma12m, false) => &self.alma_table,
+            (AntennaResponseClass::CasaAca7m, false) => &self.aca_table,
+            (AntennaResponseClass::CasaAlma12m, true) => self
+                .alma_mosaic_table
+                .as_ref()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?,
+            (AntennaResponseClass::CasaAca7m, true) => self
+                .aca_mosaic_table
+                .as_ref()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?,
+        };
+        Ok(table.evaluate(radius_arcmin_ghz))
     }
 
     pub(crate) fn fill_power_plane_into(
@@ -213,14 +265,58 @@ mod tests {
         );
         assert!(
             response
-                .mosaic_convolution_power_at_offsets(offset, 0.0, 100.0e9)
+                .paired_mosaic_voltage_at_offsets(
+                    SelectedAntennaResponses {
+                        antenna1: AntennaResponseClass::CasaAca7m,
+                        antenna2: AntennaResponseClass::CasaAca7m,
+                        family_envelope: AntennaResponseClass::CasaAca7m,
+                    },
+                    [offset, 0.0],
+                    [offset, 0.0],
+                    100.0e9,
+                )
                 .expect("convolution power")
                 > 0.0
         );
         assert_eq!(
             PreparedPrimaryBeamPower::casa_aca_mosaic_retained_table_bytes(),
-            80_000
+            160_000
         );
+    }
+
+    #[test]
+    fn heterogeneous_pair_multiplies_each_voltage_at_its_own_pointing_offset() {
+        let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
+            [64.0, 64.0],
+            [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+            [128, 128],
+            0.0,
+        )
+        .expect("response");
+        let pair = SelectedAntennaResponses {
+            antenna1: AntennaResponseClass::CasaAlma12m,
+            antenna2: AntennaResponseClass::CasaAca7m,
+            family_envelope: AntennaResponseClass::CasaAlma12m,
+        };
+        let first_offset = [0.0004, -0.0002];
+        let second_offset = [-0.0001, 0.0003];
+        let paired = response
+            .paired_voltage_at_offsets(pair, first_offset, second_offset, 100.0e9)
+            .expect("paired response");
+        let reverse = response
+            .paired_voltage_at_offsets(
+                SelectedAntennaResponses {
+                    antenna1: pair.antenna2,
+                    antenna2: pair.antenna1,
+                    family_envelope: pair.family_envelope,
+                },
+                second_offset,
+                first_offset,
+                100.0e9,
+            )
+            .expect("reversed paired response");
+        assert_eq!(paired, reverse, "baseline reversal preserves response");
+        assert!(paired.is_finite() && paired.abs() > 0.0 && paired.abs() < 1.0);
     }
 
     #[test]

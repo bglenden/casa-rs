@@ -22,6 +22,7 @@ from .image_compare import (
     comparison_request_binding,
     validate_comparison_output,
 )
+from .metadata_contract import normalize_metadata_contract
 from .host_telemetry import HostTelemetryError, validate_host_telemetry
 from .tolerances import (
     CONTRACT_VERSION as TOLERANCE_CONTRACT_VERSION,
@@ -184,6 +185,7 @@ COMPARISON_FIELDS = {
     "require_direction_wcs_parity",
     "require_exact_product_inventory",
     "require_metadata_parity",
+    "metadata_contract",
     "source_regions",
     "tolerances",
 }
@@ -487,6 +489,7 @@ COMPARISON_OUTPUT_FIELDS = {
     "require_direction_wcs_parity",
     "require_exact_product_inventory",
     "require_metadata_parity",
+    "metadata_contract",
     "legacy_operand_aliases",
     "source_regions",
     "tolerances",
@@ -565,6 +568,7 @@ COMPARISON_REQUEST_BINDING_FIELDS = {
     "require_direction_wcs_parity",
     "require_exact_product_inventory",
     "require_metadata_parity",
+    "metadata_contract",
     "legacy_operand_aliases",
     "source_regions",
     "tolerances",
@@ -970,6 +974,14 @@ def validate_workload_manifest(
             )
         except ToleranceContractError as error:
             raise ContractError(str(error)) from error
+    if "metadata_contract" in comparison:
+        try:
+            normalize_metadata_contract(
+                comparison["metadata_contract"],
+                products=comparison.get("products", []),
+            )
+        except ValueError as error:
+            raise ContractError(f"{source}: comparison.{error}") from error
     if "source_regions" in comparison:
         _validate_source_regions(comparison, source=source)
 
@@ -1546,6 +1558,14 @@ def _validate_result_comparison(value: Any, *, source: str) -> None:
             )
         except ToleranceContractError as error:
             raise ContractError(str(error)) from error
+    if "metadata_contract" in comparison:
+        try:
+            normalize_metadata_contract(
+                comparison["metadata_contract"],
+                products=comparison.get("products", []),
+            )
+        except ValueError as error:
+            raise ContractError(f"{source}: {error}") from error
 
 
 def _validate_result_review(value: Any, *, source: str) -> None:
@@ -2250,6 +2270,8 @@ def _validate_bound_comparison_output(
         # remain bound to their original request shape. New requests always
         # carry this field explicitly through normalize_comparison_request.
         binding_fields.remove("require_direction_wcs_parity")
+    if "metadata_contract" not in request:
+        binding_fields.remove("metadata_contract")
     _allowed_fields(request, binding_fields, f"{source}: request_binding")
     if set(request) != binding_fields:
         missing = sorted(binding_fields - set(request))
@@ -2295,6 +2317,13 @@ def _validate_bound_comparison_output(
         _validate_frozen_tolerances(
             request["tolerances"], source=f"{source}: request_binding.tolerances"
         )
+    if "metadata_contract" in request:
+        try:
+            normalize_metadata_contract(
+                request["metadata_contract"], products=request["products"]
+            )
+        except ValueError as error:
+            raise ContractError(f"{source}: request_binding.{error}") from error
     if comparison.get("request_sha256") is None:
         raise ContractError(f"{source}: bound comparison requires request_sha256")
     # Schema-v3 comparison artifacts remain durable historical evidence.  Their

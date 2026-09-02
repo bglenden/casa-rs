@@ -62,7 +62,9 @@ def summarize_summaryminor(summaryminor: object) -> Dict[str, object]:
         }
         if entries > 0 and fields > 0:
             facts["total_iterations"] = float(summaryminor[0].sum())
-            facts["iterations_by_entry"] = [float(value) for value in summaryminor[0].tolist()]
+            facts["iterations_by_entry"] = [
+                float(value) for value in summaryminor[0].tolist()
+            ]
         if entries > 0 and fields > 3:
             facts["max_cycle_threshold"] = float(summaryminor[3].max())
             facts["cycle_threshold_by_entry"] = [
@@ -103,9 +105,9 @@ def summarize_summaryminor(summaryminor: object) -> Dict[str, object]:
                 facts["total_entries"] = int(facts["total_entries"]) + len(rows)
                 for row in rows:
                     if len(row) > 0 and isinstance(row[0], (int, float)):
-                        facts["total_iterations"] = float(facts["total_iterations"]) + float(
-                            row[0]
-                        )
+                        facts["total_iterations"] = float(
+                            facts["total_iterations"]
+                        ) + float(row[0])
                     if len(row) > 3 and isinstance(row[3], (int, float)):
                         facts["max_cycle_threshold"] = max(
                             float(facts["max_cycle_threshold"]), float(row[3])
@@ -205,11 +207,15 @@ def main() -> None:
     vis = env_str("CASA_RS_BENCH_MS_PATH")
     repeats = env_int("CASA_RS_BENCH_REPEATS")
     field = env_str("CASA_RS_BENCH_FIELD")
+    stokes = env_str("CASA_RS_BENCH_STOKES")
+    usepointing = env_bool("CASA_RS_BENCH_USEPOINTING")
     spw = env_str("CASA_RS_BENCH_SPW")
     chan_start = env_int("CASA_RS_BENCH_CHANNEL_START")
     chan_count = env_int("CASA_RS_BENCH_CHANNEL_COUNT")
     specmode = env_str("CASA_RS_BENCH_SPECMODE")
-    gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER") or env_str("CASA_RS_BENCH_GRIDDER")
+    gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER") or env_str(
+        "CASA_RS_BENCH_GRIDDER"
+    )
     wprojplanes_env = os.environ.get("CASA_RS_BENCH_WPROJPLANES", "")
     imsize = env_int("CASA_RS_BENCH_IMSIZE")
     cell_arcsec = env_str("CASA_RS_BENCH_CELL_ARCSEC")
@@ -239,7 +245,11 @@ def main() -> None:
         "on",
     )
 
-    scales = [] if scales_env == "" else [int(float(value)) for value in scales_env.split(",")]
+    scales = (
+        []
+        if scales_env == ""
+        else [int(float(value)) for value in scales_env.split(",")]
+    )
     spw_selector = (
         f"{spw}:{chan_start}"
         if chan_count == 1
@@ -296,7 +306,8 @@ def main() -> None:
                     datacolumn="data",
                     imsize=imsize_vec,
                     cell=cell,
-                    stokes="I",
+                    stokes=stokes,
+                    usepointing=usepointing,
                     projection="SIN",
                     specmode=specmode,
                     interpolation="nearest",
@@ -343,7 +354,9 @@ def main() -> None:
                         selection["readonly"] = True
                         selection["usescratch"] = False
 
-                elapsed, imager = timed(InstrumentedPySynthesisImager, params=param_list)
+                elapsed, imager = timed(
+                    InstrumentedPySynthesisImager, params=param_list
+                )
                 per_stage["construct_imager"] += elapsed
 
                 elapsed, _ = timed(imager.initializeImagers)
@@ -407,7 +420,9 @@ def main() -> None:
                                         ),
                                     }
                                 )
-                            except Exception as error:  # pragma: no cover - diagnostic only
+                            except (
+                                Exception
+                            ) as error:  # pragma: no cover - diagnostic only
                                 clean_control_records.append(
                                     {"minor_cycle": minor_cycles, "error": str(error)}
                                 )
@@ -468,8 +483,12 @@ def main() -> None:
     print("  select_data wraps synthesisimager.selectdata for each selected MS.")
     print("  define_image wraps synthesisimager.defineimage for each image field.")
     print("  set_weighting_core wraps synthesisimager.setweighting only.")
-    print("  cube tuneSelectData and nSubCubeFitInMemory live inside CASA C++ cube major-cycle calls.")
-    print("  cube image-store writeback is inside CASA C++ major-cycle envelopes plus restore_images.")
+    print(
+        "  cube tuneSelectData and nSubCubeFitInMemory live inside CASA C++ cube major-cycle calls."
+    )
+    print(
+        "  cube image-store writeback is inside CASA C++ major-cycle envelopes plus restore_images."
+    )
     print(
         "result medians: clean_major_cycles={} minor_cycles={}".format(
             median_int(clean_major_counts), median_int(minor_cycle_counts)

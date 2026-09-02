@@ -5,6 +5,7 @@ use super::{
     SelectedObservationContentBudget, SelectedObservationRow, SelectedObservationTraversalError,
     access::validate_input_weight_group, bound_observation::consume_validated_stream,
 };
+use crate::derived::engine::MsCalEngine;
 use crate::subtables::SubTable;
 use crate::{
     MeasurementSet, MsSelectionIoBudget, ResolvedSelectedObservationAccess,
@@ -14,35 +15,35 @@ use crate::{
     tutorial_vla_a_antennas,
 };
 use casa_imaging_model::{
-    AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
-    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, Epoch,
-    FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame, GeometryInput, IdSelection,
-    ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
-    IntentSelection, ItrfPosition, LogicalIdentity, MeasurementEquationContract,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, MissingPointingPolicy,
-    ModelBounds, ModelColumnState, ModelColumnWrite, ModelInnerProduct, ModelInputCommitment,
-    ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
-    ObservationSource, ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
-    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
-    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract, SelectedColumns,
-    SelectedInputWeightGroup, SelectedMainRow, SelectedObservationGenerationId,
-    SelectedObservationInspectionError, SelectedObservationPassError,
-    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
-    SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation, SelectedVisibilitySample,
-    SelectionBound, SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec,
-    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs,
-    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
-    TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    AntennaResponseClass, AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration,
+    ConsistencyToken, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition,
+    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
+    MetadataTableKind, MissingPointingPolicy, ModelBounds, ModelColumnState, ModelColumnWrite,
+    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
+    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSelection, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationSourceState, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
+    RowSelection, ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
+    SelectedObservationGenerationId, SelectedObservationInspectionError,
+    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
+    SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::compile_spectral_stencil;
 use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
@@ -325,6 +326,33 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         .collect::<Result<Vec<_>, _>>()
         .expect("read non-toy T33 stream");
     assert_eq!(samples.len(), report.main_row_count * 4);
+
+    let measurement_set = MeasurementSet::open(&path).expect("open T33 VLA fixture");
+    let geometry = MsCalEngine::new(&measurement_set).expect("bind physical geometry");
+    let first = &samples[0];
+    let time_mjd_seconds = first.coordinates.time.mjd_days() * 86_400.0;
+    let field_id = usize::try_from(first.metadata.field_id).expect("field id");
+    let antenna1 = usize::try_from(first.metadata.antenna1).expect("antenna 1");
+    let antenna2 = usize::try_from(first.metadata.antenna2).expect("antenna 2");
+    let physical = [
+        geometry
+            .parallactic_angle(time_mjd_seconds, field_id, antenna1)
+            .expect("antenna 1 physical parallactic angle"),
+        geometry
+            .parallactic_angle(time_mjd_seconds, field_id, antenna2)
+            .expect("antenna 2 physical parallactic angle"),
+    ];
+    for (operator, physical) in first
+        .coordinates
+        .parallactic_angles_rad
+        .iter()
+        .zip(physical)
+    {
+        assert!(
+            (operator + physical).abs() < 1.0e-12,
+            "CASA's polarization operator uses the negative physical parallactic angle"
+        );
+    }
 
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];
@@ -3658,6 +3686,86 @@ fn observation_pointing_interpolates_each_antenna_on_the_shortest_arc() {
 }
 
 #[test]
+fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointings() {
+    let directory = tempfile::tempdir().expect("temporary heterogeneous response fixture");
+    let path = directory.path().join("heterogeneous-response.ms");
+    generate_fixture(&path);
+    let mut measurement_set = MeasurementSet::open(&path).expect("open response fixture");
+    {
+        let mut observation = measurement_set
+            .observation_mut()
+            .expect("OBSERVATION subtable");
+        observation
+            .set_string(0, "TELESCOPE_NAME", "ALMA")
+            .expect("set telescope");
+    }
+    {
+        let mut antenna = measurement_set.antenna_mut().expect("ANTENNA subtable");
+        antenna
+            .put_dish_diameter(0, 12.0)
+            .expect("set ALMA aperture");
+        antenna.put_dish_diameter(1, 7.0).expect("set ACA aperture");
+    }
+    measurement_set.save().expect("save response fixture");
+
+    let centres = CentreLaws::new(
+        PhaseCentreLaw::Observation,
+        DelayCentreLaw::PhaseTrackingCentre,
+        observation_pointing(MissingPointingPolicy::Reject),
+    );
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(&path, 1, 2)],
+        vec![
+            (ReferenceDataKind::Measures, identity(90)),
+            (ReferenceDataKind::Instrument, identity(91)),
+        ],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile heterogeneous observation");
+    let science = ScientificContract::new(
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
+    )
+    .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+    let problem = compile(ImagingRequest::new(
+        specification_with_science(
+            science,
+            ReconstructionBasis::Constant,
+            vec![PolarizationCoordinate::StokesI],
+        ),
+        geometry_with_centres(centres),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile heterogeneous response problem");
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let samples = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind heterogeneous source")
+    .selected_samples(&problem)
+    .expect("prepare heterogeneous stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("evaluate heterogeneous stream");
+
+    assert!(!samples.is_empty());
+    for sample in samples {
+        let responses = sample
+            .metadata
+            .antenna_responses
+            .expect("direction-dependent rows carry response classes");
+        assert_eq!(responses.antenna1, AntennaResponseClass::CasaAlma12m);
+        assert_eq!(responses.antenna2, AntennaResponseClass::CasaAca7m);
+        assert_eq!(responses.family_envelope, AntennaResponseClass::CasaAlma12m);
+        assert_eq!(sample.metadata.antenna1, 0);
+        assert_eq!(sample.metadata.antenna2, 1);
+    }
+}
+
+#[test]
 fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays() {
     let directory = tempfile::tempdir().expect("temporary multi-SPW fixture");
     let path = directory.path().join("multi-spw.ms");
@@ -4680,17 +4788,30 @@ fn specification_with_sampling_basis_and_polarization(
     basis: ReconstructionBasis,
     coordinates: Vec<PolarizationCoordinate>,
 ) -> ProblemSpecification {
-    ProblemSpecification::new(
+    specification_with_science(
         ScientificContract::new(
             SpectralContract::new(sampling, SpectralCoupling::Independent),
-            MeasurementEquationContract::new(
-                InstrumentResponse::Scalar,
-                DeclaredInnerProducts::new(
-                    ModelInnerProduct::HermitianEuclidean,
-                    VisibilityInnerProduct::HermitianEuclidean,
-                ),
-            ),
+            MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
         ),
+        basis,
+        coordinates,
+    )
+}
+
+fn inner_products() -> DeclaredInnerProducts {
+    DeclaredInnerProducts::new(
+        ModelInnerProduct::HermitianEuclidean,
+        VisibilityInnerProduct::HermitianEuclidean,
+    )
+}
+
+fn specification_with_science(
+    science: ScientificContract,
+    basis: ReconstructionBasis,
+    coordinates: Vec<PolarizationCoordinate>,
+) -> ProblemSpecification {
+    ProblemSpecification::new(
+        science,
         ReconstructionContract::new(
             basis,
             ReconstructionAlgorithm::Hogbom,

@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 17;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 19;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -450,9 +450,12 @@ pub enum InstrumentResponse {
 /// identities cannot silently change meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InstrumentModel {
-    /// CASA-compatible direct scalar power response for a homogeneous ALMA
-    /// 7 m ACA interferometric array, version 1.
-    CasaAlmaAcaInterferometricDirectPbV1,
+    /// CASA-compatible direct scalar power response for a homogeneous ACA
+    /// 7 m interferometric array, version 1.
+    CasaAca7mInterferometricDirectPbV1,
+    /// CASA-compatible paired voltage response for heterogeneous ALMA 12 m
+    /// and ACA 7 m interferometric baselines, version 1.
+    CasaAlmaAcaHeterogeneousInterferometricResponseV1,
 }
 
 /// Logical measurement-equation terms independent of an implementation.
@@ -2155,7 +2158,10 @@ fn validate_science(
         (InstrumentResponse::Scalar, None)
             | (
                 InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+                Some(
+                    InstrumentModel::CasaAca7mInterferometricDirectPbV1
+                        | InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                )
             )
     ) {
         return Err(CompileProblemError::InvalidScientificContract {
@@ -3300,7 +3306,15 @@ fn reference_data_tag(kind: ReferenceDataKind) -> u8 {
 fn encode_instrument_model(encoder: &mut CanonicalEncoder, model: Option<InstrumentModel>) {
     match model {
         None => encoder.u8(0),
-        Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1) => encoder.u8(1),
+        Some(model) => encoder.u8(instrument_model_tag(model)),
+    }
+}
+
+const fn instrument_model_tag(model: InstrumentModel) -> u8 {
+    match model {
+        InstrumentModel::CasaAca7mInterferometricDirectPbV1 => 3,
+        // Tag 1 is reserved for the retired homogeneous direct-PB v1 model.
+        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => 2,
     }
 }
 
@@ -3390,4 +3404,23 @@ fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
         write!(formatter, "{byte:02x}")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::*;
+
+    #[test]
+    fn heterogeneous_instrument_model_does_not_reuse_the_retired_homogeneous_tag() {
+        assert_eq!(
+            instrument_model_tag(
+                InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+            ),
+            2
+        );
+        assert_eq!(
+            instrument_model_tag(InstrumentModel::CasaAca7mInterferometricDirectPbV1),
+            3
+        );
+    }
 }

@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
-use casa_imaging_model::{DirectionFrame, SelectedPointingDirections, SkyDirection};
+use casa_imaging_model::{DirectionFrame, SelectedAntennaResponses, SelectedPointingDirections};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
@@ -13,7 +13,7 @@ use crate::{
     SpectralOperatorError,
     primary_beam::PreparedPrimaryBeamPower,
     spectral_operator::{
-        PreparedFft, SpectralOperatorGeometry, fft_planning_words_for_shape,
+        MosaicProjectorKey, PreparedFft, SpectralOperatorGeometry, fft_planning_words_for_shape,
         fft_resident_complex_values_for_shape,
     },
     weighting::ExactF64Sum,
@@ -71,8 +71,20 @@ pub(crate) fn response_residency_projection(
         });
     }
     let response_route_bytes = bounded_tree_bytes::<
-        (casa_imaging_model::MeasurementSetIdentity, u32, u32),
-        (u64, f64),
+        (
+            casa_imaging_model::MeasurementSetIdentity,
+            u32,
+            u32,
+            casa_imaging_model::AntennaResponseClass,
+            casa_imaging_model::AntennaResponseClass,
+            casa_imaging_model::AntennaResponseClass,
+        ),
+        (
+            MosaicProjectorKey,
+            f64,
+            f64,
+            casa_imaging_model::SelectedAntennaResponses,
+        ),
     >(response_capacity, 1)?;
     let channel_map_bytes =
         bounded_tree_bytes::<u32, (f64, f64, f64)>(maximum_selection_channels, 1)?;
@@ -117,14 +129,13 @@ pub(crate) fn residency_projection(
         .and_then(|values| values.checked_mul(size_of::<Complex32>()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     // Two base kernels and one reusable active phased data kernel per response.
-    let projector_tree_bytes = bounded_tree_bytes::<u64, MosaicProjector>(response_capacity, 1)?;
+    let projector_tree_bytes =
+        bounded_tree_bytes::<MosaicProjectorKey, MosaicProjector>(response_capacity, 1)?;
     let projector_bytes = kernel_bytes
         .checked_mul(3)
         .and_then(|bytes| bytes.checked_mul(response_capacity))
         .and_then(|bytes| bytes.checked_add(projector_tree_bytes))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let phase_metadata_bytes =
-        bounded_tree_bytes::<i32, ([u64; 2], [f64; 2])>(field_capacity, response_capacity)?;
     let normal_entry_bytes = bounded_tree_bytes::<
         (PointingKey, MosaicWeightSupportKey),
         SignedExactF64Sum,
@@ -140,7 +151,6 @@ pub(crate) fn residency_projection(
     let normal_bin_bytes = bounded_tree_bytes::<i16, u128>(1, total_normal_additions)?;
     let retained_bytes = projector_bytes
         .checked_add(PreparedPrimaryBeamPower::casa_aca_mosaic_retained_table_bytes())
-        .and_then(|bytes| bytes.checked_add(phase_metadata_bytes))
         .and_then(|bytes| bytes.checked_add(normal_entry_bytes))
         .and_then(|bytes| bytes.checked_add(normal_accumulator_bytes))
         .and_then(|bytes| bytes.checked_add(normal_bin_bytes))
@@ -203,7 +213,7 @@ pub(crate) fn residency_projection(
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct MosaicSamplePlan {
-    field_id: i32,
+    pointing: MosaicPointingPairKey,
     center_in_bounds: bool,
     loc: [isize; 2],
     offset: [isize; 2],
@@ -214,20 +224,74 @@ pub(crate) struct MosaicSamplePlan {
 }
 
 struct PhasedKernel {
-    field_id: i32,
+    pointing: MosaicPointingPairKey,
     imaging: Array2<Complex32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct MosaicPointingPairKey {
+    field_id: i32,
+    frame: DirectionFrame,
+    antenna1_longitude_bits: u64,
+    antenna1_latitude_bits: u64,
+    antenna2_longitude_bits: u64,
+    antenna2_latitude_bits: u64,
+}
+
+impl MosaicPointingPairKey {
+    fn new(field_id: i32, pointings: SelectedPointingDirections) -> Self {
+        Self {
+            field_id,
+            frame: pointings.antenna1.frame(),
+            antenna1_longitude_bits: pointings.antenna1.longitude_rad().to_bits(),
+            antenna1_latitude_bits: pointings.antenna1.latitude_rad().to_bits(),
+            antenna2_longitude_bits: pointings.antenna2.longitude_rad().to_bits(),
+            antenna2_latitude_bits: pointings.antenna2.latitude_rad().to_bits(),
+        }
+    }
+}
+
+fn pointing_pair_geometry(
+    geometry: SpectralOperatorGeometry,
+    pointing: MosaicPointingPairKey,
+) -> Result<([[f64; 2]; 2], [f64; 2]), SpectralOperatorError> {
+    if pointing.frame != geometry.direction.reference_direction().frame() {
+        return Err(SpectralOperatorError::UnsupportedProblem);
+    }
+    let directions = [
+        [
+            f64::from_bits(pointing.antenna1_longitude_bits),
+            f64::from_bits(pointing.antenna1_latitude_bits),
+        ],
+        [
+            f64::from_bits(pointing.antenna2_longitude_bits),
+            f64::from_bits(pointing.antenna2_latitude_bits),
+        ],
+    ];
+    let pixels = directions.map(|direction| {
+        crate::mask::direction_world_to_pixel(geometry.direction, direction)
+            .map_err(|_| SpectralOperatorError::UnsupportedGeometry)
+    });
+    let pixels = [pixels[0]?, pixels[1]?];
+    let midpoint = [
+        (pixels[0][0] + pixels[1][0]) * 0.5,
+        (pixels[0][1] + pixels[1][1]) * 0.5,
+    ];
+    Ok((pixels, midpoint))
+}
+
 pub(crate) struct MosaicProjector {
+    geometry: SpectralOperatorGeometry,
+    antenna_responses: SelectedAntennaResponses,
+    frequency_hz: f64,
     grid_shape: [usize; 2],
     du_lambda: f64,
     dv_lambda: f64,
+    normalization_support: usize,
     support: usize,
     kernel_center: usize,
     kernel: Array2<Complex32>,
     weight_kernel: Array2<Complex32>,
-    field_capacity: usize,
-    field_phase_gradients: BTreeMap<i32, ([u64; 2], [f64; 2])>,
     active_phased_kernel: Option<PhasedKernel>,
 }
 
@@ -235,7 +299,9 @@ impl MosaicProjector {
     pub(crate) fn new(
         geometry: SpectralOperatorGeometry,
         response: &PreparedPrimaryBeamPower,
+        antenna_responses: SelectedAntennaResponses,
         frequency_hz: f64,
+        support_frequency_hz: f64,
         field_capacity: usize,
     ) -> Result<Self, SpectralOperatorError> {
         if field_capacity == 0 {
@@ -245,18 +311,73 @@ impl MosaicProjector {
         if conv_size < 16 || conv_size % 2 != 0 {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
-        let imaging = screen_fft_temp(geometry, response, frequency_hz, conv_size, 1)?;
-        let weight = screen_fft_temp(geometry, response, frequency_hz, conv_size, 2)?;
-        let support = find_support(&weight, 1);
-        if support == 0 {
+        let family_pair = SelectedAntennaResponses {
+            antenna1: antenna_responses.family_envelope,
+            antenna2: antenna_responses.family_envelope,
+            family_envelope: antenna_responses.family_envelope,
+        };
+        let family_support = if antenna_responses.antenna1 == antenna_responses.family_envelope
+            && antenna_responses.antenna2 == antenna_responses.family_envelope
+        {
+            None
+        } else {
+            let family_weight = screen_fft_temp(
+                geometry,
+                response,
+                family_pair,
+                support_frequency_hz,
+                conv_size,
+                2,
+            )?;
+            Some(find_support(&family_weight, 1))
+        };
+        // Resolve a distinct support-frequency crop to a scalar before
+        // retaining either science-frequency crop. This keeps the build peak
+        // at the planner's two temporary crops instead of allowing imaging,
+        // weight, and support crops to overlap.
+        let support_frequency_support = if frequency_hz.to_bits() == support_frequency_hz.to_bits()
+        {
+            None
+        } else {
+            Some(screen_support(
+                geometry,
+                response,
+                antenna_responses,
+                support_frequency_hz,
+                conv_size,
+            )?)
+        };
+        let imaging = screen_fft_temp(
+            geometry,
+            response,
+            antenna_responses,
+            frequency_hz,
+            conv_size,
+            1,
+        )?;
+        let weight = screen_fft_temp(
+            geometry,
+            response,
+            antenna_responses,
+            frequency_hz,
+            conv_size,
+            2,
+        )?;
+        let normalization_support =
+            support_frequency_support.unwrap_or_else(|| find_support(&weight, 1));
+        if normalization_support == 0 {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
         let center = imaging.dim().0 / 2;
-        let normalization = plane_sum(&imaging, center, support, 1).re;
+        let normalization = plane_sum(&imaging, center, normalization_support, 1).re;
         if !normalization.is_finite() || normalization <= 1.0e-6 {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        let cropped_size = 2 * (support + 2);
+        let family_support = family_support.unwrap_or(normalization_support);
+        if family_support < normalization_support {
+            return Err(SpectralOperatorError::UnsupportedGeometry);
+        }
+        let cropped_size = 2 * (family_support + 2);
         let cropped_center = cropped_size / 2;
         let mut cropped = Array2::zeros((cropped_size, cropped_size));
         for y in 0..cropped_size {
@@ -270,7 +391,7 @@ impl MosaicProjector {
         let weight_center = weight.dim().0 / 2;
         // ACA mosaic execution uses CASA HetArrayConvFunc, whose lattice path
         // normalizes the weight convolution function by its own support sum.
-        let weight_normalization = plane_sum(&weight, weight_center, support, 1).re;
+        let weight_normalization = plane_sum(&weight, weight_center, normalization_support, 1).re;
         if !weight_normalization.is_finite() || weight_normalization <= 1.0e-6 {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
@@ -285,27 +406,52 @@ impl MosaicProjector {
         }
         let weight_kernel = lanczos_resample(&cropped_weight, MOSAIC_OVERSAMPLING);
         Ok(Self {
+            geometry,
+            antenna_responses,
+            frequency_hz,
             grid_shape: geometry.grid_shape,
             du_lambda: 1.0 / (geometry.grid_shape[0] as f64 * geometry.increment_rad[0].abs()),
             dv_lambda: 1.0 / (geometry.grid_shape[1] as f64 * geometry.increment_rad[1].abs()),
-            support,
+            normalization_support,
+            support: family_support,
             kernel_center: kernel.dim().0 / 2,
             kernel,
             weight_kernel,
-            field_capacity,
-            field_phase_gradients: BTreeMap::new(),
             active_phased_kernel: None,
         })
     }
 
     pub(crate) fn plan(
         &mut self,
+        response: &PreparedPrimaryBeamPower,
         field_id: i32,
         uv_lambda: [f64; 2],
-        pointing_pixel: [f64; 2],
-        reference_pixel: [f64; 2],
-        image_shape: [usize; 2],
+        pointings: SelectedPointingDirections,
     ) -> Result<Option<MosaicSamplePlan>, SpectralOperatorError> {
+        if pointings.antenna1.frame() != pointings.antenna2.frame()
+            || pointings.antenna1.frame() != self.geometry.direction.reference_direction().frame()
+        {
+            return Err(SpectralOperatorError::UnsupportedProblem);
+        }
+        let pointing_pixels = [pointings.antenna1, pointings.antenna2].map(|pointing| {
+            crate::mask::direction_world_to_pixel(
+                self.geometry.direction,
+                [pointing.longitude_rad(), pointing.latitude_rad()],
+            )
+            .map_err(|_| SpectralOperatorError::UnsupportedGeometry)
+        });
+        let [antenna1_pixel, antenna2_pixel] = [pointing_pixels[0]?, pointing_pixels[1]?];
+        let pointing_pixel = [
+            (antenna1_pixel[0] + antenna2_pixel[0]) * 0.5,
+            (antenna1_pixel[1] + antenna2_pixel[1]) * 0.5,
+        ];
+        let pointing = MosaicPointingPairKey::new(field_id, pointings);
+        self.activate_imaging_kernel(
+            response,
+            pointing,
+            [antenna1_pixel, antenna2_pixel],
+            pointing_pixel,
+        )?;
         let position = [
             uv_lambda[0] / self.du_lambda + self.grid_shape[0] as f64 / 2.0,
             -uv_lambda[1] / self.dv_lambda + self.grid_shape[1] as f64 / 2.0,
@@ -337,47 +483,8 @@ impl MosaicProjector {
         if x[0] > x[1] || y[0] > y[1] {
             return Ok(None);
         }
-        let pointing_pixel_bits = pointing_pixel.map(f64::to_bits);
-        match self.field_phase_gradients.get(&field_id) {
-            Some((bits, _)) if *bits != pointing_pixel_bits => {
-                return Err(SpectralOperatorError::UnsupportedProblem);
-            }
-            Some(_) => {}
-            None => {
-                if self.field_phase_gradients.len() == self.field_capacity {
-                    return Err(SpectralOperatorError::ResidencyOverflow);
-                }
-                let phase_gradient = [
-                    -(pointing_pixel[0] - reference_pixel[0]) * std::f64::consts::TAU
-                        / (image_shape[0] as f64 * MOSAIC_OVERSAMPLING as f64),
-                    -(pointing_pixel[1] - reference_pixel[1]) * std::f64::consts::TAU
-                        / (image_shape[1] as f64 * MOSAIC_OVERSAMPLING as f64),
-                ];
-                self.field_phase_gradients
-                    .insert(field_id, (pointing_pixel_bits, phase_gradient));
-            }
-        }
-        let (_, phase_gradient) = self.field_phase_gradients[&field_id];
-        if self
-            .active_phased_kernel
-            .as_ref()
-            .is_none_or(|kernel| kernel.field_id != field_id)
-        {
-            let center = self.kernel_center as isize;
-            let mut imaging = self.kernel.clone();
-            for ((kernel_x, kernel_y), value) in imaging.indexed_iter_mut() {
-                let signed_x = kernel_x as isize - center;
-                let signed_y = kernel_y as isize - center;
-                let phase_x = signed_x as f64 * phase_gradient[0];
-                let phase_y = signed_y as f64 * phase_gradient[1];
-                let phasor_x = Complex32::new(phase_x.cos() as f32, phase_x.sin() as f32);
-                let phasor_y = Complex32::new(phase_y.cos() as f32, phase_y.sin() as f32);
-                *value = *value * phasor_x * phasor_y;
-            }
-            self.active_phased_kernel = Some(PhasedKernel { field_id, imaging });
-        }
         Ok(Some(MosaicSamplePlan {
-            field_id,
+            pointing,
             center_in_bounds: loc[0] >= 0 && loc[0] <= upper_x && loc[1] >= 0 && loc[1] <= upper_y,
             loc,
             offset,
@@ -386,6 +493,55 @@ impl MosaicProjector {
             weight_x,
             weight_y,
         }))
+    }
+
+    fn activate_imaging_kernel(
+        &mut self,
+        response: &PreparedPrimaryBeamPower,
+        pointing: MosaicPointingPairKey,
+        pointing_pixels: [[f64; 2]; 2],
+        midpoint_pixel: [f64; 2],
+    ) -> Result<(), SpectralOperatorError> {
+        if self
+            .active_phased_kernel
+            .as_ref()
+            .is_some_and(|kernel| kernel.pointing == pointing)
+        {
+            return Ok(());
+        }
+        let relative_offsets = pointing_pixels.map(|pixel| {
+            image_plane_offset_rad(
+                self.geometry,
+                [pixel[0] - midpoint_pixel[0], pixel[1] - midpoint_pixel[1]],
+            )
+        });
+        let mut imaging = if pointing_pixels[0] == pointing_pixels[1] {
+            self.kernel.clone()
+        } else {
+            let conv_size = mosaic_convolution_size(self.geometry.image_shape);
+            let temporary = screen_fft_temp_at_offsets(
+                self.geometry,
+                response,
+                self.antenna_responses,
+                self.frequency_hz,
+                conv_size,
+                1,
+                relative_offsets,
+            )?;
+            normalized_resampled_kernel(&temporary, self.normalization_support(), self.support)?
+        };
+        let phase_gradient = phase_gradient(
+            midpoint_pixel,
+            self.geometry.reference_pixel,
+            self.geometry.image_shape,
+        );
+        apply_phase_gradient(&mut imaging, phase_gradient);
+        self.active_phased_kernel = Some(PhasedKernel { pointing, imaging });
+        Ok(())
+    }
+
+    fn normalization_support(&self) -> usize {
+        self.normalization_support
     }
 
     pub(crate) const fn contributes_to_normalization(plan: MosaicSamplePlan) -> bool {
@@ -402,8 +558,8 @@ impl MosaicProjector {
         let kernel = &self
             .active_phased_kernel
             .as_ref()
-            .filter(|kernel| kernel.field_id == plan.field_id)
-            .expect("sample plan keeps its field kernel active")
+            .filter(|kernel| kernel.pointing == plan.pointing)
+            .expect("sample plan keeps its pointing-pair kernel active")
             .imaging;
         for iy in plan.y[0]..=plan.y[1] {
             let kernel_y = (self.kernel_center as isize
@@ -430,8 +586,8 @@ impl MosaicProjector {
         let kernel = &self
             .active_phased_kernel
             .as_ref()
-            .filter(|kernel| kernel.field_id == plan.field_id)
-            .expect("sample plan keeps its field kernel active")
+            .filter(|kernel| kernel.pointing == plan.pointing)
+            .expect("sample plan keeps its pointing-pair kernel active")
             .imaging;
         let mut value = Complex64::default();
         for iy in plan.weight_y[0]..=plan.weight_y[1] {
@@ -452,17 +608,43 @@ impl MosaicProjector {
     }
 
     fn grid_weight_at_center(
-        &self,
-        field_id: i32,
+        &mut self,
+        response: &PreparedPrimaryBeamPower,
+        pointing: MosaicPointingPairKey,
         support: MosaicWeightSupportKey,
         value: f64,
         grid: &mut Array2<Complex64>,
         compensation: &mut Array2<Complex64>,
     ) -> Result<(), SpectralOperatorError> {
-        let (_, phase_gradient) = self
-            .field_phase_gradients
-            .get(&field_id)
-            .ok_or(SpectralOperatorError::ProblemMismatch)?;
+        let (pointing_pixels, midpoint_pixel) = pointing_pair_geometry(self.geometry, pointing)?;
+        let relative_offsets = pointing_pixels.map(|pixel| {
+            image_plane_offset_rad(
+                self.geometry,
+                [pixel[0] - midpoint_pixel[0], pixel[1] - midpoint_pixel[1]],
+            )
+        });
+        let differential_weight;
+        let weight_kernel = if pointing_pixels[0] == pointing_pixels[1] {
+            &self.weight_kernel
+        } else {
+            let temporary = screen_fft_temp_at_offsets(
+                self.geometry,
+                response,
+                self.antenna_responses,
+                self.frequency_hz,
+                mosaic_convolution_size(self.geometry.image_shape),
+                2,
+                relative_offsets,
+            )?;
+            differential_weight =
+                normalized_resampled_kernel(&temporary, self.normalization_support, self.support)?;
+            &differential_weight
+        };
+        let phase_gradient = phase_gradient(
+            midpoint_pixel,
+            self.geometry.reference_pixel,
+            self.geometry.image_shape,
+        );
         let center = [self.grid_shape[0] / 2, self.grid_shape[1] / 2];
         for y in support.min_y..=support.max_y {
             let kernel_y =
@@ -476,7 +658,7 @@ impl MosaicProjector {
                 let phase_y = phase_y as f64 * phase_gradient[1];
                 let phasor_x = Complex32::new(phase_x.cos() as f32, phase_x.sin() as f32);
                 let phasor_y = Complex32::new(phase_y.cos() as f32, phase_y.sin() as f32);
-                let tap = self.weight_kernel[(kernel_x, kernel_y)] * phasor_x * phasor_y;
+                let tap = weight_kernel[(kernel_x, kernel_y)] * phasor_x * phasor_y;
                 let contribution = Complex32::new(value as f32, 0.0) * tap;
                 let contribution =
                     Complex64::new(f64::from(contribution.re), f64::from(contribution.im));
@@ -515,23 +697,58 @@ fn is_composite_fft_length(mut value: usize) -> bool {
 fn screen_fft_temp(
     geometry: SpectralOperatorGeometry,
     response: &PreparedPrimaryBeamPower,
+    antenna_responses: SelectedAntennaResponses,
     frequency_hz: f64,
     conv_size: usize,
     power: u32,
 ) -> Result<Array2<Complex32>, SpectralOperatorError> {
-    let scale = [
-        geometry.increment_rad[0].abs() * geometry.image_shape[0] as f64 / conv_size as f64,
-        geometry.increment_rad[1].abs() * geometry.image_shape[1] as f64 / conv_size as f64,
-    ];
+    screen_fft_temp_at_offsets(
+        geometry,
+        response,
+        antenna_responses,
+        frequency_hz,
+        conv_size,
+        power,
+        [[0.0; 2]; 2],
+    )
+}
+
+fn screen_fft_temp_at_offsets(
+    geometry: SpectralOperatorGeometry,
+    response: &PreparedPrimaryBeamPower,
+    antenna_responses: SelectedAntennaResponses,
+    frequency_hz: f64,
+    conv_size: usize,
+    power: u32,
+    antenna_offsets_rad: [[f64; 2]; 2],
+) -> Result<Array2<Complex32>, SpectralOperatorError> {
     let center = conv_size as isize / 2;
     let mut screen = Array2::zeros((conv_size, conv_size));
     for y in 0..conv_size {
-        let m = (y as isize - center) as f64 * scale[1];
         for x in 0..conv_size {
-            let l = (x as isize - center) as f64 * scale[0];
+            let image_offset = image_plane_offset_rad(
+                geometry,
+                [
+                    (x as isize - center) as f64 * geometry.image_shape[0] as f64
+                        / conv_size as f64,
+                    (y as isize - center) as f64 * geometry.image_shape[1] as f64
+                        / conv_size as f64,
+                ],
+            );
             screen[(x, y)] = Complex64::new(
-                f64::from(response.mosaic_convolution_power_at_offsets(l, m, frequency_hz)?)
-                    .powi(power as i32),
+                f64::from(response.paired_mosaic_voltage_at_offsets(
+                    antenna_responses,
+                    [
+                        image_offset[0] - antenna_offsets_rad[0][0],
+                        image_offset[1] - antenna_offsets_rad[0][1],
+                    ],
+                    [
+                        image_offset[0] - antenna_offsets_rad[1][0],
+                        image_offset[1] - antenna_offsets_rad[1][1],
+                    ],
+                    frequency_hz,
+                )?)
+                .powi(power as i32),
                 0.0,
             );
         }
@@ -555,6 +772,80 @@ fn screen_fft_temp(
         }
     }
     Ok(output)
+}
+
+fn image_plane_offset_rad(geometry: SpectralOperatorGeometry, pixel_offset: [f64; 2]) -> [f64; 2] {
+    let pc = geometry.direction.pc();
+    [
+        geometry.increment_rad[0] * (pc[0][0] * pixel_offset[0] + pc[0][1] * pixel_offset[1]),
+        geometry.increment_rad[1] * (pc[1][0] * pixel_offset[0] + pc[1][1] * pixel_offset[1]),
+    ]
+}
+
+fn phase_gradient(
+    pointing_pixel: [f64; 2],
+    reference_pixel: [f64; 2],
+    image_shape: [usize; 2],
+) -> [f64; 2] {
+    [
+        -(pointing_pixel[0] - reference_pixel[0]) * std::f64::consts::TAU
+            / (image_shape[0] as f64 * MOSAIC_OVERSAMPLING as f64),
+        -(pointing_pixel[1] - reference_pixel[1]) * std::f64::consts::TAU
+            / (image_shape[1] as f64 * MOSAIC_OVERSAMPLING as f64),
+    ]
+}
+
+fn apply_phase_gradient(kernel: &mut Array2<Complex32>, phase_gradient: [f64; 2]) {
+    let center = kernel.dim().0 as isize / 2;
+    for ((kernel_x, kernel_y), value) in kernel.indexed_iter_mut() {
+        let signed_x = kernel_x as isize - center;
+        let signed_y = kernel_y as isize - center;
+        let phase_x = signed_x as f64 * phase_gradient[0];
+        let phase_y = signed_y as f64 * phase_gradient[1];
+        let phasor_x = Complex32::new(phase_x.cos() as f32, phase_x.sin() as f32);
+        let phasor_y = Complex32::new(phase_y.cos() as f32, phase_y.sin() as f32);
+        *value = *value * phasor_x * phasor_y;
+    }
+}
+
+fn normalized_resampled_kernel(
+    temporary: &Array2<Complex32>,
+    normalization_support: usize,
+    family_support: usize,
+) -> Result<Array2<Complex32>, SpectralOperatorError> {
+    let center = temporary.dim().0 / 2;
+    let normalization = plane_sum(temporary, center, normalization_support, 1).re;
+    if !normalization.is_finite() || normalization <= 1.0e-6 {
+        return Err(SpectralOperatorError::GeneratedNonfinite);
+    }
+    let cropped_size = 2 * (family_support + 2);
+    let cropped_center = cropped_size / 2;
+    let mut cropped = Array2::zeros((cropped_size, cropped_size));
+    for y in 0..cropped_size {
+        for x in 0..cropped_size {
+            cropped[(x, y)] = temporary[(center + x - cropped_center, center + y - cropped_center)]
+                / normalization;
+        }
+    }
+    Ok(lanczos_resample(&cropped, MOSAIC_OVERSAMPLING))
+}
+
+fn screen_support(
+    geometry: SpectralOperatorGeometry,
+    response: &PreparedPrimaryBeamPower,
+    antenna_responses: SelectedAntennaResponses,
+    frequency_hz: f64,
+    conv_size: usize,
+) -> Result<usize, SpectralOperatorError> {
+    let support_weight = screen_fft_temp(
+        geometry,
+        response,
+        antenna_responses,
+        frequency_hz,
+        conv_size,
+        2,
+    )?;
+    Ok(find_support(&support_weight, 1))
 }
 
 fn find_support(weights: &Array2<Complex32>, sampling: usize) -> usize {
@@ -678,25 +969,9 @@ fn casa_sinc(value: f32) -> f32 {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct PointingKey {
-    field_id: i32,
-    response_key: u64,
-    frame: DirectionFrame,
-    longitude_bits: u64,
-    latitude_bits: u64,
+    pointing: MosaicPointingPairKey,
+    response_key: MosaicProjectorKey,
     frequency_bits: u64,
-}
-
-impl PointingKey {
-    fn new(field_id: i32, response_key: u64, pointing: SkyDirection, frequency_hz: f64) -> Self {
-        Self {
-            field_id,
-            response_key,
-            frame: pointing.frame(),
-            longitude_bits: pointing.longitude_rad().to_bits(),
-            latitude_bits: pointing.latitude_rad().to_bits(),
-            frequency_bits: frequency_hz.to_bits(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -744,13 +1019,11 @@ impl From<MosaicSamplePlan> for MosaicWeightSupportKey {
     }
 }
 
-/// Reconstruction-owned exact reduction of homogeneous mosaic pointing weights.
+/// Reconstruction-owned exact reduction of mosaic pointing-pair weights.
 ///
 /// The accumulator stores one scalar per unique field, pointing, and evaluation
 /// frequency. It therefore stays independent of source block boundaries and
-/// worker partitions. T48 extends the response law for heterogeneous antenna
-/// pairs; T47 deliberately requires the two evaluated antenna pointings to be
-/// identical.
+/// worker partitions while retaining independent antenna boresights.
 pub(crate) struct MosaicNormalAccumulator {
     weights: BTreeMap<(PointingKey, MosaicWeightSupportKey), SignedExactF64Sum>,
     entry_capacity: usize,
@@ -782,21 +1055,29 @@ impl MosaicNormalAccumulator {
     pub(crate) fn accumulate(
         &mut self,
         field_id: i32,
-        response_key: u64,
+        response_key: MosaicProjectorKey,
         pointings: SelectedPointingDirections,
         frequency_hz: f64,
         plan: MosaicSamplePlan,
         weight: f64,
     ) -> Result<(), SpectralOperatorError> {
-        if pointings.antenna1 != pointings.antenna2
+        if pointings.antenna1.frame() != pointings.antenna2.frame()
             || !frequency_hz.is_finite()
             || frequency_hz <= 0.0
             || !weight.is_finite()
         {
             return Err(SpectralOperatorError::UnsupportedProblem);
         }
+        let pointing = MosaicPointingPairKey::new(field_id, pointings);
+        if plan.pointing != pointing {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
         let key = (
-            PointingKey::new(field_id, response_key, pointings.antenna1, frequency_hz),
+            PointingKey {
+                pointing,
+                response_key,
+                frequency_bits: frequency_hz.to_bits(),
+            },
             plan.into(),
         );
         if !self.weights.contains_key(&key) && self.weights.len() == self.entry_capacity {
@@ -840,7 +1121,8 @@ impl MosaicNormalAccumulator {
         self,
         image_shape: [usize; 2],
         image_blc: [usize; 2],
-        projectors: &BTreeMap<u64, MosaicProjector>,
+        response: &PreparedPrimaryBeamPower,
+        projectors: &mut BTreeMap<MosaicProjectorKey, MosaicProjector>,
         fft: &mut PreparedFft,
     ) -> Result<Vec<f64>, SpectralOperatorError> {
         let grid_shape = projectors
@@ -856,10 +1138,11 @@ impl MosaicNormalAccumulator {
                 continue;
             }
             let projector = projectors
-                .get(&pointing.response_key)
+                .get_mut(&pointing.response_key)
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
             projector.grid_weight_at_center(
-                pointing.field_id,
+                response,
+                pointing.pointing,
                 support,
                 weight,
                 &mut grid,
@@ -891,9 +1174,32 @@ mod tests {
         }
     }
 
-    fn projector() -> MosaicProjector {
-        let (geometry, response) = projector_inputs();
-        MosaicProjector::new(geometry, &response, 230.0e9, 8).expect("projector")
+    fn point_at_pixels(
+        geometry: SpectralOperatorGeometry,
+        antenna1: [f64; 2],
+        antenna2: [f64; 2],
+    ) -> SelectedPointingDirections {
+        let direction = |pixel| {
+            let world = crate::mask::direction_pixel_to_world(geometry.direction, pixel)
+                .expect("test pointing pixel");
+            SkyDirection::new(DirectionFrame::J2000, world[0], world[1])
+        };
+        SelectedPointingDirections {
+            antenna1: direction(antenna1),
+            antenna2: direction(antenna2),
+        }
+    }
+
+    fn aca_pair() -> SelectedAntennaResponses {
+        SelectedAntennaResponses {
+            antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            family_envelope: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+        }
+    }
+
+    fn response_key() -> MosaicProjectorKey {
+        crate::spectral_operator::mosaic_response_key(230.0e9, 230.0e9, aca_pair())
     }
 
     fn projector_inputs() -> (SpectralOperatorGeometry, PreparedPrimaryBeamPower) {
@@ -931,29 +1237,56 @@ mod tests {
     }
 
     #[test]
-    fn projector_reuses_one_active_phased_kernel_and_obeys_adjoint_taps() {
-        let mut projector = projector();
-        let pointing = [67.0, 61.0];
+    fn heterogeneous_projector_reuses_one_active_differential_pointing_kernel_and_obeys_adjoint_taps()
+     {
+        let (geometry, response) = projector_inputs();
+        let mut projector =
+            MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 230.0e9, 8)
+                .expect("projector");
+        let pointing = point_at_pixels(geometry, [67.0, 61.0], [67.0, 61.0]);
         let plan = projector
-            .plan(3, [0.0, 0.0], pointing, [64.0, 64.0], [128, 128])
+            .plan(&response, 3, [0.0, 0.0], pointing)
             .expect("plan")
             .expect("in-grid sample");
-        let repeated = projector
-            .plan(3, [0.0, 0.0], pointing, [64.0, 64.0], [128, 128])
+        projector
+            .plan(&response, 3, [0.0, 0.0], pointing)
             .expect("repeated plan")
             .expect("in-grid sample");
-        assert_eq!(projector.field_phase_gradients.len(), 1);
-        assert_eq!(projector.active_phased_kernel.as_ref().unwrap().field_id, 3);
-        assert!(
+        let shared_pointing_kernel = projector
+            .active_phased_kernel
+            .as_ref()
+            .expect("shared pointing kernel")
+            .imaging
+            .clone();
+        assert_eq!(
             projector
-                .plan(3, [0.0, 0.0], [68.0, 61.0], [64.0, 64.0], [128, 128])
-                .is_err()
+                .active_phased_kernel
+                .as_ref()
+                .unwrap()
+                .pointing
+                .field_id,
+            3
+        );
+
+        let differential = point_at_pixels(geometry, [66.5, 61.0], [67.5, 61.0]);
+        let differential_plan = projector
+            .plan(&response, 3, [0.0, 0.0], differential)
+            .expect("differential plan")
+            .expect("differential in-grid sample");
+        assert_ne!(plan.pointing, differential_plan.pointing);
+        assert_ne!(
+            projector
+                .active_phased_kernel
+                .as_ref()
+                .expect("differential kernel")
+                .imaging,
+            shared_pointing_kernel
         );
 
         let mut grid = Array2::zeros((160, 160));
         let mut compensation = Array2::zeros((160, 160));
         let input = Complex64::new(0.75, -0.25);
-        projector.grid_compensated(&mut grid, &mut compensation, plan, input);
+        projector.grid_compensated(&mut grid, &mut compensation, differential_plan, input);
         let data = Array2::from_shape_fn((160, 160), |(x, y)| {
             Complex64::new((x as f64 * 0.01).sin(), (y as f64 * 0.02).cos())
         });
@@ -963,11 +1296,34 @@ mod tests {
             .fold(Complex64::default(), |sum, (actual, datum)| {
                 sum + actual.conj() * datum
             });
-        let right = input.conj() * projector.degrid(&data, repeated);
+        let right = input.conj() * projector.degrid(&data, differential_plan);
         assert!(
             (left - right).norm() <= 5.0e-8,
             "CASA's Complex product boundary must remain adjoint within single-precision rounding: left={left:?} right={right:?}"
         );
+
+        let key = response_key();
+        let mut normal = MosaicNormalAccumulator::with_capacity(1, 1);
+        normal
+            .accumulate(3, key, differential, 230.0e9, differential_plan, 1.0)
+            .expect("differential normal contribution");
+        let mut projectors = BTreeMap::from([(key, projector)]);
+        let mut fft = PreparedFft::new(
+            geometry.grid_shape,
+            fft_resident_complex_values_for_shape(geometry.grid_shape).expect("FFT residency"),
+        )
+        .expect("normal FFT");
+        let sensitivity = normal
+            .gridded_sensitivity(
+                geometry.image_shape,
+                geometry.image_blc,
+                &response,
+                &mut projectors,
+                &mut fft,
+            )
+            .expect("differential sensitivity");
+        assert!(sensitivity.iter().all(|value| value.is_finite()));
+        assert!(sensitivity.iter().any(|value| *value > 0.0));
     }
 
     #[test]
@@ -978,14 +1334,101 @@ mod tests {
     }
 
     #[test]
+    fn heterogeneous_supports_match_casa_512_pixel_oracle() {
+        let (mut geometry, _) = projector_inputs();
+        geometry.image_shape = [512, 512];
+        geometry.grid_shape = [640, 640];
+        geometry.image_blc = [64, 64];
+        geometry.reference_pixel = [256.0, 256.0];
+        let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
+            geometry.reference_pixel,
+            geometry.increment_rad,
+            geometry.image_shape,
+            0.0,
+        )
+        .unwrap()
+        .with_casa_aca_hetarray_convolution();
+        let alma = casa_imaging_model::AntennaResponseClass::CasaAlma12m;
+        let aca = casa_imaging_model::AntennaResponseClass::CasaAca7m;
+        let supports = [(alma, alma), (alma, aca), (aca, aca)].map(|(antenna1, antenna2)| {
+            MosaicProjector::new(
+                geometry,
+                &response,
+                SelectedAntennaResponses {
+                    antenna1,
+                    antenna2,
+                    family_envelope: alma,
+                },
+                230.0e9,
+                230.0e9,
+                7,
+            )
+            .map(|projector| {
+                (
+                    projector.normalization_support,
+                    projector.support,
+                    projector.kernel.dim(),
+                )
+            })
+            .unwrap()
+        });
+        assert_eq!(supports.map(|entry| entry.0), [29, 24, 18]);
+        assert_eq!(supports.map(|entry| entry.1), [29; 3]);
+        assert_eq!(supports.map(|entry| entry.2), [(620, 620); 3]);
+    }
+
+    #[test]
+    fn distinct_support_frequency_is_scalarized_before_retained_kernel_construction() {
+        let (geometry, response) = projector_inputs();
+        let conv_size = mosaic_convolution_size(geometry.image_shape);
+        let support_frequency_hz = 115.0e9;
+        let expected_support = screen_support(
+            geometry,
+            &response,
+            aca_pair(),
+            support_frequency_hz,
+            conv_size,
+        )
+        .expect("support-frequency scalar");
+        let projector = MosaicProjector::new(
+            geometry,
+            &response,
+            aca_pair(),
+            230.0e9,
+            support_frequency_hz,
+            8,
+        )
+        .expect("projector with distinct support frequency");
+        assert_eq!(projector.normalization_support, expected_support);
+
+        let residency = residency_projection(geometry.image_shape, [16, 16], 1, 1, 100, 100, 1)
+            .expect("mosaic residency");
+        let temp_side = conv_size / 4;
+        let temp_bytes = temp_side * temp_side * size_of::<Complex32>();
+        let screen_bytes = conv_size * conv_size * size_of::<Complex64>();
+        let fft_bytes = fft_resident_complex_values_for_shape([conv_size, conv_size])
+            .expect("FFT residency")
+            * size_of::<Complex64>();
+        let planning_bytes = fft_planning_words_for_shape([conv_size, conv_size])
+            .expect("FFT planning residency")
+            * size_of::<usize>();
+        let charged_screen_peak = screen_bytes + fft_bytes + planning_bytes + 2 * temp_bytes;
+        assert!(
+            residency.workspace_bytes >= charged_screen_peak,
+            "the workspace must charge the retained science crop and the support FFT output crop"
+        );
+    }
+
+    #[test]
     fn weight_convolution_function_uses_casa_hetarray_weight_sum() {
         let (geometry, response) = projector_inputs();
-        let projector = MosaicProjector::new(geometry, &response, 230.0e9, 8).expect("projector");
+        let projector = MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 230.0e9, 8)
+            .expect("projector");
         let conv_size = mosaic_convolution_size(geometry.image_shape);
-        let imaging =
-            screen_fft_temp(geometry, &response, 230.0e9, conv_size, 1).expect("imaging CF");
-        let weight =
-            screen_fft_temp(geometry, &response, 230.0e9, conv_size, 2).expect("weight CF");
+        let imaging = screen_fft_temp(geometry, &response, aca_pair(), 230.0e9, conv_size, 1)
+            .expect("imaging CF");
+        let weight = screen_fft_temp(geometry, &response, aca_pair(), 230.0e9, conv_size, 2)
+            .expect("weight CF");
         let support = find_support(&weight, 1);
         let center = imaging.dim().0 / 2;
         let imaging_pb_sum = plane_sum(&imaging, center, support, 1).re;
@@ -1027,14 +1470,17 @@ mod tests {
         assert!(larger_image.retained_bytes > base.retained_bytes);
         assert!(larger_image.workspace_bytes > base.workspace_bytes);
         assert!(more_responses.retained_bytes > base.retained_bytes);
-        assert!(more_fields.retained_bytes > base.retained_bytes);
+        assert_eq!(
+            more_fields.retained_bytes, base.retained_bytes,
+            "pointing pairs replace one active kernel and do not retain a per-field cache"
+        );
         assert!(more_normals.retained_bytes > base.retained_bytes);
     }
 
     #[test]
     fn normal_accumulator_fails_before_exceeding_key_or_addition_capacity() {
         let plan = MosaicSamplePlan {
-            field_id: 0,
+            pointing: MosaicPointingPairKey::new(0, point(1.0)),
             center_in_bounds: true,
             loc: [0, 0],
             offset: [0, 0],
@@ -1045,29 +1491,41 @@ mod tests {
         };
         let mut additions = MosaicNormalAccumulator::with_capacity(2, 1);
         additions
-            .accumulate(0, 0, point(1.0), 1.0e9, plan, 1.0)
+            .accumulate(0, response_key(), point(1.0), 1.0e9, plan, 1.0)
             .unwrap();
         assert_eq!(
-            additions.accumulate(0, 0, point(1.0), 1.0e9, plan, 1.0),
+            additions.accumulate(0, response_key(), point(1.0), 1.0e9, plan, 1.0),
             Err(SpectralOperatorError::ResidencyOverflow)
         );
 
         let mut entries = MosaicNormalAccumulator::with_capacity(1, 2);
         entries
-            .accumulate(0, 0, point(1.0), 1.0e9, plan, 1.0)
+            .accumulate(0, response_key(), point(1.0), 1.0e9, plan, 1.0)
             .unwrap();
+        let second_plan = MosaicSamplePlan {
+            pointing: MosaicPointingPairKey::new(1, point(1.1)),
+            ..plan
+        };
         assert_eq!(
-            entries.accumulate(1, 0, point(1.1), 1.0e9, plan, 1.0),
+            entries.accumulate(1, response_key(), point(1.1), 1.0e9, second_plan, 1.0,),
             Err(SpectralOperatorError::ResidencyOverflow)
         );
     }
 
     #[test]
     fn cropped_edge_taps_do_not_contribute_to_scalar_normalization() {
-        let mut projector = projector();
+        let (geometry, response) = projector_inputs();
+        let mut projector =
+            MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 230.0e9, 8)
+                .expect("projector");
         let u_lambda = (-81.0) * projector.du_lambda;
         let plan = projector
-            .plan(3, [u_lambda, 0.0], [64.0, 64.0], [64.0, 64.0], [128, 128])
+            .plan(
+                &response,
+                3,
+                [u_lambda, 0.0],
+                point_at_pixels(geometry, [64.0, 64.0], [64.0, 64.0]),
+            )
             .expect("plan")
             .expect("kernel wings still intersect the grid");
         assert!(!MosaicProjector::contributes_to_normalization(plan));
@@ -1075,17 +1533,19 @@ mod tests {
 
     #[test]
     fn casa_mosaic_effective_domain_excludes_the_final_grid_edges() {
-        let mut projector = projector();
+        let (geometry, response) = projector_inputs();
+        let mut projector =
+            MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 230.0e9, 8)
+                .expect("projector");
         let last = projector.grid_shape[0] as f64 - 1.0;
         let u_lambda = (last - projector.grid_shape[0] as f64 / 2.0) * projector.du_lambda;
         let v_lambda = -(last - projector.grid_shape[1] as f64 / 2.0) * projector.dv_lambda;
         let plan = projector
             .plan(
+                &response,
                 3,
                 [u_lambda, v_lambda],
-                [64.0, 64.0],
-                [64.0, 64.0],
-                [128, 128],
+                point_at_pixels(geometry, [64.0, 64.0], [64.0, 64.0]),
             )
             .expect("plan")
             .expect("kernel wings still intersect CASA's effective grid domain");
@@ -1108,7 +1568,7 @@ mod tests {
             (1, point(1.1), 1.0e9, -4.0),
         ];
         let plan = MosaicSamplePlan {
-            field_id: 0,
+            pointing: MosaicPointingPairKey::new(0, point(1.0)),
             center_in_bounds: true,
             loc: [0, 0],
             offset: [0, 0],
@@ -1119,19 +1579,41 @@ mod tests {
         };
         let mut serial = MosaicNormalAccumulator::default();
         for (field, pointing, frequency, weight) in samples {
+            let sample_plan = MosaicSamplePlan {
+                pointing: MosaicPointingPairKey::new(field, pointing),
+                ..plan
+            };
             serial
-                .accumulate(field, 0, pointing, frequency, plan, weight)
+                .accumulate(
+                    field,
+                    response_key(),
+                    pointing,
+                    frequency,
+                    sample_plan,
+                    weight,
+                )
                 .expect("serial sample");
         }
         let mut left = MosaicNormalAccumulator::default();
         let mut right = MosaicNormalAccumulator::default();
         for (index, (field, pointing, frequency, weight)) in samples.into_iter().enumerate() {
+            let sample_plan = MosaicSamplePlan {
+                pointing: MosaicPointingPairKey::new(field, pointing),
+                ..plan
+            };
             (if index % 2 == 0 {
                 &mut left
             } else {
                 &mut right
             })
-            .accumulate(field, 0, pointing, frequency, plan, weight)
+            .accumulate(
+                field,
+                response_key(),
+                pointing,
+                frequency,
+                sample_plan,
+                weight,
+            )
             .expect("partition sample");
         }
         left.merge(right).expect("deterministic merge");

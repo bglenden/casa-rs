@@ -497,6 +497,7 @@ fn samples(problem: &casa_imaging_model::CompiledProblem) -> Vec<SelectedObserva
                     field_id: 0,
                     antenna1: 0,
                     antenna2: 1,
+                    antenna_responses: None,
                     feed1: 0,
                     feed2: 0,
                     scan_number: 1,

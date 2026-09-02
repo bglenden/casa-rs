@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "d92fb2cbe6e143638603cfafb704dac797b459a83edff1ca3fe20e0e65dfc530"
+    "e8bc9bd14442daef07646888424ee2cff87c3bd7be515e9b56356c32315d3a0f"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "8122b8bbdded2cce4654ae6742c93c161ebf0d34b5417b5bf67899d3b14a352c"
+    "e73c66523f50e5ace2f8aa6a05316d85bf3cb82a493e75ec5d70d4aabd5a4918"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 80
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1934,7 +1934,7 @@ def validate_t18_global_weighting_sources(
         )
     if (
         "spectral_contributions" in selected_sample_fields
-        or "pub const SCHEMA_VERSION: u32 = 4;" not in sample_model
+        or "pub const SCHEMA_VERSION: u32 = 5;" not in sample_model
     ):
         raise ArchitectureError(
             "T18 spectral contributions must remain outside the persisted selected-sample schema"
@@ -2242,6 +2242,7 @@ def validate_t18_global_weighting_sources(
             "output_frame_frequency_hz": "f64",
             "field_id": "i32",
             "pointing_directions": "SelectedPointingDirections",
+            "antenna_responses": "Option<SelectedAntennaResponses>",
             "domain_projections": "SelectedImageDomainProjections",
         }
         or "input" in replay_phase_fields
@@ -2538,7 +2539,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
         "repo://resources/imaging-architecture/baselines/selected-observation-generation-v5.txt",
         "repo://resources/imaging-architecture/baselines/selected-observation-generation-v6.txt",
-        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v7.txt",
+        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v8.txt",
     }
     if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
         raise ArchitectureError(

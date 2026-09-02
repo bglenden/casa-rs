@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, collections::VecDeque, mem::size_of, rc::Rc, sync::Arc, time::Instant};
 
-use crate::derived::engine::MsCalEngine;
+use crate::derived::engine::{MsCalEngine, polarization_operator_angle};
 use crate::subtables::SubTable;
 use crate::{
     MainRowSelectionCursor, MeasurementSet, MsError, MsReadPlan, MsSelectionIoBudget,
@@ -14,16 +14,16 @@ use crate::{
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DelayCentreLaw,
-    DirectionFrame, Epoch, FrequencyFrame, MeasurementSetReadAccess, MissingPointingPolicy,
-    ObservationSelection, ObservationSource, ObservationSourceState, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
-    PointingTimeSampling, SelectedImageDomainProjection, SelectedImageDomainProjections,
-    SelectedInputWeightGroup, SelectedMainRow, SelectedObservationRunChannel,
-    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
-    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedRowsBuilder, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn,
-    WeightColumn,
+    DirectionFrame, Epoch, FrequencyFrame, InstrumentModel, MeasurementSetReadAccess,
+    MissingPointingPolicy, ObservationSelection, ObservationSource, ObservationSourceState,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, SelectedAntennaResponses,
+    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedInputWeightGroup,
+    SelectedMainRow, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
+    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedPredictionTarget,
+    SelectedRowsBuilder, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn, WeightColumn,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use thiserror::Error;
@@ -970,9 +970,40 @@ fn project_stored_run_row(
     let antenna2 = usize::try_from(stored.antenna2())
         .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
     let parallactic_angles_rad = [
-        geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna1)?,
-        geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna2)?,
+        polarization_operator_angle(geometry_engine.parallactic_angle(
+            stored.time_mjd_seconds(),
+            field_id,
+            antenna1,
+        )?),
+        polarization_operator_angle(geometry_engine.parallactic_angle(
+            stored.time_mjd_seconds(),
+            field_id,
+            antenna2,
+        )?),
     ];
+    let antenna_responses = match problem.science().instrument_model() {
+        None => None,
+        Some(InstrumentModel::CasaAca7mInterferometricDirectPbV1) => {
+            Some(SelectedAntennaResponses {
+                antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+                antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+                family_envelope: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            })
+        }
+        Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1) => {
+            Some(SelectedAntennaResponses {
+                antenna1: geometry_engine
+                    .antenna_response_class(antenna1)
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
+                antenna2: geometry_engine
+                    .antenna_response_class(antenna2)
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
+                family_envelope: geometry_engine
+                    .antenna_response_family_envelope()
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
+            })
+        }
+    };
     let physical_row = u64::try_from(stored.physical_row())
         .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?;
     let prediction_target = if problem
@@ -1016,6 +1047,7 @@ fn project_stored_run_row(
             field_id: stored.field_id(),
             antenna1: stored.antenna1(),
             antenna2: stored.antenna2(),
+            antenna_responses,
             feed1: stored.feed1(),
             feed2: stored.feed2(),
             scan_number: stored.scan_number(),

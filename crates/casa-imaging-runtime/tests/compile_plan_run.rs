@@ -8788,7 +8788,7 @@ fn t47_runtime_residency_projects_all_bounded_mosaic_state() {
                 ),
             ),
         )
-        .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+        .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
         ReconstructionContract::new(
             ReconstructionBasis::ChannelLocal { channels },
             ReconstructionAlgorithm::Dirty,
@@ -10044,7 +10044,7 @@ fn t41_receipt_projection_records_the_exact_primary_beam_instrument_model() {
                 ),
             ),
         )
-        .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+        .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Dirty,
@@ -10087,7 +10087,7 @@ fn t41_receipt_projection_records_the_exact_primary_beam_instrument_model() {
     let projection = CompiledProblemEvidence::project(&problem);
     assert_eq!(
         projection.field("science.measurement_equation.operator.transforms.3.instrument_model"),
-        Some("casa-alma-aca-interferometric-direct-pb-v1")
+        Some("casa-alma-aca-heterogeneous-interferometric-response-v1")
     );
 }
 
@@ -11388,6 +11388,7 @@ fn sealed_products_samples(
                 field_id: 0,
                 antenna1: 0,
                 antenna2: 1,
+                antenna_responses: None,
                 feed1: 0,
                 feed2: 0,
                 scan_number: 1,

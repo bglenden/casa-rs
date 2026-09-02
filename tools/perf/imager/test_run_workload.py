@@ -679,7 +679,9 @@ real 1.145408
                 "specmode": "mfs",
                 "gridder": "mosaic",
                 "field": "",
+                "stokes": "Q",
                 "phasecenter_field": 0,
+                "usepointing": True,
                 "spw": "0",
                 "deconvolver": "mtmfs",
                 "hogbom_iteration_mode": "casa",
@@ -708,6 +710,8 @@ real 1.145408
             )
 
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASECENTER_FIELD"])
+        self.assertEqual("Q", plan["command"]["env"]["IMAGER_BENCH_STOKES"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_USEPOINTING"])
         self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
         self.assertEqual(
             "casa", plan["command"]["env"]["IMAGER_BENCH_HOGBOM_ITERATION_MODE"]
@@ -930,7 +934,11 @@ real 1.145408
 
         bench = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text()
         self.assertIn('--facets "$facets"', bench)
+        self.assertIn('--stokes "$stokes"', bench)
+        self.assertIn("rust_pointing_flags+=(--usepointing)", bench)
         self.assertIn("facets=facets,", bench)
+        self.assertIn("stokes=stokes,", bench)
+        self.assertIn("usepointing=usepointing,", bench)
         self.assertIn(
             'initialize_imaging_owner "$rust_ms_path"',
             bench,

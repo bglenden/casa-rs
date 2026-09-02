@@ -108,6 +108,24 @@ imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix mvc_ms mvc_c
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T41_CASA_PREFIX="{{cubesource_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_tracked_cubesource_matches_casa_geometry_and_dirty_products --release -- --ignored --exact --nocapture
     CASA_RS_T41_MVC_MS="{{mvc_ms}}" CASA_RS_T41_MVC_CASA_PREFIX="{{mvc_casa_prefix}}" CASA_RS_T41_MVC_RUST_PREFIX="$output_root/rust" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_multi_spw_mvc_matches_casa_taylor_products --release -- --ignored --exact --nocapture
 
+# Focused #534 heterogeneous ALMA/ACA response, bounded selection, and CASA product gate.
+imaging-t48-heterogeneous-response:
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointings -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms observation_pointing_interpolates_each_antenna_on_the_shortest_arc -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms polarized_linear_prediction_rotates_with_parallactic_angle -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction heterogeneous -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction mosaic_response_routes_use_full_nonuniform_spw_and_ignore_replay_partitions -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction polarization_operator::tests::parallactic_rotation_changes_linear_qu_but_not_unpolarized_i -- --exact --nocapture
+
+# Regenerate and compare the representative #534 2,016,000-sample dirty response with CASA.
+imaging-t48-heterogeneous-response-casa:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p target/t48-testdata/imaging/t48
+    CARGO_INCREMENTAL=0 cargo run --release -p casa-ms --bin simobserve -- --json-run tools/perf/imager/fixtures/t48-mixed-alma-aca-request.json
+    CASA_RS_TESTDATA_ROOT="{{justfile_directory()}}/target/t48-testdata" python3 tools/perf/imager/run_workload.py t48-heterogeneous-mosaic-mfs --stream-log
+
 # Focused #528 MT-MFS block-normal algebra, compact replay, persistence, and residency gate.
 imaging-t42-mtmfs-normal:
     just arch-check

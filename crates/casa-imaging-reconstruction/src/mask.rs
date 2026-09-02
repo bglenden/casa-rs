@@ -50,7 +50,7 @@ pub fn reproject_mask_support(
     Ok(target_support.into_boxed_slice())
 }
 
-fn direction_pixel_to_world(
+pub(crate) fn direction_pixel_to_world(
     coordinate: DirectionCoordinateSpec,
     pixel: [f64; 2],
 ) -> Result<[f64; 2], MaskError> {

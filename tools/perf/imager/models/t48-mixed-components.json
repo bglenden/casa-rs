@@ -1,0 +1,29 @@
+{
+  "kind": "analytic_components",
+  "components": [
+    {
+      "kind": "point",
+      "name": "centre",
+      "l_rad": 0.0,
+      "m_rad": 0.0,
+      "spectrum": { "flux_jy": 1.0, "spectral_index": -0.7 }
+    },
+    {
+      "kind": "gaussian",
+      "name": "offset_extended",
+      "l_rad": 0.00012,
+      "m_rad": -0.00008,
+      "major_fwhm_rad": 0.00004,
+      "minor_fwhm_rad": 0.00002,
+      "position_angle_rad": 0.6,
+      "spectrum": { "flux_jy": 0.25, "spectral_index": -0.2 }
+    },
+    {
+      "kind": "point",
+      "name": "edge",
+      "l_rad": -0.00016,
+      "m_rad": 0.00011,
+      "spectrum": { "flux_jy": 0.4, "spectral_index": 0.15 }
+    }
+  ]
+}

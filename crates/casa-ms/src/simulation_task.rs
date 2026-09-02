@@ -239,6 +239,11 @@ pub struct SimobserveFamilyTaskRequest {
     pub target_ms_size_gib: f64,
     /// Number of polarization correlations in the generated MS.
     pub polarizations: usize,
+    /// Fractional source Stokes `[Q/I, U/I, V/I]` used by synthetic
+    /// visibility prediction. Non-zero values require four linear
+    /// correlations.
+    #[serde(default)]
+    pub source_stokes_fractional_quv: [f64; 3],
     /// Number of frequency channels in the generated MS.
     pub ms_channels: usize,
     /// Number of output image channels expected for diagnostics.
@@ -404,9 +409,13 @@ impl SimobserveFamilyTaskRequest {
             spectral_setup.reference_frequency_hz(),
             preset.dish_diameter_m,
         );
-        let polarization_setup =
+        let mut polarization_setup =
             SyntheticPolarizationSetup::new(preset.polarization_basis, self.polarizations)
                 .map_err(|error| error.to_string())?;
+        polarization_setup.source_stokes_fractional_quv = self.source_stokes_fractional_quv;
+        polarization_setup
+            .validate()
+            .map_err(|error| error.to_string())?;
         let telescope_name = if self.observation_mode == SyntheticObservationMode::TotalPower
             && matches!(preset.telescope_name.as_str(), "ALMA" | "ACA")
         {
@@ -1507,6 +1516,7 @@ fn simobserve_family_request_from_parameters(
         band: required_parameter_string(values, "band")?.to_string(),
         target_ms_size_gib: required_parameter_f64(values, "target_ms_size_gib")?,
         polarizations: required_parameter_usize(values, "polarizations")?,
+        source_stokes_fractional_quv: [0.0; 3],
         ms_channels: required_parameter_usize(values, "ms_channels")?,
         image_channels: required_parameter_usize(values, "image_channels")?,
         pointing_count: required_parameter_usize(values, "pointing_count")?,

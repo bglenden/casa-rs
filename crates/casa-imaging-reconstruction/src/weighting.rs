@@ -7,10 +7,11 @@ use std::{collections::BTreeMap, fmt, mem::size_of};
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, FiniteValuePolicy,
-    ImageDomainRole, LogicalIdentity, SelectedImageDomainProjections, SelectedInputWeightGroup,
-    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedPointingDirections,
-    SelectedSampleAddress, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, UvTaper, WeightDensityScope, WeightingCommitmentId, WeightingScheme,
+    ImageDomainRole, LogicalIdentity, SelectedAntennaResponses, SelectedImageDomainProjections,
+    SelectedInputWeightGroup, SelectedObservationGenerationId, SelectedObservationSampleView,
+    SelectedPointingDirections, SelectedSampleAddress, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedVisibilitySample, UvTaper, WeightDensityScope,
+    WeightingCommitmentId, WeightingScheme,
 };
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
@@ -1193,6 +1194,7 @@ pub struct WeightingSelectedSample {
     output_frame_frequency_hz: f64,
     field_id: i32,
     pointing_directions: SelectedPointingDirections,
+    antenna_responses: Option<SelectedAntennaResponses>,
     domain_projections: SelectedImageDomainProjections,
 }
 
@@ -1219,6 +1221,7 @@ impl WeightingSelectedSample {
             output_frame_frequency_hz,
             field_id: sample.metadata().field_id,
             pointing_directions: coordinates.pointing_directions,
+            antenna_responses: sample.metadata().antenna_responses,
             domain_projections: sample.domain_projections().clone(),
         }
     }
@@ -1275,6 +1278,12 @@ impl WeightingSelectedSample {
     #[must_use]
     pub const fn pointing_directions(&self) -> SelectedPointingDirections {
         self.pointing_directions
+    }
+
+    /// Return the owner-derived paired aperture classes, when required.
+    #[must_use]
+    pub const fn antenna_responses(&self) -> Option<SelectedAntennaResponses> {
+        self.antenna_responses
     }
 
     fn starts_correlation_group(&self) -> bool {

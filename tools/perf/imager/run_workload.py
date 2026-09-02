@@ -566,6 +566,10 @@ def build_plan(
         "IMAGER_BENCH_FACETS": str(int_value(imaging, "facets", 1)),
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
+        "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
+        "IMAGER_BENCH_USEPOINTING": boolean_env_value(
+            imaging, "usepointing", gridder == "mosaic"
+        ),
         "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(
             imaging, "phasecenter_field"
         ),
@@ -781,6 +785,11 @@ def build_plan(
             ),
             "require_metadata_parity": bool_value(
                 comparison, "require_metadata_parity", False
+            ),
+            **(
+                {"metadata_contract": comparison["metadata_contract"]}
+                if "metadata_contract" in comparison
+                else {}
             ),
             "source_regions": comparison.get("source_regions", []),
             "tolerances": comparison.get("tolerances"),
@@ -3113,6 +3122,8 @@ def compare_products(
         "panel_dir": str(panel_dir),
         "structure_workspace_dir": str(structure_workspace_dir),
     }
+    if plan["comparison"].get("metadata_contract") is not None:
+        request["metadata_contract"] = plan["comparison"]["metadata_contract"]
     comparison = compare_image_products(
         casa_python=casa_python,
         request=request,

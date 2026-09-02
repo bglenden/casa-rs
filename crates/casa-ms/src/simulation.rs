@@ -33,6 +33,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::column_def::{ColumnDef, ColumnKind};
+use crate::derived::engine::polarization_operator_angle;
 use crate::error::{MsError, MsResult};
 use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
@@ -314,6 +315,10 @@ pub struct SyntheticPolarizationSetup {
     /// Number of correlations written per visibility row. Supported values are
     /// 1, 2, and 4.
     pub correlation_count: usize,
+    /// Fractional source Stokes `[Q/I, U/I, V/I]` applied to the scalar sky
+    /// model during synthetic visibility prediction.
+    #[serde(default)]
+    pub source_stokes_fractional_quv: [f64; 3],
 }
 
 impl Default for SyntheticPolarizationSetup {
@@ -321,6 +326,7 @@ impl Default for SyntheticPolarizationSetup {
         Self {
             basis: SyntheticPolarizationBasis::Circular,
             correlation_count: 2,
+            source_stokes_fractional_quv: [0.0; 3],
         }
     }
 }
@@ -331,6 +337,7 @@ impl SyntheticPolarizationSetup {
         let setup = Self {
             basis,
             correlation_count,
+            source_stokes_fractional_quv: [0.0; 3],
         };
         setup.validate()?;
         Ok(setup)
@@ -339,11 +346,40 @@ impl SyntheticPolarizationSetup {
     /// Validate that the correlation layout is supported by the native writer.
     pub fn validate(&self) -> MsResult<()> {
         match self.correlation_count {
-            1 | 2 | 4 => Ok(()),
+            1 | 2 | 4 => {}
             other => Err(MsError::SyntheticObservation(format!(
                 "polarization correlation_count {other} is unsupported; expected 1, 2, or 4"
-            ))),
+            )))?,
         }
+        if self
+            .source_stokes_fractional_quv
+            .iter()
+            .any(|value| !value.is_finite())
+        {
+            return Err(MsError::SyntheticObservation(
+                "source Stokes fractions must be finite".to_string(),
+            ));
+        }
+        let polarized_fraction = self
+            .source_stokes_fractional_quv
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            .sqrt();
+        if polarized_fraction > 1.0 + 1.0e-12 {
+            return Err(MsError::SyntheticObservation(
+                "source fractional polarization must not exceed unity".to_string(),
+            ));
+        }
+        if polarized_fraction > 0.0
+            && (self.basis != SyntheticPolarizationBasis::Linear || self.correlation_count != 4)
+        {
+            return Err(MsError::SyntheticObservation(
+                "polarized synthetic prediction currently requires four linear correlations"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 
     fn correlation_types(&self) -> Vec<i32> {
@@ -2098,6 +2134,33 @@ fn populate_main_rows(
             channel_prediction_workers,
         );
         let mut data_rows = prediction.rows;
+        if request
+            .polarization_setup
+            .source_stokes_fractional_quv
+            .iter()
+            .any(|fraction| *fraction != 0.0)
+        {
+            let parallactic_angles = request
+                .antennas
+                .iter()
+                .map(|antenna| {
+                    field_parallactic_angle_rad(
+                        field_plan.phase_center_rad,
+                        time,
+                        antenna,
+                        std::sync::Arc::clone(&measures),
+                    )
+                    .map(polarization_operator_angle)
+                })
+                .collect::<MsResult<Vec<_>>>()?;
+            apply_fractional_stokes_to_linear_rows(
+                &request.polarization_setup,
+                &row_specs,
+                &parallactic_angles,
+                &mut data_rows,
+                num_chan,
+            );
+        }
         timing.prediction_worker_wall += prediction.worker_wall;
         timing.prediction_gather += prediction.gather;
         timing.prediction += prediction_started.elapsed();
@@ -2257,6 +2320,90 @@ fn field_elevation_rad(
             ))
         })?;
     Ok(azel.latitude_rad())
+}
+
+fn field_parallactic_angle_rad(
+    phase_center_rad: [f64; 2],
+    time_mjd_seconds: f64,
+    antenna: &SyntheticAntenna,
+    measures: std::sync::Arc<dyn MeasuresProvider>,
+) -> MsResult<f64> {
+    let phase_center = MDirection::from_angles(
+        phase_center_rad[0],
+        phase_center_rad[1],
+        DirectionRef::J2000,
+    );
+    let frame = MeasFrame::new()
+        .with_epoch(MEpoch::from_mjd(time_mjd_seconds / 86_400.0, EpochRef::UTC))
+        .with_position(MPosition::new_itrf(
+            antenna.position_m[0],
+            antenna.position_m[1],
+            antenna.position_m[2],
+        ))
+        .with_direction(phase_center.clone())
+        .with_measures(measures);
+    let source_azel = phase_center
+        .convert_to(DirectionRef::AZEL, &frame)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "simobserve parallactic-angle source conversion failed: {error}"
+            ))
+        })?;
+    let pole_azel = MDirection::from_angles(0.0, std::f64::consts::FRAC_PI_2, DirectionRef::HADEC)
+        .convert_to(DirectionRef::AZEL, &frame)
+        .map_err(|error| {
+            MsError::SyntheticObservation(format!(
+                "simobserve parallactic-angle pole conversion failed: {error}"
+            ))
+        })?;
+    Ok(spherical_position_angle(&source_azel, &pole_azel))
+}
+
+fn spherical_position_angle(origin: &MDirection, target: &MDirection) -> f64 {
+    let (origin_lon, origin_lat) = origin.as_angles();
+    let (target_lon, target_lat) = target.as_angles();
+    let delta_lon = target_lon - origin_lon;
+    let y = delta_lon.sin() * target_lat.cos();
+    let x =
+        origin_lat.cos() * target_lat.sin() - origin_lat.sin() * target_lat.cos() * delta_lon.cos();
+    y.atan2(x)
+}
+
+fn apply_fractional_stokes_to_linear_rows(
+    setup: &SyntheticPolarizationSetup,
+    row_specs: &[MainRowVisibilitySpec],
+    parallactic_angles_rad: &[f64],
+    data_rows: &mut [Vec<Complex32>],
+    channel_count: usize,
+) {
+    debug_assert_eq!(setup.basis, SyntheticPolarizationBasis::Linear);
+    debug_assert_eq!(setup.correlation_count, 4);
+    let [q_fraction, u_fraction, v_fraction] =
+        setup.source_stokes_fractional_quv.map(|value| value as f32);
+    for (spec, values) in row_specs.iter().zip(data_rows) {
+        let (sin1, cos1) = parallactic_angles_rad[spec.antenna1].sin_cos();
+        let (sin2, cos2) = parallactic_angles_rad[spec.antenna2].sin_cos();
+        let (sin1, cos1, sin2, cos2) = (sin1 as f32, cos1 as f32, sin2 as f32, cos2 as f32);
+        for channel in 0..channel_count {
+            let start = channel * 4;
+            let i = values[start];
+            let q = i * q_fraction;
+            let u = i * u_fraction;
+            let v = i * v_fraction;
+            let b00 = i + q;
+            let b01 = u + Complex32::new(-v.im, v.re);
+            let b10 = u - Complex32::new(-v.im, v.re);
+            let b11 = i - q;
+            let first_row_0 = b00 * cos2 + b01 * sin2;
+            let first_row_1 = -b00 * sin2 + b01 * cos2;
+            let second_row_0 = b10 * cos2 + b11 * sin2;
+            let second_row_1 = -b10 * sin2 + b11 * cos2;
+            values[start] = first_row_0 * cos1 + second_row_0 * sin1;
+            values[start + 1] = first_row_1 * cos1 + second_row_1 * sin1;
+            values[start + 2] = -first_row_0 * sin1 + second_row_0 * cos1;
+            values[start + 3] = -first_row_1 * sin1 + second_row_1 * cos1;
+        }
+    }
 }
 
 fn apply_corruption_and_count_rows_with_workers(
@@ -5333,6 +5480,66 @@ mod tests {
 
         assert_eq!(simobserve_channel_worker_count(&request, 8), 8);
         assert_eq!(simobserve_row_worker_count(&request, 100, 1), 3);
+    }
+
+    #[test]
+    fn polarized_linear_prediction_rotates_with_parallactic_angle() {
+        let setup = SyntheticPolarizationSetup {
+            basis: SyntheticPolarizationBasis::Linear,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.25, 0.0, 0.0],
+        };
+        setup.validate().expect("valid polarized setup");
+        let rows = [MainRowVisibilitySpec {
+            antenna1: 0,
+            antenna2: 1,
+            uvw: [0.0; 3],
+        }];
+        let mut unrotated = vec![vec![Complex32::new(2.0, 0.0); 4]];
+        apply_fractional_stokes_to_linear_rows(&setup, &rows, &[0.0, 0.0], &mut unrotated, 1);
+        assert_eq!(unrotated[0][0], Complex32::new(2.5, 0.0));
+        assert_eq!(unrotated[0][1], Complex32::new(0.0, 0.0));
+        assert_eq!(unrotated[0][2], Complex32::new(0.0, 0.0));
+        assert_eq!(unrotated[0][3], Complex32::new(1.5, 0.0));
+
+        let mut rotated = vec![vec![Complex32::new(2.0, 0.0); 4]];
+        apply_fractional_stokes_to_linear_rows(
+            &setup,
+            &rows,
+            &[std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_PI_4],
+            &mut rotated,
+            1,
+        );
+        assert!((rotated[0][0].re - 2.0).abs() < 1.0e-6);
+        assert!((rotated[0][1].re + 0.5).abs() < 1.0e-6);
+        assert!((rotated[0][2].re + 0.5).abs() < 1.0e-6);
+        assert!((rotated[0][3].re - 2.0).abs() < 1.0e-6);
+        assert_ne!(unrotated, rotated);
+    }
+
+    #[test]
+    fn polarized_prediction_requires_physical_four_linear_correlation_layout() {
+        let setup = SyntheticPolarizationSetup {
+            basis: SyntheticPolarizationBasis::Circular,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.1, 0.0, 0.0],
+        };
+        assert!(matches!(
+            setup.validate(),
+            Err(MsError::SyntheticObservation(message))
+                if message.contains("requires four linear correlations")
+        ));
+
+        let setup = SyntheticPolarizationSetup {
+            basis: SyntheticPolarizationBasis::Linear,
+            correlation_count: 4,
+            source_stokes_fractional_quv: [0.8, 0.8, 0.0],
+        };
+        assert!(matches!(
+            setup.validate(),
+            Err(MsError::SyntheticObservation(message))
+                if message.contains("must not exceed unity")
+        ));
     }
 
     #[test]
