@@ -51,6 +51,7 @@ cube_width="${IMAGER_BENCH_CUBE_WIDTH:-}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
 gridder="${IMAGER_BENCH_GRIDDER:-standard}"
 casa_gridder="${IMAGER_BENCH_CASA_GRIDDER:-$gridder}"
+stokes="${IMAGER_BENCH_STOKES:-I}"
 if [[ -z "$usepointing" ]]; then
   if [[ "$gridder" == "mosaic" ]]; then
     usepointing=1

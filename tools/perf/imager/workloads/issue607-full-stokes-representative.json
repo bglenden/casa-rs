@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "id": "issue607-full-stokes-representative",
+  "mode_id": "standard-mfs-full-stokes",
+  "description": "Issue #607 representative full-Stokes CASA acceptance row using all four ALMA linear-feed correlations, all four spectral windows, 512-square geometry, and the production compile/plan/run path.",
+  "dataset": {
+    "key": "casatestdata-polcal-linear-basis",
+    "relative_path": "measurementset/alma/polcal_LINEAR_BASIS.ms",
+    "root_env": "CASA_RS_TESTDATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "mfs",
+    "gridder": "standard",
+    "field": "0",
+    "spw": "0~3",
+    "channel_start": 0,
+    "channel_count": 8,
+    "stokes": "IQUV",
+    "imsize": 512,
+    "cell_arcsec": 1.0,
+    "weighting": "natural",
+    "robust": 0.5,
+    "deconvolver": "hogbom",
+    "hogbom_iteration_mode": "casa",
+    "nterms": 1,
+    "niter": 25,
+    "nmajor": -1,
+    "gain": 0.1,
+    "threshold_jy": 0.0,
+    "minor_cycle_length": 25,
+    "cyclefactor": 1.0,
+    "min_psf_fraction": 0.1,
+    "max_psf_fraction": 0.8,
+    "standard_mfs_acceleration": "cpu",
+    "imaging_fft_backend": "rustfft",
+    "parallel": false
+  },
+  "run": {
+    "repeats": 1,
+    "run_label": "issue607-full-stokes-representative",
+    "storage_label": "casatestdata-smb-staged-local",
+    "ms_staging": "copy",
+    "phase_probe": "0",
+    "skip_profile": "1",
+    "evidence_role": "representative_scientific_acceptance"
+  },
+  "comparison": {
+    "products": [
+      ".image",
+      ".residual",
+      ".psf",
+      ".model",
+      ".sumwt"
+    ],
+    "max_elements_per_product": 4194304,
+    "full_chunk_elements": 1048576,
+    "mode": "full",
+    "require_exact_product_inventory": false,
+    "require_metadata_parity": false,
+    "require_direction_wcs_parity": true,
+    "tolerances": {
+      "contract_version": 2,
+      "require_full_array": true,
+      "default": {
+        "diff_rms_over_right_rms": 0.001,
+        "require_topology_parity": true,
+        "allowed_structure_labels": ["good"]
+      },
+      "products": {}
+    }
+  }
+}

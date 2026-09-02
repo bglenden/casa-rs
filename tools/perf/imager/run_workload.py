@@ -574,6 +574,7 @@ def build_plan(
             imaging, "phasecenter_field"
         ),
         "IMAGER_BENCH_SPW": str_value(imaging, "spw", "0"),
+        "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
         "IMAGER_BENCH_CHANNEL_START": str(int_value(imaging, "channel_start", 0)),
         "IMAGER_BENCH_CHANNEL_COUNT": str(int_value(imaging, "channel_count", 1)),
         "IMAGER_BENCH_CUBE_START": str_value(imaging, "start", ""),
@@ -694,6 +695,7 @@ def build_plan(
         "mode": {
             "specmode": specmode,
             "gridder": gridder,
+            "stokes": str_value(imaging, "stokes", "I"),
             "facets": int_value(imaging, "facets", 1),
             "bench_mode": bench_mode,
             "image_shape": [
