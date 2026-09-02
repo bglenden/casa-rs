@@ -400,13 +400,16 @@ fn assert_representative_products_match_casa(
         if casa.units != expected_units && !casa_omits_units {
             failures.push(format!("{product} CASA units {:?}", casa.units));
         }
-        let common_valid = rust
-            .valid
-            .iter()
-            .zip(&casa.valid)
-            .map(|(left, right)| *left && *right)
-            .collect::<Vec<_>>();
-        let nrms = representative_normalized_rms(&rust.values, &casa.values, &common_valid);
+        let comparison_support = if matches!(product, ".alpha" | ".alpha.error") {
+            casa_primary_beam.valid.clone()
+        } else {
+            rust.valid
+                .iter()
+                .zip(&casa.valid)
+                .map(|(left, right)| *left && *right)
+                .collect::<Vec<_>>()
+        };
+        let nrms = representative_normalized_rms(&rust.values, &casa.values, &comparison_support);
         eprintln!("issue607_mtmfs_product product={product} nrms={nrms:.9e}");
         if !nrms.is_finite() || nrms > 1.0e-3 {
             failures.push(format!("{product} normalized RMS {nrms:.6e} exceeds 0.1%"));
@@ -430,8 +433,8 @@ fn assert_representative_products_match_casa(
             }
         }
         if product == ".image.tt0" {
-            let rust_peak = peak_index(&rust.values, &common_valid);
-            let casa_peak = peak_index(&casa.values, &common_valid);
+            let rust_peak = peak_index(&rust.values, &comparison_support);
+            let casa_peak = peak_index(&casa.values, &comparison_support);
             let width = rust.shape[1];
             let distance = rust_peak.abs_diff(casa_peak) / width
                 + (rust_peak % width).abs_diff(casa_peak % width);
@@ -440,8 +443,8 @@ fn assert_representative_products_match_casa(
                     ".image.tt0 peak centroid differs by {distance} pixels"
                 ));
             }
-            let rust_flux = valid_sum(&rust.values, &common_valid);
-            let casa_flux = valid_sum(&casa.values, &common_valid);
+            let rust_flux = valid_sum(&rust.values, &comparison_support);
+            let casa_flux = valid_sum(&casa.values, &comparison_support);
             if (rust_flux - casa_flux).abs() / casa_flux.abs().max(f64::EPSILON) > 1.0e-3 {
                 failures.push(".image.tt0 integrated flux differs".to_string());
             }
