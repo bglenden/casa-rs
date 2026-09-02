@@ -11,7 +11,7 @@ use crate::compiled_problem::{
 };
 
 const OBSERVATION_SNAPSHOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-snapshot";
-const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 5;
+const OBSERVATION_SNAPSHOT_IDENTITY_VERSION: u32 = 6;
 const OBSERVATION_PROVENANCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-observation-provenance";
 const OBSERVATION_PROVENANCE_IDENTITY_VERSION: u32 = 1;
 const SELECTED_ROW_SEQUENCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs-selected-row-sequence";
@@ -954,11 +954,81 @@ impl DataDescriptionSelection {
     }
 }
 
+/// Storage-owner-certified physical coordinates for one complete spectral window.
+///
+/// CASA's mosaic convolution-function selection uses the complete physical
+/// `CHAN_FREQ` vector and `abs(CHAN_WIDTH[0])`, even when the imaging selection
+/// contains only a subset of channels. Keeping that catalog beside the logical
+/// selection lets downstream science owners reproduce those semantics without
+/// reopening the MeasurementSet or inferring unselected coordinates.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpectralWindowCoordinateCatalog {
+    channel_frequencies_hz: Arc<[f64]>,
+    first_channel_width_hz: f64,
+}
+
+// Construction rejects every non-finite value, so IEEE equality is reflexive
+// for all values this type can contain.
+impl Eq for SpectralWindowCoordinateCatalog {}
+
+impl SpectralWindowCoordinateCatalog {
+    /// Construct one exact physical `SPECTRAL_WINDOW` coordinate catalog.
+    #[must_use]
+    pub fn new(
+        channel_frequencies_hz: impl Into<Arc<[f64]>>,
+        first_channel_width_hz: f64,
+    ) -> Option<Self> {
+        let channel_frequencies_hz = channel_frequencies_hz.into();
+        (!channel_frequencies_hz.is_empty()
+            && channel_frequencies_hz
+                .iter()
+                .all(|frequency| frequency.is_finite() && *frequency > 0.0)
+            && first_channel_width_hz.is_finite()
+            && first_channel_width_hz != 0.0)
+            .then_some(Self {
+                channel_frequencies_hz,
+                first_channel_width_hz,
+            })
+    }
+
+    /// Return the number of physical channels, including unselected channels.
+    #[must_use]
+    pub fn channel_count(&self) -> usize {
+        self.channel_frequencies_hz.len()
+    }
+
+    /// Return the exact physical `CHAN_FREQ` value at one native channel index.
+    #[must_use]
+    pub fn channel_frequency_hz(&self, channel: usize) -> Option<f64> {
+        self.channel_frequencies_hz.get(channel).copied()
+    }
+
+    /// Return the complete physical `CHAN_FREQ` vector in storage order.
+    #[must_use]
+    pub fn channel_frequencies_hz(&self) -> &[f64] {
+        &self.channel_frequencies_hz
+    }
+
+    /// Return the exact physical `CHAN_WIDTH[0]` value.
+    #[must_use]
+    pub const fn first_channel_width_hz(&self) -> f64 {
+        self.first_channel_width_hz
+    }
+
+    fn retained_manifest_bytes(&self) -> Option<usize> {
+        self.channel_frequencies_hz
+            .len()
+            .checked_mul(size_of::<f64>())?
+            .checked_add(2 * size_of::<usize>())
+    }
+}
+
 /// Exact channels selected from one spectral window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpectralWindowSelection {
     spectral_window_id: u32,
     channel_indices: Vec<u32>,
+    coordinate_catalog: Option<SpectralWindowCoordinateCatalog>,
 }
 
 impl SpectralWindowSelection {
@@ -968,7 +1038,18 @@ impl SpectralWindowSelection {
         Self {
             spectral_window_id,
             channel_indices,
+            coordinate_catalog: None,
         }
+    }
+
+    /// Bind the storage owner's complete physical spectral coordinate catalog.
+    #[must_use]
+    pub fn with_coordinate_catalog(
+        mut self,
+        coordinate_catalog: SpectralWindowCoordinateCatalog,
+    ) -> Self {
+        self.coordinate_catalog = Some(coordinate_catalog);
+        self
     }
 
     /// Return the `SPECTRAL_WINDOW_ID`.
@@ -981,6 +1062,12 @@ impl SpectralWindowSelection {
     #[must_use]
     pub fn channel_indices(&self) -> &[u32] {
         &self.channel_indices
+    }
+
+    /// Return the storage-owner-certified complete physical SPW coordinates.
+    #[must_use]
+    pub const fn coordinate_catalog(&self) -> Option<&SpectralWindowCoordinateCatalog> {
+        self.coordinate_catalog.as_ref()
     }
 }
 
@@ -1246,6 +1333,9 @@ impl ObservationSelection {
                     .capacity()
                     .checked_mul(size_of::<u32>())?,
             )?;
+            if let Some(catalog) = &selection.coordinate_catalog {
+                bytes = bytes.checked_add(catalog.retained_manifest_bytes()?)?;
+            }
         }
         bytes = bytes.checked_add(
             self.correlations
@@ -1309,6 +1399,19 @@ impl ObservationSelection {
                 return Err(CompileObservationError::EmptySpectralWindowSelection {
                     spectral_window_id: selection.spectral_window_id,
                 });
+            }
+            if let Some(catalog) = &selection.coordinate_catalog
+                && selection.channel_indices.iter().any(|channel| {
+                    usize::try_from(*channel)
+                        .ok()
+                        .is_none_or(|channel| channel >= catalog.channel_count())
+                })
+            {
+                return Err(
+                    CompileObservationError::SpectralWindowCoordinateCatalogMismatch {
+                        spectral_window_id: selection.spectral_window_id,
+                    },
+                );
             }
         }
         self.spectral_windows
@@ -2304,6 +2407,14 @@ pub enum CompileObservationError {
         /// Spectral-window identifier.
         spectral_window_id: u32,
     },
+    /// A selected native channel was absent from the storage-owner coordinate catalog.
+    #[error(
+        "spectral window {spectral_window_id} selection exceeds its physical coordinate catalog"
+    )]
+    SpectralWindowCoordinateCatalogMismatch {
+        /// Spectral-window identifier.
+        spectral_window_id: u32,
+    },
     /// A selected spectral-window projection had no selected `DATA_DESCRIPTION` member.
     #[error("spectral window {spectral_window_id} is not referenced by DATA_DESCRIPTION")]
     OrphanSpectralWindowSelection {
@@ -2839,6 +2950,17 @@ fn encode_selection(encoder: &mut CanonicalEncoder, selection: &ObservationSelec
         encoder.usize(spectral_window.channel_indices.len());
         for channel in &spectral_window.channel_indices {
             encoder.u32(*channel);
+        }
+        match &spectral_window.coordinate_catalog {
+            Some(catalog) => {
+                encoder.u8(1);
+                encoder.usize(catalog.channel_frequencies_hz.len());
+                for frequency_hz in catalog.channel_frequencies_hz.iter().copied() {
+                    encoder.f64(frequency_hz);
+                }
+                encoder.f64(catalog.first_channel_width_hz);
+            }
+            None => encoder.u8(0),
         }
     }
     encoder.usize(selection.correlations.len());

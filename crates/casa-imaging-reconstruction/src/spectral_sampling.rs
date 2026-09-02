@@ -13,14 +13,14 @@ use thiserror::Error;
 
 /// One CASA fine-channel interpolation point between adjacent native channels.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct CasaWideLinearSample {
+pub(crate) struct CasaLinearSample {
     output_channel: usize,
     frequency_hz: f64,
     left_factor: f64,
     right_factor: f64,
 }
 
-impl CasaWideLinearSample {
+impl CasaLinearSample {
     pub(crate) const fn output_channel(self) -> usize {
         self.output_channel
     }
@@ -34,13 +34,53 @@ impl CasaWideLinearSample {
     }
 }
 
-/// CASA's bounded virtual fine-frequency grid for wide linear cube channels.
-///
-/// The grid contains only scalar geometry. A streaming consumer retains one
-/// adjacent native channel pair and a cursor into this grid; visibility,
-/// weight, and flag arrays therefore never leave their row-local bound.
+/// One direct CASA row-vector interpolation point.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct CasaWideLinearGrid {
+pub(crate) struct CasaDirectLinearSample {
+    output_channel: usize,
+    left_native_channel: usize,
+    right_native_channel: usize,
+    frequency_hz: f64,
+    left_factor: f64,
+    right_factor: f64,
+}
+
+#[cfg(test)]
+impl CasaDirectLinearSample {
+    pub(crate) const fn output_channel(self) -> usize {
+        self.output_channel
+    }
+
+    pub(crate) const fn native_channels(self) -> [usize; 2] {
+        [self.left_native_channel, self.right_native_channel]
+    }
+
+    pub(crate) const fn factors(self) -> [f64; 2] {
+        [self.left_factor, self.right_factor]
+    }
+}
+
+#[cfg(test)]
+impl From<CasaDirectLinearSample> for CasaLinearSample {
+    fn from(sample: CasaDirectLinearSample) -> Self {
+        Self {
+            output_channel: sample.output_channel,
+            frequency_hz: sample.frequency_hz,
+            left_factor: sample.left_factor,
+            right_factor: sample.right_factor,
+        }
+    }
+}
+
+/// CASA's bounded row-local frequency grid for linear cube interpolation.
+///
+/// Direct interpolation uses the image-channel centres. When image channels
+/// are wider than native channels, CASA first constructs a synchronized fine
+/// grid. A streaming consumer retains one adjacent native channel pair and a
+/// cursor, so visibility, weight, and flag arrays remain row-local.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CasaLinearGrid {
     fine_start_hz: f64,
     fine_increment_hz: f64,
     fine_channels_per_output: usize,
@@ -48,18 +88,93 @@ pub(crate) struct CasaWideLinearGrid {
     output_increment_hz: f64,
 }
 
-impl CasaWideLinearGrid {
-    /// Compile the same fine grid used by CASA when an image channel is wider
-    /// than a native visibility channel.
+/// Copy-only image-frequency geometry used to compile row-local CASA grids.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct CasaLinearOutputGrid {
+    first_hz: f64,
+    second_hz: f64,
+    last_hz: f64,
+    channels: usize,
+}
+
+impl CasaLinearOutputGrid {
+    pub(crate) fn compile(output_centres_hz: &[f64]) -> Option<Self> {
+        Some(Self {
+            first_hz: *output_centres_hz.first()?,
+            second_hz: *output_centres_hz.get(1)?,
+            last_hz: *output_centres_hz.last()?,
+            channels: output_centres_hz.len(),
+        })
+    }
+}
+
+/// Allocation-free stream of fine-grid points bracketed by one native pair.
+pub(crate) struct CasaLinearPairSamples<'a> {
+    grid: CasaLinearGrid,
+    next_fine_channel: &'a mut usize,
+    left_frequency_hz: f64,
+    right_frequency_hz: f64,
+    native_increment_hz: f64,
+}
+
+impl Iterator for CasaLinearPairSamples<'_> {
+    type Item = CasaLinearSample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while *self.next_fine_channel < self.grid.fine_channel_count() {
+            let fine_ordinal = *self.next_fine_channel;
+            let frequency_hz = self.grid.fine_frequency_hz(fine_ordinal);
+            let before_left = if self.native_increment_hz > 0.0 {
+                frequency_hz < self.left_frequency_hz
+            } else {
+                frequency_hz > self.left_frequency_hz
+            };
+            if before_left {
+                *self.next_fine_channel += 1;
+                continue;
+            }
+            let after_right = if self.native_increment_hz > 0.0 {
+                frequency_hz > self.right_frequency_hz
+            } else {
+                frequency_hz < self.right_frequency_hz
+            };
+            if after_right {
+                return None;
+            }
+            let right_factor = ((frequency_hz - self.left_frequency_hz) / self.native_increment_hz)
+                .clamp(0.0, 1.0);
+            *self.next_fine_channel += 1;
+            return Some(CasaLinearSample {
+                output_channel: self.grid.output_channel(fine_ordinal),
+                frequency_hz,
+                left_factor: 1.0 - right_factor,
+                right_factor,
+            });
+        }
+        None
+    }
+}
+
+impl CasaLinearGrid {
+    /// Compile CASA's direct or synchronized-fine interpolation grid.
     pub(crate) fn compile(
         output_centres_hz: &[f64],
         first_native_frequency_hz: f64,
         second_native_frequency_hz: f64,
     ) -> Option<Self> {
-        if output_centres_hz.len() < 2 {
-            return None;
-        }
-        let output_increment_hz = output_centres_hz[1] - output_centres_hz[0];
+        Self::compile_for_output(
+            CasaLinearOutputGrid::compile(output_centres_hz)?,
+            first_native_frequency_hz,
+            second_native_frequency_hz,
+        )
+    }
+
+    pub(crate) fn compile_for_output(
+        output: CasaLinearOutputGrid,
+        first_native_frequency_hz: f64,
+        second_native_frequency_hz: f64,
+    ) -> Option<Self> {
+        let output_increment_hz = output.second_hz - output.first_hz;
         let native_increment_hz = second_native_frequency_hz - first_native_frequency_hz;
         if !output_increment_hz.is_finite()
             || output_increment_hz == 0.0
@@ -69,16 +184,28 @@ impl CasaWideLinearGrid {
             return None;
         }
         let width = output_increment_hz.abs() / native_increment_hz.abs();
-        if !width.is_finite() || width <= 1.0 {
+        if !width.is_finite() || width <= 0.0 {
             return None;
+        }
+        let output_last_hz = output.last_hz;
+        if width <= 1.0 {
+            let fine_increment_hz = output_increment_hz.abs().copysign(native_increment_hz);
+            let fine_start_hz = if fine_increment_hz.signum() == output_increment_hz.signum() {
+                output.first_hz
+            } else {
+                output_last_hz
+            };
+            return Some(Self {
+                fine_start_hz,
+                fine_increment_hz,
+                fine_channels_per_output: 1,
+                output_channels: output.channels,
+                output_increment_hz,
+            });
         }
         let fine_channels_per_output = width.floor() as usize;
-        if fine_channels_per_output == 0 {
-            return None;
-        }
         let fine_increment_abs = output_increment_hz.abs() / fine_channels_per_output as f64;
-        let output_last_hz = *output_centres_hz.last()?;
-        let first_edge_hz = output_centres_hz[0] - output_increment_hz / 2.0;
+        let first_edge_hz = output.first_hz - output_increment_hz / 2.0;
         let last_edge_hz = output_last_hz + output_increment_hz / 2.0;
         let low_edge_hz = first_edge_hz.min(last_edge_hz);
         let high_edge_hz = first_edge_hz.max(last_edge_hz);
@@ -92,7 +219,7 @@ impl CasaWideLinearGrid {
             fine_start_hz,
             fine_increment_hz,
             fine_channels_per_output,
-            output_channels: output_centres_hz.len(),
+            output_channels: output.channels,
             output_increment_hz,
         })
     }
@@ -117,12 +244,12 @@ impl CasaWideLinearGrid {
     /// Consume all still-unseen fine points bracketed by one ordered adjacent
     /// native pair. The cursor makes the boundary rule single-valued when a
     /// fine point lies exactly on a native centre.
-    pub(crate) fn consume_pair(
+    pub(crate) fn samples_for_pair<'a>(
         self,
-        next_fine_channel: &mut usize,
+        next_fine_channel: &'a mut usize,
         left_frequency_hz: f64,
         right_frequency_hz: f64,
-    ) -> Result<SmallVec<[CasaWideLinearSample; 2]>, SpectralStencilError> {
+    ) -> Result<CasaLinearPairSamples<'a>, SpectralStencilError> {
         let native_increment_hz = right_frequency_hz - left_frequency_hz;
         if !left_frequency_hz.is_finite()
             || !right_frequency_hz.is_finite()
@@ -131,38 +258,116 @@ impl CasaWideLinearGrid {
         {
             return Err(SpectralStencilError::InvalidOutputGeometry);
         }
-        let mut samples = SmallVec::new();
-        while *next_fine_channel < self.fine_channel_count() {
-            let fine_ordinal = *next_fine_channel;
-            let frequency_hz = self.fine_frequency_hz(fine_ordinal);
-            let before_left = if native_increment_hz > 0.0 {
-                frequency_hz < left_frequency_hz
-            } else {
-                frequency_hz > left_frequency_hz
-            };
-            if before_left {
-                *next_fine_channel += 1;
-                continue;
-            }
-            let after_right = if native_increment_hz > 0.0 {
-                frequency_hz > right_frequency_hz
-            } else {
-                frequency_hz < right_frequency_hz
-            };
-            if after_right {
+        Ok(CasaLinearPairSamples {
+            grid: self,
+            next_fine_channel,
+            left_frequency_hz,
+            right_frequency_hz,
+            native_increment_hz,
+        })
+    }
+}
+
+/// Compile CASA's direct `interpVisFreq=imageFreq` row-vector samples.
+///
+/// CASA's direct linear branch keeps the image-frequency vector in image
+/// channel order, calls `InterpolateArray1D` with `extrapolate=false`, and
+/// flags out-of-range output channels. This helper preserves that vector
+/// semantics while retaining only one row's selected spectral vector.
+#[cfg(test)]
+pub(crate) fn casa_direct_linear_samples(
+    output_centres_hz: &[f64],
+    input_frequencies_hz: &[f64],
+) -> Result<Vec<CasaDirectLinearSample>, SpectralStencilError> {
+    if output_centres_hz.is_empty()
+        || input_frequencies_hz.len() < 2
+        || output_centres_hz
+            .iter()
+            .chain(input_frequencies_hz)
+            .any(|frequency| !frequency.is_finite())
+    {
+        return Err(SpectralStencilError::InvalidOutputGeometry);
+    }
+    let direction = input_frequencies_hz[input_frequencies_hz.len() - 1] - input_frequencies_hz[0];
+    if direction == 0.0
+        || input_frequencies_hz.windows(2).any(|pair| {
+            let increment = pair[1] - pair[0];
+            increment == 0.0 || increment.signum() != direction.signum()
+        })
+    {
+        return Err(SpectralStencilError::InvalidOutputGeometry);
+    }
+    let mut samples = Vec::with_capacity(output_centres_hz.len());
+    for (output_channel, frequency_hz) in output_centres_hz.iter().copied().enumerate() {
+        let Some(mut upper) = casa_bracket(input_frequencies_hz, frequency_hz) else {
+            continue;
+        };
+        if upper == 0 {
+            upper = 1;
+        }
+        let lower = upper - 1;
+        let lower_frequency_hz = input_frequencies_hz[lower];
+        let upper_frequency_hz = input_frequencies_hz[upper];
+        if (lower_frequency_hz - upper_frequency_hz).abs() <= f64::EPSILON {
+            return Err(SpectralStencilError::InvalidOutputGeometry);
+        }
+        let right_factor = ((frequency_hz - lower_frequency_hz)
+            / (upper_frequency_hz - lower_frequency_hz))
+            .clamp(0.0, 1.0);
+        samples.push(CasaDirectLinearSample {
+            output_channel,
+            left_native_channel: lower,
+            right_native_channel: upper,
+            frequency_hz,
+            left_factor: 1.0 - right_factor,
+            right_factor,
+        });
+    }
+    Ok(samples)
+}
+
+#[cfg(test)]
+fn casa_bracket(input_frequencies_hz: &[f64], frequency_hz: f64) -> Option<usize> {
+    let mut lower = 0_usize;
+    let mut upper = input_frequencies_hz.len() - 1;
+    let mut middle = 0_usize;
+    let ascending = input_frequencies_hz[upper] >= input_frequencies_hz[lower];
+    while lower <= upper {
+        middle = (upper + lower) / 2;
+        let midval = input_frequencies_hz[middle];
+        let to_left = if ascending {
+            frequency_hz < midval
+        } else {
+            frequency_hz > midval
+        };
+        if to_left {
+            if middle == 0 {
                 break;
             }
-            let right_factor =
-                ((frequency_hz - left_frequency_hz) / native_increment_hz).clamp(0.0, 1.0);
-            samples.push(CasaWideLinearSample {
-                output_channel: self.output_channel(fine_ordinal),
-                frequency_hz,
-                left_factor: 1.0 - right_factor,
-                right_factor,
-            });
-            *next_fine_channel += 1;
+            upper = middle - 1;
+        } else {
+            let to_right = if ascending {
+                frequency_hz > midval
+            } else {
+                frequency_hz < midval
+            };
+            if to_right {
+                middle += 1;
+                lower = middle;
+            } else {
+                if middle == 0 {
+                    return Some(0);
+                }
+                upper = middle - 1;
+            }
         }
-        Ok(samples)
+    }
+    if middle == input_frequencies_hz.len()
+        || (middle == 0 && frequency_hz != input_frequencies_hz[0])
+    {
+        None
+    } else {
+        Some(middle)
     }
 }
 
@@ -179,9 +384,9 @@ pub enum SpectralStencilValidity {
 
 /// A compiled sparse native-sample stencil.
 ///
-/// Ordinary kernels use this for prediction and adjoint evaluation. CASA wide
-/// linear channels use it only for coarse-image-to-native prediction; their
-/// data adjoint is the separate bounded row resampler above.
+/// Ordinary kernels use this for prediction and adjoint evaluation. CASA
+/// linear cube data use the separate bounded row resampler above, which
+/// interpolates visibilities, weights, and flags before gridding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralStencilReceipt {
     contributions: SelectedSpectralContributions,
@@ -446,7 +651,11 @@ fn casa_wide_channel_linear_terms(
     source_frequency_hz: f64,
 ) -> Option<SmallVec<[SelectedSpectralContribution; 4]>> {
     let source_increment_hz = source_boundaries_hz[1] - source_boundaries_hz[0];
-    let grid = CasaWideLinearGrid::compile(
+    let output_increment_hz = output_centres_hz.get(1)? - output_centres_hz[0];
+    if output_increment_hz.abs() / source_increment_hz.abs() <= 1.0 {
+        return None;
+    }
+    let grid = CasaLinearGrid::compile(
         output_centres_hz,
         source_frequency_hz,
         source_frequency_hz + source_increment_hz,
@@ -732,7 +941,7 @@ mod tests {
             .map(|channel| 1_031.75 + 64.0 * channel as f64)
             .collect::<Vec<_>>();
         let grid =
-            CasaWideLinearGrid::compile(&output_centres, 1_000.0, 1_001.0).expect("wide CASA grid");
+            CasaLinearGrid::compile(&output_centres, 1_000.0, 1_001.0).expect("wide CASA grid");
         assert_eq!(grid.fine_channel_count(), 1_024);
 
         let mut cursor = 0;
@@ -744,7 +953,7 @@ mod tests {
         let mut last = None;
         for native in 0..1_023 {
             for sample in grid
-                .consume_pair(
+                .samples_for_pair(
                     &mut cursor,
                     1_000.0 + native as f64,
                     1_001.0 + native as f64,
@@ -794,6 +1003,103 @@ mod tests {
             assert_eq!(sum_weights[output], expected.0);
             assert_eq!(dirty_numerators[output], expected.1);
         }
+    }
+
+    #[test]
+    fn t47_direct_linear_grid_streams_adjacent_pairs_onto_image_centres() {
+        let grid = CasaLinearGrid::compile(&[1_000.0, 1_001.0, 1_002.0], 1_000.8, 1_001.8)
+            .expect("direct CASA grid");
+        assert_eq!(grid.fine_channel_count(), 3);
+        let mut cursor = 0;
+        let first = grid
+            .samples_for_pair(&mut cursor, 1_000.8, 1_001.8)
+            .expect("first native pair")
+            .collect::<Vec<_>>();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].output_channel(), 1);
+        assert_eq!(first[0].frequency_hz(), 1_001.0);
+        let [left, right] = first[0].factors();
+        assert!((left - 0.8).abs() < 1.0e-12);
+        assert!((right - 0.2).abs() < 1.0e-12);
+        assert!((left + right - 1.0).abs() < f64::EPSILON);
+
+        let second = grid
+            .samples_for_pair(&mut cursor, 1_001.8, 1_002.8)
+            .expect("second native pair")
+            .collect::<Vec<_>>();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].output_channel(), 2);
+    }
+
+    #[test]
+    fn t47_worst_case_direct_pair_expansion_has_constant_stream_residency() {
+        const OUTPUT_CHANNELS: usize = 65_536;
+        let output_centres = (0..OUTPUT_CHANNELS)
+            .map(|channel| 1_000.0 + channel as f64)
+            .collect::<Vec<_>>();
+        let grid = CasaLinearGrid::compile(
+            &output_centres,
+            output_centres[0],
+            output_centres[OUTPUT_CHANNELS - 1],
+        )
+        .expect("one native pair brackets the full direct grid");
+        assert_eq!(grid.fine_channel_count(), OUTPUT_CHANNELS);
+
+        let mut cursor = 0;
+        let samples = grid
+            .samples_for_pair(
+                &mut cursor,
+                output_centres[0],
+                output_centres[OUTPUT_CHANNELS - 1],
+            )
+            .expect("valid worst-case pair stream");
+        assert!(
+            std::mem::size_of_val(&samples) < 128,
+            "pair output residency is a fixed iterator, not one element per output channel"
+        );
+        assert_eq!(samples.count(), OUTPUT_CHANNELS);
+        assert_eq!(cursor, OUTPUT_CHANNELS);
+    }
+
+    #[test]
+    fn t47_direct_linear_row_samples_match_casa_vector_edge_rules() {
+        let ascending =
+            casa_direct_linear_samples(&[5.0, 10.0, 15.0, 30.0, 35.0], &[10.0, 20.0, 30.0])
+                .expect("ascending direct samples");
+        assert_eq!(
+            ascending
+                .iter()
+                .map(|sample| (
+                    sample.output_channel(),
+                    sample.native_channels(),
+                    sample.factors()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, [0, 1], [1.0, 0.0]),
+                (2, [0, 1], [0.5, 0.5]),
+                (3, [1, 2], [0.0, 1.0]),
+            ]
+        );
+
+        let descending =
+            casa_direct_linear_samples(&[35.0, 30.0, 25.0, 10.0, 5.0], &[30.0, 20.0, 10.0])
+                .expect("descending direct samples");
+        assert_eq!(
+            descending
+                .iter()
+                .map(|sample| (
+                    sample.output_channel(),
+                    sample.native_channels(),
+                    sample.factors()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (1, [0, 1], [1.0, 0.0]),
+                (2, [0, 1], [0.5, 0.5]),
+                (3, [1, 2], [0.0, 1.0]),
+            ]
+        );
     }
 
     #[test]

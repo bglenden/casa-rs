@@ -391,11 +391,15 @@ fn output_role_selection(
                     })
                 })
                 .collect::<Vec<_>>();
-            (!output_channels.is_empty())
+            let mut output = (!output_channels.is_empty())
                 .then(|| {
                     SpectralWindowSelection::new(selection.spectral_window_id(), output_channels)
                 })
-                .ok_or(ObservationTransactionCompileError::EmptyOutputRoleSelection)
+                .ok_or(ObservationTransactionCompileError::EmptyOutputRoleSelection)?;
+            if let Some(catalog) = selection.coordinate_catalog() {
+                output = output.with_coordinate_catalog(catalog.clone());
+            }
+            Ok(output)
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ObservationSelection::new(

@@ -396,23 +396,6 @@ impl MsCalEngine {
         Ok(frame.with_direction(direction))
     }
 
-    /// Build a spectral frame from an explicit fixed output anchor.
-    pub(crate) fn spectral_frame_explicit(
-        &self,
-        epoch: MEpoch,
-        position: MPosition,
-        direction: MDirection,
-    ) -> MeasFrame {
-        let frame = MeasFrame::new()
-            .with_epoch(epoch)
-            .with_position(position)
-            .with_direction(direction);
-        match &self.measures {
-            Some(measures) => frame.with_measures(Arc::clone(measures)),
-            None => frame,
-        }
-    }
-
     pub(crate) fn direction_angles_j2000(
         &self,
         time_mjd_sec: f64,

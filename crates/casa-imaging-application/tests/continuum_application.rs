@@ -622,6 +622,7 @@ fn request(
         threshold_jy: 0.0,
         psf_cutoff: 0.2,
         primary_beam_cutoff: 0.2,
+        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
         beam_policy: ContinuumBeamPolicy::PerPlane,
         mask: ContinuumMask::FullPlane,
         save_model_column: false,

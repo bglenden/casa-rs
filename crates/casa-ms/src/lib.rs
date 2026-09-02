@@ -153,10 +153,12 @@ pub use selected_observation::{
     SelectedObservationMeasuresError, SelectedObservationReferenceDataBudget,
     SelectedObservationReplayAuthorization, SelectedObservationReplayProof,
     SelectedObservationResidencyCertificate, SelectedObservationRow,
-    SelectedObservationRowSelection, SelectedObservationSpectralRange,
-    SelectedObservationSpectralRangeMeasurements, SelectedObservationTerminal,
-    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
-    SelectedObservationTraversalRun, SelectedObservationTraversalSample,
+    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
+    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralRange,
+    SelectedObservationSpectralRangeMeasurements, SelectedObservationSpectralWindow,
+    SelectedObservationTerminal, SelectedObservationTraversalError,
+    SelectedObservationTraversalMeasurements, SelectedObservationTraversalRun,
+    SelectedObservationTraversalSample,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,

@@ -35,8 +35,10 @@ pub(crate) use content_plan::{
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
 pub use spectral_evaluation::{
+    SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
     SelectedObservationSpectralRange, SelectedObservationSpectralRangeMeasurements,
-    SelectedObservationTraversalRun, SelectedObservationTraversalSample,
+    SelectedObservationSpectralWindow, SelectedObservationTraversalRun,
+    SelectedObservationTraversalSample,
 };
 
 fn maximum_selected_correlations(problem: &casa_imaging_model::CompiledProblem) -> usize {

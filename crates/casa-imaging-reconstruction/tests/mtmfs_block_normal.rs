@@ -12,12 +12,14 @@ use casa_imaging_model::{
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
     ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection,
     JointContinuumLineContract, LogicalIdentity, MeasurementEquationContract,
-    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelBounds, ModelCell,
-    ModelColumnState, ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, ModelValue, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
-    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
-    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, MissingPointingPolicy,
+    ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
+    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
+    ObservationSourceInput, ObservationSourceProvenance, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
     PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
     ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
     ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
@@ -29,10 +31,10 @@ use casa_imaging_model::{
     SelectedSampleMetadata, SelectedSpectralContributions, SelectedSpectralEvaluation,
     SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection, SourceGenerations,
     SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
@@ -367,6 +369,32 @@ fn source() -> ObservationSourceInput {
     ))
 }
 
+fn mosaic_source() -> ObservationSourceInput {
+    source_with_selection(ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(
+            2,
+            [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 1)],
+        )
+        .expect("two selected mosaic rows"),
+        row_selection(),
+        vec![
+            DataDescriptionSelection::new(0, 0, 0),
+            DataDescriptionSelection::new(1, 1, 0),
+        ],
+        vec![
+            SpectralWindowSelection::new(0, vec![0]).with_coordinate_catalog(
+                SpectralWindowCoordinateCatalog::new([0.8e9], 2.0e6)
+                    .expect("low-frequency mosaic catalog"),
+            ),
+            SpectralWindowSelection::new(1, vec![0]).with_coordinate_catalog(
+                SpectralWindowCoordinateCatalog::new([1.2e9], 2.0e6)
+                    .expect("high-frequency mosaic catalog"),
+            ),
+        ],
+        correlations(),
+    ))
+}
+
 fn joint_source() -> ObservationSourceInput {
     source_with_selection(ObservationSelection::new(
         SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
@@ -435,6 +463,22 @@ fn problem_with_shape_and_response(
     image_shape: ImageShape,
     primary_beam: bool,
 ) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_response_and_mosaic(
+        reconstruction,
+        spectral_channels,
+        image_shape,
+        primary_beam,
+        false,
+    )
+}
+
+fn problem_with_shape_response_and_mosaic(
+    reconstruction: ReconstructionContract,
+    spectral_channels: usize,
+    image_shape: ImageShape,
+    primary_beam: bool,
+    mosaic: bool,
+) -> casa_imaging_model::CompiledProblem {
     let is_joint = matches!(
         reconstruction.basis(),
         ReconstructionBasis::JointContinuumLine { .. }
@@ -484,9 +528,24 @@ fn problem_with_shape_and_response(
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
             DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::PhaseTrackingCentre,
+            if mosaic {
+                PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                    PointingDirectionColumn::Direction,
+                    PointingDirectionSemantic::AntennaBoresight,
+                    PointingTimeSampling::VisibilityTimeCentroid,
+                    PointingInterpolation::GreatCircleShortestArc,
+                    PointingExtrapolation::Reject,
+                    MissingPointingPolicy::Reject,
+                ))
+            } else {
+                PointingCentreLaw::PhaseTrackingCentre
+            },
         ),
-        UvwCoordinateLaw::PhaseTrackingCentre,
+        if mosaic {
+            UvwCoordinateLaw::MosaicPhaseTrackingCentre
+        } else {
+            UvwCoordinateLaw::PhaseTrackingCentre
+        },
         SpectralCoordinateSpec::new(
             FrequencyFrame::Topocentric,
             FrequencyFrame::Topocentric,
@@ -502,18 +561,22 @@ fn problem_with_shape_and_response(
         ),
     );
     let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![if is_joint {
+        vec![if mosaic {
+            mosaic_source()
+        } else if is_joint {
             joint_source()
         } else if is_channel_major {
             channel_major_source(spectral_channels)
         } else {
             source()
         }],
-        if primary_beam {
-            vec![(ReferenceDataKind::Instrument, identity(42, 100))]
-        } else {
-            Vec::new()
-        },
+        [
+            mosaic.then(|| (ReferenceDataKind::Measures, identity(42, 99))),
+            primary_beam.then(|| (ReferenceDataKind::Instrument, identity(42, 100))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect(),
         ModelStateIdentity::Empty,
     ))
     .expect("compile T42 observation");
@@ -545,7 +608,11 @@ fn problem_with_shape_and_response(
             ),
             ProductRequirements::new(
                 product_kinds,
-                ProductNormalization::UnitResponse,
+                if mosaic {
+                    ProductNormalization::FlatSky
+                } else {
+                    ProductNormalization::UnitResponse
+                },
                 RestoringBeamPolicy::None,
                 validity(),
             ),
@@ -591,6 +658,24 @@ fn problem() -> casa_imaging_model::CompiledProblem {
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         1,
+    )
+}
+
+fn mosaic_taylor_problem() -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_response_and_mosaic(
+        ReconstructionContract::new(
+            ReconstructionBasis::Taylor { terms: 2 },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(1, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        1,
+        ImageShape::new(128, 128),
+        true,
+        true,
     )
 }
 
@@ -672,6 +757,14 @@ fn samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservatio
         sample(measurement_set, 0, 0, 0, 0.8e9, 2.0, [1.0, 0.25]),
         sample(measurement_set, 1, 1, 0, 1.2e9, 1.0, [0.5, -0.75]),
     ]
+}
+
+fn mosaic_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservationSample; 2] {
+    let mut selected = samples(problem);
+    for sample in &mut selected {
+        sample.coordinates.uvw_law = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+    }
+    selected
 }
 
 fn joint_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObservationSample; 2] {
@@ -818,13 +911,23 @@ fn run_operator(
     let mut density = begin_weighting_generation(problem, &plan).expect("begin density pass");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         density
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume density sample");
     }
     let mut sum_weight = density.finish(problem).expect("finish density pass");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         sum_weight
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume sum-weight sample");
     }
     let generation = sum_weight.finish().expect("freeze global weighting");
@@ -835,7 +938,12 @@ fn run_operator(
         .expect("begin weighted replay");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         if let Some(block) = replay
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("weight replay sample")
         {
             blocks.push(block);
@@ -1058,13 +1166,23 @@ fn freeze_taylor_replay(
     let mut density = begin_weighting_generation(problem, &plan).expect("begin density pass");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         density
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume density sample");
     }
     let mut sum_weight = density.finish(problem).expect("finish density pass");
     for (sample, stencil) in samples.iter().zip(&stencils) {
         sum_weight
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume sum-weight sample");
     }
     let weighting = sum_weight.finish().expect("freeze global weighting");
@@ -1074,7 +1192,12 @@ fn freeze_taylor_replay(
     let mut blocks = Vec::new();
     for (sample, stencil) in samples.iter().zip(&stencils) {
         if let Some(block) = replay
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume frozen compact replay")
         {
             blocks.push(block);
@@ -1124,7 +1247,12 @@ fn derive_taylor_replay_blocks(
     let mut blocks = Vec::new();
     for (sample, stencil) in samples.iter().zip(&stencils) {
         if let Some(block) = replay
-            .consume(problem, sample, stencil.clone())
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                stencil.clone(),
+            )
             .expect("consume derived Taylor replay")
         {
             blocks.push(block);
@@ -1961,6 +2089,117 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
         symmetric.primitives().channel_validity(),
         &[SpectralChannelValidity::Valid],
         "an exactly cancelled odd moment does not erase principal Taylor support"
+    );
+}
+
+#[test]
+fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
+    let problem = mosaic_taylor_problem();
+    let selected = mosaic_samples(&problem);
+    let (result, expected, _) = run_operator(&problem, &selected, selected.len(), 1, None);
+
+    assert!(
+        expected[1] < 0.0,
+        "the low-frequency Taylor sample must exercise a signed odd normal moment"
+    );
+    let primitives = result.primitives();
+    assert_eq!(primitives.sum_weights(), expected);
+    assert!(
+        primitives.primary_beam_weighted_sum().is_none(),
+        "direct polynomial MT-MFS does not use the channel-major PB replay state"
+    );
+    let cells = 128 * 128;
+    assert!(
+        primitives.sensitivity()[cells..2 * cells]
+            .iter()
+            .any(|value| *value < 0.0),
+        "mosaic sensitivity must retain the signed Taylor cross moment"
+    );
+    assert!(
+        primitives
+            .sensitivity()
+            .iter()
+            .all(|value| value.is_finite()),
+        "executed mosaic Taylor normal state must remain finite"
+    );
+
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let preparation = nonzero_taylor_model(&problem);
+    let refreshed = complete_frozen_taylor_operator(
+        &problem,
+        &frozen,
+        &preparation,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(initial_normal_from_frozen(&problem, &frozen)),
+    );
+    assert!(
+        refreshed
+            .primitives()
+            .dirty()
+            .iter()
+            .all(|value| value.re.is_finite() && value.im.is_finite()),
+        "mosaic MT-MFS residual refresh must retain a finite paired-operator result"
+    );
+
+    let executable =
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable mosaic problem");
+    let mut lifecycle = ModelLifecycle::bind(
+        executable,
+        ModelExecutionAttemptId::new(identity(47, 120)),
+        1,
+    )
+    .expect("bind mosaic model lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty mosaic model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare mosaic model");
+    let (complete_data, _, _) =
+        run_operator(&problem, &selected, selected.len(), 1, Some(&preparation));
+    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
+        .expect("join mosaic complete-data evidence")
+        .reconcile(&mut lifecycle)
+        .expect("reconcile mosaic normal state");
+    let (normal, _, model) = completion.into_parts();
+    let principal_sensitivity = normal
+        .normal_moment(0)
+        .expect("principal mosaic normal moment")
+        .sensitivity();
+    let minimum = principal_sensitivity
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let maximum = principal_sensitivity
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(
+        maximum > minimum,
+        "fixture must exercise nontrivial direction-dependent mosaic sensitivity"
+    );
+    let coordinate = problem.geometry().domains()[0].direction();
+    let mask = ReconstructionMask::full_plane(
+        problem.problem_id(),
+        model.generation_id(),
+        coordinate,
+        normal.shape(),
+    )
+    .expect("full mosaic reconstruction mask");
+    let cycle = ReconstructionCycle::new(
+        ChannelCyclePolicy::Coupled,
+        MinorCycleProgram::for_problem(&problem)
+            .expect("compiled mosaic controls")
+            .limit_iterations(1)
+            .expect("one mosaic iteration"),
+    )
+    .run(&lifecycle, &model, &normal, &mask)
+    .expect("flat-sky mosaic Taylor minor cycle");
+    assert_eq!(cycle.evidence().iterations(), 1);
+    assert!(
+        cycle
+            .delta()
+            .expect("one mosaic Taylor update")
+            .terms()
+            .iter()
+            .all(|term| term.increment().value().is_finite())
     );
 }
 

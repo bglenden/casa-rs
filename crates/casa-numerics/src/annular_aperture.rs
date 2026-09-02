@@ -62,6 +62,18 @@ impl AnnularApertureVoltageTable {
     pub fn maximum_radius(&self) -> f64 {
         self.maximum_radius
     }
+
+    /// Return the retained heap storage used by the sampled voltage values.
+    #[must_use]
+    pub const fn resident_bytes(&self) -> usize {
+        Self::table_resident_bytes()
+    }
+
+    /// Return the retained heap storage of one table before construction.
+    #[must_use]
+    pub const fn table_resident_bytes() -> usize {
+        SAMPLE_COUNT * std::mem::size_of::<f32>()
+    }
 }
 
 fn voltage_at_index(

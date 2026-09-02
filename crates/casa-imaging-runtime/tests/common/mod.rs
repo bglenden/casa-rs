@@ -13,13 +13,14 @@ use casa_imaging_model::{
     MsColumnKind, NumericPrecision, ObservationSelection, ObservationSnapshotInput,
     ObservationSourceInput, ObservationSourceProvenance, ProblemInputIdentities, ReferenceDataKind,
     RowSelection, SelectedColumns, SelectedMainRow, SelectedRows, SourceGenerations,
-    SpectralWindowSelection, TimeSelection, UvSelection, VisibilityColumn, WeightColumn,
-    compile_observation,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, TimeSelection, UvSelection,
+    VisibilityColumn, WeightColumn, compile_observation,
 };
 use casa_ms::{
-    SyntheticAnalyticComponent, SyntheticAnalyticSpectrum, SyntheticObservationRequest,
-    SyntheticPolarizationBasis, SyntheticPolarizationSetup, SyntheticSkyModel,
-    SyntheticWorkerPolicy, generate_synthetic_observation_ms, tutorial_vla_a_antennas,
+    MeasurementSet, SyntheticAnalyticComponent, SyntheticAnalyticSpectrum,
+    SyntheticObservationRequest, SyntheticPolarizationBasis, SyntheticPolarizationSetup,
+    SyntheticSkyModel, SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+    tutorial_vla_a_antennas,
 };
 
 pub fn identity(byte: u8) -> LogicalIdentity {
@@ -97,6 +98,24 @@ fn problem_inputs_with_source_count_and_channels(
     source_count: usize,
     channel_count: usize,
 ) -> ProblemInputIdentities {
+    let fixture = runtime_observation_fixture(channel_count);
+    let measurement_set = MeasurementSet::open(fixture).expect("open runtime observation fixture");
+    let spectral_window = measurement_set
+        .spectral_window()
+        .expect("runtime fixture SPECTRAL_WINDOW");
+    let channel_frequencies_hz = spectral_window
+        .chan_freq(0)
+        .expect("runtime fixture CHAN_FREQ");
+    let channel_widths_hz = spectral_window
+        .chan_width(0)
+        .expect("runtime fixture CHAN_WIDTH");
+    let coordinate_catalog = SpectralWindowCoordinateCatalog::new(
+        channel_frequencies_hz,
+        *channel_widths_hz
+            .first()
+            .expect("runtime fixture has one channel width"),
+    )
+    .expect("valid runtime fixture spectral coordinates");
     let column_kinds = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -157,12 +176,15 @@ fn problem_inputs_with_source_count_and_channels(
             IdSelection::All,
         ),
         vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(
-            0,
-            (0..channel_count)
-                .map(|channel| u32::try_from(channel).expect("bounded fixture channel count"))
-                .collect(),
-        )],
+        vec![
+            SpectralWindowSelection::new(
+                0,
+                (0..channel_count)
+                    .map(|channel| u32::try_from(channel).expect("bounded fixture channel count"))
+                    .collect(),
+            )
+            .with_coordinate_catalog(coordinate_catalog),
+        ],
         vec![CorrelationSelection::new(
             0,
             vec![CorrelationProduct::new(0, CorrelationType::CircularRr)],
@@ -174,9 +196,7 @@ fn problem_inputs_with_source_count_and_channels(
             ObservationSourceInput::new(
                 MeasurementSetIdentity::new(scoped_identity(observation, 1 + source_index)),
                 ObservationSourceProvenance::new(
-                    runtime_observation_fixture(channel_count)
-                        .display()
-                        .to_string(),
+                    fixture.display().to_string(),
                     scoped_identity(observation, 3 + source_index),
                 ),
                 selection.clone(),

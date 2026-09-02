@@ -220,15 +220,14 @@ def test_imager_ineligibility_raises_exact_typed_owner_reason_before_process(
 ) -> None:
     with pytest.raises(tasks.TaskCapabilityError) as failure:
         tasks.imager(
-            vis="mosaic.ms",
-            imagename="products/mosaic",
-            gridder="mosaic",
-            usepointing=True,
+            vis="awproject.ms",
+            imagename="products/awproject",
+            gridder="awproject",
             write_preview_pngs=False,
             workspace=tmp_path,
             binary=tmp_path / "missing-casars",
         )
 
     assert [(reason.kind, reason.id) for reason in failure.value.reasons] == [
-        ("task", "task.mosaic_gridder")
+        ("task", "task.aw_projection")
     ]

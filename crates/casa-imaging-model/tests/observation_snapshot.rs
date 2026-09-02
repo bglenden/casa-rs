@@ -10,8 +10,9 @@ use casa_imaging_model::{
     ObservationSourceState, ObservationState, ReferenceDataKind, ResolvedIntent, RowSelection,
     SelectedColumns, SelectedMainRow, SelectedRowManifestValidationError, SelectedRowSequenceError,
     SelectedRowSequenceId, SelectedRows, SelectionBound, SourceGenerations,
-    SpectralWindowSelection, TimeRange, TimeSelection, UvDistanceRange, UvDistanceUnit,
-    UvSelection, VisibilityColumn, WeightColumn, compile_observation,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, TimeRange, TimeSelection,
+    UvDistanceRange, UvDistanceUnit, UvSelection, VisibilityColumn, WeightColumn,
+    compile_observation,
 };
 
 fn identity(byte: u8) -> LogicalIdentity {
@@ -592,12 +593,12 @@ fn data_description_catalog_binds_spw_and_polarization_pairing() {
     );
     assert_eq!(expected.snapshot_id(), reordered.snapshot_id());
     assert_ne!(expected.snapshot_id(), different_pairing.snapshot_id());
-    assert_eq!(ObservationSnapshotId::SCHEMA_VERSION, 4);
+    assert_eq!(ObservationSnapshotId::SCHEMA_VERSION, 6);
     assert_eq!(
         expected.snapshot_id().as_bytes(),
         [
-            254, 192, 119, 69, 16, 184, 111, 194, 219, 159, 152, 108, 97, 127, 136, 119, 201, 109,
-            10, 97, 239, 111, 199, 28, 218, 236, 219, 202, 131, 81, 136, 223,
+            235, 9, 231, 239, 74, 183, 74, 129, 12, 69, 191, 215, 54, 24, 221, 146, 181, 248, 204,
+            0, 241, 44, 189, 63, 100, 33, 92, 43, 8, 27, 152, 238,
         ]
     );
 }
@@ -638,6 +639,130 @@ fn data_description_catalog_rejects_duplicate_ddid() {
             data_description_id: 1,
         })
     );
+}
+
+#[test]
+fn full_spectral_coordinate_catalog_is_exact_identity_bearing_selection_state() {
+    let compile = |first_frequency_hz| {
+        let base = selection(31, false);
+        let spectral_windows = base
+            .spectral_windows()
+            .iter()
+            .cloned()
+            .map(|spectral_window| {
+                if spectral_window.spectral_window_id() != 2 {
+                    return spectral_window;
+                }
+                spectral_window.with_coordinate_catalog(
+                    SpectralWindowCoordinateCatalog::new(
+                        vec![
+                            first_frequency_hz,
+                            1.001e9,
+                            1.003e9,
+                            1.006e9,
+                            1.010e9,
+                            1.015e9,
+                            1.021e9,
+                            1.028e9,
+                            1.036e9,
+                        ],
+                        -1.25e6,
+                    )
+                    .expect("valid nonuniform catalog"),
+                )
+            })
+            .collect();
+        let exact = ObservationSelection::new(
+            base.rows().clone(),
+            base.rows_filter().clone(),
+            base.data_descriptions().to_vec(),
+            spectral_windows,
+            base.correlations().to_vec(),
+        );
+        compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                MeasurementSetIdentity::new(identity(11)),
+                ObservationSourceProvenance::new("/archive/full-spw.ms".to_string(), identity(51)),
+                exact,
+                SourceGenerations::new(
+                    ConsistencyToken::new(identity(61)),
+                    columns(60, false),
+                    metadata(84, false),
+                    ModelColumnState::Absent,
+                ),
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        ))
+        .expect("compile exact spectral coordinate catalog")
+    };
+
+    let first = compile(1.0e9);
+    let changed_unselected_coordinate = compile(1.000_1e9);
+    let catalog = first.sources()[0].selection().spectral_windows()[0]
+        .coordinate_catalog()
+        .expect("catalog is retained");
+    assert_eq!(
+        catalog.channel_frequencies_hz(),
+        &[
+            1.0e9, 1.001e9, 1.003e9, 1.006e9, 1.010e9, 1.015e9, 1.021e9, 1.028e9, 1.036e9,
+        ]
+    );
+    assert_eq!(catalog.first_channel_width_hz(), -1.25e6);
+    assert_ne!(
+        first.snapshot_id(),
+        changed_unselected_coordinate.snapshot_id(),
+        "an unselected physical coordinate changes CASA mosaic response planning"
+    );
+}
+
+#[test]
+fn selected_channel_must_exist_in_its_full_coordinate_catalog() {
+    let base = selection(31, false);
+    let spectral_windows = base
+        .spectral_windows()
+        .iter()
+        .cloned()
+        .map(|spectral_window| {
+            if spectral_window.spectral_window_id() != 2 {
+                return spectral_window;
+            }
+            spectral_window.with_coordinate_catalog(
+                SpectralWindowCoordinateCatalog::new(vec![1.0e9; 8], 1.0e6)
+                    .expect("valid but too-short catalog"),
+            )
+        })
+        .collect();
+    let invalid = ObservationSelection::new(
+        base.rows().clone(),
+        base.rows_filter().clone(),
+        base.data_descriptions().to_vec(),
+        spectral_windows,
+        base.correlations().to_vec(),
+    );
+
+    assert!(matches!(
+        compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                MeasurementSetIdentity::new(identity(11)),
+                ObservationSourceProvenance::new("/archive/short-spw.ms".to_string(), identity(51),),
+                invalid,
+                SourceGenerations::new(
+                    ConsistencyToken::new(identity(61)),
+                    columns(60, false),
+                    metadata(84, false),
+                    ModelColumnState::Absent,
+                ),
+            )],
+            Vec::new(),
+            ModelStateIdentity::Empty,
+        )),
+        Err(
+            CompileObservationError::SpectralWindowCoordinateCatalogMismatch {
+                spectral_window_id: 2
+            }
+        )
+    ));
 }
 
 #[test]
@@ -839,7 +964,7 @@ fn content_identity_is_canonical_but_provenance_retains_origin_and_request_order
     );
     assert_eq!(first.sources()[0].input_ordinal(), 0);
     assert_eq!(reordered.sources()[0].input_ordinal(), 1);
-    assert_eq!(casa_imaging_model::ObservationSnapshotId::SCHEMA_VERSION, 4);
+    assert_eq!(casa_imaging_model::ObservationSnapshotId::SCHEMA_VERSION, 6);
 }
 
 #[test]

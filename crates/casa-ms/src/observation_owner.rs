@@ -19,8 +19,8 @@ use casa_imaging_model::{
     MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelColumnState,
     ModelStateIdentity, MsColumnKind, ObservationSelection, ObservationSnapshotInput,
     ObservationSourceInput, ObservationSourceProvenance, ObservationSourceState, ReferenceDataKind,
-    SelectedColumns, SelectedMainRow, SelectedRowsBuilder, SourceGenerations, VisibilityColumn,
-    WeightColumn,
+    SelectedColumns, SelectedMainRow, SelectedRowsBuilder, SourceGenerations,
+    SpectralWindowCoordinateCatalog, SpectralWindowSelection, VisibilityColumn, WeightColumn,
 };
 use casa_tables::{ColumnSchema, LockType, Table};
 use casa_types::{
@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::selected_observation::validate_selected_coordinates;
+use crate::subtables::SubTable;
 use crate::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
     MeasurementSet, MsError, MsSelectionIoBudget, ObservationSourceBinding,
@@ -728,10 +729,15 @@ pub fn resolve_selected_observation(
     let measurement_set = MeasurementSet::open_retained_read(&request.locator)?;
     let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
     manifest.validate_physical_state(&measurement_set)?;
-    validate_physical_selection(&measurement_set, &request.selection, request.content_budget)?;
+    let selection = Arc::new(bind_physical_spectral_coordinates(
+        &measurement_set,
+        &request.selection,
+        request.content_budget,
+    )?);
+    validate_physical_selection(&measurement_set, &selection, request.content_budget)?;
     let visibility_storage = SelectedVisibilityStoragePlanner {
         locator: request.locator.clone(),
-        selection: Arc::clone(&request.selection),
+        selection: Arc::clone(&selection),
         content_budget: request.content_budget,
     };
     let generations =
@@ -740,15 +746,12 @@ pub fn resolve_selected_observation(
         &manifest.measurement_set_identity,
         "MeasurementSet identity",
     )?);
-    let state = ObservationSourceState::new(
-        identity,
-        request.selection.rows().clone(),
-        generations.clone(),
-    );
+    let state =
+        ObservationSourceState::new(identity, selection.rows().clone(), generations.clone());
     let source = ObservationSourceInput::new(
         identity,
         ObservationSourceProvenance::new(request.locator, request.selection_request),
-        Arc::unwrap_or_clone(request.selection),
+        Arc::unwrap_or_clone(selection),
         generations,
     );
     let measures = SelectedObservationMeasures::new(request.measures_provider)?;
@@ -768,6 +771,83 @@ pub fn resolve_selected_observation(
             visibility_storage,
         },
     })
+}
+
+fn bind_physical_spectral_coordinates(
+    measurement_set: &MeasurementSet,
+    selection: &ObservationSelection,
+    content_budget: SelectedObservationContentBudget,
+) -> Result<ObservationSelection, ObservationOwnerError> {
+    let spectral_window = measurement_set.spectral_window()?;
+    let mut retained_catalog_bytes = 0usize;
+    let mut spectral_windows = Vec::with_capacity(selection.spectral_windows().len());
+    for selected in selection.spectral_windows() {
+        let row = usize::try_from(selected.spectral_window_id())
+            .map_err(|_| ObservationOwnerError::PhysicalSelectionMismatch)?;
+        let frequency_shape = spectral_window
+            .table()
+            .array_shape(row, "CHAN_FREQ")?
+            .filter(|shape| shape.len() == 1 && shape[0] > 0)
+            .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)?;
+        let width_shape = spectral_window
+            .table()
+            .array_shape(row, "CHAN_WIDTH")?
+            .filter(|shape| shape.len() == 1 && shape[0] > 0)
+            .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)?;
+        if frequency_shape != width_shape {
+            return Err(ObservationOwnerError::PhysicalSelectionMismatch);
+        }
+        let values = frequency_shape[0];
+        let simultaneous_array_bytes = values
+            .checked_mul(2)
+            .and_then(|values| values.checked_mul(std::mem::size_of::<f64>()))
+            .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)?;
+        let catalog_bytes = values
+            .checked_mul(std::mem::size_of::<f64>())
+            .and_then(|bytes| bytes.checked_add(2 * std::mem::size_of::<usize>()))
+            .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)?;
+        // Arc<[f64]> construction briefly overlaps the source Vec with the
+        // destination allocation. CHAN_WIDTH is dropped first, so both the
+        // two-array read peak and the Arc conversion peak are exactly covered.
+        let construction_peak_bytes = retained_catalog_bytes
+            .checked_add(simultaneous_array_bytes)
+            .and_then(|bytes| bytes.checked_add(2 * std::mem::size_of::<usize>()))
+            .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)?;
+        retained_catalog_bytes = retained_catalog_bytes
+            .checked_add(catalog_bytes)
+            .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)?;
+        let required_bytes = construction_peak_bytes.max(retained_catalog_bytes);
+        if required_bytes > content_budget.available_bytes() {
+            return Err(ObservationOwnerError::SpectralCoordinateCatalogBudget {
+                required_bytes,
+                available_bytes: content_budget.available_bytes(),
+            });
+        }
+        let frequencies_hz = spectral_window.chan_freq(row)?;
+        let widths_hz = spectral_window.chan_width(row)?;
+        if frequencies_hz.len() != values || widths_hz.len() != values {
+            return Err(ObservationOwnerError::PhysicalSelectionMismatch);
+        }
+        let first_channel_width_hz = widths_hz[0];
+        drop(widths_hz);
+        let coordinate_catalog =
+            SpectralWindowCoordinateCatalog::new(frequencies_hz, first_channel_width_hz)
+                .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)?;
+        spectral_windows.push(
+            SpectralWindowSelection::new(
+                selected.spectral_window_id(),
+                selected.channel_indices().to_vec(),
+            )
+            .with_coordinate_catalog(coordinate_catalog),
+        );
+    }
+    Ok(ObservationSelection::new(
+        selection.rows().clone(),
+        selection.rows_filter().clone(),
+        selection.data_descriptions().to_vec(),
+        spectral_windows,
+        selection.correlations().to_vec(),
+    ))
 }
 
 /// Rederive one compiled source's selected read state while its newly opened
@@ -875,6 +955,16 @@ pub enum ObservationOwnerError {
     /// The selected physical MAIN row sequence differs from the compiled selection.
     #[error("selected physical MAIN rows no longer match the compiled observation selection")]
     PhysicalSelectionMismatch,
+    /// The complete physical SPW coordinate catalog cannot fit its explicit source budget.
+    #[error(
+        "spectral coordinate catalog requires {required_bytes} bytes but the content budget has {available_bytes} bytes"
+    )]
+    SpectralCoordinateCatalogBudget {
+        /// Peak catalog construction or retained bytes.
+        required_bytes: usize,
+        /// Total source content budget.
+        available_bytes: usize,
+    },
     /// Measures identity is always injected by the acquired provider.
     #[error(
         "reference_data must not include Measures; the storage owner injects it from the acquired provider"
@@ -1451,6 +1541,10 @@ mod tests {
     }
 
     fn one_row_selection() -> ObservationSelection {
+        one_row_selection_with_channels(vec![0])
+    }
+
+    fn one_row_selection_with_channels(channel_indices: Vec<u32>) -> ObservationSelection {
         ObservationSelection::new(
             SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
                 .expect("one-row selection manifest"),
@@ -1465,12 +1559,82 @@ mod tests {
                 IdSelection::All,
             ),
             vec![DataDescriptionSelection::new(0, 0, 0)],
-            vec![SpectralWindowSelection::new(0, vec![0])],
+            vec![SpectralWindowSelection::new(0, channel_indices)],
             vec![CorrelationSelection::new(
                 0,
                 vec![CorrelationProduct::new(0, CorrelationType::CircularRr)],
             )],
         )
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn resolution_binds_exact_full_nonuniform_spw_for_a_subselection() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("nonuniform-subselection.ms");
+        let frequencies_hz = [1.0e9, 1.001e9, 1.004e9, 1.010e9];
+        let widths_hz = [-1.0e6, -1.1e6, -2.5e6, -4.0e6];
+        create_ms_columns_with_spectral_coordinates(
+            &path,
+            false,
+            false,
+            &frequencies_hz,
+            &widths_hz,
+        );
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let request = SelectedObservationResolutionRequest::new(
+            path.display().to_string(),
+            identity(2),
+            one_row_selection_with_channels(vec![1, 3]),
+            VisibilityColumn::Data,
+            WeightColumn::Weight,
+            Vec::new(),
+            ModelStateIdentity::Empty,
+            SelectedObservationContentBudget::new(1 << 20, 1, 4),
+            casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+        );
+
+        let (snapshot_input, _) = resolve_selected_observation(request)
+            .expect("resolve exact physical catalog")
+            .into_parts();
+        let snapshot = compile_observation(snapshot_input).expect("compile bound catalog");
+        let spectral_window = &snapshot.sources()[0].selection().spectral_windows()[0];
+        assert_eq!(spectral_window.channel_indices(), &[1, 3]);
+        let catalog = spectral_window
+            .coordinate_catalog()
+            .expect("owner-certified full SPW catalog");
+        assert_eq!(catalog.channel_frequencies_hz(), frequencies_hz);
+        assert_eq!(catalog.first_channel_width_hz(), widths_hz[0]);
+        let measurement_set = MeasurementSet::open(&path).expect("reopen physical catalog");
+        validate_selected_coordinates(&measurement_set, snapshot.sources()[0].selection())
+            .expect("runtime access accepts the exact owner-certified catalog");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn full_spw_catalog_construction_obeys_the_source_content_budget() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("catalog-budget.ms");
+        create_ms_columns_with_spectral_coordinates(
+            &path,
+            false,
+            false,
+            &[1.0e9, 1.001e9, 1.004e9, 1.010e9],
+            &[1.0e6; 4],
+        );
+        let measurement_set = MeasurementSet::open(&path).expect("open test MS");
+
+        assert!(matches!(
+            bind_physical_spectral_coordinates(
+                &measurement_set,
+                &one_row_selection_with_channels(vec![1, 3]),
+                SelectedObservationContentBudget::new(79, 1, 4),
+            ),
+            Err(ObservationOwnerError::SpectralCoordinateCatalogBudget {
+                required_bytes: 80,
+                available_bytes: 79,
+            })
+        ));
     }
 
     fn request(path: &Path) -> SelectedObservationResolutionRequest {
@@ -1511,6 +1675,25 @@ mod tests {
     }
 
     fn create_ms_columns(path: &Path, model_data: bool, corrected_data: bool) {
+        create_ms_columns_with_spectral_coordinates(
+            path,
+            model_data,
+            corrected_data,
+            &[1.0e9],
+            &[1.0e6],
+        );
+    }
+
+    fn create_ms_columns_with_spectral_coordinates(
+        path: &Path,
+        model_data: bool,
+        corrected_data: bool,
+        channel_frequencies_hz: &[f64],
+        channel_widths_hz: &[f64],
+    ) {
+        assert_eq!(channel_frequencies_hz.len(), channel_widths_hz.len());
+        assert!(!channel_frequencies_hz.is_empty());
+        let channel_count = channel_frequencies_hz.len();
         let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
         if model_data {
             builder = builder.with_main_column(OptionalMainColumn::ModelData);
@@ -1550,39 +1733,58 @@ mod tests {
             .add_row(row(
                 schema::spectral_window::REQUIRED_COLUMNS,
                 &[
-                    ("NUM_CHAN", Value::Scalar(ScalarValue::Int32(1))),
+                    (
+                        "NUM_CHAN",
+                        Value::Scalar(ScalarValue::Int32(
+                            i32::try_from(channel_count).expect("test channel count"),
+                        )),
+                    ),
                     (
                         "CHAN_FREQ",
                         Value::Array(ArrayValue::Float64(
-                            ArrayD::from_shape_vec(vec![1], vec![1.0e9])
-                                .expect("one channel frequency"),
+                            ArrayD::from_shape_vec(
+                                vec![channel_count],
+                                channel_frequencies_hz.to_vec(),
+                            )
+                            .expect("channel frequencies"),
                         )),
                     ),
                     (
                         "CHAN_WIDTH",
                         Value::Array(ArrayValue::Float64(
-                            ArrayD::from_shape_vec(vec![1], vec![1.0e6])
-                                .expect("one channel width"),
+                            ArrayD::from_shape_vec(vec![channel_count], channel_widths_hz.to_vec())
+                                .expect("channel widths"),
                         )),
                     ),
                     (
                         "EFFECTIVE_BW",
                         Value::Array(ArrayValue::Float64(
-                            ArrayD::from_shape_vec(vec![1], vec![1.0e6])
-                                .expect("one effective bandwidth"),
+                            ArrayD::from_shape_vec(
+                                vec![channel_count],
+                                channel_widths_hz.iter().map(|width| width.abs()).collect(),
+                            )
+                            .expect("effective bandwidths"),
                         )),
                     ),
                     (
                         "RESOLUTION",
                         Value::Array(ArrayValue::Float64(
-                            ArrayD::from_shape_vec(vec![1], vec![1.0e6])
-                                .expect("one channel resolution"),
+                            ArrayD::from_shape_vec(
+                                vec![channel_count],
+                                channel_widths_hz.iter().map(|width| width.abs()).collect(),
+                            )
+                            .expect("channel resolutions"),
                         )),
                     ),
-                    ("REF_FREQUENCY", Value::Scalar(ScalarValue::Float64(1.0e9))),
+                    (
+                        "REF_FREQUENCY",
+                        Value::Scalar(ScalarValue::Float64(channel_frequencies_hz[0])),
+                    ),
                     (
                         "TOTAL_BANDWIDTH",
-                        Value::Scalar(ScalarValue::Float64(1.0e6)),
+                        Value::Scalar(ScalarValue::Float64(
+                            channel_widths_hz.iter().map(|width| width.abs()).sum(),
+                        )),
                     ),
                     ("MEAS_FREQ_REF", Value::Scalar(ScalarValue::Int32(5))),
                 ],
@@ -1613,12 +1815,16 @@ mod tests {
                     "DATA_DESC_ID" => Value::Scalar(ScalarValue::Int32(0)),
                     "DATA" | "MODEL_DATA" | "CORRECTED_DATA" => {
                         Value::Array(ArrayValue::Complex32(
-                            ArrayD::from_shape_vec(vec![1, 1], vec![Complex32::new(1.0, 0.0)])
-                                .expect("one visibility"),
+                            ArrayD::from_shape_vec(
+                                vec![1, channel_count],
+                                vec![Complex32::new(1.0, 0.0); channel_count],
+                            )
+                            .expect("channel visibilities"),
                         ))
                     }
                     "FLAG" => Value::Array(ArrayValue::Bool(
-                        ArrayD::from_shape_vec(vec![1, 1], vec![false]).expect("one flag"),
+                        ArrayD::from_shape_vec(vec![1, channel_count], vec![false; channel_count])
+                            .expect("channel flags"),
                     )),
                     "WEIGHT" => Value::Array(ArrayValue::Float32(
                         ArrayD::from_shape_vec(vec![1], vec![1.0]).expect("one weight"),

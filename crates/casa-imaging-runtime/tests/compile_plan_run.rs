@@ -688,6 +688,58 @@ fn geometry_with_shape_and_increment(
     )
 }
 
+fn mosaic_geometry(image_shape: ImageShape, channels: usize) -> GeometryInput {
+    let pixels = image_shape.pixels();
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [pixels[0] as f64 / 2.0, pixels[1] as f64 / 2.0],
+        [-1.0e-6, 1.0e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            image_shape,
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(direction.reference_direction()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTimeCentroid,
+                PointingInterpolation::GreatCircleShortestArc,
+                PointingExtrapolation::Reject,
+                MissingPointingPolicy::Reject,
+            )),
+        ),
+        UvwCoordinateLaw::MosaicPhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 230.0e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+    )
+}
+
 fn channel_local_request(observation: u8, channels: usize) -> ImagingRequest {
     channel_local_request_with_reconstruction(
         observation,
@@ -8723,6 +8775,89 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
 }
 
 #[test]
+fn t47_runtime_residency_projects_all_bounded_mosaic_state() {
+    let channels = 8;
+    let specification = ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSamplingLaw::LINEAR, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::PrimaryBeam,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        )
+        .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+        ReconstructionContract::new(
+            ReconstructionBasis::ChannelLocal { channels },
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        ProductRequirements::new(
+            vec![
+                ProductKind::Psf,
+                ProductKind::Residual,
+                ProductKind::Sensitivity,
+            ],
+            ProductNormalization::FlatNoise,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        NumericsContract::new(
+            vec![NumericPrecision::F64],
+            ReductionPolicy::Compensated,
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            NumericalStage::ALL
+                .into_iter()
+                .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                .collect(),
+        ),
+    );
+    let problem = compile(ImagingRequest::new(
+        specification,
+        mosaic_geometry(ImageShape::new(128, 128), channels),
+        problem_inputs_with_channels(
+            238,
+            vec![
+                (ReferenceDataKind::Measures, identity(90)),
+                (ReferenceDataKind::Instrument, identity(91)),
+            ],
+            ModelStateIdentity::Empty,
+            channels,
+        ),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("mosaic problem");
+    let fragment = CompleteDataPlanFragment::new(
+        &problem,
+        4,
+        WorkNodeId::new("t47-mosaic-replay"),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("mosaic operator plan");
+    let residency = fragment.residency();
+    assert!(residency.mosaic_state_bytes() > 0);
+    assert!(residency.mosaic_workspace_bytes() > 0);
+    assert_eq!(
+        residency.peak_bytes(),
+        residency.grid_bytes()
+            + residency.convolution_cache_bytes()
+            + residency.fft_resident_bytes()
+            + residency.fft_planning_bytes()
+            + residency.forward_workspace_bytes()
+            + residency.response_workspace_bytes()
+            + residency.mosaic_state_bytes()
+            + residency.mosaic_workspace_bytes()
+            + residency.primitive_output_bytes()
+            + residency.major_cycle_model_bytes()
+    );
+}
+
+#[test]
 fn t41_runtime_residency_bounds_channel_major_windows_without_expanding_the_taylor_model() {
     let problem =
         compile(channel_major_taylor_request(241, 8)).expect("Taylor-via-channel-major problem");
@@ -11288,11 +11423,21 @@ fn freeze_sealed_products_weighting(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, sample, exact_sample_contributions(sample))?;
+        density.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            exact_sample_contributions(sample),
+        )?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, sample, exact_sample_contributions(sample))?;
+        sum_weight.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            exact_sample_contributions(sample),
+        )?;
     }
     sum_weight.finish()
 }
@@ -11309,7 +11454,12 @@ fn replay_sealed_products_weighting(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, sample, exact_sample_contributions(sample))
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                exact_sample_contributions(sample),
+            )
             .expect("weight sample")
         {
             blocks.push(block);

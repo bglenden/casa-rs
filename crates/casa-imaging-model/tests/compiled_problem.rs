@@ -519,7 +519,10 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
         restored.beam(),
         ProductBeamRule::Restoring(RestoringBeamPolicy::PerPlane)
     );
-    assert_eq!(restored.validity(), ProductValidityRule::FinalNormalState);
+    assert_eq!(
+        restored.validity(),
+        ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
+    );
     assert_eq!(restored.schema(), ProductSchema::ImageF32V1);
 
     let spectral_index = graph
@@ -638,8 +641,8 @@ fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem
     assert_eq!(
         first.product_graph().graph_id().as_bytes(),
         [
-            235, 221, 234, 76, 221, 106, 227, 135, 121, 148, 175, 232, 82, 0, 166, 137, 236, 238,
-            165, 115, 143, 112, 173, 242, 205, 34, 87, 135, 86, 241, 132, 33,
+            139, 130, 57, 178, 38, 63, 150, 135, 182, 215, 213, 237, 156, 152, 40, 187, 235, 26,
+            221, 172, 147, 63, 210, 224, 10, 236, 117, 22, 5, 151, 235, 95,
         ]
     );
 }
@@ -702,6 +705,13 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
             .node_id()]
     );
     assert!(!graph.publication().members().contains(&pb_alpha.node_id()));
+    assert_eq!(
+        graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+            .expect("primary-beam Taylor-zero product")
+            .validity(),
+        ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
+    );
     assert!(
         graph
             .nodes()
@@ -1710,7 +1720,7 @@ fn compiled_problem_identity_has_a_pinned_schema_seventeen_digest() {
     assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 17);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "47797621df2e146662efc7b2c908fb44c2fffbdb1b491730b83b86faeb30f058"
+        "22b9977608a12d4eab830485c55e39e101df1f631cfd04a4676c8de742c4109c"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

@@ -18,7 +18,7 @@ pub use availability::{
     validate_installed_implementation,
 };
 pub use casa_imaging_model::{
-    HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate,
+    HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
 };
 pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};

@@ -421,30 +421,28 @@ pub fn validate_installed_implementation(
                 .instrument_response(),
             problem.science().instrument_model(),
             problem.reconstruction().basis(),
+            matches!(
+                problem.geometry().centres().pointing(),
+                casa_imaging_model::PointingCentreLaw::Observation(_)
+            ),
         ),
-        (InstrumentResponse::Scalar, None, _)
+        (InstrumentResponse::Scalar, None, _, _)
             | (
                 InstrumentResponse::PrimaryBeam,
                 Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
-                ReconstructionBasis::TaylorViaChannelMajor { .. }
+                ReconstructionBasis::TaylorViaChannelMajor { .. },
+                false,
+            )
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+                ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. },
+                true,
             )
     );
     if !installed_response {
         unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
     }
-    if !matches!(
-        problem.reconstruction().basis(),
-        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
-    ) {
-        for product in [ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage] {
-            if problem.products().products().contains(&product) {
-                unsupported.push(UnsupportedRequirement::Capability(
-                    RequiredCapability::Product(product),
-                ));
-            }
-        }
-    }
-
     unsupported.sort_unstable();
     unsupported.dedup();
     if unsupported.is_empty() {
@@ -473,10 +471,12 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::SpectralCubedata
             | TaskRequirement::SpectralCubeSource
             | TaskRequirement::SpectralMtmfsViaCube
+            | TaskRequirement::MosaicGridder
             | TaskRequirement::PolarizationSelection
             | TaskRequirement::Automasking
             | TaskRequirement::MaskProduct
             | TaskRequirement::ModelColumnWrite
+            | TaskRequirement::PerChannelWeightDensity
             | TaskRequirement::SerialCpu
             | TaskRequirement::FixedTileCpu
             | TaskRequirement::RustFft
@@ -517,11 +517,14 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::SumWeights)
             | RequiredCapability::Product(ProductKind::Mask)
             | RequiredCapability::Product(ProductKind::Beam)
+            | RequiredCapability::Product(ProductKind::Weight)
+            | RequiredCapability::Product(ProductKind::Sensitivity)
             | RequiredCapability::Product(ProductKind::PrimaryBeam)
             | RequiredCapability::Product(ProductKind::PbCorrectedImage)
             | RequiredCapability::Product(ProductKind::TaylorTerms)
             | RequiredCapability::Product(ProductKind::SpectralIndex)
             | RequiredCapability::Product(ProductKind::SpectralIndexError)
+            | RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex)
     )
 }
 
@@ -532,6 +535,27 @@ mod tests {
     use casa_imaging_model::PolarizationCoordinate;
 
     use super::*;
+
+    #[test]
+    fn t47_mosaic_gridder_is_installed_at_the_application_boundary() {
+        assert!(supports_task(TaskRequirement::MosaicGridder));
+    }
+
+    #[test]
+    fn t47_per_channel_weight_density_is_installed_at_the_application_boundary() {
+        assert!(supports_task(TaskRequirement::PerChannelWeightDensity));
+    }
+
+    #[test]
+    fn t47_mosaic_products_are_installed_at_the_application_boundary() {
+        for product in [
+            ProductKind::Weight,
+            ProductKind::Sensitivity,
+            ProductKind::PbCorrectedSpectralIndex,
+        ] {
+            assert!(supports_capability(RequiredCapability::Product(product)));
+        }
+    }
 
     #[test]
     fn t46_joint_reconstruction_is_installed_at_the_application_boundary() {
@@ -634,7 +658,7 @@ mod tests {
                 .and_then(ImagingCapabilityCatalogEntry::unsupported),
             Some(UnsupportedRequirement::Task(TaskRequirement::AwProjection))
         );
-        assert_eq!(
+        assert!(
             catalog
                 .iter()
                 .find(|entry| {
@@ -643,10 +667,7 @@ mod tests {
                             ProductKind::Sensitivity,
                         ))
                 })
-                .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            Some(UnsupportedRequirement::Capability(
-                RequiredCapability::Product(ProductKind::Sensitivity)
-            ))
+                .is_some_and(|entry| entry.unsupported().is_none())
         );
         assert!(catalog.iter().any(|entry| {
             entry.requirement()

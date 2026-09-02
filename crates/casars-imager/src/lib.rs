@@ -330,6 +330,8 @@ pub struct CliConfig {
     pub psf_cutoff: f32,
     /// Mosaic primary-beam limit.
     pub mosaic_pb_limit: f32,
+    /// Primary-beam product normalization for mosaic or A/W-projection imaging.
+    pub normalization: AwProjectNormalization,
     /// PB-corrected image toggle.
     pub pbcor: bool,
     /// Primary-beam product toggle.
@@ -658,9 +660,7 @@ impl CliConfig {
                     aw_controls(&mut config).mosaic_weighting = false;
                     consumed = 1;
                 }
-                "--normtype" => {
-                    aw_controls(&mut config).normalization = parse_aw_normalization(value(1)?)?
-                }
+                "--normtype" => config.normalization = parse_aw_normalization(value(1)?)?,
                 "--imaging-fft-precision" => {
                     config.imaging_fft_precision = parse_fft_precision(value(1)?)?
                 }
@@ -768,6 +768,7 @@ impl CliConfig {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.2,
+            normalization: AwProjectNormalization::FlatNoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -865,13 +866,13 @@ impl CliConfig {
                 .parse()
                 .map_err(|error| format!("parse veltype: {error}"))?;
         }
-        if let Some(value) = optional_text("start")? {
+        if let Some(value) = optional_cube_axis_value(values, "start")? {
             config.cube_axis.start = Some(
                 CubeAxisValue::parse(&value, config.cube_axis.veltype)
                     .map_err(|error| error.to_string())?,
             );
         }
-        if let Some(value) = optional_text("width")? {
+        if let Some(value) = optional_cube_axis_value(values, "width")? {
             config.cube_axis.width = Some(
                 CubeAxisValue::parse(&value, config.cube_axis.veltype)
                     .map_err(|error| error.to_string())?,
@@ -947,6 +948,11 @@ impl CliConfig {
         config.write_pb = boolean("write_pb")?;
         config.pbcor = boolean("pbcor")?;
         config.mosaic_pb_limit = float("pblimit")? as f32;
+        config.normalization = values
+            .get("normtype")
+            .map(|_| text("normtype").and_then(|value| parse_aw_normalization(&value)))
+            .transpose()?
+            .unwrap_or(AwProjectNormalization::FlatNoise);
         config.w_term_mode = parse_w_term(&text("wterm")?)?;
         set_gridder(&mut config, &text("gridder")?)?;
         config.standard_mfs_acceleration = parse_acceleration(&text("standard_mfs_acceleration")?)?;
@@ -957,6 +963,7 @@ impl CliConfig {
         config.uvrange = optional_text("uvrange")?;
         config.intent = optional_text("intent")?;
         if config.aw_project.is_some() {
+            let normalization = config.normalization;
             let controls = aw_controls(&mut config);
             controls.cf_cache = PathBuf::from(text("cfcache")?);
             controls.cf_resident_bytes = usize::try_from(integer("cf_resident_mb")?)
@@ -980,7 +987,7 @@ impl CliConfig {
             controls.pointing_offset_sigdev =
                 parse_csv(&text("pointingoffsetsigdev")?, "pointingoffsetsigdev")?;
             controls.mosaic_weighting = boolean("mosweight")?;
-            controls.normalization = parse_aw_normalization(&text("normtype")?)?;
+            controls.normalization = normalization;
         }
         config.imaging_memory_target_mb = optional_usize(values, "imaging_memory_target_mb")?;
         config.imaging_memory_pressure_policy =
@@ -1089,6 +1096,25 @@ fn optional_bool(
         ParameterValue::String(value) if value.eq_ignore_ascii_case("none") => Ok(None),
         value => Err(format!(
             "resolved imager parameter {name:?} must be optional boolean, found {value:?}"
+        )),
+    }
+}
+
+fn optional_cube_axis_value(
+    values: &BTreeMap<String, ParameterValue>,
+    name: &str,
+) -> Result<Option<String>, String> {
+    match parameter_value(values, name)? {
+        ParameterValue::Integer(value) => Ok(Some(value.to_string())),
+        ParameterValue::String(value)
+            if matches!(value.to_ascii_lowercase().as_str(), "none" | "auto") =>
+        {
+            Ok(None)
+        }
+        ParameterValue::String(value) if value.is_empty() => Ok(None),
+        ParameterValue::String(value) => Ok(Some(value.clone())),
+        value => Err(format!(
+            "resolved imager parameter {name:?} must be optional cube-axis text or integer, found {value:?}"
         )),
     }
 }
@@ -1609,5 +1635,26 @@ mod cli_projection_tests {
         ])
         .unwrap_err();
         assert!(error.contains("unknown imager parameter flag --threshold"));
+    }
+
+    #[test]
+    fn standalone_cli_accepts_channel_axis_start_and_width() {
+        let canonical = request_from_parameter_cli_args(&[
+            "--ms".into(),
+            "input.ms".into(),
+            "--imagename".into(),
+            "products/image".into(),
+            "--specmode".into(),
+            "cube".into(),
+            "--start".into(),
+            "0".into(),
+            "--width".into(),
+            "1".into(),
+        ])
+        .unwrap();
+        let restored = canonical.to_cli_config().unwrap();
+
+        assert_eq!(restored.cube_axis.start, Some(CubeAxisValue::Channel(0)));
+        assert_eq!(restored.cube_axis.width, Some(CubeAxisValue::Channel(1)));
     }
 }

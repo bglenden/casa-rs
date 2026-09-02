@@ -88,7 +88,7 @@ fn direction_pixel_to_world(
     Ok([longitude, latitude])
 }
 
-fn direction_world_to_pixel(
+pub(crate) fn direction_world_to_pixel(
     coordinate: DirectionCoordinateSpec,
     world: [f64; 2],
 ) -> Result<[f64; 2], MaskError> {

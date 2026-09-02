@@ -147,7 +147,12 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
             channel,
             frequency_hz,
         )?;
-        if let Some(block) = weighting.consume(&problem, sample, receipt.contributions().clone())? {
+        if let Some(block) = weighting.consume(
+            &problem,
+            sample,
+            reported.spectral_evaluation().output_frame().centre_hz(),
+            receipt.contributions().clone(),
+        )? {
             if !owner.consume_block(&block)?.is_empty() {
                 return Err(StreamError::Contract(
                     "empty model emitted final visibilities",

@@ -675,6 +675,9 @@ pub enum UvwCoordinateLaw {
     /// MeasurementSet MAIN UVW in metres: `u` east, `v` north, and `w` toward
     /// the phase-tracking centre, with prediction phase `exp(-i 2πν delay)`.
     PhaseTrackingCentre,
+    /// CASA MosaicFT `girarUVW` projection from each observation field to the
+    /// compiled image centre, paired with the reconstruction phase convention.
+    MosaicPhaseTrackingCentre,
 }
 
 /// Unit of UVW coordinates read from an observation snapshot.
@@ -703,7 +706,7 @@ impl UvwCoordinateLaw {
     #[must_use]
     pub const fn unit(self) -> UvwUnit {
         match self {
-            Self::PhaseTrackingCentre => UvwUnit::Metres,
+            Self::PhaseTrackingCentre | Self::MosaicPhaseTrackingCentre => UvwUnit::Metres,
         }
     }
 
@@ -711,7 +714,9 @@ impl UvwCoordinateLaw {
     #[must_use]
     pub const fn axes(self) -> UvwAxes {
         match self {
-            Self::PhaseTrackingCentre => UvwAxes::EastNorthPhaseTrackingCentre,
+            Self::PhaseTrackingCentre | Self::MosaicPhaseTrackingCentre => {
+                UvwAxes::EastNorthPhaseTrackingCentre
+            }
         }
     }
 
@@ -719,7 +724,9 @@ impl UvwCoordinateLaw {
     #[must_use]
     pub const fn prediction_phase(self) -> VisibilityPhaseConvention {
         match self {
-            Self::PhaseTrackingCentre => VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay,
+            Self::PhaseTrackingCentre | Self::MosaicPhaseTrackingCentre => {
+                VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay
+            }
         }
     }
 }
@@ -1743,6 +1750,7 @@ fn canonical_geometry_id(geometry: &CompiledGeometry) -> CompiledGeometryId {
     encode_centres(&mut encoder, &geometry.centres);
     encoder.u8(match geometry.uvw {
         UvwCoordinateLaw::PhaseTrackingCentre => 0,
+        UvwCoordinateLaw::MosaicPhaseTrackingCentre => 1,
     });
     encode_spectral(&mut encoder, &geometry.spectral);
     encode_optional_identity(&mut encoder, geometry.measures_reference);

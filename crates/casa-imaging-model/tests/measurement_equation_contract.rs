@@ -479,8 +479,8 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "9d6b788fee3616ca76091b18a46366ab13a1092c9bcc9d031c67be06167b9e07".to_string(),
-            "1135b569d7fa70062caa4f09b38de8bda8b0f176647ca26f48f81a8c268d87d3".to_string(),
+            "6744b191ea77a60fe6fb03a38a7e548ea537591a0c810be589dea34a74bccfac".to_string(),
+            "fb3f6fbe9f427fbdad7ce317690019841393c10a10d2c48cb163179be78db6e5".to_string(),
         )
     );
 }

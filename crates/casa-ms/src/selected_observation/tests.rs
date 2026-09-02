@@ -1237,7 +1237,7 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
 }
 
 #[test]
-fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame() {
+fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
     let directory = tempfile::tempdir().expect("temporary transformed-frame fixture");
     let path = directory.path().join("transformed-contributions.ms");
     generate_fixture(&path);
@@ -1309,21 +1309,29 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
                     .expect("BARY to LSRK")
                     .hz()
             };
-            let transformed_hz = transform_to_output(sample.address().frequency_centre_hz);
-            let transformed_boundaries = [
+            let image_anchor_hz = transform_to_output(sample.address().frequency_centre_hz);
+            let image_anchor_boundaries = [
                 transform_to_output(sample.address().frequency_lower_hz),
                 transform_to_output(sample.address().frequency_upper_hz),
             ];
-            let source_only_hz =
-                MFrequency::new(sample.address().frequency_centre_hz, FrequencyRef::TOPO)
+            let transform_in_native_field_frame = |frequency_hz| {
+                MFrequency::new(frequency_hz, FrequencyRef::TOPO)
                     .convert_to(FrequencyRef::GEO, &frame)
                     .expect("source-only TOPO to GEO")
                     .convert_to(FrequencyRef::BARY, &frame)
                     .expect("source-only GEO to BARY")
                     .convert_to(FrequencyRef::LSRK, &frame)
                     .expect("source-only BARY to LSRK")
-                    .hz();
-            assert!((transformed_hz - source_only_hz).abs() > 1.0);
+                    .hz()
+            };
+            let native_field_hz =
+                transform_in_native_field_frame(sample.address().frequency_centre_hz);
+            let native_field_boundaries = [
+                transform_in_native_field_frame(sample.address().frequency_lower_hz),
+                transform_in_native_field_frame(sample.address().frequency_upper_hz),
+            ];
+            assert!((image_anchor_hz - native_field_hz).abs() > 1.0);
+            assert_ne!(image_anchor_boundaries, native_field_boundaries);
             let evaluation = reported.spectral_evaluation();
             assert_eq!(
                 evaluation.native().centre_hz().to_bits(),
@@ -1338,19 +1346,19 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
             );
             assert_eq!(
                 evaluation.output_frame().centre_hz().to_bits(),
-                transformed_hz.to_bits()
+                native_field_hz.to_bits()
             );
             assert_eq!(
                 evaluation.output_frame().boundaries_hz(),
-                transformed_boundaries
+                native_field_boundaries
             );
             assert_eq!(evaluation.effective_weight(), 1.0);
             assert!(evaluation.is_valid());
             values.push((
                 sample.address().channel_index,
-                transformed_hz,
-                source_only_hz,
-                transformed_boundaries,
+                image_anchor_hz,
+                native_field_hz,
+                native_field_boundaries,
             ));
             Ok::<_, Infallible>(())
         })
@@ -1365,7 +1373,7 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
     assert_eq!(values[0].0, 0);
     assert!(
         values[0].1 != values[0].2,
-        "the fixed output anchor must transform the source centre"
+        "the image anchor must remain observably distinct from the native FIELD frame"
     );
     assert_eq!(values[1].3, values[0].3);
     assert_eq!(values[2].0, 2);
@@ -3227,6 +3235,61 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
 }
 
 #[test]
+fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
+    let directory = tempfile::tempdir().expect("temporary mosaic-projection fixture");
+    let path = directory.path().join("mosaic-projection.ms");
+    generate_fixture(&path);
+    let phase = SkyDirection::new(DirectionFrame::J2000, 0.7, -0.2);
+    let centres = CentreLaws::new(
+        PhaseCentreLaw::Fixed(phase),
+        DelayCentreLaw::PhaseTrackingCentre,
+        PointingCentreLaw::PhaseTrackingCentre,
+    );
+    let problem = compiled_problem_with_geometry(
+        &path,
+        2,
+        geometry_with_centres_and_uvw(centres, UvwCoordinateLaw::MosaicPhaseTrackingCentre),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind mosaic-projection source");
+    let sample = bound
+        .selected_samples(&problem)
+        .expect("prepare mosaic-projection stream")
+        .next()
+        .expect("one selected sample")
+        .expect("evaluate mosaic-projection sample");
+    let target_direction = problem.geometry().domains()[0].model_phase_centre();
+    let target = MDirection::from_angles(
+        target_direction.longitude_rad(),
+        target_direction.latitude_rad(),
+        DirectionRef::J2000,
+    );
+    let (expected_uvw_m, casa_dphase_m) = bound
+        .geometry_engine()
+        .reproject_raw_uvw_for_mosaic_to_direction(
+            sample.coordinates.raw_uvw_m,
+            usize::try_from(sample.metadata.field_id).expect("field id"),
+            &target,
+        )
+        .expect("CASA girarUVW projection");
+    let projection = sample
+        .domain_projections
+        .iter()
+        .next()
+        .expect("primary projection")
+        .model();
+
+    assert_eq!(projection.transformed_uvw_m(), expected_uvw_m);
+    assert_eq!(projection.phase_shift_m(), -casa_dphase_m);
+}
+
+#[test]
 fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
     let directory = tempfile::tempdir().expect("temporary moving-centre fixture");
     let path = directory.path().join("moving.ms");
@@ -4688,6 +4751,10 @@ fn geometry_with_spectral_wcs(wcs: SpectralWcs) -> GeometryInput {
 }
 
 fn geometry_with_centres(centres: CentreLaws) -> GeometryInput {
+    geometry_with_centres_and_uvw(centres, UvwCoordinateLaw::PhaseTrackingCentre)
+}
+
+fn geometry_with_centres_and_uvw(centres: CentreLaws, uvw: UvwCoordinateLaw) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -4710,7 +4777,7 @@ fn geometry_with_centres(centres: CentreLaws) -> GeometryInput {
             ]),
         )],
         centres,
-        UvwCoordinateLaw::PhaseTrackingCentre,
+        uvw,
         SpectralCoordinateSpec::new(
             FrequencyFrame::Topocentric,
             FrequencyFrame::Topocentric,

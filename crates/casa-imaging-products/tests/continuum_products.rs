@@ -36,8 +36,9 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
-    ContinuumProductControls, ContinuumSourceCatalog, ProductGenerationAuthority, ProductsError,
-    fit_restoring_beam, gaussian_beam_image, normalize_plane, produce_continuum_members,
+    AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumSourceCatalog, MosaicSensitivity,
+    ProductGenerationAuthority, ProductsError, fit_restoring_beam, gaussian_beam_image,
+    normalize_plane, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
@@ -687,13 +688,23 @@ fn run_two_domain_round(
     let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
     for run in &runs {
         density
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("density sample");
     }
     let mut sum_weight = density.finish(problem).expect("sum-weight phase");
     for run in &runs {
         sum_weight
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("sum-weight sample");
     }
     let generation = sum_weight.finish().expect("weighting generation");
@@ -703,7 +714,12 @@ fn run_two_domain_round(
     let mut blocks = Vec::new();
     for run in &runs {
         if let Some(block) = replay
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("replay sample")
         {
             blocks.push(block);
@@ -774,13 +790,23 @@ fn rerun_two_domain_with_masks(
     let mut density = begin_weighting_generation(problem, &plan).expect("density phase");
     for run in &runs {
         density
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("density sample");
     }
     let mut sum_weight = density.finish(problem).expect("sum-weight phase");
     for run in &runs {
         sum_weight
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("sum-weight sample");
     }
     let generation = sum_weight.finish().expect("weighting generation");
@@ -790,7 +816,12 @@ fn rerun_two_domain_with_masks(
     let mut blocks = Vec::new();
     for run in &runs {
         if let Some(block) = replay
-            .consume(problem, run.view(), run.contributions.clone())
+            .consume(
+                problem,
+                run.view(),
+                run.channel.frequency_centre_hz,
+                run.contributions.clone(),
+            )
             .expect("replay sample")
         {
             blocks.push(block);
@@ -838,11 +869,21 @@ fn freeze_weighting_generation(
 ) -> Result<WeightingAlgorithmState, WeightingError> {
     let mut density = begin_weighting_generation(problem, plan)?;
     for sample in samples {
-        density.consume(problem, sample, contributions(sample))?;
+        density.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            contributions(sample),
+        )?;
     }
     let mut sum_weight = density.finish(problem)?;
     for sample in samples {
-        sum_weight.consume(problem, sample, contributions(sample))?;
+        sum_weight.consume(
+            problem,
+            sample,
+            sample.address.frequency_centre_hz,
+            contributions(sample),
+        )?;
     }
     sum_weight.finish()
 }
@@ -860,7 +901,12 @@ fn replay(
         .expect("begin replay");
     for sample in samples {
         if let Some(block) = phase
-            .consume(problem, sample, contributions(sample))
+            .consume(
+                problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                contributions(sample),
+            )
             .expect("weight sample")
         {
             blocks.push(block);
@@ -1442,6 +1488,39 @@ fn flat_noise_normalization_divides_by_the_exact_sensitivity() {
 }
 
 #[test]
+fn mosaic_sensitivity_owns_normalization_primary_beam_and_valid_support() {
+    let sensitivity =
+        MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("finite positive mosaic sensitivity");
+    assert_eq!(sensitivity.primary_beam(), [1.0, 0.5, 0.25, 0.0]);
+    assert_eq!(
+        sensitivity
+            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatNoise)
+            .expect("flat-noise normalization"),
+        [2.0, 2.0, 2.0, 0.0]
+    );
+    assert_eq!(
+        sensitivity
+            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatSky)
+            .expect("flat-sky normalization"),
+        [2.0, 4.0, 8.0, 0.0]
+    );
+
+    let policy = PrimaryBeamValidityPolicy::new(
+        0.25,
+        ProductSupportComparison::StrictlyGreater,
+        ProductBlankingPolicy::ZeroAndFalseMask,
+    )
+    .expect("valid PB policy");
+    assert_eq!(sensitivity.validity(policy), [true, true, false, false]);
+    assert_eq!(
+        sensitivity
+            .correct_primary_beam(&[2.0, 2.0, 2.0, 2.0], policy)
+            .expect("PB correction"),
+        [2.0, 4.0, 0.0, 0.0]
+    );
+}
+
+#[test]
 fn beam_fit_recovers_a_synthetic_elliptical_gaussian() {
     let shape = [32_usize, 32];
     let cell = [1.0e-4_f64, 1.0e-4];
@@ -1650,6 +1729,107 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
         .map(|value| *value as f32)
         .collect();
     assert_eq!(weight.payload(), expected);
+}
+
+#[test]
+fn standard_products_publish_the_selected_analytic_primary_beam() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::PrimaryBeam,
+        ProductKind::PbCorrectedImage,
+        ProductKind::Beam,
+    ];
+    let problem = continuum_problem_with_reconstruction(
+        109,
+        &products,
+        RestoringBeamPolicy::PerPlane,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+    );
+    let round = run_continuum_round(&problem, 110);
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let planned = authority
+        .plan(&catalog, &controls)
+        .expect("analytic PB plan");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("analytic PB products");
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+    let pb = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("primary beam");
+    let centre = pb.payload()[4 * SHAPE[1] + 4];
+    let corner = pb.payload()[0];
+    assert_eq!(centre, 1.0);
+    assert!(
+        corner < centre,
+        "analytic PB must fall away from phase centre"
+    );
+}
+
+#[test]
+fn standard_cube_products_publish_analytic_primary_beams_per_output_channel() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::PrimaryBeam,
+    ];
+    let problem = continuum_problem_with_reconstruction(
+        111,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+    );
+    let round = run_round_with_contributions(
+        &problem,
+        112,
+        fixture_samples(&problem),
+        channel_contributions,
+    );
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let planned = authority
+        .plan(&catalog, &controls)
+        .expect("analytic PB plan");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("analytic cube PB products");
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+    let pb = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("primary beam");
+    assert_eq!(pb.payload().len(), SHAPE[0] * SHAPE[1] * 2);
+    assert_eq!(pb.payload().iter().copied().reduce(f32::max), Some(1.0),);
+    assert!(pb.payload().iter().any(|value| *value < 1.0));
+    for channel in 0..2 {
+        let plane = pb.payload().iter().skip(channel).step_by(2);
+        assert_eq!(plane.clone().copied().reduce(f32::max), Some(1.0));
+        assert!(plane.copied().any(|value| value < 1.0));
+    }
 }
 
 #[test]

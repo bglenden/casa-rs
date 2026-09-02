@@ -402,6 +402,7 @@ const fn role_label(role: ProductRole) -> &'static str {
         ProductRole::PbCorrectedImage(_) => "pbcor.image",
         ProductRole::SpectralIndex => "alpha",
         ProductRole::SpectralIndexError => "alpha.error",
+        ProductRole::PbCorrectedSpectralIndex => "alpha.pbcor",
         ProductRole::BeamMetadata => "beam",
         _ => "product",
     }

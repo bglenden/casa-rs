@@ -21,10 +21,12 @@ use casa_imaging_model::{
     DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, HogbomIterationAccounting, ImageAxis, ImageDomainRole,
     ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse, ItrfPosition,
-    LogicalIdentity, MeasurementEquationContract, ModelBounds, ModelColumnWrite, ModelInnerProduct,
-    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, NumericPrecision,
-    NumericalStage, NumericsContract, ObservationSelection, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PolarizationContract, PolarizationCoordinate,
+    LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelBounds,
+    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
+    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSelection, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
+    PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     PrimaryBeamValidityPolicy, ProblemSpecification, ProductBlankingPolicy, ProductKind,
     ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
@@ -48,7 +50,9 @@ use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
     SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
     SelectedObservationResolutionRequest, SelectedObservationRow, SelectedObservationRowSelection,
-    VisibilityDataColumn, parse_spw_selector, resolve_channel_selector_selection,
+    SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
+    SelectedObservationSpectralWindow, VisibilityDataColumn, parse_spw_selector,
+    resolve_channel_selector_selection,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::{
@@ -310,6 +314,8 @@ pub struct ContinuumImagingRequest {
     pub psf_cutoff: f32,
     /// Positive primary-beam support cutoff corresponding to CASA `abs(pblimit)`.
     pub primary_beam_cutoff: f32,
+    /// Direction-dependent image normalization selected by the task surface.
+    pub normalization: ProductNormalization,
     /// Restoring-beam policy.
     pub beam_policy: ContinuumBeamPolicy,
     /// Model-update support policy.
@@ -413,6 +419,7 @@ struct PreparedImageDomain {
 
 struct SourceSpectralWindow {
     spw_id: usize,
+    frequency_reference: FrequencyRef,
     frequencies_hz: Vec<f64>,
     channel_widths_hz: Vec<f64>,
 }
@@ -434,33 +441,22 @@ fn prepare_spectral_axis(
     frame_engine: &casa_ms::derived::engine::MsCalEngine,
     moving_rest_frame: Option<&MeasFrame>,
     source_rest_frequency_hz: Option<f64>,
+    continuum_selected_source_channels: Option<BTreeMap<usize, Vec<usize>>>,
+    continuum_spectral_envelope: Option<SelectedObservationSpectralEnvelope>,
 ) -> Result<PreparedSpectralAxis, crate::ApplicationError> {
     let source_frame = imaging_frequency_frame(source_frequency_reference)?;
     match &request.spectral_mode {
         SpectralImagingMode::Continuum => {
-            let mut selected_source_channels = BTreeMap::new();
-            let mut source_frequency_sum = 0.0;
-            let mut source_frequency_count = 0_usize;
-            for window in spectral_windows {
-                let selected = selected_channels(request, window.spw_id, &window.frequencies_hz)?;
-                source_frequency_sum += selected
-                    .iter()
-                    .map(|channel| window.frequencies_hz[*channel])
-                    .sum::<f64>();
-                source_frequency_count += selected.len();
-                selected_source_channels.insert(window.spw_id, selected);
-            }
-            let source_reference_frequency = source_frequency_sum / source_frequency_count as f64;
+            let selected_source_channels = continuum_selected_source_channels.ok_or_else(|| {
+                boxed("continuum imaging requires a prepared selected-channel map")
+            })?;
+            let spectral_envelope = continuum_spectral_envelope
+                .ok_or_else(|| boxed("continuum imaging requires a selected spectral envelope"))?;
+            let [lower_hz, upper_hz] = spectral_envelope.edges_hz();
             let output_frequency_reference = FrequencyRef::LSRK;
             let output_frame = imaging_frequency_frame(output_frequency_reference)?;
-            let reference_frequency_hz = casa_ms::convert_frequency_to_frame(
-                source_frequency_reference,
-                output_frequency_reference,
-                source_reference_frequency,
-                anchor_time_mjd_seconds,
-                field_id,
-                frame_engine,
-            )?;
+            let reference_frequency_hz = spectral_envelope.midpoint_hz();
+            let increment_hz = upper_hz - lower_hz;
             Ok(PreparedSpectralAxis {
                 selected_source_channels,
                 source_frame,
@@ -477,7 +473,7 @@ fn prepare_spectral_axis(
                     channels: 1,
                     reference_pixel: 0.0,
                     reference_frequency_hz,
-                    increment_hz: 1.0,
+                    increment_hz,
                 },
                 rest_frequency: RestFrequency::NotApplicable,
                 doppler: DopplerConvention::NotApplicable,
@@ -485,7 +481,7 @@ fn prepare_spectral_axis(
                 basis: ReconstructionBasis::Constant,
                 output_channels: 1,
                 reference_frequency_hz,
-                increment_hz: 1.0,
+                increment_hz,
             })
         }
         SpectralImagingMode::JointContinuumLine => {
@@ -992,6 +988,78 @@ fn prepare(
         request.intent.as_deref(),
     )?;
     let content_budget = SelectedObservationContentBudget::new(64 << 20, 2, 4);
+    let candidate_bindings = ddids
+        .iter()
+        .copied()
+        .map(|ddid| {
+            usize::try_from(ddid)
+                .map_err(|_| boxed("selected DATA_DESC_ID is negative"))
+                .and_then(|ddid| data_description_binding(&data_description, ddid))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let candidate_spw_ids = candidate_bindings
+        .iter()
+        .map(|(spw_id, _)| *spw_id)
+        .collect::<BTreeSet<_>>();
+    let mut spectral_windows = Vec::with_capacity(candidate_spw_ids.len());
+    for spw_id in candidate_spw_ids {
+        let frequency_reference =
+            FrequencyRef::from_casacore_code(spectral_window.meas_freq_ref(spw_id)?)
+                .ok_or_else(|| boxed("selected SPW has an unsupported frequency frame"))?;
+        spectral_windows.push(SourceSpectralWindow {
+            spw_id,
+            frequency_reference,
+            frequencies_hz: spectral_window.chan_freq(spw_id)?,
+            channel_widths_hz: spectral_window.chan_width(spw_id)?,
+        });
+    }
+    let mut continuum_selected_source_channels =
+        if matches!(request.spectral_mode, SpectralImagingMode::Continuum) {
+            Some(
+                spectral_windows
+                    .iter()
+                    .map(|window| {
+                        Ok((
+                            window.spw_id,
+                            selected_channels(&request, window.spw_id, &window.frequencies_hz)?,
+                        ))
+                    })
+                    .collect::<Result<BTreeMap<_, _>, crate::ApplicationError>>()?,
+            )
+        } else {
+            None
+        };
+    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
+    let mut continuum_spectral_reducer = continuum_selected_source_channels
+        .as_ref()
+        .map(|selected| {
+            ms.selected_observation_spectral_envelope_reducer(
+                &row_selection,
+                spectral_windows.iter().map(|window| {
+                    SelectedObservationSpectralWindow::borrow_selected(
+                        u32::try_from(window.spw_id).expect("nonnegative i32 SPW fits u32"),
+                        window.frequency_reference,
+                        &window.frequencies_hz,
+                        &window.channel_widths_hz,
+                        selected
+                            .get(&window.spw_id)
+                            .expect("selected every candidate spectral window"),
+                    )
+                }),
+                FrequencyRef::LSRK,
+                &frame_engine,
+                content_budget.available_bytes(),
+            )
+        })
+        .transpose()?;
+    let spectral_reducer_bytes = continuum_spectral_reducer.as_ref().map_or(
+        0,
+        SelectedObservationSpectralEnvelopeReducer::retained_bytes,
+    );
+    let row_available_bytes = content_budget
+        .available_bytes()
+        .checked_sub(spectral_reducer_bytes)
+        .ok_or_else(|| boxed("selected spectral envelope exhausts the row traversal budget"))?;
     let mut selected_rows = SelectedRowsBuilder::with_data_description_capacity(
         u64::try_from(ms.row_count()).map_err(|_| boxed("MS row count exceeds u64"))?,
         ddids.len(),
@@ -1004,15 +1072,21 @@ fn prepare(
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut weight_spectrum_error = None;
+    let mut spectral_envelope_error = None;
     ms.visit_selected_observation_rows(
         &row_selection,
         MsSelectionIoBudget {
-            available_bytes: content_budget.available_bytes(),
+            available_bytes: row_available_bytes,
             maximum_live_blocks: content_budget.maximum_live_blocks(),
             requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
             storage_alignment_rows: None,
         },
         |row| {
+            if spectral_envelope_error.is_none()
+                && let Some(reducer) = continuum_spectral_reducer.as_mut()
+            {
+                spectral_envelope_error = reducer.observe(row).err();
+            }
             if weight_spectrum_complete {
                 match main_table
                     .column_accessor("WEIGHT_SPECTRUM")
@@ -1046,6 +1120,12 @@ fn prepare(
     if let Some(error) = weight_spectrum_error {
         return Err(Box::new(error));
     }
+    if let Some(error) = spectral_envelope_error {
+        return Err(Box::new(error));
+    }
+    let continuum_spectral_envelope = continuum_spectral_reducer
+        .map(SelectedObservationSpectralEnvelopeReducer::finish)
+        .transpose()?;
     let rows = selected_rows.finish();
     if rows.selected_row_count() == 0 {
         return Err(boxed("selection resolved to no rows"));
@@ -1072,22 +1152,19 @@ fn prepare(
         .iter()
         .map(|(spw_id, _)| *spw_id)
         .collect::<BTreeSet<_>>();
+    spectral_windows.retain(|window| spw_ids.contains(&window.spw_id));
+    if let Some(selected) = continuum_selected_source_channels.as_mut() {
+        selected.retain(|spw_id, _| spw_ids.contains(spw_id));
+    }
     let mut source_frequency_reference = None;
-    let mut spectral_windows = Vec::with_capacity(spw_ids.len());
-    for spw_id in spw_ids {
-        let reference = FrequencyRef::from_casacore_code(spectral_window.meas_freq_ref(spw_id)?)
-            .ok_or_else(|| boxed("selected SPW has an unsupported frequency frame"))?;
+    for window in &spectral_windows {
+        let reference = window.frequency_reference;
         if source_frequency_reference.is_some_and(|selected| selected != reference) {
             return Err(boxed(
                 "selected spectral windows use different source frequency frames",
             ));
         }
         source_frequency_reference.get_or_insert(reference);
-        spectral_windows.push(SourceSpectralWindow {
-            spw_id,
-            frequencies_hz: spectral_window.chan_freq(spw_id)?,
-            channel_widths_hz: spectral_window.chan_width(spw_id)?,
-        });
     }
     let phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(&ms, field_id)?;
     let default_main_direction = SkyDirection::new(
@@ -1100,7 +1177,6 @@ fn prepare(
     let measures_provider = casa_ms::open_measures_runtime()?;
     let measures_identity =
         SelectedObservationMeasures::new(Arc::clone(&measures_provider))?.identity();
-    let frame_engine = casa_ms::derived::engine::MsCalEngine::new(&ms)?;
     let (phase_centre_law, ephemeris, main_direction) = match request.phase_center.as_deref() {
         None => (
             PhaseCentreLaw::Fixed(default_main_direction),
@@ -1238,6 +1314,8 @@ fn prepare(
         } else {
             None
         },
+        continuum_selected_source_channels,
+        continuum_spectral_envelope,
     )?;
     let (continuum_transform, selected_source_channels) = if request.continuum_subtraction.is_some()
     {
@@ -1356,6 +1434,9 @@ fn prepare(
         }
     }
     prepared_domains.sort_by(|left, right| left.role.cmp(&right.role));
+    let mosaic = request
+        .task_requirements
+        .contains(&TaskRequirement::MosaicGridder);
     let geometry = casa_imaging_model::GeometryInput::new(
         prepared_domains
             .iter()
@@ -1384,9 +1465,24 @@ fn prepare(
         CentreLaws::new(
             phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::PhaseTrackingCentre,
+            if mosaic {
+                PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                    PointingDirectionColumn::Direction,
+                    PointingDirectionSemantic::AntennaBoresight,
+                    PointingTimeSampling::VisibilityTimeCentroid,
+                    PointingInterpolation::GreatCircleShortestArc,
+                    PointingExtrapolation::Reject,
+                    MissingPointingPolicy::Reject,
+                ))
+            } else {
+                PointingCentreLaw::PhaseTrackingCentre
+            },
         ),
-        UvwCoordinateLaw::PhaseTrackingCentre,
+        if mosaic {
+            UvwCoordinateLaw::MosaicPhaseTrackingCentre
+        } else {
+            UvwCoordinateLaw::PhaseTrackingCentre
+        },
         SpectralCoordinateSpec::new(
             prepared_spectral.source_frame,
             prepared_spectral.output_frame,
@@ -1396,9 +1492,13 @@ fn prepare(
             prepared_spectral.doppler,
         ),
     );
-    let primary_beam_model = (request.write_primary_beam || request.pbcor)
-        .then(|| standard_primary_beam_model(&ms))
-        .transpose()?;
+    let primary_beam_model = if mosaic {
+        Some(casa_imaging_products::AnalyticPrimaryBeamModel::MosaicSensitivity)
+    } else if request.write_primary_beam || request.pbcor {
+        Some(standard_primary_beam_model(&ms)?)
+    } else {
+        None
+    };
     let mut product_controls =
         casa_imaging_products::ContinuumProductControls::new(request.psf_cutoff)
             .expect("validated PSF cutoff");
@@ -1601,10 +1701,15 @@ fn scientific_instrument_model(
     request: &ContinuumImagingRequest,
     ms: &MeasurementSet,
 ) -> Result<Option<(InstrumentModel, LogicalIdentity)>, crate::ApplicationError> {
-    if !matches!(
-        request.spectral_mode,
-        SpectralImagingMode::MtmfsViaCube { .. }
-    ) {
+    let mosaic = request
+        .task_requirements
+        .contains(&TaskRequirement::MosaicGridder);
+    if !mosaic
+        && !matches!(
+            request.spectral_mode,
+            SpectralImagingMode::MtmfsViaCube { .. }
+        )
+    {
         return Ok(None);
     }
     let observation = ms.observation()?;
@@ -1615,9 +1720,15 @@ fn scientific_instrument_model(
                 .map(|name| name.trim().to_string())
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
-    if telescopes.iter().map(String::as_str).collect::<Vec<_>>() != ["ALMA"] {
+    let telescope_names = telescopes.iter().map(String::as_str).collect::<Vec<_>>();
+    let supported_telescope = if mosaic {
+        matches!(telescope_names.as_slice(), ["ALMA"] | ["ACA"])
+    } else {
+        matches!(telescope_names.as_slice(), ["ALMA"])
+    };
+    if !supported_telescope {
         return Err(boxed(format!(
-            "channel-major primary-beam response requires one ALMA observation; found {telescopes:?}"
+            "primary-beam response requires one supported homogeneous observation; found {telescopes:?}"
         )));
     }
     let antenna = ms.antenna()?;
@@ -2279,6 +2390,9 @@ fn specification(
     spectral: &PreparedSpectralAxis,
     instrument_model: Option<InstrumentModel>,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
+    let mosaic = request
+        .task_requirements
+        .contains(&TaskRequirement::MosaicGridder);
     let algorithm = reconstruction_algorithm(&request.algorithm);
     let basis = match (&request.spectral_mode, &request.algorithm) {
         (SpectralImagingMode::MtmfsViaCube { .. }, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
@@ -2388,32 +2502,14 @@ fn specification(
         reconstruction,
         WeightingContract::new(weighting, density),
         ProductRequirements::new(
-            {
-                let mut products = vec![
-                    ProductKind::Psf,
-                    ProductKind::Residual,
-                    ProductKind::Model,
-                    ProductKind::RestoredImage,
-                    ProductKind::SumWeights,
-                    ProductKind::Mask,
-                    ProductKind::Beam,
-                ];
-                if matches!(request.algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
-                    products.extend([
-                        ProductKind::TaylorTerms,
-                        ProductKind::SpectralIndex,
-                        ProductKind::SpectralIndexError,
-                    ]);
-                }
-                if request.write_primary_beam || request.pbcor {
-                    products.push(ProductKind::PrimaryBeam);
-                }
-                if request.pbcor {
-                    products.push(ProductKind::PbCorrectedImage);
-                }
-                products
-            },
-            ProductNormalization::UnitResponse,
+            requested_products(
+                &request.algorithm,
+                request.normalization,
+                mosaic,
+                request.write_primary_beam,
+                request.pbcor,
+            ),
+            request.normalization,
             match (&request.algorithm, request.beam_policy) {
                 (ContinuumAlgorithm::Mtmfs { .. }, _)
                 | (ContinuumAlgorithm::JointContinuumLine { .. }, _) => RestoringBeamPolicy::Common,
@@ -2454,6 +2550,47 @@ fn specification(
                 .collect(),
         ),
     ))
+}
+
+fn requested_products(
+    algorithm: &ContinuumAlgorithm,
+    normalization: ProductNormalization,
+    mosaic: bool,
+    write_primary_beam: bool,
+    pbcor: bool,
+) -> Vec<ProductKind> {
+    let mut products = vec![
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::Mask,
+        ProductKind::Beam,
+    ];
+    if matches!(algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
+        products.extend([
+            ProductKind::TaylorTerms,
+            ProductKind::SpectralIndex,
+            ProductKind::SpectralIndexError,
+        ]);
+    }
+    if mosaic {
+        products.push(ProductKind::Weight);
+    }
+    if !matches!(normalization, ProductNormalization::UnitResponse) {
+        products.push(ProductKind::Sensitivity);
+    }
+    if write_primary_beam || pbcor {
+        products.push(ProductKind::PrimaryBeam);
+    }
+    if pbcor {
+        products.push(ProductKind::PbCorrectedImage);
+        if mosaic && matches!(algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
+            products.push(ProductKind::PbCorrectedSpectralIndex);
+        }
+    }
+    products
 }
 
 fn reconstruction_algorithm(algorithm: &ContinuumAlgorithm) -> ReconstructionAlgorithm {
@@ -2794,7 +2931,7 @@ mod tests {
     use super::{
         ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
         canonicalize_polarizations, image_coordinates, image_reference_pixel, model_plane_samples,
-        parse_phase_center_direction, planned_minor_cycle_bytes,
+        parse_phase_center_direction, planned_minor_cycle_bytes, requested_products,
         resource_policy_for_task_requirements,
     };
 
@@ -2916,5 +3053,27 @@ mod tests {
         assert!(
             analytic_primary_beam_model_for_telescopes(&std::collections::BTreeSet::new()).is_err()
         );
+    }
+
+    #[test]
+    fn t47_mosaic_requests_weight_and_wideband_pb_correction() {
+        let products = requested_products(
+            &ContinuumAlgorithm::Mtmfs {
+                terms: 2,
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            casa_imaging_model::ProductNormalization::FlatNoise,
+            true,
+            true,
+            true,
+        );
+        for product in [
+            casa_imaging_model::ProductKind::Weight,
+            casa_imaging_model::ProductKind::Sensitivity,
+            casa_imaging_model::ProductKind::PbCorrectedSpectralIndex,
+        ] {
+            assert!(products.contains(&product));
+        }
     }
 }

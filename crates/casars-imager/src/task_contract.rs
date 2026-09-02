@@ -33,7 +33,7 @@ use crate::{
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 6;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 7;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -2224,6 +2224,9 @@ pub struct ImagerRunTaskRequest {
     /// Mosaic primary-beam cutoff used for flat-noise normalization.
     #[serde(default = "default_mosaic_pb_limit")]
     pub mosaic_pb_limit: f32,
+    /// CASA `normtype` used by mosaic and A/W-projection product publication.
+    #[serde(default = "default_aw_normalization")]
+    pub normalization: ImagerAwProjectNormalization,
     /// Write CASA-style PB-corrected mosaic image products.
     #[serde(default)]
     pub pbcor: bool,
@@ -2417,6 +2420,7 @@ impl ImagerRunTaskRequest {
             nsigma: config.nsigma,
             psf_cutoff: config.psf_cutoff,
             mosaic_pb_limit: config.mosaic_pb_limit,
+            normalization: config.normalization.into(),
             pbcor: config.pbcor,
             write_pb: config.write_pb,
             minor_cycle_length: config.minor_cycle_length,
@@ -2555,6 +2559,14 @@ impl ImagerRunTaskRequest {
                 }
             }
         }
+        let mut aw_project = self
+            .aw_project
+            .clone()
+            .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
+            .transpose()?;
+        if let Some(controls) = &mut aw_project {
+            controls.normalization = self.normalization.into();
+        }
         let mut config = CliConfig {
             ms: self.measurement_set.clone(),
             imagename: self.image_name.clone(),
@@ -2605,6 +2617,7 @@ impl ImagerRunTaskRequest {
             nsigma: self.nsigma,
             psf_cutoff: self.psf_cutoff,
             mosaic_pb_limit: self.mosaic_pb_limit,
+            normalization: self.normalization.into(),
             pbcor: self.pbcor,
             write_pb: self.write_pb,
             minor_cycle_length: self.minor_cycle_length,
@@ -2619,11 +2632,7 @@ impl ImagerRunTaskRequest {
             w_term_mode: self.w_term_mode.into(),
             force_standard_gridder: self.force_standard_gridder,
             w_project_planes: self.w_project_planes,
-            aw_project: self
-                .aw_project
-                .clone()
-                .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
-                .transpose()?,
+            aw_project,
             dirty_only: self.dirty_only,
             parallel: self.parallel,
             chanchunks: self.chanchunks,
@@ -2978,6 +2987,8 @@ pub enum ImagerArtifactKind {
     Alpha,
     /// Spectral-index uncertainty image.
     AlphaError,
+    /// Primary-beam-corrected spectral-index image.
+    AlphaPbcor,
 }
 
 impl ImagerArtifactKind {
@@ -2994,6 +3005,7 @@ impl ImagerArtifactKind {
             Self::ImagePbcor => "image.pbcor",
             Self::Alpha => "alpha",
             Self::AlphaError => "alpha.error",
+            Self::AlphaPbcor => "alpha.pbcor",
         }
     }
 }
@@ -3203,7 +3215,9 @@ pub(crate) fn build_artifacts_for_products(
 fn artifact_kind_for_product_suffix(suffix: &str) -> ImagerArtifactKind {
     if suffix == ".alpha.error" {
         ImagerArtifactKind::AlphaError
-    } else if suffix == ".alpha" || suffix == ".alpha.pbcor" {
+    } else if suffix == ".alpha.pbcor" {
+        ImagerArtifactKind::AlphaPbcor
+    } else if suffix == ".alpha" {
         ImagerArtifactKind::Alpha
     } else if suffix.starts_with(".psf") {
         ImagerArtifactKind::Psf
@@ -3240,6 +3254,7 @@ fn artifact_label_for_product_suffix(suffix: &str) -> String {
         ImagerArtifactKind::ImagePbcor => "PB-corrected Image",
         ImagerArtifactKind::Alpha => "Spectral Index",
         ImagerArtifactKind::AlphaError => "Spectral Index Error",
+        ImagerArtifactKind::AlphaPbcor => "PB-corrected Spectral Index",
     };
     suffix
         .split(".tt")
@@ -3290,19 +3305,20 @@ mod tests {
     use super::{
         IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROJECTED_PARAMETERS,
         IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
-        ImagerAutoMultiThresholdConfig, ImagerCleanMaskMode, ImagerCleanStopReason,
-        ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation, ImagerDeconvolver,
-        ImagerHogbomIterationMode, ImagerObservedResourceId, ImagerObservedResourceState,
-        ImagerObservedStageKind, ImagerPlaneSelection, ImagerProgressDetail, ImagerProgressEvent,
-        ImagerProgressRuntime, ImagerProjection, ImagerRestoringBeamMode, ImagerRunTaskRequest,
-        ImagerSaveModel, ImagerSpectralMode, ImagerTaskRequest, ImagerUnsupportedReason,
-        ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
-        imager_task_schema_bundle,
+        ImagerAutoMultiThresholdConfig, ImagerAwProjectNormalization, ImagerCleanMaskMode,
+        ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
+        ImagerDeconvolver, ImagerHogbomIterationMode, ImagerObservedResourceId,
+        ImagerObservedResourceState, ImagerObservedStageKind, ImagerPlaneSelection,
+        ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime, ImagerProjection,
+        ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
+        ImagerTaskRequest, ImagerUnsupportedReason, ImagerUvTaper, ImagerUvTaperSize,
+        ImagerWTermMode, ImagerWeighting, imager_task_schema_bundle,
     };
     use crate::{
-        CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, ImagingFftBackendPolicy,
-        ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RestoringBeamMode, SaveModelMode,
-        SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize, WTermMode, WeightingMode,
+        AwProjectNormalization, CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper,
+        ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
+        RestoringBeamMode, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize,
+        WTermMode, WeightingMode,
     };
 
     #[test]
@@ -3743,6 +3759,31 @@ mod tests {
     }
 
     #[test]
+    fn mosaic_flatsky_normalization_roundtrips_through_the_task_contract() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("256"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--usepointing"),
+            OsString::from("--normtype"),
+            OsString::from("flatsky"),
+        ])
+        .expect("mosaic flatsky CLI");
+
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        assert_eq!(request.normalization, ImagerAwProjectNormalization::Flatsky);
+        let restored = request.to_cli_config().expect("task request roundtrip");
+        assert_eq!(restored.normalization, AwProjectNormalization::FlatSky);
+    }
+
+    #[test]
     fn task_request_defaults_match_cli_defaults() {
         let request = ImagerRunTaskRequest {
             measurement_set: PathBuf::from("demo.ms"),
@@ -3787,6 +3828,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.2,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -3901,6 +3943,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -4175,6 +4218,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -4341,6 +4385,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -4920,6 +4965,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.2,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,

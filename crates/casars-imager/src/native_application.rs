@@ -8,15 +8,16 @@ use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
     ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
     HogbomIterationAccounting, ImagingCapabilityRequirement, PolarizationCoordinate,
-    ResourcePolicy, SpectralImagingMode, TaskRequirement, UnsupportedRequirement,
-    VisibilityContinuumSubtraction, execute_continuum, installed_imaging_capability_catalog,
-    resource_policy_for_task_requirements,
+    ProductNormalization, ResourcePolicy, SpectralImagingMode, TaskRequirement,
+    UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    installed_imaging_capability_catalog, resource_policy_for_task_requirements,
 };
 
 use super::{
-    CleanMaskMode, CleanStopReason, CliConfig, CubeAxisValue, Deconvolver, ImagingFftBackendPolicy,
-    ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RestoringBeamMode, RunSummary,
-    SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, WTermMode, WeightingMode,
+    AwProjectNormalization, CleanMaskMode, CleanStopReason, CliConfig, CubeAxisValue, Deconvolver,
+    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
+    RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
+    WTermMode, WeightingMode,
 };
 
 fn hex(bytes: [u8; 32]) -> String {
@@ -145,6 +146,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
     let iterations = config.niter;
     let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
     let task_requirements = task_requirements(config);
+    let mosaic = task_requirements.contains(&TaskRequirement::MosaicGridder);
     let resource_policy = if config.parallel == Some(true) {
         ResourcePolicy::Balanced
     } else {
@@ -199,6 +201,19 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
         primary_beam_cutoff: config.mosaic_pb_limit.abs(),
+        normalization: if mosaic {
+            match config.normalization {
+                AwProjectNormalization::FlatNoise => ProductNormalization::FlatNoise,
+                AwProjectNormalization::FlatSky => ProductNormalization::FlatSky,
+                AwProjectNormalization::PbSquare => {
+                    return Err(
+                        "native imaging does not implement pbsquare normalization".to_string()
+                    );
+                }
+            }
+        } else {
+            ProductNormalization::UnitResponse
+        },
         beam_policy: match config.restoring_beam_mode {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,
@@ -428,7 +443,7 @@ mod tests {
     use std::ffi::OsString;
 
     use casa_imaging_application::{
-        ImagingCapabilityRequirement, PolarizationCoordinate, ResourcePolicy,
+        ImagingCapabilityRequirement, PolarizationCoordinate, ProductNormalization, ResourcePolicy,
         installed_imaging_capability_catalog,
     };
 
@@ -478,6 +493,32 @@ mod tests {
                 .expect("installed Stokes-Q request")
                 .polarizations,
             [PolarizationCoordinate::StokesQ]
+        );
+    }
+
+    #[test]
+    fn product_normalization_is_mosaic_specific() {
+        assert_eq!(
+            application_request(&config(&[])).unwrap().normalization,
+            ProductNormalization::UnitResponse
+        );
+        assert_eq!(
+            application_request(&config(&["--gridder", "mosaic", "--usepointing"]))
+                .unwrap()
+                .normalization,
+            ProductNormalization::FlatNoise
+        );
+        assert_eq!(
+            application_request(&config(&[
+                "--gridder",
+                "mosaic",
+                "--usepointing",
+                "--normtype",
+                "flatsky",
+            ]))
+            .unwrap()
+            .normalization,
+            ProductNormalization::FlatSky
         );
     }
 

@@ -8,9 +8,9 @@ use std::{collections::BTreeMap, fmt, mem::size_of};
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, FiniteValuePolicy,
     ImageDomainRole, LogicalIdentity, SelectedImageDomainProjections, SelectedInputWeightGroup,
-    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedSampleAddress,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample, UvTaper,
-    WeightDensityScope, WeightingCommitmentId, WeightingScheme,
+    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedPointingDirections,
+    SelectedSampleAddress, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedVisibilitySample, UvTaper, WeightDensityScope, WeightingCommitmentId, WeightingScheme,
 };
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
@@ -669,6 +669,7 @@ impl WeightingDensityPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: impl Into<SelectedObservationSampleView<'a>>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
@@ -678,7 +679,7 @@ impl WeightingDensityPhase {
         }
         let sample = sample.into();
         let density_owner = sample.input_weight_group().is_density_owner();
-        let sample = WeightingSelectedSample::from_selected(sample);
+        let sample = WeightingSelectedSample::from_selected(sample, output_frame_frequency_hz);
         for contribution in contributions.iter() {
             extend_frequency_range(
                 &mut self.frequency_range_hz,
@@ -789,6 +790,7 @@ impl WeightingSumWeightPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: impl Into<SelectedObservationSampleView<'a>>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<(), WeightingError> {
         if self.problem != problem.problem_id()
@@ -796,7 +798,12 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let _ = self.weighted_sample(problem, sample.into(), contributions)?;
+        let _ = self.weighted_sample(
+            problem,
+            sample.into(),
+            output_frame_frequency_hz,
+            contributions,
+        )?;
         Ok(())
     }
 
@@ -804,6 +811,7 @@ impl WeightingSumWeightPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'_>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<WeightingSampleValue, WeightingError> {
         if self.problem != problem.problem_id()
@@ -811,7 +819,23 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample = WeightingSelectedSample::from_selected(sample);
+        let sample = WeightingSelectedSample::from_selected(sample, output_frame_frequency_hz);
+        let source_imaging_weight = match problem.weighting().density_scope() {
+            WeightDensityScope::PerOutputChannel => None,
+            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
+                let source = SelectedSpectralContribution::new(0, 1.0, output_frame_frequency_hz)
+                    .ok_or(WeightingError::OutputChannelMismatch)?;
+                Some(weight_from_state(
+                    problem,
+                    self.grid,
+                    &self.density,
+                    &self.robust_f2,
+                    self.frequency_range_hz,
+                    &sample,
+                    Some(source),
+                )?)
+            }
+        };
         let spectral_values = contributions
             .iter()
             .map(|contribution| {
@@ -849,6 +873,7 @@ impl WeightingSumWeightPhase {
             .ok_or(WeightingError::SampleCountOverflow)?;
         Ok(WeightingSampleValue {
             sample,
+            source_imaging_weight,
             spectral_values,
         })
     }
@@ -956,11 +981,15 @@ impl FusedWeightingPhase {
         &mut self,
         problem: &CompiledProblem,
         sample: impl Into<SelectedObservationSampleView<'a>>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
-        let weighted = self
-            .sum
-            .weighted_sample(problem, sample.into(), contributions)?;
+        let weighted = self.sum.weighted_sample(
+            problem,
+            sample.into(),
+            output_frame_frequency_hz,
+            contributions,
+        )?;
         let emitted = self
             .flush_before_group(&weighted)?
             .then(|| self.take_block())
@@ -1143,9 +1172,9 @@ impl WeightingSpectralValue {
 
 /// Compact kernel projection of one validated selected sample.
 ///
-/// Row-level geometry that is needed only for source validation is deliberately
-/// absent. Bounded weighting/reconstruction blocks retain only the coordinates,
-/// flags, visibility, and address consumed by the scientific kernels.
+/// Row-level geometry used only for source validation is absent. The bounded
+/// block retains the field, pointing, frequency, coordinates, flags,
+/// visibility, and address consumed by the scientific kernels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSelectedSample {
     pub(crate) address: SelectedSampleAddress,
@@ -1161,11 +1190,17 @@ pub struct WeightingSelectedSample {
     pub(crate) correlation_group_size: usize,
     pub(crate) parallactic_angles_rad: [f64; 2],
     pub(crate) density_uvw_m: [f64; 3],
+    output_frame_frequency_hz: f64,
+    field_id: i32,
+    pointing_directions: SelectedPointingDirections,
     domain_projections: SelectedImageDomainProjections,
 }
 
 impl WeightingSelectedSample {
-    fn from_selected(sample: SelectedObservationSampleView<'_>) -> Self {
+    fn from_selected(
+        sample: SelectedObservationSampleView<'_>,
+        output_frame_frequency_hz: f64,
+    ) -> Self {
         let coordinates = sample.coordinates();
         let input_weight_group = sample.input_weight_group();
         Self {
@@ -1181,6 +1216,9 @@ impl WeightingSelectedSample {
             correlation_group_size: input_weight_group.member_count(),
             parallactic_angles_rad: coordinates.parallactic_angles_rad,
             density_uvw_m: coordinates.density_uvw_m,
+            output_frame_frequency_hz,
+            field_id: sample.metadata().field_id,
+            pointing_directions: coordinates.pointing_directions,
             domain_projections: sample.domain_projections().clone(),
         }
     }
@@ -1219,6 +1257,24 @@ impl WeightingSelectedSample {
     #[must_use]
     pub const fn parallactic_angles_rad(&self) -> [f64; 2] {
         self.parallactic_angles_rad
+    }
+
+    /// Return the selected MeasurementSet field identifier used for mosaic routing.
+    #[must_use]
+    pub const fn field_id(&self) -> i32 {
+        self.field_id
+    }
+
+    /// Return the source-channel centre transformed into the compiled output frame.
+    #[must_use]
+    pub const fn output_frame_frequency_hz(&self) -> f64 {
+        self.output_frame_frequency_hz
+    }
+
+    /// Return the two antenna pointing directions used by the mosaic response.
+    #[must_use]
+    pub const fn pointing_directions(&self) -> SelectedPointingDirections {
+        self.pointing_directions
     }
 
     fn starts_correlation_group(&self) -> bool {
@@ -1277,6 +1333,7 @@ fn casa_unpolarized_input_weight(group: SelectedInputWeightGroup) -> f32 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSampleValue {
     sample: WeightingSelectedSample,
+    source_imaging_weight: Option<f64>,
     spectral_values: SmallVec<[WeightingSpectralValue; 4]>,
 }
 
@@ -1290,6 +1347,12 @@ impl WeightingSampleValue {
     /// Iterate over output-channel contributions and their W values.
     pub fn spectral_values(&self) -> impl Iterator<Item = WeightingSpectralValue> + '_ {
         self.spectral_values.iter().copied()
+    }
+
+    /// Return the output-channel-independent imaging weight at the transformed source centre.
+    #[must_use]
+    pub const fn source_imaging_weight(&self) -> Option<f64> {
+        self.source_imaging_weight
     }
 }
 
@@ -1365,6 +1428,7 @@ impl WeightingReplayPhase<'_> {
         &mut self,
         problem: &CompiledProblem,
         sample: impl Into<SelectedObservationSampleView<'a>>,
+        output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         if self.generation.problem != problem.problem_id()
@@ -1373,7 +1437,19 @@ impl WeightingReplayPhase<'_> {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample = WeightingSelectedSample::from_selected(sample.into());
+        let sample =
+            WeightingSelectedSample::from_selected(sample.into(), output_frame_frequency_hz);
+        let source_imaging_weight = match problem.weighting().density_scope() {
+            WeightDensityScope::PerOutputChannel => None,
+            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
+                let source = SelectedSpectralContribution::new(0, 1.0, output_frame_frequency_hz)
+                    .ok_or(WeightingError::OutputChannelMismatch)?;
+                Some(
+                    self.generation
+                        .weight(self.problem, &sample, Some(source))?,
+                )
+            }
+        };
         let spectral_values = contributions
             .iter()
             .map(|contribution| {
@@ -1389,6 +1465,7 @@ impl WeightingReplayPhase<'_> {
             .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
         let weighted = WeightingSampleValue {
             sample,
+            source_imaging_weight,
             spectral_values,
         };
         let emitted = self
@@ -2155,12 +2232,12 @@ mod exact_f32_accumulator_tests {
 }
 
 #[derive(Default)]
-struct ExactF64Sum {
-    bins: BTreeMap<i16, u128>,
+pub(crate) struct ExactF64Sum {
+    pub(crate) bins: BTreeMap<i16, u128>,
 }
 
 impl ExactF64Sum {
-    fn add(&mut self, value: f64) -> Result<(), WeightingError> {
+    pub(crate) fn add(&mut self, value: f64) -> Result<(), WeightingError> {
         if value == 0.0 {
             return Ok(());
         }
@@ -2182,11 +2259,22 @@ impl ExactF64Sum {
         Ok(())
     }
 
-    fn value(&self) -> f64 {
+    pub(crate) fn value(&self) -> f64 {
         self.bins
             .iter()
             .map(|(power, mantissa)| (*mantissa as f64) * 2_f64.powi(i32::from(*power)))
             .sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn merge(&mut self, other: Self) -> Result<(), WeightingError> {
+        for (power, mantissa) in other.bins {
+            let bin = self.bins.entry(power).or_default();
+            *bin = bin
+                .checked_add(mantissa)
+                .ok_or(WeightingError::ExactReductionOverflow)?;
+        }
+        Ok(())
     }
 }
 

@@ -1341,6 +1341,8 @@ pub struct CompleteDataResidency {
     fft_planning_bytes: usize,
     forward_workspace_bytes: usize,
     response_workspace_bytes: usize,
+    mosaic_state_bytes: usize,
+    mosaic_workspace_bytes: usize,
     gridded_route_bytes: usize,
     gridded_replay_schedule_bytes: usize,
     primitive_output_bytes: usize,
@@ -1395,6 +1397,18 @@ impl CompleteDataResidency {
     #[must_use]
     pub const fn response_workspace_bytes(self) -> usize {
         self.response_workspace_bytes
+    }
+
+    /// Bytes retained by bounded mosaic response, phase, and normal state.
+    #[must_use]
+    pub const fn mosaic_state_bytes(self) -> usize {
+        self.mosaic_state_bytes
+    }
+
+    /// Peak reusable mosaic convolution-build or sensitivity-completion workspace.
+    #[must_use]
+    pub const fn mosaic_workspace_bytes(self) -> usize {
+        self.mosaic_workspace_bytes
     }
 
     /// Bytes for the retained schedule route during gridded replay.
@@ -1886,6 +1900,24 @@ impl CompleteDataPlanFragment {
                 residency.major_cycle_model_bytes(),
             ),
         ];
+        if residency.response_workspace_bytes() > 0 {
+            required.push((
+                format!("spectral-operator-response-workspace-{suffix}"),
+                residency.response_workspace_bytes(),
+            ));
+        }
+        if residency.mosaic_state_bytes() > 0 {
+            required.push((
+                format!("spectral-operator-mosaic-state-{suffix}"),
+                residency.mosaic_state_bytes(),
+            ));
+        }
+        if residency.mosaic_workspace_bytes() > 0 {
+            required.push((
+                format!("spectral-operator-mosaic-workspace-{suffix}"),
+                residency.mosaic_workspace_bytes(),
+            ));
+        }
         if residency.gridded_route_bytes() > 0 {
             required.push((
                 format!("spectral-operator-gridded-route-{suffix}"),
@@ -2040,6 +2072,11 @@ impl CompleteDataPlanFragment {
             specs[4].usage(replay_fence.clone()),
             specs[5].usage(replay_fence),
         ]);
+        for replay_state in &specs[6..] {
+            replay
+                .allocations
+                .push(replay_state.usage(ClaimLifetime::through_fence(FenceKind::Io)));
+        }
         for spec in gridded_specs.iter().flatten() {
             replay
                 .allocations
@@ -2155,7 +2192,7 @@ impl CompleteDataPlanFragment {
     fn allocation_specs(
         &self,
         reconciliation: &WorkNodeId,
-    ) -> Result<[CompleteDataAllocation; 6], CompleteDataPlanError> {
+    ) -> Result<Vec<CompleteDataAllocation>, CompleteDataPlanError> {
         let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let residency = self.residency;
         let replay_done = BTreeSet::from([WorkDependency::Fence(FenceId::new(
@@ -2164,7 +2201,7 @@ impl CompleteDataPlanFragment {
         ))]);
         let reconciled = BTreeSet::from([WorkDependency::Work(reconciliation.clone())]);
         let residual_refresh = self.workload.pass() == SpectralOperatorPass::ResidualRefresh;
-        Ok([
+        let mut allocations = vec![
             CompleteDataAllocation::new(
                 format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
@@ -2221,7 +2258,26 @@ impl CompleteDataPlanFragment {
                 self.preparation_node.clone(),
                 BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
             )?,
-        ])
+        ];
+        if residency.response_workspace_bytes() > 0 {
+            allocations.push(CompleteDataAllocation::new(
+                format!("spectral-operator-response-workspace-{suffix}"),
+                residency.response_workspace_bytes(),
+                "spectral-operator-frequency-dependent-response-plane",
+                InitializationPolicy::OverwriteBeforeRead,
+                self.replay_node.clone(),
+                BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                    self.replay_node.clone(),
+                    FenceKind::Io,
+                ))]),
+            )?);
+        }
+        allocations.extend(mosaic_allocation_specs(
+            residency,
+            &suffix,
+            &self.replay_node,
+        )?);
+        Ok(allocations)
     }
 
     fn route_allocation_spec(
@@ -2341,6 +2397,8 @@ fn project_residency(
         .response_f32_values()
         .checked_mul(size_of::<f32>())
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+    let mosaic_state_bytes = workload.mosaic_state_bytes();
+    let mosaic_workspace_bytes = workload.mosaic_workspace_bytes();
     let gridded_route_bytes = gridded_route_residency
         .map(GriddedNormalRouteResidency::peak_bytes)
         .unwrap_or(0);
@@ -2383,6 +2441,8 @@ fn project_residency(
         .and_then(|bytes| bytes.checked_add(fft_planning_bytes))
         .and_then(|bytes| bytes.checked_add(forward_workspace_bytes))
         .and_then(|bytes| bytes.checked_add(response_workspace_bytes))
+        .and_then(|bytes| bytes.checked_add(mosaic_state_bytes))
+        .and_then(|bytes| bytes.checked_add(mosaic_workspace_bytes))
         .and_then(|bytes| bytes.checked_add(gridded_route_bytes))
         .and_then(|bytes| bytes.checked_add(gridded_replay_schedule_bytes))
         .and_then(|bytes| bytes.checked_add(primitive_output_bytes))
@@ -2395,12 +2455,49 @@ fn project_residency(
         fft_planning_bytes,
         forward_workspace_bytes,
         response_workspace_bytes,
+        mosaic_state_bytes,
+        mosaic_workspace_bytes,
         gridded_route_bytes,
         gridded_replay_schedule_bytes,
         primitive_output_bytes,
         major_cycle_model_bytes,
         peak_bytes,
     })
+}
+
+fn mosaic_allocation_specs(
+    residency: CompleteDataResidency,
+    suffix: &str,
+    replay_node: &WorkNodeId,
+) -> Result<Vec<CompleteDataAllocation>, CompleteDataPlanError> {
+    let release_after = || {
+        BTreeSet::from([WorkDependency::Fence(FenceId::new(
+            replay_node.clone(),
+            FenceKind::Io,
+        ))])
+    };
+    let mut allocations = Vec::with_capacity(2);
+    if residency.mosaic_state_bytes() > 0 {
+        allocations.push(CompleteDataAllocation::new(
+            format!("spectral-operator-mosaic-state-{suffix}"),
+            residency.mosaic_state_bytes(),
+            "spectral-operator-bounded-mosaic-response-phase-and-normal-state",
+            InitializationPolicy::OverwriteBeforeRead,
+            replay_node.clone(),
+            release_after(),
+        )?);
+    }
+    if residency.mosaic_workspace_bytes() > 0 {
+        allocations.push(CompleteDataAllocation::new(
+            format!("spectral-operator-mosaic-workspace-{suffix}"),
+            residency.mosaic_workspace_bytes(),
+            "spectral-operator-reusable-mosaic-build-or-completion-workspace",
+            InitializationPolicy::OverwriteBeforeRead,
+            replay_node.clone(),
+            release_after(),
+        )?);
+    }
+    Ok(allocations)
 }
 
 struct CompleteDataAllocation {
@@ -3147,9 +3244,10 @@ impl From<SpectralOperatorError> for CompleteDataOperatorError {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompleteDataPlanError, GriddedNormalReplayPlanningCapacity, GriddedNormalReplayWindowPlan,
-        GriddedNormalRouteResidency, bind_gridded_replay_window_plan,
-        gridded_buffer_claim_satisfies, gridded_normal_route_capacity_bytes,
+        CompleteDataPlanError, CompleteDataResidency, GriddedNormalReplayPlanningCapacity,
+        GriddedNormalReplayWindowPlan, GriddedNormalRouteResidency,
+        bind_gridded_replay_window_plan, gridded_buffer_claim_satisfies,
+        gridded_normal_route_capacity_bytes, mosaic_allocation_specs,
     };
 
     const TEST_RECORD_BYTES: usize = 32;
@@ -3160,6 +3258,48 @@ mod tests {
             .checked_mul(super::GRIDDED_NORMAL_SOURCE_SLOTS)
             .and_then(|bytes| bytes.checked_add(route_capacity_bytes))
             .expect("small test working set")
+    }
+
+    #[test]
+    fn t47_mosaic_allocations_are_exact_and_replay_fence_bounded() {
+        let residency = CompleteDataResidency {
+            grid_bytes: 0,
+            convolution_cache_bytes: 0,
+            fft_resident_bytes: 0,
+            fft_planning_bytes: 0,
+            forward_workspace_bytes: 0,
+            response_workspace_bytes: 0,
+            mosaic_state_bytes: 7,
+            mosaic_workspace_bytes: 11,
+            gridded_route_bytes: 0,
+            gridded_replay_schedule_bytes: 0,
+            primitive_output_bytes: 0,
+            major_cycle_model_bytes: 0,
+            peak_bytes: 18,
+        };
+        let replay = crate::WorkNodeId::new("t47-mosaic-replay");
+        let allocations =
+            mosaic_allocation_specs(residency, "initial-128x128-ch0-1", &replay).unwrap();
+
+        assert_eq!(allocations.len(), 2);
+        assert_eq!(allocations[0].bytes, 7);
+        assert_eq!(allocations[1].bytes, 11);
+        assert!(allocations[0].allocation.as_str().contains("mosaic-state"));
+        assert!(
+            allocations[1]
+                .allocation
+                .as_str()
+                .contains("mosaic-workspace")
+        );
+        for allocation in allocations {
+            assert_eq!(allocation.acquire_at, replay);
+            assert_eq!(
+                allocation.release_after,
+                std::collections::BTreeSet::from([crate::WorkDependency::Fence(
+                    crate::FenceId::new(replay.clone(), crate::FenceKind::Io)
+                )])
+            );
+        }
     }
 
     #[test]
