@@ -726,6 +726,18 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     };
 
     let interactive = make_authority();
+    let mut planning_base = demand("planning-base", 100);
+    planning_base.alternatives[0].headroom.memory_bytes =
+        BTreeMap::from([(CapacityDomainId::new("unified-memory"), 100)]);
+    assert_eq!(
+        interactive
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Interactive,
+                &planning_base.alternatives[0],
+            )
+            .expect("interactive planning capacity"),
+        300
+    );
     let error = interactive
         .acquire(
             ResourcePolicy::Interactive,
@@ -736,6 +748,15 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let _interactive_a = interactive
         .acquire(ResourcePolicy::Interactive, demand("interactive-a", 250))
         .expect("first interactive lease fits");
+    assert_eq!(
+        interactive
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Interactive,
+                &planning_base.alternatives[0],
+            )
+            .expect("active leases reduce planning capacity"),
+        50
+    );
     let _interactive_b = interactive
         .acquire(ResourcePolicy::Interactive, demand("interactive-b", 250))
         .expect("second interactive lease reaches the aggregate cap");
@@ -750,6 +771,15 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
     let balanced = make_authority();
     assert_eq!(
         balanced
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Balanced,
+                &planning_base.alternatives[0],
+            )
+            .expect("balanced planning capacity"),
+        550
+    );
+    assert_eq!(
+        balanced
             .acquire(ResourcePolicy::Balanced, demand("balanced-too-large", 751))
             .expect_err("balanced admission caps memory at seventy-five percent")
             .available(),
@@ -759,7 +789,17 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
         .acquire(ResourcePolicy::Balanced, demand("balanced", 750))
         .expect("balanced hard cap is usable");
 
-    make_authority()
+    let exclusive = make_authority();
+    assert_eq!(
+        exclusive
+            .remaining_planning_memory_bytes(
+                &ResourcePolicy::Exclusive,
+                &planning_base.alternatives[0],
+            )
+            .expect("exclusive planning capacity"),
+        800
+    );
+    exclusive
         .acquire(ResourcePolicy::Exclusive, demand("exclusive", 1_000))
         .expect("exclusive admission may consume all pressured capacity");
 }

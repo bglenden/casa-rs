@@ -248,7 +248,18 @@ fn t41_multi_spw_mvc_matches_casa_taylor_products() -> Result<(), Box<dyn Error>
     casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
     set_production_io_environment();
 
+    let started = std::time::Instant::now();
     let result = execute_continuum(mvc_request(measurement_set, rust_prefix.clone()))?;
+    let production_wall = started.elapsed();
+    eprintln!(
+        "t41_mvc_serial_production_wall_seconds={:.9}",
+        production_wall.as_secs_f64()
+    );
+    assert!(
+        production_wall.as_secs_f64() <= 10.474_082,
+        "T41 serial MVC production wall {:.9} s exceeds 2x frozen CASA",
+        production_wall.as_secs_f64()
+    );
     assert_eq!(
         result
             .outcome

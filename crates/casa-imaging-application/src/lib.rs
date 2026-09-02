@@ -54,8 +54,9 @@ use casa_imaging_runtime::{
     RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
+    StorageIoResourceBinding, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -909,9 +910,13 @@ fn execution_policy(
         runtime.weighting_limits,
         residency,
         runtime.storage_io.clone(),
-        runtime.stage_nanos,
-        runtime.minor_cycle_bytes,
-        runtime.confidence_parts_per_million,
+        SpectralCyclePlanningLimits::new(
+            runtime.stage_nanos,
+            runtime.minor_cycle_bytes,
+            runtime.confidence_parts_per_million,
+        ),
+        runtime.authority.clone(),
+        runtime.resource_policy.clone(),
     )
     .with_gridded_normal_storage(runtime.gridded_normal_storage.clone())
 }

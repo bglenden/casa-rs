@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
     fmt,
+    sync::OnceLock,
 };
 
 use casa_imaging_model::CompiledProblem;
@@ -37,6 +38,11 @@ const GRIDDED_SPILL_WRITE_RATE_DEMAND: &str = "gridded-normal-spill-write-rate";
 const GRIDDED_SPILL_QUEUE_DEMAND: &str = "gridded-normal-spill-queue";
 const GRIDDED_SPILL_STORAGE_DEMAND: &str = "gridded-normal-spill-storage";
 
+fn imaging_plan_diagnostics_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some())
+}
+
 fn bounded_worker_stack_bytes(workers: u64) -> Result<u64, SpectralCyclePlanError> {
     if workers == 1 {
         return Ok(0);
@@ -47,39 +53,63 @@ fn bounded_worker_stack_bytes(workers: u64) -> Result<u64, SpectralCyclePlanErro
 }
 
 /// Explicit non-scientific limits for one spectral cycle physical plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpectralCyclePlanningLimits {
+    stage_nanos: u64,
+    minor_cycle_bytes: u64,
+    confidence_parts_per_million: u32,
+}
+
+impl SpectralCyclePlanningLimits {
+    /// Bind stage prediction, minor-cycle residency, and prediction confidence.
+    #[must_use]
+    pub const fn new(
+        stage_nanos: u64,
+        minor_cycle_bytes: u64,
+        confidence_parts_per_million: u32,
+    ) -> Self {
+        Self {
+            stage_nanos,
+            minor_cycle_bytes,
+            confidence_parts_per_million,
+        }
+    }
+}
+
+/// Explicit non-scientific limits for one spectral cycle physical plan.
 #[derive(Clone)]
 pub struct SpectralCycleExecutionPolicy {
     implementation: WorkImplementationId,
     weighting_limits: WeightingExecutionLimits,
     selected_residency: SelectedObservationResidencyCertificate,
     storage_io: StorageIoResourceBinding,
-    stage_nanos: u64,
-    minor_cycle_bytes: u64,
-    confidence_parts_per_million: u32,
+    limits: SpectralCyclePlanningLimits,
+    authority: ResourceAuthority,
+    resource_policy: ResourcePolicy,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<GriddedNormalReplayStorage>,
 }
 
 impl SpectralCycleExecutionPolicy {
-    /// Construct explicit execution limits; no machine estimate is inferred.
+    /// Construct explicit execution limits bound to runtime-owned resource planning.
     #[must_use]
     pub fn new(
         implementation: WorkImplementationId,
         weighting_limits: WeightingExecutionLimits,
         selected_residency: SelectedObservationResidencyCertificate,
         storage_io: StorageIoResourceBinding,
-        stage_nanos: u64,
-        minor_cycle_bytes: u64,
-        confidence_parts_per_million: u32,
+        limits: SpectralCyclePlanningLimits,
+        authority: ResourceAuthority,
+        resource_policy: ResourcePolicy,
     ) -> Self {
         Self {
             implementation,
             weighting_limits,
             selected_residency,
             storage_io,
-            stage_nanos,
-            minor_cycle_bytes,
-            confidence_parts_per_million,
+            limits,
+            authority,
+            resource_policy,
             visibility_write: None,
             gridded_normal_storage: None,
         }
@@ -480,17 +510,35 @@ impl SpectralCyclePlan {
                     casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
                 ) =>
             {
-                let working_set_bytes = gridded_normal_storage
-                    .as_ref()
-                    .and_then(GriddedNormalReplayStorage::cpu_replay_capacity)
-                    .map(|(bytes, _)| bytes);
-                CompleteDataPlanFragment::mvc_with_preparation_node(
+                let memory_ceiling = policy.authority.remaining_planning_memory_bytes(
+                    &policy.resource_policy,
+                    physical.execution_dag().resource_alternative(),
+                )?;
+                let fragment = CompleteDataPlanFragment::mvc_with_preparation_node(
                     problem,
                     weighting.limits().max_block_samples(),
                     replay.clone(),
                     preparation_node,
-                    working_set_bytes,
-                )?
+                    memory_ceiling,
+                )?;
+                if imaging_plan_diagnostics_enabled() {
+                    let residency = fragment.residency();
+                    eprintln!(
+                        "imaging_mvc_plan_summary available_after_base_bytes={} admitted_slab_depth={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} primitive_output_bytes={} major_cycle_model_bytes={}",
+                        memory_ceiling,
+                        fragment.slab().core_depth(),
+                        residency.peak_bytes(),
+                        residency.grid_bytes(),
+                        residency.convolution_cache_bytes(),
+                        residency.fft_resident_bytes(),
+                        residency.fft_planning_bytes(),
+                        residency.forward_workspace_bytes(),
+                        residency.response_workspace_bytes(),
+                        residency.primitive_output_bytes(),
+                        residency.major_cycle_model_bytes(),
+                    );
+                }
+                fragment
             }
             SpectralPassPhase::InitialMajor => CompleteDataPlanFragment::new_with_preparation_node(
                 problem,
@@ -908,7 +956,7 @@ fn base_physical<R: ImplementationRegistry>(
         .nodes()
         .keys()
         .map(|node| {
-            let prediction = StagePrediction::new(node.clone(), policy.stage_nanos);
+            let prediction = StagePrediction::new(node.clone(), policy.limits.stage_nanos);
             if node == &read {
                 prediction.with_io(vec![IoPrediction::new(
                     IoBufferKind::SourceReadAhead,
@@ -924,10 +972,11 @@ fn base_physical<R: ImplementationRegistry>(
         .collect::<Vec<_>>();
     let prediction = PlanPrediction::new(
         policy
+            .limits
             .stage_nanos
             .checked_mul(predictions.len() as u64)
             .ok_or(SpectralCyclePlanError::Overflow)?,
-        PredictionConfidence::new(policy.confidence_parts_per_million)?,
+        PredictionConfidence::new(policy.limits.confidence_parts_per_million)?,
         vec![],
         predictions,
     )?;
@@ -1221,7 +1270,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         .nodes()
         .keys()
         .map(|node| {
-            let prediction = StagePrediction::new(node.clone(), policy.stage_nanos);
+            let prediction = StagePrediction::new(node.clone(), policy.limits.stage_nanos);
             if node == &commit {
                 prediction.with_io(vec![IoPrediction::new(IoBufferKind::Publication, 1, 1)])
             } else {
@@ -1231,10 +1280,11 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         .collect::<Vec<_>>();
     let prediction = PlanPrediction::new(
         policy
+            .limits
             .stage_nanos
             .checked_mul(predictions.len() as u64)
             .ok_or(SpectralCyclePlanError::Overflow)?,
-        PredictionConfidence::new(policy.confidence_parts_per_million)?,
+        PredictionConfidence::new(policy.limits.confidence_parts_per_million)?,
         vec![],
         predictions,
     )?;
@@ -1935,8 +1985,8 @@ fn append_minor<R: ImplementationRegistry>(
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.demand.memory.push(MemoryDemand {
         allocation_id: "spectral-cycle-minor-cycle".to_string(),
-        hard_bytes: policy.minor_cycle_bytes,
-        preferred_bytes: policy.minor_cycle_bytes,
+        hard_bytes: policy.limits.minor_cycle_bytes,
+        preferred_bytes: policy.limits.minor_cycle_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
     let dag = ExecutionDag::new(ExecutionDagSpecification {
@@ -1953,7 +2003,7 @@ fn append_minor<R: ImplementationRegistry>(
             .cloned()
             .chain([LogicalAllocation {
                 id: allocation,
-                bytes: policy.minor_cycle_bytes,
+                bytes: policy.limits.minor_cycle_bytes,
                 purpose: AllocationPurpose::Data,
                 compatibility: compatibility.clone(),
                 physical_slot: slot.clone(),
@@ -1973,7 +2023,7 @@ fn append_minor<R: ImplementationRegistry>(
                 lease_resource: LeaseResource::Memory {
                     allocation_id: "spectral-cycle-minor-cycle".to_string(),
                 },
-                capacity_bytes: policy.minor_cycle_bytes,
+                capacity_bytes: policy.limits.minor_cycle_bytes,
                 compatibility,
             }])
             .collect(),
@@ -1983,7 +2033,7 @@ fn append_minor<R: ImplementationRegistry>(
     let prediction = PlanPrediction::new(
         base.prediction()
             .elapsed_nanos()
-            .checked_add(policy.stage_nanos)
+            .checked_add(policy.limits.stage_nanos)
             .ok_or(SpectralCyclePlanError::Overflow)?,
         base.prediction().confidence(),
         base.prediction().uncertainty().to_vec(),
@@ -1991,7 +2041,10 @@ fn append_minor<R: ImplementationRegistry>(
             .stages()
             .values()
             .cloned()
-            .chain([StagePrediction::new(minor.clone(), policy.stage_nanos)])
+            .chain([StagePrediction::new(
+                minor.clone(),
+                policy.limits.stage_nanos,
+            )])
             .collect(),
     )?;
     let catalog =
@@ -2030,6 +2083,8 @@ pub enum SpectralCyclePlanError {
     Execution(ExecutionError),
     /// Physical work, prediction, or transaction binding failed.
     Physical(PhysicalWorkBindingError),
+    /// Whole-plan Resource Authority feasibility failed.
+    Resource(ResourceError),
 }
 impl fmt::Display for SpectralCyclePlanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2055,6 +2110,11 @@ impl From<crate::ContinuumTransformError> for SpectralCyclePlanError {
 impl From<CompleteDataPlanError> for SpectralCyclePlanError {
     fn from(v: CompleteDataPlanError) -> Self {
         Self::Complete(v)
+    }
+}
+impl From<ResourceError> for SpectralCyclePlanError {
+    fn from(value: ResourceError) -> Self {
+        Self::Resource(value)
     }
 }
 impl From<ExecutionError> for SpectralCyclePlanError {
