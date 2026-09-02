@@ -3,7 +3,7 @@
 into an already validated observation transaction. It is the only supported
 route for attaching reconstruction weighting residency to physical work.</p>
 </div></details><h2 id="implementations" class="section-header">Implementations<a href="#implementations" class="anchor">§</a></h2><div id="implementations-list"><details class="toggle implementors-toggle" open><summary><section id="impl-WeightingPlanFragment%3C'a%3E" class="impl"><a class="src rightside" href="../src/casa_imaging_runtime/weighting.rs.html#905-1742">Source</a><a href="#impl-WeightingPlanFragment%3C'a%3E" class="anchor">§</a><h3 class="code-header">impl&lt;'a&gt; <a class="struct" href="struct.WeightingPlanFragment.html" title="struct casa_imaging_runtime::WeightingPlanFragment">WeightingPlanFragment</a>&lt;'a&gt;</h3></section></summary><div class="impl-items"><details class="toggle method-toggle" open><summary><section id="method.new" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/weighting.rs.html#911-928">Source</a><h4 class="code-header">pub fn <a href="#method.new" class="fn">new</a>(
-    plan: &amp;'a <a class="struct" href="../casa_imaging_reconstruction/weighting/struct.WeightingPlan.html" title="struct casa_imaging_reconstruction::weighting::WeightingPlan">WeightingPlan</a>,
+    plan: &amp;'a WeightingPlan,
     source_read: <a class="struct" href="struct.WorkNodeId.html" title="struct casa_imaging_runtime::WorkNodeId">WorkNodeId</a>,
     source_resources: <a class="struct" href="struct.SelectedObservationSourceResources.html" title="struct casa_imaging_runtime::SelectedObservationSourceResources">SelectedObservationSourceResources</a>,
     generation_implementation: <a class="struct" href="struct.WorkImplementationId.html" title="struct casa_imaging_runtime::WorkImplementationId">WorkImplementationId</a>,
@@ -13,7 +13,7 @@ route for attaching reconstruction weighting residency to physical work.</p>
 <p>Production continuum execution uses <a href="struct.WeightingPlanFragment.html#method.streaming_for_pass" title="associated function casa_imaging_runtime::WeightingPlanFragment::streaming_for_pass"><code>Self::streaming_for_pass</code></a>; this
 constructor cannot enter the bounded spectral-cycle owner.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.new_for_pass" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/weighting.rs.html#932-952">Source</a><h4 class="code-header">pub fn <a href="#method.new_for_pass" class="fn">new_for_pass</a>(
-    plan: &amp;'a <a class="struct" href="../casa_imaging_reconstruction/weighting/struct.WeightingPlan.html" title="struct casa_imaging_reconstruction::weighting::WeightingPlan">WeightingPlan</a>,
+    plan: &amp;'a WeightingPlan,
     source_read: <a class="struct" href="struct.WorkNodeId.html" title="struct casa_imaging_runtime::WorkNodeId">WorkNodeId</a>,
     source_resources: <a class="struct" href="struct.SelectedObservationSourceResources.html" title="struct casa_imaging_runtime::SelectedObservationSourceResources">SelectedObservationSourceResources</a>,
     generation_implementation: <a class="struct" href="struct.WorkImplementationId.html" title="struct casa_imaging_runtime::WorkImplementationId">WorkImplementationId</a>,
@@ -22,7 +22,7 @@ constructor cannot enter the bounded spectral-cycle owner.</p>
     pass: <a class="struct" href="struct.SpectralPassIdentity.html" title="struct casa_imaging_runtime::SpectralPassIdentity">SpectralPassIdentity</a>,
 ) -&gt; Self</h4></section></summary><div class="docblock"><p>Bind one reconstruction plan in an explicit phase/ordinal namespace.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.streaming_for_pass" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/weighting.rs.html#956-976">Source</a><h4 class="code-header">pub fn <a href="#method.streaming_for_pass" class="fn">streaming_for_pass</a>(
-    plan: &amp;'a <a class="struct" href="../casa_imaging_reconstruction/weighting/struct.WeightingPlan.html" title="struct casa_imaging_reconstruction::weighting::WeightingPlan">WeightingPlan</a>,
+    plan: &amp;'a WeightingPlan,
     source_read: <a class="struct" href="struct.WorkNodeId.html" title="struct casa_imaging_runtime::WorkNodeId">WorkNodeId</a>,
     source_resources: <a class="struct" href="struct.SelectedObservationSourceResources.html" title="struct casa_imaging_runtime::SelectedObservationSourceResources">SelectedObservationSourceResources</a>,
     implementation: <a class="struct" href="struct.WorkImplementationId.html" title="struct casa_imaging_runtime::WorkImplementationId">WorkImplementationId</a>,
