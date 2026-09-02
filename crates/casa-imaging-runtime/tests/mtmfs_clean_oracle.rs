@@ -27,10 +27,10 @@ use casa_imaging_runtime::{
     PlanningBindings, QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit,
     ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, ResourceTopology,
     RunBindings, RunToCompletion, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCycleRegistry,
-    StorageDomain, StorageDomainId, StorageIoResourceBinding, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkMeasurements, plan as runtime_plan,
-    run as runtime_run,
+    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+    SpectralCycleRegistry, StorageDomain, StorageDomainId, StorageIoResourceBinding,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
+    plan as runtime_plan, run as runtime_run,
 };
 use serde_json::json;
 
@@ -144,9 +144,7 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
             WeightingExecutionLimits::new(512, 1).expect("fixed T43/T44 weighting limits"),
             residency.clone(),
             storage_io(),
-            1_000,
-            16 << 20,
-            900_000,
+            SpectralCyclePlanningLimits::new(1_000, 16 << 20, 900_000),
             authority.clone(),
             resource_policy.clone(),
         )

@@ -53,15 +53,37 @@ fn bounded_worker_stack_bytes(workers: u64) -> Result<u64, SpectralCyclePlanErro
 }
 
 /// Explicit non-scientific limits for one spectral cycle physical plan.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SpectralCyclePlanningLimits {
+    stage_nanos: u64,
+    minor_cycle_bytes: u64,
+    confidence_parts_per_million: u32,
+}
+
+impl SpectralCyclePlanningLimits {
+    /// Bind stage prediction, minor-cycle residency, and prediction confidence.
+    #[must_use]
+    pub const fn new(
+        stage_nanos: u64,
+        minor_cycle_bytes: u64,
+        confidence_parts_per_million: u32,
+    ) -> Self {
+        Self {
+            stage_nanos,
+            minor_cycle_bytes,
+            confidence_parts_per_million,
+        }
+    }
+}
+
+/// Explicit non-scientific limits for one spectral cycle physical plan.
 #[derive(Clone)]
 pub struct SpectralCycleExecutionPolicy {
     implementation: WorkImplementationId,
     weighting_limits: WeightingExecutionLimits,
     selected_residency: SelectedObservationResidencyCertificate,
     storage_io: StorageIoResourceBinding,
-    stage_nanos: u64,
-    minor_cycle_bytes: u64,
-    confidence_parts_per_million: u32,
+    limits: SpectralCyclePlanningLimits,
     authority: ResourceAuthority,
     resource_policy: ResourcePolicy,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
@@ -76,9 +98,7 @@ impl SpectralCycleExecutionPolicy {
         weighting_limits: WeightingExecutionLimits,
         selected_residency: SelectedObservationResidencyCertificate,
         storage_io: StorageIoResourceBinding,
-        stage_nanos: u64,
-        minor_cycle_bytes: u64,
-        confidence_parts_per_million: u32,
+        limits: SpectralCyclePlanningLimits,
         authority: ResourceAuthority,
         resource_policy: ResourcePolicy,
     ) -> Self {
@@ -87,9 +107,7 @@ impl SpectralCycleExecutionPolicy {
             weighting_limits,
             selected_residency,
             storage_io,
-            stage_nanos,
-            minor_cycle_bytes,
-            confidence_parts_per_million,
+            limits,
             authority,
             resource_policy,
             visibility_write: None,
@@ -938,7 +956,7 @@ fn base_physical<R: ImplementationRegistry>(
         .nodes()
         .keys()
         .map(|node| {
-            let prediction = StagePrediction::new(node.clone(), policy.stage_nanos);
+            let prediction = StagePrediction::new(node.clone(), policy.limits.stage_nanos);
             if node == &read {
                 prediction.with_io(vec![IoPrediction::new(
                     IoBufferKind::SourceReadAhead,
@@ -954,10 +972,11 @@ fn base_physical<R: ImplementationRegistry>(
         .collect::<Vec<_>>();
     let prediction = PlanPrediction::new(
         policy
+            .limits
             .stage_nanos
             .checked_mul(predictions.len() as u64)
             .ok_or(SpectralCyclePlanError::Overflow)?,
-        PredictionConfidence::new(policy.confidence_parts_per_million)?,
+        PredictionConfidence::new(policy.limits.confidence_parts_per_million)?,
         vec![],
         predictions,
     )?;
@@ -1251,7 +1270,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         .nodes()
         .keys()
         .map(|node| {
-            let prediction = StagePrediction::new(node.clone(), policy.stage_nanos);
+            let prediction = StagePrediction::new(node.clone(), policy.limits.stage_nanos);
             if node == &commit {
                 prediction.with_io(vec![IoPrediction::new(IoBufferKind::Publication, 1, 1)])
             } else {
@@ -1261,10 +1280,11 @@ fn base_gridded_physical<R: ImplementationRegistry>(
         .collect::<Vec<_>>();
     let prediction = PlanPrediction::new(
         policy
+            .limits
             .stage_nanos
             .checked_mul(predictions.len() as u64)
             .ok_or(SpectralCyclePlanError::Overflow)?,
-        PredictionConfidence::new(policy.confidence_parts_per_million)?,
+        PredictionConfidence::new(policy.limits.confidence_parts_per_million)?,
         vec![],
         predictions,
     )?;
@@ -1965,8 +1985,8 @@ fn append_minor<R: ImplementationRegistry>(
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.demand.memory.push(MemoryDemand {
         allocation_id: "spectral-cycle-minor-cycle".to_string(),
-        hard_bytes: policy.minor_cycle_bytes,
-        preferred_bytes: policy.minor_cycle_bytes,
+        hard_bytes: policy.limits.minor_cycle_bytes,
+        preferred_bytes: policy.limits.minor_cycle_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
     let dag = ExecutionDag::new(ExecutionDagSpecification {
@@ -1983,7 +2003,7 @@ fn append_minor<R: ImplementationRegistry>(
             .cloned()
             .chain([LogicalAllocation {
                 id: allocation,
-                bytes: policy.minor_cycle_bytes,
+                bytes: policy.limits.minor_cycle_bytes,
                 purpose: AllocationPurpose::Data,
                 compatibility: compatibility.clone(),
                 physical_slot: slot.clone(),
@@ -2003,7 +2023,7 @@ fn append_minor<R: ImplementationRegistry>(
                 lease_resource: LeaseResource::Memory {
                     allocation_id: "spectral-cycle-minor-cycle".to_string(),
                 },
-                capacity_bytes: policy.minor_cycle_bytes,
+                capacity_bytes: policy.limits.minor_cycle_bytes,
                 compatibility,
             }])
             .collect(),
@@ -2013,7 +2033,7 @@ fn append_minor<R: ImplementationRegistry>(
     let prediction = PlanPrediction::new(
         base.prediction()
             .elapsed_nanos()
-            .checked_add(policy.stage_nanos)
+            .checked_add(policy.limits.stage_nanos)
             .ok_or(SpectralCyclePlanError::Overflow)?,
         base.prediction().confidence(),
         base.prediction().uncertainty().to_vec(),
@@ -2021,7 +2041,10 @@ fn append_minor<R: ImplementationRegistry>(
             .stages()
             .values()
             .cloned()
-            .chain([StagePrediction::new(minor.clone(), policy.stage_nanos)])
+            .chain([StagePrediction::new(
+                minor.clone(),
+                policy.limits.stage_nanos,
+            )])
             .collect(),
     )?;
     let catalog =

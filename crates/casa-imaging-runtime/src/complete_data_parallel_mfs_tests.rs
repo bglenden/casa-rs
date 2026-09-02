@@ -16,10 +16,10 @@ use crate::{
     PlanningBindings, QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit,
     ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, ResourceTopology,
     RunBindings, RunToCompletion, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCycleRegistry,
-    StorageDomain, StorageDomainId, StorageIoResourceBinding, WorkExecutionContext,
-    WorkImplementation, WorkImplementationId, WorkMeasurements, plan as runtime_plan,
-    run as runtime_run,
+    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+    SpectralCycleRegistry, StorageDomain, StorageDomainId, StorageIoResourceBinding,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
+    plan as runtime_plan, run as runtime_run,
 };
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, CorrelationProduct, CorrelationSelection,
@@ -351,9 +351,11 @@ fn execute_complete_data_mfs_with_policy(
             WeightingExecutionLimits::new(1, 1).expect("one-sample artifact frames"),
             residency.clone(),
             storage_io(),
-            1_000,
-            (IMAGE_PIXELS * std::mem::size_of::<Complex64>() * 3) as u64,
-            900_000,
+            SpectralCyclePlanningLimits::new(
+                1_000,
+                (IMAGE_PIXELS * std::mem::size_of::<Complex64>() * 3) as u64,
+                900_000,
+            ),
             authority.clone(),
             resource_policy.clone(),
         )

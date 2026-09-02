@@ -125,7 +125,7 @@ pub use spectral_cycle::{
 };
 pub use spectral_cycle_plan::{
     PlannedGriddedNormalBinding, SpectralCycleExecutionPolicy, SpectralCyclePlan,
-    SpectralCyclePlanError, SpectralCyclePlanParts,
+    SpectralCyclePlanError, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
 };
 pub use weighting::{
     ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,
