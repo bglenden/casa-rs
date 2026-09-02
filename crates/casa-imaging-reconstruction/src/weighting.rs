@@ -8,9 +8,9 @@ use std::{collections::BTreeMap, fmt, mem::size_of};
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, FiniteValuePolicy,
     ImageDomainRole, LogicalIdentity, SelectedImageDomainProjections, SelectedInputWeightGroup,
-    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedSampleAddress,
-    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample, UvTaper,
-    WeightDensityScope, WeightingCommitmentId, WeightingScheme,
+    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedPointingDirections,
+    SelectedSampleAddress, SelectedSpectralContribution, SelectedSpectralContributions,
+    SelectedVisibilitySample, UvTaper, WeightDensityScope, WeightingCommitmentId, WeightingScheme,
 };
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
@@ -1161,6 +1161,8 @@ pub struct WeightingSelectedSample {
     pub(crate) correlation_group_size: usize,
     pub(crate) parallactic_angles_rad: [f64; 2],
     pub(crate) density_uvw_m: [f64; 3],
+    field_id: i32,
+    pointing_directions: SelectedPointingDirections,
     domain_projections: SelectedImageDomainProjections,
 }
 
@@ -1181,6 +1183,8 @@ impl WeightingSelectedSample {
             correlation_group_size: input_weight_group.member_count(),
             parallactic_angles_rad: coordinates.parallactic_angles_rad,
             density_uvw_m: coordinates.density_uvw_m,
+            field_id: sample.metadata().field_id,
+            pointing_directions: coordinates.pointing_directions,
             domain_projections: sample.domain_projections().clone(),
         }
     }
@@ -1219,6 +1223,18 @@ impl WeightingSelectedSample {
     #[must_use]
     pub const fn parallactic_angles_rad(&self) -> [f64; 2] {
         self.parallactic_angles_rad
+    }
+
+    /// Return the selected MeasurementSet field identifier used for mosaic routing.
+    #[must_use]
+    pub const fn field_id(&self) -> i32 {
+        self.field_id
+    }
+
+    /// Return the two antenna pointing directions used by the mosaic response.
+    #[must_use]
+    pub const fn pointing_directions(&self) -> SelectedPointingDirections {
+        self.pointing_directions
     }
 
     fn starts_correlation_group(&self) -> bool {

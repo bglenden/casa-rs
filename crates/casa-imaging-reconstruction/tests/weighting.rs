@@ -376,10 +376,39 @@ fn selected_generation(
 #[test]
 fn bounded_replay_retains_a_compact_kernel_projection() {
     assert!(
-        size_of::<WeightingSelectedSample>() < size_of::<SelectedObservationSample>() / 2,
+        size_of::<WeightingSelectedSample>() * 3 < size_of::<SelectedObservationSample>() * 2,
         "replay must not retain the complete validated source record: weighted={} selected={}",
         size_of::<WeightingSelectedSample>(),
         size_of::<SelectedObservationSample>()
+    );
+}
+
+#[test]
+fn bounded_replay_retains_mosaic_routing_facts() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let mut samples = exact_samples(&problem);
+    samples[0].metadata.field_id = 17;
+    samples[0].coordinates.pointing_directions = casa_imaging_model::SelectedPointingDirections {
+        antenna1: SkyDirection::new(DirectionFrame::J2000, 1.01, -0.51),
+        antenna2: SkyDirection::new(DirectionFrame::J2000, 1.02, -0.52),
+    };
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(samples.len(), 1).expect("mosaic routing limits"),
+    )
+    .expect("mosaic routing plan");
+
+    let (_, blocks, _) = fused_stream(&problem, &plan, &samples);
+    let selected = blocks[0].samples()[0].selected();
+
+    assert_eq!(selected.field_id(), 17);
+    assert_eq!(
+        selected.pointing_directions(),
+        samples[0].coordinates.pointing_directions
     );
 }
 
