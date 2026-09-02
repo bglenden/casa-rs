@@ -44,7 +44,7 @@ use crate::{
 const OWNER_MANIFEST_KEYWORD: &str = "CASA_RS_IMAGING_OWNER_MANIFEST";
 const OWNER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const OWNER_IDENTITY_DOMAIN: &[u8] = b"casa-rs-ms-owner-manifest-v1";
-const VISIBILITY_WRITE_BATCH_ROWS: u64 = 128;
+const VISIBILITY_WRITE_BATCH_ROWS: u64 = 10_000;
 static OWNER_INITIALIZATION_MUTEX: Mutex<()> = Mutex::new(());
 
 const TRACKED_COLUMNS: &[(MsColumnKind, &str)] = &[
@@ -672,8 +672,9 @@ impl ResolvedSelectedObservationAccess {
                 .checked_add(corrected.write_bytes)
                 .ok_or(ObservationOwnerError::PredictionAddress)?,
             maximum_cell_bytes,
-            write_buffer_bytes: maximum_cell_bytes
-                .checked_mul(VISIBILITY_WRITE_BATCH_ROWS)
+            write_buffer_bytes: model
+                .write_buffer_bytes
+                .checked_add(corrected.write_buffer_bytes)
                 .ok_or(ObservationOwnerError::PredictionAddress)?,
         })
     }
@@ -1529,12 +1530,19 @@ fn derive_column_storage_plan(
     let write_bytes = additional_persistent_bytes
         .checked_add(selected_write_bytes)
         .ok_or(ObservationOwnerError::PredictionAddress)?;
+    let possible_buffer_rows = if create_if_absent && !has_column {
+        u64::try_from(measurement_set.row_count())
+            .map_err(|_| ObservationOwnerError::PredictionAddress)?
+    } else {
+        selection.rows().selected_row_count()
+    }
+    .min(VISIBILITY_WRITE_BATCH_ROWS);
     Ok(SelectedVisibilityStoragePlan {
         additional_persistent_bytes,
         write_bytes,
         maximum_cell_bytes,
         write_buffer_bytes: maximum_cell_bytes
-            .checked_mul(VISIBILITY_WRITE_BATCH_ROWS)
+            .checked_mul(possible_buffer_rows)
             .ok_or(ObservationOwnerError::PredictionAddress)?,
     })
 }
@@ -2198,7 +2206,7 @@ mod tests {
         assert_eq!(plan.additional_persistent_bytes(), 8);
         assert_eq!(plan.write_bytes(), 16);
         assert_eq!(plan.maximum_cell_bytes(), 8);
-        assert_eq!(plan.write_buffer_bytes(), 1_024);
+        assert_eq!(plan.write_buffer_bytes(), 8);
 
         let existing_path = directory.path().join("model-plan-overwrite.ms");
         create_ms(&existing_path, true);
@@ -2214,7 +2222,7 @@ mod tests {
         assert_eq!(existing_plan.additional_persistent_bytes(), 0);
         assert_eq!(existing_plan.write_bytes(), 8);
         assert_eq!(existing_plan.maximum_cell_bytes(), 8);
-        assert_eq!(existing_plan.write_buffer_bytes(), 1_024);
+        assert_eq!(existing_plan.write_buffer_bytes(), 8);
     }
 
     #[test]

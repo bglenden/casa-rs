@@ -1203,7 +1203,7 @@ fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
         .expect("MODEL_DATA storage plan");
     assert_eq!(storage.additional_persistent_bytes(), 768);
     assert_eq!(storage.maximum_cell_bytes(), 512);
-    assert_eq!(storage.write_buffer_bytes(), 65_536);
+    assert_eq!(storage.write_buffer_bytes(), 1_024);
 
     let mut writer = SelectedVisibilityWrite::begin(
         &path,
