@@ -58,7 +58,7 @@
     },
     {
       "id": "mtmfs-alma",
-      "status": "blocked",
+      "status": "pass",
       "evidence_tier": "representative_scientific_acceptance",
       "production_path": true,
       "image_shape": [512, 512, 1, 1],
@@ -66,7 +66,7 @@
       "dimensions": ["four_spw", "fractional_frequency_span_0.169389", "nterms_2", "multiple_major_cycles", "complete_taylor_and_spectral_index_products"],
       "casa_version": "6.7.6.14",
       "frozen_receipt": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/mtmfs-v1/oracle.json",
-      "blocker": "All nineteen products satisfy NRMS <= 0.001 and exact topology/metadata; alpha and alpha.error differ at one strict-threshold pixel outside PB support (15188 versus 15189 valid pixels).",
+      "validity_rule": "Exact for every product; for alpha and alpha.error, exact validity and NRMS <= 0.001 across the full CASA .pb.tt0-supported plane under the programme-owner approval of 2026-09-02. Outside-PB validity differences are counted and reported.",
       "evidence": ["crates/casa-imaging-application/tests/mtmfs_publication_oracle.rs", "tools/science/issue607_mtmfs_oracle.py"]
     },
     {

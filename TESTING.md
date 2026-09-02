@@ -48,6 +48,13 @@ inventory. Regenerate only when one of those contracts changes. Tiny fixtures
 remain required when they provide faster failure localization, but a green toy
 end-to-end test cannot make a matrix row representative.
 
+For #607's frozen MT-MFS row, the programme owner approved one narrow support
+rule on 2026-09-02: `.alpha` and `.alpha.error` validity is exact within CASA's
+`.pb.tt0` support, alpha values across that full supported plane remain subject
+to NRMS <= 0.001, and outside-PB validity differences are counted and reported.
+This does not change CASA's strict Taylor support law, add a numerical epsilon,
+or relax any other product's exact validity comparison.
+
 ## Required discipline
 
 - Every approved work item defines falsifiable acceptance checks and ships verification evidence.

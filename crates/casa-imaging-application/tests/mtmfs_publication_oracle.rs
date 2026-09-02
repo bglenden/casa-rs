@@ -330,6 +330,11 @@ fn assert_representative_products_match_casa(
     casa_prefix: &Path,
 ) -> Result<(), Box<dyn Error>> {
     let mut failures = Vec::new();
+    let rust_primary_beam = read_oracle_product(rust_prefix, ".pb.tt0")?;
+    let casa_primary_beam = read_oracle_product(casa_prefix, ".pb.tt0")?;
+    if rust_primary_beam.valid != casa_primary_beam.valid {
+        failures.push(".pb.tt0 validity differs".to_string());
+    }
     for product in PRODUCT_NAMES {
         let rust = read_oracle_product(rust_prefix, product)?;
         let casa = read_oracle_product(casa_prefix, product)?;
@@ -340,7 +345,31 @@ fn assert_representative_products_match_casa(
         if rust.stokes != casa.stokes {
             failures.push(format!("{product} polarization axis differs"));
         }
-        if rust.valid != casa.valid {
+        let alpha_product = matches!(product, ".alpha" | ".alpha.error");
+        if alpha_product {
+            let differing_within_primary_beam = rust
+                .valid
+                .iter()
+                .zip(&casa.valid)
+                .zip(&casa_primary_beam.valid)
+                .filter(|((left, right), primary_beam)| **primary_beam && left != right)
+                .count();
+            let differing_outside_primary_beam = rust
+                .valid
+                .iter()
+                .zip(&casa.valid)
+                .zip(&casa_primary_beam.valid)
+                .filter(|((left, right), primary_beam)| !**primary_beam && left != right)
+                .count();
+            eprintln!(
+                "issue607_mtmfs_alpha_validity product={product} within_pb_differing={differing_within_primary_beam} outside_pb_differing={differing_outside_primary_beam}",
+            );
+            if differing_within_primary_beam != 0 {
+                failures.push(format!(
+                    "{product} validity differs within primary-beam support"
+                ));
+            }
+        } else if rust.valid != casa.valid {
             eprintln!(
                 "issue607_mtmfs_validity product={product} rust_valid={} casa_valid={} differing={}",
                 rust.valid.iter().filter(|valid| **valid).count(),
@@ -371,12 +400,15 @@ fn assert_representative_products_match_casa(
         if casa.units != expected_units && !casa_omits_units {
             failures.push(format!("{product} CASA units {:?}", casa.units));
         }
-        let common_valid = rust
-            .valid
-            .iter()
-            .zip(&casa.valid)
-            .map(|(left, right)| *left && *right)
-            .collect::<Vec<_>>();
+        let common_valid = if alpha_product {
+            casa_primary_beam.valid.clone()
+        } else {
+            rust.valid
+                .iter()
+                .zip(&casa.valid)
+                .map(|(left, right)| *left && *right)
+                .collect::<Vec<_>>()
+        };
         let nrms = representative_normalized_rms(&rust.values, &casa.values, &common_valid);
         eprintln!("issue607_mtmfs_product product={product} nrms={nrms:.9e}");
         if nrms > 1.0e-3 {
