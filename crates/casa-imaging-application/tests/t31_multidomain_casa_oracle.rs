@@ -5,19 +5,27 @@
 use std::{
     error::Error,
     fs,
+    io::{BufReader, Read},
     path::{Path, PathBuf},
 };
 
 use casa_images::PagedImage;
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
-    ContinuumWeighting, HogbomIterationAccounting, SpectralImagingMode, TaskRequirement,
-    execute_continuum,
+    ContinuumMaskBox, ContinuumWeighting, HogbomIterationAccounting, SpectralImagingMode,
+    TaskRequirement, execute_continuum,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
+use sha2::{Digest, Sha256};
 
 const DATASET: &str = "measurementset/vla/refim_twopoints_twochan.ms";
 const CASA_PREFIX_ENV: &str = "CASA_RS_T31_CASA_PREFIX";
+const REPRESENTATIVE_MS_ENV: &str = "CASA_RS_ISSUE607_OUTLIER_MS";
+const REPRESENTATIVE_CASA_ENV: &str = "CASA_RS_ISSUE607_OUTLIER_CASA_ROOT";
+const REPRESENTATIVE_OUTPUT_ENV: &str = "CASA_RS_ISSUE607_OUTLIER_RUST_ROOT";
+const REPRESENTATIVE_SOURCE_SHA256: &str =
+    "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea";
+const REPRESENTATIVE_OUTLIER_PHASE_CENTRE: &str = "J2000 4.71239123rad -0.40152075rad";
 const MAIN_PHASE_CENTRE: &str = "J2000 19:59:28.500 +40.44.01.50";
 const OUTLIER_PHASE_CENTRE: &str = "J2000 19:58:40.895 +40.55.58.543";
 const PRODUCTS: [&str; 4] = [".psf", ".residual", ".model", ".image"];
@@ -106,6 +114,112 @@ fn t31_multidomain_geometry_matches_frozen_casa_dirty_and_hogbom() -> Result<(),
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires the issue #607 representative VLA MS and frozen CASA main/outlier products"]
+fn issue607_representative_main_and_outlier_match_casa() -> Result<(), Box<dyn Error>> {
+    set_production_io_environment();
+    let source = PathBuf::from(
+        std::env::var_os(REPRESENTATIVE_MS_ENV).ok_or("CASA_RS_ISSUE607_OUTLIER_MS is not set")?,
+    );
+    let casa_root = PathBuf::from(
+        std::env::var_os(REPRESENTATIVE_CASA_ENV)
+            .ok_or("CASA_RS_ISSUE607_OUTLIER_CASA_ROOT is not set")?,
+    );
+    let rust_root = PathBuf::from(
+        std::env::var_os(REPRESENTATIVE_OUTPUT_ENV)
+            .ok_or("CASA_RS_ISSUE607_OUTLIER_RUST_ROOT is not set")?,
+    );
+    assert_eq!(tree_sha256(&source)?, REPRESENTATIVE_SOURCE_SHA256);
+    fs::create_dir_all(&rust_root)?;
+    let staging = tempfile::Builder::new()
+        .prefix("issue607-outlier-staging-")
+        .tempdir_in(&rust_root)?;
+    let measurement_set = staging.path().join("input.ms");
+    copy_tree(&source, &measurement_set)?;
+    casa_ms::initialize_measurement_set_owner_manifest(&measurement_set)?;
+
+    for (label, algorithm, iterations) in [
+        ("dirty", ContinuumAlgorithm::Dirty, 0),
+        ("clean", ContinuumAlgorithm::Hogbom, 25),
+    ] {
+        let rust_case = rust_root.join(label);
+        fs::create_dir_all(&rust_case)?;
+        let rust_main = rust_case.join("main");
+        let rust_outlier = rust_case.join("outlier");
+        let outlier_file = rust_case.join("outlier.txt");
+        fs::write(
+            &outlier_file,
+            format!(
+                "imagename={}\nnchan=1\nimsize=[512,512]\ncell=[0.35arcsec,0.35arcsec]\nphasecenter={REPRESENTATIVE_OUTLIER_PHASE_CENTRE}\nusemask=user\nmask=circle[[256pix,256pix],64pix]\n",
+                rust_outlier.display()
+            ),
+        )?;
+        let mut request = request(
+            measurement_set.clone(),
+            rust_main.clone(),
+            outlier_file,
+            algorithm,
+            iterations,
+        );
+        request.image_size = 512;
+        request.cell_arcsec = 0.35;
+        request.phase_center = None;
+        request.field_ids = Some(vec![0]);
+        request.spectral_window = Some("0:0~23".to_string());
+        request.channel_count = Some(24);
+        request.minimum_psf_fraction = 0.05;
+        request.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
+            blc: [192, 192],
+            trc: [319, 319],
+        }]);
+        let result = execute_continuum(request)?;
+        assert_eq!(
+            result
+                .outcome
+                .output
+                .scientific
+                .normal_state()
+                .domain_count(),
+            2
+        );
+        assert_eq!(
+            result
+                .outcome
+                .output
+                .scientific
+                .normal_state()
+                .sample_count(),
+            6_284_304,
+        );
+
+        for (role, rust_prefix) in [("main", &rust_main), ("outlier", &rust_outlier)] {
+            let casa_prefix = casa_root.join(label).join(role);
+            assert_matching_domain_wcs(rust_prefix, &casa_prefix, [512, 512, 1, 1])?;
+            let products: &[&str] = if label == "dirty" {
+                &[".psf", ".residual", ".model", ".image", ".sumwt"]
+            } else {
+                &[".psf", ".residual", ".model", ".image", ".mask", ".sumwt"]
+            };
+            for product in products {
+                let rust = read_product(rust_prefix, product)?;
+                let casa = read_product(&casa_prefix, product)?;
+                assert_eq!(
+                    rust.valid, casa.valid,
+                    "{label} {role} {product} validity differs"
+                );
+                assert!(rust.values.iter().all(|value| value.is_finite()));
+                assert!(casa.values.iter().all(|value| value.is_finite()));
+                let nrms = normalized_rms(&rust.values, &casa.values, &rust.valid, &casa.valid);
+                eprintln!(
+                    "issue607_outlier_parity label={label} role={role} product={product} nrms={nrms:.9e}"
+                );
+                assert!(nrms <= 1.0e-3, "{label} {role} {product} NRMS {nrms:.6e}");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -242,6 +356,30 @@ fn assert_domain_wcs(
     Ok(())
 }
 
+fn assert_matching_domain_wcs(
+    rust_prefix: &Path,
+    casa_prefix: &Path,
+    expected_shape: [usize; 4],
+) -> Result<(), Box<dyn Error>> {
+    let rust = PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", rust_prefix.display())))?;
+    let casa = PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", casa_prefix.display())))?;
+    assert_eq!(rust.shape(), expected_shape);
+    assert_eq!(casa.shape(), expected_shape);
+    let pixel = [256.0, 256.0, 0.0, 0.0];
+    let rust_world = rust.coordinates().to_world(&pixel)?;
+    let casa_world = casa.coordinates().to_world(&pixel)?;
+    assert_eq!(rust_world.len(), casa_world.len());
+    for (axis, (rust, casa)) in rust_world.iter().zip(casa_world).enumerate() {
+        let difference = (rust - casa).abs();
+        let tolerance = 1.0e-12_f64.max(1.0e-12 * rust.abs().max(casa.abs()));
+        assert!(
+            difference <= tolerance,
+            "WCS axis {axis} differs: {rust} versus {casa}; delta={difference} tolerance={tolerance}",
+        );
+    }
+    Ok(())
+}
+
 fn main_centre_rad() -> [f64; 2] {
     [
         (19.0 + 59.0 / 60.0 + 28.5 / 3600.0) * std::f64::consts::PI / 12.0,
@@ -281,6 +419,56 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn Error>> {
             } else {
                 fs::copy(target, destination)?;
             }
+        }
+    }
+    Ok(())
+}
+
+fn tree_sha256(root: &Path) -> Result<String, Box<dyn Error>> {
+    let mut files = Vec::new();
+    collect_files(root, root, &mut files)?;
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    for (relative, path) in files {
+        if Path::new(&relative)
+            .file_name()
+            .is_some_and(|name| name == "table.lock")
+        {
+            continue;
+        }
+        digest.update(relative.as_bytes());
+        digest.update([0]);
+        digest.update(fs::metadata(&path)?.len().to_be_bytes());
+        let mut input = BufReader::new(fs::File::open(path)?);
+        loop {
+            let count = input.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            digest.update(&buffer[..count]);
+        }
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn collect_files(
+    root: &Path,
+    directory: &Path,
+    files: &mut Vec<(String, PathBuf)>,
+) -> Result<(), Box<dyn Error>> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            collect_files(root, &path, files)?;
+        } else if entry.file_type()?.is_file() {
+            files.push((
+                path.strip_prefix(root)?
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                path,
+            ));
         }
     }
     Ok(())

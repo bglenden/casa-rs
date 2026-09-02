@@ -400,18 +400,15 @@ fn assert_representative_products_match_casa(
         if casa.units != expected_units && !casa_omits_units {
             failures.push(format!("{product} CASA units {:?}", casa.units));
         }
-        let common_valid = if alpha_product {
-            casa_primary_beam.valid.clone()
-        } else {
-            rust.valid
-                .iter()
-                .zip(&casa.valid)
-                .map(|(left, right)| *left && *right)
-                .collect::<Vec<_>>()
-        };
+        let common_valid = rust
+            .valid
+            .iter()
+            .zip(&casa.valid)
+            .map(|(left, right)| *left && *right)
+            .collect::<Vec<_>>();
         let nrms = representative_normalized_rms(&rust.values, &casa.values, &common_valid);
         eprintln!("issue607_mtmfs_product product={product} nrms={nrms:.9e}");
-        if nrms > 1.0e-3 {
+        if !nrms.is_finite() || nrms > 1.0e-3 {
             failures.push(format!("{product} normalized RMS {nrms:.6e} exceeds 0.1%"));
         }
         if matches!(

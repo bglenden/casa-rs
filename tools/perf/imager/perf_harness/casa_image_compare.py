@@ -796,6 +796,9 @@ def compare_one(
     panel = write_review_panel(**panel_arguments)
 
     metadata_required = require_metadata_parity or metadata_contract is not None
+    metadata_captured = (
+        metadata_required or allow_scientific_beam_equivalence or source_regions
+    )
     metadata = (
         compare_image_metadata(
             left_path,
@@ -803,7 +806,7 @@ def compare_one(
             contract=metadata_contract,
             suffix=suffix,
         )
-        if metadata_required
+        if metadata_captured
         else {"status": "not_required", "parity": None}
     )
     metadata_mismatch = metadata_required and not (

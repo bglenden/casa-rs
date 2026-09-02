@@ -10,20 +10,21 @@ use casa_imaging_model::{
     ContinuumTransformGenerationId, CorrelationProduct, CorrelationSelection, CorrelationType,
     DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy,
-    FrequencyFrame, GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration, MetadataTableKind,
-    ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, MsColumnKind, NumericPrecision, NumericalStage, NumericsContract,
-    ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
+    FrequencyFrame, GeometryInput, HogbomIterationAccounting, IdSelection, ImageAxis,
+    ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest, InstrumentResponse,
+    IntentSelection, LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity,
+    MetadataGeneration, MetadataTableKind, ModelBounds, ModelCell, ModelColumnState,
+    ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection, ScientificContract,
+    SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
     SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
     SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
@@ -1041,7 +1042,7 @@ fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
 }
 
 #[test]
-fn t38_independent_channels_share_one_ordered_iteration_budget() {
+fn t38_independent_channels_receive_the_same_iteration_limit() {
     let problem = t38_cube_problem_with_controls(244, 2, ReconstructionControls::new(3, 0.5, 0.0));
     let mut lifecycle = ModelLifecycle::bind(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
@@ -1072,7 +1073,7 @@ fn t38_independent_channels_share_one_ordered_iteration_budget() {
     .expect("cube Högbom program");
     let result = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program)
         .run(&lifecycle, continuation.generation(), &normal, &mask)
-        .expect("budgeted cube cycle");
+        .expect("channel-local cube cycle");
     let iterations = result
         .evidence()
         .channels()
@@ -1084,15 +1085,66 @@ fn t38_independent_channels_share_one_ordered_iteration_budget() {
             )
         })
         .collect::<Vec<_>>();
-    assert_eq!(iterations, vec![2, 1]);
-    assert_eq!(result.evidence().iterations(), 3);
-    assert!(
-        result
-            .evidence()
-            .channels()
-            .iter()
-            .all(|channel| !channel.budget_exhausted())
-    );
+    assert_eq!(iterations, vec![3, 3]);
+    assert_eq!(result.evidence().iterations(), 6);
+}
+
+#[test]
+fn t38_casa_inclusive_iteration_limit_is_applied_to_every_channel() {
+    let controls = ReconstructionControls::new(2, 0.5, 0.0)
+        .with_hogbom_iteration_accounting(HogbomIterationAccounting::CasaInclusive);
+    let problem = t38_cube_problem_with_controls(250, 2, controls);
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
+        attempt(251),
+        1,
+    )
+    .expect("cube lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty cube model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
+    let complete = run_t19_complete_data(&problem, Some(&preparation));
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .expect("channel-local major-cycle owner")
+        .reconcile(&mut lifecycle)
+        .expect("channel-local normal state");
+    let (normal, continuation) = joined.into_continuation();
+    let mask = ReconstructionMask::full_plane(
+        problem.problem_id(),
+        continuation.generation().generation_id(),
+        problem.geometry().domains()[0].direction(),
+        normal.shape(),
+    )
+    .expect("shared cube mask");
+    let program = MinorCycleProgram::for_algorithm(
+        ReconstructionAlgorithm::Hogbom,
+        problem.reconstruction().controls(),
+    )
+    .expect("cube Högbom program");
+    let result = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program)
+        .run(&lifecycle, continuation.generation(), &normal, &mask)
+        .expect("CASA-inclusive channel-local cycle");
+    let actual = result
+        .evidence()
+        .channels()
+        .iter()
+        .map(|channel| channel.minor_cycle().expect("valid channel").iterations())
+        .collect::<Vec<_>>();
+    let charged = result
+        .evidence()
+        .channels()
+        .iter()
+        .map(|channel| {
+            channel
+                .minor_cycle()
+                .expect("valid channel")
+                .controller_iterations()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, vec![3, 3]);
+    assert_eq!(charged, vec![2, 2]);
+    assert_eq!(result.evidence().iterations(), 6);
+    assert_eq!(result.evidence().controller_iterations(), 4);
 }
 
 #[test]

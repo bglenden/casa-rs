@@ -85,6 +85,7 @@ IMAGING_FIELDS = {
     "calcres",
     "casa_gridder",
     "cell_arcsec",
+    "casa_pblimit",
     "chanchunks",
     "channel_count",
     "channel_start",
@@ -95,6 +96,8 @@ IMAGING_FIELDS = {
     "deconvolver",
     "facets",
     "field",
+    "fitorder",
+    "fitspw",
     "gain",
     "gridder",
     "hogbom_iteration_mode",
@@ -109,6 +112,7 @@ IMAGING_FIELDS = {
     "interpolation",
     "max_psf_fraction",
     "mask_image",
+    "mask_box",
     "mask_sha256",
     "min_psf_fraction",
     "minor_cycle_length",
@@ -119,6 +123,7 @@ IMAGING_FIELDS = {
     "normtype",
     "nsigma",
     "nterms",
+    "noisethreshold",
     "parallel",
     "pbcor",
     "pblimit",
@@ -135,8 +140,10 @@ IMAGING_FIELDS = {
     "rotatepastep",
     "robust",
     "savemodel",
+    "save_continuum_residual",
     "scales",
     "smallscalebias",
+    "sidelobethreshold",
     "specmode",
     "spw",
     "standard_mfs_acceleration",
@@ -399,6 +406,8 @@ WORKLOAD_RESULT_FIELDS = {
     "benchmark_features",
     "stage_breakdown",
     "product_comparison",
+    "model_data_comparison",
+    "continuum_residual_comparison",
     "casa_repeatability_comparison",
     "casa_tclean_calls",
     "publication_recovery",
@@ -1892,6 +1901,43 @@ def _validate_results(
             migrated_environment=migrated_environment,
             source=f"{source}: product_comparison",
         )
+    if "model_data_comparison" in value:
+        comparison = _require_dict(
+            value["model_data_comparison"], f"{source}: model_data_comparison"
+        )
+        status = comparison.get("status")
+        if status not in {"not_run", "missing", "pass", "fail"}:
+            raise ContractError(
+                f"{source}: model_data_comparison.status is invalid: {status!r}"
+            )
+        if status in {"pass", "fail"}:
+            if comparison.get("schema") != "casa-rs-model-data-comparison-v1":
+                raise ContractError(
+                    f"{source}: model_data_comparison schema is invalid"
+                )
+            _sha256_or_historical(
+                comparison.get("sha256"),
+                f"{source}: model_data_comparison.sha256",
+            )
+    if "continuum_residual_comparison" in value:
+        comparison = _require_dict(
+            value["continuum_residual_comparison"],
+            f"{source}: continuum_residual_comparison",
+        )
+        status = comparison.get("status")
+        if status not in {"not_run", "missing", "pass", "fail"}:
+            raise ContractError(
+                f"{source}: continuum_residual_comparison.status is invalid: {status!r}"
+            )
+        if status in {"pass", "fail"}:
+            if comparison.get("schema") != "casa-rs-continuum-residual-comparison-v1":
+                raise ContractError(
+                    f"{source}: continuum_residual_comparison schema is invalid"
+                )
+            _sha256_or_historical(
+                comparison.get("sha256"),
+                f"{source}: continuum_residual_comparison.sha256",
+            )
     if "backend_plan_logs" in value:
         _validate_backend_plan_logs(
             value["backend_plan_logs"], source=f"{source}: backend_plan_logs"
@@ -4191,6 +4237,7 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "channel_count",
         "channel_start",
         "facets",
+        "fitorder",
         "imaging_memory_target_mb",
         "imaging_prepare_buffer_mb",
         "imaging_prepare_workers",
@@ -4203,6 +4250,7 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "nterms",
     }
     numbers = {
+        "casa_pblimit",
         "cell_arcsec",
         "computepastep",
         "pointingoffsetsigdev",
@@ -4231,6 +4279,7 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "psterm",
         "restart",
         "restoration",
+        "save_continuum_residual",
         "usepointing",
         "wbawp",
         "write_pb",
@@ -4412,15 +4461,46 @@ def _validate_cross_fields(
         raise ContractError(
             f"{source}: imaging.mask_image requires imaging.usemask=user"
         )
+    mask_box = imaging.get("mask_box")
+    if mask_box is not None:
+        if imaging.get("usemask") != "user":
+            raise ContractError(
+                f"{source}: imaging.mask_box requires imaging.usemask=user"
+            )
+        try:
+            coordinates = [int(value) for value in str(mask_box).split(",")]
+        except ValueError as error:
+            raise ContractError(
+                f"{source}: imaging.mask_box must be x0,y0,x1,y1"
+            ) from error
+        if len(coordinates) != 4 or coordinates[0] > coordinates[2] or coordinates[1] > coordinates[3]:
+            raise ContractError(
+                f"{source}: imaging.mask_box must be x0,y0,x1,y1 with ordered corners"
+            )
     deterministic_clean = (
         imaging.get("mode") == "clean"
         and imaging.get("niter", 0) > 0
         and imaging.get("usemask") == "user"
     )
-    if deterministic_clean and not mask_image:
+    if deterministic_clean and not (mask_image or mask_box is not None):
         raise ContractError(
-            f"{source}: deterministic user-mask clean requires imaging.mask_image and imaging.mask_sha256"
+            f"{source}: deterministic user-mask clean requires a digested mask image or imaging.mask_box"
         )
+
+    fitspw = imaging.get("fitspw")
+    if "fitorder" in imaging and imaging["fitorder"] < 0:
+        raise ContractError(f"{source}: imaging.fitorder must be nonnegative")
+    if "fitorder" in imaging and not fitspw:
+        raise ContractError(f"{source}: imaging.fitorder requires imaging.fitspw")
+    if imaging.get("save_continuum_residual"):
+        if not fitspw:
+            raise ContractError(
+                f"{source}: imaging.save_continuum_residual requires imaging.fitspw"
+            )
+        if run.get("ms_staging") != "copy":
+            raise ContractError(
+                f"{source}: persisted continuum-residual comparison requires run.ms_staging=copy"
+            )
 
     comparison_mode = comparison.get("mode", "sampled")
     if comparison_mode == "full":

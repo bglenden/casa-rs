@@ -1046,6 +1046,14 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "deterministic user-mask clean"):
             validate_workload_manifest(workload)
 
+        box_mask = copy.deepcopy(workload)
+        box_mask["imaging"]["mask_box"] = "1,2,30,40"
+        validate_workload_manifest(box_mask)
+
+        box_mask["imaging"]["mask_box"] = "30,2,1,40"
+        with self.assertRaisesRegex(ContractError, "ordered corners"):
+            validate_workload_manifest(box_mask)
+
         workload["imaging"]["mask_image"] = "masks/clean.mask"
         with self.assertRaisesRegex(ContractError, "must be set together"):
             validate_workload_manifest(workload)

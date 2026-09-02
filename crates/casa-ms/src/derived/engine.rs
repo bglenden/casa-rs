@@ -1613,10 +1613,7 @@ pub fn resolve_field_phase_direction_j2000(
 /// Storage-owned spectral-range evaluation needs the original measure reference
 /// because CASA applies dynamic references such as ITRF at every selected row
 /// epoch instead of freezing them at the FIELD reference epoch.
-pub(crate) fn raw_field_phase_direction(
-    ms: &MeasurementSet,
-    field_id: usize,
-) -> MsResult<MDirection> {
+pub fn raw_field_phase_direction(ms: &MeasurementSet, field_id: usize) -> MsResult<MDirection> {
     let field = ms.field()?;
     let raw = field.phase_dir(field_id)?;
     let (longitude, latitude) = phase_dir_constant(raw)?;

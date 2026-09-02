@@ -1028,7 +1028,7 @@ impl ModelLifecycle {
     ) -> Result<PreparedFinalModel, ModelLifecycleError> {
         self.ensure_open()?;
         let base = named.generation_id;
-        let (generation, delta) = match delta {
+        let (mut generation, delta) = match delta {
             Some(delta) => {
                 let delta_id = delta.delta_id;
                 (self.apply_delta_inner(named, delta)?, Some(delta_id))
@@ -1038,6 +1038,7 @@ impl ModelLifecycle {
                 (generation, None)
             }
         };
+        self.restore_later_domain_overlap(&mut generation)?;
         Ok(PreparedFinalModel {
             generation,
             authority: self.authority,
@@ -1045,6 +1046,80 @@ impl ModelLifecycle {
             base,
             delta,
         })
+    }
+
+    /// Restore CASA's canonical multi-domain model ownership after an update.
+    ///
+    /// Later compiled domains own shared sky pixels. CASA omits those pixels from
+    /// earlier-domain prediction and restores the later values into earlier models
+    /// before publication and continuation.
+    fn restore_later_domain_overlap(
+        &self,
+        generation: &mut ModelGeneration,
+    ) -> Result<(), ModelLifecycleError> {
+        let shape = self.contract.target();
+        if shape.domains().len() < 2 {
+            return Ok(());
+        }
+        for earlier in (0..shape.domains().len() - 1).rev() {
+            let [width, height] = shape.domains()[earlier].pixels();
+            let target_coordinate = shape
+                .direction(earlier)
+                .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)?;
+            for y in 0..height {
+                for x in 0..width {
+                    let mut owner = None;
+                    for later in earlier + 1..shape.domains().len() {
+                        let source_coordinate = shape
+                            .direction(later)
+                            .ok_or(ModelLifecycleError::UnsupportedDirectionConversion)?;
+                        if let Some(pixel) = crate::mask::reprojected_pixel(
+                            source_coordinate,
+                            shape.domains()[later].pixels(),
+                            target_coordinate,
+                            [x, y],
+                        )
+                        .map_err(|_| ModelLifecycleError::UnsupportedDirectionConversion)?
+                        {
+                            owner = Some((later, pixel));
+                        }
+                    }
+                    let Some((owner_domain, owner_pixel)) = owner else {
+                        continue;
+                    };
+                    for coefficient in 0..shape.coefficients() {
+                        for polarization in 0..shape.polarizations() {
+                            let target = shape
+                                .flat_index(ModelCell::new(
+                                    earlier,
+                                    coefficient,
+                                    polarization,
+                                    [x, y],
+                                ))
+                                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+                            let source = shape
+                                .flat_index(ModelCell::new(
+                                    owner_domain,
+                                    coefficient,
+                                    polarization,
+                                    owner_pixel,
+                                ))
+                                .ok_or(ModelLifecycleError::CellOutsideShape)?;
+                            generation.samples[target] = match generation.samples[target].support()
+                            {
+                                ModelSupport::Valid => {
+                                    ModelSample::valid(generation.samples[source].value())
+                                }
+                                ModelSupport::Invalid => ModelSample::invalid(),
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        generation.generation_id =
+            generation_id(self.authority, &generation.samples, generation.origin);
+        Ok(())
     }
 
     /// Commit a successfully reconciled final-model candidate and mint its

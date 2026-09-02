@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 
-SCHEMA = "casa-rs-issue607-full-stokes-oracle-v1"
+SCHEMA = "casa-rs-issue607-full-stokes-oracle-v2"
 SOURCE_SHA256 = "4e7ef4e66cc3499d3c923c1ea0111a7c02eba674e144041089c932e6bda86935"
 PRODUCTS = ("psf", "residual", "model", "image", "sumwt", "pb")
 
@@ -115,10 +115,10 @@ def run(source: Path, output: Path) -> dict[str, Any]:
     fixture_identity = derive_fixture(source, fixture)
     casalog.setlogfile(str(output / "casa.log"))
     prefix = output / "casa"
+    dirty_prefix = output / "casa-dirty"
     started = time.monotonic()
-    result = tclean(
+    common = dict(
         vis=str(fixture),
-        imagename=str(prefix),
         datacolumn="data",
         field="0",
         spw="0~3",
@@ -130,8 +130,6 @@ def run(source: Path, output: Path) -> dict[str, Any]:
         cell="1.0arcsec",
         weighting="natural",
         deconvolver="hogbom",
-        niter=25,
-        cycleniter=25,
         gain=0.1,
         threshold="0Jy",
         cyclefactor=1.0,
@@ -142,6 +140,8 @@ def run(source: Path, output: Path) -> dict[str, Any]:
         pbcor=False,
         savemodel="none",
     )
+    dirty_result = tclean(imagename=str(dirty_prefix), niter=0, cycleniter=25, **common)
+    result = tclean(imagename=str(prefix), niter=25, cycleniter=25, **common)
     elapsed = time.monotonic() - started
     product_identities = {}
     for product in PRODUCTS:
@@ -150,6 +150,17 @@ def run(source: Path, output: Path) -> dict[str, Any]:
             raise RuntimeError(f"CASA product is missing: {path}")
         digest, files, size = tree_sha256(path)
         product_identities[f".{product}"] = {
+            "tree_sha256_excluding_table_lock": digest,
+            "file_count_excluding_table_lock": files,
+            "bytes_excluding_table_lock": size,
+        }
+    dirty_product_identities = {}
+    for product in ("psf", "residual", "sumwt", "pb"):
+        path = output / f"casa-dirty.{product}"
+        if not path.is_dir():
+            raise RuntimeError(f"CASA dirty product is missing: {path}")
+        digest, files, size = tree_sha256(path)
+        dirty_product_identities[f".{product}"] = {
             "tree_sha256_excluding_table_lock": digest,
             "file_count_excluding_table_lock": files,
             "bytes_excluding_table_lock": size,
@@ -179,6 +190,8 @@ def run(source: Path, output: Path) -> dict[str, Any]:
         "timing_seconds": elapsed,
         "task_result": task_summary(result),
         "products": product_identities,
+        "dirty_task_result": task_summary(dirty_result),
+        "dirty_products": dirty_product_identities,
     }
 
 

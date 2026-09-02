@@ -17,7 +17,7 @@ use crate::{
 };
 
 const RECONSTRUCTION_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-reconstruction-cycle-evidence";
-const RECONSTRUCTION_CYCLE_EVIDENCE_VERSION: u32 = 3;
+const RECONSTRUCTION_CYCLE_EVIDENCE_VERSION: u32 = 4;
 
 /// Stable identity of one ordered continuum or channel-local solve.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -57,7 +57,6 @@ pub struct ChannelCycleEvidence {
     output_channel: usize,
     polarization: usize,
     validity: SpectralChannelValidity,
-    budget_exhausted: bool,
     minor_cycle: Option<MinorCycleEvidence>,
 }
 
@@ -80,17 +79,10 @@ impl ChannelCycleEvidence {
         self.validity
     }
 
-    /// Whether this valid channel was not entered because the ordered
-    /// cube-wide iteration budget had already been consumed.
-    #[must_use]
-    pub const fn budget_exhausted(&self) -> bool {
-        self.budget_exhausted
-    }
-
     /// Return minor-cycle evidence for a valid channel.
     ///
-    /// Blank, unmapped, and budget-exhausted channels are represented
-    /// explicitly and never manufacture a solver stop or model update.
+    /// Blank and unmapped channels are represented explicitly and never
+    /// manufacture a solver stop or model update.
     #[must_use]
     pub const fn minor_cycle(&self) -> Option<&MinorCycleEvidence> {
         self.minor_cycle.as_ref()
@@ -398,7 +390,6 @@ impl ReconstructionCycle {
                 output_channel: normal.slab().core_range().start,
                 polarization,
                 validity,
-                budget_exhausted: false,
                 minor_cycle,
             });
         }
@@ -442,7 +433,6 @@ impl ReconstructionCycle {
                     output_channel: normal.slab().core_range().start,
                     polarization: 0,
                     validity,
-                    budget_exhausted: false,
                     minor_cycle: None,
                 }];
                 let evidence_id =
@@ -463,7 +453,6 @@ impl ReconstructionCycle {
                 output_channel: normal.slab().core_range().start,
                 polarization: 0,
                 validity,
-                budget_exhausted: false,
                 minor_cycle: Some(minor_cycle),
             }];
             let evidence_id =
@@ -482,25 +471,15 @@ impl ReconstructionCycle {
         let mut terms = Vec::<ModelDeltaTerm>::new();
         let mut channels = Vec::with_capacity(normal.channel_count() * normal.polarization_count());
         for polarization in 0..normal.polarization_count() {
-            let mut remaining_iterations = self.program.max_iterations();
-            let mut remaining_valid_channels = (0..normal.channel_count())
-                .filter_map(|local_channel| normal.polarization_plane(local_channel, polarization))
-                .filter(|plane| plane.validity() == SpectralChannelValidity::Valid)
-                .count();
             for local_channel in 0..normal.channel_count() {
                 let plane = normal
                     .polarization_plane(local_channel, polarization)
                     .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
                 let validity = plane.validity();
-                let budget_exhausted =
-                    validity == SpectralChannelValidity::Valid && remaining_iterations == 0;
-                let minor_cycle = if validity == SpectralChannelValidity::Valid && !budget_exhausted
-                {
-                    let channel_limit = remaining_iterations.div_ceil(remaining_valid_channels);
+                let minor_cycle = if validity == SpectralChannelValidity::Valid {
                     let program = self
                         .program
                         .clone()
-                        .limit_iterations(channel_limit)?
                         .with_fixed_cycle_threshold(shared_cycle_threshold)
                         .on_model_plane(MinorCycleModelPlane::new(
                             0,
@@ -509,8 +488,6 @@ impl ReconstructionCycle {
                         ));
                     let result = run_minor_cycle_plane(lifecycle, base, plane, mask, program)?;
                     let (delta, evidence) = result.into_parts();
-                    remaining_iterations =
-                        remaining_iterations.saturating_sub(evidence.controller_iterations());
                     if let Some(delta) = delta {
                         terms.extend_from_slice(delta.terms());
                     }
@@ -518,14 +495,10 @@ impl ReconstructionCycle {
                 } else {
                     None
                 };
-                if validity == SpectralChannelValidity::Valid {
-                    remaining_valid_channels = remaining_valid_channels.saturating_sub(1);
-                }
                 channels.push(ChannelCycleEvidence {
                     output_channel: plane.output_channel(),
                     polarization,
                     validity,
-                    budget_exhausted,
                     minor_cycle,
                 });
             }
@@ -572,7 +545,6 @@ impl ReconstructionCycle {
             output_channel: normal.slab().core_range().start,
             polarization: 0,
             validity: SpectralChannelValidity::Valid,
-            budget_exhausted: false,
             minor_cycle: Some(evidence),
         }];
         let evidence_id =
@@ -838,7 +810,6 @@ fn reconstruction_cycle_evidence_id(
             SpectralChannelValidity::Blank => 1,
             SpectralChannelValidity::Unmapped => 2,
         });
-        encoder.u8(u8::from(channel.budget_exhausted));
         if let Some(evidence) = &channel.minor_cycle {
             encoder.u8(1);
             encoder.identity(evidence.evidence_id().as_bytes());

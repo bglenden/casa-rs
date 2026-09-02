@@ -10,7 +10,7 @@ use std::{
 };
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
+    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
     Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
     StokesType,
 };
@@ -58,7 +58,7 @@ use casa_types::ArrayValue;
 use casa_types::measures::{
     direction::{DirectionRef, MDirection},
     doppler::DopplerRef,
-    epoch::EpochRef,
+    epoch::{EpochRef, MEpoch},
     frame::MeasFrame,
     frequency::FrequencyRef,
 };
@@ -1067,6 +1067,7 @@ fn prepare(
     let mut selected_rows_error = None;
     let mut selected_ddids = BTreeSet::new();
     let mut selected_fields = BTreeSet::new();
+    let mut selected_observation_ids = BTreeSet::new();
     let mut first_selected_time_mjd_seconds = None;
     let mut selected_time_bounds_mjd_seconds = [f64::INFINITY, f64::NEG_INFINITY];
     let main_table = ms.main_table();
@@ -1098,6 +1099,7 @@ fn prepare(
             }
             selected_ddids.insert(row.data_description_id());
             selected_fields.insert(row.field_id());
+            selected_observation_ids.insert(row.observation_id());
             first_selected_time_mjd_seconds.get_or_insert(row.time_mjd_seconds());
             selected_time_bounds_mjd_seconds[0] =
                 selected_time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
@@ -1166,6 +1168,7 @@ fn prepare(
         }
         source_frequency_reference.get_or_insert(reference);
     }
+    let stored_phase = casa_ms::derived::engine::raw_field_phase_direction(&ms, field_id)?;
     let phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(&ms, field_id)?;
     let default_main_direction = SkyDirection::new(
         DirectionFrame::J2000,
@@ -1252,6 +1255,13 @@ fn prepare(
         let frame = frame_engine
             .spectral_frame_observatory_direction(anchor_time_mjd_seconds, phase.clone())?;
         phase.convert_to(DirectionRef::ICRS, &frame)?
+    } else if request.phase_center.is_none()
+        && matches!(
+            stored_phase.refer(),
+            DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
+        )
+    {
+        stored_phase
     } else {
         phase.clone()
     };
@@ -1259,7 +1269,12 @@ fn prepare(
     let image_direction_frame = if ephemeris.is_some() {
         DirectionFrame::Icrs
     } else {
-        DirectionFrame::J2000
+        match image_centre.refer() {
+            DirectionRef::ICRS => DirectionFrame::Icrs,
+            DirectionRef::B1950 => DirectionFrame::B1950,
+            DirectionRef::GALACTIC => DirectionFrame::Galactic,
+            _ => DirectionFrame::J2000,
+        }
     };
     let direction = direction_spec_for_frame(
         request.image_size,
@@ -1392,6 +1407,38 @@ fn prepare(
             prepared_spectral.reference_frequency_hz,
         ),
     };
+    let observation_id = if selected_observation_ids.len() == 1 {
+        usize::try_from(
+            *selected_observation_ids
+                .first()
+                .expect("one selected observation identifier"),
+        )
+        .map_err(|_| boxed("selected OBSERVATION_ID is negative"))?
+    } else {
+        return Err(boxed(format!(
+            "image observation metadata requires one selected OBSERVATION_ID; found {selected_observation_ids:?}"
+        )));
+    };
+    let observation = ms.observation()?;
+    let (telescope_name, observer) = if observation_id < observation.row_count() {
+        (
+            observation.string(observation_id, "TELESCOPE_NAME")?,
+            observation.string(observation_id, "OBSERVER")?,
+        )
+    } else {
+        (String::new(), String::new())
+    };
+    let pointing_longitude = (right_ascension + std::f64::consts::PI)
+        .rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::PI;
+    let observation_info = ObsInfo::new(telescope_name)
+        .with_observer(observer)
+        .with_date(MEpoch::from_mjd(
+            anchor_time_mjd_seconds / 86_400.0,
+            frame_engine.time_reference(),
+        ))
+        .with_telescope_position(frame_engine.observatory_position().clone())
+        .with_pointing_center(pointing_longitude, declination);
     let mut prepared_domains = vec![PreparedImageDomain {
         role: ImageDomainRole::Main,
         output: request.image_name.clone(),
@@ -1404,6 +1451,7 @@ fn prepare(
             [right_ascension, declination],
             &request.polarizations,
             image_spectral_coordinate,
+            &observation_info,
         ),
         mask: request.mask.clone(),
     }];
@@ -1428,6 +1476,7 @@ fn prepare(
                     [centre.longitude_rad(), centre.latitude_rad()],
                     &request.polarizations,
                     image_spectral_coordinate,
+                    &observation_info,
                 ),
                 mask: input.mask,
             });
@@ -2140,6 +2189,7 @@ fn image_coordinates(
     phase: [f64; 2],
     polarizations: &[PolarizationCoordinate],
     spectral: ImageSpectralCoordinate,
+    observation: &ObsInfo,
 ) -> CoordinateSystem {
     let cell = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
     let reference_pixel = image_reference_pixel(image_size);
@@ -2161,6 +2211,7 @@ fn image_coordinates(
         0.0,
         spectral.rest_frequency_hz,
     ));
+    *coordinates.obs_info_mut() = observation.clone();
     coordinates
 }
 
@@ -2815,10 +2866,7 @@ fn runtime(
         storage_io,
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
-        resource_policy: match resource_policy_for_task_requirements(&request.task_requirements) {
-            ResourcePolicy::Explicit(serial) => ResourcePolicy::Explicit(serial),
-            _ => request.resource_policy.clone(),
-        },
+        resource_policy: request.resource_policy.clone(),
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority,
@@ -3047,6 +3095,7 @@ mod tests {
                 increment_hz: 1.0,
                 rest_frequency_hz: 1.0e9,
             },
+            &casa_coordinates::ObsInfo::default(),
         );
         let polarization_coordinate = coordinates
             .find_coordinate(CoordinateType::Stokes)

@@ -1523,6 +1523,11 @@ fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
     let image_name = root.path().join("serial-hogbom");
     let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Hogbom);
     imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+    imaging.resource_policy =
+        casa_imaging_runtime::ResourcePolicy::Explicit(casa_imaging_runtime::ResourceOverride {
+            workers: Some(1),
+            ..casa_imaging_runtime::ResourceOverride::default()
+        });
 
     let result = execute_continuum(imaging).expect("serial native Högbom execution");
     let final_receipt = result
@@ -1696,6 +1701,8 @@ fn application_commits_exact_final_prediction_to_model_data() {
         ContinuumAlgorithm::Hogbom,
     );
     imaging.save_model_column = true;
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+    imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Balanced;
 
     let result = execute_continuum(imaging).expect("native save-model application execution");
     let visibility = result

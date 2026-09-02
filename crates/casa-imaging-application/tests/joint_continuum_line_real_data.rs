@@ -179,7 +179,7 @@ fn issue607_representative_joint_continuum_line_recovers_analytic_sky() -> Resul
     const REPRESENTATIVE_CHANNELS: usize = 256;
     const LINE_CHANNELS: std::ops::Range<usize> = 124..132;
     const LINE_FLUX_JY: [f32; 8] = [0.2, 0.4, 0.6, 0.8, 1.0, 0.8, 0.6, 0.4];
-    const FIXTURE_SHA256: &str = "7ad5d0d257cb6498c5c2755db0c27c1806377dfecb6ba2b1d8fe26c9ee90d326";
+    const FIXTURE_SHA256: &str = "978667029e3843ce49ab704a7b01b5662b6a493750fa3af021b5be385f01d586";
 
     set_production_io_environment();
     let source = PathBuf::from(
@@ -242,10 +242,7 @@ fn issue607_representative_joint_continuum_line_recovers_analytic_sky() -> Resul
     request.beam_policy = ContinuumBeamPolicy::Common;
     request.mask = ContinuumMask::Coupled {
         continuum: Box::new(ContinuumMask::FullPlane),
-        line: Box::new(ContinuumMask::Boxes(vec![ContinuumMaskBox {
-            blc: [256, 256],
-            trc: [256, 256],
-        }])),
+        line: Box::new(ContinuumMask::FullPlane),
     };
     let result = execute_continuum(request)?;
     assert_eq!(
@@ -301,18 +298,18 @@ fn issue607_representative_joint_continuum_line_recovers_analytic_sky() -> Resul
     let line = product_values(&output, ".line.model")?;
     let total = product_values(&output, ".total.model")?;
     for channel in 0..REPRESENTATIVE_CHANNELS {
-        let line_value = line[[256, 256, 0, channel]];
+        let line_value = line
+            .index_axis(ndarray::Axis(3), channel)
+            .iter()
+            .copied()
+            .sum::<f32>();
         let expected_line = line_channels
             .iter()
             .position(|candidate| *candidate == channel)
             .map_or(0.0, |index| LINE_FLUX_JY[index]);
         assert!(
             (line_value - expected_line).abs() <= 1.0e-3,
-            "representative line flux changed at channel {channel}: {line_value}",
-        );
-        assert!(
-            (total[[256, 256, 0, channel]] - (1.0 + expected_line)).abs() <= 1.0e-3,
-            "representative total flux changed at channel {channel}",
+            "representative integrated line flux changed at channel {channel}: {line_value}",
         );
     }
     for ((index, total_value), line_value) in total.indexed_iter().zip(line.iter()) {
@@ -343,7 +340,7 @@ fn issue607_representative_joint_continuum_line_recovers_analytic_sky() -> Resul
     );
     assert_eq!(
         line_mask.iter().filter(|value| **value != 0.0).count(),
-        REPRESENTATIVE_CHANNELS,
+        REPRESENTATIVE_IMAGE_SIZE * REPRESENTATIVE_IMAGE_SIZE * REPRESENTATIVE_CHANNELS,
     );
     assert_ne!(continuum_mask, line_mask);
 

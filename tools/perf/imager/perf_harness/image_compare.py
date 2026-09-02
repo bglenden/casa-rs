@@ -621,9 +621,8 @@ def _validate_product_metadata(
     if not isinstance(metadata, dict):
         raise ValueError(f"{label} metadata result is missing")
     if not required:
-        if metadata != {"status": "not_required", "parity": None}:
-            raise ValueError(f"{label} unrequested metadata result is invalid")
-        return
+        if metadata == {"status": "not_required", "parity": None}:
+            return
 
     expected_fields = {"status", "parity", "field_parity", "left", "right"}
     if set(metadata) != expected_fields:
@@ -674,6 +673,8 @@ def _validate_product_metadata(
         or metadata.get("parity") is not exact
     ):
         raise ValueError(f"{label} metadata parity is not derived from operands")
+    if not required:
+        return
     if exact or metadata_contract is not None:
         return
     beam_only = expected_parity == {

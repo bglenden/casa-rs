@@ -14,10 +14,35 @@ from typing import Any
 import numpy as np
 
 
-SCHEMA = "casa-rs-issue607-joint-fixture-v1"
+SCHEMA = "casa-rs-issue607-joint-fixture-v2"
 SOURCE_SHA256 = "e39cbfd898885c8726497b9ee637ddad834bfc189ff6c4774eff671736d5b5a0"
 LINE_CHANNELS = tuple(range(124, 132))
 LINE_FLUX_JY = (0.2, 0.4, 0.6, 0.8, 1.0, 0.8, 0.6, 0.4)
+CELL_ARCSEC = 0.1
+CONTINUUM_COMPONENTS = (
+    {"offset_pixels": (0, 0), "flux_jy": 0.65},
+    {"offset_pixels": (24, -17), "flux_jy": 0.25},
+    {"offset_pixels": (-31, 22), "flux_jy": 0.10},
+)
+LINE_OFFSET_PIXELS = (11, 15)
+SPEED_OF_LIGHT_M_S = 299_792_458.0
+
+
+def direction_cosines(offset_pixels: tuple[int, int]) -> tuple[float, float]:
+    radians_per_pixel = np.deg2rad(CELL_ARCSEC / 3600.0)
+    return offset_pixels[0] * radians_per_pixel, offset_pixels[1] * radians_per_pixel
+
+
+def point_visibility(
+    uvw_m: np.ndarray,
+    frequencies_hz: np.ndarray,
+    offset_pixels: tuple[int, int],
+    flux_jy: float,
+) -> np.ndarray:
+    l, m = direction_cosines(offset_pixels)
+    geometric_delay_m = uvw_m[0, :, None] * l + uvw_m[1, :, None] * m
+    phase = -2.0 * np.pi * geometric_delay_m * frequencies_hz[None, :] / SPEED_OF_LIGHT_M_S
+    return flux_jy * np.exp(1j * phase)
 
 
 def tree_sha256(root: Path) -> tuple[str, int, int]:
@@ -60,15 +85,41 @@ def derive(source: Path, output: Path) -> dict[str, Any]:
         data = np.asarray(table.getcol("DATA"), dtype=np.complex64)
         flags = np.asarray(table.getcol("FLAG"), dtype=np.bool_)
         weights = np.asarray(table.getcol("WEIGHT"), dtype=np.float32)
+        uvw = np.asarray(table.getcol("UVW"), dtype=np.float64)
         if data.shape != (2, 256, 9600) or flags.shape != data.shape:
             raise RuntimeError(f"unexpected source DATA/FLAG shape: {data.shape}/{flags.shape}")
         if weights.shape != (2, 9600) or selected_rows.size != 2400:
             raise RuntimeError(
                 f"unexpected source WEIGHT/selection shape: {weights.shape}/{selected_rows.size}"
             )
-        data[:, :, selected_rows] = np.complex64(1.0 + 0.0j)
+        spectral_window = table_tool()
+        try:
+            spectral_window.open(str(target / "SPECTRAL_WINDOW"), nomodify=True)
+            frequencies_hz = np.asarray(spectral_window.getcell("CHAN_FREQ", 0), dtype=np.float64)
+        finally:
+            spectral_window.close()
+        if frequencies_hz.shape != (256,) or uvw.shape != (3, 9600):
+            raise RuntimeError(
+                f"unexpected CHAN_FREQ/UVW shape: {frequencies_hz.shape}/{uvw.shape}"
+            )
+        selected_uvw = uvw[:, selected_rows]
+        visibility = np.zeros((selected_rows.size, frequencies_hz.size), dtype=np.complex128)
+        for component in CONTINUUM_COMPONENTS:
+            visibility += point_visibility(
+                selected_uvw,
+                frequencies_hz,
+                component["offset_pixels"],
+                component["flux_jy"],
+            )
+        line_visibility = point_visibility(
+            selected_uvw,
+            frequencies_hz,
+            LINE_OFFSET_PIXELS,
+            1.0,
+        )
         for channel, flux in zip(LINE_CHANNELS, LINE_FLUX_JY, strict=True):
-            data[:, channel, selected_rows] += np.complex64(flux + 0.0j)
+            visibility[:, channel] += flux * line_visibility[:, channel]
+        data[:, :, selected_rows] = np.asarray(visibility.T[None, :, :], dtype=np.complex64)
         table.putcol("DATA", data)
         table.flush()
     finally:
@@ -99,9 +150,13 @@ def derive(source: Path, output: Path) -> dict[str, Any]:
             "uvw_time_baselines_preserved": True,
         },
         "analytic_sky": {
-            "position": "selected field phase centre",
-            "continuum_flux_jy": 1.0,
+            "cell_arcsec": CELL_ARCSEC,
+            "continuum_components": list(CONTINUUM_COMPONENTS),
+            "continuum_total_flux_jy": sum(
+                component["flux_jy"] for component in CONTINUUM_COMPONENTS
+            ),
             "continuum_anchor_channels": [0, 123, 132, 255],
+            "line_offset_pixels": list(LINE_OFFSET_PIXELS),
             "line_channels": list(LINE_CHANNELS),
             "line_flux_jy_above_continuum": list(LINE_FLUX_JY),
         },

@@ -727,6 +727,7 @@ pub(crate) struct SpectralOperatorDomainSpecification {
     ordinal: usize,
     role: ImageDomainRole,
     image_shape: [usize; 2],
+    direction: casa_imaging_model::DirectionCoordinateSpec,
     chart_start: usize,
     chart_end: usize,
 }
@@ -739,6 +740,34 @@ impl SpectralOperatorDomainSpecification {
     pub(crate) const fn chart_range(&self) -> std::ops::Range<usize> {
         self.chart_start..self.chart_end
     }
+}
+
+fn pixel_has_later_domain_owner(
+    specification: Option<&SpectralOperatorSpecification>,
+    domain_ordinal: usize,
+    pixel: [usize; 2],
+) -> Result<bool, SpectralOperatorError> {
+    let Some(specification) = specification else {
+        return Ok(false);
+    };
+    let domain = specification
+        .domains
+        .get(domain_ordinal)
+        .ok_or(SpectralOperatorError::ModelShape)?;
+    for later in specification.domains.iter().skip(domain_ordinal + 1) {
+        if crate::mask::reprojected_pixel(
+            later.direction,
+            later.image_shape,
+            domain.direction,
+            pixel,
+        )
+        .map_err(|_| SpectralOperatorError::UnsupportedMultiDomainProblem)?
+        .is_some()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// One physical facet chart executed by the paired operator.
@@ -897,6 +926,7 @@ impl SpectralOperatorSpecification {
                 ordinal,
                 role: domain.role().clone(),
                 image_shape: domain.shape().pixels(),
+                direction: domain.direction(),
                 chart_start,
                 chart_end: charts.len(),
             });
@@ -3857,9 +3887,6 @@ impl CompleteDataOwnerState {
                 let contribution = first_spectral.contribution();
                 for coordinate in 0..polarization.model_coordinates().len() {
                     let weight = diagonal[coordinate];
-                    if weight == 0.0 {
-                        continue;
-                    }
                     let direct_row = (polarization.feed_basis()
                         == crate::polarization_operator::FeedBasis::Stokes)
                         .then(|| {
@@ -3869,12 +3896,16 @@ impl CompleteDataOwnerState {
                                 .position(|row| row[coordinate] == Complex64::new(1.0, 0.0))
                         })
                         .flatten();
-                    let observed = if let Some(row) = direct_row {
+                    let observed = if weight == 0.0 {
+                        Complex64::new(0.0, 0.0)
+                    } else if let Some(row) = direct_row {
                         visibilities[row]
                     } else {
                         observed_adjoint[coordinate] / weight
                     };
-                    let predicted = if let Some(row) = direct_row {
+                    let predicted = if weight == 0.0 {
+                        Complex64::new(0.0, 0.0)
+                    } else if let Some(row) = direct_row {
                         predicted_correlations[row]
                     } else {
                         predicted_adjoint[coordinate] / weight
@@ -4080,9 +4111,6 @@ impl CompleteDataOwnerState {
             )?;
             for coordinate in 0..polarization.model_coordinates().len() {
                 let weight = diagonal[coordinate];
-                if weight == 0.0 {
-                    continue;
-                }
                 let direct_row = (polarization.feed_basis()
                     == crate::polarization_operator::FeedBasis::Stokes)
                     .then(|| {
@@ -4092,14 +4120,22 @@ impl CompleteDataOwnerState {
                             .position(|row| row[coordinate] == Complex64::new(1.0, 0.0))
                     })
                     .flatten();
-                let observed = direct_row.map_or_else(
-                    || observed_adjoint[coordinate] / weight,
-                    |row| resampled.observed[row],
-                );
-                let predicted = direct_row.map_or_else(
-                    || predicted_adjoint[coordinate] / weight,
-                    |row| resampled.predicted[row],
-                );
+                let observed = if weight == 0.0 {
+                    Complex64::new(0.0, 0.0)
+                } else {
+                    direct_row.map_or_else(
+                        || observed_adjoint[coordinate] / weight,
+                        |row| resampled.observed[row],
+                    )
+                };
+                let predicted = if weight == 0.0 {
+                    Complex64::new(0.0, 0.0)
+                } else {
+                    direct_row.map_or_else(
+                        || predicted_adjoint[coordinate] / weight,
+                        |row| resampled.predicted[row],
+                    )
+                };
                 let sample = SpectralOperatorSample::new(
                     resampled.output_channel,
                     uvw_m,
@@ -5688,6 +5724,8 @@ impl SpectralSlabOperator {
             } => 0..continuum.coefficient_term_count() + line_terms,
         };
         let mosaic = self.mosaic_normal.is_some();
+        let specification = self.specification.as_deref();
+        let domain_ordinal = self.domain_ordinal;
         for (resident, coefficient) in coefficient_range.enumerate() {
             for polarization in 0..self.polarization_count {
                 let plane = self.polarization_plane(resident, polarization);
@@ -5706,6 +5744,13 @@ impl SpectralSlabOperator {
                             .ok_or(SpectralOperatorError::ModelShape)?;
                         let sample = generation.samples()[index];
                         if sample.support() == ModelSupport::Invalid {
+                            continue;
+                        }
+                        if pixel_has_later_domain_owner(
+                            specification,
+                            domain_ordinal,
+                            [origin[0] + x, origin[1] + y],
+                        )? {
                             continue;
                         }
                         let correction = if mosaic {

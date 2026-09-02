@@ -8,7 +8,7 @@ use std::{
 };
 
 use casa_coordinates::{CoordinateModel, StokesType};
-use casa_images::PagedImage;
+use casa_images::{ImageBeamSet, PagedImage};
 use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumMask,
     ContinuumWeighting, HogbomIterationAccounting, PolarizationCoordinate, SpectralImagingMode,
@@ -66,6 +66,7 @@ fn compare_products(
     selected: &SelectedCorrelationContract,
 ) -> Result<(), Box<dyn Error>> {
     let mut failures = Vec::new();
+    assert_matching_wcs(rust_prefix, casa_prefix, ".image")?;
     for product in PRODUCTS {
         let rust = read_product(&rust_prefix, product)?;
         let casa = read_product(&casa_prefix, product)?;
@@ -121,12 +122,113 @@ fn compare_products(
             "t34_casa_parity product={product} nrms={nrms:.9e} rust_units={:?} casa_units={:?}",
             rust.units, casa.units
         );
-        if nrms > 1.0e-3 {
+        if !nrms.is_finite() || nrms > 1.0e-3 {
             failures.push(format!("{product} normalized RMS {nrms:.6e} exceeds 0.1%"));
+        }
+        if product == ".image" {
+            compare_restoring_beam(&rust, &casa, &mut failures);
+            compare_stokes_flux_and_centroid(&rust, &casa, &common_valid, &mut failures);
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
+}
+
+fn assert_matching_wcs(
+    rust_prefix: &Path,
+    casa_prefix: &Path,
+    suffix: &str,
+) -> Result<(), Box<dyn Error>> {
+    let rust =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", rust_prefix.display())))?;
+    let casa =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", casa_prefix.display())))?;
+    for pixel in [[256.0, 256.0, 0.0, 0.0], [64.0, 448.0, 3.0, 0.0]] {
+        let rust_world = rust.coordinates().to_world(&pixel)?;
+        let casa_world = casa.coordinates().to_world(&pixel)?;
+        for axis in 0..rust_world.len() {
+            let tolerance = casa_world[axis].abs().max(1.0) * 2.0e-12;
+            assert!(
+                (rust_world[axis] - casa_world[axis]).abs() <= tolerance,
+                "full-Stokes WCS axis {axis} differs at {pixel:?}: Rust {} CASA {}",
+                rust_world[axis],
+                casa_world[axis],
+            );
+        }
+    }
+    Ok(())
+}
+
+fn compare_restoring_beam(rust: &Product, casa: &Product, failures: &mut Vec<String>) {
+    if rust.beams.is_empty() || casa.beams.is_empty() {
+        failures.push(".image restoring-beam topology differs".to_string());
+        return;
+    }
+    for stokes in 0..4 {
+        let rust = rust.beams.beam(0, stokes);
+        let casa = casa.beams.beam(0, stokes);
+        for (name, actual, expected) in [
+            ("major", rust.major, casa.major),
+            ("minor", rust.minor, casa.minor),
+            ("position angle", rust.position_angle, casa.position_angle),
+        ] {
+            if (actual - expected).abs() / expected.abs().max(1.0) > 1.0e-3 {
+                failures.push(format!(
+                    ".image Stokes plane {stokes} {name} restoring beam differs"
+                ));
+            }
+        }
+    }
+}
+
+fn compare_stokes_flux_and_centroid(
+    rust: &Product,
+    casa: &Product,
+    valid: &[bool],
+    failures: &mut Vec<String>,
+) {
+    let pixel_stride = rust.shape[2] * rust.shape[3];
+    for plane in 0..4 {
+        let indices = (0..rust.values.len())
+            .filter(|index| (index / rust.shape[3]) % rust.shape[2] == plane)
+            .filter(|index| valid[*index])
+            .collect::<Vec<_>>();
+        let peak = |values: &[f32]| {
+            indices
+                .iter()
+                .copied()
+                .max_by(|left, right| values[*left].abs().total_cmp(&values[*right].abs()))
+                .expect("Stokes plane has valid support")
+        };
+        let rust_peak = peak(&rust.values);
+        let casa_peak = peak(&casa.values);
+        let rust_plane_index = rust_peak / pixel_stride;
+        let casa_plane_index = casa_peak / pixel_stride;
+        let distance = (rust_plane_index / rust.shape[1])
+            .abs_diff(casa_plane_index / casa.shape[1])
+            + (rust_plane_index % rust.shape[1]).abs_diff(casa_plane_index % casa.shape[1]);
+        if distance > 1 {
+            failures.push(format!(".image Stokes plane {plane} centroid differs"));
+        }
+        let rust_flux = indices
+            .iter()
+            .map(|index| f64::from(rust.values[*index]))
+            .sum::<f64>();
+        let casa_flux = indices
+            .iter()
+            .map(|index| f64::from(casa.values[*index]))
+            .sum::<f64>();
+        let scale = indices
+            .iter()
+            .map(|index| f64::from(casa.values[*index]).abs())
+            .sum::<f64>()
+            .max(f64::EPSILON);
+        if (rust_flux - casa_flux).abs() / scale > 1.0e-3 {
+            failures.push(format!(
+                ".image Stokes plane {plane} integrated flux differs"
+            ));
+        }
+    }
 }
 
 fn product_diagnostics(product: &str, rust: &Product, casa: &Product) {
@@ -221,6 +323,53 @@ fn issue607_representative_full_stokes_matches_casa_products() -> Result<(), Box
         selected.sample_count,
     );
     compare_products(&rust_prefix, &casa_prefix, &selected)?;
+
+    let dirty_rust_prefix = staging.path().join("rust-full-stokes-dirty-representative");
+    let mut dirty = request(
+        measurement_set_path(&source, staging.path())?,
+        dirty_rust_prefix.clone(),
+    );
+    dirty.image_size = 512;
+    dirty.cell_arcsec = 1.0;
+    dirty.spectral_window = Some("0~3".to_string());
+    dirty.channel_count = Some(8);
+    dirty.algorithm = ContinuumAlgorithm::Dirty;
+    dirty.iterations = 0;
+    dirty.cycle_iterations = 25;
+    dirty.write_primary_beam = true;
+    let dirty_result = execute_continuum(dirty)?;
+    assert_eq!(dirty_result.minor_iterations, 0);
+    let dirty_casa_prefix = casa_prefix.with_file_name("casa-dirty");
+    compare_dirty_products(&dirty_rust_prefix, &dirty_casa_prefix)?;
+    Ok(())
+}
+
+fn measurement_set_path(source: &Path, staging: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let path = staging.join("full-stokes-shaped-dirty.ms");
+    MeasurementSet::open(source)?.save_as(&path)?;
+    casa_ms::initialize_measurement_set_owner_manifest(&path)?;
+    Ok(path)
+}
+
+fn compare_dirty_products(rust_prefix: &Path, casa_prefix: &Path) -> Result<(), Box<dyn Error>> {
+    assert_matching_wcs(rust_prefix, casa_prefix, ".residual")?;
+    let mut failures = Vec::new();
+    for product in [".psf", ".residual", ".sumwt", ".pb"] {
+        let rust = read_product(rust_prefix, product)?;
+        let casa = read_product(casa_prefix, product)?;
+        if rust.shape != casa.shape || rust.stokes != casa.stokes || rust.valid != casa.valid {
+            failures.push(format!("dirty {product} topology/validity differs"));
+            continue;
+        }
+        let nrms = normalized_rms(&rust.values, &casa.values, &rust.valid);
+        eprintln!("issue607_full_stokes_dirty product={product} nrms={nrms:.9e}");
+        if !nrms.is_finite() || nrms > 1.0e-3 {
+            failures.push(format!(
+                "dirty {product} normalized RMS {nrms:.6e} exceeds 0.1%"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
     Ok(())
 }
 
@@ -424,6 +573,7 @@ struct Product {
     stokes: Vec<StokesType>,
     values: Vec<f32>,
     valid: Vec<bool>,
+    beams: ImageBeamSet,
 }
 
 fn read_product(prefix: &Path, suffix: &str) -> Result<Product, Box<dyn Error>> {
@@ -449,6 +599,7 @@ fn read_product(prefix: &Path, suffix: &str) -> Result<Product, Box<dyn Error>> 
         stokes: stokes.stokes().to_vec(),
         values,
         valid,
+        beams: image.image_info()?.beam_set,
     })
 }
 

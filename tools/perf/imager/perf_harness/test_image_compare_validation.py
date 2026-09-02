@@ -185,7 +185,7 @@ class FullArrayOutputValidationTests(unittest.TestCase):
             "status": "matched",
             "parity": True,
         }
-        with self.assertRaisesRegex(ValueError, "unrequested metadata"):
+        with self.assertRaisesRegex(ValueError, "metadata result fields"):
             validate_comparison_output(bad_metadata, request)
 
         bad_classification = comparison_output(request)

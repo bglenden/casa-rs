@@ -51,6 +51,7 @@ pub struct SelectedObservationRow {
     field_id: i32,
     antenna1: i32,
     antenna2: i32,
+    observation_id: i32,
     time_mjd_seconds: f64,
     flag_row: bool,
 }
@@ -87,6 +88,12 @@ impl SelectedObservationRow {
     #[must_use]
     pub const fn antenna2(self) -> i32 {
         self.antenna2
+    }
+
+    /// Return the stored `OBSERVATION_ID`.
+    #[must_use]
+    pub const fn observation_id(self) -> i32 {
+        self.observation_id
     }
 
     /// Return the stored `TIME` in MJD seconds.
@@ -242,6 +249,7 @@ impl MeasurementSet {
                         field_id: fact.field_id(),
                         antenna1: fact.antenna1(),
                         antenna2: fact.antenna2(),
+                        observation_id: fact.observation_id(),
                         time_mjd_seconds: fact.time_mjd_seconds(),
                         flag_row: fact.flag_row(),
                     });

@@ -82,6 +82,14 @@ weighting="${IMAGER_BENCH_WEIGHTING:-natural}"
 robust="${IMAGER_BENCH_ROBUST:-0.5}"
 perchanweightdensity="${IMAGER_BENCH_PERCHANWEIGHTDENSITY:-}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
+usemask="${IMAGER_BENCH_USEMASK:-user}"
+mask_box="${IMAGER_BENCH_MASK_BOX:-}"
+savemodel="${IMAGER_BENCH_SAVEMODEL:-none}"
+fitspw="${IMAGER_BENCH_FITSPW:-}"
+fitorder="${IMAGER_BENCH_FITORDER:-0}"
+save_continuum_residual="${IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL:-0}"
+sidelobethreshold="${IMAGER_BENCH_SIDELOBETHRESHOLD:-3.0}"
+noisethreshold="${IMAGER_BENCH_NOISETHRESHOLD:-5.0}"
 standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
 standard_mfs_grid_threads="${IMAGER_BENCH_STANDARD_MFS_GRID_THREADS:-}"
 standard_mfs_metal_minor_cycle_chunk="${IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK:-}"
@@ -110,6 +118,7 @@ threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 pblimit="${IMAGER_BENCH_PBLIMIT:-0.2}"
+casa_pblimit="${IMAGER_BENCH_CASA_PBLIMIT:-$pblimit}"
 write_pb="${IMAGER_BENCH_WRITE_PB:-0}"
 pbcor="${IMAGER_BENCH_PBCOR:-0}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
@@ -462,6 +471,10 @@ if [[ "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" ]]; then
   cp -R "$source_ms_path" "$rust_ms_path"
   target/release/examples/initialize_imaging_owner "$rust_ms_path" >/dev/null
 fi
+if [[ "$ms_staging" == "copy" && "$skip_casa" != "1" && "$skip_casa" != "true" && "$skip_casa" != "yes" && "$skip_casa" != "on" && ( "$savemodel" == "modelcolumn" || -n "$fitspw" ) ]]; then
+  casa_ms_path="$tmpdir/casa-benchmark.ms"
+  cp -R "$source_ms_path" "$casa_ms_path"
+fi
 if [[ -n "$keep_output_root" ]]; then
   mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
   rust_keep_prefix="$keep_output_root/rust/rust"
@@ -501,6 +514,13 @@ rust_pointing_flags=()
 if [[ "$usepointing_enabled" == "1" ]]; then
   rust_pointing_flags+=(--usepointing)
 fi
+rust_continuum_flags=()
+if [[ -n "$fitspw" ]]; then
+  rust_continuum_flags+=(--fitspw "$fitspw" --fitorder "$fitorder")
+fi
+if [[ "$save_continuum_residual" == "1" || "$save_continuum_residual" == "true" || "$save_continuum_residual" == "yes" || "$save_continuum_residual" == "on" ]]; then
+  rust_continuum_flags+=(--save-continuum-residual)
+fi
 rust_source_stream_flags=()
 if [[ -n "$imaging_memory_target_mb" ]]; then
   rust_source_stream_flags+=(--imaging-memory-target-mb "$imaging_memory_target_mb")
@@ -520,6 +540,10 @@ fi
 rust_thread_flags=()
 if [[ -n "$standard_mfs_grid_threads" ]]; then
   rust_thread_flags+=(--standard-mfs-grid-threads "$standard_mfs_grid_threads")
+fi
+rust_mask_flags=(--usemask "$usemask")
+if [[ -n "$mask_box" ]]; then
+  rust_mask_flags+=(--mask-box "$mask_box")
 fi
 if [[ -n "$standard_mfs_metal_minor_cycle_chunk" ]]; then
   rust_thread_flags+=(--standard-mfs-metal-minor-cycle-chunk "$standard_mfs_metal_minor_cycle_chunk")
@@ -569,6 +593,9 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
       --deconvolver "$deconvolver" \
+      --savemodel "$savemodel" \
+      ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
+      ${rust_mask_flags[@]+"${rust_mask_flags[@]}"} \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
       --imaging-fft-backend "$imaging_fft_backend" \
@@ -618,6 +645,9 @@ for run in $(seq 1 "$repeats"); do
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
       --deconvolver "$deconvolver" \
+      --savemodel "$savemodel" \
+      ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
+      ${rust_mask_flags[@]+"${rust_mask_flags[@]}"} \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
       --imaging-fft-backend "$imaging_fft_backend" \
@@ -764,7 +794,7 @@ import statistics
 import tempfile
 import time
 import numpy as np
-from casatasks import casalog, tclean
+from casatasks import casalog, tclean, uvcontsub
 
 vis = os.environ["CASA_RS_BENCH_MS_PATH"]
 repeats = int(os.environ["CASA_RS_BENCH_REPEATS"])
@@ -795,6 +825,13 @@ weighting = os.environ["CASA_RS_BENCH_WEIGHTING"]
 robust = float(os.environ["CASA_RS_BENCH_ROBUST"])
 perchanweightdensity = os.environ["CASA_RS_BENCH_PERCHANWEIGHTDENSITY"].lower() in ("1", "true", "yes", "on")
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
+usemask = os.environ["CASA_RS_BENCH_USEMASK"]
+mask_box = os.environ["CASA_RS_BENCH_MASK_BOX"]
+savemodel = os.environ["CASA_RS_BENCH_SAVEMODEL"]
+fitspw = os.environ["CASA_RS_BENCH_FITSPW"]
+fitorder = int(os.environ["CASA_RS_BENCH_FITORDER"])
+sidelobethreshold = float(os.environ["CASA_RS_BENCH_SIDELOBETHRESHOLD"])
+noisethreshold = float(os.environ["CASA_RS_BENCH_NOISETHRESHOLD"])
 nterms = int(os.environ["CASA_RS_BENCH_NTERMS"])
 casa_gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER", os.environ["CASA_RS_BENCH_GRIDDER"])
 facets = int(os.environ["CASA_RS_BENCH_FACETS"])
@@ -810,6 +847,19 @@ casa_log_file = os.environ.get("CASA_RS_BENCH_CASA_LOG_FILE", "")
 casa_keep_prefix = os.path.join(keep_output_root, "casa", "casa") if keep_output_root else ""
 spw_selector = f"{spw}:{chan_start}" if chan_count == 1 else f"{spw}:{chan_start}~{chan_start + chan_count - 1}"
 times = []
+
+if fitspw:
+    continuum_subtracted_vis = f"{vis}.contsub"
+    uvcontsub(
+        vis=vis,
+        outputvis=continuum_subtracted_vis,
+        field=field,
+        spw=spw,
+        fitspec=fitspw,
+        fitorder=fitorder,
+        datacolumn="data",
+    )
+    vis = continuum_subtracted_vis
 
 def json_safe(value):
     if isinstance(value, np.ndarray):
@@ -870,9 +920,11 @@ with tempfile.TemporaryDirectory() as td:
             parallel=False,
             pblimit=pblimit,
             pbcor=pbcor,
-            usemask="user",
-            mask="",
-            savemodel="none",
+            usemask=usemask,
+            mask=(f"box[[{mask_box.split(',')[0]}pix,{mask_box.split(',')[1]}pix],[{mask_box.split(',')[2]}pix,{mask_box.split(',')[3]}pix]]" if mask_box else ""),
+            savemodel=savemodel,
+            sidelobethreshold=sidelobethreshold,
+            noisethreshold=noisethreshold,
             psfcutoff=psfcutoff,
         )
         if restoringbeam:
@@ -945,6 +997,13 @@ else
   CASA_RS_BENCH_ROBUST="$robust" \
   CASA_RS_BENCH_PERCHANWEIGHTDENSITY="$perchanweightdensity_enabled" \
   CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
+  CASA_RS_BENCH_USEMASK="$usemask" \
+  CASA_RS_BENCH_MASK_BOX="$mask_box" \
+  CASA_RS_BENCH_SAVEMODEL="$savemodel" \
+  CASA_RS_BENCH_FITSPW="$fitspw" \
+  CASA_RS_BENCH_FITORDER="$fitorder" \
+  CASA_RS_BENCH_SIDELOBETHRESHOLD="$sidelobethreshold" \
+  CASA_RS_BENCH_NOISETHRESHOLD="$noisethreshold" \
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \
   CASA_RS_BENCH_SMALL_SCALE_BIAS="$small_scale_bias" \
@@ -955,7 +1014,7 @@ else
   CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
   CASA_RS_BENCH_NSIGMA="$nsigma" \
   CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
-  CASA_RS_BENCH_PBLIMIT="$pblimit" \
+  CASA_RS_BENCH_PBLIMIT="$casa_pblimit" \
   CASA_RS_BENCH_PBCOR="$pbcor_enabled" \
   CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
   CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
@@ -968,6 +1027,37 @@ else
     "$CASA_RS_CASA_PYTHON" "$tmpdir/casa-imager-bench.py" | sed 's/^/  /'
 fi
 echo
+
+if [[ "$savemodel" == "modelcolumn" && "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
+  model_data_receipt="${keep_output_root:-$tmpdir}/model-data-comparison.json"
+  "$CASA_RS_CASA_PYTHON" tools/science/compare_model_data.py \
+    --source "$source_ms_path" \
+    --rust "$rust_ms_path" \
+    --casa "$casa_ms_path" \
+    --field "$field" \
+    --spw "$spw" \
+    --channel-start "$channel_start" \
+    --channel-count "$channel_count" \
+    --output "$model_data_receipt"
+  echo
+fi
+
+if [[ -n "$fitspw" && "$save_continuum_residual" != "0" && "$save_continuum_residual" != "false" && "$save_continuum_residual" != "no" && "$save_continuum_residual" != "off" && "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
+  continuum_residual_receipt="${keep_output_root:-$tmpdir}/continuum-residual-comparison.json"
+  "$CASA_RS_CASA_PYTHON" tools/science/compare_model_data.py \
+    --source "$source_ms_path" \
+    --rust "$rust_ms_path" \
+    --casa "$casa_ms_path.contsub" \
+    --rust-column CORRECTED_DATA \
+    --casa-column DATA \
+    --comparison-key continuum_residual \
+    --field "$field" \
+    --spw "$spw" \
+    --channel-start "$channel_start" \
+    --channel-count "$channel_count" \
+    --output "$continuum_residual_receipt"
+  echo
+fi
 
 if [[ -n "$keep_output_root" ]]; then
   echo "Kept benchmark products:"
