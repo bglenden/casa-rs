@@ -315,7 +315,6 @@ RESULT_MODE_FIELDS = {
     "standard_mfs_acceleration",
     "standard_mfs_metal_minor_cycle_chunk",
     "start",
-    "stokes",
     "weighting",
     "width",
     "wprojplanes",

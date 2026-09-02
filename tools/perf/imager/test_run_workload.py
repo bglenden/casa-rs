@@ -722,31 +722,6 @@ real 1.145408
         self.assertEqual("casa", plan["mode"]["hogbom_iteration_mode"])
         self.assertEqual(2, plan["mode"]["nterms"])
 
-    def test_stokes_coordinate_flows_to_both_imagers_and_receipt(self) -> None:
-        manifest = {
-            "id": "full-stokes-representative",
-            "mode_id": "standard-mfs-full-stokes",
-            "dataset": {"key": "polcal.ms", "path": "/tmp/polcal.ms"},
-            "imaging": {
-                "mode": "clean",
-                "specmode": "mfs",
-                "gridder": "standard",
-                "stokes": "IQUV",
-            },
-        }
-
-        plan = run_workload.build_plan(
-            manifest_path=Path("manifest.json"),
-            manifest=manifest,
-            repeats_override=1,
-            run_label_override=None,
-            storage_label_override=None,
-            dry_run=True,
-        )
-
-        self.assertEqual("IQUV", plan["command"]["env"]["IMAGER_BENCH_STOKES"])
-        self.assertEqual("IQUV", plan["mode"]["stokes"])
-
     def test_wprojection_auto_uses_distinct_casa_auto_plane_value(self) -> None:
         manifest = {
             "id": "wprojection-auto",
