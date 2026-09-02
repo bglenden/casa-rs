@@ -517,12 +517,14 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::Product(ProductKind::SumWeights)
             | RequiredCapability::Product(ProductKind::Mask)
             | RequiredCapability::Product(ProductKind::Beam)
+            | RequiredCapability::Product(ProductKind::Weight)
             | RequiredCapability::Product(ProductKind::Sensitivity)
             | RequiredCapability::Product(ProductKind::PrimaryBeam)
             | RequiredCapability::Product(ProductKind::PbCorrectedImage)
             | RequiredCapability::Product(ProductKind::TaylorTerms)
             | RequiredCapability::Product(ProductKind::SpectralIndex)
             | RequiredCapability::Product(ProductKind::SpectralIndexError)
+            | RequiredCapability::Product(ProductKind::PbCorrectedSpectralIndex)
     )
 }
 
@@ -542,6 +544,17 @@ mod tests {
     #[test]
     fn t47_per_channel_weight_density_is_installed_at_the_application_boundary() {
         assert!(supports_task(TaskRequirement::PerChannelWeightDensity));
+    }
+
+    #[test]
+    fn t47_mosaic_products_are_installed_at_the_application_boundary() {
+        for product in [
+            ProductKind::Weight,
+            ProductKind::Sensitivity,
+            ProductKind::PbCorrectedSpectralIndex,
+        ] {
+            assert!(supports_capability(RequiredCapability::Product(product)));
+        }
     }
 
     #[test]

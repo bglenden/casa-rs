@@ -36,7 +36,7 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
-    ContinuumProductControls, ContinuumSourceCatalog, MosaicSensitivity,
+    AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumSourceCatalog, MosaicSensitivity,
     ProductGenerationAuthority, ProductsError, fit_restoring_beam, gaussian_beam_image,
     normalize_plane, produce_continuum_members,
 };
@@ -1729,6 +1729,107 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
         .map(|value| *value as f32)
         .collect();
     assert_eq!(weight.payload(), expected);
+}
+
+#[test]
+fn standard_products_publish_the_selected_analytic_primary_beam() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::PrimaryBeam,
+        ProductKind::PbCorrectedImage,
+        ProductKind::Beam,
+    ];
+    let problem = continuum_problem_with_reconstruction(
+        109,
+        &products,
+        RestoringBeamPolicy::PerPlane,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+    );
+    let round = run_continuum_round(&problem, 110);
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let planned = authority
+        .plan(&catalog, &controls)
+        .expect("analytic PB plan");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("analytic PB products");
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+    let pb = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("primary beam");
+    let centre = pb.payload()[4 * SHAPE[1] + 4];
+    let corner = pb.payload()[0];
+    assert_eq!(centre, 1.0);
+    assert!(
+        corner < centre,
+        "analytic PB must fall away from phase centre"
+    );
+}
+
+#[test]
+fn standard_cube_products_publish_analytic_primary_beams_per_output_channel() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::SumWeights,
+        ProductKind::PrimaryBeam,
+    ];
+    let problem = continuum_problem_with_reconstruction(
+        111,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+    );
+    let round = run_round_with_contributions(
+        &problem,
+        112,
+        fixture_samples(&problem),
+        channel_contributions,
+    );
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let authority = ProductGenerationAuthority::bind(&problem);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
+    let planned = authority
+        .plan(&catalog, &controls)
+        .expect("analytic PB plan");
+    let inputs =
+        casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
+            .expect("inputs");
+    let produced = produce_continuum_members(&planned, &inputs).expect("analytic cube PB products");
+    let sealed = authority.authorize(&planned, &produced).expect("seal");
+    let pb = sealed
+        .members()
+        .iter()
+        .find(|member| member.name() == ".pb")
+        .expect("primary beam");
+    assert_eq!(pb.payload().len(), SHAPE[0] * SHAPE[1] * 2);
+    assert_eq!(pb.payload().iter().copied().reduce(f32::max), Some(1.0),);
+    assert!(pb.payload().iter().any(|value| *value < 1.0));
+    for channel in 0..2 {
+        let plane = pb.payload().iter().skip(channel).step_by(2);
+        assert_eq!(plane.clone().copied().reduce(f32::max), Some(1.0));
+        assert!(plane.copied().any(|value| value < 1.0));
+    }
 }
 
 #[test]

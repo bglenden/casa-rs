@@ -32,17 +32,15 @@ pub struct MosaicSensitivity<'a> {
 }
 
 impl<'a> MosaicSensitivity<'a> {
-    /// Bind one finite, non-negative sensitivity plane with positive support.
+    /// Bind one finite sensitivity plane with positive support.
     ///
     /// # Errors
     ///
-    /// Rejects empty, non-finite, negative, or wholly unsupported state.
+    /// Small negative values from finite FFT convolution ringing remain part of
+    /// the published CASA-compatible weight plane, but never form PB support.
+    /// Rejects empty, non-finite, or wholly unsupported state.
     pub fn new(values: &'a [f64]) -> Result<Self, ProductsError> {
-        if values.is_empty()
-            || values
-                .iter()
-                .any(|value| !value.is_finite() || *value < 0.0)
-        {
+        if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
             return Err(ProductsError::GeneratedNonfinite);
         }
         let peak = values.iter().copied().fold(0.0_f64, f64::max);
@@ -57,7 +55,7 @@ impl<'a> MosaicSensitivity<'a> {
     pub fn primary_beam(self) -> Vec<f32> {
         self.values
             .iter()
-            .map(|value| (value / self.peak).sqrt() as f32)
+            .map(|value| (value.max(0.0) / self.peak).sqrt() as f32)
             .collect()
     }
 

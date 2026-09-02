@@ -35,6 +35,7 @@ impl CasaLinearSample {
 }
 
 /// One direct CASA row-vector interpolation point.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CasaDirectLinearSample {
     output_channel: usize,
@@ -45,8 +46,8 @@ pub(crate) struct CasaDirectLinearSample {
     right_factor: f64,
 }
 
+#[cfg(test)]
 impl CasaDirectLinearSample {
-    #[cfg(test)]
     pub(crate) const fn output_channel(self) -> usize {
         self.output_channel
     }
@@ -55,12 +56,12 @@ impl CasaDirectLinearSample {
         [self.left_native_channel, self.right_native_channel]
     }
 
-    #[cfg(test)]
     pub(crate) const fn factors(self) -> [f64; 2] {
         [self.left_factor, self.right_factor]
     }
 }
 
+#[cfg(test)]
 impl From<CasaDirectLinearSample> for CasaLinearSample {
     fn from(sample: CasaDirectLinearSample) -> Self {
         Self {
@@ -151,10 +152,6 @@ impl CasaLinearGrid {
         self.fine_channels_per_output * self.output_channels
     }
 
-    pub(crate) const fn is_direct(self) -> bool {
-        self.fine_channels_per_output == 1
-    }
-
     fn fine_frequency_hz(self, ordinal: usize) -> f64 {
         self.fine_start_hz + ordinal as f64 * self.fine_increment_hz
     }
@@ -226,6 +223,7 @@ impl CasaLinearGrid {
 /// channel order, calls `InterpolateArray1D` with `extrapolate=false`, and
 /// flags out-of-range output channels. This helper preserves that vector
 /// semantics while retaining only one row's selected spectral vector.
+#[cfg(test)]
 pub(crate) fn casa_direct_linear_samples(
     output_centres_hz: &[f64],
     input_frequencies_hz: &[f64],
@@ -277,6 +275,7 @@ pub(crate) fn casa_direct_linear_samples(
     Ok(samples)
 }
 
+#[cfg(test)]
 fn casa_bracket(input_frequencies_hz: &[f64], frequency_hz: f64) -> Option<usize> {
     let mut lower = 0_usize;
     let mut upper = input_frequencies_hz.len() - 1;
@@ -956,12 +955,10 @@ mod tests {
     }
 
     #[test]
-    fn t47_direct_linear_grid_interpolates_rows_onto_image_centres() {
+    fn t47_direct_linear_grid_streams_adjacent_pairs_onto_image_centres() {
         let grid = CasaLinearGrid::compile(&[1_000.0, 1_001.0, 1_002.0], 1_000.8, 1_001.8)
             .expect("direct CASA grid");
         assert_eq!(grid.fine_channel_count(), 3);
-        assert!(grid.is_direct());
-
         let mut cursor = 0;
         let first = grid
             .consume_pair(&mut cursor, 1_000.8, 1_001.8)

@@ -1100,6 +1100,48 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
 }
 
 #[test]
+fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::Weight,
+        ProductKind::PrimaryBeam,
+        ProductKind::PbCorrectedImage,
+        ProductKind::TaylorTerms,
+        ProductKind::SpectralIndex,
+        ProductKind::SpectralIndexError,
+        ProductKind::PbCorrectedSpectralIndex,
+        ProductKind::Beam,
+    ];
+    let problem = taylor_problem(211, &products, InstrumentResponse::Scalar);
+    let join = run_round(&problem, 212);
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::MosaicSensitivity);
+    let sealed = seal_with_controls(&problem, &join, controls);
+    let weight = member(&sealed, ".weight.tt0");
+    let alpha_pbcor = member(&sealed, ".alpha.pbcor");
+    let image0 = member(&sealed, ".image.tt0.pbcor");
+    let image1 = member(&sealed, ".image.tt1.pbcor");
+
+    assert!(weight.payload().iter().any(|value| *value > 0.0));
+    for index in 0..alpha_pbcor.payload().len() {
+        let expected = if alpha_pbcor.validity()[index] && image0.payload()[index] != 0.0 {
+            image1.payload()[index] / image0.payload()[index]
+        } else {
+            0.0
+        };
+        assert_close(
+            alpha_pbcor.payload()[index],
+            expected,
+            "PB-corrected spectral index",
+        );
+    }
+}
+
+#[test]
 fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let problem = taylor_problem(209, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
     let join = run_round(&problem, 210);

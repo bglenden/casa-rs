@@ -4,7 +4,7 @@
 
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
-    ProductTerm, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy, SpectralWcs,
+    ProductTerm, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
     TaylorSupportReference,
 };
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
@@ -26,6 +26,7 @@ pub(crate) struct TaylorProducts {
     primary_beam: Vec<Vec<f32>>,
     pb_corrected: Vec<Vec<f32>>,
     alpha: Vec<f32>,
+    alpha_pbcor: Vec<f32>,
     alpha_error: Vec<f32>,
     alpha_validity: Vec<bool>,
     primary_beam_validity: Vec<bool>,
@@ -102,11 +103,17 @@ impl TaylorProducts {
                 ProductNormalization::UnitResponse,
                 principal_sum_weight,
             )?);
+            let weight_scale =
+                if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+                    principal_sum_weight
+                } else {
+                    1.0
+                };
             weight.push(
                 source
                     .sensitivity()
                     .iter()
-                    .map(|value| *value as f32)
+                    .map(|value| (*value / weight_scale) as f32)
                     .collect(),
             );
             let sum_weight = if channel_major_publication {
@@ -233,7 +240,10 @@ impl TaylorProducts {
             });
         let pb0 = match primary_beam_model {
             Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-                analytic_evla_common_primary_beam(inputs, shape)?
+                analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
+            }
+            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
+                primary_beam_from_weight(&weight[0])?
             }
             None if requests_primary_beam => return Err(ProductsError::UnsupportedProblem),
             None => primary_beam_from_weight(&weight[0])?,
@@ -252,7 +262,7 @@ impl TaylorProducts {
             .iter()
             .map(|value| value.is_finite() && *value > pb_policy.cutoff())
             .collect::<Vec<_>>();
-        let pb_corrected = restored
+        let pb_corrected: Vec<Vec<f32>> = restored
             .iter()
             .map(|image| {
                 image
@@ -279,6 +289,19 @@ impl TaylorProducts {
             &restored[1],
             taylor_policy.peak_fraction(),
         );
+        let alpha_pbcor = pb_corrected[0]
+            .iter()
+            .zip(&pb_corrected[1])
+            .zip(&alpha_validity)
+            .zip(&primary_beam_validity)
+            .map(|(((image0, image1), alpha_valid), pb_valid)| {
+                if *alpha_valid && *pb_valid && image0.is_finite() && *image0 != 0.0 {
+                    *image1 / *image0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
         let clean_mask = weight[0]
             .iter()
             .enumerate()
@@ -301,6 +324,7 @@ impl TaylorProducts {
             primary_beam,
             pb_corrected,
             alpha,
+            alpha_pbcor,
             alpha_error,
             alpha_validity,
             primary_beam_validity,
@@ -339,6 +363,7 @@ impl TaylorProducts {
             ProductRole::PrimaryBeam(value) => self.primary_beam.get(term(value)?),
             ProductRole::PbCorrectedImage(value) => self.pb_corrected.get(term(value)?),
             ProductRole::SpectralIndex => return Ok(self.alpha.clone()),
+            ProductRole::PbCorrectedSpectralIndex => return Ok(self.alpha_pbcor.clone()),
             ProductRole::SpectralIndexError => return Ok(self.alpha_error.clone()),
             ProductRole::CleanMask => return Ok(self.clean_mask.clone()),
             ProductRole::Sensitivity => self.weight.first(),
@@ -430,26 +455,28 @@ fn primary_beam_from_weight(weight: &[f32]) -> Result<Vec<f32>, ProductsError> {
         .collect())
 }
 
-fn analytic_evla_common_primary_beam(
+pub(crate) fn analytic_evla_primary_beam(
     inputs: &ContinuumProductInputs<'_>,
+    domain_role: &casa_imaging_model::ImageDomainRole,
     shape: [usize; 2],
+    output_channel: usize,
 ) -> Result<Vec<f32>, ProductsError> {
     let domain = inputs
         .problem()
         .geometry()
         .domains()
-        .first()
+        .iter()
+        .find(|domain| domain.role() == domain_role)
         .ok_or(ProductsError::UnsupportedProblem)?;
     let direction = domain.direction();
     let reference_pixel = direction.reference_pixel();
     let increment_rad = direction.increment_rad();
-    let frequency_hz = match inputs.problem().geometry().spectral().wcs() {
-        SpectralWcs::Linear {
-            reference_frequency_hz,
-            ..
-        } => *reference_frequency_hz,
-        SpectralWcs::Tabular { .. } => return Err(ProductsError::UnsupportedProblem),
-    };
+    let frequency_hz = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(output_channel)
+        .ok_or(ProductsError::UnsupportedProblem)?;
     let coefficients = nearest_evla_common_coefficients(frequency_hz * 1.0e-6)
         .ok_or(ProductsError::UnsupportedProblem)?;
     let mut values = vec![0.0; shape[0] * shape[1]];

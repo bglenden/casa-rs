@@ -843,7 +843,7 @@ impl MosaicNormalAccumulator {
         let mut sensitivity = Vec::with_capacity(image_shape[0] * image_shape[1]);
         for x in 0..image_shape[0] {
             for y in 0..image_shape[1] {
-                sensitivity.push(grid[(image_blc[0] + x, image_blc[1] + y)].re.max(0.0));
+                sensitivity.push(grid[(image_blc[0] + x, image_blc[1] + y)].re);
             }
         }
         Ok(sensitivity)

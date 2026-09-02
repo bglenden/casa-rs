@@ -14,8 +14,8 @@
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ModelCell, ProductAxes,
     ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductRole,
-    ProductSchema, ProductTerm, ProductUnit, ProductValidityRule, ReconstructionBasis,
-    RestoringBeamPolicy,
+    ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule,
+    ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{ModelGeneration, NormalStateCatalog, SpectralChannelValidity};
 
@@ -30,13 +30,13 @@ use crate::restore::{
     MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
 };
 use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
-use crate::taylor::TaylorProducts;
+use crate::taylor::{TaylorProducts, analytic_evla_primary_beam};
 
 /// Version of the native continuum product-algorithm catalog.
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 6;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 7;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -46,6 +46,8 @@ pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT
 pub enum AnalyticPrimaryBeamModel {
     /// CASA's common EVLA primary-beam power polynomial with sampled radial lookup.
     CasaEvlaCommon,
+    /// CASA mosaic PB formed from the reconstruction-owned sensitivity image.
+    MosaicSensitivity,
 }
 
 /// Explicit continuum production controls.
@@ -254,6 +256,7 @@ impl ProductGenerationAuthority {
         encoder.u32(controls.psf_cutoff().to_bits());
         match controls.primary_beam_model() {
             Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => encoder.u8(1),
+            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => encoder.u8(2),
             None => encoder.u8(0),
         }
         encoder.usize(members.len());
@@ -429,6 +432,7 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
         | ProductRole::PbCorrectedImage(_)
         | ProductRole::SpectralIndex
         | ProductRole::SpectralIndexError
+        | ProductRole::PbCorrectedSpectralIndex
         | ProductRole::Sensitivity
         | ProductRole::CleanMask
         | ProductRole::ContinuumCleanMask
@@ -817,7 +821,13 @@ pub fn produce_continuum_members(
                 let plane_validity = if member.validity == ProductValidityRule::All {
                     None
                 } else {
-                    let plane_validity = product_plane_validity(member.validity, &plane)?;
+                    let plane_validity = product_plane_validity(
+                        member.validity,
+                        &plane,
+                        planned.primary_beam_model,
+                        inputs,
+                        member.axes().domain(),
+                    )?;
                     scatter_image_polarization_plane(
                         &mut validity,
                         member.axes(),
@@ -840,15 +850,16 @@ pub fn produce_continuum_members(
                 }
                 let beam_index =
                     beam_offset + local_channel * normal_state.polarization_count() + polarization;
-                let mut plane_payload = produce_plane_member(
+                let mut plane_payload = produce_plane_member(PlaneMemberRequest {
                     member,
                     inputs,
-                    &plane,
+                    plane: &plane,
                     domain_ordinal,
                     polarization,
-                    fitted_beams.get(beam_index).copied().flatten(),
-                    restoring_beams.get(beam_index).copied().flatten(),
-                )?;
+                    fitted_beam: fitted_beams.get(beam_index).copied().flatten(),
+                    restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
+                    primary_beam_model: planned.primary_beam_model,
+                })?;
                 if let Some(plane_validity) = plane_validity.as_deref() {
                     zero_invalid_plane_values(&mut plane_payload, plane_validity)?;
                 }
@@ -1367,15 +1378,30 @@ fn domain_plane<'a>(
     })
 }
 
-fn produce_plane_member(
-    member: &PlannedMember,
-    inputs: &ContinuumProductInputs<'_>,
-    plane: &DomainPlane<'_>,
+struct PlaneMemberRequest<'request, 'inputs, 'plane> {
+    member: &'request PlannedMember,
+    inputs: &'request ContinuumProductInputs<'inputs>,
+    plane: &'request DomainPlane<'plane>,
     domain_ordinal: usize,
     polarization: usize,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+}
+
+fn produce_plane_member(
+    request: PlaneMemberRequest<'_, '_, '_>,
 ) -> Result<Vec<f32>, ProductsError> {
+    let PlaneMemberRequest {
+        member,
+        inputs,
+        plane,
+        domain_ordinal,
+        polarization,
+        fitted_beam,
+        restoring_beam,
+        primary_beam_model,
+    } = request;
     let scalar_sensitivity = plane.sum_weight;
     let valid = plane.validity == SpectralChannelValidity::Valid
         && scalar_sensitivity.is_finite()
@@ -1422,8 +1448,22 @@ fn produce_plane_member(
         ),
         ProductRole::Weight(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        )
-        | ProductRole::Sensitivity => Ok(plane
+        ) => {
+            let scale = if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+                if !plane.sum_weight.is_finite() || plane.sum_weight <= 0.0 {
+                    return Err(ProductsError::GeneratedNonfinite);
+                }
+                plane.sum_weight
+            } else {
+                1.0
+            };
+            Ok(plane
+                .sensitivity
+                .iter()
+                .map(|value| (*value / scale) as f32)
+                .collect())
+        }
+        ProductRole::Sensitivity => Ok(plane
             .sensitivity
             .iter()
             .map(|value| *value as f32)
@@ -1469,7 +1509,7 @@ fn produce_plane_member(
         }
         ProductRole::PrimaryBeam(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => Ok(MosaicSensitivity::new(plane.sensitivity)?.primary_beam()),
+        ) => primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane),
         ProductRole::PbCorrectedImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
@@ -1485,8 +1525,11 @@ fn produce_plane_member(
                 fitted_beam,
                 restoring_beam,
             )?;
-            MosaicSensitivity::new(plane.sensitivity)?.correct_primary_beam(
+            let primary_beam =
+                primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
+            correct_primary_beam(
                 &restored,
+                &primary_beam,
                 inputs.problem().products().validity().primary_beam(),
             )
         }
@@ -1616,6 +1659,9 @@ fn residual_real_plane(plane: &DomainPlane<'_>) -> Vec<f32> {
 fn product_plane_validity(
     rule: ProductValidityRule,
     plane: &DomainPlane<'_>,
+    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &ImageDomainRole,
 ) -> Result<Vec<bool>, ProductsError> {
     let shape = plane.shape;
     match rule {
@@ -1627,12 +1673,63 @@ fn product_plane_validity(
             Ok(vec![valid; shape[0] * shape[1]])
         }
         ProductValidityRule::PrimaryBeam(policy) => {
-            Ok(MosaicSensitivity::new(plane.sensitivity)?.validity(policy))
+            Ok(
+                primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?
+                    .into_iter()
+                    .map(|value| match policy.comparison() {
+                        ProductSupportComparison::StrictlyGreater => value > policy.cutoff(),
+                    })
+                    .collect(),
+            )
         }
         ProductValidityRule::Taylor(_) | ProductValidityRule::TaylorAndPrimaryBeam { .. } => {
             Err(ProductsError::UnsupportedProblem)
         }
     }
+}
+
+fn primary_beam_plane(
+    model: Option<AnalyticPrimaryBeamModel>,
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &ImageDomainRole,
+    plane: &DomainPlane<'_>,
+) -> Result<Vec<f32>, ProductsError> {
+    match model {
+        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
+            analytic_evla_primary_beam(inputs, domain_role, plane.shape, plane.output_channel)
+        }
+        Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
+            Ok(MosaicSensitivity::new(plane.sensitivity)?.primary_beam())
+        }
+        None => Err(ProductsError::UnsupportedProblem),
+    }
+}
+
+fn correct_primary_beam(
+    values: &[f32],
+    primary_beam: &[f32],
+    policy: casa_imaging_model::PrimaryBeamValidityPolicy,
+) -> Result<Vec<f32>, ProductsError> {
+    if values.len() != primary_beam.len() {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    values
+        .iter()
+        .zip(primary_beam)
+        .map(|(value, beam)| {
+            let valid = match policy.comparison() {
+                ProductSupportComparison::StrictlyGreater => *beam > policy.cutoff(),
+            };
+            if !valid {
+                return Ok(0.0);
+            }
+            let corrected = *value / *beam;
+            corrected
+                .is_finite()
+                .then_some(corrected)
+                .ok_or(ProductsError::GeneratedNonfinite)
+        })
+        .collect()
 }
 
 fn zero_invalid_plane_values(payload: &mut [f32], validity: &[bool]) -> Result<(), ProductsError> {

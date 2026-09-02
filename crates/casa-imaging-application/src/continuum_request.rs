@@ -1418,9 +1418,13 @@ fn prepare(
             prepared_spectral.doppler,
         ),
     );
-    let primary_beam_model = (!mosaic && (request.write_primary_beam || request.pbcor))
-        .then(|| standard_primary_beam_model(&ms))
-        .transpose()?;
+    let primary_beam_model = if mosaic {
+        Some(casa_imaging_products::AnalyticPrimaryBeamModel::MosaicSensitivity)
+    } else if request.write_primary_beam || request.pbcor {
+        Some(standard_primary_beam_model(&ms)?)
+    } else {
+        None
+    };
     let mut product_controls =
         casa_imaging_products::ContinuumProductControls::new(request.psf_cutoff)
             .expect("validated PSF cutoff");
@@ -2312,6 +2316,9 @@ fn specification(
     spectral: &PreparedSpectralAxis,
     instrument_model: Option<InstrumentModel>,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
+    let mosaic = request
+        .task_requirements
+        .contains(&TaskRequirement::MosaicGridder);
     let algorithm = reconstruction_algorithm(&request.algorithm);
     let basis = match (&request.spectral_mode, &request.algorithm) {
         (SpectralImagingMode::MtmfsViaCube { .. }, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
@@ -2421,34 +2428,13 @@ fn specification(
         reconstruction,
         WeightingContract::new(weighting, density),
         ProductRequirements::new(
-            {
-                let mut products = vec![
-                    ProductKind::Psf,
-                    ProductKind::Residual,
-                    ProductKind::Model,
-                    ProductKind::RestoredImage,
-                    ProductKind::SumWeights,
-                    ProductKind::Mask,
-                    ProductKind::Beam,
-                ];
-                if matches!(request.algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
-                    products.extend([
-                        ProductKind::TaylorTerms,
-                        ProductKind::SpectralIndex,
-                        ProductKind::SpectralIndexError,
-                    ]);
-                }
-                if !matches!(request.normalization, ProductNormalization::UnitResponse) {
-                    products.push(ProductKind::Sensitivity);
-                }
-                if request.write_primary_beam || request.pbcor {
-                    products.push(ProductKind::PrimaryBeam);
-                }
-                if request.pbcor {
-                    products.push(ProductKind::PbCorrectedImage);
-                }
-                products
-            },
+            requested_products(
+                &request.algorithm,
+                request.normalization,
+                mosaic,
+                request.write_primary_beam,
+                request.pbcor,
+            ),
             request.normalization,
             match (&request.algorithm, request.beam_policy) {
                 (ContinuumAlgorithm::Mtmfs { .. }, _)
@@ -2490,6 +2476,47 @@ fn specification(
                 .collect(),
         ),
     ))
+}
+
+fn requested_products(
+    algorithm: &ContinuumAlgorithm,
+    normalization: ProductNormalization,
+    mosaic: bool,
+    write_primary_beam: bool,
+    pbcor: bool,
+) -> Vec<ProductKind> {
+    let mut products = vec![
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::Mask,
+        ProductKind::Beam,
+    ];
+    if matches!(algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
+        products.extend([
+            ProductKind::TaylorTerms,
+            ProductKind::SpectralIndex,
+            ProductKind::SpectralIndexError,
+        ]);
+    }
+    if mosaic {
+        products.push(ProductKind::Weight);
+    }
+    if !matches!(normalization, ProductNormalization::UnitResponse) {
+        products.push(ProductKind::Sensitivity);
+    }
+    if write_primary_beam || pbcor {
+        products.push(ProductKind::PrimaryBeam);
+    }
+    if pbcor {
+        products.push(ProductKind::PbCorrectedImage);
+        if mosaic && matches!(algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
+            products.push(ProductKind::PbCorrectedSpectralIndex);
+        }
+    }
+    products
 }
 
 fn reconstruction_algorithm(algorithm: &ContinuumAlgorithm) -> ReconstructionAlgorithm {
@@ -2830,7 +2857,7 @@ mod tests {
     use super::{
         ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
         canonicalize_polarizations, image_coordinates, image_reference_pixel, model_plane_samples,
-        parse_phase_center_direction, planned_minor_cycle_bytes,
+        parse_phase_center_direction, planned_minor_cycle_bytes, requested_products,
         resource_policy_for_task_requirements,
     };
 
@@ -2952,5 +2979,27 @@ mod tests {
         assert!(
             analytic_primary_beam_model_for_telescopes(&std::collections::BTreeSet::new()).is_err()
         );
+    }
+
+    #[test]
+    fn t47_mosaic_requests_weight_and_wideband_pb_correction() {
+        let products = requested_products(
+            &ContinuumAlgorithm::Mtmfs {
+                terms: 2,
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            casa_imaging_model::ProductNormalization::FlatNoise,
+            true,
+            true,
+            true,
+        );
+        for product in [
+            casa_imaging_model::ProductKind::Weight,
+            casa_imaging_model::ProductKind::Sensitivity,
+            casa_imaging_model::ProductKind::PbCorrectedSpectralIndex,
+        ] {
+            assert!(products.contains(&product));
+        }
     }
 }
