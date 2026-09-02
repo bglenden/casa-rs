@@ -16,7 +16,7 @@ use crate::{
 };
 
 const SELECTED_OBSERVATION_GENERATION_DOMAIN: &[u8] = b"casa-rs-selected-observation-generation";
-const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 7;
+const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 8;
 const GENERATION_ROW_RUN_MARKER: u8 = 0xa1;
 const GENERATION_ROW_RUN_TERMINAL: u8 = 0xaf;
 const GENERATION_CHANNEL_RUN_MARKER: u8 = 0xb1;
@@ -727,7 +727,7 @@ pub struct SelectedObservationSample {
 
 impl SelectedObservationSample {
     /// Closed schema version of the selected-sample value record.
-    pub const SCHEMA_VERSION: u32 = 4;
+    pub const SCHEMA_VERSION: u32 = 5;
 
     /// Borrow this scalar record through the same interface used by a
     /// row/channel run.
@@ -1429,12 +1429,28 @@ fn encode_generation_row_content(encoder: &mut CanonicalEncoder, content: &Gener
     encoder.i32(content.metadata.field_id);
     encoder.i32(content.metadata.antenna1);
     encoder.i32(content.metadata.antenna2);
+    match content.metadata.antenna_responses {
+        None => encoder.u8(0),
+        Some(responses) => {
+            encoder.u8(1);
+            encode_antenna_response_class(encoder, responses.antenna1);
+            encode_antenna_response_class(encoder, responses.antenna2);
+            encode_antenna_response_class(encoder, responses.family_envelope);
+        }
+    }
     encoder.i32(content.metadata.feed1);
     encoder.i32(content.metadata.feed2);
     encoder.i32(content.metadata.scan_number);
     encoder.i32(content.metadata.state_id);
     encoder.i32(content.metadata.observation_id);
     encoder.i32(content.metadata.array_id);
+}
+
+fn encode_antenna_response_class(encoder: &mut CanonicalEncoder, class: AntennaResponseClass) {
+    encoder.u8(match class {
+        AntennaResponseClass::CasaAlma12m => 0,
+        AntennaResponseClass::CasaAca7m => 1,
+    });
 }
 
 fn encode_phase_centre_projection(
@@ -1505,10 +1521,10 @@ mod tests {
 
     const GENERATION_FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v7.txt"
+        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v8.txt"
     ));
 
-    const ENCODED_FIELDS: [&str; 47] = [
+    const ENCODED_FIELDS: [&str; 51] = [
         "row.data_description_id:i32",
         "row.spectral_window_id:u32",
         "row.polarization_id:u32",
@@ -1538,6 +1554,10 @@ mod tests {
         "row.field_id:i32",
         "row.antenna1:i32",
         "row.antenna2:i32",
+        "row.antenna_responses:option-tag-u8",
+        "row.antenna_response_antenna1:tag-u8-if-present",
+        "row.antenna_response_antenna2:tag-u8-if-present",
+        "row.antenna_response_family_envelope:tag-u8-if-present",
         "row.feed1:i32",
         "row.feed2:i32",
         "row.scan_number:i32",
@@ -1609,7 +1629,7 @@ mod tests {
         assert!(SelectedSpectralContribution::new(0, 1.0, f64::NAN).is_none());
         assert!(SelectedSpectralContributions::new([None, Some(first)]).is_none());
         assert!(SelectedSpectralContributions::new([Some(first), Some(first)]).is_none());
-        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 4);
+        assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 5);
 
         let samples = generation_fixture_samples();
         assert_eq!(
@@ -1632,7 +1652,7 @@ mod tests {
             generation(&[&[second.clone(), first.clone()]]),
             "logical sample order participates in content identity"
         );
-        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 7);
+        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 8);
 
         let mutations: &[SampleMutation] = &[
             ("data description", |s| s.address.data_description_id += 1),
@@ -1706,6 +1726,7 @@ mod tests {
             ("field", |s| s.metadata.field_id += 1),
             ("antenna1", |s| s.metadata.antenna1 += 1),
             ("antenna2", |s| s.metadata.antenna2 += 1),
+            ("antenna responses", |s| s.metadata.antenna_responses = None),
             ("feed1", |s| s.metadata.feed1 += 1),
             ("feed2", |s| s.metadata.feed2 += 1),
             ("scan", |s| s.metadata.scan_number += 1),
@@ -1786,10 +1807,10 @@ mod tests {
         assert_eq!(
             one_block.as_bytes(),
             [
-                71, 115, 200, 155, 87, 199, 14, 168, 110, 136, 91, 51, 140, 108, 60, 240, 140, 237,
-                201, 146, 211, 137, 143, 142, 233, 248, 61, 50, 8, 234, 73, 93,
+                77, 197, 204, 165, 208, 30, 160, 65, 207, 107, 26, 113, 112, 39, 221, 124, 87, 241,
+                59, 16, 59, 57, 137, 41, 5, 209, 82, 40, 81, 243, 230, 9,
             ],
-            "schema-7 golden ratchet"
+            "schema-8 golden ratchet"
         );
     }
 
@@ -1872,7 +1893,7 @@ mod tests {
             fixture_value("identity_domain"),
             "casa-rs-selected-observation-generation"
         );
-        assert_eq!(fixture_value("generation_schema_version"), "7");
+        assert_eq!(fixture_value("generation_schema_version"), "8");
         assert_eq!(fixture_value("row_run_marker"), "0xa1");
         assert_eq!(fixture_value("row_run_terminal"), "0xaf");
         assert_eq!(fixture_value("channel_run_marker"), "0xb1");
@@ -1916,8 +1937,44 @@ mod tests {
 
         assert_eq!(
             (encoder.proof_bytes(), encoder.proof_hash_calls()),
-            (520, 93),
+            (524, 97),
         );
+    }
+
+    #[test]
+    fn antenna_response_identity_encodes_absence_and_every_selected_class() {
+        let mut absent = sample();
+        absent.metadata.antenna_responses = None;
+        let absent_generation = generation(&[&[absent.clone()]]);
+
+        let responses = SelectedAntennaResponses {
+            antenna1: AntennaResponseClass::CasaAlma12m,
+            antenna2: AntennaResponseClass::CasaAca7m,
+            family_envelope: AntennaResponseClass::CasaAlma12m,
+        };
+        let mut selected = absent;
+        selected.metadata.antenna_responses = Some(responses);
+        let selected_generation = generation(&[&[selected.clone()]]);
+        assert_ne!(absent_generation, selected_generation);
+
+        for changed in [
+            SelectedAntennaResponses {
+                antenna1: AntennaResponseClass::CasaAca7m,
+                ..responses
+            },
+            SelectedAntennaResponses {
+                antenna2: AntennaResponseClass::CasaAlma12m,
+                ..responses
+            },
+            SelectedAntennaResponses {
+                family_envelope: AntennaResponseClass::CasaAca7m,
+                ..responses
+            },
+        ] {
+            let mut sample = selected.clone();
+            sample.metadata.antenna_responses = Some(changed);
+            assert_ne!(selected_generation, generation(&[&[sample]]));
+        }
     }
 
     fn fixture_value(key: &str) -> &str {
@@ -2006,7 +2063,11 @@ mod tests {
                 field_id: 14,
                 antenna1: 10,
                 antenna2: 11,
-                antenna_responses: None,
+                antenna_responses: Some(SelectedAntennaResponses {
+                    antenna1: AntennaResponseClass::CasaAlma12m,
+                    antenna2: AntennaResponseClass::CasaAca7m,
+                    family_envelope: AntennaResponseClass::CasaAlma12m,
+                }),
                 feed1: 12,
                 feed2: 13,
                 scan_number: 15,

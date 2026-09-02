@@ -81,7 +81,7 @@ fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
         },
     };
 
-    assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 4);
+    assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 5);
     assert_eq!(sample.as_view().domain_projections(), &domain_projections);
     assert_eq!(
         sample.as_view().to_owned().domain_projections,

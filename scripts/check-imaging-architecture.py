@@ -2539,7 +2539,7 @@ def validate_t17_ms_selection_transfer(rows: list[dict[str, Any]]) -> None:
         "repo://crates/casa-imaging-model/src/selected_observation_sample.rs",
         "repo://resources/imaging-architecture/baselines/selected-observation-generation-v5.txt",
         "repo://resources/imaging-architecture/baselines/selected-observation-generation-v6.txt",
-        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v7.txt",
+        "repo://resources/imaging-architecture/baselines/selected-observation-generation-v8.txt",
     }
     if not required_baselines.issubset(set(row.get("baseline_manifests", []))):
         raise ArchitectureError(

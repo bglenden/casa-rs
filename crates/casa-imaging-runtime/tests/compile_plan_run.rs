@@ -10087,7 +10087,7 @@ fn t41_receipt_projection_records_the_exact_primary_beam_instrument_model() {
     let projection = CompiledProblemEvidence::project(&problem);
     assert_eq!(
         projection.field("science.measurement_equation.operator.transforms.3.instrument_model"),
-        Some("casa-alma-aca-interferometric-direct-pb-v1")
+        Some("casa-alma-aca-heterogeneous-interferometric-response-v1")
     );
 }
 

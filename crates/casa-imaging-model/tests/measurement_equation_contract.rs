@@ -469,7 +469,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 fn problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSamplingLaw::LINEAR);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 17);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 18);
     assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 4);
     assert_eq!(
         (
@@ -481,7 +481,7 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "6744b191ea77a60fe6fb03a38a7e548ea537591a0c810be589dea34a74bccfac".to_string(),
+            "8ca3b218105daf1bd53843e8eec203b1bf62c5d6739a0916c4beb60e9c2c4f91".to_string(),
             "fb3f6fbe9f427fbdad7ce317690019841393c10a10d2c48cb163179be78db6e5".to_string(),
         )
     );
