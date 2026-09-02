@@ -1172,9 +1172,9 @@ impl WeightingSpectralValue {
 
 /// Compact kernel projection of one validated selected sample.
 ///
-/// Row-level geometry that is needed only for source validation is deliberately
-/// absent. Bounded weighting/reconstruction blocks retain only the coordinates,
-/// flags, visibility, and address consumed by the scientific kernels.
+/// Row-level geometry used only for source validation is absent. The bounded
+/// block retains the field, pointing, frequency, coordinates, flags,
+/// visibility, and address consumed by the scientific kernels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSelectedSample {
     pub(crate) address: SelectedSampleAddress,

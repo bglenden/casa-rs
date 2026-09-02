@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "3e16a6bbb00ff35169d3d80c1911d2db67e6a4737f0eadd3e52f33addadb31b1"
+    "80b3c9ea2451f3e0b057482cf21df9be65b58cec74dc279eb184a3013f35a4ad"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "290da44b275708185d0ba02532866b877747ece36978ce2b4acbe0a5f74d4b25"
+    "67bf2d1b5a93d28f162bc94c3a0773a9e2f3b5e1726e1360d710af6d18d848db"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 78
+ACCEPTED_MATRIX_CONTRACT_REVISION = 79
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -1349,7 +1349,7 @@ def validate_t36_spectral_sampling_transfer(rows: list[dict[str, Any]]) -> None:
     rows_by_id = {row.get("id"): row for row in rows}
     required_evidence = {
         "capability.lsrk-transform": {
-            "crates/casa-ms/src/derived/engine.rs::pub(crate) fn spectral_frame_explicit",
+            "crates/casa-ms/src/derived/engine.rs::pub fn spectral_frame_observatory_direction",
             "crates/casa-ms/src/selected_observation/spectral_evaluation.rs::pub struct SelectedObservationTraversalSample",
             "crates/casa-imaging-reconstruction/src/spectral_sampling.rs::pub fn compile_spectral_stencil",
         },
@@ -1739,7 +1739,7 @@ def validate_t18_global_weighting_transfer(rows: list[dict[str, Any]]) -> None:
         "crates/casa-imaging-model/src/measurement_equation.rs::pub struct WeightingOperatorContract",
         "crates/casa-imaging-model/src/selected_observation_sample.rs::pub struct SelectedSpectralContribution",
         "crates/casa-imaging-model/src/selected_observation_sample.rs::pub struct SelectedSpectralContributions",
-        "crates/casa-ms/src/derived/engine.rs::pub(crate) fn spectral_frame_explicit",
+        "crates/casa-ms/src/derived/engine.rs::pub fn spectral_frame_observatory_direction",
         "crates/casa-ms/src/spectral_selection.rs::pub(crate) fn convert_frequency_to_frame_with_frames",
         "crates/casa-ms/src/selected_observation/spectral_evaluation.rs::pub struct SelectedObservationTraversalSample",
         "crates/casa-ms/src/selected_observation/bound_observation.rs::pub fn traverse",
@@ -1969,8 +1969,8 @@ def validate_t18_global_weighting_sources(
         traversal_sample, "prepared_frequency_conversion_cached", traversal_sample_path
     )
     compact_evaluation = re.sub(r"\s+", "", evaluation)
-    explicit_output_frame = rust_function_body(
-        spectral_engine, "spectral_frame_explicit", spectral_engine_path
+    observatory_direction_frame = rust_function_body(
+        spectral_engine, "spectral_frame_observatory_direction", spectral_engine_path
     )
     two_frame_conversion = rust_function_body(
         spectral_selection,
@@ -1999,18 +1999,18 @@ def validate_t18_global_weighting_sources(
         or "native.centre_hz()" not in derivation
         or "native_boundaries[0]" not in derivation
         or "native_boundaries[1]" not in derivation
-        or "spectral.anchor()" not in evaluation
+        or "observation_direction_j2000(" not in evaluation
         or "spectral_frame_observatory_direction(" not in evaluation
         or "moving_radial_velocity(" not in evaluation
-        or "spectral_frame_explicit(" not in evaluation
-        or "sample.coordinates()" not in evaluation
-        or "sample.metadata()" not in evaluation
         or "source_frame" not in evaluation
-        or "output_frame" not in evaluation
-        or "Some(source_frame),Some(output_frame)" not in compact_evaluation
+        or "target_frame" not in evaluation
+        or "Some(source_frame),Some(target_frame)" not in compact_evaluation
+        or not re.search(
+            r"else\s*\{(?:\s*//[^\n]*\n)*\s*source_frame\s*\}", evaluation
+        )
         or not all(
-            token in explicit_output_frame
-            for token in ("with_epoch(", "with_position(", "with_direction(", "with_measures(")
+            token in observatory_direction_frame
+            for token in ("make_frame_with_position(", "with_direction(")
         )
         or "source_frame" not in two_frame_conversion
         or "target_frame" not in two_frame_conversion
@@ -2239,6 +2239,9 @@ def validate_t18_global_weighting_sources(
             "correlation_group_size": "usize",
             "parallactic_angles_rad": "[f64;2]",
             "density_uvw_m": "[f64;3]",
+            "output_frame_frequency_hz": "f64",
+            "field_id": "i32",
+            "pointing_directions": "SelectedPointingDirections",
             "domain_projections": "SelectedImageDomainProjections",
         }
         or "input" in replay_phase_fields
