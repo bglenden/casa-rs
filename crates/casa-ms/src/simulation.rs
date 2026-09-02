@@ -33,6 +33,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::column_def::{ColumnDef, ColumnKind};
+use crate::derived::engine::polarization_operator_angle;
 use crate::error::{MsError, MsResult};
 use crate::flagging::shadowed_antennas_from_projected_baselines;
 use crate::schema::{self, SubtableId};
@@ -2149,6 +2150,7 @@ fn populate_main_rows(
                         antenna,
                         std::sync::Arc::clone(&measures),
                     )
+                    .map(polarization_operator_angle)
                 })
                 .collect::<MsResult<Vec<_>>>()?;
             apply_fractional_stokes_to_linear_rows(

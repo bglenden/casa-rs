@@ -5,6 +5,7 @@ use super::{
     SelectedObservationContentBudget, SelectedObservationRow, SelectedObservationTraversalError,
     access::validate_input_weight_group, bound_observation::consume_validated_stream,
 };
+use crate::derived::engine::MsCalEngine;
 use crate::subtables::SubTable;
 use crate::{
     MeasurementSet, MsSelectionIoBudget, ResolvedSelectedObservationAccess,
@@ -325,6 +326,33 @@ fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
         .collect::<Result<Vec<_>, _>>()
         .expect("read non-toy T33 stream");
     assert_eq!(samples.len(), report.main_row_count * 4);
+
+    let measurement_set = MeasurementSet::open(&path).expect("open T33 VLA fixture");
+    let geometry = MsCalEngine::new(&measurement_set).expect("bind physical geometry");
+    let first = &samples[0];
+    let time_mjd_seconds = first.coordinates.time.mjd_days() * 86_400.0;
+    let field_id = usize::try_from(first.metadata.field_id).expect("field id");
+    let antenna1 = usize::try_from(first.metadata.antenna1).expect("antenna 1");
+    let antenna2 = usize::try_from(first.metadata.antenna2).expect("antenna 2");
+    let physical = [
+        geometry
+            .parallactic_angle(time_mjd_seconds, field_id, antenna1)
+            .expect("antenna 1 physical parallactic angle"),
+        geometry
+            .parallactic_angle(time_mjd_seconds, field_id, antenna2)
+            .expect("antenna 2 physical parallactic angle"),
+    ];
+    for (operator, physical) in first
+        .coordinates
+        .parallactic_angles_rad
+        .iter()
+        .zip(physical)
+    {
+        assert!(
+            (operator + physical).abs() < 1.0e-12,
+            "CASA's polarization operator uses the negative physical parallactic angle"
+        );
+    }
 
     let mut minimum = [f64::INFINITY; 2];
     let mut maximum = [f64::NEG_INFINITY; 2];

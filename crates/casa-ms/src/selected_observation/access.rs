@@ -2,7 +2,7 @@
 
 use std::{cell::RefCell, collections::VecDeque, mem::size_of, rc::Rc, sync::Arc, time::Instant};
 
-use crate::derived::engine::MsCalEngine;
+use crate::derived::engine::{MsCalEngine, polarization_operator_angle};
 use crate::subtables::SubTable;
 use crate::{
     MainRowSelectionCursor, MeasurementSet, MsError, MsReadPlan, MsSelectionIoBudget,
@@ -970,8 +970,16 @@ fn project_stored_run_row(
     let antenna2 = usize::try_from(stored.antenna2())
         .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
     let parallactic_angles_rad = [
-        geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna1)?,
-        geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna2)?,
+        polarization_operator_angle(geometry_engine.parallactic_angle(
+            stored.time_mjd_seconds(),
+            field_id,
+            antenna1,
+        )?),
+        polarization_operator_angle(geometry_engine.parallactic_angle(
+            stored.time_mjd_seconds(),
+            field_id,
+            antenna2,
+        )?),
     ];
     let antenna_responses = match problem.science().instrument_model() {
         None => None,
