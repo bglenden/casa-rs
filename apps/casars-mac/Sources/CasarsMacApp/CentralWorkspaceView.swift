@@ -7902,10 +7902,12 @@ struct GenericTaskPanel: View {
                         Image(systemName: "xmark.octagon.fill")
                             .accessibilityHidden(true)
                         Text("\(reason.kind): \(reason.id)")
-                            .accessibilityIdentifier("task.imagerReadiness.unsupported.\(reason.id)")
                     }
                     .workbenchFont(.caption, design: .monospaced)
                     .foregroundStyle(.red)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(reason.kind): \(reason.id)")
+                    .accessibilityIdentifier("task.imagerReadiness.unsupported.\(reason.id)")
                 }
                 ForEach(readiness.diagnostics, id: \.self) { diagnostic in
                     Label(diagnostic, systemImage: "exclamationmark.triangle.fill")
@@ -7919,6 +7921,7 @@ struct GenericTaskPanel: View {
                 }
             }
             .taskCard()
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("task.imagerReadiness")
         }
     }
