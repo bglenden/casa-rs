@@ -355,7 +355,7 @@
 <a href=#355 id=355 data-nosnippet>355</a>    </span><span class="kw">fn </span>imager_wide_field_controls_share_one_catalog_owned_surface() {
 <a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span>catalog = builtin_surface_catalog().unwrap();
 <a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">let </span>surface = catalog.surface(<span class="string">"imager"</span>).unwrap();
-<a href=#358 id=358 data-nosnippet>358</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">12</span>);
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">13</span>);
 <a href=#359 id=359 data-nosnippet>359</a>        <span class="macro">assert_eq!</span>(surface.bindings().len(), <span class="number">94</span>);
 <a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">for </span>binding <span class="kw">in </span>surface.bindings() {
 <a href=#361 id=361 data-nosnippet>361</a>            <span class="kw">let </span>concept = catalog

@@ -1758,7 +1758,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">12</td>
+<td style="text-align: right;">13</td>
 <td><code>imager</code></td>
 <td style="text-align: right;">94</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
@@ -3166,7 +3166,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>12</code></li>
+<li>Contract version: <code>13</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3313,11 +3313,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>specmode</code></td>
-<td><code>parameter.specmode@r1</code></td>
-<td><code>choice (3 values)</code></td>
+<td><code>parameter.specmode@r2</code></td>
+<td><code>choice (5 values)</code></td>
 <td><code>"mfs"</code>; optional</td>
 <td>Stages</td>
-<td>MFS continuum imaging, cube with CASA Doppler/frame handling, or cubedata in the native data frame without Doppler correction</td>
+<td>MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; cubesource tracked in the source rest frame; or MVC MT-MFS via a channel cube</td>
 </tr>
 <tr>
 <td><code>start</code></td>
