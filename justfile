@@ -111,11 +111,14 @@ imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix mvc_ms mvc_c
 # Focused #534 heterogeneous ALMA/ACA response, bounded selection, and CASA product gate.
 imaging-t48-heterogeneous-response:
     CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointings -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms observation_pointing_interpolates_each_antenna_on_the_shortest_arc -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms polarized_linear_prediction_rotates_with_parallactic_angle -- --nocapture
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles -- --nocapture
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction heterogeneous -- --nocapture
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction mosaic_response_routes_use_full_nonuniform_spw_and_ignore_replay_partitions -- --nocapture
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction polarization_operator::tests::parallactic_rotation_changes_linear_qu_but_not_unpolarized_i -- --exact --nocapture
 
-# Regenerate and compare the representative #534 1,008,000-sample fixture with CASA.
+# Regenerate and compare the representative #534 2,016,000-sample fixture with CASA.
 imaging-t48-heterogeneous-response-casa:
     #!/usr/bin/env bash
     set -euo pipefail
