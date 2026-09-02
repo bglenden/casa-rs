@@ -1863,163 +1863,165 @@
 <a href=#1863 id=1863 data-nosnippet>1863</a>    </span>MeasurementOverflow,
 <a href=#1864 id=1864 data-nosnippet>1864</a>}
 <a href=#1865 id=1865 data-nosnippet>1865</a>
-<a href=#1866 id=1866 data-nosnippet>1866</a><span class="kw">impl</span>&lt;E&gt; fmt::Display <span class="kw">for </span>SelectedObservationTraversalError&lt;E&gt; {
+<a href=#1866 id=1866 data-nosnippet>1866</a><span class="kw">impl</span>&lt;E: fmt::Display&gt; fmt::Display <span class="kw">for </span>SelectedObservationTraversalError&lt;E&gt; {
 <a href=#1867 id=1867 data-nosnippet>1867</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
 <a href=#1868 id=1868 data-nosnippet>1868</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#1869 id=1869 data-nosnippet>1869</a>            <span class="self">Self</span>::Binding(error) =&gt; error.fmt(formatter),
 <a href=#1870 id=1870 data-nosnippet>1870</a>            <span class="self">Self</span>::Source(error) =&gt; error.fmt(formatter),
 <a href=#1871 id=1871 data-nosnippet>1871</a>            <span class="self">Self</span>::Inspection(error) =&gt; error.fmt(formatter),
-<a href=#1872 id=1872 data-nosnippet>1872</a>            <span class="self">Self</span>::Consumer(<span class="kw">_</span>) =&gt; formatter.write_str(<span class="string">"selected-observation consumer failed"</span>),
-<a href=#1873 id=1873 data-nosnippet>1873</a>            <span class="self">Self</span>::TraversalIdentityExhausted =&gt; {
-<a href=#1874 id=1874 data-nosnippet>1874</a>                formatter.write_str(<span class="string">"selected-observation traversal identity exhausted"</span>)
-<a href=#1875 id=1875 data-nosnippet>1875</a>            }
-<a href=#1876 id=1876 data-nosnippet>1876</a>            <span class="self">Self</span>::MeasurementOverflow =&gt; {
-<a href=#1877 id=1877 data-nosnippet>1877</a>                formatter.write_str(<span class="string">"selected-observation traversal measurements overflowed"</span>)
-<a href=#1878 id=1878 data-nosnippet>1878</a>            }
-<a href=#1879 id=1879 data-nosnippet>1879</a>        }
-<a href=#1880 id=1880 data-nosnippet>1880</a>    }
-<a href=#1881 id=1881 data-nosnippet>1881</a>}
-<a href=#1882 id=1882 data-nosnippet>1882</a>
-<a href=#1883 id=1883 data-nosnippet>1883</a><span class="kw">impl</span>&lt;E: Error + <span class="lifetime">'static</span>&gt; Error <span class="kw">for </span>SelectedObservationTraversalError&lt;E&gt; {
-<a href=#1884 id=1884 data-nosnippet>1884</a>    <span class="kw">fn </span>source(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>(<span class="kw">dyn </span>Error + <span class="lifetime">'static</span>)&gt; {
-<a href=#1885 id=1885 data-nosnippet>1885</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#1886 id=1886 data-nosnippet>1886</a>            <span class="self">Self</span>::Binding(error) =&gt; <span class="prelude-val">Some</span>(error),
-<a href=#1887 id=1887 data-nosnippet>1887</a>            <span class="self">Self</span>::Source(error) =&gt; <span class="prelude-val">Some</span>(error),
-<a href=#1888 id=1888 data-nosnippet>1888</a>            <span class="self">Self</span>::Inspection(error) =&gt; <span class="prelude-val">Some</span>(error),
-<a href=#1889 id=1889 data-nosnippet>1889</a>            <span class="self">Self</span>::Consumer(error) =&gt; <span class="prelude-val">Some</span>(error),
-<a href=#1890 id=1890 data-nosnippet>1890</a>            <span class="self">Self</span>::TraversalIdentityExhausted | <span class="self">Self</span>::MeasurementOverflow =&gt; <span class="prelude-val">None</span>,
-<a href=#1891 id=1891 data-nosnippet>1891</a>        }
-<a href=#1892 id=1892 data-nosnippet>1892</a>    }
-<a href=#1893 id=1893 data-nosnippet>1893</a>}
-<a href=#1894 id=1894 data-nosnippet>1894</a>
-<a href=#1895 id=1895 data-nosnippet>1895</a><span class="kw">impl </span>Iterator <span class="kw">for </span>BoundSelectedObservationSamples&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#1896 id=1896 data-nosnippet>1896</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;SelectedObservationSample, BoundObservationSourceError&gt;;
-<a href=#1897 id=1897 data-nosnippet>1897</a>
-<a href=#1898 id=1898 data-nosnippet>1898</a>    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
-<a href=#1899 id=1899 data-nosnippet>1899</a>        <span class="self">self</span>.next_projected()
-<a href=#1900 id=1900 data-nosnippet>1900</a>            .map(|result| result.map(|projected| projected.selected))
-<a href=#1901 id=1901 data-nosnippet>1901</a>    }
-<a href=#1902 id=1902 data-nosnippet>1902</a>}
-<a href=#1903 id=1903 data-nosnippet>1903</a>
-<a href=#1904 id=1904 data-nosnippet>1904</a><span class="kw">impl </span>BoundSelectedObservationSamples&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#1905 id=1905 data-nosnippet>1905</a>    <span class="kw">fn </span>next_projected(
-<a href=#1906 id=1906 data-nosnippet>1906</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#1907 id=1907 data-nosnippet>1907</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ProjectedSelectedObservationSample, BoundObservationSourceError&gt;&gt; {
-<a href=#1908 id=1908 data-nosnippet>1908</a>        <span class="kw">if </span><span class="self">self</span>.finished {
-<a href=#1909 id=1909 data-nosnippet>1909</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#1910 id=1910 data-nosnippet>1910</a>        }
-<a href=#1911 id=1911 data-nosnippet>1911</a>        <span class="kw">loop </span>{
-<a href=#1912 id=1912 data-nosnippet>1912</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(current) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.current {
-<a href=#1913 id=1913 data-nosnippet>1913</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(sample) = current.next_projected() {
-<a href=#1914 id=1914 data-nosnippet>1914</a>                    <span class="kw">if </span>sample.is_err() {
-<a href=#1915 id=1915 data-nosnippet>1915</a>                        <span class="self">self</span>.finished = <span class="bool-val">true</span>;
-<a href=#1916 id=1916 data-nosnippet>1916</a>                    }
-<a href=#1917 id=1917 data-nosnippet>1917</a>                    <span class="kw">return </span><span class="prelude-val">Some</span>(sample);
-<a href=#1918 id=1918 data-nosnippet>1918</a>                }
-<a href=#1919 id=1919 data-nosnippet>1919</a>                <span class="self">self</span>.current = <span class="prelude-val">None</span>;
-<a href=#1920 id=1920 data-nosnippet>1920</a>                <span class="self">self</span>.source_index += <span class="number">1</span>;
-<a href=#1921 id=1921 data-nosnippet>1921</a>            }
-<a href=#1922 id=1922 data-nosnippet>1922</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(source) = <span class="self">self</span>.observation.sources.get(<span class="self">self</span>.source_index) <span class="kw">else </span>{
-<a href=#1923 id=1923 data-nosnippet>1923</a>                <span class="self">self</span>.finished = <span class="bool-val">true</span>;
-<a href=#1924 id=1924 data-nosnippet>1924</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#1925 id=1925 data-nosnippet>1925</a>            };
-<a href=#1926 id=1926 data-nosnippet>1926</a>            <span class="kw">match </span>source.selected_samples_measured(<span class="self">self</span>.problem, Rc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.measurements)) {
-<a href=#1927 id=1927 data-nosnippet>1927</a>                <span class="prelude-val">Ok</span>(samples) =&gt; {
-<a href=#1928 id=1928 data-nosnippet>1928</a>                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self</span>.measurements.borrow_mut().record_source_pass() {
-<a href=#1929 id=1929 data-nosnippet>1929</a>                        <span class="self">self</span>.finished = <span class="bool-val">true</span>;
-<a href=#1930 id=1930 data-nosnippet>1930</a>                        <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(error));
-<a href=#1931 id=1931 data-nosnippet>1931</a>                    }
-<a href=#1932 id=1932 data-nosnippet>1932</a>                    <span class="self">self</span>.current = <span class="prelude-val">Some</span>(samples);
-<a href=#1933 id=1933 data-nosnippet>1933</a>                }
-<a href=#1934 id=1934 data-nosnippet>1934</a>                <span class="prelude-val">Err</span>(error) =&gt; {
-<a href=#1935 id=1935 data-nosnippet>1935</a>                    <span class="self">self</span>.finished = <span class="bool-val">true</span>;
-<a href=#1936 id=1936 data-nosnippet>1936</a>                    <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(error));
-<a href=#1937 id=1937 data-nosnippet>1937</a>                }
-<a href=#1938 id=1938 data-nosnippet>1938</a>            }
-<a href=#1939 id=1939 data-nosnippet>1939</a>        }
-<a href=#1940 id=1940 data-nosnippet>1940</a>    }
-<a href=#1941 id=1941 data-nosnippet>1941</a>}
-<a href=#1942 id=1942 data-nosnippet>1942</a>
-<a href=#1943 id=1943 data-nosnippet>1943</a><span class="doccomment">/// Failure to bind or replay a complete compiled selected observation.
-<a href=#1944 id=1944 data-nosnippet>1944</a></span><span class="attr">#[derive(Debug, Error)]
-<a href=#1945 id=1945 data-nosnippet>1945</a></span><span class="kw">pub enum </span>BoundSelectedObservationError {
-<a href=#1946 id=1946 data-nosnippet>1946</a>    <span class="doccomment">/// The injected Measures provider is missing, stale, or unaccounted.
-<a href=#1947 id=1947 data-nosnippet>1947</a>    </span><span class="attr">#[error(transparent)]
-<a href=#1948 id=1948 data-nosnippet>1948</a>    </span>Measures(<span class="attr">#[from] </span>SelectedObservationMeasuresError),
-<a href=#1949 id=1949 data-nosnippet>1949</a>    <span class="doccomment">/// The supplied binding count or membership differs from the compiled source set.
-<a href=#1950 id=1950 data-nosnippet>1950</a>    </span><span class="attr">#[error(<span class="string">"source binding set does not match the compiled selected observation"</span>)]
-<a href=#1951 id=1951 data-nosnippet>1951</a>    </span>BindingSetMismatch,
-<a href=#1952 id=1952 data-nosnippet>1952</a>    <span class="doccomment">/// One compiled source has no current state and budget binding.
-<a href=#1953 id=1953 data-nosnippet>1953</a>    </span><span class="attr">#[error(<span class="string">"compiled source {measurement_set} has no retained-access binding"</span>)]
-<a href=#1954 id=1954 data-nosnippet>1954</a>    </span>MissingSourceBinding {
-<a href=#1955 id=1955 data-nosnippet>1955</a>        <span class="doccomment">/// Source missing a binding.
-<a href=#1956 id=1956 data-nosnippet>1956</a>        </span>measurement_set: MeasurementSetIdentity,
-<a href=#1957 id=1957 data-nosnippet>1957</a>    },
-<a href=#1958 id=1958 data-nosnippet>1958</a>    <span class="doccomment">/// One compiled source was assigned more than one binding.
-<a href=#1959 id=1959 data-nosnippet>1959</a>    </span><span class="attr">#[error(<span class="string">"compiled source {measurement_set} has duplicate retained-access bindings"</span>)]
-<a href=#1960 id=1960 data-nosnippet>1960</a>    </span>DuplicateSourceBinding {
-<a href=#1961 id=1961 data-nosnippet>1961</a>        <span class="doccomment">/// Source with duplicate bindings.
-<a href=#1962 id=1962 data-nosnippet>1962</a>        </span>measurement_set: MeasurementSetIdentity,
-<a href=#1963 id=1963 data-nosnippet>1963</a>    },
-<a href=#1964 id=1964 data-nosnippet>1964</a>    <span class="doccomment">/// A source binding omitted, substituted, or unexpectedly supplied ephemeris data.
-<a href=#1965 id=1965 data-nosnippet>1965</a>    </span><span class="attr">#[error(
-<a href=#1966 id=1966 data-nosnippet>1966</a>        <span class="string">"compiled source {measurement_set} ephemeris reference mismatch: expected {expected:?}, actual {actual:?}"
-<a href=#1967 id=1967 data-nosnippet>1967</a>    </span>)]
-<a href=#1968 id=1968 data-nosnippet>1968</a>    </span>EphemerisReferenceMismatch {
-<a href=#1969 id=1969 data-nosnippet>1969</a>        <span class="doccomment">/// Source whose reference-data binding differs from compiled geometry.
-<a href=#1970 id=1970 data-nosnippet>1970</a>        </span>measurement_set: MeasurementSetIdentity,
-<a href=#1971 id=1971 data-nosnippet>1971</a>        <span class="doccomment">/// Compiler-owned ephemeris identity, or absence for fixed geometry.
-<a href=#1972 id=1972 data-nosnippet>1972</a>        </span>expected: <span class="prelude-ty">Option</span>&lt;LogicalIdentity&gt;,
-<a href=#1973 id=1973 data-nosnippet>1973</a>        <span class="doccomment">/// Supplied source-binding identity, or absence when none was supplied.
-<a href=#1974 id=1974 data-nosnippet>1974</a>        </span>actual: <span class="prelude-ty">Option</span>&lt;LogicalIdentity&gt;,
-<a href=#1975 id=1975 data-nosnippet>1975</a>    },
-<a href=#1976 id=1976 data-nosnippet>1976</a>    <span class="doccomment">/// A source's retained reference data exceeds its selected-content ceiling.
-<a href=#1977 id=1977 data-nosnippet>1977</a>    </span><span class="attr">#[error(
-<a href=#1978 id=1978 data-nosnippet>1978</a>        <span class="string">"compiled source {measurement_set} retains {required_bytes} reference-data bytes but its content budget has {available_bytes} bytes"
-<a href=#1979 id=1979 data-nosnippet>1979</a>    </span>)]
-<a href=#1980 id=1980 data-nosnippet>1980</a>    </span>ReferenceDataBudgetExceeded {
-<a href=#1981 id=1981 data-nosnippet>1981</a>        <span class="doccomment">/// Source whose exact reference-data charge exceeds its budget.
-<a href=#1982 id=1982 data-nosnippet>1982</a>        </span>measurement_set: MeasurementSetIdentity,
-<a href=#1983 id=1983 data-nosnippet>1983</a>        <span class="doccomment">/// Exact retained reference-data allocation.
-<a href=#1984 id=1984 data-nosnippet>1984</a>        </span>required_bytes: usize,
-<a href=#1985 id=1985 data-nosnippet>1985</a>        <span class="doccomment">/// Bytes authorized by the source content budget.
-<a href=#1986 id=1986 data-nosnippet>1986</a>        </span>available_bytes: usize,
-<a href=#1987 id=1987 data-nosnippet>1987</a>    },
-<a href=#1988 id=1988 data-nosnippet>1988</a>    <span class="doccomment">/// One retained source could not be bound under its state and budget.
-<a href=#1989 id=1989 data-nosnippet>1989</a>    </span><span class="attr">#[error(<span class="string">"bind compiled source {measurement_set}: {error}"</span>)]
-<a href=#1990 id=1990 data-nosnippet>1990</a>    </span>Source {
-<a href=#1991 id=1991 data-nosnippet>1991</a>        <span class="doccomment">/// Source whose binding failed.
-<a href=#1992 id=1992 data-nosnippet>1992</a>        </span>measurement_set: MeasurementSetIdentity,
-<a href=#1993 id=1993 data-nosnippet>1993</a>        <span class="doccomment">/// Exact source-level failure.
-<a href=#1994 id=1994 data-nosnippet>1994</a>        </span><span class="attr">#[source]
-<a href=#1995 id=1995 data-nosnippet>1995</a>        </span>error: Box&lt;BoundObservationSourceError&gt;,
-<a href=#1996 id=1996 data-nosnippet>1996</a>    },
-<a href=#1997 id=1997 data-nosnippet>1997</a>    <span class="doccomment">/// A different compiled problem was supplied for replay.
-<a href=#1998 id=1998 data-nosnippet>1998</a>    </span><span class="attr">#[error(<span class="string">"retained selected observation belongs to a different compiled problem"</span>)]
-<a href=#1999 id=1999 data-nosnippet>1999</a>    </span>ProblemMismatch,
-<a href=#2000 id=2000 data-nosnippet>2000</a>    <span class="doccomment">/// A prior replay proof does not authorize this compiled source set.
-<a href=#2001 id=2001 data-nosnippet>2001</a>    </span><span class="attr">#[error(<span class="string">"selected-observation replay proof does not match the rebound source set"</span>)]
-<a href=#2002 id=2002 data-nosnippet>2002</a>    </span>ReplayProofMismatch,
-<a href=#2003 id=2003 data-nosnippet>2003</a>    <span class="doccomment">/// The affine traversal identity domain was exhausted.
-<a href=#2004 id=2004 data-nosnippet>2004</a>    </span><span class="attr">#[error(<span class="string">"selected-observation traversal identity exhausted"</span>)]
-<a href=#2005 id=2005 data-nosnippet>2005</a>    </span>TraversalIdentityExhausted,
-<a href=#2006 id=2006 data-nosnippet>2006</a>    <span class="doccomment">/// The process-local retained-access identity domain was exhausted.
-<a href=#2007 id=2007 data-nosnippet>2007</a>    </span><span class="attr">#[error(<span class="string">"selected-observation retained-access identity exhausted"</span>)]
-<a href=#2008 id=2008 data-nosnippet>2008</a>    </span>AccessIdentityExhausted,
-<a href=#2009 id=2009 data-nosnippet>2009</a>    <span class="doccomment">/// The retained source-slot allocation exceeded the host byte domain.
-<a href=#2010 id=2010 data-nosnippet>2010</a>    </span><span class="attr">#[error(<span class="string">"selected-observation source-slot byte projection overflowed"</span>)]
-<a href=#2011 id=2011 data-nosnippet>2011</a>    </span>SourceSlotByteOverflow,
-<a href=#2012 id=2012 data-nosnippet>2012</a>    <span class="doccomment">/// The consumed source-binding graph exceeded the host byte domain.
-<a href=#2013 id=2013 data-nosnippet>2013</a>    </span><span class="attr">#[error(<span class="string">"selected-observation binding-graph byte projection overflowed"</span>)]
-<a href=#2014 id=2014 data-nosnippet>2014</a>    </span>BindingGraphByteOverflow,
-<a href=#2015 id=2015 data-nosnippet>2015</a>    <span class="doccomment">/// Aggregate selected-source residency exceeded the host byte domain.
-<a href=#2016 id=2016 data-nosnippet>2016</a>    </span><span class="attr">#[error(<span class="string">"selected-observation aggregate residency projection overflowed"</span>)]
-<a href=#2017 id=2017 data-nosnippet>2017</a>    </span>ResidencyByteOverflow,
-<a href=#2018 id=2018 data-nosnippet>2018</a>    <span class="doccomment">/// Aggregate retained reference data exceeded the host byte domain.
-<a href=#2019 id=2019 data-nosnippet>2019</a>    </span><span class="attr">#[error(<span class="string">"selected-observation reference-data residency projection overflowed"</span>)]
-<a href=#2020 id=2020 data-nosnippet>2020</a>    </span>ReferenceDataByteOverflow,
-<a href=#2021 id=2021 data-nosnippet>2021</a>    <span class="doccomment">/// The retained replay-proof graph exceeded the host byte domain.
-<a href=#2022 id=2022 data-nosnippet>2022</a>    </span><span class="attr">#[error(<span class="string">"selected-observation replay-proof byte projection overflowed"</span>)]
-<a href=#2023 id=2023 data-nosnippet>2023</a>    </span>ReplayProofByteOverflow,
-<a href=#2024 id=2024 data-nosnippet>2024</a>}
+<a href=#1872 id=1872 data-nosnippet>1872</a>            <span class="self">Self</span>::Consumer(error) =&gt; {
+<a href=#1873 id=1873 data-nosnippet>1873</a>                <span class="macro">write!</span>(formatter, <span class="string">"selected-observation consumer failed: {error}"</span>)
+<a href=#1874 id=1874 data-nosnippet>1874</a>            }
+<a href=#1875 id=1875 data-nosnippet>1875</a>            <span class="self">Self</span>::TraversalIdentityExhausted =&gt; {
+<a href=#1876 id=1876 data-nosnippet>1876</a>                formatter.write_str(<span class="string">"selected-observation traversal identity exhausted"</span>)
+<a href=#1877 id=1877 data-nosnippet>1877</a>            }
+<a href=#1878 id=1878 data-nosnippet>1878</a>            <span class="self">Self</span>::MeasurementOverflow =&gt; {
+<a href=#1879 id=1879 data-nosnippet>1879</a>                formatter.write_str(<span class="string">"selected-observation traversal measurements overflowed"</span>)
+<a href=#1880 id=1880 data-nosnippet>1880</a>            }
+<a href=#1881 id=1881 data-nosnippet>1881</a>        }
+<a href=#1882 id=1882 data-nosnippet>1882</a>    }
+<a href=#1883 id=1883 data-nosnippet>1883</a>}
+<a href=#1884 id=1884 data-nosnippet>1884</a>
+<a href=#1885 id=1885 data-nosnippet>1885</a><span class="kw">impl</span>&lt;E: Error + <span class="lifetime">'static</span>&gt; Error <span class="kw">for </span>SelectedObservationTraversalError&lt;E&gt; {
+<a href=#1886 id=1886 data-nosnippet>1886</a>    <span class="kw">fn </span>source(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>(<span class="kw">dyn </span>Error + <span class="lifetime">'static</span>)&gt; {
+<a href=#1887 id=1887 data-nosnippet>1887</a>        <span class="kw">match </span><span class="self">self </span>{
+<a href=#1888 id=1888 data-nosnippet>1888</a>            <span class="self">Self</span>::Binding(error) =&gt; <span class="prelude-val">Some</span>(error),
+<a href=#1889 id=1889 data-nosnippet>1889</a>            <span class="self">Self</span>::Source(error) =&gt; <span class="prelude-val">Some</span>(error),
+<a href=#1890 id=1890 data-nosnippet>1890</a>            <span class="self">Self</span>::Inspection(error) =&gt; <span class="prelude-val">Some</span>(error),
+<a href=#1891 id=1891 data-nosnippet>1891</a>            <span class="self">Self</span>::Consumer(error) =&gt; <span class="prelude-val">Some</span>(error),
+<a href=#1892 id=1892 data-nosnippet>1892</a>            <span class="self">Self</span>::TraversalIdentityExhausted | <span class="self">Self</span>::MeasurementOverflow =&gt; <span class="prelude-val">None</span>,
+<a href=#1893 id=1893 data-nosnippet>1893</a>        }
+<a href=#1894 id=1894 data-nosnippet>1894</a>    }
+<a href=#1895 id=1895 data-nosnippet>1895</a>}
+<a href=#1896 id=1896 data-nosnippet>1896</a>
+<a href=#1897 id=1897 data-nosnippet>1897</a><span class="kw">impl </span>Iterator <span class="kw">for </span>BoundSelectedObservationSamples&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#1898 id=1898 data-nosnippet>1898</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;SelectedObservationSample, BoundObservationSourceError&gt;;
+<a href=#1899 id=1899 data-nosnippet>1899</a>
+<a href=#1900 id=1900 data-nosnippet>1900</a>    <span class="kw">fn </span>next(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt; {
+<a href=#1901 id=1901 data-nosnippet>1901</a>        <span class="self">self</span>.next_projected()
+<a href=#1902 id=1902 data-nosnippet>1902</a>            .map(|result| result.map(|projected| projected.selected))
+<a href=#1903 id=1903 data-nosnippet>1903</a>    }
+<a href=#1904 id=1904 data-nosnippet>1904</a>}
+<a href=#1905 id=1905 data-nosnippet>1905</a>
+<a href=#1906 id=1906 data-nosnippet>1906</a><span class="kw">impl </span>BoundSelectedObservationSamples&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#1907 id=1907 data-nosnippet>1907</a>    <span class="kw">fn </span>next_projected(
+<a href=#1908 id=1908 data-nosnippet>1908</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+<a href=#1909 id=1909 data-nosnippet>1909</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ProjectedSelectedObservationSample, BoundObservationSourceError&gt;&gt; {
+<a href=#1910 id=1910 data-nosnippet>1910</a>        <span class="kw">if </span><span class="self">self</span>.finished {
+<a href=#1911 id=1911 data-nosnippet>1911</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#1912 id=1912 data-nosnippet>1912</a>        }
+<a href=#1913 id=1913 data-nosnippet>1913</a>        <span class="kw">loop </span>{
+<a href=#1914 id=1914 data-nosnippet>1914</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(current) = <span class="kw-2">&amp;mut </span><span class="self">self</span>.current {
+<a href=#1915 id=1915 data-nosnippet>1915</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(sample) = current.next_projected() {
+<a href=#1916 id=1916 data-nosnippet>1916</a>                    <span class="kw">if </span>sample.is_err() {
+<a href=#1917 id=1917 data-nosnippet>1917</a>                        <span class="self">self</span>.finished = <span class="bool-val">true</span>;
+<a href=#1918 id=1918 data-nosnippet>1918</a>                    }
+<a href=#1919 id=1919 data-nosnippet>1919</a>                    <span class="kw">return </span><span class="prelude-val">Some</span>(sample);
+<a href=#1920 id=1920 data-nosnippet>1920</a>                }
+<a href=#1921 id=1921 data-nosnippet>1921</a>                <span class="self">self</span>.current = <span class="prelude-val">None</span>;
+<a href=#1922 id=1922 data-nosnippet>1922</a>                <span class="self">self</span>.source_index += <span class="number">1</span>;
+<a href=#1923 id=1923 data-nosnippet>1923</a>            }
+<a href=#1924 id=1924 data-nosnippet>1924</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(source) = <span class="self">self</span>.observation.sources.get(<span class="self">self</span>.source_index) <span class="kw">else </span>{
+<a href=#1925 id=1925 data-nosnippet>1925</a>                <span class="self">self</span>.finished = <span class="bool-val">true</span>;
+<a href=#1926 id=1926 data-nosnippet>1926</a>                <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#1927 id=1927 data-nosnippet>1927</a>            };
+<a href=#1928 id=1928 data-nosnippet>1928</a>            <span class="kw">match </span>source.selected_samples_measured(<span class="self">self</span>.problem, Rc::clone(<span class="kw-2">&amp;</span><span class="self">self</span>.measurements)) {
+<a href=#1929 id=1929 data-nosnippet>1929</a>                <span class="prelude-val">Ok</span>(samples) =&gt; {
+<a href=#1930 id=1930 data-nosnippet>1930</a>                    <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="self">self</span>.measurements.borrow_mut().record_source_pass() {
+<a href=#1931 id=1931 data-nosnippet>1931</a>                        <span class="self">self</span>.finished = <span class="bool-val">true</span>;
+<a href=#1932 id=1932 data-nosnippet>1932</a>                        <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(error));
+<a href=#1933 id=1933 data-nosnippet>1933</a>                    }
+<a href=#1934 id=1934 data-nosnippet>1934</a>                    <span class="self">self</span>.current = <span class="prelude-val">Some</span>(samples);
+<a href=#1935 id=1935 data-nosnippet>1935</a>                }
+<a href=#1936 id=1936 data-nosnippet>1936</a>                <span class="prelude-val">Err</span>(error) =&gt; {
+<a href=#1937 id=1937 data-nosnippet>1937</a>                    <span class="self">self</span>.finished = <span class="bool-val">true</span>;
+<a href=#1938 id=1938 data-nosnippet>1938</a>                    <span class="kw">return </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(error));
+<a href=#1939 id=1939 data-nosnippet>1939</a>                }
+<a href=#1940 id=1940 data-nosnippet>1940</a>            }
+<a href=#1941 id=1941 data-nosnippet>1941</a>        }
+<a href=#1942 id=1942 data-nosnippet>1942</a>    }
+<a href=#1943 id=1943 data-nosnippet>1943</a>}
+<a href=#1944 id=1944 data-nosnippet>1944</a>
+<a href=#1945 id=1945 data-nosnippet>1945</a><span class="doccomment">/// Failure to bind or replay a complete compiled selected observation.
+<a href=#1946 id=1946 data-nosnippet>1946</a></span><span class="attr">#[derive(Debug, Error)]
+<a href=#1947 id=1947 data-nosnippet>1947</a></span><span class="kw">pub enum </span>BoundSelectedObservationError {
+<a href=#1948 id=1948 data-nosnippet>1948</a>    <span class="doccomment">/// The injected Measures provider is missing, stale, or unaccounted.
+<a href=#1949 id=1949 data-nosnippet>1949</a>    </span><span class="attr">#[error(transparent)]
+<a href=#1950 id=1950 data-nosnippet>1950</a>    </span>Measures(<span class="attr">#[from] </span>SelectedObservationMeasuresError),
+<a href=#1951 id=1951 data-nosnippet>1951</a>    <span class="doccomment">/// The supplied binding count or membership differs from the compiled source set.
+<a href=#1952 id=1952 data-nosnippet>1952</a>    </span><span class="attr">#[error(<span class="string">"source binding set does not match the compiled selected observation"</span>)]
+<a href=#1953 id=1953 data-nosnippet>1953</a>    </span>BindingSetMismatch,
+<a href=#1954 id=1954 data-nosnippet>1954</a>    <span class="doccomment">/// One compiled source has no current state and budget binding.
+<a href=#1955 id=1955 data-nosnippet>1955</a>    </span><span class="attr">#[error(<span class="string">"compiled source {measurement_set} has no retained-access binding"</span>)]
+<a href=#1956 id=1956 data-nosnippet>1956</a>    </span>MissingSourceBinding {
+<a href=#1957 id=1957 data-nosnippet>1957</a>        <span class="doccomment">/// Source missing a binding.
+<a href=#1958 id=1958 data-nosnippet>1958</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#1959 id=1959 data-nosnippet>1959</a>    },
+<a href=#1960 id=1960 data-nosnippet>1960</a>    <span class="doccomment">/// One compiled source was assigned more than one binding.
+<a href=#1961 id=1961 data-nosnippet>1961</a>    </span><span class="attr">#[error(<span class="string">"compiled source {measurement_set} has duplicate retained-access bindings"</span>)]
+<a href=#1962 id=1962 data-nosnippet>1962</a>    </span>DuplicateSourceBinding {
+<a href=#1963 id=1963 data-nosnippet>1963</a>        <span class="doccomment">/// Source with duplicate bindings.
+<a href=#1964 id=1964 data-nosnippet>1964</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#1965 id=1965 data-nosnippet>1965</a>    },
+<a href=#1966 id=1966 data-nosnippet>1966</a>    <span class="doccomment">/// A source binding omitted, substituted, or unexpectedly supplied ephemeris data.
+<a href=#1967 id=1967 data-nosnippet>1967</a>    </span><span class="attr">#[error(
+<a href=#1968 id=1968 data-nosnippet>1968</a>        <span class="string">"compiled source {measurement_set} ephemeris reference mismatch: expected {expected:?}, actual {actual:?}"
+<a href=#1969 id=1969 data-nosnippet>1969</a>    </span>)]
+<a href=#1970 id=1970 data-nosnippet>1970</a>    </span>EphemerisReferenceMismatch {
+<a href=#1971 id=1971 data-nosnippet>1971</a>        <span class="doccomment">/// Source whose reference-data binding differs from compiled geometry.
+<a href=#1972 id=1972 data-nosnippet>1972</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#1973 id=1973 data-nosnippet>1973</a>        <span class="doccomment">/// Compiler-owned ephemeris identity, or absence for fixed geometry.
+<a href=#1974 id=1974 data-nosnippet>1974</a>        </span>expected: <span class="prelude-ty">Option</span>&lt;LogicalIdentity&gt;,
+<a href=#1975 id=1975 data-nosnippet>1975</a>        <span class="doccomment">/// Supplied source-binding identity, or absence when none was supplied.
+<a href=#1976 id=1976 data-nosnippet>1976</a>        </span>actual: <span class="prelude-ty">Option</span>&lt;LogicalIdentity&gt;,
+<a href=#1977 id=1977 data-nosnippet>1977</a>    },
+<a href=#1978 id=1978 data-nosnippet>1978</a>    <span class="doccomment">/// A source's retained reference data exceeds its selected-content ceiling.
+<a href=#1979 id=1979 data-nosnippet>1979</a>    </span><span class="attr">#[error(
+<a href=#1980 id=1980 data-nosnippet>1980</a>        <span class="string">"compiled source {measurement_set} retains {required_bytes} reference-data bytes but its content budget has {available_bytes} bytes"
+<a href=#1981 id=1981 data-nosnippet>1981</a>    </span>)]
+<a href=#1982 id=1982 data-nosnippet>1982</a>    </span>ReferenceDataBudgetExceeded {
+<a href=#1983 id=1983 data-nosnippet>1983</a>        <span class="doccomment">/// Source whose exact reference-data charge exceeds its budget.
+<a href=#1984 id=1984 data-nosnippet>1984</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#1985 id=1985 data-nosnippet>1985</a>        <span class="doccomment">/// Exact retained reference-data allocation.
+<a href=#1986 id=1986 data-nosnippet>1986</a>        </span>required_bytes: usize,
+<a href=#1987 id=1987 data-nosnippet>1987</a>        <span class="doccomment">/// Bytes authorized by the source content budget.
+<a href=#1988 id=1988 data-nosnippet>1988</a>        </span>available_bytes: usize,
+<a href=#1989 id=1989 data-nosnippet>1989</a>    },
+<a href=#1990 id=1990 data-nosnippet>1990</a>    <span class="doccomment">/// One retained source could not be bound under its state and budget.
+<a href=#1991 id=1991 data-nosnippet>1991</a>    </span><span class="attr">#[error(<span class="string">"bind compiled source {measurement_set}: {error}"</span>)]
+<a href=#1992 id=1992 data-nosnippet>1992</a>    </span>Source {
+<a href=#1993 id=1993 data-nosnippet>1993</a>        <span class="doccomment">/// Source whose binding failed.
+<a href=#1994 id=1994 data-nosnippet>1994</a>        </span>measurement_set: MeasurementSetIdentity,
+<a href=#1995 id=1995 data-nosnippet>1995</a>        <span class="doccomment">/// Exact source-level failure.
+<a href=#1996 id=1996 data-nosnippet>1996</a>        </span><span class="attr">#[source]
+<a href=#1997 id=1997 data-nosnippet>1997</a>        </span>error: Box&lt;BoundObservationSourceError&gt;,
+<a href=#1998 id=1998 data-nosnippet>1998</a>    },
+<a href=#1999 id=1999 data-nosnippet>1999</a>    <span class="doccomment">/// A different compiled problem was supplied for replay.
+<a href=#2000 id=2000 data-nosnippet>2000</a>    </span><span class="attr">#[error(<span class="string">"retained selected observation belongs to a different compiled problem"</span>)]
+<a href=#2001 id=2001 data-nosnippet>2001</a>    </span>ProblemMismatch,
+<a href=#2002 id=2002 data-nosnippet>2002</a>    <span class="doccomment">/// A prior replay proof does not authorize this compiled source set.
+<a href=#2003 id=2003 data-nosnippet>2003</a>    </span><span class="attr">#[error(<span class="string">"selected-observation replay proof does not match the rebound source set"</span>)]
+<a href=#2004 id=2004 data-nosnippet>2004</a>    </span>ReplayProofMismatch,
+<a href=#2005 id=2005 data-nosnippet>2005</a>    <span class="doccomment">/// The affine traversal identity domain was exhausted.
+<a href=#2006 id=2006 data-nosnippet>2006</a>    </span><span class="attr">#[error(<span class="string">"selected-observation traversal identity exhausted"</span>)]
+<a href=#2007 id=2007 data-nosnippet>2007</a>    </span>TraversalIdentityExhausted,
+<a href=#2008 id=2008 data-nosnippet>2008</a>    <span class="doccomment">/// The process-local retained-access identity domain was exhausted.
+<a href=#2009 id=2009 data-nosnippet>2009</a>    </span><span class="attr">#[error(<span class="string">"selected-observation retained-access identity exhausted"</span>)]
+<a href=#2010 id=2010 data-nosnippet>2010</a>    </span>AccessIdentityExhausted,
+<a href=#2011 id=2011 data-nosnippet>2011</a>    <span class="doccomment">/// The retained source-slot allocation exceeded the host byte domain.
+<a href=#2012 id=2012 data-nosnippet>2012</a>    </span><span class="attr">#[error(<span class="string">"selected-observation source-slot byte projection overflowed"</span>)]
+<a href=#2013 id=2013 data-nosnippet>2013</a>    </span>SourceSlotByteOverflow,
+<a href=#2014 id=2014 data-nosnippet>2014</a>    <span class="doccomment">/// The consumed source-binding graph exceeded the host byte domain.
+<a href=#2015 id=2015 data-nosnippet>2015</a>    </span><span class="attr">#[error(<span class="string">"selected-observation binding-graph byte projection overflowed"</span>)]
+<a href=#2016 id=2016 data-nosnippet>2016</a>    </span>BindingGraphByteOverflow,
+<a href=#2017 id=2017 data-nosnippet>2017</a>    <span class="doccomment">/// Aggregate selected-source residency exceeded the host byte domain.
+<a href=#2018 id=2018 data-nosnippet>2018</a>    </span><span class="attr">#[error(<span class="string">"selected-observation aggregate residency projection overflowed"</span>)]
+<a href=#2019 id=2019 data-nosnippet>2019</a>    </span>ResidencyByteOverflow,
+<a href=#2020 id=2020 data-nosnippet>2020</a>    <span class="doccomment">/// Aggregate retained reference data exceeded the host byte domain.
+<a href=#2021 id=2021 data-nosnippet>2021</a>    </span><span class="attr">#[error(<span class="string">"selected-observation reference-data residency projection overflowed"</span>)]
+<a href=#2022 id=2022 data-nosnippet>2022</a>    </span>ReferenceDataByteOverflow,
+<a href=#2023 id=2023 data-nosnippet>2023</a>    <span class="doccomment">/// The retained replay-proof graph exceeded the host byte domain.
+<a href=#2024 id=2024 data-nosnippet>2024</a>    </span><span class="attr">#[error(<span class="string">"selected-observation replay-proof byte projection overflowed"</span>)]
+<a href=#2025 id=2025 data-nosnippet>2025</a>    </span>ReplayProofByteOverflow,
+<a href=#2026 id=2026 data-nosnippet>2026</a>}
 </code></pre></div></section></main></body></html>

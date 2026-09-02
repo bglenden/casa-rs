@@ -11,12 +11,12 @@ and the plan-authoritative reconciliation node is retained beside it;
 <a href="struct.MajorCycleOperatorState.html#method.reconcile" title="method casa_imaging_runtime::MajorCycleOperatorState::reconcile"><code>Self::reconcile</code></a> accepts no substitute node, evidence, or context.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bind_reconstruction_masks" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/major_cycle.rs.html#60-66">Source</a><h4 class="code-header">pub fn <a href="#method.bind_reconstruction_masks" class="fn">bind_reconstruction_masks</a>(
     self,
-    masks: &amp;ReconstructionMaskSet,
+    masks: &amp;<a class="enum" href="../casa_imaging_reconstruction/mask/enum.ReconstructionMaskSet.html" title="enum casa_imaging_reconstruction::mask::ReconstructionMaskSet">ReconstructionMaskSet</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.98.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;Self, <a class="enum" href="enum.MajorCycleOperatorError.html" title="enum casa_imaging_runtime::MajorCycleOperatorError">MajorCycleOperatorError</a>&gt;</h4></section></summary><div class="docblock"><p>Bind reconstruction-owned support lineage without interpreting mask contents.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.reconcile" class="method"><a class="src rightside" href="../src/casa_imaging_runtime/major_cycle.rs.html#86-146">Source</a><h4 class="code-header">pub fn <a href="#method.reconcile" class="fn">reconcile</a>(
     self,
     context: <a class="struct" href="struct.WorkExecutionContext.html" title="struct casa_imaging_runtime::WorkExecutionContext">WorkExecutionContext</a>&lt;'_&gt;,
-    lifecycle: &amp;mut ModelLifecycle,
+    lifecycle: &amp;mut <a class="struct" href="../casa_imaging_reconstruction/struct.ModelLifecycle.html" title="struct casa_imaging_reconstruction::ModelLifecycle">ModelLifecycle</a>,
 ) -&gt; <a class="enum" href="https://doc.rust-lang.org/1.98.0/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="struct" href="struct.MajorCycleOperatorResult.html" title="struct casa_imaging_runtime::MajorCycleOperatorResult">MajorCycleOperatorResult</a>, <a class="enum" href="enum.MajorCycleOperatorError.html" title="enum casa_imaging_runtime::MajorCycleOperatorError">MajorCycleOperatorError</a>&gt;</h4></section></summary><div class="docblock"><p>Perform the one atomic Major-Cycle reconciliation.</p>
 <p>The context must be the exact plan-authoritative final-reconciliation
 Compute node behind the sealed plan, and the exact execution attempt and
