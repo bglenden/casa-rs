@@ -71,6 +71,7 @@ fn selected_observation_sample_schema_carries_exact_science_and_provenance() {
             field_id: 14,
             antenna1: 10,
             antenna2: 11,
+            antenna_responses: None,
             feed1: 12,
             feed2: 13,
             scan_number: 15,

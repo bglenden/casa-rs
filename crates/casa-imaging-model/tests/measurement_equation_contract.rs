@@ -237,7 +237,7 @@ fn compile_contract_with_reduction(
         SpectralContract::new(sampling, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products),
     )
-    .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
+    .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
     let reconstruction = ReconstructionContract::new(
         ReconstructionBasis::Constant,
         ReconstructionAlgorithm::Hogbom,
@@ -357,7 +357,9 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
             PairedMeasurementTransform::FeedResponse,
             PairedMeasurementTransform::DirectionDependentResponse {
                 response: InstrumentResponse::PrimaryBeam,
-                instrument_model: Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1,),
+                instrument_model: Some(
+                    InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+                ),
             },
             PairedMeasurementTransform::PhaseRotation {
                 convention: VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay,

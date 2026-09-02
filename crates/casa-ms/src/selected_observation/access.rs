@@ -14,16 +14,16 @@ use crate::{
 };
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DelayCentreLaw,
-    DirectionFrame, Epoch, FrequencyFrame, MeasurementSetReadAccess, MissingPointingPolicy,
-    ObservationSelection, ObservationSource, ObservationSourceState, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation, PointingInterpolation,
-    PointingTimeSampling, SelectedImageDomainProjection, SelectedImageDomainProjections,
-    SelectedInputWeightGroup, SelectedMainRow, SelectedObservationRunChannel,
-    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
-    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedRowsBuilder, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn,
-    WeightColumn,
+    DirectionFrame, Epoch, FrequencyFrame, InstrumentModel, MeasurementSetReadAccess,
+    MissingPointingPolicy, ObservationSelection, ObservationSource, ObservationSourceState,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation,
+    PointingInterpolation, PointingTimeSampling, SelectedAntennaResponses,
+    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedInputWeightGroup,
+    SelectedMainRow, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
+    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedPredictionTarget,
+    SelectedRowsBuilder, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn, WeightColumn,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
 use thiserror::Error;
@@ -973,6 +973,19 @@ fn project_stored_run_row(
         geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna1)?,
         geometry_engine.parallactic_angle(stored.time_mjd_seconds(), field_id, antenna2)?,
     ];
+    let antenna_responses = match problem.science().instrument_model() {
+        None => None,
+        Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1) => {
+            Some(SelectedAntennaResponses {
+                antenna1: geometry_engine
+                    .antenna_response_class(antenna1)
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
+                antenna2: geometry_engine
+                    .antenna_response_class(antenna2)
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
+            })
+        }
+    };
     let physical_row = u64::try_from(stored.physical_row())
         .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?;
     let prediction_target = if problem
@@ -1016,6 +1029,7 @@ fn project_stored_run_row(
             field_id: stored.field_id(),
             antenna1: stored.antenna1(),
             antenna2: stored.antenna2(),
+            antenna_responses,
             feed1: stored.feed1(),
             feed2: stored.feed2(),
             scan_number: stored.scan_number(),

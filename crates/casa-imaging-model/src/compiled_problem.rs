@@ -450,9 +450,9 @@ pub enum InstrumentResponse {
 /// identities cannot silently change meaning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InstrumentModel {
-    /// CASA-compatible direct scalar power response for a homogeneous ALMA
-    /// 7 m ACA interferometric array, version 1.
-    CasaAlmaAcaInterferometricDirectPbV1,
+    /// CASA-compatible paired voltage response for heterogeneous ALMA 12 m
+    /// and ACA 7 m interferometric baselines, version 1.
+    CasaAlmaAcaHeterogeneousInterferometricResponseV1,
 }
 
 /// Logical measurement-equation terms independent of an implementation.
@@ -2155,7 +2155,7 @@ fn validate_science(
         (InstrumentResponse::Scalar, None)
             | (
                 InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
             )
     ) {
         return Err(CompileProblemError::InvalidScientificContract {
@@ -3300,7 +3300,7 @@ fn reference_data_tag(kind: ReferenceDataKind) -> u8 {
 fn encode_instrument_model(encoder: &mut CanonicalEncoder, model: Option<InstrumentModel>) {
     match model {
         None => encoder.u8(0),
-        Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1) => encoder.u8(1),
+        Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1) => encoder.u8(1),
     }
 }
 

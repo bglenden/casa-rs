@@ -5,7 +5,9 @@
 use std::collections::BTreeMap;
 use std::mem::size_of;
 
-use casa_imaging_model::{DirectionFrame, SelectedPointingDirections, SkyDirection};
+use casa_imaging_model::{
+    DirectionFrame, SelectedAntennaResponses, SelectedPointingDirections, SkyDirection,
+};
 use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
@@ -71,8 +73,14 @@ pub(crate) fn response_residency_projection(
         });
     }
     let response_route_bytes = bounded_tree_bytes::<
-        (casa_imaging_model::MeasurementSetIdentity, u32, u32),
-        (u64, f64),
+        (
+            casa_imaging_model::MeasurementSetIdentity,
+            u32,
+            u32,
+            casa_imaging_model::AntennaResponseClass,
+            casa_imaging_model::AntennaResponseClass,
+        ),
+        (u128, f64, casa_imaging_model::SelectedAntennaResponses),
     >(response_capacity, 1)?;
     let channel_map_bytes =
         bounded_tree_bytes::<u32, (f64, f64, f64)>(maximum_selection_channels, 1)?;
@@ -117,7 +125,7 @@ pub(crate) fn residency_projection(
         .and_then(|values| values.checked_mul(size_of::<Complex32>()))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     // Two base kernels and one reusable active phased data kernel per response.
-    let projector_tree_bytes = bounded_tree_bytes::<u64, MosaicProjector>(response_capacity, 1)?;
+    let projector_tree_bytes = bounded_tree_bytes::<u128, MosaicProjector>(response_capacity, 1)?;
     let projector_bytes = kernel_bytes
         .checked_mul(3)
         .and_then(|bytes| bytes.checked_mul(response_capacity))
@@ -235,6 +243,7 @@ impl MosaicProjector {
     pub(crate) fn new(
         geometry: SpectralOperatorGeometry,
         response: &PreparedPrimaryBeamPower,
+        antenna_responses: SelectedAntennaResponses,
         frequency_hz: f64,
         field_capacity: usize,
     ) -> Result<Self, SpectralOperatorError> {
@@ -245,8 +254,22 @@ impl MosaicProjector {
         if conv_size < 16 || conv_size % 2 != 0 {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
-        let imaging = screen_fft_temp(geometry, response, frequency_hz, conv_size, 1)?;
-        let weight = screen_fft_temp(geometry, response, frequency_hz, conv_size, 2)?;
+        let imaging = screen_fft_temp(
+            geometry,
+            response,
+            antenna_responses,
+            frequency_hz,
+            conv_size,
+            1,
+        )?;
+        let weight = screen_fft_temp(
+            geometry,
+            response,
+            antenna_responses,
+            frequency_hz,
+            conv_size,
+            2,
+        )?;
         let support = find_support(&weight, 1);
         if support == 0 {
             return Err(SpectralOperatorError::UnsupportedGeometry);
@@ -515,6 +538,7 @@ fn is_composite_fft_length(mut value: usize) -> bool {
 fn screen_fft_temp(
     geometry: SpectralOperatorGeometry,
     response: &PreparedPrimaryBeamPower,
+    antenna_responses: SelectedAntennaResponses,
     frequency_hz: f64,
     conv_size: usize,
     power: u32,
@@ -530,8 +554,13 @@ fn screen_fft_temp(
         for x in 0..conv_size {
             let l = (x as isize - center) as f64 * scale[0];
             screen[(x, y)] = Complex64::new(
-                f64::from(response.mosaic_convolution_power_at_offsets(l, m, frequency_hz)?)
-                    .powi(power as i32),
+                f64::from(response.paired_mosaic_voltage_at_offsets(
+                    antenna_responses,
+                    [l, m],
+                    [l, m],
+                    frequency_hz,
+                )?)
+                .powi(power as i32),
                 0.0,
             );
         }
@@ -679,7 +708,7 @@ fn casa_sinc(value: f32) -> f32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct PointingKey {
     field_id: i32,
-    response_key: u64,
+    response_key: u128,
     frame: DirectionFrame,
     longitude_bits: u64,
     latitude_bits: u64,
@@ -687,7 +716,7 @@ struct PointingKey {
 }
 
 impl PointingKey {
-    fn new(field_id: i32, response_key: u64, pointing: SkyDirection, frequency_hz: f64) -> Self {
+    fn new(field_id: i32, response_key: u128, pointing: SkyDirection, frequency_hz: f64) -> Self {
         Self {
             field_id,
             response_key,
@@ -782,7 +811,7 @@ impl MosaicNormalAccumulator {
     pub(crate) fn accumulate(
         &mut self,
         field_id: i32,
-        response_key: u64,
+        response_key: u128,
         pointings: SelectedPointingDirections,
         frequency_hz: f64,
         plan: MosaicSamplePlan,
@@ -840,7 +869,7 @@ impl MosaicNormalAccumulator {
         self,
         image_shape: [usize; 2],
         image_blc: [usize; 2],
-        projectors: &BTreeMap<u64, MosaicProjector>,
+        projectors: &BTreeMap<u128, MosaicProjector>,
         fft: &mut PreparedFft,
     ) -> Result<Vec<f64>, SpectralOperatorError> {
         let grid_shape = projectors
@@ -893,7 +922,14 @@ mod tests {
 
     fn projector() -> MosaicProjector {
         let (geometry, response) = projector_inputs();
-        MosaicProjector::new(geometry, &response, 230.0e9, 8).expect("projector")
+        MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 8).expect("projector")
+    }
+
+    fn aca_pair() -> SelectedAntennaResponses {
+        SelectedAntennaResponses {
+            antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+        }
     }
 
     fn projector_inputs() -> (SpectralOperatorGeometry, PreparedPrimaryBeamPower) {
@@ -980,12 +1016,13 @@ mod tests {
     #[test]
     fn weight_convolution_function_uses_casa_hetarray_weight_sum() {
         let (geometry, response) = projector_inputs();
-        let projector = MosaicProjector::new(geometry, &response, 230.0e9, 8).expect("projector");
+        let projector =
+            MosaicProjector::new(geometry, &response, aca_pair(), 230.0e9, 8).expect("projector");
         let conv_size = mosaic_convolution_size(geometry.image_shape);
-        let imaging =
-            screen_fft_temp(geometry, &response, 230.0e9, conv_size, 1).expect("imaging CF");
-        let weight =
-            screen_fft_temp(geometry, &response, 230.0e9, conv_size, 2).expect("weight CF");
+        let imaging = screen_fft_temp(geometry, &response, aca_pair(), 230.0e9, conv_size, 1)
+            .expect("imaging CF");
+        let weight = screen_fft_temp(geometry, &response, aca_pair(), 230.0e9, conv_size, 2)
+            .expect("weight CF");
         let support = find_support(&weight, 1);
         let center = imaging.dim().0 / 2;
         let imaging_pb_sum = plane_sum(&imaging, center, support, 1).re;

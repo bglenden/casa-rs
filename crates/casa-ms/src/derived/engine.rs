@@ -8,6 +8,7 @@
 //!
 //! Cf. C++ `DerivedMC::MSCalEngine`.
 
+use casa_imaging_model::AntennaResponseClass;
 use casa_tables::Table;
 use casa_tables::table_measures::{MeasRefDesc, TableMeasDesc};
 use casa_types::measures::direction::{DirectionRef, MDirection};
@@ -48,6 +49,8 @@ pub struct MsCalEngine {
     antenna_positions: Box<[MPosition]>,
     /// Whether each antenna uses an alt-az mount.
     antenna_mount_alt_az: Box<[bool]>,
+    /// CASA aperture response class derived from ANTENNA and OBSERVATION metadata.
+    antenna_response_classes: Box<[Option<AntennaResponseClass>]>,
     /// Field phase directions (constant term, J2000).
     field_directions: Box<[MDirection]>,
     /// Raw FIELD phase values, used as true-angle offsets for attached ephemerides.
@@ -133,7 +136,11 @@ impl MsCalEngine {
         let antenna_count = ms.antenna()?.row_count();
         let field_count = ms.field()?.row_count();
         antenna_count
-            .checked_mul(size_of::<MPosition>() + size_of::<bool>())
+            .checked_mul(
+                size_of::<MPosition>()
+                    + size_of::<bool>()
+                    + size_of::<Option<AntennaResponseClass>>(),
+            )
             .and_then(|bytes| {
                 field_count
                     .checked_mul(size_of::<MDirection>() + size_of::<[f64; 2]>())
@@ -166,6 +173,7 @@ impl MsCalEngine {
 
         let observatory_position =
             resolve_observatory_position(ms, &antenna_positions, measures.as_ref());
+        let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
         let field = ms.field()?;
         let n_field = field.row_count();
         let mut field_directions = Vec::with_capacity(n_field);
@@ -185,6 +193,7 @@ impl MsCalEngine {
         Ok(Self {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+            antenna_response_classes,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             observatory_position,
@@ -241,6 +250,7 @@ impl MsCalEngine {
 
         let observatory_position =
             resolve_observatory_position_selected(ms, &antenna_positions, measures.as_ref());
+        let antenna_response_classes = casa_alma_aca_response_classes(ms)?;
         let field = ms.field()?;
         let mut field_directions = Vec::with_capacity(field.row_count());
         let mut field_phase_offsets = Vec::with_capacity(field.row_count());
@@ -259,6 +269,7 @@ impl MsCalEngine {
         Ok(Self {
             antenna_positions: antenna_positions.into_boxed_slice(),
             antenna_mount_alt_az: antenna_mount_alt_az.into_boxed_slice(),
+            antenna_response_classes,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets: field_phase_offsets.into_boxed_slice(),
             observatory_position,
@@ -273,6 +284,14 @@ impl MsCalEngine {
         })
     }
 
+    /// Return the source-derived CASA aperture class for one antenna row.
+    pub(crate) fn antenna_response_class(&self, antenna_id: usize) -> Option<AntennaResponseClass> {
+        self.antenna_response_classes
+            .get(antenna_id)
+            .copied()
+            .flatten()
+    }
+
     /// Create an engine with explicit data (useful for testing).
     pub fn from_parts(
         antenna_positions: Vec<MPosition>,
@@ -281,6 +300,7 @@ impl MsCalEngine {
         measures: Arc<dyn MeasuresProvider>,
     ) -> Self {
         let antenna_mount_alt_az = vec![true; antenna_positions.len()].into_boxed_slice();
+        let antenna_response_classes = vec![None; antenna_positions.len()].into_boxed_slice();
         let field_phase_offsets = field_directions
             .iter()
             .map(|direction| {
@@ -292,6 +312,7 @@ impl MsCalEngine {
         Self {
             antenna_mount_alt_az,
             antenna_positions: antenna_positions.into_boxed_slice(),
+            antenna_response_classes,
             field_directions: field_directions.into_boxed_slice(),
             field_phase_offsets,
             observatory_position,
@@ -1126,6 +1147,37 @@ impl MsCalEngine {
                 context: "antenna_id".to_string(),
             })
     }
+}
+
+fn casa_alma_aca_response_classes(
+    ms: &MeasurementSet,
+) -> MsResult<Box<[Option<AntennaResponseClass>]>> {
+    let antenna = ms.antenna()?;
+    let supported_observation = ms.observation().is_ok_and(|observation| {
+        observation.row_count() > 0
+            && (0..observation.row_count()).all(|row| {
+                observation
+                    .string(row, "TELESCOPE_NAME")
+                    .is_ok_and(|name| matches!(name.trim(), "ALMA" | "ACA"))
+            })
+    });
+    if !supported_observation {
+        return Ok(vec![None; antenna.row_count()].into_boxed_slice());
+    }
+    (0..antenna.row_count())
+        .map(|row| {
+            antenna.dish_diameter(row).map(|diameter| {
+                if (diameter - 12.0).abs() < 0.5 {
+                    Some(AntennaResponseClass::CasaAlma12m)
+                } else if (diameter - 7.0).abs() < 1.0 {
+                    Some(AntennaResponseClass::CasaAca7m)
+                } else {
+                    None
+                }
+            })
+        })
+        .collect::<MsResult<Vec<_>>>()
+        .map(Vec::into_boxed_slice)
 }
 
 fn uvw_rotation_matrix(

@@ -436,7 +436,9 @@ fn compile_product_set(
         MeasurementEquationContract::new(instrument_response, inner_products()),
     );
     let science = if instrument_response == InstrumentResponse::PrimaryBeam {
-        science.with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+        science.with_instrument_model(
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+        )
     } else {
         science
     };
@@ -670,7 +672,9 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
                 SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
             )
-            .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+            .with_instrument_model(
+                InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+            ),
             reconstruction(),
             weighting(),
             products,
@@ -1387,7 +1391,9 @@ fn complete_science_contract_changes_identity_and_capabilities() {
         .expect("baseline");
     let tagged_scalar = compile_request(
         make(
-            science().with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+            science().with_instrument_model(
+                InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+            ),
             weighting(),
             products(false),
         ),
@@ -1406,7 +1412,7 @@ fn complete_science_contract_changes_identity_and_capabilities() {
         ),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
     )
-    .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
+    .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
     let widefield_geometry = geometry()
         .with_domains(vec![geometry().domains()[0].clone().with_facets(
             FacetLayout::Regular {
@@ -1491,10 +1497,10 @@ fn primary_beam_response_requires_exact_model_and_instrument_identity() {
     ));
 
     let direction_dependent = direction_dependent
-        .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
+        .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
     assert_eq!(
         direction_dependent.instrument_model(),
-        Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+        Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1)
     );
     assert!(matches!(
         compile_request(specification(direction_dependent.clone()), inputs(false)),
@@ -1512,7 +1518,9 @@ fn primary_beam_response_requires_exact_model_and_instrument_identity() {
             .transforms()
             .contains(&PairedMeasurementTransform::DirectionDependentResponse {
                 response: InstrumentResponse::PrimaryBeam,
-                instrument_model: Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+                instrument_model: Some(
+                    InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                ),
             })
     );
 }

@@ -366,6 +366,27 @@ pub struct SelectedSampleCoordinates {
     pub pointing_directions: SelectedPointingDirections,
 }
 
+/// CASA aperture class selected from owner-controlled ANTENNA metadata.
+///
+/// These are scientific response identities rather than physical antenna IDs.
+/// Multiple antennas with the same class therefore share one cached response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AntennaResponseClass {
+    /// Physical 12 m ALMA dish evaluated with CASA's 10.7 m effective aperture.
+    CasaAlma12m,
+    /// Physical 7 m ACA dish evaluated with CASA's 6.25 m effective aperture.
+    CasaAca7m,
+}
+
+/// Ordered response classes for one selected interferometric baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedAntennaResponses {
+    /// Response class of MAIN `ANTENNA1`.
+    pub antenna1: AntennaResponseClass,
+    /// Response class of MAIN `ANTENNA2`.
+    pub antenna2: AntennaResponseClass,
+}
+
 /// Reported per-sample MeasurementSet provenance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectedSampleMetadata {
@@ -375,6 +396,8 @@ pub struct SelectedSampleMetadata {
     pub antenna1: i32,
     /// MAIN `ANTENNA2`.
     pub antenna2: i32,
+    /// Owner-derived paired response, present for a direction-dependent model.
+    pub antenna_responses: Option<SelectedAntennaResponses>,
     /// MAIN `FEED1`.
     pub feed1: i32,
     /// MAIN `FEED2`.
@@ -1978,6 +2001,7 @@ mod tests {
                 field_id: 14,
                 antenna1: 10,
                 antenna2: 11,
+                antenna_responses: None,
                 feed1: 12,
                 feed2: 13,
                 scan_number: 15,

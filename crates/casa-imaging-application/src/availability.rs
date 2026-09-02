@@ -429,13 +429,13 @@ pub fn validate_installed_implementation(
         (InstrumentResponse::Scalar, None, _, _)
             | (
                 InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
                 ReconstructionBasis::TaylorViaChannelMajor { .. },
                 false,
             )
             | (
                 InstrumentResponse::PrimaryBeam,
-                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+                Some(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1),
                 ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. },
                 true,
             )

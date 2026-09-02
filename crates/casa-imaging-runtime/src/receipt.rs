@@ -7214,7 +7214,7 @@ fn instrument_response(value: InstrumentResponse) -> &'static str {
 
 const fn instrument_model_name(value: InstrumentModel) -> &'static str {
     match value {
-        InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1 => {
+        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => {
             "casa-alma-aca-interferometric-direct-pb-v1"
         }
     }

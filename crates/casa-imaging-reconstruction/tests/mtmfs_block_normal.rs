@@ -595,8 +595,9 @@ fn problem_with_shape_response_and_mosaic(
         ),
     );
     if primary_beam {
-        science =
-            science.with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
+        science = science.with_instrument_model(
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+        );
     }
     compile(ImagingRequest::new(
         ProblemSpecification::new(
@@ -851,6 +852,7 @@ fn sample(
             field_id: 0,
             antenna1: 0,
             antenna2: 1,
+            antenna_responses: None,
             feed1: 0,
             feed2: 0,
             scan_number: 1,

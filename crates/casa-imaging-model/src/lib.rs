@@ -90,13 +90,14 @@ pub use selected_observation::{
 };
 
 pub use selected_observation_sample::{
-    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedInputWeightGroup,
-    SelectedObservationGenerationId, SelectedObservationRunChannel,
-    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
-    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
-    SelectedPredictionTarget, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample,
+    AntennaResponseClass, SelectedAntennaResponses, SelectedImageDomainProjection,
+    SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationGenerationId,
+    SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
+    SelectedObservationSample, SelectedObservationSampleView, SelectedPhaseCentreProjection,
+    SelectedPointingDirections, SelectedPredictionTarget, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedSpectralEvaluation, SelectedSpectralInterval,
+    SelectedVisibilitySample,
 };
 
 pub use product_graph::{

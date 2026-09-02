@@ -1721,14 +1721,12 @@ fn scientific_instrument_model(
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
     let telescope_names = telescopes.iter().map(String::as_str).collect::<Vec<_>>();
-    let supported_telescope = if mosaic {
-        matches!(telescope_names.as_slice(), ["ALMA"] | ["ACA"])
-    } else {
-        matches!(telescope_names.as_slice(), ["ALMA"])
-    };
+    let supported_telescope = telescope_names
+        .iter()
+        .all(|name| matches!(*name, "ALMA" | "ACA"));
     if !supported_telescope {
         return Err(boxed(format!(
-            "primary-beam response requires one supported homogeneous observation; found {telescopes:?}"
+            "primary-beam response requires ALMA/ACA observation metadata; found {telescopes:?}"
         )));
     }
     let antenna = ms.antenna()?;
@@ -1738,19 +1736,25 @@ fn scientific_instrument_model(
         ));
     }
     let mut hasher = Sha256::new();
-    hasher.update(b"casa-rs-instrument-reference/casa-alma-aca-direct-pb-v1");
+    hasher.update(b"casa-rs-instrument-reference/casa-alma-aca-heterogeneous-response-v1");
+    hasher.update((telescopes.len() as u64).to_le_bytes());
+    for telescope in &telescopes {
+        hasher.update((telescope.len() as u64).to_le_bytes());
+        hasher.update(telescope.as_bytes());
+    }
     hasher.update((antenna.row_count() as u64).to_le_bytes());
     for row in 0..antenna.row_count() {
         let diameter = antenna.dish_diameter(row)?;
-        if !diameter.is_finite() || !(6.0..8.0).contains(&diameter) {
+        let supported_diameter = (diameter - 12.0).abs() < 0.5 || (diameter - 7.0).abs() < 1.0;
+        if !diameter.is_finite() || !supported_diameter {
             return Err(boxed(format!(
-                "channel-major ALMA response requires homogeneous 7 m ACA antennas; row {row} has diameter {diameter} m"
+                "ALMA/ACA response requires CASA 12 m or 7 m antenna classes; row {row} has diameter {diameter} m"
             )));
         }
         hasher.update(diameter.to_bits().to_le_bytes());
     }
     Ok(Some((
-        InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1,
+        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
         LogicalIdentity::from_sha256(hasher.finalize().into()),
     )))
 }
