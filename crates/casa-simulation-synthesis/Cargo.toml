@@ -11,7 +11,7 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-libm = "0.2"
+casa-numerics = { path = "../casa-numerics" }
 ndarray.workspace = true
 num-complex.workspace = true
 rustfft.workspace = true

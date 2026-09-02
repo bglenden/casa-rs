@@ -188,6 +188,8 @@ impl ManagedImagingOutput {
                     ImagerSpectralMode::Mfs => "mfs".to_string(),
                     ImagerSpectralMode::Cube => "cube".to_string(),
                     ImagerSpectralMode::Cubedata => "cubedata".to_string(),
+                    ImagerSpectralMode::Cubesource => "cubesource".to_string(),
+                    ImagerSpectralMode::Mvc => "mvc".to_string(),
                 },
                 weighting: match &request.weighting {
                     ImagerWeighting::Natural => "natural".to_string(),

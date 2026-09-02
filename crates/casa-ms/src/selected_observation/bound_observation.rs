@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use casa_imaging_model::{
-    CompiledGeometryId, CompiledProblem, CompiledProblemId, MeasurementSetIdentity,
-    ObservationProvenanceId, ObservationSnapshotId, ObservationSourceState,
+    CompiledGeometryId, CompiledProblem, CompiledProblemId, LogicalIdentity,
+    MeasurementSetIdentity, ObservationProvenanceId, ObservationSnapshotId, ObservationSourceState,
     SelectedInputWeightGroup, SelectedObservationCommitmentId, SelectedObservationGenerationId,
     SelectedObservationInspection, SelectedObservationInspectionError,
     SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
@@ -46,6 +46,7 @@ use super::{
 pub struct ObservationSourceBinding {
     current_state: ObservationSourceState,
     content_budget: SelectedObservationContentBudget,
+    ephemeris: Option<Arc<crate::SelectedObservationEphemeris>>,
 }
 
 /// Opaque storage-owner certificate for one complete selected-observation residency contract.
@@ -60,6 +61,7 @@ pub struct SelectedObservationResidencyCertificate {
     identity: BoundSelectedObservationIdentity,
     sources: Vec<SelectedObservationSourceResidency>,
     aggregate_resident_bytes: usize,
+    aggregate_reference_data_bytes: usize,
     peak_live_blocks: usize,
     maximum_pointing_polynomial_terms: usize,
 }
@@ -213,6 +215,7 @@ enum SelectedObservationReplayMode {
 struct SelectedObservationSourceResidency {
     measurement_set: MeasurementSetIdentity,
     content_budget: SelectedObservationContentBudget,
+    reference_data_bytes: usize,
 }
 
 impl SelectedObservationResidencyCertificate {
@@ -225,6 +228,7 @@ impl SelectedObservationResidencyCertificate {
             return Err(BoundSelectedObservationError::BindingSetMismatch);
         }
         let mut aggregate_resident_bytes = 0_usize;
+        let mut aggregate_reference_data_bytes = 0_usize;
         let mut peak_live_blocks = 0_usize;
         let mut maximum_pointing_polynomial_terms = 0_usize;
         let mut sources = Vec::with_capacity(expected.len());
@@ -243,22 +247,44 @@ impl SelectedObservationResidencyCertificate {
                     measurement_set,
                 });
             }
+            let expected_ephemeris = problem.geometry().ephemeris_reference();
+            let actual_ephemeris = binding.ephemeris_identity();
+            if actual_ephemeris != expected_ephemeris {
+                return Err(BoundSelectedObservationError::EphemerisReferenceMismatch {
+                    measurement_set,
+                    expected: expected_ephemeris,
+                    actual: actual_ephemeris,
+                });
+            }
             let content_budget = binding.content_budget();
+            let reference_data_bytes = binding.reference_data_bytes();
+            if reference_data_bytes > content_budget.available_bytes() {
+                return Err(BoundSelectedObservationError::ReferenceDataBudgetExceeded {
+                    measurement_set,
+                    required_bytes: reference_data_bytes,
+                    available_bytes: content_budget.available_bytes(),
+                });
+            }
             aggregate_resident_bytes = aggregate_resident_bytes
                 .checked_add(content_budget.available_bytes())
                 .ok_or(BoundSelectedObservationError::ResidencyByteOverflow)?;
+            aggregate_reference_data_bytes = aggregate_reference_data_bytes
+                .checked_add(reference_data_bytes)
+                .ok_or(BoundSelectedObservationError::ReferenceDataByteOverflow)?;
             peak_live_blocks = peak_live_blocks.max(content_budget.maximum_live_blocks());
             maximum_pointing_polynomial_terms = maximum_pointing_polynomial_terms
                 .max(content_budget.maximum_pointing_polynomial_terms());
             sources.push(SelectedObservationSourceResidency {
                 measurement_set,
                 content_budget,
+                reference_data_bytes,
             });
         }
         Ok(Self {
             identity: BoundSelectedObservationIdentity::from_problem(problem),
             sources,
             aggregate_resident_bytes,
+            aggregate_reference_data_bytes,
             peak_live_blocks,
             maximum_pointing_polynomial_terms,
         })
@@ -268,6 +294,12 @@ impl SelectedObservationResidencyCertificate {
     #[must_use]
     pub const fn aggregate_resident_bytes(&self) -> usize {
         self.aggregate_resident_bytes
+    }
+
+    /// Return the exact immutable reference-data allocation retained by all bindings.
+    #[must_use]
+    pub const fn aggregate_reference_data_bytes(&self) -> usize {
+        self.aggregate_reference_data_bytes
     }
 
     /// Return the peak simultaneously live selected-content block count.
@@ -296,6 +328,14 @@ impl SelectedObservationResidencyCertificate {
         })
     }
 
+    /// Return one source binding's exact retained reference-data allocation.
+    #[must_use]
+    pub fn reference_data_bytes(&self, measurement_set: MeasurementSetIdentity) -> Option<usize> {
+        self.sources.iter().find_map(|source| {
+            (source.measurement_set == measurement_set).then_some(source.reference_data_bytes)
+        })
+    }
+
     /// Return whether this certificate belongs to the supplied compiled problem.
     #[must_use]
     pub fn matches_problem(&self, problem: &CompiledProblem) -> bool {
@@ -313,7 +353,18 @@ impl ObservationSourceBinding {
         Self {
             current_state,
             content_budget,
+            ephemeris: None,
         }
+    }
+
+    /// Attach immutable moving-source data owned by this selected source.
+    #[must_use]
+    pub fn with_ephemeris(
+        mut self,
+        ephemeris: Option<crate::SelectedObservationEphemeris>,
+    ) -> Self {
+        self.ephemeris = ephemeris.map(Arc::new);
+        self
     }
 
     /// Return the canonical logical MeasurementSet identity.
@@ -332,6 +383,20 @@ impl ObservationSourceBinding {
     #[must_use]
     pub const fn content_budget(&self) -> SelectedObservationContentBudget {
         self.content_budget
+    }
+
+    fn ephemeris_identity(&self) -> Option<LogicalIdentity> {
+        self.ephemeris
+            .as_deref()
+            .map(crate::SelectedObservationEphemeris::identity)
+    }
+
+    /// Return the exact ephemeris allocation retained by this source binding.
+    #[must_use]
+    pub fn reference_data_bytes(&self) -> usize {
+        self.ephemeris
+            .as_deref()
+            .map_or(0, |ephemeris| ephemeris.retained_bytes())
     }
 }
 
@@ -431,11 +496,18 @@ impl BoundSelectedObservation {
                     .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)
             },
         )?;
+        let reference_data_retained_bytes =
+            bindings.iter().try_fold(0_usize, |bytes, binding| {
+                bytes
+                    .checked_add(binding.reference_data_bytes())
+                    .ok_or(BoundSelectedObservationError::ReferenceDataByteOverflow)
+            })?;
         let source_slots_retained_bytes = source_capacity
             .checked_mul(BoundObservationSource::retained_source_slot_bytes())
             .ok_or(BoundSelectedObservationError::SourceSlotByteOverflow)?;
         Ok(SelectedObservationSharedBytes::new(
             measures.retained_bytes(),
+            reference_data_retained_bytes,
             source_slots_retained_bytes,
             binding_graph_initialization_bytes,
         ))
@@ -518,6 +590,7 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
+                    binding.ephemeris.as_ref(),
                 )
             } else {
                 BoundObservationSource::open_with_measures(
@@ -527,6 +600,7 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
+                    binding.ephemeris.as_ref(),
                 )
             };
             sources.push(
@@ -621,11 +695,11 @@ impl BoundSelectedObservation {
                 BoundObservationSource::rebind_with_measures(
                     problem,
                     source,
-                    &binding.current_state,
-                    prior_state,
+                    (&binding.current_state, prior_state),
                     &measures,
                     shared_bytes,
                     binding.content_budget,
+                    binding.ephemeris.as_ref(),
                 )
                 .map_err(|error| BoundSelectedObservationError::Source {
                     measurement_set: identity,
@@ -1887,6 +1961,30 @@ pub enum BoundSelectedObservationError {
         /// Source with duplicate bindings.
         measurement_set: MeasurementSetIdentity,
     },
+    /// A source binding omitted, substituted, or unexpectedly supplied ephemeris data.
+    #[error(
+        "compiled source {measurement_set} ephemeris reference mismatch: expected {expected:?}, actual {actual:?}"
+    )]
+    EphemerisReferenceMismatch {
+        /// Source whose reference-data binding differs from compiled geometry.
+        measurement_set: MeasurementSetIdentity,
+        /// Compiler-owned ephemeris identity, or absence for fixed geometry.
+        expected: Option<LogicalIdentity>,
+        /// Supplied source-binding identity, or absence when none was supplied.
+        actual: Option<LogicalIdentity>,
+    },
+    /// A source's retained reference data exceeds its selected-content ceiling.
+    #[error(
+        "compiled source {measurement_set} retains {required_bytes} reference-data bytes but its content budget has {available_bytes} bytes"
+    )]
+    ReferenceDataBudgetExceeded {
+        /// Source whose exact reference-data charge exceeds its budget.
+        measurement_set: MeasurementSetIdentity,
+        /// Exact retained reference-data allocation.
+        required_bytes: usize,
+        /// Bytes authorized by the source content budget.
+        available_bytes: usize,
+    },
     /// One retained source could not be bound under its state and budget.
     #[error("bind compiled source {measurement_set}: {error}")]
     Source {
@@ -1917,6 +2015,9 @@ pub enum BoundSelectedObservationError {
     /// Aggregate selected-source residency exceeded the host byte domain.
     #[error("selected-observation aggregate residency projection overflowed")]
     ResidencyByteOverflow,
+    /// Aggregate retained reference data exceeded the host byte domain.
+    #[error("selected-observation reference-data residency projection overflowed")]
+    ReferenceDataByteOverflow,
     /// The retained replay-proof graph exceeded the host byte domain.
     #[error("selected-observation replay-proof byte projection overflowed")]
     ReplayProofByteOverflow,

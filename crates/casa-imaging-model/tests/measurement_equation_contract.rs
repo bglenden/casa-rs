@@ -15,18 +15,18 @@ use casa_imaging_model::{
     AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy,
     FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, MeasurementEquationContract, ModelColumnWrite,
-    ModelInnerProduct, ModelStateIdentity, NormalEquationForm, NormalStateNormalization,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
-    PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
-    ProblemSpecification, ProductBoundaryOperation, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
+    ImagingRequest, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
+    ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, NormalEquationForm,
+    NormalStateNormalization, NumericPrecision, NumericalStage, NumericsContract,
+    ObservationPointingLaw, ObservationTransactionRequirements, PairedMeasurementTransform,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, ProblemSpecification, ProductBoundaryOperation, ProductKind,
+    ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract, SkyDirection,
+    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
+    SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
     VisibilityPhaseConvention, WeightColumn, WeightDensityScope, WeightingCommitmentId,
     WeightingContract, WeightingScheme, compile,
 };
@@ -236,7 +236,8 @@ fn compile_contract_with_reduction(
     let science = ScientificContract::new(
         SpectralContract::new(sampling, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products),
-    );
+    )
+    .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
     let reconstruction = ReconstructionContract::new(
         ReconstructionBasis::Constant,
         ReconstructionAlgorithm::Hogbom,
@@ -356,6 +357,7 @@ fn compiled_contract_owns_paired_operator_weighting_and_product_boundary() {
             PairedMeasurementTransform::FeedResponse,
             PairedMeasurementTransform::DirectionDependentResponse {
                 response: InstrumentResponse::PrimaryBeam,
+                instrument_model: Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1,),
             },
             PairedMeasurementTransform::PhaseRotation {
                 convention: VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay,
@@ -465,7 +467,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 fn problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSamplingLaw::LINEAR);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 16);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 17);
     assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 4);
     assert_eq!(
         (
@@ -477,7 +479,7 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "5ed03cee235bac5ad5ec54ab5f00c0a80b5b5f1e6a2e3398f0223d4824b4e168".to_string(),
+            "9d6b788fee3616ca76091b18a46366ab13a1092c9bcc9d031c67be06167b9e07".to_string(),
             "1135b569d7fa70062caa4f09b38de8bda8b0f176647ca26f48f81a8c268d87d3".to_string(),
         )
     );

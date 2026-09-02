@@ -4,7 +4,8 @@
 
 use casa_imaging_model::{
     ProductBlankingPolicy, ProductNormalization, ProductRole, ProductSupportComparison,
-    ProductTerm, ProductValidityRule, RestoringBeamPolicy, SpectralWcs, TaylorSupportReference,
+    ProductTerm, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy, SpectralWcs,
+    TaylorSupportReference,
 };
 use casa_numerics::solve_symmetric_ldlt_casacore_dynamic;
 
@@ -31,6 +32,17 @@ pub(crate) struct TaylorProducts {
     clean_mask: Vec<f32>,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
+}
+
+fn normalize_channel_major_sum_weight(
+    publication_numerator: f64,
+    principal_sum_weight: f64,
+) -> Result<f64, ProductsError> {
+    let published = publication_numerator / principal_sum_weight;
+    published
+        .is_finite()
+        .then_some(published)
+        .ok_or(ProductsError::GeneratedNonfinite)
 }
 
 impl TaylorProducts {
@@ -65,10 +77,19 @@ impl TaylorProducts {
             return Err(ProductsError::SourceLineageMismatch);
         }
         let normalization = inputs.problem().products().normalization();
+        let channel_major_publication = matches!(
+            inputs.problem().reconstruction().basis(),
+            ReconstructionBasis::TaylorViaChannelMajor { .. }
+        );
+        let published_sum_weights = state.published_sum_weights();
+        if channel_major_publication && published_sum_weights.len() != moments {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
         for moment in 0..moments {
+            let published_sum_weight = published_sum_weights.get(moment).copied();
             let source = state
                 .normal_moment(moment)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
@@ -88,7 +109,18 @@ impl TaylorProducts {
                     .map(|value| *value as f32)
                     .collect(),
             );
-            sum_weights.push(source.sum_weight() as f32);
+            let sum_weight = if channel_major_publication {
+                normalize_channel_major_sum_weight(
+                    published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?,
+                    principal_sum_weight,
+                )?
+            } else {
+                source.sum_weight()
+            };
+            if !sum_weight.is_finite() {
+                return Err(ProductsError::GeneratedNonfinite);
+            }
+            sum_weights.push(sum_weight as f32);
         }
         let residual = (0..terms)
             .map(|term| {
@@ -602,6 +634,15 @@ fn model_term(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn channel_major_sum_weight_uses_complete_family_denominator() {
+        assert_eq!(
+            super::normalize_channel_major_sum_weight(24.0, 6.0)
+                .expect("finite CASA publication statistic"),
+            4.0
+        );
+    }
+
     #[test]
     fn negative_only_principal_residual_has_no_taylor_support_or_payload() {
         let (alpha, alpha_error, validity) = super::taylor_alpha_products(

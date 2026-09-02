@@ -20,24 +20,25 @@ use casa_imaging_model::{
     CorrelationType, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
     DirectionFrame, DopplerConvention, FacetLayout, FiniteValuePolicy, FrequencyFrame,
     GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape, ImagingRequest,
-    ImagingRequestVersion, InstrumentResponse, LogicalIdentity, MeasurementEquationContract,
-    MetadataTableKind, MissingPointingPolicy, ModelCell, ModelColumnWrite, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelStateIdentity, ModelValue, MsColumnKind,
-    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSourceState, ObservationTransactionId, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PreparedArtifactAwInterpretation, PreparedArtifactCellSemantics,
-    PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
-    PreparedArtifactScientificIdentity, PreparedArtifactSpectralMapSemantics,
-    ProblemInputIdentities, ProblemSpecification, ProductKind, ProductNormalization,
-    ProductRequirements, Projection, ReconstructionAlgorithm, ReconstructionBasis,
-    ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
-    RestFrequency, RestoringBeamPolicy, ScientificContract, SelectedVisibilitySample,
-    SequentialContinuumTransform, SkyDirection, SpectralContract, SpectralCoordinateSpec,
-    SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, StageErrorBudget,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    ImagingRequestVersion, InstrumentModel, InstrumentResponse, LogicalIdentity,
+    MeasurementEquationContract, MetadataTableKind, MissingPointingPolicy, ModelCell,
+    ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSourceState, ObservationTransactionId,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PreparedArtifactAwInterpretation,
+    PreparedArtifactCellSemantics, PreparedArtifactKernelAlgorithm,
+    PreparedArtifactKernelSemantics, PreparedArtifactScientificIdentity,
+    PreparedArtifactSpectralMapSemantics, ProblemInputIdentities, ProblemSpecification,
+    ProductKind, ProductNormalization, ProductRequirements, Projection, ReconstructionAlgorithm,
+    ReconstructionBasis, ReconstructionContract, ReconstructionControls, ReductionPolicy,
+    ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
+    SelectedVisibilitySample, SequentialContinuumTransform, SkyDirection, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct,
+    WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    compile_observation,
 };
 use casa_imaging_products::{
     ContinuumGenerationDemand, ContinuumProductControls, ContinuumProductInputs,
@@ -696,6 +697,34 @@ fn channel_local_request(observation: u8, channels: usize) -> ImagingRequest {
     )
 }
 
+fn channel_major_taylor_request(observation: u8, channels: usize) -> ImagingRequest {
+    channel_major_taylor_request_with_shape(observation, channels, ImageShape::new(8, 8))
+}
+
+fn channel_major_taylor_request_with_shape(
+    observation: u8,
+    channels: usize,
+    shape: ImageShape,
+) -> ImagingRequest {
+    spectral_request_with_inputs_and_shape(
+        problem_inputs_with_channels(
+            observation,
+            default_references(),
+            ModelStateIdentity::Empty,
+            channels,
+        ),
+        channels,
+        ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
+        ReconstructionAlgorithm::Mtmfs {
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+        ReconstructionControls::new(1, 0.1, 0.0),
+        None,
+        shape,
+    )
+}
+
 fn channel_local_hogbom_request(
     observation: u8,
     output_channels: usize,
@@ -756,8 +785,51 @@ fn channel_local_request_with_inputs(
     controls: ReconstructionControls,
     visibility_transform: Option<SequentialContinuumTransform>,
 ) -> ImagingRequest {
-    let geometry =
-        geometry_with_shape_and_increment([4.0, 4.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]);
+    spectral_request_with_inputs(
+        inputs,
+        channels,
+        ReconstructionBasis::ChannelLocal { channels },
+        algorithm,
+        controls,
+        visibility_transform,
+    )
+}
+
+fn spectral_request_with_inputs(
+    inputs: ProblemInputIdentities,
+    channels: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    visibility_transform: Option<SequentialContinuumTransform>,
+) -> ImagingRequest {
+    spectral_request_with_inputs_and_shape(
+        inputs,
+        channels,
+        basis,
+        algorithm,
+        controls,
+        visibility_transform,
+        ImageShape::new(8, 8),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spectral_request_with_inputs_and_shape(
+    inputs: ProblemInputIdentities,
+    channels: usize,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    controls: ReconstructionControls,
+    visibility_transform: Option<SequentialContinuumTransform>,
+    shape: ImageShape,
+) -> ImagingRequest {
+    let pixels = shape.pixels();
+    let geometry = geometry_with_shape_and_increment(
+        [pixels[0] as f64 / 2.0, pixels[1] as f64 / 2.0],
+        shape,
+        [-1.0e-6, 1.0e-6],
+    );
     let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
         channels,
         reference_pixel: 0.0,
@@ -777,7 +849,7 @@ fn channel_local_request_with_inputs(
             ),
         ),
         ReconstructionContract::new(
-            ReconstructionBasis::ChannelLocal { channels },
+            basis,
             algorithm,
             controls,
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
@@ -8622,6 +8694,101 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
 }
 
 #[test]
+fn t41_runtime_residency_bounds_channel_major_windows_without_expanding_the_taylor_model() {
+    let problem =
+        compile(channel_major_taylor_request(241, 8)).expect("Taylor-via-channel-major problem");
+    let replay = WorkNodeId::new("t41-channel-major-replay");
+    let depth_one = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        1,
+        1,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("one-channel major-cycle window");
+    let depth_two = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay.clone(),
+        1,
+        2,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("two-channel major-cycle window");
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        4,
+        replay,
+        0,
+        8,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full channel-major window");
+
+    assert_eq!(depth_one.slab().core_range(), 1..2);
+    assert_eq!(depth_two.slab().core_range(), 1..3);
+    let one = depth_one.residency();
+    let two = depth_two.residency();
+    let all = full.residency();
+    assert_eq!(two.grid_bytes(), one.grid_bytes() * 2);
+    assert_eq!(all.grid_bytes(), one.grid_bytes() * 8);
+    assert_eq!(one.major_cycle_model_bytes(), two.major_cycle_model_bytes());
+    assert_eq!(two.major_cycle_model_bytes(), all.major_cycle_model_bytes());
+    assert!(one.peak_bytes() < two.peak_bytes());
+    assert!(two.peak_bytes() < all.peak_bytes());
+}
+
+#[test]
+fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_shape() {
+    let problem = compile(channel_major_taylor_request_with_shape(
+        242,
+        8,
+        ImageShape::new(512, 512),
+    ))
+    .expect("realistically shaped Taylor-via-channel-major problem");
+    let registry = test_registry(&problem, 3, 6, None);
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(6),
+        WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
+        selected_content_residency(&problem),
+        serial_storage_io(),
+        1_000,
+        512 * 512 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+        900_000,
+    )
+    .with_gridded_normal_storage(artifact_storage());
+    let plan =
+        SpectralCyclePlan::initial(&problem, &registry, policy).expect("production MVC plan");
+    let knobs = plan.physical_work().execution_dag().initial_knobs();
+    assert_eq!(knobs.slab_depth, 1, "the 1 MiB fixture admits one channel");
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .quiescence_points
+            .contains(&QuiescencePoint::Slab)
+    );
+    let complete = plan.into_parts().complete_data;
+    assert_eq!(complete.slab().core_range(), 0..1);
+
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        256,
+        WorkNodeId::new("t41-realistic-full-depth"),
+        0,
+        8,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full-depth comparison fragment");
+    assert!(complete.residency().peak_bytes() < full.residency().peak_bytes());
+    assert!(
+        complete.residency().grid_bytes() * 8 <= full.residency().grid_bytes(),
+        "one admitted shared slab grid cannot retain the complete 8-channel cube"
+    );
+}
+
+#[test]
 fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     let problem = compile(request_with_geometry(
         1,
@@ -9677,6 +9844,66 @@ fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
         Some("f64:3fc999999999999a")
     );
     assert_ne!(unbiased_projection, biased_projection);
+}
+
+#[test]
+fn t41_receipt_projection_records_the_exact_primary_beam_instrument_model() {
+    let specification = ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::PrimaryBeam,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        )
+        .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        ProductRequirements::new(
+            vec![ProductKind::Psf],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        NumericsContract::new(
+            vec![NumericPrecision::F64],
+            ReductionPolicy::Compensated,
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            NumericalStage::ALL
+                .into_iter()
+                .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                .collect(),
+        ),
+    );
+    let problem = compile(ImagingRequest::new(
+        specification,
+        geometry(255.0),
+        problem_inputs(
+            92,
+            vec![
+                (ReferenceDataKind::Measures, identity(90)),
+                (ReferenceDataKind::Instrument, identity(91)),
+            ],
+            ModelStateIdentity::Empty,
+        ),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("logical primary-beam compilation");
+
+    let projection = CompiledProblemEvidence::project(&problem);
+    assert_eq!(
+        projection.field("science.measurement_equation.operator.transforms.3.instrument_model"),
+        Some("casa-alma-aca-interferometric-direct-pb-v1")
+    );
 }
 
 #[test]

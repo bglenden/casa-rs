@@ -26,7 +26,7 @@ use two_domain::{
 pub use two_domain::{GriddedNormalPartial, GriddedNormalWork};
 
 use crate::{
-    Encoder, FinalNormalState, ModelGeneration,
+    Encoder, FinalNormalState, ModelGeneration, ScienceTraceDigest, imaging_science_trace_enabled,
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, OVERSAMPLING,
@@ -34,8 +34,7 @@ use crate::{
         SpectralOperatorError, SpectralOperatorPass, SpectralOperatorSpecification,
         SpectralPrimitiveCatalog, SpectralSlabOperator, StandardConvolution, TapSpan,
         accept_polarization_input, accept_weighted_input, combine_chart_updates,
-        final_correlation_weight, polarization_diagonal, polarization_effective_flags,
-        selected_model_projection,
+        polarization_diagonal, polarization_effective_flags, selected_model_projection,
     },
     weighting::{
         CoverageEncoder, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -71,6 +70,10 @@ pub(super) enum GriddedNormalRecordLayout {
         channels: usize,
     },
     Taylor(crate::block_normal::BlockNormalPlan),
+    TaylorViaChannelMajor {
+        plan: crate::block_normal::BlockNormalPlan,
+        channels: usize,
+    },
     Joint {
         coefficient_terms: usize,
         normal_moments: usize,
@@ -79,6 +82,12 @@ pub(super) enum GriddedNormalRecordLayout {
 
 impl GriddedNormalRecordLayout {
     fn for_specification(specification: &SpectralOperatorSpecification) -> Self {
+        if let Some(plan) = specification.channel_major_taylor_plan() {
+            return Self::TaylorViaChannelMajor {
+                plan,
+                channels: specification.slab().core_depth(),
+            };
+        }
         if specification.joint_continuum_term_count().is_some() {
             return Self::Joint {
                 coefficient_terms: specification.coefficient_terms(),
@@ -99,6 +108,7 @@ impl GriddedNormalRecordLayout {
             Self::Scalar => 1,
             Self::ChannelLocal { channels } => channels,
             Self::Taylor(plan) => plan.coefficient_term_count(),
+            Self::TaylorViaChannelMajor { plan, .. } => plan.coefficient_term_count(),
             Self::Joint {
                 coefficient_terms, ..
             } => coefficient_terms,
@@ -110,13 +120,17 @@ impl GriddedNormalRecordLayout {
             Self::Scalar => 1,
             Self::ChannelLocal { channels } => channels,
             Self::Taylor(plan) => plan.normal_moment_count(),
+            Self::TaylorViaChannelMajor { plan, .. } => plan.normal_moment_count(),
             Self::Joint { normal_moments, .. } => normal_moments,
         }
     }
 
     pub(super) const fn prediction_width(self) -> usize {
         match self {
-            Self::Scalar | Self::ChannelLocal { .. } | Self::Joint { .. } => 1,
+            Self::Scalar
+            | Self::ChannelLocal { .. }
+            | Self::TaylorViaChannelMajor { .. }
+            | Self::Joint { .. } => 1,
             Self::Taylor(plan) => plan.coefficient_term_count(),
         }
     }
@@ -128,13 +142,16 @@ impl GriddedNormalRecordLayout {
             } => coefficient_terms + output_channels,
             Self::Scalar => 1,
             Self::ChannelLocal { channels } => channels,
+            Self::TaylorViaChannelMajor { channels, .. } => channels,
             Self::Taylor(plan) => plan.coefficient_term_count(),
         }
     }
 
     pub(super) fn record_bytes(self) -> Result<usize, SpectralOperatorError> {
         match self {
-            Self::Scalar | Self::ChannelLocal { .. } => Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
+            Self::Scalar | Self::ChannelLocal { .. } | Self::TaylorViaChannelMajor { .. } => {
+                Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
+            }
             Self::Joint { .. } => Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
             Self::Taylor(plan) => plan
                 .normal_moment_count()
@@ -497,12 +514,14 @@ impl GriddedNormalOperatorCompiler {
             (
                 GriddedNormalRecordLayout::Scalar
                 | GriddedNormalRecordLayout::ChannelLocal { .. }
+                | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                 | GriddedNormalRecordLayout::Joint { .. },
                 SourceCardinalityObservation::Disabled,
             ) => self.compile_block_inner::<false>(block),
             (
                 GriddedNormalRecordLayout::Scalar
                 | GriddedNormalRecordLayout::ChannelLocal { .. }
+                | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                 | GriddedNormalRecordLayout::Joint { .. },
                 SourceCardinalityObservation::Enabled,
             ) => self.compile_block_inner::<true>(block),
@@ -536,6 +555,7 @@ impl GriddedNormalOperatorCompiler {
         let (encoded, digest, measurements) = match self.record_layout {
             GriddedNormalRecordLayout::Scalar
             | GriddedNormalRecordLayout::ChannelLocal { .. }
+            | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
             | GriddedNormalRecordLayout::Joint { .. } => {
                 let started = Instant::now();
                 self.begin_block(block)?;
@@ -663,7 +683,7 @@ impl GriddedNormalOperatorCompiler {
                         if spectral.contribution() != first_spectral.contribution() {
                             return Err(SpectralOperatorError::InvalidSample);
                         }
-                        final_correlation_weight(weighted, spectral.imaging_weight())
+                        Ok(spectral.imaging_weight())
                     })
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 let diagonal = polarization_diagonal(&operator, &weights, &flags);
@@ -1069,7 +1089,8 @@ impl GriddedNormalOperatorProgram {
             || prior.block_count() != self.block_count()
             || prior.catalog()
                 != match self.manifest.record_layout {
-                    GriddedNormalRecordLayout::Taylor(_) => {
+                    GriddedNormalRecordLayout::Taylor(_)
+                    | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
                         crate::NormalStateCatalog::UnnormalizedTaylorBlockV1
                     }
                     GriddedNormalRecordLayout::Joint { .. } => {
@@ -1095,15 +1116,16 @@ impl GriddedNormalOperatorProgram {
         }
         let model_generation = model.generation_id();
         let reusable_domains = prior.into_reusable_domains()?;
+        if reusable_domains.len() != prepared_specification.domain_count() {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
+        }
         let mut operators = Vec::with_capacity(prepared_specification.chart_count());
         for (chart, fft) in prepared_specification.charts().iter().zip(ffts.drain(..)) {
             let mut operator =
                 SpectralSlabOperator::new_chart(&prepared_specification, chart, workload, fft, 0);
-            operator.prepare_gridded_normal_model(model)?;
+            operator
+                .prepare_gridded_normal_model(model, &reusable_domains[chart.domain_ordinal()])?;
             operators.push(operator);
-        }
-        if reusable_domains.len() != prepared_specification.domain_count() {
-            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
         let core_depth = self.accumulation_width();
         let tile_catalogs = GriddedNormalDomainTileCatalogs::new(
@@ -1147,6 +1169,7 @@ impl GriddedNormalOperatorProgram {
             tile_accumulators,
             normal_grids: domain_planes(),
             normal_compensations: domain_planes(),
+            science_prediction_trace: imaging_science_trace_enabled().then(ScienceTraceDigest::new),
             #[cfg(test)]
             next_sector_commit: 0,
             #[cfg(test)]
@@ -1180,6 +1203,7 @@ pub struct GriddedNormalOperatorApply {
     tile_accumulators: Vec<Mutex<GriddedNormalTileAccumulator>>,
     normal_grids: Vec<Vec<Array2<Complex64>>>,
     normal_compensations: Vec<Vec<Array2<Complex64>>>,
+    science_prediction_trace: Option<ScienceTraceDigest>,
     #[cfg(test)]
     next_sector_commit: usize,
     #[cfg(test)]
@@ -2069,7 +2093,7 @@ impl GriddedNormalOperatorApply {
 
     /// Finish and return the final immutable route-once measurement snapshot.
     pub fn finish_with_routing_measurements(
-        self,
+        mut self,
     ) -> Result<(CompleteDataOwnerResult, GriddedNormalRoutingMeasurements), SpectralOperatorError>
     {
         let active_frames = self
@@ -2083,6 +2107,9 @@ impl GriddedNormalOperatorApply {
             || active_frames != 0
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        if let Some(trace) = self.science_prediction_trace.take() {
+            trace.emit("predicted_visibility");
         }
         let measurements = self.routing_measurements();
         let Self {
@@ -2104,7 +2131,8 @@ impl GriddedNormalOperatorApply {
                 }),
         )?;
         let primitive_catalog = match program.manifest.record_layout {
-            GriddedNormalRecordLayout::Taylor(_) => {
+            GriddedNormalRecordLayout::Taylor(_)
+            | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
             }
             GriddedNormalRecordLayout::Joint { .. } => {
@@ -2258,6 +2286,7 @@ fn require_supported_basis(basis: &ReconstructionBasis) -> Result<(), SpectralOp
         ReconstructionBasis::Constant
             | ReconstructionBasis::ChannelLocal { .. }
             | ReconstructionBasis::Taylor { terms: 2.. }
+            | ReconstructionBasis::TaylorViaChannelMajor { terms: 2.., .. }
             | ReconstructionBasis::JointContinuumLine { .. }
     ) {
         Ok(())
@@ -2338,6 +2367,14 @@ fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdent
                     .record_bytes()
                     .expect("validated Taylor record width"),
             );
+        }
+        GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, channels } => {
+            encoder.u8(4);
+            encoder.usize(plan.coefficient_term_count());
+            encoder.usize(plan.normal_moment_count());
+            encoder.u64(plan.reference_frequency_hz().to_bits());
+            encoder.usize(channels);
+            encoder.usize(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
         }
         GriddedNormalRecordLayout::Joint {
             coefficient_terms,
@@ -2890,6 +2927,7 @@ mod tests {
             image_shape: [8, 8],
             grid_shape: [10, 10],
             image_blc: [1, 1],
+            reference_pixel: [4.0, 4.0],
             increment_rad: [-2.0e-3, 2.0e-3],
         }
     }

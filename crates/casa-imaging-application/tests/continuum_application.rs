@@ -35,7 +35,7 @@ fn tiny_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, false),
+        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 1, false),
     )
 }
 
@@ -43,7 +43,7 @@ fn multi_row_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "multi-row-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 2, 8, false),
+        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 8, false),
     )
 }
 
@@ -51,7 +51,7 @@ fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "polarized-input.ms",
-        MeasurementSetFixtureOptions::new(true, true, 2, 2, 1, false),
+        MeasurementSetFixtureOptions::new(true, true, 2, 1, 2, 1, false),
     )
 }
 
@@ -59,7 +59,21 @@ fn full_stokes_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "full-stokes-input.ms",
-        MeasurementSetFixtureOptions::new(true, false, 2, 27, 702, false),
+        MeasurementSetFixtureOptions::new(true, false, 2, 1, 27, 702, false),
+    )
+}
+
+fn unequal_linear_parallel_hand_measurement_set(
+    root: &Path,
+    name: &str,
+    parallel_hand_weights: [f32; 2],
+) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        name,
+        MeasurementSetFixtureOptions::new(true, false, 1, 1, 2, 1, false)
+            .with_linear_correlations()
+            .with_parallel_hand_weights(parallel_hand_weights),
     )
 }
 
@@ -67,7 +81,7 @@ fn spectral_line_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "line-input.ms",
-        MeasurementSetFixtureOptions::new(true, true, 4, 2, 1, false),
+        MeasurementSetFixtureOptions::new(true, true, 4, 1, 2, 1, false),
     )
 }
 
@@ -75,7 +89,7 @@ fn joint_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "joint-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 4, 2, 1, false),
+        MeasurementSetFixtureOptions::new(false, false, 4, 1, 2, 1, false),
     )
 }
 
@@ -83,7 +97,15 @@ fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "undefined-weight-spectrum.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 2, 1, true),
+        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 1, true),
+    )
+}
+
+fn four_spw_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "four-spw-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false),
     )
 }
 
@@ -92,9 +114,12 @@ struct MeasurementSetFixtureOptions {
     polarized: bool,
     flag_cross_hand: bool,
     channel_count: usize,
+    spectral_window_count: usize,
     antenna_count: usize,
     main_row_count: usize,
     undefined_weight_spectrum: bool,
+    linear_correlations: bool,
+    parallel_hand_weights: Option<[f32; 2]>,
 }
 
 impl MeasurementSetFixtureOptions {
@@ -102,6 +127,7 @@ impl MeasurementSetFixtureOptions {
         polarized: bool,
         flag_cross_hand: bool,
         channel_count: usize,
+        spectral_window_count: usize,
         antenna_count: usize,
         main_row_count: usize,
         undefined_weight_spectrum: bool,
@@ -110,10 +136,23 @@ impl MeasurementSetFixtureOptions {
             polarized,
             flag_cross_hand,
             channel_count,
+            spectral_window_count,
             antenna_count,
             main_row_count,
             undefined_weight_spectrum,
+            linear_correlations: false,
+            parallel_hand_weights: None,
         }
+    }
+
+    const fn with_linear_correlations(mut self) -> Self {
+        self.linear_correlations = true;
+        self
+    }
+
+    const fn with_parallel_hand_weights(mut self, weights: [f32; 2]) -> Self {
+        self.parallel_hand_weights = Some(weights);
+        self
     }
 }
 
@@ -122,35 +161,20 @@ fn measurement_set_fixture(
     name: &str,
     options: MeasurementSetFixtureOptions,
 ) -> PathBuf {
-    let MeasurementSetFixtureOptions {
-        polarized,
-        flag_cross_hand,
-        channel_count,
-        antenna_count,
-        main_row_count,
-        undefined_weight_spectrum,
-    } = options;
     let output = root.join(name);
     let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
-    if undefined_weight_spectrum {
+    if options.undefined_weight_spectrum {
         builder = builder.with_main_column(OptionalMainColumn::WeightSpectrum);
     }
-    if polarized {
+    if options.polarized {
         builder = builder.with_main_column(OptionalMainColumn::ModelData);
     }
-    if channel_count == 4 {
+    if options.channel_count == 4 {
         builder = builder.with_main_column(OptionalMainColumn::CorrectedData);
     }
     let mut measurement_set =
         MeasurementSet::create_memory(builder).expect("create in-memory application fixture");
-    populate_fixture(
-        &mut measurement_set,
-        polarized,
-        flag_cross_hand,
-        channel_count,
-        antenna_count,
-        main_row_count,
-    );
+    populate_fixture(&mut measurement_set, options);
     measurement_set
         .save_as(&output)
         .expect("persist fixture with production tiled bindings");
@@ -175,14 +199,18 @@ fn measurement_set_fixture(
     output
 }
 
-fn populate_fixture(
-    measurement_set: &mut MeasurementSet,
-    polarized: bool,
-    flag_cross_hand: bool,
-    channel_count: usize,
-    antenna_count: usize,
-    main_row_count: usize,
-) {
+fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSetFixtureOptions) {
+    let MeasurementSetFixtureOptions {
+        polarized,
+        flag_cross_hand,
+        channel_count,
+        spectral_window_count,
+        antenna_count,
+        main_row_count,
+        linear_correlations,
+        parallel_hand_weights,
+        ..
+    } = options;
     {
         let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
         for antenna in 0..antenna_count {
@@ -209,7 +237,13 @@ fn populate_fixture(
     let direction = ArrayValue::Float64(
         ArrayD::from_shape_vec(vec![2, 1], vec![1.0, 0.5]).expect("direction shape"),
     );
-    let correlation_codes = if polarized { vec![5, 6, 7, 8] } else { vec![1] };
+    let correlation_codes = if !polarized {
+        vec![1]
+    } else if linear_correlations {
+        vec![9, 10, 11, 12]
+    } else {
+        vec![5, 6, 7, 8]
+    };
     let correlation_count = correlation_codes.len();
     let correlation_products = if polarized {
         vec![0, 0, 0, 1, 1, 0, 1, 1]
@@ -261,55 +295,57 @@ fn populate_fixture(
         ))
         .expect("add POLARIZATION row");
 
-    let frequency = Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(
-            vec![channel_count],
-            (0..channel_count)
-                .map(|channel| 44.0e9 + channel as f64 * 1.0e6)
-                .collect(),
-        )
-        .expect("frequency shape"),
-    ));
-    let width = Value::Array(ArrayValue::Float64(
-        ArrayD::from_shape_vec(vec![channel_count], vec![1.0e6; channel_count])
-            .expect("width shape"),
-    ));
-    measurement_set
-        .subtable_mut(SubtableId::SpectralWindow)
-        .expect("SPECTRAL_WINDOW")
-        .add_row(required_row(
-            schema::spectral_window::REQUIRED_COLUMNS,
-            &[
-                ("NUM_CHAN", int(channel_count as i32)),
-                ("NAME", string("CONTINUUM")),
-                ("REF_FREQUENCY", float(44.0e9)),
-                ("TOTAL_BANDWIDTH", float(channel_count as f64 * 1.0e6)),
-                ("CHAN_FREQ", frequency),
-                ("CHAN_WIDTH", width.clone()),
-                ("EFFECTIVE_BW", width.clone()),
-                ("RESOLUTION", width),
-                ("MEAS_FREQ_REF", int(5)),
-                ("NET_SIDEBAND", int(1)),
-                ("FREQ_GROUP", int(0)),
-                ("FREQ_GROUP_NAME", string("")),
-                ("IF_CONV_CHAIN", int(0)),
-                ("FLAG_ROW", boolean(false)),
-            ],
-        ))
-        .expect("add SPECTRAL_WINDOW row");
-
-    measurement_set
-        .subtable_mut(SubtableId::DataDescription)
-        .expect("DATA_DESCRIPTION")
-        .add_row(required_row(
-            schema::data_description::REQUIRED_COLUMNS,
-            &[
-                ("SPECTRAL_WINDOW_ID", int(0)),
-                ("POLARIZATION_ID", int(0)),
-                ("FLAG_ROW", boolean(false)),
-            ],
-        ))
-        .expect("add DATA_DESCRIPTION row");
+    for spw in 0..spectral_window_count {
+        let first_frequency_hz = 44.0e9 + spw as f64 * 100.0e6;
+        let frequency = Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(
+                vec![channel_count],
+                (0..channel_count)
+                    .map(|channel| first_frequency_hz + channel as f64 * 1.0e6)
+                    .collect(),
+            )
+            .expect("frequency shape"),
+        ));
+        let width = Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![channel_count], vec![1.0e6; channel_count])
+                .expect("width shape"),
+        ));
+        measurement_set
+            .subtable_mut(SubtableId::SpectralWindow)
+            .expect("SPECTRAL_WINDOW")
+            .add_row(required_row(
+                schema::spectral_window::REQUIRED_COLUMNS,
+                &[
+                    ("NUM_CHAN", int(channel_count as i32)),
+                    ("NAME", string(&format!("CONTINUUM_{spw}"))),
+                    ("REF_FREQUENCY", float(first_frequency_hz)),
+                    ("TOTAL_BANDWIDTH", float(channel_count as f64 * 1.0e6)),
+                    ("CHAN_FREQ", frequency),
+                    ("CHAN_WIDTH", width.clone()),
+                    ("EFFECTIVE_BW", width.clone()),
+                    ("RESOLUTION", width),
+                    ("MEAS_FREQ_REF", int(5)),
+                    ("NET_SIDEBAND", int(1)),
+                    ("FREQ_GROUP", int(0)),
+                    ("FREQ_GROUP_NAME", string("")),
+                    ("IF_CONV_CHAIN", int(0)),
+                    ("FLAG_ROW", boolean(false)),
+                ],
+            ))
+            .expect("add SPECTRAL_WINDOW row");
+        measurement_set
+            .subtable_mut(SubtableId::DataDescription)
+            .expect("DATA_DESCRIPTION")
+            .add_row(required_row(
+                schema::data_description::REQUIRED_COLUMNS,
+                &[
+                    ("SPECTRAL_WINDOW_ID", int(spw as i32)),
+                    ("POLARIZATION_ID", int(0)),
+                    ("FLAG_ROW", boolean(false)),
+                ],
+            ))
+            .expect("add DATA_DESCRIPTION row");
+    }
 
     let visibilities = (0..correlation_count * channel_count)
         .map(|index| Complex32::new((index % 6 + 1) as f32, 0.0))
@@ -317,7 +353,11 @@ fn populate_fixture(
     let flags = (0..correlation_count * channel_count)
         .map(|index| flag_cross_hand && index % 4 == 3)
         .collect::<Vec<_>>();
-    let weights = vec![1.0; correlation_count];
+    let mut weights = vec![1.0; correlation_count];
+    if let Some([first, last]) = parallel_hand_weights {
+        weights[0] = first;
+        weights[correlation_count - 1] = last;
+    }
     let mut overrides = vec![
         ("ANTENNA1", int(0)),
         ("ANTENNA2", int(1)),
@@ -395,6 +435,11 @@ fn populate_fixture(
         let mut row_overrides = overrides.clone();
         replace_override(&mut row_overrides, "ANTENNA1", int(antenna1 as i32));
         replace_override(&mut row_overrides, "ANTENNA2", int(antenna2 as i32));
+        replace_override(
+            &mut row_overrides,
+            "DATA_DESC_ID",
+            int((row % spectral_window_count) as i32),
+        );
         replace_override(
             &mut row_overrides,
             "TIME",
@@ -576,6 +621,7 @@ fn request(
         gain: 1.0,
         threshold_jy: 0.0,
         psf_cutoff: 0.2,
+        primary_beam_cutoff: 0.2,
         beam_policy: ContinuumBeamPolicy::PerPlane,
         mask: ContinuumMask::FullPlane,
         save_model_column: false,
@@ -669,6 +715,57 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
             .expect("reopen numeric CLEAN mask");
     assert_eq!(clean_mask.default_mask_name(), None);
+}
+
+#[test]
+fn stokes_i_uses_one_shared_imaging_weight_for_each_linear_parallel_hand() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+
+    let run = |name: &str, weights: [f32; 2]| {
+        let measurement_set =
+            unequal_linear_parallel_hand_measurement_set(root.path(), name, weights);
+        let image_name = root.path().join(format!("{name}-dirty"));
+        execute_continuum(request(
+            measurement_set,
+            image_name.clone(),
+            ContinuumAlgorithm::Dirty,
+        ))
+        .expect("native unequal-XX/YY dirty execution");
+        let psf = product_plane(&image_name, ".psf");
+        let residual = product_plane(&image_name, ".residual");
+        let sumwt =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}.sumwt", image_name.display())))
+                .expect("open Stokes-I sum weights")
+                .get()
+                .expect("read Stokes-I sum weights");
+        (psf, residual, sumwt)
+    };
+
+    let (equal_psf, equal_residual, equal_sumwt) = run("equal-hands", [2.0, 2.0]);
+    let (unequal_psf, unequal_residual, unequal_sumwt) = run("unequal-hands", [1.0, 3.0]);
+
+    assert_eq!(equal_psf, unequal_psf, "the common mean preserves the PSF");
+    assert!(
+        equal_residual.iter().any(|value| value.abs() > 0.0),
+        "the numerator comparison must be non-vacuous"
+    );
+    for (equal, unequal) in equal_residual.iter().zip(unequal_residual.iter()) {
+        assert!(
+            (equal - unequal).abs() <= 1.0e-6,
+            "shared per-hand weighting changed the Stokes-I numerator: equal={equal} unequal={unequal}"
+        );
+    }
+    assert_eq!(
+        equal_sumwt.as_slice().expect("contiguous sum weights"),
+        &[4.0]
+    );
+    assert_eq!(
+        unequal_sumwt.as_slice().expect("contiguous sum weights"),
+        &[4.0],
+        "both mapped hands contribute their shared row/channel imaging weight"
+    );
 }
 
 #[test]
@@ -1164,6 +1261,84 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
             .beam_set
             .has_single_beam()
     );
+}
+
+#[test]
+fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_windows() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = four_spw_measurement_set(root.path());
+    let image_name = root.path().join("four-spw-mvc");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.channel_count = Some(8);
+    imaging.maximum_major_cycles = Some(1);
+    imaging.task_requirements = vec![
+        TaskRequirement::SpectralMtmfsViaCube,
+        TaskRequirement::SerialCpu,
+    ];
+    imaging.spectral_mode = SpectralImagingMode::MtmfsViaCube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(16),
+    };
+
+    let result = execute_continuum(imaging).expect("bounded multi-SPW MVC execution");
+    assert_eq!(
+        result.product_names,
+        [
+            ".psf.tt0",
+            ".psf.tt1",
+            ".psf.tt2",
+            ".residual.tt0",
+            ".residual.tt1",
+            ".model.tt0",
+            ".model.tt1",
+            ".image.tt0",
+            ".image.tt1",
+            ".sumwt.tt0",
+            ".sumwt.tt1",
+            ".sumwt.tt2",
+            ".mask",
+            ".alpha",
+            ".alpha.error",
+        ]
+        .map(str::to_string),
+    );
+    assert!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .sample_count()
+            > 0
+    );
+    for suffix in &result.product_names {
+        let product =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
+                .expect("reopen MVC Taylor product");
+        assert_eq!(
+            product.shape(),
+            if suffix.starts_with(".sumwt.") {
+                &[1, 1, 1, 1]
+            } else {
+                &[16, 16, 1, 1]
+            },
+            "{suffix}"
+        );
+    }
 }
 
 #[test]

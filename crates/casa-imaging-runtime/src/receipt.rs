@@ -14,8 +14,8 @@ use std::{
 use casa_imaging_model::{
     AntennaSelection, CompiledGeometry, CompiledProblem, CorrelationType, DelayCentreLaw,
     DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy, FrequencyFrame, IdSelection,
-    ImageAxis, ImageDomainRole, InstrumentResponse, IntentSelection, LogicalIdentity,
-    MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelBounds,
+    ImageAxis, ImageDomainRole, InstrumentModel, InstrumentResponse, IntentSelection,
+    LogicalIdentity, MeasurementSetIdentity, MetadataTableKind, MissingPointingPolicy, ModelBounds,
     ModelInnerProduct, ModelInputCommitment, ModelInputCommitmentIdentity, ModelReprojectionPolicy,
     ModelStateEncoding, ModelStateIdentity, ModelSupportSemantics, MsColumnKind,
     NormalEquationForm, NormalStateNormalization, NumericPrecision, NumericalStage,
@@ -5662,12 +5662,22 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
                     reconstruction_basis(*basis),
                 );
             }
-            PairedMeasurementTransform::DirectionDependentResponse { response } => {
+            PairedMeasurementTransform::DirectionDependentResponse {
+                response,
+                instrument_model,
+            } => {
                 evidence_field(
                     fields,
                     format!("{prefix}.response"),
                     instrument_response(*response),
                 );
+                if let Some(model) = instrument_model {
+                    evidence_field(
+                        fields,
+                        format!("{prefix}.instrument_model"),
+                        instrument_model_name(*model),
+                    );
+                }
             }
             PairedMeasurementTransform::PhaseRotation { convention } => {
                 evidence_field(
@@ -5719,6 +5729,10 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
     match basis {
         ReconstructionBasis::Taylor { terms } => {
             evidence_field(fields, "reconstruction.basis.terms", terms);
+        }
+        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } => {
+            evidence_field(fields, "reconstruction.basis.terms", terms);
+            evidence_field(fields, "reconstruction.basis.channels", channels);
         }
         ReconstructionBasis::ChannelLocal { channels } => {
             evidence_field(fields, "reconstruction.basis.channels", channels);
@@ -7198,6 +7212,14 @@ fn instrument_response(value: InstrumentResponse) -> &'static str {
     }
 }
 
+const fn instrument_model_name(value: InstrumentModel) -> &'static str {
+    match value {
+        InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1 => {
+            "casa-alma-aca-interferometric-direct-pb-v1"
+        }
+    }
+}
+
 fn model_inner_product(value: ModelInnerProduct) -> &'static str {
     match value {
         ModelInnerProduct::HermitianEuclidean => "hermitian_euclidean",
@@ -7240,6 +7262,7 @@ fn reconstruction_basis(value: ReconstructionBasis) -> &'static str {
     match value {
         ReconstructionBasis::Constant => "constant",
         ReconstructionBasis::Taylor { .. } => "taylor",
+        ReconstructionBasis::TaylorViaChannelMajor { .. } => "taylor_via_channel_major",
         ReconstructionBasis::ChannelLocal { .. } => "channel_local",
         ReconstructionBasis::JointContinuumLine { .. } => "joint_continuum_line",
     }
@@ -7622,6 +7645,7 @@ fn visibility_phase(value: VisibilityPhaseConvention) -> &'static str {
 
 fn frequency_frame(value: FrequencyFrame) -> &'static str {
     match value {
+        FrequencyFrame::Rest => "rest",
         FrequencyFrame::Topocentric => "topocentric",
         FrequencyFrame::Barycentric => "barycentric",
         FrequencyFrame::Lsrk => "lsrk",

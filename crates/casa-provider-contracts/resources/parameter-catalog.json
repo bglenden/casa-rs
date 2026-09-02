@@ -7484,13 +7484,15 @@
     },
     {
       "id": "parameter.specmode",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "specmode",
       "value_domain": {
         "kind": "choice",
         "values": [
           "cube",
           "cubedata",
+          "cubesource",
+          "mvc",
           "mfs"
         ]
       },
@@ -7501,10 +7503,12 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "MFS continuum imaging, cube with CASA Doppler/frame handling, or cubedata in the native data frame without Doppler correction",
+        "summary": "MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; cubesource tracked in the source rest frame; or MVC MT-MFS via a channel cube",
         "details": null,
         "examples": [
-          "mfs"
+          "mfs",
+          "cubesource",
+          "mvc"
         ]
       },
       "persistence_class": "profile"

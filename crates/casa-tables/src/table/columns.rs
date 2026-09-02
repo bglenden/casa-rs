@@ -1913,6 +1913,23 @@ impl<'a> TableColumn<'a> {
             .get_array_cells_owned_uncached(&self.column, row_indices)
     }
 
+    /// Returns whether an array cell is defined without reading its payload or
+    /// populating the table-level row cache.
+    ///
+    /// This metadata-only probe requires a lazy, disk-backed
+    /// `TiledShapeStMan` column.
+    pub fn array_cell_is_defined_uncached(&self, row_index: usize) -> Result<bool, TableError> {
+        if row_index >= self.table.row_count() {
+            return Err(TableError::RowOutOfBounds {
+                row_index,
+                row_count: self.table.row_count(),
+            });
+        }
+        self.table
+            .inner
+            .array_cell_is_defined_uncached(row_index, &self.column)
+    }
+
     /// Returns typed 2-D array channel slices for selected rows without
     /// populating the table-level row cache.
     ///

@@ -2,7 +2,7 @@
 
 //! T42 public-owner acceptance for MT-MFS block-normal construction.
 
-use std::{convert::Infallible, thread};
+use std::{collections::BTreeMap, convert::Infallible, thread};
 
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
@@ -10,18 +10,19 @@ use casa_imaging_model::{
     DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
     DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
     GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentResponse, IntentSelection, JointContinuumLineContract,
-    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
-    MetadataTableKind, ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
-    ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationSelection, ObservationSnapshotInput, ObservationSourceInput,
-    ObservationSourceProvenance, ObservationTransactionRequirements, PhaseCentreLaw,
-    PointingCentreLaw, PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
-    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
-    ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
+    ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection,
+    JointContinuumLineContract, LogicalIdentity, MeasurementEquationContract,
+    MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, ModelBounds, ModelCell,
+    ModelColumnState, ModelColumnWrite, ModelDeltaTerm, ModelExecutionAttemptId, ModelInnerProduct,
+    ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity, ModelValue, MsColumnKind,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
+    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
     SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
@@ -35,14 +36,15 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
-    MajorCycleOwner, MajorCyclePreparation, MinorCycleError, MinorCycleProgram, ModelGeneration,
-    ModelLifecycle, NormalStateCatalog, ReconstructionCycle, ReconstructionCycleError,
-    ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
+    FrozenWeightingCoverageProof, MajorCycleOwner, MajorCyclePreparation, MinorCycleError,
+    MinorCycleProgram, ModelGeneration, ModelLifecycle, NormalStateCatalog, ReconstructionCycle,
+    ReconstructionCycleError, ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralStencilValidity,
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
     WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
+        CompleteDataOwnerResult, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+        GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
         GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
         GriddedNormalRoutingMeasurements, SourceCardinalityObservation, SpectralOperatorPass,
         gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
@@ -52,6 +54,213 @@ use casa_imaging_reconstruction::{
 
 const REFERENCE_FREQUENCY_HZ: f64 = 1.0e9;
 const IMAGE_WIDTH: usize = 8;
+
+#[test]
+fn frozen_casa_mvc_channel_folding_law() {
+    const CHANNELS: usize = 40;
+    const FIRST_CHANNEL_CENTRE_HZ: f64 = 230_449_729_492.188_84;
+    const CHANNEL_INCREMENT_HZ: f64 = 122_982_578.274_169_92;
+    const TAYLOR_REFERENCE_FREQUENCY_HZ: f64 = 232_847_889_767.857_8;
+    const WEIGHTS: [f64; CHANNELS] = [
+        639_163_584.0,
+        10_790_249.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        188_639_120.0,
+        754_556_480.0,
+        707_396_736.0,
+        754_556_480.0,
+        754_556_480.0,
+        754_556_480.0,
+        707_396_736.0,
+        754_556_480.0,
+        754_556_480.0,
+        754_556_480.0,
+        707_396_736.0,
+        754_556_480.0,
+        754_556_480.0,
+        754_556_480.0,
+        707_396_736.0,
+        0.0,
+    ];
+    const PRIMARY_BEAM: [f64; CHANNELS] = [
+        0.688_695_669_174_194_3,
+        0.688_327_729_701_995_8,
+        0.688_143_670_558_929_4,
+        0.687_775_433_063_507_1,
+        0.687_591_254_711_151_1,
+        0.687_222_898_006_439_2,
+        0.686_854_422_092_437_7,
+        0.686_670_184_135_437,
+        0.686_301_589_012_146,
+        0.685_932_755_470_275_9,
+        0.685_748_457_908_630_4,
+        0.685_379_505_157_470_7,
+        0.685_010_552_406_311,
+        0.684_825_956_821_441_7,
+        0.684_456_884_860_992_4,
+        0.684_272_229_671_478_3,
+        0.683_902_919_292_45,
+        0.683_533_489_704_132_1,
+        0.683_348_655_700_683_6,
+        0.682_979_106_903_076_2,
+        0.682_609_379_291_534_4,
+        0.682_424_545_288_085_9,
+        0.682_054_638_862_609_9,
+        0.681_869_745_254_516_6,
+        0.681_499_660_015_106_2,
+        0.681_129_574_775_695_8,
+        0.680_944_442_749_023_4,
+        0.680_574_119_091_033_9,
+        0.680_203_735_828_399_7,
+        0.680_018_484_592_437_7,
+        0.679_647_922_515_869_1,
+        0.679_277_300_834_655_8,
+        0.679_091_930_389_404_3,
+        0.678_721_129_894_256_6,
+        0.678_535_699_844_360_4,
+        0.678_164_660_930_633_5,
+        0.677_793_622_016_906_7,
+        0.677_608_072_757_721,
+        0.677_236_795_425_415,
+        0.676_865_458_488_464_4,
+    ];
+    const RESIDUAL: [f64; CHANNELS] = [
+        -0.012_630_579_993_128_777,
+        -0.011_666_422_709_822_655,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.086_194_373_667_240_14,
+        0.084_854_930_639_266_97,
+        0.083_378_627_896_308_9,
+        0.081_058_189_272_880_55,
+        0.080_800_563_097_000_12,
+        0.081_458_963_453_769_68,
+        0.082_277_722_656_726_84,
+        0.080_849_200_487_136_84,
+        0.079_072_520_136_833_19,
+        0.077_560_365_200_042_72,
+        0.076_599_426_567_554_47,
+        0.075_768_440_961_837_77,
+        0.075_612_261_891_365_05,
+        0.076_553_344_726_562_5,
+        0.075_070_008_635_520_94,
+        0.0,
+    ];
+
+    let frequencies = std::array::from_fn::<_, CHANNELS, _>(|channel| {
+        FIRST_CHANNEL_CENTRE_HZ + channel as f64 * CHANNEL_INCREMENT_HZ
+    });
+    let x = frequencies.map(|frequency| {
+        (frequency - TAYLOR_REFERENCE_FREQUENCY_HZ) / TAYLOR_REFERENCE_FREQUENCY_HZ
+    });
+    let total_weight: f64 = WEIGHTS.iter().sum();
+    let primary_beam_tt0 = WEIGHTS
+        .iter()
+        .zip(PRIMARY_BEAM)
+        .map(|(weight, primary_beam)| weight * primary_beam)
+        .sum::<f64>()
+        / total_weight;
+    let denominator = total_weight * primary_beam_tt0;
+    let psf = std::array::from_fn::<_, 3, _>(|term| {
+        WEIGHTS
+            .iter()
+            .zip(x)
+            .map(|(weight, x)| weight * x.powi(term as i32))
+            .sum::<f64>()
+            / total_weight
+    });
+    let residual = std::array::from_fn::<_, 2, _>(|term| {
+        WEIGHTS
+            .iter()
+            .zip(PRIMARY_BEAM)
+            .zip(RESIDUAL)
+            .zip(x)
+            .map(|(((weight, primary_beam), residual), x)| {
+                weight * primary_beam * residual * x.powi(term as i32)
+            })
+            .sum::<f64>()
+            / denominator
+    });
+    let sum_weights = std::array::from_fn::<_, 3, _>(|term| {
+        WEIGHTS
+            .iter()
+            .zip(x)
+            .map(|(weight, x)| weight.powi(2) * x.powi(term as i32))
+            .sum::<f64>()
+            / total_weight
+    });
+
+    fn assert_casa_float(actual: f64, expected: f64) {
+        let scale = expected.abs().max(1.0);
+        assert!(
+            (actual - expected).abs() <= 2.0e-6 * scale,
+            "actual {actual:.17e}, expected {expected:.17e}"
+        );
+    }
+
+    assert_casa_float(primary_beam_tt0, 0.679_800_510_406_494_1);
+    for (actual, expected) in psf.into_iter().zip([
+        1.0,
+        0.005_303_129_553_794_861,
+        0.000_047_518_253_268_208_355,
+    ]) {
+        assert_casa_float(actual, expected);
+    }
+    for (actual, expected) in residual
+        .into_iter()
+        .zip([0.074_071_452_021_598_82, 0.000_469_728_838_652_372_36])
+    {
+        assert_casa_float(actual, expected);
+    }
+    for (actual, expected) in
+        sum_weights
+            .into_iter()
+            .zip([725_843_840.0, 3_975_053.0, 34_450.343_75])
+    {
+        assert_casa_float(actual, expected);
+    }
+}
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
@@ -169,6 +378,20 @@ fn joint_source() -> ObservationSourceInput {
     ))
 }
 
+fn channel_major_source(channels: usize) -> ObservationSourceInput {
+    source_with_selection(ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
+            .expect("one selected channel-major row"),
+        row_selection(),
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(
+            0,
+            (0..channels as u32).collect(),
+        )],
+        correlations(),
+    ))
+}
+
 fn validity() -> ProductValidityPolicies {
     ProductValidityPolicies::new(
         PrimaryBeamValidityPolicy::new(
@@ -191,9 +414,34 @@ fn problem_with(
     reconstruction: ReconstructionContract,
     spectral_channels: usize,
 ) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape(
+        reconstruction,
+        spectral_channels,
+        ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH),
+    )
+}
+
+fn problem_with_shape(
+    reconstruction: ReconstructionContract,
+    spectral_channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_and_response(reconstruction, spectral_channels, image_shape, false)
+}
+
+fn problem_with_shape_and_response(
+    reconstruction: ReconstructionContract,
+    spectral_channels: usize,
+    image_shape: ImageShape,
+    primary_beam: bool,
+) -> casa_imaging_model::CompiledProblem {
     let is_joint = matches!(
         reconstruction.basis(),
         ReconstructionBasis::JointContinuumLine { .. }
+    );
+    let is_channel_major = matches!(
+        reconstruction.basis(),
+        ReconstructionBasis::TaylorViaChannelMajor { .. }
     );
     let mut product_kinds = vec![
         ProductKind::Psf,
@@ -205,14 +453,17 @@ fn problem_with(
     if is_joint {
         product_kinds.retain(|product| *product != ProductKind::Sensitivity);
     }
-    if matches!(reconstruction.basis(), ReconstructionBasis::Taylor { .. }) {
+    if matches!(
+        reconstruction.basis(),
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
+    ) {
         product_kinds.push(ProductKind::TaylorTerms);
     }
-    let centre = IMAGE_WIDTH as f64 / 2.0;
+    let [width, height] = image_shape.pixels();
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
-        [centre, centre],
+        [width as f64 / 2.0, height as f64 / 2.0],
         [-1.0e-6, 1.0e-6],
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
@@ -220,7 +471,7 @@ fn problem_with(
     let geometry = GeometryInput::new(
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
-            ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH),
+            image_shape,
             direction,
             FacetLayout::Single,
             AxisOrder::new([
@@ -251,23 +502,42 @@ fn problem_with(
         ),
     );
     let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![if is_joint { joint_source() } else { source() }],
-        Vec::new(),
+        vec![if is_joint {
+            joint_source()
+        } else if is_channel_major {
+            channel_major_source(spectral_channels)
+        } else {
+            source()
+        }],
+        if primary_beam {
+            vec![(ReferenceDataKind::Instrument, identity(42, 100))]
+        } else {
+            Vec::new()
+        },
         ModelStateIdentity::Empty,
     ))
     .expect("compile T42 observation");
+    let mut science = ScientificContract::new(
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+        MeasurementEquationContract::new(
+            if primary_beam {
+                InstrumentResponse::PrimaryBeam
+            } else {
+                InstrumentResponse::Scalar
+            },
+            DeclaredInnerProducts::new(
+                ModelInnerProduct::HermitianEuclidean,
+                VisibilityInnerProduct::HermitianEuclidean,
+            ),
+        ),
+    );
+    if primary_beam {
+        science =
+            science.with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
+    }
     compile(ImagingRequest::new(
         ProblemSpecification::new(
-            ScientificContract::new(
-                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(
-                    InstrumentResponse::Scalar,
-                    DeclaredInnerProducts::new(
-                        ModelInnerProduct::HermitianEuclidean,
-                        VisibilityInnerProduct::HermitianEuclidean,
-                    ),
-                ),
-            ),
+            science,
             reconstruction,
             WeightingContract::new(
                 WeightingScheme::Briggs { robust: 0.5 },
@@ -293,7 +563,15 @@ fn problem_with(
         geometry,
         ProblemInputIdentities::new(snapshot),
         ModelLifecycleRequirements::new(
-            ModelBounds::new(1_024, 1_024, 1_024, 1_024, 1.0e30, 1.0e30).expect("T42 model bounds"),
+            ModelBounds::new(
+                width * height * 2,
+                width * height * 2,
+                width * height * 2,
+                1_024,
+                1.0e30,
+                1.0e30,
+            )
+            .expect("T42 model bounds"),
             NumericPrecision::F64,
             ModelInputCommitment::Empty,
         ),
@@ -313,6 +591,49 @@ fn problem() -> casa_imaging_model::CompiledProblem {
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         1,
+    )
+}
+
+fn channel_major_problem(channels: usize) -> casa_imaging_model::CompiledProblem {
+    channel_major_problem_with_shape(channels, ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH))
+}
+
+fn channel_major_problem_with_shape(
+    channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape(
+        ReconstructionContract::new(
+            ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(1, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        channels,
+        image_shape,
+    )
+}
+
+fn channel_major_primary_beam_problem(
+    channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_and_response(
+        ReconstructionContract::new(
+            ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(1, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        channels,
+        image_shape,
+        true,
     )
 }
 
@@ -359,6 +680,24 @@ fn joint_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObse
         sample(measurement_set, 0, 0, 0, 1.0e9, 2.0, [1.0, 0.0]),
         sample(measurement_set, 0, 0, 1, 1.001e9, 2.0, [3.0, 0.0]),
     ]
+}
+
+fn channel_major_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> [SelectedObservationSample; 4] {
+    let measurement_set = problem.selected_observation().read_set().sources()[0].measurement_set();
+    std::array::from_fn(|channel| {
+        let frequency_hz = REFERENCE_FREQUENCY_HZ + channel as f64 * 1.0e6;
+        sample(
+            measurement_set,
+            0,
+            0,
+            channel as u32,
+            frequency_hz,
+            2.0,
+            [1.0 + channel as f32, -0.25 * channel as f32],
+        )
+    })
 }
 
 fn sample(
@@ -467,7 +806,7 @@ fn run_operator(
     block_samples: usize,
     density_partitions: usize,
     preparation: Option<&MajorCyclePreparation>,
-) -> (CompleteDataOwnerResult, [f64; 3]) {
+) -> (CompleteDataOwnerResult, [f64; 3], Option<[f64; 3]>) {
     let limits = WeightingExecutionLimits::new(block_samples, density_partitions)
         .expect("T42 execution limits");
     let plan = plan_weighting(problem, limits).expect("T42 weighting plan");
@@ -509,21 +848,54 @@ fn run_operator(
 
     let mut expected = [0.0; 3];
     let mut compensation = [0.0; 3];
+    let mut channel_weights = BTreeMap::<u32, (f64, f64, f64)>::new();
     for weighted in blocks.iter().flat_map(|block| block.samples()) {
         for spectral in weighted.spectral_values() {
+            let contribution = spectral.contribution();
             for moment in 0..3 {
                 compensated_add(
                     &mut expected[moment],
                     &mut compensation[moment],
                     casa_moment_weight(
-                        spectral.contribution().evaluation_frequency_hz(),
+                        contribution.evaluation_frequency_hz(),
                         spectral.imaging_weight(),
                         moment,
                     ),
                 );
             }
+            if matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::TaylorViaChannelMajor { .. }
+            ) {
+                let entry = channel_weights
+                    .entry(contribution.output_channel())
+                    .or_insert((contribution.evaluation_frequency_hz(), 0.0, 0.0));
+                assert_eq!(
+                    entry.0.to_bits(),
+                    contribution.evaluation_frequency_hz().to_bits()
+                );
+                compensated_add(
+                    &mut entry.1,
+                    &mut entry.2,
+                    spectral.imaging_weight() * contribution.factor().powi(2),
+                );
+            }
         }
     }
+    let expected_publication = (!channel_weights.is_empty()).then(|| {
+        let mut moments = [0.0; 3];
+        let mut compensation = [0.0; 3];
+        for (_, (frequency_hz, weight, _)) in channel_weights {
+            for moment in 0..3 {
+                compensated_add(
+                    &mut moments[moment],
+                    &mut compensation[moment],
+                    casa_moment_weight(frequency_hz, weight * weight, moment),
+                );
+            }
+        }
+        moments
+    });
 
     let (selected_generation, selected_count) = problem
         .inspect_selected_observation(samples.iter().cloned().map(Ok::<_, Infallible>), |_| {
@@ -558,7 +930,7 @@ fn run_operator(
     let result = owner
         .complete(&summary, selected_generation, None)
         .expect("complete Taylor normal state");
-    (result, expected)
+    (result, expected, expected_publication)
 }
 
 fn compensated_add(sum: &mut f64, compensation: &mut f64, value: f64) {
@@ -594,7 +966,7 @@ fn run_final_normal_state(
     let initial = lifecycle.initial_empty().expect("empty Taylor model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare Taylor model");
-    let (complete_data, expected) = run_operator(problem, samples, 1, 1, Some(&preparation));
+    let (complete_data, expected, _) = run_operator(problem, samples, 1, 1, Some(&preparation));
     let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
         .expect("join Taylor complete-data evidence")
         .reconcile(&mut lifecycle)
@@ -628,7 +1000,7 @@ fn run_joint_final_normal_state(
     let initial = lifecycle.initial_empty().expect("empty joint model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare joint model");
-    let (complete_data, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
+    let (complete_data, _, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
     let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
         .expect("join joint complete-data evidence")
         .reconcile(&mut lifecycle)
@@ -727,6 +1099,57 @@ fn freeze_taylor_replay(
     }
 }
 
+fn derive_taylor_replay_blocks(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: &[SelectedObservationSample],
+    frozen: &FrozenTaylorReplay,
+) -> Vec<WeightingReplayChunk> {
+    let proof = FrozenWeightingCoverageProof::seal(
+        problem,
+        &frozen.weighting,
+        &frozen.summary,
+        frozen.selected_generation,
+        samples.len() as u64,
+        None,
+    )
+    .expect("seal encoded Taylor replay coverage");
+    let stencils = samples
+        .iter()
+        .map(|sample| stencil(problem, sample))
+        .collect::<Vec<_>>();
+    let mut replay = frozen
+        .weighting
+        .begin_derived_replay(problem, &frozen.plan, proof, None)
+        .expect("begin derived Taylor replay");
+    let mut blocks = Vec::new();
+    for (sample, stencil) in samples.iter().zip(&stencils) {
+        if let Some(block) = replay
+            .consume(problem, sample, stencil.clone())
+            .expect("consume derived Taylor replay")
+        {
+            blocks.push(block);
+        }
+    }
+    let (tail, summary) = replay.finish().expect("finish derived Taylor replay");
+    if let Some(block) = tail {
+        blocks.push(block);
+    }
+    proof
+        .validate_derived_replay(
+            frozen.selected_generation,
+            samples.len() as u64,
+            None,
+            &summary,
+        )
+        .expect("validate derived Taylor replay");
+    assert_eq!(summary.coverage(), frozen.summary.coverage());
+    assert_eq!(summary.sample_count(), frozen.summary.sample_count());
+    assert_eq!(summary.block_count(), frozen.summary.block_count());
+    assert_eq!(summary.coverage_proof_bytes(), 0);
+    assert_eq!(summary.coverage_proof_hash_calls(), 0);
+    blocks
+}
+
 fn complete_frozen_taylor_operator(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
@@ -734,7 +1157,25 @@ fn complete_frozen_taylor_operator(
     pass: SpectralOperatorPass,
     prior: Option<FinalNormalState>,
 ) -> CompleteDataOwnerResult {
-    let specification = SpectralOperatorSpecification::new(problem).expect("Taylor operator");
+    let channels = match problem.reconstruction().basis() {
+        ReconstructionBasis::TaylorViaChannelMajor { channels, .. } => channels,
+        _ => 1,
+    };
+    complete_frozen_taylor_operator_slab(problem, frozen, preparation, pass, prior, 0, channels)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_frozen_taylor_operator_slab(
+    problem: &casa_imaging_model::CompiledProblem,
+    frozen: &FrozenTaylorReplay,
+    preparation: &MajorCyclePreparation,
+    pass: SpectralOperatorPass,
+    prior: Option<FinalNormalState>,
+    core_start: usize,
+    core_depth: usize,
+) -> CompleteDataOwnerResult {
+    let specification = SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)
+        .expect("Taylor operator slab");
     let workload = spectral_operator_workload(
         &specification,
         frozen.plan.limits().max_block_samples(),
@@ -759,6 +1200,46 @@ fn complete_frozen_taylor_operator(
     owner
         .complete(&frozen.summary, frozen.selected_generation, None)
         .expect("complete frozen Taylor normal state")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn complete_derived_taylor_operator_slab(
+    problem: &casa_imaging_model::CompiledProblem,
+    frozen: &FrozenTaylorReplay,
+    blocks: &[WeightingReplayChunk],
+    preparation: &MajorCyclePreparation,
+    pass: SpectralOperatorPass,
+    prior: Option<FinalNormalState>,
+    core_start: usize,
+    core_depth: usize,
+) -> CompleteDataOwnerResult {
+    let specification = SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)
+        .expect("derived Taylor operator slab");
+    let workload = spectral_operator_workload(
+        &specification,
+        frozen.plan.limits().max_block_samples(),
+        pass,
+    )
+    .expect("derived Taylor workload");
+    let prepared =
+        prepare_spectral_operator(specification, workload).expect("prepare derived Taylor FFT");
+    let mut owner = prepared
+        .begin_streaming(problem)
+        .expect("begin derived Taylor owner");
+    owner
+        .bind_major_cycle_model(preparation.final_model(), prior)
+        .expect("bind derived Taylor model");
+    for block in blocks {
+        assert!(
+            owner
+                .consume_block(block)
+                .expect("consume derived Taylor block")
+                .is_empty()
+        );
+    }
+    owner
+        .complete(&frozen.summary, frozen.selected_generation, None)
+        .expect("complete derived Taylor normal state against canonical replay")
 }
 
 fn initial_normal_from_frozen(
@@ -825,6 +1306,8 @@ fn compile_compact_program(
     GriddedNormalOperatorProgram,
     Vec<GriddedNormalOperatorBlock>,
 ) {
+    let record_bytes = gridded_normal_operator_record_bytes(problem)
+        .expect("problem-derived compact record width");
     let mut compiler =
         GriddedNormalOperatorCompiler::new(problem, SourceCardinalityObservation::Enabled)
             .expect("begin Taylor compact compiler");
@@ -846,7 +1329,7 @@ fn compile_compact_program(
             );
                 assert_eq!(
                     measurements.encoded_buffer_bytes,
-                    compiled.record_count() * 32
+                    compiled.record_count() * record_bytes as u64
                 );
                 assert_eq!(measurements.encoded_buffer_allocations, 1);
                 let _exclusive_stage_total = timings.record_key_construction
@@ -994,11 +1477,423 @@ fn complex_nrms(actual: &[num_complex::Complex64], expected: &[num_complex::Comp
 }
 
 #[test]
+fn t41_channel_major_sampling_fold_and_residency_preserve_all_channels() {
+    let problem = channel_major_problem(4);
+    let selected = channel_major_samples(&problem);
+    let output_channels = selected
+        .iter()
+        .map(|sample| {
+            let contributions = stencil(&problem, sample);
+            assert_eq!(contributions.len(), 1);
+            contributions
+                .iter()
+                .next()
+                .expect("one channel-major contribution")
+                .output_channel()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(output_channels, vec![0, 1, 2, 3]);
+
+    let full_specification =
+        SpectralOperatorSpecification::new(&problem).expect("full channel-major specification");
+    let one_channel_specification = SpectralOperatorSpecification::for_slab(&problem, 1, 1)
+        .expect("one-channel bounded major-cycle slab");
+    let full_workload = spectral_operator_workload(
+        &full_specification,
+        selected.len(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full channel-major workload");
+    let one_channel_workload = spectral_operator_workload(
+        &one_channel_specification,
+        selected.len(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("bounded channel-major workload");
+    assert_eq!(full_specification.slab().core_depth(), 4);
+    assert_eq!(one_channel_specification.slab().core_range(), 1..2);
+    assert_eq!(full_workload.coefficient_terms(), 2);
+    assert_eq!(one_channel_workload.coefficient_terms(), 2);
+    assert_eq!(one_channel_workload.normal_moments(), 3);
+    assert_eq!(one_channel_workload.resident_model_terms(), 2);
+    assert!(one_channel_workload.grid_complex_values() < full_workload.grid_complex_values());
+
+    let (one_sample_blocks, expected, published_expected) =
+        run_operator(&problem, &selected, 1, 1, None);
+    let (one_full_block, full_expected, full_published_expected) =
+        run_operator(&problem, &selected, selected.len(), 2, None);
+    assert_eq!(expected, full_expected);
+    assert_eq!(published_expected, full_published_expected);
+    for result in [&one_sample_blocks, &one_full_block] {
+        assert_eq!(
+            result.completion().primitive_catalog(),
+            SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
+        );
+        let primitives = result.primitives();
+        assert_eq!(primitives.slab().core_depth(), 4);
+        assert_eq!(primitives.coefficient_term_count(), 2);
+        assert_eq!(primitives.normal_moment_count(), 3);
+        assert_eq!(primitives.sum_weights(), expected);
+        assert_eq!(
+            primitives.published_sum_weights(),
+            published_expected.expect("channel-major publication moments"),
+            "MVC publication must retain the exact channel self-fold"
+        );
+        assert_eq!(
+            primitives.channel_validity(),
+            &[SpectralChannelValidity::Valid]
+        );
+    }
+    assert_eq!(
+        one_sample_blocks.primitives().published_sum_weights(),
+        one_full_block.primitives().published_sum_weights(),
+        "block and density partitions cannot change the MVC publication fold"
+    );
+    assert_eq!(
+        one_sample_blocks
+            .primitives()
+            .normal_state_content_identity(),
+        one_full_block.primitives().normal_state_content_identity(),
+        "block and density partitions cannot change the channel fold"
+    );
+}
+
+#[test]
+fn t41_channel_major_ordered_slab_fold_matches_one_window() {
+    let problem = channel_major_problem_with_shape(4, ImageShape::new(256, 256));
+    let selected = channel_major_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let preparation = nonzero_taylor_model(&problem);
+    let run = |depth: usize| {
+        let mut slabs = (0..4).step_by(depth).map(|start| {
+            complete_frozen_taylor_operator_slab(
+                &problem,
+                &frozen,
+                &preparation,
+                SpectralOperatorPass::InitialMajor,
+                None,
+                start,
+                depth.min(4 - start),
+            )
+        });
+        let mut folded = slabs.next().expect("at least one MVC slab");
+        for slab in slabs {
+            folded = CompleteDataOwnerResult::fold_channel_major_slab_prefix(folded, slab)
+                .expect("fold adjacent ordered MVC slab");
+        }
+        assert_eq!(folded.primitives().slab().core_range(), 0..4);
+        folded
+    };
+    let full = run(4);
+    let depth_one = run(1);
+    let depth_two = run(2);
+    for bounded in [&depth_one, &depth_two] {
+        assert_eq!(bounded.primitives().slab().core_range(), 0..4);
+        assert_eq!(
+            bounded.primitives().channel_validity(),
+            full.primitives().channel_validity()
+        );
+        assert!(
+            complex_nrms(bounded.primitives().dirty(), full.primitives().dirty()) <= 1.0e-13,
+            "bounded MVC dirty fold changed the complete Taylor result"
+        );
+        assert!(
+            complex_nrms(bounded.primitives().psf(), full.primitives().psf()) <= 1.0e-13,
+            "bounded MVC PSF fold changed the complete Taylor result"
+        );
+        assert_eq!(
+            bounded.primitives().sum_weights(),
+            full.primitives().sum_weights()
+        );
+        assert_eq!(
+            bounded.primitives().published_sum_weights(),
+            full.primitives().published_sum_weights(),
+            "bounded MVC slabs must preserve the publication self-fold"
+        );
+    }
+    assert_eq!(
+        run(2).primitives().normal_state_content_identity(),
+        depth_two.primitives().normal_state_content_identity(),
+        "the ordered multi-slab fold must be deterministic"
+    );
+}
+
+#[test]
+fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
+    let problem = channel_major_problem(4);
+    let mut selected = channel_major_samples(&problem);
+    for sample in &mut selected[2..] {
+        sample.channel_flag = true;
+    }
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let derived_blocks = derive_taylor_replay_blocks(&problem, &selected, &frozen);
+    let preparation = nonzero_taylor_model(&problem);
+    let first = complete_frozen_taylor_operator_slab(
+        &problem,
+        &frozen,
+        &preparation,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        0,
+        1,
+    );
+    let second = complete_derived_taylor_operator_slab(
+        &problem,
+        &frozen,
+        &derived_blocks,
+        &preparation,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        1,
+        1,
+    );
+    let gap = complete_derived_taylor_operator_slab(
+        &problem,
+        &frozen,
+        &derived_blocks,
+        &preparation,
+        SpectralOperatorPass::InitialMajor,
+        None,
+        2,
+        1,
+    );
+
+    assert_eq!(
+        first.primitives().channel_validity(),
+        &[SpectralChannelValidity::Valid]
+    );
+    assert_eq!(
+        second.primitives().channel_validity(),
+        &[SpectralChannelValidity::Valid]
+    );
+    assert_eq!(
+        gap.primitives().channel_validity(),
+        &[SpectralChannelValidity::Unmapped]
+    );
+    assert!(
+        gap.primitives()
+            .dirty()
+            .iter()
+            .all(|value| *value == num_complex::Complex64::new(0.0, 0.0))
+    );
+    assert!(
+        gap.primitives()
+            .psf()
+            .iter()
+            .all(|value| *value == num_complex::Complex64::new(0.0, 0.0))
+    );
+    assert!(
+        gap.primitives()
+            .sum_weights()
+            .iter()
+            .all(|value| *value == 0.0)
+    );
+
+    let canonical = first.completion();
+    for derived in [second.completion(), gap.completion()] {
+        assert_eq!(derived.problem_id(), canonical.problem_id());
+        assert_eq!(derived.geometry_id(), canonical.geometry_id());
+        assert_eq!(derived.numerics_id(), canonical.numerics_id());
+        assert_eq!(
+            derived.weighting_commitment_id(),
+            canonical.weighting_commitment_id()
+        );
+        assert_eq!(
+            derived.weighting_generation(),
+            canonical.weighting_generation()
+        );
+        assert_eq!(derived.replay_id(), canonical.replay_id());
+        assert_eq!(derived.coverage(), canonical.coverage());
+        assert_eq!(derived.primitive_catalog(), canonical.primitive_catalog());
+        assert_eq!(
+            derived.selected_generation(),
+            canonical.selected_generation()
+        );
+        assert_eq!(
+            derived.continuum_transform_generation(),
+            canonical.continuum_transform_generation()
+        );
+        assert_eq!(derived.sample_count(), canonical.sample_count());
+        assert_eq!(derived.block_count(), canonical.block_count());
+        assert_eq!(derived.coverage_proof_bytes(), 0);
+        assert_eq!(derived.coverage_proof_hash_calls(), 0);
+    }
+    let expected_proof_bytes = canonical.coverage_proof_bytes();
+    let expected_proof_hash_calls = canonical.coverage_proof_hash_calls();
+    let expected_replay = canonical.replay_id();
+    let expected_coverage = canonical.coverage();
+    let expected_samples = canonical.sample_count();
+    let expected_blocks = canonical.block_count();
+    assert!(expected_proof_bytes > 0);
+    assert!(expected_proof_hash_calls > 0);
+
+    let folded = CompleteDataOwnerResult::fold_channel_major_slab_prefix(first, second)
+        .expect("derived supported MVC slab retains canonical completion");
+    let folded = CompleteDataOwnerResult::fold_channel_major_slab_prefix(folded, gap)
+        .expect("zero-weight MVC gap is a neutral Taylor contribution");
+    assert_eq!(folded.primitives().slab().core_range(), 0..3);
+    assert_eq!(folded.completion().replay_id(), expected_replay);
+    assert_eq!(folded.completion().coverage(), expected_coverage);
+    assert_eq!(folded.completion().sample_count(), expected_samples);
+    assert_eq!(folded.completion().block_count(), expected_blocks);
+    assert_eq!(
+        folded.completion().coverage_proof_bytes(),
+        expected_proof_bytes
+    );
+    assert_eq!(
+        folded.completion().coverage_proof_hash_calls(),
+        expected_proof_hash_calls
+    );
+}
+
+#[test]
+fn t41_channel_major_two_cycle_feedback_and_gridded_replay_stay_dual_space() {
+    let problem = channel_major_problem(4);
+    let selected = channel_major_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let preparation = nonzero_taylor_model(&problem);
+
+    let initial = initial_normal_from_frozen(&problem, &frozen);
+    let initial_residual = (0..2)
+        .flat_map(|term| {
+            initial
+                .coefficient_term(term)
+                .expect("initial Taylor term")
+                .residual()
+                .to_vec()
+        })
+        .collect::<Vec<_>>();
+    let direct = complete_frozen_taylor_operator(
+        &problem,
+        &frozen,
+        &preparation,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(initial_normal_from_frozen(&problem, &frozen)),
+    );
+    let direct_residual = direct.primitives().dirty().to_vec();
+    assert_ne!(
+        direct_residual, initial_residual,
+        "the second major cycle must evaluate the Taylor model into channel predictions"
+    );
+
+    let (program, blocks) = compile_compact_program(&problem, &frozen);
+    assert_eq!(program.record_bytes(), GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+    assert_eq!(program.prediction_width(), 1);
+    assert_eq!(program.accumulation_width(), 4);
+    let serial = execute_compact_taylor(
+        &problem,
+        &frozen,
+        &program,
+        &blocks,
+        &preparation,
+        initial_normal_from_frozen(&problem, &frozen),
+        1,
+    );
+    let parallel = execute_compact_taylor(
+        &problem,
+        &frozen,
+        &program,
+        &blocks,
+        &preparation,
+        initial_normal_from_frozen(&problem, &frozen),
+        2,
+    );
+    let nrms = complex_nrms(&serial.residual, &direct_residual);
+    assert!(
+        nrms <= 0.001,
+        "channel-keyed gridded replay must match streaming feedback: NRMS={nrms:e}"
+    );
+    assert_eq!(serial.residual, parallel.residual);
+    assert_eq!(serial.grid_residency, parallel.grid_residency);
+}
+
+#[test]
+fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() {
+    let problem = channel_major_primary_beam_problem(4, ImageShape::new(256, 256));
+    let selected = channel_major_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("primary-beam MVC specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        frozen.plan.limits().max_block_samples(),
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("primary-beam MVC workload");
+    assert_eq!(workload.resident_model_terms(), 2);
+    assert_eq!(workload.response_f32_values(), 256 * 256);
+
+    let preparation = nonzero_taylor_model(&problem);
+    let initial = initial_normal_from_frozen(&problem, &frozen);
+    let scalar_problem = channel_major_problem_with_shape(4, ImageShape::new(256, 256));
+    let scalar_selected = channel_major_samples(&scalar_problem);
+    let scalar_frozen = freeze_taylor_replay(&scalar_problem, &scalar_selected);
+    let scalar_initial = initial_normal_from_frozen(&scalar_problem, &scalar_frozen);
+    let residual_nrms = complex_nrms(initial.residual(), scalar_initial.residual());
+    assert!(
+        residual_nrms <= 1.0e-15,
+        "CASA MVC removes the frequency-dependent PB before folding the residual family: NRMS={residual_nrms:e}",
+    );
+    let psf_nrms = complex_nrms(
+        initial.normal_approximation(),
+        scalar_initial.normal_approximation(),
+    );
+    assert!(
+        psf_nrms > 1.0e-8,
+        "CASA MVC retains the frequency-dependent PB in the PSF family: NRMS={psf_nrms:e}",
+    );
+    let residual = complete_frozen_taylor_operator(
+        &problem,
+        &frozen,
+        &preparation,
+        SpectralOperatorPass::ResidualRefresh,
+        Some(initial),
+    );
+    let primitives = residual.primitives();
+    assert!(primitives.primary_beam_weighted_sum().is_some());
+    assert!(
+        primitives
+            .dirty()
+            .iter()
+            .all(|value| value.re.is_finite() && value.im.is_finite())
+    );
+    assert_eq!(primitives.slab().core_range(), 0..4);
+
+    let direct_residual = primitives.dirty().to_vec();
+    let (program, blocks) = compile_compact_program(&problem, &frozen);
+    let serial = execute_compact_taylor(
+        &problem,
+        &frozen,
+        &program,
+        &blocks,
+        &preparation,
+        initial_normal_from_frozen(&problem, &frozen),
+        1,
+    );
+    let parallel = execute_compact_taylor(
+        &problem,
+        &frozen,
+        &program,
+        &blocks,
+        &preparation,
+        initial_normal_from_frozen(&problem, &frozen),
+        2,
+    );
+    let nrms = complex_nrms(&serial.residual, &direct_residual);
+    assert!(
+        nrms <= 0.001,
+        "primary-beam gridded replay must match streaming feedback: NRMS={nrms:e}"
+    );
+    assert_eq!(serial.residual, parallel.residual);
+    assert_eq!(serial.grid_residency, parallel.grid_residency);
+}
+
+#[test]
 fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
     let problem = problem();
     let samples = samples(&problem);
-    let (single_sample_blocks, expected) = run_operator(&problem, &samples, 1, 1, None);
-    let (single_full_block, full_expected) =
+    let (single_sample_blocks, expected, _) = run_operator(&problem, &samples, 1, 1, None);
+    let (single_full_block, full_expected, _) =
         run_operator(&problem, &samples, samples.len(), 2, None);
     assert_eq!(expected, full_expected);
 
@@ -1053,7 +1948,7 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
 
     let mut symmetric_samples = samples;
     symmetric_samples[0].input_weight = 1.0;
-    let (symmetric, symmetric_expected) = run_operator(
+    let (symmetric, symmetric_expected, _) = run_operator(
         &problem,
         &symmetric_samples,
         symmetric_samples.len(),
@@ -1073,8 +1968,8 @@ fn t42_multi_spw_block_normal_is_global_signed_and_partition_deterministic() {
 fn t46_joint_block_accumulates_cross_terms_once_and_is_partition_deterministic() {
     let problem = joint_problem();
     let samples = joint_samples(&problem);
-    let (one_sample_blocks, _) = run_operator(&problem, &samples, 1, 1, None);
-    let (one_full_block, _) = run_operator(&problem, &samples, samples.len(), 2, None);
+    let (one_sample_blocks, _, _) = run_operator(&problem, &samples, 1, 1, None);
+    let (one_full_block, _, _) = run_operator(&problem, &samples, samples.len(), 2, None);
 
     for result in [&one_sample_blocks, &one_full_block] {
         assert_eq!(

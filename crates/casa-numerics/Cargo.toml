@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+libm = "0.2"
 nalgebra.workspace = true
 
 [lints]

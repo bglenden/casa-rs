@@ -95,6 +95,7 @@ impl BoundObservationSource {
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
+        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
     ) -> Result<Self, BoundObservationSourceError> {
         measures.validate_problem(problem)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
@@ -107,6 +108,7 @@ impl BoundObservationSource {
             shared_bytes,
             content_budget,
             measurement_set,
+            ephemeris,
         )
     }
 
@@ -116,12 +118,13 @@ impl BoundObservationSource {
     pub(crate) fn rebind_with_measures(
         problem: &CompiledProblem,
         source: &ObservationSource,
-        current_state: &ObservationSourceState,
-        prior_state: &ObservationSourceState,
+        states: (&ObservationSourceState, &ObservationSourceState),
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
+        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
     ) -> Result<Self, BoundObservationSourceError> {
+        let (current_state, prior_state) = states;
         measures.validate_problem(problem)?;
         validate_current_state(source, current_state)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
@@ -146,6 +149,7 @@ impl BoundObservationSource {
             measures,
             content_plan,
             measurement_set,
+            ephemeris,
         )
     }
 
@@ -159,6 +163,7 @@ impl BoundObservationSource {
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
+        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
     ) -> Result<Self, BoundObservationSourceError> {
         measures.validate_problem(problem)?;
         validate_current_state(source, current_state)?;
@@ -184,6 +189,7 @@ impl BoundObservationSource {
             measures,
             content_plan,
             measurement_set,
+            ephemeris,
         )
     }
 
@@ -196,6 +202,7 @@ impl BoundObservationSource {
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
         measurement_set: MeasurementSet,
+        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
     ) -> Result<Self, BoundObservationSourceError> {
         let content_plan = selected_content_plan(
             &measurement_set,
@@ -210,6 +217,7 @@ impl BoundObservationSource {
             measures,
             content_plan,
             measurement_set,
+            ephemeris,
         )
     }
 
@@ -219,6 +227,7 @@ impl BoundObservationSource {
         measures: &SelectedObservationMeasures,
         content_plan: SelectedObservationContentPlan,
         measurement_set: MeasurementSet,
+        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
     ) -> Result<Self, BoundObservationSourceError> {
         let row_predicate = selected_row_predicate(&measurement_set, source)?;
         let coordinates = Arc::from(selected_coordinates(&measurement_set, source.selection())?);
@@ -234,6 +243,7 @@ impl BoundObservationSource {
             &measurement_set,
             measures.provider(),
             measures.provider_state(),
+            ephemeris.cloned(),
         )?);
         geometry_engine.verify_selected_observation_measures()?;
         Ok(Self {
@@ -268,10 +278,12 @@ impl BoundObservationSource {
             &measures,
             SelectedObservationSharedBytes::new(
                 measures.retained_bytes(),
+                0,
                 Self::retained_source_slot_bytes(),
                 current_state_heap_bytes,
             ),
             content_budget,
+            None,
         )
     }
 
@@ -1728,7 +1740,7 @@ fn evaluate_row_geometry(
         .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
     let (longitude_rad, latitude_rad) = source
         .geometry_engine
-        .field_direction_j2000(field_id)?
+        .observation_direction_j2000(stored.time_mjd_seconds(), field_id)?
         .as_angles();
     let observation_direction =
         SkyDirection::new(DirectionFrame::J2000, longitude_rad, latitude_rad);
@@ -1736,8 +1748,14 @@ fn evaluate_row_geometry(
     let phase_direction = match centres.phase_tracking() {
         PhaseCentreLaw::Observation => observation_direction,
         PhaseCentreLaw::Fixed(direction) => require_fixed_j2000(*direction)?,
-        PhaseCentreLaw::Ephemeris(_) => {
-            return Err(BoundObservationSourceError::UnsupportedCentreLaw);
+        PhaseCentreLaw::Ephemeris(target) => {
+            let direction = source.geometry_engine.moving_direction_j2000(
+                stored.time_mjd_seconds(),
+                field_id,
+                target,
+            )?;
+            let (longitude_rad, latitude_rad) = direction.as_angles();
+            SkyDirection::new(DirectionFrame::J2000, longitude_rad, latitude_rad)
         }
     };
     let delay_direction = match centres.delay() {
@@ -1768,15 +1786,45 @@ fn evaluate_row_geometry(
                 phase_direction.longitude_rad(),
                 phase_direction.latitude_rad(),
             ];
+            let observation = [
+                observation_direction.longitude_rad(),
+                observation_direction.latitude_rad(),
+            ];
             let density_uvw_m = source
                 .geometry_engine
-                .reproject_raw_uvw_for_density_to_j2000(stored.uvw_m(), field_id, target)?;
+                .reproject_raw_uvw_for_density_between_j2000_directions(
+                    stored.uvw_m(),
+                    observation,
+                    target,
+                )?;
             let (transformed_uvw_m, phase_shift_m) = source
                 .geometry_engine
-                .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target)?;
+                .reproject_raw_uvw_for_gridft_between_j2000_directions(
+                    stored.uvw_m(),
+                    observation,
+                    target,
+                )?;
             (density_uvw_m, transformed_uvw_m, phase_shift_m)
         };
     let domains = problem.geometry().domains();
+    let moving_direction_shift = if matches!(centres.phase_tracking(), PhaseCentreLaw::Ephemeris(_))
+    {
+        let anchor = domains
+            .first()
+            .ok_or(BoundObservationSourceError::InvalidRowGeometry)?
+            .model_phase_centre();
+        let anchor_j2000 = source.geometry_engine.direction_angles_j2000(
+            stored.time_mjd_seconds(),
+            [anchor.longitude_rad(), anchor.latitude_rad()],
+            direction_ref(anchor.frame()),
+        )?;
+        Some([
+            phase_direction.longitude_rad() - anchor_j2000[0],
+            phase_direction.latitude_rad() - anchor_j2000[1],
+        ])
+    } else {
+        None
+    };
     let chart_count = domains.iter().try_fold(0_usize, |count, domain| {
         count.checked_add(domain.facets().len())
     });
@@ -1798,6 +1846,7 @@ fn evaluate_row_geometry(
                 observation_direction,
                 domain.psf_phase_centre(),
                 domain.facets().len() > 1,
+                moving_direction_shift,
             )?)
         };
         for (facet_ordinal, facet) in domain.facets().iter().enumerate() {
@@ -1815,6 +1864,7 @@ fn evaluate_row_geometry(
                 observation_direction,
                 model_phase_centre,
                 domain.facets().len() > 1,
+                moving_direction_shift,
             )?;
             let projection = match distinct_psf {
                 Some(psf) => SelectedImageDomainProjection::new_facet(
@@ -1848,12 +1898,13 @@ fn evaluate_row_geometry(
 fn evaluate_phase_centre_projection(
     source: &BoundObservationSource,
     stored: SelectedStoredSample,
-    field_id: usize,
+    _field_id: usize,
     observation_direction: SkyDirection,
     target_direction: SkyDirection,
     project_to_observation_plane: bool,
+    moving_direction_shift: Option<[f64; 2]>,
 ) -> Result<SelectedPhaseCentreProjection, BoundObservationSourceError> {
-    let target_angles = source.geometry_engine.direction_angles_j2000(
+    let mut target_angles = source.geometry_engine.direction_angles_j2000(
         stored.time_mjd_seconds(),
         [
             target_direction.longitude_rad(),
@@ -1861,6 +1912,10 @@ fn evaluate_phase_centre_projection(
         ],
         direction_ref(target_direction.frame()),
     )?;
+    if let Some([longitude, latitude]) = moving_direction_shift {
+        target_angles[0] += longitude;
+        target_angles[1] += latitude;
+    }
     let target_j2000 = SkyDirection::new(DirectionFrame::J2000, target_angles[0], target_angles[1]);
     let (transformed_uvw_m, phase_shift_m) =
         if target_j2000 == observation_direction && !project_to_observation_plane {
@@ -1868,15 +1923,25 @@ fn evaluate_phase_centre_projection(
         } else if project_to_observation_plane {
             source
                 .geometry_engine
-                .reproject_raw_uvw_for_faceted_gridft_to_j2000(
+                .reproject_raw_uvw_for_faceted_gridft_between_j2000_directions(
                     stored.uvw_m(),
-                    field_id,
+                    [
+                        observation_direction.longitude_rad(),
+                        observation_direction.latitude_rad(),
+                    ],
                     target_angles,
                 )?
         } else {
             source
                 .geometry_engine
-                .reproject_raw_uvw_for_gridft_to_j2000(stored.uvw_m(), field_id, target_angles)?
+                .reproject_raw_uvw_for_gridft_between_j2000_directions(
+                    stored.uvw_m(),
+                    [
+                        observation_direction.longitude_rad(),
+                        observation_direction.latitude_rad(),
+                    ],
+                    target_angles,
+                )?
         };
     SelectedPhaseCentreProjection::new(transformed_uvw_m, phase_shift_m)
         .ok_or(BoundObservationSourceError::InvalidRowGeometry)
@@ -1962,13 +2027,25 @@ fn evaluate_phase_direction(
         .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
     let (longitude_rad, latitude_rad) = source
         .geometry_engine
-        .field_direction_j2000(field_id)?
+        .observation_direction_j2000(stored.time_mjd_seconds(), field_id)?
         .as_angles();
     let observation = SkyDirection::new(DirectionFrame::J2000, longitude_rad, latitude_rad);
     match problem.geometry().centres().phase_tracking() {
         PhaseCentreLaw::Observation => Ok(observation),
         PhaseCentreLaw::Fixed(direction) => require_fixed_j2000(*direction),
-        PhaseCentreLaw::Ephemeris(_) => Err(BoundObservationSourceError::UnsupportedCentreLaw),
+        PhaseCentreLaw::Ephemeris(target) => {
+            let direction = source.geometry_engine.moving_direction_j2000(
+                stored.time_mjd_seconds(),
+                field_id,
+                target,
+            )?;
+            let (longitude_rad, latitude_rad) = direction.as_angles();
+            Ok(SkyDirection::new(
+                DirectionFrame::J2000,
+                longitude_rad,
+                latitude_rad,
+            ))
+        }
     }
 }
 
@@ -2103,6 +2180,7 @@ const fn selected_weight(weight: WeightColumn) -> SelectedWeightColumn {
 
 const fn frequency_frame(code: i32) -> Result<FrequencyFrame, BoundObservationSourceError> {
     match code {
+        0 => Ok(FrequencyFrame::Rest),
         1 => Ok(FrequencyFrame::Lsrk),
         3 => Ok(FrequencyFrame::Barycentric),
         5 => Ok(FrequencyFrame::Topocentric),

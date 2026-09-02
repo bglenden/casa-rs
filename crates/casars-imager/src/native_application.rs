@@ -70,7 +70,10 @@ pub(super) fn execute(config: &CliConfig) -> Result<RunSummary, String> {
 pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImagingRequest, String> {
     let spectral_mode = match config.spectral_mode {
         SpectralMode::Mfs => SpectralImagingMode::Continuum,
-        SpectralMode::Cube | SpectralMode::Cubedata => {
+        SpectralMode::Cube
+        | SpectralMode::Cubedata
+        | SpectralMode::Cubesource
+        | SpectralMode::Mvc => {
             let mut axis = config.cube_axis.clone();
             axis.specmode = config.spectral_mode.cube_specmode();
             if axis.start.is_none()
@@ -81,9 +84,22 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
                         .map_err(|_| "cube channel start exceeds i32".to_string())?,
                 ));
             }
-            SpectralImagingMode::Cube {
-                axis,
-                output_channels: config.channel_count,
+            if config.spectral_mode == SpectralMode::Cubesource {
+                axis.outframe = casa_types::measures::frequency::FrequencyRef::REST;
+                SpectralImagingMode::CubeSource {
+                    axis,
+                    output_channels: config.channel_count,
+                }
+            } else if config.spectral_mode == SpectralMode::Mvc {
+                SpectralImagingMode::MtmfsViaCube {
+                    axis,
+                    output_channels: config.channel_count,
+                }
+            } else {
+                SpectralImagingMode::Cube {
+                    axis,
+                    output_channels: config.channel_count,
+                }
             }
         }
     };
@@ -182,6 +198,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         gain: f64::from(config.gain),
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
+        primary_beam_cutoff: config.mosaic_pb_limit.abs(),
         beam_policy: match config.restoring_beam_mode {
             RestoringBeamMode::PerPlane => ContinuumBeamPolicy::PerPlane,
             RestoringBeamMode::Common => ContinuumBeamPolicy::Common,
@@ -242,6 +259,8 @@ fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
         SpectralMode::Mfs => TaskRequirement::SerialCpu,
         SpectralMode::Cube => TaskRequirement::SpectralCube,
         SpectralMode::Cubedata => TaskRequirement::SpectralCubedata,
+        SpectralMode::Cubesource => TaskRequirement::SpectralCubeSource,
+        SpectralMode::Mvc => TaskRequirement::SpectralMtmfsViaCube,
     }];
     if config.aw_project.is_some() {
         requirements.push(TaskRequirement::AwProjection);

@@ -45,6 +45,7 @@ pub mod builder;
 pub mod column_def;
 pub mod columns;
 pub mod derived;
+mod ephemeris;
 pub mod error;
 pub mod flagging;
 pub mod grouping;
@@ -77,6 +78,7 @@ pub mod write_session;
 pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
+pub use ephemeris::{SelectedObservationEphemeris, SelectedObservationEphemerisError};
 pub use error::{MsError, MsResult};
 pub use flagging::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, FlagMerge,
@@ -148,9 +150,11 @@ pub use selected_observation::{
     ObservationSourceBinding, SelectedObservationBlock, SelectedObservationBlockConsumer,
     SelectedObservationBlockSource, SelectedObservationCompletion,
     SelectedObservationContentBudget, SelectedObservationMeasures,
-    SelectedObservationMeasuresError, SelectedObservationReplayAuthorization,
-    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
-    SelectedObservationRow, SelectedObservationRowSelection, SelectedObservationTerminal,
+    SelectedObservationMeasuresError, SelectedObservationReferenceDataBudget,
+    SelectedObservationReplayAuthorization, SelectedObservationReplayProof,
+    SelectedObservationResidencyCertificate, SelectedObservationRow,
+    SelectedObservationRowSelection, SelectedObservationSpectralRange,
+    SelectedObservationSpectralRangeMeasurements, SelectedObservationTerminal,
     SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
     SelectedObservationTraversalRun, SelectedObservationTraversalSample,
 };

@@ -71,15 +71,10 @@ fn installed_spectral_cycle_accepts_planned_multi_cpu_execution() {
 }
 
 #[test]
-fn moving_source_fails_typed_before_execution() {
+fn moving_source_is_available_through_selected_observation_geometry() {
     let problem = compile(moving_source_request()).expect("compile moving-source request");
-    let error = require_installed_implementation(&problem, [])
-        .expect_err("moving-source request must fail closed");
-    assert!(
-        error
-            .unsupported()
-            .contains(&UnsupportedRequirement::FixedPhaseCentre)
-    );
+    require_installed_implementation(&problem, [])
+        .expect("moving-source geometry is evaluated by selected observation traversal");
 }
 
 #[test]

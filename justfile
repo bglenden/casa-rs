@@ -82,6 +82,32 @@ imaging-t38-cube-clean:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --features cpp-interop-tests --test major_cycle t38_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence
 
+# Focused #527 moving-source, MVC, response, bounded-replay, and provider-contract gate.
+imaging-t41-moving-source:
+    just arch-check
+    CARGO_INCREMENTAL=0 cargo test -p casa-provider-contracts
+    CARGO_INCREMENTAL=0 cargo test -p casa-tables add_variable_shape_tiled_column_in_place_persists_defined_rows_only
+    CARGO_INCREMENTAL=0 cargo test -p casa-ms t41_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_problem t41_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-model --test compiled_geometry ephemeris_centre_laws_require_and_identify_one_bound_snapshot -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction t41_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t41_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --lib t41_
+    CARGO_INCREMENTAL=0 cargo test -p casars-imager task_contract
+
+# Representative #527 frozen-CASA cubesource and multi-SPW MVC product gate.
+imaging-t41-moving-source-casa testdata_root cubesource_casa_prefix mvc_ms mvc_casa_prefix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    test -d "{{testdata_root}}"
+    test -d "{{mvc_ms}}"
+    output_root="$(mktemp -d "{{justfile_directory()}}/target/t41-casa-oracle.XXXXXX")"
+    CASA_RS_T41_MVC_MS="{{mvc_ms}}" CARGO_INCREMENTAL=0 cargo test -p casa-ms selected_observation::tests::t41_ephemeris_oracle::t41_trackfield_phase_centre_matches_casa_at_three_row_times -- --ignored --exact --nocapture
+    CASA_RS_T41_MVC_CASA_PREFIX="{{mvc_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction primary_beam::tests::t41_alma_mvc_primary_beam_owner_matches_frozen_cube --release -- --ignored --exact --nocapture
+    CASA_RS_T41_MVC_MS="{{mvc_ms}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_mvc_selected_spectral_range_matches_casa_edge_topology --release -- --ignored --exact --nocapture
+    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T41_CASA_PREFIX="{{cubesource_casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_tracked_cubesource_matches_casa_geometry_and_dirty_products --release -- --ignored --exact --nocapture
+    CASA_RS_T41_MVC_MS="{{mvc_ms}}" CASA_RS_T41_MVC_CASA_PREFIX="{{mvc_casa_prefix}}" CASA_RS_T41_MVC_RUST_PREFIX="$output_root/rust" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test t41_moving_source_casa_oracle t41_multi_spw_mvc_matches_casa_taylor_products --release -- --ignored --exact --nocapture
+
 # Focused #528 MT-MFS block-normal algebra, compact replay, persistence, and residency gate.
 imaging-t42-mtmfs-normal:
     just arch-check

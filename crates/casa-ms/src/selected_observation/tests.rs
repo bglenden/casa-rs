@@ -60,6 +60,8 @@ use std::convert::Infallible;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
+mod t41_ephemeris_oracle;
+
 /// Canonical model-lifecycle commitment matching the compiled snapshot.
 fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
     let input = match model {
@@ -849,6 +851,139 @@ fn selected_observation_rejects_opaque_foreign_and_mutated_measures_providers() 
 }
 
 #[test]
+fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_before_source_open() {
+    let directory = tempfile::tempdir().expect("temporary ephemeris-binding fixture");
+    let absent_path = directory.path().join("source-must-not-open.ms");
+    let moving = compiled_problem_with_centres(
+        &absent_path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let moving_source = &moving.inputs().observation_snapshot().sources()[0];
+    let budget = SelectedObservationContentBudget::new(1 << 20, 1, 4);
+
+    let missing = BoundSelectedObservation::open(
+        &moving,
+        test_measures(&moving),
+        vec![ObservationSourceBinding::new(
+            source_state(moving_source),
+            budget,
+        )],
+    )
+    .err()
+    .expect("required ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        missing,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: Some(expected),
+            actual: None,
+        } if measurement_set == moving_source.identity() && expected == identity(90)
+    ));
+
+    let substituted = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(91),
+        budget.reference_data_budget(),
+    )
+    .expect("admit substituted ephemeris fixture");
+    let substituted = BoundSelectedObservation::open(
+        &moving,
+        test_measures(&moving),
+        vec![
+            ObservationSourceBinding::new(source_state(moving_source), budget)
+                .with_ephemeris(Some(substituted)),
+        ],
+    )
+    .err()
+    .expect("substituted ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        substituted,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: Some(expected),
+            actual: Some(actual),
+        } if measurement_set == moving_source.identity()
+            && expected == identity(90)
+            && actual == identity(91)
+    ));
+
+    let fixed = compiled_problem(&absent_path, 2);
+    let fixed_source = &fixed.inputs().observation_snapshot().sources()[0];
+    let unexpected = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(90),
+        budget.reference_data_budget(),
+    )
+    .expect("admit unexpected ephemeris fixture");
+    let unexpected = BoundSelectedObservation::open(
+        &fixed,
+        test_measures(&fixed),
+        vec![
+            ObservationSourceBinding::new(source_state(fixed_source), budget)
+                .with_ephemeris(Some(unexpected)),
+        ],
+    )
+    .err()
+    .expect("unexpected ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        unexpected,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: None,
+            actual: Some(actual),
+        } if measurement_set == fixed_source.identity() && actual == identity(90)
+    ));
+}
+
+#[test]
+fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charge() {
+    let directory = tempfile::tempdir().expect("temporary exact ephemeris fixture");
+    let path = directory.path().join("exact-ephemeris.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
+    let ephemeris = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(90),
+        budget.reference_data_budget(),
+    )
+    .expect("admit exact ephemeris fixture");
+    let binding =
+        ObservationSourceBinding::new(source_state(source), budget).with_ephemeris(Some(ephemeris));
+    let reference_data_bytes = binding.reference_data_bytes();
+    let certificate =
+        BoundSelectedObservation::certify_residency(&problem, std::slice::from_ref(&binding))
+            .expect("certify exact ephemeris binding");
+
+    assert!(reference_data_bytes > 0);
+    assert_eq!(
+        certificate.reference_data_bytes(source.identity()),
+        Some(reference_data_bytes)
+    );
+    assert_eq!(
+        certificate.aggregate_reference_data_bytes(),
+        reference_data_bytes
+    );
+    let bound = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+        .expect("open exact ephemeris binding");
+    assert_eq!(bound.residency_certificate(), &certificate);
+}
+
+#[test]
 fn measures_provider_growth_during_traversal_prevents_owner_completion() {
     let directory = tempfile::tempdir().expect("temporary Measures-mutation fixture");
     let path = directory.path().join("measures-mutation.ms");
@@ -1131,6 +1266,7 @@ fn real_ms_cube_traversal_maps_contributions_into_the_transformed_output_frame()
         &expected_measures,
         expected_shared_bytes,
         expected_budget,
+        None,
     )
     .expect("open independent frame-conversion oracle");
     let expected_output_frame = MeasFrame::new()
@@ -1325,6 +1461,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &baseline_measures,
         baseline_shared_bytes,
         baseline_budget,
+        None,
     )
     .expect("bind baseline provider residency");
 
@@ -1345,6 +1482,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
             &large_measures,
             large_shared_bytes,
             baseline_budget,
+            None,
         ),
         Err(super::BoundObservationSourceError::ContentPlan(
             super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
@@ -1361,6 +1499,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &large_measures,
         large_shared_bytes,
         large_budget,
+        None,
     )
     .expect("bind admitted large provider residency");
     assert_eq!(
@@ -1453,7 +1592,7 @@ fn retained_source_slots_are_charged_once_and_rejected_under_a_tight_budget() {
         &measurement_set,
         &problem,
         source,
-        super::content_plan::SelectedObservationSharedBytes::new(measures_retained_bytes, 0, 0),
+        super::content_plan::SelectedObservationSharedBytes::new(measures_retained_bytes, 0, 0, 0),
         admitted_budget,
     )
     .expect("plan the same retained state without the source-slot owner");
@@ -1541,6 +1680,7 @@ fn consumed_binding_graph_is_charged_once_at_actual_capacity_under_a_tight_budge
         source,
         super::content_plan::SelectedObservationSharedBytes::new(
             measures_retained_bytes,
+            0,
             source_slot_bytes,
             0,
         ),
@@ -1699,6 +1839,7 @@ fn later_binding_generation_allocations_are_included_in_the_once_only_graph_peak
         &sources[0],
         super::content_plan::SelectedObservationSharedBytes::new(
             measures_retained_bytes,
+            0,
             source_slot_bytes,
             0,
         ),
@@ -3086,6 +3227,72 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
 }
 
 #[test]
+fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
+    let directory = tempfile::tempdir().expect("temporary moving-centre fixture");
+    let path = directory.path().join("moving.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let samples = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind moving-centre source")
+    .selected_samples(&problem)
+    .expect("prepare moving-centre stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("evaluate moving-centre samples");
+
+    let first = &samples[0];
+    let second_row = samples
+        .iter()
+        .find(|sample| sample.address.physical_row == 1)
+        .expect("second selected row");
+    assert_ne!(
+        first.coordinates.phase_direction,
+        second_row.coordinates.phase_direction
+    );
+    assert_ne!(
+        first.domain_projections.iter().next().unwrap().model(),
+        second_row.domain_projections.iter().next().unwrap().model(),
+        "moving rows must not retain one fixed primary-domain projection",
+    );
+    for sample in &samples {
+        assert_eq!(
+            sample.coordinates.phase_direction,
+            sample.coordinates.delay_direction
+        );
+        assert_eq!(
+            sample.coordinates.phase_direction,
+            sample.coordinates.pointing_directions.antenna1
+        );
+        assert_ne!(sample.coordinates.phase_shift_m, 0.0);
+        let primary = sample
+            .domain_projections
+            .iter()
+            .next()
+            .expect("primary image-domain projection")
+            .model();
+        assert_eq!(
+            primary.transformed_uvw_m(),
+            sample.coordinates.transformed_uvw_m,
+        );
+        assert_eq!(primary.phase_shift_m(), sample.coordinates.phase_shift_m);
+    }
+    inspect_samples(&problem, samples).expect("inspect moving-centre stream");
+}
+
+#[test]
 fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() {
     let directory = tempfile::tempdir().expect("temporary POINTING fixture");
     let path = directory.path().join("pointing.ms");
@@ -3877,6 +4084,7 @@ fn selected_observation_shared_bytes(
 ) -> super::content_plan::SelectedObservationSharedBytes {
     super::content_plan::SelectedObservationSharedBytes::new(
         measures.retained_bytes(),
+        0,
         source_slots_retained_bytes,
         binding_graph_initialization_bytes,
     )
@@ -4027,9 +4235,13 @@ fn compiled_problem_with_centres(
     row_count: usize,
     centres: CentreLaws,
 ) -> casa_imaging_model::CompiledProblem {
+    let mut references = vec![(ReferenceDataKind::Measures, identity(90))];
+    if matches!(centres.phase_tracking(), PhaseCentreLaw::Ephemeris(_)) {
+        references.push((ReferenceDataKind::Ephemeris, identity(90)));
+    }
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         vec![source_input(path, 1, row_count)],
-        vec![(ReferenceDataKind::Measures, identity(90))],
+        references,
         ModelStateIdentity::Empty,
     ))
     .expect("compile fixed-centre observation");

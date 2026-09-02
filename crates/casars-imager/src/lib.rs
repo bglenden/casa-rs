@@ -37,6 +37,10 @@ pub enum SpectralMode {
     Cube,
     /// Spectral cube in the native data frame.
     Cubedata,
+    /// Source-rest-frame cube for a moving target.
+    Cubesource,
+    /// Multi-term continuum reconstruction through cube major cycles.
+    Mvc,
 }
 
 impl SpectralMode {
@@ -45,13 +49,17 @@ impl SpectralMode {
             "mfs" => Ok(Self::Mfs),
             "cube" => Ok(Self::Cube),
             "cubedata" => Ok(Self::Cubedata),
+            "cubesource" => Ok(Self::Cubesource),
+            "mvc" => Ok(Self::Mvc),
             _ => Err(format!("unsupported spectral mode {value:?}")),
         }
     }
 
     pub(crate) const fn cube_specmode(self) -> casa_ms::spectral_selection::CubeSpecMode {
         match self {
-            Self::Mfs | Self::Cube => casa_ms::spectral_selection::CubeSpecMode::Cube,
+            Self::Mfs | Self::Cube | Self::Cubesource | Self::Mvc => {
+                casa_ms::spectral_selection::CubeSpecMode::Cube
+            }
             Self::Cubedata => casa_ms::spectral_selection::CubeSpecMode::Cubedata,
         }
     }
@@ -1335,6 +1343,8 @@ pub(crate) const fn canonical_spectral_mode_name(value: SpectralMode) -> &'stati
         SpectralMode::Mfs => "mfs",
         SpectralMode::Cube => "cube",
         SpectralMode::Cubedata => "cubedata",
+        SpectralMode::Cubesource => "cubesource",
+        SpectralMode::Mvc => "mvc",
     }
 }
 

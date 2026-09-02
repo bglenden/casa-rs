@@ -5,10 +5,11 @@ use casa_imaging_model::{
     ContinuumChannelUse, ContinuumFitRule, DeclaredInnerProducts, DelayCentreLaw,
     DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
     FiniteValuePolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
-    ImageShape, ImagingRequest, InstrumentResponse, ItrfPosition, JointContinuumLineContract,
-    MeasurementEquationContract, MissingPointingPolicy, ModelColumnWrite, ModelInnerProduct,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
-    ObservationSnapshotInput, ObservationTransactionRequirements, PhaseCentreLaw,
+    ImageShape, ImagingRequest, InstrumentModel, InstrumentResponse, ItrfPosition,
+    JointContinuumLineContract, MeasurementEquationContract, MissingPointingPolicy,
+    ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, NumericPrecision, NumericalStage,
+    NumericsContract, ObservationPointingLaw, ObservationSnapshotInput,
+    ObservationTransactionRequirements, PairedMeasurementTransform, PhaseCentreLaw,
     PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
     PrimaryBeamValidityPolicy, ProblemInputIdentities, ProblemSpecification, ProductAxisKind,
@@ -430,12 +431,18 @@ fn compile_product_set(
     } else {
         inputs_with_instrument()
     };
+    let science = ScientificContract::new(
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+        MeasurementEquationContract::new(instrument_response, inner_products()),
+    );
+    let science = if instrument_response == InstrumentResponse::PrimaryBeam {
+        science.with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+    } else {
+        science
+    };
     compile_request(
         ProblemSpecification::new(
-            ScientificContract::new(
-                SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(instrument_response, inner_products()),
-            ),
+            science,
             reconstruction(),
             weighting(),
             ProductRequirements::new(
@@ -659,7 +666,8 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
             ScientificContract::new(
                 SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
                 MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
-            ),
+            )
+            .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
             reconstruction(),
             weighting(),
             products,
@@ -881,6 +889,91 @@ fn channel_local_basis_must_match_compiled_geometry_channels() {
             geometry_channels: 2,
             reconstruction_channels: 1,
         })
+    ));
+}
+
+#[test]
+fn t41_taylor_via_channel_major_is_distinct_and_channel_bounded() {
+    let contract = |basis| {
+        ProblemSpecification::new(
+            science(),
+            ReconstructionContract::new(
+                basis,
+                ReconstructionAlgorithm::Mtmfs {
+                    scales_px: vec![0.0],
+                    small_scale_bias: 0.0,
+                },
+                ReconstructionControls::new(100, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        )
+    };
+    let four_channel_geometry =
+        geometry().with_spectral(geometry().spectral().clone().with_wcs(SpectralWcs::Linear {
+            channels: 4,
+            reference_pixel: 1.5,
+            reference_frequency_hz: 1.4e9,
+            increment_hz: 1.0e6,
+        }));
+    let dual = compile_with_geometry(
+        contract(ReconstructionBasis::TaylorViaChannelMajor {
+            terms: 2,
+            channels: 4,
+        }),
+        four_channel_geometry.clone(),
+        inputs(false),
+    )
+    .expect("four channels support two Taylor terms");
+    let direct = compile_with_geometry(
+        contract(ReconstructionBasis::Taylor { terms: 2 }),
+        four_channel_geometry.clone(),
+        inputs(false),
+    )
+    .expect("direct Taylor contract compiles independently of its implementation route");
+    assert_eq!(
+        dual.reconstruction().basis(),
+        ReconstructionBasis::TaylorViaChannelMajor {
+            terms: 2,
+            channels: 4,
+        }
+    );
+    assert!(
+        dual.product_graph()
+            .nodes()
+            .iter()
+            .filter(|node| node.schema() == ProductSchema::ImageF32V1)
+            .all(|node| node.axes().shape()[3] == 1),
+        "public MT-MFS products retain singleton Taylor axes while the major cycle uses channels"
+    );
+    assert_ne!(dual.problem_id(), direct.problem_id());
+    assert!(matches!(
+        compile_with_geometry(
+            contract(ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 2,
+                channels: 3,
+            }),
+            four_channel_geometry.clone(),
+            inputs(false),
+        ),
+        Err(CompileProblemError::SpectralChannelCountMismatch {
+            geometry_channels: 4,
+            reconstruction_channels: 3,
+        })
+    ));
+    assert!(matches!(
+        compile_with_geometry(
+            contract(ReconstructionBasis::TaylorViaChannelMajor {
+                terms: 5,
+                channels: 4,
+            }),
+            four_channel_geometry,
+            inputs(false),
+        ),
+        Err(CompileProblemError::InvalidCapabilityCombination { .. })
     ));
 }
 
@@ -1159,7 +1252,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 16);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 17);
 }
 
 #[test]
@@ -1282,13 +1375,28 @@ fn complete_science_contract_changes_identity_and_capabilities() {
     };
     let baseline = compile_request(make(science(), weighting(), products(false)), inputs(false))
         .expect("baseline");
+    let tagged_scalar = compile_request(
+        make(
+            science().with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+            weighting(),
+            products(false),
+        ),
+        inputs(false),
+    );
+    assert!(matches!(
+        tagged_scalar,
+        Err(CompileProblemError::InvalidScientificContract {
+            reason: "instrument response and instrument model must form one supported exact pair"
+        })
+    ));
     let widefield_science = ScientificContract::new(
         SpectralContract::new(
             SpectralSamplingLaw::LINEAR,
             SpectralCoupling::CommonRestoringBeam,
         ),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
-    );
+    )
+    .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
     let widefield_geometry = geometry()
         .with_domains(vec![geometry().domains()[0].clone().with_facets(
             FacetLayout::Regular {
@@ -1346,26 +1454,57 @@ fn complete_science_contract_changes_identity_and_capabilities() {
 }
 
 #[test]
-fn direction_dependent_response_requires_instrument_identity() {
+fn primary_beam_response_requires_exact_model_and_instrument_identity() {
     let direction_dependent = ScientificContract::new(
         SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
         MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
     );
-    let specification = ProblemSpecification::new(
-        direction_dependent,
-        reconstruction(),
-        weighting(),
-        products(false),
-        read_only_transaction(),
-        numerics(false),
-    );
+    let specification = |science| {
+        ProblemSpecification::new(
+            science,
+            reconstruction(),
+            weighting(),
+            products(false),
+            read_only_transaction(),
+            numerics(false),
+        )
+    };
 
     assert!(matches!(
-        compile_request(specification, inputs(false)),
+        compile_request(
+            specification(direction_dependent.clone()),
+            inputs_with_instrument()
+        ),
+        Err(CompileProblemError::InvalidScientificContract {
+            reason: "instrument response and instrument model must form one supported exact pair"
+        })
+    ));
+
+    let direction_dependent = direction_dependent
+        .with_instrument_model(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1);
+    assert_eq!(
+        direction_dependent.instrument_model(),
+        Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+    );
+    assert!(matches!(
+        compile_request(specification(direction_dependent.clone()), inputs(false)),
         Err(CompileProblemError::InvalidScientificContract {
             reason: "direction-dependent response requires bound instrument reference data"
         })
     ));
+
+    let compiled = compile_request(specification(direction_dependent), inputs_with_instrument())
+        .expect("compile exact primary-beam instrument model");
+    assert!(
+        compiled
+            .normal_equation()
+            .measurement_operator()
+            .transforms()
+            .contains(&PairedMeasurementTransform::DirectionDependentResponse {
+                response: InstrumentResponse::PrimaryBeam,
+                instrument_model: Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+            })
+    );
 }
 
 #[test]
@@ -1565,13 +1704,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_sixteen_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_seventeen_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 16);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 17);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "6ea85054a2c9e06c66a8277d2198ec1db129ae6f361ad3d81640abbb614a24d8"
+        "47797621df2e146662efc7b2c908fb44c2fffbdb1b491730b83b86faeb30f058"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

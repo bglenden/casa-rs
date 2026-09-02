@@ -7,6 +7,17 @@ use ndarray::ArrayD;
 use crate::column_def::{ColumnDef, ColumnKind};
 use crate::schema;
 
+pub(crate) fn production_measures_provider()
+-> crate::MsResult<std::sync::Arc<dyn casa_types::measures::MeasuresProvider>> {
+    casa_measures_data::MeasuresRuntime::open_discovered(Default::default())
+        .map(|runtime| {
+            let runtime: std::sync::Arc<dyn casa_types::measures::MeasuresProvider> =
+                std::sync::Arc::new(runtime);
+            runtime
+        })
+        .map_err(|error| crate::MsError::MeasuresRuntime(error.to_string()))
+}
+
 /// Create a default Value for a main-table column, given its name.
 ///
 /// Looks up the column definition in the required/optional column lists

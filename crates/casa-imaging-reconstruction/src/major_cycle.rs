@@ -337,6 +337,13 @@ impl FinalNormalState {
         self.primitives.sensitivity()
     }
 
+    /// Return the completed scalar primary-beam `sum(W B)` statistic, when
+    /// the compiled measurement equation includes that response.
+    #[must_use]
+    pub fn primary_beam_weighted_sum(&self) -> Option<&[f64]> {
+        self.primitives.primary_beam_weighted_sum()
+    }
+
     /// Return the exact accumulated sum weight.
     #[must_use]
     pub fn sum_weight(&self) -> f64 {
@@ -351,10 +358,12 @@ impl FinalNormalState {
         self.primitives.sum_weights()
     }
 
-    /// Return CASA-compatible normal-moment-major, polarization-minor sum weights.
+    /// Return CASA publication-statistic numerators in normal-moment-major,
+    /// polarization-minor order.
     ///
-    /// The length is `normal_moment_count() * polarization_count()`; publication
-    /// does not change normal-state scaling.
+    /// The length is `normal_moment_count() * polarization_count()`. Product
+    /// formation owns any complete-family denominator; publication does not
+    /// change normal-state scaling.
     #[must_use]
     pub fn published_sum_weights(&self) -> &[f64] {
         self.primitives.published_sum_weights()
@@ -537,6 +546,12 @@ impl<'a> FinalNormalDomainState<'a> {
         self.domain.primitives().sensitivity()
     }
 
+    /// Return the completed scalar primary-beam `sum(W B)` statistic.
+    #[must_use]
+    pub fn primary_beam_weighted_sum(self) -> Option<&'a [f64]> {
+        self.domain.primitives().primary_beam_weighted_sum()
+    }
+
     /// Return this chart's normal-moment-major, polarization-minor weights.
     ///
     /// The length is `normal_moment_count() * polarization_count()`.
@@ -545,9 +560,11 @@ impl<'a> FinalNormalDomainState<'a> {
         self.domain.primitives().sum_weights()
     }
 
-    /// Return CASA-compatible normal-moment-major, polarization-minor weights.
+    /// Return CASA publication-statistic numerators in normal-moment-major,
+    /// polarization-minor order.
     ///
-    /// The length is `normal_moment_count() * polarization_count()`.
+    /// The length is `normal_moment_count() * polarization_count()`; publication
+    /// does not change normal-state scaling.
     #[must_use]
     pub const fn published_sum_weights(self) -> &'a [f64] {
         self.domain.primitives().published_sum_weights()

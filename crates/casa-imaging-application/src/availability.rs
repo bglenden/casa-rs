@@ -4,8 +4,8 @@
 use std::{error::Error, fmt};
 
 use casa_imaging_model::{
-    CompiledProblem, ImageDomainRole, InstrumentResponse, ModelStateIdentity, PhaseCentreLaw,
-    PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
+    CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, ModelStateIdentity,
+    PhaseCentreLaw, PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -15,6 +15,10 @@ pub enum TaskRequirement {
     SpectralCube,
     /// Cubedata task surface.
     SpectralCubedata,
+    /// Moving-source REST-frame cube task surface.
+    SpectralCubeSource,
+    /// Multi-term continuum reconstruction through cube major cycles.
+    SpectralMtmfsViaCube,
     /// Mosaic gridder request.
     MosaicGridder,
     /// W-projection gridder request.
@@ -98,9 +102,11 @@ pub enum TaskRequirement {
 impl TaskRequirement {
     /// Complete stable task-only capability catalog for the current application
     /// contract.
-    pub const ALL: [Self; 41] = [
+    pub const ALL: [Self; 43] = [
         Self::SpectralCube,
         Self::SpectralCubedata,
+        Self::SpectralCubeSource,
+        Self::SpectralMtmfsViaCube,
         Self::MosaicGridder,
         Self::WProjection,
         Self::AwProjection,
@@ -148,6 +154,8 @@ impl TaskRequirement {
         match self {
             Self::SpectralCube => "spectral_cube",
             Self::SpectralCubedata => "spectral_cubedata",
+            Self::SpectralCubeSource => "spectral_cubesource",
+            Self::SpectralMtmfsViaCube => "spectral_mtmfs_via_cube",
             Self::MosaicGridder => "mosaic_gridder",
             Self::WProjection => "w_projection",
             Self::AwProjection => "aw_projection",
@@ -396,26 +404,37 @@ pub fn validate_installed_implementation(
     ) {
         unsupported.push(UnsupportedRequirement::IndependentBasisForPolarizationSelection);
     }
-    if !matches!(
+    if matches!(
         problem.geometry().centres().phase_tracking(),
-        PhaseCentreLaw::Fixed(_)
+        PhaseCentreLaw::Observation
     ) {
         unsupported.push(UnsupportedRequirement::FixedPhaseCentre);
     }
     if !matches!(problem.inputs().model(), ModelStateIdentity::Empty) {
         unsupported.push(UnsupportedRequirement::EmptyInitialModel);
     }
-    if problem
-        .science()
-        .measurement_equation()
-        .instrument_response()
-        != InstrumentResponse::Scalar
-    {
+    let installed_response = matches!(
+        (
+            problem
+                .science()
+                .measurement_equation()
+                .instrument_response(),
+            problem.science().instrument_model(),
+            problem.reconstruction().basis(),
+        ),
+        (InstrumentResponse::Scalar, None, _)
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1),
+                ReconstructionBasis::TaylorViaChannelMajor { .. }
+            )
+    );
+    if !installed_response {
         unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
     }
     if !matches!(
         problem.reconstruction().basis(),
-        ReconstructionBasis::Taylor { .. }
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
     ) {
         for product in [ProductKind::PrimaryBeam, ProductKind::PbCorrectedImage] {
             if problem.products().products().contains(&product) {
@@ -441,7 +460,9 @@ fn coupled_basis_requires_independent_polarization(
 ) -> bool {
     matches!(
         basis,
-        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::JointContinuumLine { .. }
+        ReconstructionBasis::Taylor { .. }
+            | ReconstructionBasis::TaylorViaChannelMajor { .. }
+            | ReconstructionBasis::JointContinuumLine { .. }
     ) && coordinates != [PolarizationCoordinate::StokesI]
 }
 
@@ -450,6 +471,8 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
         requirement,
         TaskRequirement::SpectralCube
             | TaskRequirement::SpectralCubedata
+            | TaskRequirement::SpectralCubeSource
+            | TaskRequirement::SpectralMtmfsViaCube
             | TaskRequirement::PolarizationSelection
             | TaskRequirement::Automasking
             | TaskRequirement::MaskProduct
@@ -483,6 +506,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
             | RequiredCapability::BriggsBandwidthTaperWeighting
+            | RequiredCapability::PrimaryBeamResponse
             | RequiredCapability::UnitResponseNormalization
             | RequiredCapability::FlatNoiseNormalization
             | RequiredCapability::FlatSkyNormalization
@@ -514,6 +538,11 @@ mod tests {
         assert!(supports_capability(
             RequiredCapability::JointContinuumLineReconstruction
         ));
+    }
+
+    #[test]
+    fn t41_primary_beam_response_is_installed_at_the_application_boundary() {
+        assert!(supports_capability(RequiredCapability::PrimaryBeamResponse));
     }
 
     #[test]

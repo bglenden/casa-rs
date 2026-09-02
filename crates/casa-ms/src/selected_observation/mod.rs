@@ -28,13 +28,14 @@ pub use bound_observation::{
     SelectedObservationTerminal, SelectedObservationTraversalError,
     SelectedObservationTraversalMeasurements,
 };
-pub use content_plan::SelectedObservationContentBudget;
+pub use content_plan::{SelectedObservationContentBudget, SelectedObservationReferenceDataBudget};
 pub(crate) use content_plan::{
     SelectedObservationContentPlan, SelectedObservationContentPlanError,
 };
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};
 pub use spectral_evaluation::{
+    SelectedObservationSpectralRange, SelectedObservationSpectralRangeMeasurements,
     SelectedObservationTraversalRun, SelectedObservationTraversalSample,
 };
 

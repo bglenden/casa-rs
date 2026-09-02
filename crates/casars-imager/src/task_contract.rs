@@ -1334,6 +1334,10 @@ pub enum ImagerSpectralMode {
     Cube,
     /// Produce a spectral cube in the native data frame.
     Cubedata,
+    /// Produce a source-rest-frame cube for a moving target.
+    Cubesource,
+    /// Multi-term continuum reconstruction through cube major cycles.
+    Mvc,
 }
 
 impl From<SpectralMode> for ImagerSpectralMode {
@@ -1342,6 +1346,8 @@ impl From<SpectralMode> for ImagerSpectralMode {
             SpectralMode::Mfs => Self::Mfs,
             SpectralMode::Cube => Self::Cube,
             SpectralMode::Cubedata => Self::Cubedata,
+            SpectralMode::Cubesource => Self::Cubesource,
+            SpectralMode::Mvc => Self::Mvc,
         }
     }
 }
@@ -1352,6 +1358,8 @@ impl From<ImagerSpectralMode> for SpectralMode {
             ImagerSpectralMode::Mfs => Self::Mfs,
             ImagerSpectralMode::Cube => Self::Cube,
             ImagerSpectralMode::Cubedata => Self::Cubedata,
+            ImagerSpectralMode::Cubesource => Self::Cubesource,
+            ImagerSpectralMode::Mvc => Self::Mvc,
         }
     }
 }
@@ -2459,11 +2467,25 @@ impl ImagerRunTaskRequest {
         if self.phasecenter_field.is_some() && self.phasecenter.is_some() {
             return Err("--phasecenter and --phasecenter-field are mutually exclusive".to_string());
         }
-        if deconvolver == Deconvolver::Mtmfs && spectral_mode != SpectralMode::Mfs {
-            return Err("deconvolver='mtmfs' currently requires specmode='mfs'".to_string());
+        if deconvolver == Deconvolver::Mtmfs
+            && !matches!(spectral_mode, SpectralMode::Mfs | SpectralMode::Mvc)
+        {
+            return Err("deconvolver='mtmfs' requires specmode='mfs' or 'mvc'".to_string());
+        }
+        if spectral_mode == SpectralMode::Mvc
+            && (deconvolver != Deconvolver::Mtmfs || self.nterms < 2)
+        {
+            return Err("specmode='mvc' requires deconvolver='mtmfs' and nterms > 1".to_string());
         }
         if deconvolver != Deconvolver::Mtmfs && self.nterms != 1 {
-            return Err("nterms > 1 currently requires deconvolver='mtmfs'".to_string());
+            return Err("nterms > 1 requires deconvolver='mtmfs'".to_string());
+        }
+        if spectral_mode == SpectralMode::Mvc
+            && self
+                .channel_count
+                .is_some_and(|channels| channels < self.nterms)
+        {
+            return Err("mvc requires nchan >= nterms".to_string());
         }
         if self.nterms == 0 {
             return Err("nterms must be at least 1".to_string());

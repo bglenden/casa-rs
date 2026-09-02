@@ -2080,6 +2080,7 @@ fn attempt(byte: u8) -> ModelExecutionAttemptId {
 
 fn imaging_frequency_frame(reference: FrequencyRef) -> Result<FrequencyFrame, Box<dyn Error>> {
     match reference {
+        FrequencyRef::REST => Ok(FrequencyFrame::Rest),
         FrequencyRef::TOPO => Ok(FrequencyFrame::Topocentric),
         FrequencyRef::BARY => Ok(FrequencyFrame::Barycentric),
         FrequencyRef::LSRK => Ok(FrequencyFrame::Lsrk),

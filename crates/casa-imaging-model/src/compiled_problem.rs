@@ -33,9 +33,9 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 16;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 17;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
-const COMPILED_PROBLEM_BASIS_VERSION: u32 = 2;
+const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -442,6 +442,19 @@ pub enum InstrumentResponse {
     FullMueller,
 }
 
+/// Closed identity of an instrument power-response law compiled into the
+/// paired measurement operator.
+///
+/// Each variant is a versioned scientific identity, not a runtime backend
+/// selector. Changing the law requires a new variant so compiled-problem
+/// identities cannot silently change meaning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum InstrumentModel {
+    /// CASA-compatible direct scalar power response for a homogeneous ALMA
+    /// 7 m ACA interferometric array, version 1.
+    CasaAlmaAcaInterferometricDirectPbV1,
+}
+
 /// Logical measurement-equation terms independent of an implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeasurementEquationContract {
@@ -480,6 +493,7 @@ impl MeasurementEquationContract {
 pub struct ScientificContract {
     spectral: SpectralContract,
     measurement_equation: MeasurementEquationContract,
+    instrument_model: Option<InstrumentModel>,
 }
 
 impl ScientificContract {
@@ -492,7 +506,16 @@ impl ScientificContract {
         Self {
             spectral,
             measurement_equation,
+            instrument_model: None,
         }
+    }
+
+    /// Bind the exact instrument power-response law used by the measurement
+    /// equation.
+    #[must_use]
+    pub const fn with_instrument_model(mut self, instrument_model: InstrumentModel) -> Self {
+        self.instrument_model = Some(instrument_model);
+        self
     }
 
     /// Return spectral requirements.
@@ -506,6 +529,12 @@ impl ScientificContract {
     pub const fn measurement_equation(&self) -> MeasurementEquationContract {
         self.measurement_equation
     }
+
+    /// Return the exact instrument power-response law, when one is declared.
+    #[must_use]
+    pub const fn instrument_model(&self) -> Option<InstrumentModel> {
+        self.instrument_model
+    }
 }
 
 /// Frequency-domain model coefficient basis.
@@ -517,6 +546,17 @@ pub enum ReconstructionBasis {
     Taylor {
         /// Number of Taylor coefficients.
         terms: usize,
+    },
+    /// Taylor model coefficients reconstructed from channel-local major cycles.
+    ///
+    /// The public model and minor-cycle space contains `terms` Taylor planes,
+    /// while prediction and adjoint sampling pass through `channels` distinct
+    /// output-channel planes before their deterministic Taylor reduction.
+    TaylorViaChannelMajor {
+        /// Number of public Taylor coefficients.
+        terms: usize,
+        /// Number of channel-local major-cycle planes.
+        channels: usize,
     },
     /// Independent coefficient state for each output channel.
     ChannelLocal {
@@ -2107,6 +2147,21 @@ fn validate_science(
             reason: "spectral channel averaging requires a positive bin width",
         });
     }
+    if !matches!(
+        (
+            science.measurement_equation.instrument_response,
+            science.instrument_model,
+        ),
+        (InstrumentResponse::Scalar, None)
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1)
+            )
+    ) {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "instrument response and instrument model must form one supported exact pair",
+        });
+    }
     if science.measurement_equation.instrument_response != InstrumentResponse::Scalar
         && !inputs
             .reference_data()
@@ -2126,9 +2181,20 @@ fn validate_reconstruction(
     geometry: &CompiledGeometry,
 ) -> Result<(), CompileProblemError> {
     match contract.basis {
-        ReconstructionBasis::Taylor { terms: 0 | 1 } => {
+        ReconstructionBasis::Taylor { terms: 0 | 1 }
+        | ReconstructionBasis::TaylorViaChannelMajor { terms: 0 | 1, .. } => {
             return Err(CompileProblemError::InvalidCapabilityCombination {
                 reason: "a Taylor basis requires at least two terms; single-term MFS uses the constant basis",
+            });
+        }
+        ReconstructionBasis::TaylorViaChannelMajor { channels: 0, .. } => {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "a Taylor-via-channel major-cycle basis requires at least one channel",
+            });
+        }
+        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } if channels < terms => {
+            return Err(CompileProblemError::InvalidCapabilityCombination {
+                reason: "a Taylor-via-channel major-cycle basis requires at least as many channels as Taylor terms",
             });
         }
         ReconstructionBasis::ChannelLocal { channels: 0 } => {
@@ -2146,6 +2212,7 @@ fn validate_reconstruction(
         }
         ReconstructionBasis::Constant
         | ReconstructionBasis::Taylor { .. }
+        | ReconstructionBasis::TaylorViaChannelMajor { .. }
         | ReconstructionBasis::ChannelLocal { .. }
         | ReconstructionBasis::JointContinuumLine { .. } => {}
     }
@@ -2157,8 +2224,19 @@ fn validate_reconstruction(
             reconstruction_channels: channels,
         });
     }
+    if let ReconstructionBasis::TaylorViaChannelMajor { channels, .. } = contract.basis
+        && channels != geometry.spectral().output_channels()
+    {
+        return Err(CompileProblemError::SpectralChannelCountMismatch {
+            geometry_channels: geometry.spectral().output_channels(),
+            reconstruction_channels: channels,
+        });
+    }
     if matches!(contract.algorithm, ReconstructionAlgorithm::Mtmfs { .. })
-        != matches!(contract.basis, ReconstructionBasis::Taylor { .. })
+        != matches!(
+            contract.basis,
+            ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. }
+        )
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "MT-MFS and Taylor-basis reconstruction must be requested together",
@@ -2538,7 +2616,8 @@ fn validate_products(
         });
     }
     let taylor_terms = match reconstruction.basis {
-        ReconstructionBasis::Taylor { terms } => terms,
+        ReconstructionBasis::Taylor { terms }
+        | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
         ReconstructionBasis::Constant
         | ReconstructionBasis::ChannelLocal { .. }
         | ReconstructionBasis::JointContinuumLine { .. } => 0,
@@ -2656,7 +2735,9 @@ fn derive_capabilities(
     }
     capabilities.insert(match reconstruction.basis {
         ReconstructionBasis::Constant => RequiredCapability::ConstantBasis,
-        ReconstructionBasis::Taylor { .. } => RequiredCapability::TaylorBasis,
+        ReconstructionBasis::Taylor { .. } | ReconstructionBasis::TaylorViaChannelMajor { .. } => {
+            RequiredCapability::TaylorBasis
+        }
         ReconstructionBasis::ChannelLocal { .. } => RequiredCapability::ChannelLocalBasis,
         ReconstructionBasis::JointContinuumLine { .. } => {
             RequiredCapability::JointContinuumLineReconstruction
@@ -2747,6 +2828,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         InstrumentResponse::PrimaryBeam => 1,
         InstrumentResponse::FullMueller => 2,
     });
+    encode_instrument_model(&mut encoder, science.instrument_model);
     let inner_products = science.measurement_equation.inner_products;
     encoder.u8(match inner_products.model() {
         ModelInnerProduct::HermitianEuclidean => 0,
@@ -2759,6 +2841,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     encoder.u8(match operator.domain().basis() {
         ReconstructionBasis::Constant => 0,
         ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::TaylorViaChannelMajor { .. } => 4,
         ReconstructionBasis::ChannelLocal { .. } => 2,
         ReconstructionBasis::JointContinuumLine { .. } => 3,
     });
@@ -2776,13 +2859,17 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             }
             PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
             PairedMeasurementTransform::FeedResponse => encoder.u8(6),
-            PairedMeasurementTransform::DirectionDependentResponse { response } => {
+            PairedMeasurementTransform::DirectionDependentResponse {
+                response,
+                instrument_model,
+            } => {
                 encoder.u8(2);
                 encoder.u8(match response {
                     InstrumentResponse::Scalar => 0,
                     InstrumentResponse::PrimaryBeam => 1,
                     InstrumentResponse::FullMueller => 2,
                 });
+                encode_instrument_model(&mut encoder, *instrument_model);
             }
             PairedMeasurementTransform::PhaseRotation { convention } => {
                 encoder.u8(3);
@@ -3210,6 +3297,13 @@ fn reference_data_tag(kind: ReferenceDataKind) -> u8 {
     }
 }
 
+fn encode_instrument_model(encoder: &mut CanonicalEncoder, model: Option<InstrumentModel>) {
+    match model {
+        None => encoder.u8(0),
+        Some(InstrumentModel::CasaAlmaAcaInterferometricDirectPbV1) => encoder.u8(1),
+    }
+}
+
 fn product_tag(product: ProductKind) -> u8 {
     match product {
         ProductKind::Psf => 0,
@@ -3239,6 +3333,11 @@ pub(crate) fn encode_reconstruction_basis(
         ReconstructionBasis::Taylor { terms } => {
             encoder.u8(1);
             encoder.usize(terms);
+        }
+        ReconstructionBasis::TaylorViaChannelMajor { terms, channels } => {
+            encoder.u8(4);
+            encoder.usize(terms);
+            encoder.usize(channels);
         }
         ReconstructionBasis::ChannelLocal { channels } => {
             encoder.u8(2);

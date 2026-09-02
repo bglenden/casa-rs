@@ -508,6 +508,43 @@ impl TiledReadMetadata {
         Some(bytes)
     }
 
+    pub(crate) fn shape_cell_is_defined(
+        &self,
+        dm_seq_nr: u32,
+        target_col_idx: usize,
+        row_index: usize,
+    ) -> Result<bool, StorageError> {
+        let read_header = self.header(dm_seq_nr)?;
+        if target_col_idx >= read_header.header.col_data_types.len() {
+            return Err(StorageError::FormatMismatch(format!(
+                "tiled column index {target_col_idx} out of range for data manager {dm_seq_nr}"
+            )));
+        }
+        let TiledVariant::Shape {
+            nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+            ..
+        } = &read_header.variant
+        else {
+            return Err(StorageError::FormatMismatch(format!(
+                "metadata-only array-cell definedness requires TiledShapeStMan Shape variant for data manager {dm_seq_nr}"
+            )));
+        };
+        Ok(shape_row_location(
+            &read_header.header,
+            &ShapeRowMapping {
+                nr_used_row_map: *nr_used_row_map,
+                row_map,
+                cube_map,
+                pos_map,
+            },
+            row_index,
+        )?
+        .is_some())
+    }
+
     #[cfg(test)]
     pub(crate) fn cached_header_count(&self) -> usize {
         self.headers.len()
@@ -2235,6 +2272,35 @@ struct ShapeRowMapping<'a> {
     pos_map: &'a [u32],
 }
 
+fn shape_row_location(
+    header: &TiledStManHeader,
+    mapping: &ShapeRowMapping<'_>,
+    row_index: usize,
+) -> Result<Option<(usize, usize)>, StorageError> {
+    let interval_count = mapping.nr_used_row_map as usize;
+    if interval_count > mapping.row_map.len()
+        || interval_count > mapping.cube_map.len()
+        || interval_count > mapping.pos_map.len()
+    {
+        return Err(StorageError::FormatMismatch(
+            "invalid TiledShapeStMan row-map lengths".to_string(),
+        ));
+    }
+    let interval = mapping.row_map[..interval_count].partition_point(|&row| row < row_index as u32);
+    if interval >= interval_count {
+        return Ok(None);
+    }
+    let cube_index = mapping.cube_map[interval] as usize;
+    if cube_index == 0 || cube_index >= header.cubes.len() {
+        return Ok(None);
+    }
+    let row_delta = mapping.row_map[interval] as usize - row_index;
+    let Some(position) = (mapping.pos_map[interval] as usize).checked_sub(row_delta) else {
+        return Ok(None);
+    };
+    Ok(Some((cube_index, position)))
+}
+
 /// Load columns from a `TiledShapeStMan` (one hypercube per unique shape).
 #[allow(clippy::too_many_arguments)]
 fn load_tiled_shape_stman(
@@ -2852,23 +2918,8 @@ fn load_tiled_column_rows_shape_variant_1d_typed(
         std::collections::BTreeMap::new();
     let mut mapped_rows = 0usize;
     for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
             continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
         };
         patches_by_cube
             .entry(cube_idx)
@@ -2924,23 +2975,8 @@ fn fill_tiled_column_rows_shape_variant_1d_typed(
     let mut patches_by_cube = std::collections::BTreeMap::<usize, Vec<SelectedCubeRow>>::new();
     let mut mapped_rows = 0usize;
     for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
             continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
         };
         patches_by_cube
             .entry(cube_idx)
@@ -3386,23 +3422,8 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
         std::collections::BTreeMap::new();
     let mut mapped_rows = 0usize;
     for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
             continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
         };
         patches_by_cube
             .entry(cube_idx)
@@ -3563,23 +3584,8 @@ fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
     let mut patches_by_cube = std::collections::BTreeMap::<usize, Vec<SelectedCubeRow>>::new();
     let mut mapped_rows = 0usize;
     for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
             continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
         };
         patches_by_cube
             .entry(cube_idx)

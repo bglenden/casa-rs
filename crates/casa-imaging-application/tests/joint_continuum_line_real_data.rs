@@ -202,6 +202,7 @@ fn base_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagi
         gain: 0.1,
         threshold_jy: 0.002,
         psf_cutoff: casa_imaging_products::DEFAULT_PSF_CUTOFF,
+        primary_beam_cutoff: 0.2,
         beam_policy: ContinuumBeamPolicy::PerPlane,
         mask: ContinuumMask::FullPlane,
         save_model_column: false,

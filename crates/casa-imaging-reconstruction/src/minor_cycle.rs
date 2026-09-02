@@ -32,8 +32,8 @@ use thiserror::Error;
 use crate::{
     CoupledReconstructionMask, Encoder, FinalNormalState, FinalNormalStateCompletionId,
     ImageDomainReconstructionMasks, ModelDelta, ModelGeneration, ModelGenerationId, ModelLifecycle,
-    ModelLifecycleError, ReconstructionMask, ReconstructionMaskGenerationId,
-    major_cycle::FinalNormalStatePlane,
+    ModelLifecycleError, ReconstructionMask, ReconstructionMaskGenerationId, ScienceTraceDigest,
+    imaging_science_trace_enabled, major_cycle::FinalNormalStatePlane, trace_real_values,
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
@@ -58,7 +58,8 @@ pub fn minor_cycle_workspace_bytes(
     let scalar_workspace = cells.saturating_mul(16);
     let (terms, scales_px) = match (basis, algorithm) {
         (
-            ReconstructionBasis::Taylor { terms },
+            ReconstructionBasis::Taylor { terms }
+            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. },
             ReconstructionAlgorithm::Mtmfs { scales_px, .. },
         ) => (terms, scales_px),
         (
@@ -2025,6 +2026,16 @@ fn run_taylor_minor_cycle(
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, MinorCycleError>>()?;
+    if imaging_science_trace_enabled() {
+        for (term, residual) in residuals.iter().enumerate() {
+            let label = match term {
+                0 => "minor_residual_tt0_enter",
+                1 => "minor_residual_tt1_enter",
+                _ => "minor_residual_tt_other_enter",
+            };
+            trace_real_values(label, residual);
+        }
+    }
     let primary_plane = MinorCycleModelPlane::new(primary.domain(), 0, primary.polarization());
     let has_valid_support = (0..cells).any(|index| {
         let pixel = plane_pixel(index, shape);
@@ -2235,6 +2246,30 @@ fn finish_taylor_minor_cycle(
     recorded: Vec<MinorCycleComponent>,
 ) -> Result<MinorCycleResult, MinorCycleError> {
     terms.retain(|_, value| *value != 0.0);
+    if imaging_science_trace_enabled() {
+        let mut digests = (0..base.shape().coefficients())
+            .map(|coefficient| {
+                let label = match coefficient {
+                    0 => "minor_model_tt0_leave",
+                    1 => "minor_model_tt1_leave",
+                    _ => "minor_model_tt_other_leave",
+                };
+                (label, ScienceTraceDigest::new())
+            })
+            .collect::<Vec<_>>();
+        for (flat, value) in &terms {
+            let cell = base
+                .shape()
+                .cell_at(*flat)
+                .ok_or(MinorCycleError::ModelShapeMismatch)?;
+            digests[cell.coefficient()]
+                .1
+                .push_indexed_real(*flat, *value);
+        }
+        for (label, digest) in digests {
+            digest.emit(label);
+        }
+    }
     let delta = if terms.is_empty() {
         None
     } else {

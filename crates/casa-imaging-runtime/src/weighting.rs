@@ -11,9 +11,9 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, MeasurementSetIdentity, SelectedObservationGenerationId,
-    SelectedObservationSampleView, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedSpectralInterval, SequentialContinuumTransform,
+    CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId, MeasurementSetIdentity,
+    SelectedObservationGenerationId, SelectedObservationSampleView, SelectedSpectralContribution,
+    SelectedSpectralContributions, SelectedSpectralInterval, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::runtime_adapter::WeightingReplayPhase;
 use casa_imaging_reconstruction::{
@@ -2181,6 +2181,123 @@ impl WeightingExecutionState {
             }),
         };
         Ok(())
+    }
+
+    pub(crate) fn traverse_additional_initial_slab_stream<E, F>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        problem: &CompiledProblem,
+        emit: F,
+    ) -> Result<(), WeightingReplayError<E>>
+    where
+        E: Error + Send + 'static,
+        F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+    {
+        self.begin_measurement_scope();
+        let phase = std::mem::take(&mut self.phase);
+        let WeightingExecutionPhase::PendingReplay { frozen, pending } = phase else {
+            self.phase = phase;
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        };
+        let retained = self
+            .retained_observation
+            .take()
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        if retained.attempt_id != context.attempt_id()
+            || retained.owner_node != fragment.source_read
+            || retained.lease_epoch != context.lease_epoch()
+        {
+            self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
+            self.retained_observation = Some(retained);
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        }
+        let plan = fragment
+            .bounded_stream_plan(context)
+            .map_err(WeightingReplayError::Evidence)?;
+        let coverage_proof = frozen
+            .artifact
+            .coverage_proof
+            .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        let replay = frozen
+            .artifact
+            .state
+            .begin_derived_replay(
+                problem,
+                fragment.plan,
+                coverage_proof,
+                frozen
+                    .artifact
+                    .continuum_transform
+                    .map(ContinuumTransformCompletion::generation_id),
+            )
+            .map_err(WeightingReplayError::Owner)?;
+        let completed = match execute_weighting_block_stream(
+            problem,
+            retained.selected,
+            plan,
+            replay,
+            begin_continuum_stream(problem)?,
+            emit,
+        ) {
+            Ok(completed) => completed,
+            Err(failure) => {
+                self.latest_stream_measurements = Some(*failure.measurements);
+                return Err(*failure.error);
+            }
+        };
+        let CompletedWeightingBlockStream {
+            selected,
+            owner_completion,
+            weights: summary,
+            continuum,
+            spectral_support_sample_count,
+            measurements,
+        } = completed;
+        self.latest_traversal_measurements = Some(*owner_completion.measurements());
+        self.latest_stream_measurements = Some(measurements);
+        let continuum_completion = continuum
+            .map(|transform| transform.complete(owner_completion.generation_id()))
+            .transpose()
+            .map_err(WeightingReplayError::Transform)?;
+        if owner_completion.generation_id() != pending.owner_completion.generation_id()
+            || owner_completion.sample_count() != pending.owner_completion.sample_count()
+            || summary.weighting_generation() != pending.state.weighting_generation()
+            || summary.coverage() != pending.state.coverage()
+            || summary.sample_count() != pending.state.sample_count()
+            || summary.block_count() != pending.state.block_count()
+            || continuum_completion != pending.continuum_transform
+            || spectral_support_sample_count != pending.spectral_support_sample_count
+        {
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        }
+        self.retained_observation = Some(RetainedWeightingObservation {
+            selected,
+            attempt_id: context.attempt_id(),
+            owner_node: fragment.source_read.clone(),
+            lease_epoch: context.lease_epoch(),
+        });
+        self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
+        Ok(())
+    }
+
+    pub(crate) fn pending_replay_inputs(
+        &self,
+    ) -> Option<(
+        &WeightingReplaySummary,
+        SelectedObservationGenerationId,
+        Option<ContinuumTransformGenerationId>,
+    )> {
+        let WeightingExecutionPhase::PendingReplay { pending, .. } = &self.phase else {
+            return None;
+        };
+        Some((
+            &pending.state,
+            pending.owner_completion.generation_id(),
+            pending
+                .continuum_transform
+                .map(ContinuumTransformCompletion::generation_id),
+        ))
     }
 
     pub(crate) fn traverse_selected_output_bounded_stream<E, F>(

@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "947db69654f5c476f2330524b4914a27acc03c508e41873da327a4b50528af18"
+    "3e16a6bbb00ff35169d3d80c1911d2db67e6a4737f0eadd3e52f33addadb31b1"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "ee14206de0e14755df99915c9f76916f9ac70245555474d002dff170d6ab21cb"
+    "d5fa3e6beb2bf26b7fa6e153a13b11a60b5deb252ece543a7e85e0e73f4d16ff"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 78
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2000,7 +2000,8 @@ def validate_t18_global_weighting_sources(
         or "native_boundaries[0]" not in derivation
         or "native_boundaries[1]" not in derivation
         or "spectral.anchor()" not in evaluation
-        or "spectral_frame_observatory(" not in evaluation
+        or "spectral_frame_observatory_direction(" not in evaluation
+        or "moving_radial_velocity(" not in evaluation
         or "spectral_frame_explicit(" not in evaluation
         or "sample.coordinates()" not in evaluation
         or "sample.metadata()" not in evaluation
@@ -2933,6 +2934,7 @@ def validate_t17_selected_observation_resource_sources(
         or shared_byte_fields
         != {
             "shared_measures_retained_bytes": "usize",
+            "shared_reference_data_retained_bytes": "usize",
             "shared_source_slots_retained_bytes": "usize",
             "shared_binding_graph_initialization_bytes": "usize",
         }
@@ -2949,11 +2951,13 @@ def validate_t17_selected_observation_resource_sources(
         not in bound_shared_bytes
         or ".additional_retained_heap_bytes(already_accounted_rows)"
         not in bound_shared_bytes
+        or "letreference_data_retained_bytes=bindings.iter().try_fold(0_usize,|bytes,binding|{bytes.checked_add(binding.reference_data_bytes()).ok_or(BoundSelectedObservationError::ReferenceDataByteOverflow)})?;"
+        not in bound_shared_bytes
         or "bindings[..binding_index].iter().map(|prior|prior.current_state.selected_rows())"
         not in bound_shared_bytes
         or "source_capacity.checked_mul(BoundObservationSource::retained_source_slot_bytes())"
         not in bound_shared_bytes
-        or "Ok(SelectedObservationSharedBytes::new(measures.retained_bytes(),source_slots_retained_bytes,binding_graph_initialization_bytes,))"
+        or "Ok(SelectedObservationSharedBytes::new(measures.retained_bytes(),reference_data_retained_bytes,source_slots_retained_bytes,binding_graph_initialization_bytes,))"
         not in bound_shared_bytes
         or bound_shared_bytes.count("measures.retained_bytes()") != 1
         or bound_open_internal.count("source_index==0") != 1
@@ -2978,7 +2982,7 @@ def validate_t17_selected_observation_resource_sources(
         or "constfnretained_source_slot_bytes()->usize{size_of::<Self>()}"
         not in compact_access
         or "measures.validate_problem(problem)?;" not in access_open
-        or "Self::from_locked_measurement_set(problem,source,current_state.clone(),measures,shared_bytes,content_budget,measurement_set,)"
+        or "Self::from_locked_measurement_set(problem,source,current_state.clone(),measures,shared_bytes,content_budget,measurement_set,ephemeris,)"
         not in access_open
         or "selected_content_plan(&measurement_set,problem,source,shared_bytes,content_budget,)?"
         not in access_from_locked
@@ -2994,13 +2998,14 @@ def validate_t17_selected_observation_resource_sources(
         not in access_owner_open
         or "validate_rebound_state(prior_state,&fresh_state)?;"
         not in access_rebind
-        or "MsCalEngine::new_selected_observation(&measurement_set,measures.provider(),measures.provider_state(),)?"
+        or "MsCalEngine::new_selected_observation(&measurement_set,measures.provider(),measures.provider_state(),ephemeris.cloned(),)?"
         not in access_from_planned
-        or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
+        or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_reference_data_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
         not in plan_admission
         or retained_metadata.count("shared_source_slots_retained_bytes") != 1
         or retained_metadata.count("shared_measures_retained_bytes") != 1
-        or "letretained_bytes=shared_source_slots_retained_bytes.checked_add(shared_measures_retained_bytes)"
+        or retained_metadata.count("shared_reference_data_retained_bytes") != 1
+        or "letretained_bytes=shared_source_slots_retained_bytes.checked_add(shared_measures_retained_bytes).and_then(|bytes|bytes.checked_add(shared_reference_data_retained_bytes))"
         not in retained_metadata
         or "coordinate_construction_scratch_bytes.checked_add(shared_bytes.shared_binding_graph_initialization_bytes)"
         not in plan_admission
@@ -3037,9 +3042,12 @@ def validate_t17_selected_observation_resource_sources(
         engine_fields.get("antenna_positions") != "Box<[MPosition]>"
         or engine_fields.get("antenna_mount_alt_az") != "Box<[bool]>"
         or engine_fields.get("field_directions") != "Box<[MDirection]>"
+        or engine_fields.get("field_phase_offsets") != "Box<[[f64;2]]>"
         or engine_fields.get("measures") != "Option<Arc<dynMeasuresProvider>>"
         or engine_fields.get("selected_observation_measures_state")
         != "Option<MeasuresProviderState>"
+        or engine_fields.get("selected_observation_ephemeris")
+        != "Option<Arc<SelectedObservationEphemeris>>"
         or any(
             forbidden in engine_constructor
             for forbidden in (
@@ -3048,12 +3056,14 @@ def validate_t17_selected_observation_resource_sources(
                 "MeasuresRuntime",
             )
         )
-        or engine_constructor.count(".into_boxed_slice()") != 3
+        or engine_constructor.count(".into_boxed_slice()") != 4
         or "measures:Some(measures)" not in engine_constructor
         or "selected_observation_measures_state:Some(measures_state)"
         not in engine_constructor
+        or "selected_observation_ephemeris:ephemeris" not in engine_constructor
         or "size_of::<MPosition>()+size_of::<bool>()" not in engine_projection
-        or "size_of::<MDirection>()" not in engine_projection
+        or "size_of::<MDirection>()+size_of::<[f64;2]>()"
+        not in engine_projection
         or ".prepare_bounded_state()" not in engine_verify
         or "actual!=Some(expected)" not in engine_verify
     ):
