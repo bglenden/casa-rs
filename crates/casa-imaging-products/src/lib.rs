@@ -44,7 +44,7 @@ pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
 pub use projection::{PublicationMemberProjection, PublicationProjection};
 pub use restore::{
-    ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,
+    MosaicSensitivity, ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,
     rescale_residual_to_beam,
 };
 pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};

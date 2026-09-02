@@ -36,8 +36,9 @@ use casa_imaging_model::{
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_products::{
-    ContinuumProductControls, ContinuumSourceCatalog, ProductGenerationAuthority, ProductsError,
-    fit_restoring_beam, gaussian_beam_image, normalize_plane, produce_continuum_members,
+    ContinuumProductControls, ContinuumSourceCatalog, MosaicSensitivity,
+    ProductGenerationAuthority, ProductsError, fit_restoring_beam, gaussian_beam_image,
+    normalize_plane, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, ImageDomainReconstructionMasks,
@@ -1439,6 +1440,39 @@ fn flat_noise_normalization_divides_by_the_exact_sensitivity() {
     // No usable sensitivity blanks every pixel instead of dividing by zero.
     let blanked = normalize_plane(&values, ProductNormalization::FlatNoise, 0.0).expect("blanked");
     assert!(blanked.iter().all(|value| value.is_nan()));
+}
+
+#[test]
+fn mosaic_sensitivity_owns_normalization_primary_beam_and_valid_support() {
+    let sensitivity =
+        MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("finite positive mosaic sensitivity");
+    assert_eq!(sensitivity.primary_beam(), [1.0, 0.5, 0.25, 0.0]);
+    assert_eq!(
+        sensitivity
+            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatNoise)
+            .expect("flat-noise normalization"),
+        [2.0, 2.0, 2.0, 0.0]
+    );
+    assert_eq!(
+        sensitivity
+            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatSky)
+            .expect("flat-sky normalization"),
+        [2.0, 4.0, 8.0, 0.0]
+    );
+
+    let policy = PrimaryBeamValidityPolicy::new(
+        0.25,
+        ProductSupportComparison::StrictlyGreater,
+        ProductBlankingPolicy::ZeroAndFalseMask,
+    )
+    .expect("valid PB policy");
+    assert_eq!(sensitivity.validity(policy), [true, true, false, false]);
+    assert_eq!(
+        sensitivity
+            .correct_primary_beam(&[2.0, 2.0, 2.0, 2.0], policy)
+            .expect("PB correction"),
+        [2.0, 4.0, 0.0, 0.0]
+    );
 }
 
 #[test]
