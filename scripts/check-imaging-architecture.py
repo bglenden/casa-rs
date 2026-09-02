@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "d92fb2cbe6e143638603cfafb704dac797b459a83edff1ca3fe20e0e65dfc530"
+    "e8bc9bd14442daef07646888424ee2cff87c3bd7be515e9b56356c32315d3a0f"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "a6923b1e919d5a4a479cd35ba8f8707f513e49baca99c61e4ea1d79af5cfac6f"
+    "d5da4452057c4d5c23636a0b4d30aafad9579fde17724ecdc47f0491e4b6cc91"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 80
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1934,7 +1934,7 @@ def validate_t18_global_weighting_sources(
         )
     if (
         "spectral_contributions" in selected_sample_fields
-        or "pub const SCHEMA_VERSION: u32 = 4;" not in sample_model
+        or "pub const SCHEMA_VERSION: u32 = 5;" not in sample_model
     ):
         raise ArchitectureError(
             "T18 spectral contributions must remain outside the persisted selected-sample schema"

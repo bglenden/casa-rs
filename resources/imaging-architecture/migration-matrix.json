@@ -100,7 +100,7 @@
     "repo://crates/casa-imaging-model/src/model_state.rs": "e824f140c6401ceaff875d0b32309ceac36d331ff6f77aab3ab3da36c1291b39",
     "repo://crates/casa-imaging-reconstruction/src/lib.rs": "cbc26beab88a56090b804776875ce0a3c0f2cf2c66c88da7e71f5a89c66d7ef6",
     "repo://crates/casa-imaging-reconstruction/src/major_cycle.rs": "21b1b8243e749f541a44b4d26d9739553fc73308e25bcb38b53820265bdbf717",
-    "repo://crates/casa-imaging-reconstruction/src/spectral_operator.rs": "e8300429e0d757c945696bbe499d007ff5cb52bdc2cfb5347b5dce5e88835bee",
+    "repo://crates/casa-imaging-reconstruction/src/spectral_operator.rs": "6ecad78571842681a80b351a0775a761d127d0bddb6f36e17a29d72af7c2c424",
     "repo://crates/casa-imaging-reconstruction/src/weighting.rs": "a0afc9dd078c93be7b5d0c7d2f9c9071611df6452fed7c5da15f7713c43f60b4",
     "repo://crates/casa-imaging-runtime/src/execution.rs": "85c36b9f516118a3e64c000efdd5acff94ae3d484eacfe0186612eced45c5898",
     "repo://crates/casa-imaging-runtime/src/execution_bindings.rs": "7323b964cca89c9f2de65ab2f3735a907ee267b9b8bb9c95ff43e6912b3aa1b4",

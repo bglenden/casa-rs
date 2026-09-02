@@ -234,6 +234,30 @@ struct MosaicResponse {
     antenna_responses: SelectedAntennaResponses,
 }
 
+impl MosaicResponse {
+    fn canonical_responses(self) -> SelectedAntennaResponses {
+        SelectedAntennaResponses {
+            antenna1: self.key.antenna1,
+            antenna2: self.key.antenna2,
+            family_envelope: self.key.family_envelope,
+        }
+    }
+
+    fn canonical_pointings(
+        self,
+        pointings: SelectedPointingDirections,
+    ) -> SelectedPointingDirections {
+        if self.antenna_responses.antenna1 <= self.antenna_responses.antenna2 {
+            pointings
+        } else {
+            SelectedPointingDirections {
+                antenna1: pointings.antenna2,
+                antenna2: pointings.antenna1,
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct MosaicProjectorKey {
     frequency_bits: u64,
@@ -5194,7 +5218,7 @@ impl SpectralSlabOperator {
         let (field_id, pointings) = sample
             .mosaic_route
             .ok_or(SpectralOperatorError::InvalidSample)?;
-        if pointings.antenna1 != pointings.antenna2
+        if pointings.antenna1.frame() != pointings.antenna2.frame()
             || pointings.antenna1.frame() != self.geometry.direction.reference_direction().frame()
         {
             return Err(SpectralOperatorError::UnsupportedProblem);
@@ -5202,6 +5226,7 @@ impl SpectralSlabOperator {
         let mosaic_response = sample
             .mosaic_response
             .ok_or(SpectralOperatorError::InvalidSample)?;
+        let pointings = mosaic_response.canonical_pointings(pointings);
         if !self.mosaic_projectors.contains_key(&mosaic_response.key) {
             let response = self
                 .primary_beam
@@ -5220,32 +5245,22 @@ impl SpectralSlabOperator {
                 MosaicProjector::new(
                     self.geometry,
                     response,
-                    mosaic_response.antenna_responses,
+                    mosaic_response.canonical_responses(),
                     mosaic_response.frequency_hz,
                     mosaic_response.support_frequency_hz,
                     specification.mosaic_field_capacity,
                 )?,
             );
         }
-        let pointing_pixel = crate::mask::direction_world_to_pixel(
-            self.geometry.direction,
-            [
-                pointings.antenna1.longitude_rad(),
-                pointings.antenna1.latitude_rad(),
-            ],
-        )
-        .map_err(|_| SpectralOperatorError::UnsupportedGeometry)?;
+        let response = self
+            .primary_beam
+            .as_ref()
+            .ok_or(SpectralOperatorError::UnsupportedProblem)?;
         let plan = self
             .mosaic_projectors
             .get_mut(&mosaic_response.key)
             .expect("frequency projector was inserted")
-            .plan(
-                field_id,
-                sample.uv_lambda(),
-                pointing_pixel,
-                self.geometry.reference_pixel,
-                self.geometry.image_shape,
-            )?;
+            .plan(response, field_id, sample.uv_lambda(), pointings)?;
         Ok(plan.map(|plan| OperatorTaps::Mosaic {
             response_key: mosaic_response.key,
             plan,
@@ -5268,6 +5283,7 @@ impl SpectralSlabOperator {
         let mosaic_response = sample
             .mosaic_response
             .ok_or(SpectralOperatorError::InvalidSample)?;
+        let pointings = mosaic_response.canonical_pointings(pointings);
         let OperatorTaps::Mosaic { plan, .. } = taps else {
             return Err(SpectralOperatorError::ProblemMismatch);
         };
@@ -7198,11 +7214,16 @@ impl SpectralSlabOperator {
         }
         let mut sensitivity = Vec::with_capacity(normal_cells);
         if let Some(accumulators) = self.mosaic_normal.take() {
+            let response = self
+                .primary_beam
+                .as_ref()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?;
             for accumulator in accumulators {
                 sensitivity.extend(accumulator.gridded_sensitivity(
                     self.geometry.image_shape,
                     self.geometry.image_blc,
-                    &self.mosaic_projectors,
+                    response,
+                    &mut self.mosaic_projectors,
                     &mut self.fft,
                 )?);
             }

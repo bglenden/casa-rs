@@ -62,6 +62,7 @@
     "max_elements_per_product": 5000000,
     "full_chunk_elements": 16384,
     "require_exact_product_inventory": false,
+    "require_metadata_parity": true,
     "require_direction_wcs_parity": true,
     "tolerances": {
       "contract_version": 2,
