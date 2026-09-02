@@ -404,6 +404,8 @@ def _beam_checks(
 ) -> list[dict[str, Any]]:
     checks = []
     metadata = product.get("metadata")
+    left_beams = _beam_parameter_sets(metadata, "left")
+    right_beams = _beam_parameter_sets(metadata, "right")
     for axis, threshold_name in (
         ("major", "beam_major_relative"),
         ("minor", "beam_minor_relative"),
@@ -413,24 +415,30 @@ def _beam_checks(
         checks.append(
             _ceiling_check(
                 f"{suffix}.{threshold_name}",
-                _relative_scalar(
-                    _beam_quantity(metadata, "left", axis, output_unit="arcsec"),
-                    _beam_quantity(metadata, "right", axis, output_unit="arcsec"),
+                _maximum_beam_metric(
+                    left_beams,
+                    right_beams,
+                    lambda left, right: _relative_scalar(
+                        left[0 if axis == "major" else 1],
+                        right[0 if axis == "major" else 1],
+                    ),
                 ),
                 thresholds[threshold_name],
             )
         )
     if "beam_pa_degrees" in thresholds:
-        left = _beam_quantity(metadata, "left", "positionangle", output_unit="deg")
-        right = _beam_quantity(metadata, "right", "positionangle", output_unit="deg")
-        difference = None
-        if _finite(left) and _finite(right):
-            raw = abs(float(left) - float(right)) % 180.0
-            difference = min(raw, 180.0 - raw)
+        def position_angle_difference(left, right):
+            raw = abs(left[2] - right[2]) % 180.0
+            return min(raw, 180.0 - raw)
+
         checks.append(
             _ceiling_check(
                 f"{suffix}.beam_pa_degrees",
-                difference,
+                _maximum_beam_metric(
+                    left_beams,
+                    right_beams,
+                    position_angle_difference,
+                ),
                 thresholds["beam_pa_degrees"],
             )
         )
@@ -669,13 +677,15 @@ def _beam_width_pixels(beam_info: dict[str, Any] | None) -> float | None:
 
 
 def _beam_area_relative(metadata: Any) -> float | None:
-    left = _beam_parameters(metadata, "left")
-    right = _beam_parameters(metadata, "right")
-    if left is None or right is None:
-        return None
-    left_area = left[0] * left[1]
-    right_area = right[0] * right[1]
-    return abs(left_area / right_area - 1.0) if right_area > 0.0 else None
+    return _maximum_beam_metric(
+        _beam_parameter_sets(metadata, "left"),
+        _beam_parameter_sets(metadata, "right"),
+        lambda left, right: (
+            abs((left[0] * left[1]) / (right[0] * right[1]) - 1.0)
+            if right[0] * right[1] > 0.0
+            else None
+        ),
+    )
 
 
 def scientific_beam_metrics(metadata: Any) -> dict[str, float | None]:
@@ -688,12 +698,16 @@ def scientific_beam_metrics(metadata: Any) -> dict[str, float | None]:
 
 
 def _beam_kernel_nrmse(metadata: Any) -> float | None:
-    left = _beam_parameters(metadata, "left")
-    right = _beam_parameters(metadata, "right")
-    if left is None or right is None:
-        return None
-    left_covariance = _beam_covariance(*left)
-    right_covariance = _beam_covariance(*right)
+    return _maximum_beam_metric(
+        _beam_parameter_sets(metadata, "left"),
+        _beam_parameter_sets(metadata, "right"),
+        _beam_kernel_nrmse_pair,
+    )
+
+
+def _beam_kernel_nrmse_pair(left, right) -> float | None:
+    left_covariance = _beam_covariance(left[0], left[1], math.radians(left[2]))
+    right_covariance = _beam_covariance(right[0], right[1], math.radians(right[2]))
     left_det = _determinant_2x2(left_covariance)
     right_det = _determinant_2x2(right_covariance)
     left_inverse = _inverse_2x2(left_covariance)
@@ -725,10 +739,38 @@ def _beam_kernel_nrmse(metadata: Any) -> float | None:
     return math.sqrt(difference_energy / right_energy)
 
 
-def _beam_parameters(metadata: Any, side: str) -> tuple[float, float, float] | None:
-    major = _beam_quantity(metadata, side, "major", output_unit="arcsec")
-    minor = _beam_quantity(metadata, side, "minor", output_unit="arcsec")
-    pa_degrees = _beam_quantity(metadata, side, "positionangle", output_unit="deg")
+def _beam_parameter_sets(
+    metadata: Any, side: str
+) -> list[tuple[float, float, float]] | None:
+    beam = _nested(metadata, side, "restoring_beam")
+    if not isinstance(beam, dict):
+        return None
+    if "beams" in beam:
+        channels = beam.get("beams")
+        if not isinstance(channels, dict) or not channels:
+            return None
+        leaves = []
+        for channel in sorted(channels, key=_beam_ordinal):
+            stokes = channels[channel]
+            if not isinstance(stokes, dict) or not stokes:
+                return None
+            for polarization in sorted(stokes, key=_beam_ordinal):
+                leaves.append(stokes[polarization])
+    else:
+        leaves = [beam]
+    result = [_beam_parameters(leaf) for leaf in leaves]
+    return result if result and all(value is not None for value in result) else None
+
+
+def _beam_ordinal(value: Any) -> int:
+    text = str(value)
+    return int(text[1:]) if text.startswith("*") and text[1:].isdigit() else -1
+
+
+def _beam_parameters(beam: Any) -> tuple[float, float, float] | None:
+    major = _beam_quantity(beam, "major", output_unit="arcsec")
+    minor = _beam_quantity(beam, "minor", output_unit="arcsec")
+    pa_degrees = _beam_quantity(beam, "positionangle", output_unit="deg")
     if (
         not _finite(major)
         or not _finite(minor)
@@ -737,7 +779,14 @@ def _beam_parameters(metadata: Any, side: str) -> tuple[float, float, float] | N
         or float(minor) <= 0.0
     ):
         return None
-    return float(major), float(minor), math.radians(float(pa_degrees))
+    return float(major), float(minor), float(pa_degrees)
+
+
+def _maximum_beam_metric(left, right, metric) -> float | None:
+    if left is None or right is None or len(left) != len(right):
+        return None
+    values = [metric(left_value, right_value) for left_value, right_value in zip(left, right)]
+    return max(values) if values and all(_finite(value) for value in values) else None
 
 
 def _beam_covariance(
@@ -785,10 +834,8 @@ def _relative_scalar(left: Any, right: Any) -> float | None:
     return abs(float(left) - float(right)) / abs(float(right))
 
 
-def _beam_quantity(
-    metadata: Any, side: str, name: str, *, output_unit: str
-) -> float | None:
-    quantity = _nested(metadata, side, "restoring_beam", name)
+def _beam_quantity(beam: Any, name: str, *, output_unit: str) -> float | None:
+    quantity = beam.get(name) if isinstance(beam, dict) else None
     if not isinstance(quantity, dict) or not _finite(quantity.get("value")):
         return None
     unit = quantity.get("unit")

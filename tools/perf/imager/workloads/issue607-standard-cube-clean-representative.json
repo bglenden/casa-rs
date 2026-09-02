@@ -74,7 +74,6 @@
           "beam_minor_relative": 0.001,
           "beam_pa_degrees": 0.1,
           "centroid_pixels": 0.05,
-          "integrated_flux_relative": 0.001,
           "peak_relative": 0.001
         }
       }
