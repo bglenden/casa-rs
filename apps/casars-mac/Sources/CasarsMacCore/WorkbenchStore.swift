@@ -6700,6 +6700,51 @@ public final class WorkbenchStore: ObservableObject {
         return try? surfaceParameterClient.runSafety(surfaceID: surfaceID, values: session.values)
     }
 
+    public func taskLaunchReadiness(
+        taskID: String? = nil,
+        instanceID: String? = nil
+    ) -> TaskLaunchReadiness {
+        let surfaceID = taskID ?? state.activeTaskID
+        guard let session = parameterSession(surfaceID: surfaceID, instanceID: instanceID) else {
+            return TaskLaunchReadiness(
+                status: .unavailable,
+                diagnostics: ["The canonical parameter session is unavailable."]
+            )
+        }
+        let parameterErrors = session.snapshot.diagnostics
+            .filter { $0.level == "error" }
+            .map(\.message)
+        guard parameterErrors.isEmpty else {
+            return TaskLaunchReadiness(status: .invalid, diagnostics: parameterErrors)
+        }
+        do {
+            let invocation = try surfaceParameterClient.providerInvocation(
+                surfaceID: surfaceID,
+                values: session.values
+            )
+            return TaskLaunchReadiness(
+                status: invocation.unsupportedReasons.isEmpty ? .ready : .infeasible,
+                protocolName: invocation.protocolName,
+                protocolVersion: invocation.protocolVersion,
+                unsupportedReasons: invocation.unsupportedReasons
+            )
+        } catch {
+            return TaskLaunchReadiness(
+                status: .invalid,
+                diagnostics: ["Project canonical provider invocation: \(error)"]
+            )
+        }
+    }
+
+    public func taskReceipt(runID: String?) -> NotebookExecutionReceipt? {
+        guard let runID else { return nil }
+        return state.scientificNotebooks?.notebooks
+            .lazy
+            .flatMap(\.receipts)
+            .filter { $0.runId == runID }
+            .max { $0.revision < $1.revision }
+    }
+
     public func taskRequiresConfirmation(taskID: String? = nil, instanceID: String? = nil) -> Bool {
         taskRunSafety(taskID: taskID, instanceID: instanceID)?.requiresInteractiveConfirmation ?? false
     }
@@ -6851,6 +6896,41 @@ public final class WorkbenchStore: ObservableObject {
                 diagnostics: ["Project provider invocation: \(error)"]
             )
             state.lastErrors.append("Project provider invocation for \(taskID): \(error)")
+            return
+        }
+        if !providerInvocation.unsupportedReasons.isEmpty {
+            let diagnostics = providerInvocation.unsupportedReasons.map {
+                "Unsupported \($0.kind): \($0.id)"
+            }
+            beginNotebookTaskRecording(
+                runID: runID,
+                tabID: tabID,
+                taskID: taskID,
+                session: parameterSession,
+                runSafety: runSafety
+            )
+            finalizeNotebookTaskRecording(
+                runID: runID,
+                status: "failed",
+                diagnostics: diagnostics
+            )
+            state.taskRun = TaskRun(
+                runID: runID,
+                state: .failed,
+                progress: 1.0,
+                logLines: [],
+                warnings: [],
+                products: [],
+                diagnostics: diagnostics,
+                requestSummary: genericTaskRequestSummary(taskID: taskID, instanceID: instanceID),
+                imagerProgress: imagerProgressSnapshot(
+                    taskID: taskID,
+                    runID: runID,
+                    taskState: .failed,
+                    progress: 1.0
+                )
+            )
+            state.lastErrors.append("The installed build cannot run this \(task.displayName) request.")
             return
         }
         let summary = genericTaskRequestSummary(taskID: taskID, instanceID: instanceID)

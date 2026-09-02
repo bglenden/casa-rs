@@ -1276,38 +1276,166 @@ final class WorkbenchStoreTests: XCTestCase {
             sourcePath: profileURL.path
         )
 
-        XCTAssertEqual(snapshot.contractVersion, 5)
+        XCTAssertEqual(snapshot.contractVersion, 12)
         XCTAssertEqual(snapshot.states["gridder"]?.value, .string(value: "awproject"))
-        XCTAssertTrue(snapshot.diagnostics.isEmpty)
-        for name in ["cfcache", "cf_resident_mb", "aterm", "psterm", "wbawp", "conjbeams", "usepointing", "normtype"] {
+        XCTAssertFalse(snapshot.diagnostics.contains { $0.level == "error" }, "\(snapshot.diagnostics)")
+        XCTAssertTrue(snapshot.diagnostics.contains { $0.code == "migrated" })
+        let wideFieldNames = ["cfcache", "cf_resident_mb", "aterm", "psterm", "wbawp", "conjbeams"]
+        for name in wideFieldNames + ["usepointing", "normtype"] {
             XCTAssertTrue(try XCTUnwrap(snapshot.states[name]).active, "\(name) must activate for AWProject")
         }
+        let bundle = try client.loadBundle(surfaceID: "imager")
+        for name in wideFieldNames {
+            let presentation = try XCTUnwrap(
+                bundle.surface.bindings.first { $0.name == name }?.projections.presentation
+            )
+            XCTAssertEqual(presentation.group, "Advanced Wide-Field")
+            XCTAssertTrue(presentation.advanced)
+        }
 
-        let activeValues = snapshot.states.compactMapValues { state in
+        var activeValues = snapshot.states.compactMapValues { state in
             state.active ? state.value : nil
         }
+        activeValues["cf_resident_mb"] = .integer(384)
+        let edited = try client.resolve(
+            surfaceID: "imager",
+            baseSource: .file,
+            profileTOML: profile,
+            profilePath: profileURL.path,
+            context: SurfaceParameterPatch(),
+            override: SurfaceParameterPatch(values: ["cf_resident_mb": .integer(384)])
+        )
+        XCTAssertEqual(edited.states["cf_resident_mb"]?.value, .integer(384))
+
+        let savedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t64-vlass-\(UUID().uuidString).toml")
+        defer { try? FileManager.default.removeItem(at: savedURL) }
+        _ = try client.save(
+            surfaceID: "imager",
+            values: edited.states.compactMapValues(\.value),
+            destinationPath: savedURL.path
+        )
+        let savedProfile = try String(contentsOf: savedURL, encoding: .utf8)
+        XCTAssertTrue(savedProfile.contains("cf_resident_mb = 384"))
+        let reloaded = try client.load(
+            surfaceID: "imager",
+            profileTOML: savedProfile,
+            sourcePath: savedURL.path
+        )
+        XCTAssertEqual(reloaded.states["cf_resident_mb"]?.value, .integer(384))
+
         let invocation = try client.providerInvocation(surfaceID: "imager", values: activeValues)
+        XCTAssertEqual(invocation.args, ["--managed-output", "true", "--json-run", "-"])
+        XCTAssertEqual(invocation.protocolName, "casa_imager_task")
+        XCTAssertEqual(invocation.protocolVersion, 6)
+        let unsupported = Set(invocation.unsupportedReasons.map(\.id))
+        XCTAssertTrue(unsupported.contains("task.aw_projection"))
+        XCTAssertTrue(unsupported.contains("task.w_projection_planes"))
 
-        func assertPair(_ flag: String, _ value: String) {
-            guard let index = invocation.args.firstIndex(of: flag), index + 1 < invocation.args.count else {
-                return XCTFail("missing provider argument \(flag)")
-            }
-            XCTAssertEqual(invocation.args[index + 1], value, "unexpected value for \(flag)")
-        }
+        let stdin = try XCTUnwrap(invocation.stdin)
+        let envelope = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(stdin.utf8)) as? [String: Any]
+        )
+        XCTAssertEqual(envelope["kind"] as? String, "run")
+        let request = try XCTUnwrap(envelope["request"] as? [String: Any])
+        XCTAssertEqual(request["measurement_set"] as? String, "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms")
+        XCTAssertEqual(request["image_name"] as? String, "products/vlass-single-field")
+        XCTAssertEqual(request["image_size"] as? Int, 12_150)
+        XCTAssertEqual(request["uvrange"] as? String, "<12km")
+        XCTAssertEqual(request["intent"] as? String, "OBSERVE_TARGET#UNSPECIFIED")
+        XCTAssertEqual(request["spw_selector"] as? String, "2~17")
+        XCTAssertEqual(request["w_project_planes"] as? Int, 32)
+        XCTAssertEqual(request["use_pointing"] as? Bool, true)
+        let awProject = try XCTUnwrap(request["aw_project"] as? [String: Any])
+        XCTAssertEqual(awProject["cf_cache"] as? String, "cf-cache/vlass-spw2-17")
+        XCTAssertEqual(awProject["cf_resident_mb"] as? Int, 384)
+        XCTAssertEqual(awProject["a_term"] as? Bool, true)
+        XCTAssertEqual(awProject["ps_term"] as? Bool, false)
+        XCTAssertEqual(awProject["wb_awp"] as? Bool, true)
+        XCTAssertEqual(awProject["conjugate_beams"] as? Bool, true)
+    }
 
-        assertPair("--gridder", "awproject")
-        assertPair("--cfcache", "cf-cache/vlass-spw2-17")
-        assertPair("--cf-resident-mb", "256")
-        assertPair("--uvrange", "<12km")
-        assertPair("--intent", "OBSERVE_TARGET#UNSPECIFIED")
-        assertPair("--stokes", "I")
-        assertPair("--projection", "SIN")
-        assertPair("--normtype", "flatnoise")
-        XCTAssertTrue(invocation.args.contains("--aterm"))
-        XCTAssertTrue(invocation.args.contains("--wbawp"))
-        XCTAssertTrue(invocation.args.contains("--conjbeams"))
-        XCTAssertTrue(invocation.args.contains("--usepointing"))
-        XCTAssertTrue(invocation.args.contains("--no-psterm"))
+    func testT64WorkbenchBlocksTypedVlassInfeasibilityAndLaunchesSupportedRequest() throws {
+        let fixtureRoot = repositoryRootURL().appendingPathComponent("resources/test-profiles", isDirectory: true)
+        let profileURL = fixtureRoot.appendingPathComponent("vlass-single-field-awproject.toml")
+        let blockedTaskClient = HoldingGenericTaskClient()
+        var blockedState = EmptyWorkbench.makeState()
+        blockedState.applicationCatalog = [makeImagerApplicationCatalogEntry()]
+        blockedState.activeTaskID = "imager"
+        blockedState.tabs = [WorkbenchTab(id: "tab-imager", title: "Imager", kind: .task, taskID: "imager")]
+        blockedState.activeTabID = "tab-imager"
+        let blockedStore = WorkbenchStore(
+            state: blockedState,
+            genericTaskClient: blockedTaskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema())
+        )
+
+        blockedStore.loadTaskUISchemaIfNeeded("imager", instanceID: "tab-imager")
+        blockedStore.loadActiveParameterProfile(from: profileURL.path, discardEdits: true)
+        let blockedReadiness = blockedStore.taskLaunchReadiness(taskID: "imager", instanceID: "tab-imager")
+        XCTAssertEqual(blockedReadiness.status, .infeasible)
+        XCTAssertEqual(blockedReadiness.protocolName, "casa_imager_task")
+        XCTAssertEqual(blockedReadiness.protocolVersion, 6)
+        let blockedReasons = Set(blockedReadiness.unsupportedReasons.map(\.id))
+        XCTAssertTrue(blockedReasons.contains("task.aw_projection"))
+        XCTAssertTrue(blockedReasons.contains("task.w_projection_planes"))
+
+        blockedStore.setGenericTaskConfirmation(
+            taskID: "imager",
+            instanceID: "tab-imager",
+            confirmed: true
+        )
+        blockedStore.runTask()
+        XCTAssertTrue(blockedTaskClient.requests.isEmpty)
+        XCTAssertEqual(blockedStore.state.taskRun.state, .failed)
+        XCTAssertTrue(
+            blockedStore.state.taskRun.diagnostics.contains { $0.hasSuffix(": task.aw_projection") },
+            "\(blockedStore.state.taskRun.diagnostics)"
+        )
+
+        let supportedTaskClient = HoldingGenericTaskClient()
+        var supportedState = EmptyWorkbench.makeState()
+        supportedState.applicationCatalog = [makeImagerApplicationCatalogEntry()]
+        supportedState.activeTaskID = "imager"
+        supportedState.tabs = [WorkbenchTab(id: "tab-imager", title: "Imager", kind: .task, taskID: "imager")]
+        supportedState.activeTabID = "tab-imager"
+        let supportedStore = WorkbenchStore(
+            state: supportedState,
+            genericTaskClient: supportedTaskClient,
+            taskUISchemaClient: StubTaskUISchemaClient(schema: try makeImagerTaskUISchema())
+        )
+        supportedStore.loadTaskUISchemaIfNeeded("imager", instanceID: "tab-imager")
+        supportedStore.setGenericTaskValue(
+            taskID: "imager",
+            instanceID: "tab-imager",
+            argumentID: "vis",
+            value: "input.ms"
+        )
+        supportedStore.setGenericTaskValue(
+            taskID: "imager",
+            instanceID: "tab-imager",
+            argumentID: "imagename",
+            value: "products/supported"
+        )
+        supportedStore.setGenericTaskToggle(
+            taskID: "imager",
+            instanceID: "tab-imager",
+            argumentID: "write_preview_pngs",
+            value: false
+        )
+
+        XCTAssertEqual(
+            supportedStore.taskLaunchReadiness(taskID: "imager", instanceID: "tab-imager").status,
+            .ready
+        )
+        supportedStore.setGenericTaskConfirmation(
+            taskID: "imager",
+            instanceID: "tab-imager",
+            confirmed: true
+        )
+        supportedStore.runTask()
+        XCTAssertEqual(supportedTaskClient.requests.count, 1)
+        XCTAssertEqual(supportedStore.state.taskRun.state, .running)
     }
 
     func testSwiftUniFFIUsesCatalogProviderInvocationIncludingStdin() throws {
@@ -4919,18 +5047,15 @@ final class WorkbenchStoreTests: XCTestCase {
         store.setGenericTaskValue(taskID: "imager", argumentID: "imsize", value: "256")
         store.setGenericTaskValue(taskID: "imager", argumentID: "cell", value: "0.25arcsec")
         store.setGenericTaskValue(taskID: "imager", argumentID: "weighting", value: "briggs")
-        store.setGenericTaskValue(taskID: "imager", argumentID: "channel_start", value: "2")
-        store.setGenericTaskValue(taskID: "imager", argumentID: "channel_count", value: "4")
+        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         XCTAssertEqual(taskClient.requests.count, 1)
-        let arguments = try ProcessGenericTaskClient.arguments(for: taskClient.requests[0])
-        XCTAssertTrue(arguments.contains("--managed-output"))
-        XCTAssertTrue(arguments.contains("--progress"))
-        XCTAssertTrue(arguments.contains("--progress-max-uv-points"))
-        XCTAssertTrue(arguments.contains("16384"))
-        XCTAssertTrue(arguments.contains("--ms"))
-        XCTAssertTrue(arguments.contains("probed.ms"))
+        let request = try XCTUnwrap(taskClient.requests.first)
+        XCTAssertEqual(request.providerInvocation.protocolName, "casa_imager_task")
+        XCTAssertEqual(request.providerInvocation.protocolVersion, 6)
+        XCTAssertEqual(request.providerInvocation.args, ["--managed-output", "true", "--json-run", "-"])
+        XCTAssertNotNil(request.providerInvocation.stdin)
         waitFor("imager completion") {
             store.debugSnapshot().taskState == .succeeded
         }
@@ -4995,6 +5120,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openImagerTaskForSelectedDataset()
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         let runID = try XCTUnwrap(store.state.taskRun.runID)
@@ -5069,6 +5195,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openImagerTaskForSelectedDataset()
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         let runID = try XCTUnwrap(store.state.taskRun.runID)
@@ -5541,6 +5668,7 @@ final class WorkbenchStoreTests: XCTestCase {
         store.openDefaultTab(kind: .task)
         store.selectTask("imager")
         store.setGenericTaskConfirmation(taskID: "imager", confirmed: true)
+        store.setGenericTaskToggle(taskID: "imager", argumentID: "write_preview_pngs", value: false)
         store.runTask()
 
         XCTAssertNotNil(
