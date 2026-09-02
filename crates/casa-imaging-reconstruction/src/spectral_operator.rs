@@ -3939,7 +3939,11 @@ impl CompleteDataOwnerState {
             for ((weighted, observed), predicted) in
                 group.iter().zip(visibilities).zip(predicted_correlations)
             {
-                let predicted = casa_persistent_complex(predicted);
+                let predicted = casa_model_output_prediction(
+                    weighted.selected(),
+                    predicted,
+                    self.finite_values,
+                )?;
                 self.predicted_selected.push(FinalVisibilitySample {
                     address: weighted.selected().address,
                     observed,
@@ -4052,7 +4056,11 @@ impl CompleteDataOwnerState {
             && (touches_core || self.specification.slab.total_channels() == 1)
         {
             for ((weighted, observed), predicted) in group.iter().zip(&observed).zip(&predicted) {
-                let predicted = casa_persistent_complex(*predicted);
+                let predicted = casa_model_output_prediction(
+                    weighted.selected(),
+                    *predicted,
+                    self.finite_values,
+                )?;
                 self.predicted_selected.push(FinalVisibilitySample {
                     address: weighted.selected().address,
                     observed: *observed,
@@ -4234,7 +4242,11 @@ impl CompleteDataOwnerState {
                 && (touches_core || self.specification.slab.total_channels() == 1)
             {
                 for ((weighted, observed), predicted) in group.iter().zip(observed).zip(predicted) {
-                    let predicted = casa_persistent_complex(predicted);
+                    let predicted = casa_model_output_prediction(
+                        weighted.selected(),
+                        predicted,
+                        self.finite_values,
+                    )?;
                     self.predicted_selected.push(FinalVisibilitySample {
                         address: weighted.selected().address,
                         observed,
@@ -4531,6 +4543,21 @@ fn selected_visibility(value: SelectedVisibilitySample) -> Complex64 {
         SelectedVisibilitySample::Complex32([real, imaginary]) => {
             Complex64::new(f64::from(real), f64::from(imaginary))
         }
+    }
+}
+
+fn casa_model_output_prediction(
+    sample: &crate::weighting::WeightingSelectedSample,
+    predicted: Complex64,
+    finite_values: FiniteValuePolicy,
+) -> Result<Complex64, SpectralOperatorError> {
+    if accept_polarization_input(sample, finite_values)? {
+        Ok(casa_persistent_complex(predicted))
+    } else {
+        // GridFT initializes the selected prediction buffer to zero and skips
+        // flagged rows and correlations in sectdgrid. Persist the same value
+        // while retaining exhaustive selected-address coverage for the writer.
+        Ok(Complex64::default())
     }
 }
 

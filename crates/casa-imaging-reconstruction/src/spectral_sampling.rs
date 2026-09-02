@@ -448,10 +448,11 @@ pub fn compile_spectral_stencil<'a>(
     let law = problem.science().spectral().sampling();
     let frequency_hz = evaluation.output_frame().centre_hz();
     // Preserve paired forward support even when flags force the adjoint weight
-    // to zero: MODEL_DATA refreshes every selected cell, including flagged
-    // cells. A constant-basis model evaluates the same coefficient at every
-    // selected frequency rather than treating source-channel ordinal as a
-    // model coefficient.
+    // to zero. The terminal output owner retains exhaustive selected-address
+    // coverage and applies CASA's zero-for-flagged MODEL_DATA convention. A
+    // constant-basis model evaluates the same coefficient at every selected
+    // frequency rather than treating source-channel ordinal as a model
+    // coefficient.
     let terms = match problem.reconstruction().basis() {
         ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. } => {
             one_term(0, 1.0, frequency_hz)?
