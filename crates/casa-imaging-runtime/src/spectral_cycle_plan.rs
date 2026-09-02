@@ -1681,7 +1681,7 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
         .unwrap_or_else(|| "serial-visibility-write-queue".to_string());
     let persistent_bytes = storage_plan.additional_persistent_bytes();
     let write_bytes = storage_plan.write_bytes().max(1);
-    let cell_bytes = storage_plan.maximum_cell_bytes().max(1);
+    let cell_bytes = storage_plan.write_buffer_bytes().max(1);
     let block_copy_bytes = u64::try_from(policy.weighting_limits.max_block_samples())
         .ok()
         .and_then(|samples| {
