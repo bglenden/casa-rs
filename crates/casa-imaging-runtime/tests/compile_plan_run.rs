@@ -10,7 +10,7 @@ use std::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use sha2::{Digest, Sha256};
@@ -1411,10 +1411,12 @@ struct PublicationPause {
 }
 
 impl PublicationPause {
-    fn wait_until_entered(&self) {
-        while !self.entered.load(Ordering::SeqCst) {
+    fn wait_until_entered(&self, timeout: Duration) -> bool {
+        let started = Instant::now();
+        while !self.entered.load(Ordering::SeqCst) && started.elapsed() < timeout {
             std::thread::yield_now();
         }
+        self.entered.load(Ordering::SeqCst)
     }
 
     fn release(&self) {
@@ -8702,7 +8704,11 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
     let max_bytes = 1_048_576;
     let receipts = execution_plan.receipt_store();
     let pause = Arc::new(PublicationPause::default());
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = product_publication_recording_executor(
+        &problem,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
     executor.publication_pause = Some(Arc::clone(&pause));
     let registry = TestRegistry {
         id: registry(3),
@@ -8743,7 +8749,11 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
                 .expect("first run result receiver");
         });
 
-        pause.wait_until_entered();
+        assert!(
+            pause.wait_until_entered(Duration::from_secs(5)),
+            "first run exited before publication pause: {:?}",
+            first_rx.try_recv()
+        );
         let retained_bytes = fs::read_dir(receipts.root_path())
             .expect("receipt root")
             .map(|entry| {
@@ -8775,10 +8785,13 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
                 ))
                 .expect("second run result receiver");
         });
-        assert!(matches!(
-            second_rx.recv_timeout(Duration::from_millis(100)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-        ));
+        match second_rx.recv_timeout(Duration::from_millis(100)) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            unexpected => {
+                pause.release();
+                panic!("second run bypassed the retained reservation: {unexpected:?}");
+            }
+        }
 
         pause.release();
         assert_eq!(

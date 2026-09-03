@@ -1277,6 +1277,7 @@ impl ExecutionReceiptStore {
             active_nodes: BTreeMap::new(),
             active_fences: BTreeMap::new(),
             pending_publications: BTreeSet::new(),
+            publication_mutation: None,
             terminal: false,
         })
     }
@@ -1312,11 +1313,20 @@ impl ExecutionReceiptStore {
     }
 
     fn persist(&self, body: &ReceiptBody, is_new: bool) -> Result<(), ReceiptError> {
-        let _mutation = self
+        let mutation = self
             .state
             .mutation
             .lock()
             .map_err(|_| ReceiptError::InvalidStore)?;
+        self.persist_while_locked(body, is_new, &mutation)
+    }
+
+    fn persist_while_locked(
+        &self,
+        body: &ReceiptBody,
+        is_new: bool,
+        _mutation: &MutexGuard<'_, ()>,
+    ) -> Result<(), ReceiptError> {
         let bytes = encode_document(body)?;
         let actual_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         let reserved_bytes = if body.status.is_terminal() {
@@ -1339,11 +1349,19 @@ impl ExecutionReceiptStore {
     }
 
     fn persist_checkpoint(&self, body: &ReceiptBody) -> Result<(), ReceiptError> {
-        let _mutation = self
+        let mutation = self
             .state
             .mutation
             .lock()
             .map_err(|_| ReceiptError::InvalidStore)?;
+        self.persist_checkpoint_while_locked(body, &mutation)
+    }
+
+    fn persist_checkpoint_while_locked(
+        &self,
+        body: &ReceiptBody,
+        _mutation: &MutexGuard<'_, ()>,
+    ) -> Result<(), ReceiptError> {
         let bytes = encode_document(body)?;
         atomic_write_checkpoint(&self.receipt_path(body.attempt()), &bytes)
     }
@@ -3780,6 +3798,7 @@ pub(crate) struct ReceiptRecorder<'store> {
     active_nodes: BTreeMap<String, Instant>,
     active_fences: BTreeMap<(String, String), Instant>,
     pending_publications: BTreeSet<String>,
+    publication_mutation: Option<MutexGuard<'store, ()>>,
     terminal: bool,
 }
 
@@ -4014,8 +4033,14 @@ impl<'store> ReceiptRecorder<'store> {
         self.body.failure = failure.map(ReceiptFailure::projection);
         self.body.finished_unix_millis = Some(now_millis());
         self.body.revision = self.body.revision.saturating_add(1);
-        self.store.persist(&self.body, false)?;
+        if let Some(mutation) = &self.publication_mutation {
+            self.store
+                .persist_while_locked(&self.body, false, mutation)?;
+        } else {
+            self.store.persist(&self.body, false)?;
+        }
         self.terminal = true;
+        drop(self.publication_mutation.take());
         Ok(())
     }
 
@@ -4114,10 +4139,20 @@ impl<'store> ReceiptRecorder<'store> {
         if self.pending_publications != expected || prepared != expected {
             return Err(ReceiptError::IncompleteSuccess);
         }
+        let mutation = self
+            .store
+            .state
+            .mutation
+            .lock()
+            .map_err(|_| ReceiptError::InvalidStore)?;
         self.body.status = ReceiptStatus::PublicationPrepared;
         self.body.failure = None;
         self.body.finished_unix_millis = None;
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        self.store
+            .persist_checkpoint_while_locked(&self.body, &mutation)?;
+        self.publication_mutation = Some(mutation);
+        Ok(())
     }
 
     pub(crate) fn complete_independent_product_publication(&mut self) -> Result<(), ReceiptError> {
@@ -4147,7 +4182,12 @@ impl<'store> ReceiptRecorder<'store> {
 
     fn checkpoint(&mut self) -> Result<(), ReceiptError> {
         self.body.revision = self.body.revision.saturating_add(1);
-        self.store.persist_checkpoint(&self.body)
+        if let Some(mutation) = &self.publication_mutation {
+            self.store
+                .persist_checkpoint_while_locked(&self.body, mutation)
+        } else {
+            self.store.persist_checkpoint(&self.body)
+        }
     }
 
     fn finish_node(
