@@ -12,7 +12,7 @@ use std::{error::Error, fmt};
 
 use casa_imaging_model::{LogicalIdentity, ModelExecutionAttemptId};
 use casa_imaging_reconstruction::{
-    MajorCycleError, MajorCycleOwner, MajorCyclePreparation, ModelLifecycle, ReconstructionMaskSet,
+    MajorCycleError, MajorCycleOwner, MajorCyclePreparation, ModelLifecycle,
 };
 
 use crate::{
@@ -54,15 +54,6 @@ impl MajorCycleOperatorState {
             owner: MajorCycleOwner::from_complete_data(result.into_evidence(), preparation)?,
         };
         Ok(state)
-    }
-
-    /// Bind reconstruction-owned support lineage without interpreting mask contents.
-    pub fn bind_reconstruction_masks(
-        mut self,
-        masks: &ReconstructionMaskSet,
-    ) -> Result<Self, MajorCycleOperatorError> {
-        self.owner = self.owner.bind_reconstruction_masks(masks)?;
-        Ok(self)
     }
 
     /// Perform the one atomic Major-Cycle reconciliation.

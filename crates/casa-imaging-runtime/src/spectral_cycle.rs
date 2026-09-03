@@ -931,7 +931,6 @@ struct SpectralCycleExecutorState {
     prepared_model: Option<PreparedFinalModel>,
     result: Option<MajorCycleOperatorResult>,
     reconstruction_cycle_completion: Option<ReconstructionCyclePhaseCompletion>,
-    reconstruction_masks: Option<ReconstructionMaskSet>,
     output_completion: Option<MajorCycleCompletion>,
     complete_data_source_pass_count: u64,
 }
@@ -1067,15 +1066,13 @@ impl FinalMajorPhaseInput {
         Box<[ModelDeltaTerm]>,
         FinalModelContinuation,
         FinalNormalState,
-        ReconstructionMaskSet,
     ) {
         let ReconstructionCyclePhaseEvidence {
             normal_state,
             continuation,
             reconstruction_cycle: _,
-            masks,
         } = *self.evidence;
-        (self.terms, continuation, normal_state, masks)
+        (self.terms, continuation, normal_state)
     }
 }
 
@@ -1186,7 +1183,6 @@ impl SpectralCycleExecutor {
                 prepared_model: None,
                 result: None,
                 reconstruction_cycle_completion: None,
-                reconstruction_masks: None,
                 output_completion: None,
                 complete_data_source_pass_count: 0,
             }),
@@ -1250,7 +1246,6 @@ impl SpectralCycleExecutor {
                 prepared_model: None,
                 result: None,
                 reconstruction_cycle_completion: None,
-                reconstruction_masks: None,
                 output_completion: None,
                 complete_data_source_pass_count: 0,
             }),
@@ -1304,7 +1299,6 @@ impl SpectralCycleExecutor {
                 prepared_model: None,
                 result: None,
                 reconstruction_cycle_completion: None,
-                reconstruction_masks: None,
                 output_completion: Some(completion),
                 complete_data_source_pass_count: 0,
             }),
@@ -1474,7 +1468,7 @@ impl SpectralCycleExecutor {
             context.attempt_id().as_bytes(),
         ));
         let epoch = context.lease_epoch();
-        let (lifecycle, named, terms, prior_normal_state, reconstruction_masks) = match input {
+        let (lifecycle, named, terms, prior_normal_state) = match input {
             SpectralCyclePassInput::Initial => {
                 let mut lifecycle =
                     ModelLifecycle::bind(executable, attempt, epoch).map_err(io::Error::other)?;
@@ -1489,20 +1483,14 @@ impl SpectralCycleExecutor {
                     }
                 }
                 .map_err(io::Error::other)?;
-                (lifecycle, named, None, None, None)
+                (lifecycle, named, None, None)
             }
             SpectralCyclePassInput::FinalMajor(input) => {
-                let (terms, continuation, prior_normal_state, masks) = input.into_execution_parts();
+                let (terms, continuation, prior_normal_state) = input.into_execution_parts();
                 let (lifecycle, named) =
                     ModelLifecycle::continue_from(executable, attempt, epoch, continuation)
                         .map_err(io::Error::other)?;
-                (
-                    lifecycle,
-                    named,
-                    Some(terms),
-                    Some(prior_normal_state),
-                    Some(masks),
-                )
+                (lifecycle, named, Some(terms), Some(prior_normal_state))
             }
         };
         let delta = match terms {
@@ -1520,7 +1508,6 @@ impl SpectralCycleExecutor {
             preparation,
             prior_normal_state,
         ));
-        state.reconstruction_masks = reconstruction_masks;
         state.lifecycle = Some(lifecycle);
         Ok(())
     }
@@ -2338,13 +2325,8 @@ impl WorkImplementation for SpectralCycleExecutor {
                     .take()
                     .ok_or_else(|| io::Error::other("final-model preparation missing"))?
                     .into_reconciliation(context)?;
-                let mut owner = MajorCycleOperatorState::begin(complete, preparation)
+                let owner = MajorCycleOperatorState::begin(complete, preparation)
                     .map_err(io::Error::other)?;
-                if let Some(masks) = state.reconstruction_masks.take() {
-                    owner = owner
-                        .bind_reconstruction_masks(&masks)
-                        .map_err(io::Error::other)?;
-                }
                 let mut lifecycle = state
                     .lifecycle
                     .take()
@@ -2780,7 +2762,6 @@ impl ReconstructionCyclePhaseCompletion {
                 normal_state: self.normal_state,
                 continuation: self.continuation,
                 reconstruction_cycle: self.evidence,
-                masks: self.masks,
             }),
         }
     }
@@ -2791,7 +2772,6 @@ pub struct ReconstructionCyclePhaseEvidence {
     normal_state: FinalNormalState,
     continuation: FinalModelContinuation,
     reconstruction_cycle: ReconstructionCycleEvidence,
-    masks: ReconstructionMaskSet,
 }
 
 impl ReconstructionCyclePhaseEvidence {

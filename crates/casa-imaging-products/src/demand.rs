@@ -115,8 +115,8 @@ impl PlannedContinuumGeneration {
         }
 
         let algorithm_scratch_bytes = match inputs.normal_state().catalog() {
-            NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
-            NormalStateCatalog::UnnormalizedJointBlockV1 => generic_scratch_bytes(self, inputs)?,
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+            | NormalStateCatalog::UnnormalizedJointBlockV1 => taylor_scratch_bytes(inputs)?,
             NormalStateCatalog::UnnormalizedPlaneV1
             | NormalStateCatalog::UnnormalizedChannelSlabV1 => generic_scratch_bytes(self, inputs)?,
         };
