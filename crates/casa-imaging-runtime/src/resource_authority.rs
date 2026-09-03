@@ -84,6 +84,7 @@ pub struct StorageIoResourceBinding {
     domain: StorageDomainId,
     read_rate: RateResourceId,
     write_rate: RateResourceId,
+    operations_rate: Option<RateResourceId>,
     queue: QueueResourceId,
 }
 
@@ -100,6 +101,25 @@ impl StorageIoResourceBinding {
             domain,
             read_rate,
             write_rate,
+            operations_rate: None,
+            queue,
+        }
+    }
+
+    /// Bind a storage domain whose IOPS capacity was explicitly calibrated.
+    #[must_use]
+    pub const fn new_with_operations_rate(
+        domain: StorageDomainId,
+        read_rate: RateResourceId,
+        write_rate: RateResourceId,
+        operations_rate: RateResourceId,
+        queue: QueueResourceId,
+    ) -> Self {
+        Self {
+            domain,
+            read_rate,
+            write_rate,
+            operations_rate: Some(operations_rate),
             queue,
         }
     }
@@ -120,6 +140,12 @@ impl StorageIoResourceBinding {
     #[must_use]
     pub const fn write_rate(&self) -> &RateResourceId {
         &self.write_rate
+    }
+
+    /// Return the calibrated operations-per-second identity when profiled.
+    #[must_use]
+    pub const fn operations_rate(&self) -> Option<&RateResourceId> {
+        self.operations_rate.as_ref()
     }
 
     /// Return the bounded storage-queue identity.
@@ -380,11 +406,13 @@ pub struct ProductionStorageProfile {
     available_bytes: u64,
     read_bytes_per_second: u64,
     write_bytes_per_second: u64,
+    operations_per_second: Option<u64>,
     queue_slots: u64,
     table_lock_slots: u64,
     domain: StorageDomainId,
     read_rate: RateResourceId,
     write_rate: RateResourceId,
+    operations_rate: Option<RateResourceId>,
     queue: QueueResourceId,
 }
 
@@ -426,13 +454,34 @@ impl ProductionStorageProfile {
             available_bytes,
             read_bytes_per_second,
             write_bytes_per_second,
+            operations_per_second: None,
             queue_slots,
             table_lock_slots,
             domain: StorageDomainId::new(format!("production-output-{suffix}")),
             read_rate: RateResourceId::new(format!("production-output-read-{suffix}")),
             write_rate: RateResourceId::new(format!("production-output-write-{suffix}")),
+            operations_rate: None,
             queue: QueueResourceId::new(format!("production-output-queue-{suffix}")),
         })
+    }
+
+    /// Attach a calibrated storage operations-per-second capacity.
+    pub fn with_operations_rate(
+        mut self,
+        operations_per_second: u64,
+    ) -> Result<Self, ResourceError> {
+        if operations_per_second == 0 {
+            return Err(ResourceError::Invalid(
+                "production storage operations rate must be positive".to_string(),
+            ));
+        }
+        let digest = hex_digest(&self.filesystem_root.to_string_lossy());
+        self.operations_rate = Some(RateResourceId::new(format!(
+            "production-output-operations-{}",
+            &digest[..16]
+        )));
+        self.operations_per_second = Some(operations_per_second);
+        Ok(self)
     }
 
     /// Return the path-free storage-domain identity.
@@ -453,6 +502,14 @@ impl ProductionStorageProfile {
         &self.write_rate
     }
 
+    /// Return the calibrated operations-per-second identity.
+    #[must_use]
+    pub fn operations_rate_id(&self) -> &RateResourceId {
+        self.operations_rate
+            .as_ref()
+            .expect("operations rate requested from an unprofiled storage domain")
+    }
+
     /// Return the bounded output queue identity.
     #[must_use]
     pub const fn queue_id(&self) -> &QueueResourceId {
@@ -462,12 +519,21 @@ impl ProductionStorageProfile {
     /// Return the exact path-free resource identities registered by this profile.
     #[must_use]
     pub fn io_resources(&self) -> StorageIoResourceBinding {
-        StorageIoResourceBinding::new(
-            self.domain.clone(),
-            self.read_rate.clone(),
-            self.write_rate.clone(),
-            self.queue.clone(),
-        )
+        match &self.operations_rate {
+            Some(operations_rate) => StorageIoResourceBinding::new_with_operations_rate(
+                self.domain.clone(),
+                self.read_rate.clone(),
+                self.write_rate.clone(),
+                operations_rate.clone(),
+                self.queue.clone(),
+            ),
+            None => StorageIoResourceBinding::new(
+                self.domain.clone(),
+                self.read_rate.clone(),
+                self.write_rate.clone(),
+                self.queue.clone(),
+            ),
+        }
     }
 
     fn same_calibration(&self, other: &Self) -> bool {
@@ -475,6 +541,8 @@ impl ProductionStorageProfile {
             && self.capacity_bytes == other.capacity_bytes
             && self.read_bytes_per_second == other.read_bytes_per_second
             && self.write_bytes_per_second == other.write_bytes_per_second
+            && self.operations_rate == other.operations_rate
+            && self.operations_per_second == other.operations_per_second
             && self.queue_slots == other.queue_slots
             && self.table_lock_slots == other.table_lock_slots
     }
@@ -512,7 +580,7 @@ impl HostInventory {
             capacity_bytes: profile.capacity_bytes,
             read_rate: profile.read_rate.clone(),
             write_rate: profile.write_rate.clone(),
-            operations_rate: None,
+            operations_rate: profile.operations_rate.clone(),
             queue: profile.queue.clone(),
         });
         inventory.topology.rate_resources.extend([
@@ -527,6 +595,19 @@ impl HostInventory {
                 profile.write_bytes_per_second,
             ),
         ]);
+        if let (Some(operations_rate), Some(operations_per_second)) =
+            (&profile.operations_rate, profile.operations_per_second)
+        {
+            inventory.topology.rate_resources.push(RateResource::new(
+                operations_rate.clone(),
+                RateUnit::OperationsPerSecond,
+                operations_per_second,
+            ));
+            inventory
+                .pressure
+                .rate_available_per_second
+                .insert(operations_rate.clone(), operations_per_second);
+        }
         inventory.topology.queue_resources.push(QueueResource::new(
             profile.queue.clone(),
             profile.queue_slots,

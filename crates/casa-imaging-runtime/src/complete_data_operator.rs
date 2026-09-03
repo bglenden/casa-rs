@@ -53,10 +53,9 @@ use crate::{
     WorkNode, WorkNodeId,
 };
 
-use crate::gridded_normal_artifact::{
-    FRAME_HEADER_BYTES, GriddedNormalArtifactBudget, GriddedNormalArtifactMeasurements,
-    GriddedNormalArtifactWindowStorage, GriddedNormalArtifactWriter,
-    GriddedNormalReplayArtifact as GriddedNormalSpillArtifact, GriddedNormalReplayStorage,
+use crate::managed_spill::{
+    FRAME_HEADER_BYTES, ManagedSpillArtifact as GriddedNormalSpillArtifact, ManagedSpillBudget,
+    ManagedSpillMeasurements, ManagedSpillStorage, ManagedSpillWindowStorage, ManagedSpillWriter,
 };
 
 const GRIDDED_NORMAL_SOURCE_SLOTS: u64 = 2;
@@ -374,8 +373,8 @@ impl GriddedNormalReplayWindowPlan {
 pub struct FrozenGriddedNormalReplay {
     program: GriddedNormalOperatorProgram,
     spill: GriddedNormalSpillArtifact,
-    retention: Option<crate::gridded_normal_artifact::GriddedNormalArtifactRetention>,
-    latest_read: Option<GriddedNormalArtifactMeasurements>,
+    retention: Option<crate::managed_spill::ManagedSpillRetention>,
+    latest_read: Option<ManagedSpillMeasurements>,
     latest_stream: Option<BoundedStreamMeasurements>,
     latest_routing: Option<GriddedNormalRoutingMeasurements>,
     window_plan: Option<GriddedNormalReplayWindowPlan>,
@@ -404,7 +403,7 @@ impl GriddedNormalReplayDescriptor {
 
 pub(crate) struct GriddedNormalReplayCompilation {
     compiler: GriddedNormalOperatorCompiler,
-    writer: Option<GriddedNormalArtifactWriter>,
+    writer: Option<ManagedSpillWriter>,
     spill: Option<GriddedNormalSpillArtifact>,
     compilation_measurements: GriddedNormalCompilationMeasurements,
     #[cfg(test)]
@@ -534,10 +533,10 @@ impl GriddedNormalReplayCompilation {
     pub(crate) fn new(
         problem: &CompiledProblem,
         context: WorkExecutionContext<'_>,
-        storage: &GriddedNormalReplayStorage,
+        storage: &ManagedSpillStorage,
         max_block_samples: usize,
     ) -> io::Result<Self> {
-        let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
+        let budget = project_managed_spill_budget(problem, max_block_samples)?;
         validate_gridded_artifact_context(
             context,
             budget,
@@ -554,16 +553,14 @@ impl GriddedNormalReplayCompilation {
 
     fn create(
         problem: &CompiledProblem,
-        storage: &GriddedNormalReplayStorage,
-        budget: GriddedNormalArtifactBudget,
+        storage: &ManagedSpillStorage,
+        budget: ManagedSpillBudget,
         observation: SourceCardinalityObservation,
     ) -> io::Result<Self> {
         Ok(Self {
             compiler: GriddedNormalOperatorCompiler::new(problem, observation)
                 .map_err(io::Error::other)?,
-            writer: Some(
-                GriddedNormalArtifactWriter::create(storage, budget).map_err(io::Error::other)?,
-            ),
+            writer: Some(ManagedSpillWriter::create(storage, budget).map_err(io::Error::other)?),
             spill: None,
             compilation_measurements: GriddedNormalCompilationMeasurements::new(observation),
             #[cfg(test)]
@@ -574,11 +571,11 @@ impl GriddedNormalReplayCompilation {
     #[cfg(test)]
     pub(crate) fn new_stage_local_probe(
         problem: &CompiledProblem,
-        storage: &GriddedNormalReplayStorage,
+        storage: &ManagedSpillStorage,
         max_block_samples: usize,
         observe_timings: bool,
     ) -> io::Result<Self> {
-        let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
+        let budget = project_managed_spill_budget(problem, max_block_samples)?;
         let mut compilation = Self::create(
             problem,
             storage,
@@ -654,7 +651,7 @@ impl GriddedNormalReplayCompilation {
             .map_err(io::Error::other)
     }
 
-    pub(crate) fn write_measurements(&self) -> GriddedNormalArtifactMeasurements {
+    pub(crate) fn write_measurements(&self) -> ManagedSpillMeasurements {
         self.writer.as_ref().map_or_else(
             || {
                 self.spill
@@ -662,7 +659,7 @@ impl GriddedNormalReplayCompilation {
                     .expect("sealed compilation retains its spill")
                     .write_measurements()
             },
-            GriddedNormalArtifactWriter::measurements,
+            ManagedSpillWriter::measurements,
         )
     }
 
@@ -750,7 +747,7 @@ impl GriddedNormalReplayCompilation {
 
 fn validate_gridded_artifact_context(
     context: WorkExecutionContext<'_>,
-    budget: GriddedNormalArtifactBudget,
+    budget: ManagedSpillBudget,
     io_kind: crate::IoBufferKind,
     minimum_buffer_bytes: u64,
 ) -> io::Result<()> {
@@ -773,17 +770,23 @@ fn validate_gridded_artifact_context(
     let has_file = claims
         .iter()
         .any(|claim| claim.resource == LeaseResource::FileDescriptors && claim.amount >= 1);
-    let has_rate = claims
+    let has_byte_rate = claims.iter().any(|claim| {
+        matches!(
+            claim.resource,
+            LeaseResource::StorageReadRate { .. } | LeaseResource::StorageWriteRate { .. }
+        )
+    });
+    let has_operations_rate = claims
         .iter()
-        .any(|claim| matches!(claim.resource, LeaseResource::Rate { .. }));
+        .any(|claim| matches!(claim.resource, LeaseResource::StorageOperationsRate { .. }));
     let has_queue = claims
         .iter()
-        .any(|claim| matches!(claim.resource, LeaseResource::Queue { .. }));
-    if has_buffer && has_storage && has_file && has_rate && has_queue {
+        .any(|claim| matches!(claim.resource, LeaseResource::StorageQueue { .. }));
+    if has_buffer && has_storage && has_file && has_byte_rate && has_operations_rate && has_queue {
         Ok(())
     } else {
         Err(io::Error::other(
-            "gridded-normal artifact work lacks its complete planned resource claims",
+            "managed spill artifact work lacks its complete planned resource claims",
         ))
     }
 }
@@ -802,9 +805,7 @@ fn gridded_buffer_claim_satisfies(
 
 impl FrozenGriddedNormalReplay {
     #[cfg(test)]
-    pub(crate) const fn stage_local_artifact_seal(
-        &self,
-    ) -> crate::gridded_normal_artifact::GriddedNormalArtifactSeal {
+    pub(crate) const fn stage_local_artifact_seal(&self) -> crate::managed_spill::ManagedSpillSeal {
         self.spill.seal()
     }
 
@@ -819,27 +820,25 @@ impl FrozenGriddedNormalReplay {
     pub(crate) fn retain_plan_storage(
         &mut self,
         permit: crate::RetainedArtifactPermit,
-        storage: &GriddedNormalReplayStorage,
+        storage: &ManagedSpillStorage,
         retained_bytes: u64,
     ) -> io::Result<()> {
         if self.retention.is_some() {
             return Err(io::Error::other(
-                "gridded-normal artifact storage was retained more than once",
+                "managed spill artifact storage was retained more than once",
             ));
         }
-        self.retention = Some(
-            crate::gridded_normal_artifact::GriddedNormalArtifactRetention::bind(
-                permit,
-                storage,
-                retained_bytes,
-            )?,
-        );
+        self.retention = Some(crate::managed_spill::ManagedSpillRetention::bind(
+            permit,
+            storage,
+            retained_bytes,
+        )?);
         Ok(())
     }
 
     pub(crate) fn validates_plan_storage(
         &self,
-        storage: &GriddedNormalReplayStorage,
+        storage: &ManagedSpillStorage,
         retained_bytes: u64,
     ) -> bool {
         self.retention
@@ -855,9 +854,7 @@ impl FrozenGriddedNormalReplay {
         }
     }
 
-    pub(crate) const fn latest_read_measurements(
-        &self,
-    ) -> Option<GriddedNormalArtifactMeasurements> {
+    pub(crate) const fn latest_read_measurements(&self) -> Option<ManagedSpillMeasurements> {
         self.latest_read
     }
 
@@ -1022,7 +1019,7 @@ struct GriddedNormalReplayKernel {
     record_bytes: usize,
 }
 
-impl PartitionedKernel<GriddedNormalArtifactWindowStorage> for GriddedNormalReplayKernel {
+impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel {
     type Partition = GriddedNormalWork;
     type Partial = GriddedNormalPartial;
     type Completion = (CompleteDataOperatorResult, GriddedNormalRoutingMeasurements);
@@ -1031,7 +1028,7 @@ impl PartitionedKernel<GriddedNormalArtifactWindowStorage> for GriddedNormalRepl
     fn partition_count(
         &self,
         _block: BlockIdentity,
-        storage: &GriddedNormalArtifactWindowStorage,
+        storage: &ManagedSpillWindowStorage,
     ) -> Result<usize, Self::Error> {
         let records = storage.frames().try_fold(0_u64, |total, frame| {
             if self.record_bytes == 0 || frame.payload().len() % self.record_bytes != 0 {
@@ -1062,7 +1059,7 @@ impl PartitionedKernel<GriddedNormalArtifactWindowStorage> for GriddedNormalRepl
     fn partition(
         &self,
         _block: BlockIdentity,
-        storage: &GriddedNormalArtifactWindowStorage,
+        storage: &ManagedSpillWindowStorage,
         local_ordinal: usize,
     ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
         let first_sequence = storage
@@ -1097,7 +1094,7 @@ impl PartitionedKernel<GriddedNormalArtifactWindowStorage> for GriddedNormalRepl
     fn execute(
         &self,
         _work: WorkIdentity,
-        storage: &GriddedNormalArtifactWindowStorage,
+        storage: &ManagedSpillWindowStorage,
         partition: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error> {
         self.state
@@ -1121,7 +1118,7 @@ impl PartitionedKernel<GriddedNormalArtifactWindowStorage> for GriddedNormalRepl
     fn commit(
         &mut self,
         _work: WorkIdentity,
-        _storage: &GriddedNormalArtifactWindowStorage,
+        _storage: &ManagedSpillWindowStorage,
         partial: Self::Partial,
     ) -> Result<(), Self::Error> {
         self.state
@@ -1302,10 +1299,10 @@ fn project_gridded_normal_route_residency(
     GriddedNormalRouteResidency::from_window_plan(window_plan)
 }
 
-pub(crate) fn project_gridded_normal_artifact_budget(
+pub(crate) fn project_managed_spill_budget(
     problem: &CompiledProblem,
     max_block_samples: usize,
-) -> io::Result<GriddedNormalArtifactBudget> {
+) -> io::Result<ManagedSpillBudget> {
     let bounds = project_gridded_normal_frame_bounds(problem, max_block_samples)?;
     let record_bytes = gridded_normal_operator_record_bytes(problem).map_err(io::Error::other)?;
     let record_bytes_u64 = u64::try_from(record_bytes)
@@ -1321,7 +1318,7 @@ pub(crate) fn project_gridded_normal_artifact_budget(
         .maximum_frame_records()?
         .checked_mul(record_bytes)
         .ok_or_else(|| io::Error::other("gridded-normal frame payload overflow"))?;
-    GriddedNormalArtifactBudget::for_bounded_stream(
+    ManagedSpillBudget::for_bounded_stream(
         maximum_payload_bytes.max(
             u64::try_from(maximum_frame_payload_bytes)
                 .map_err(|_| io::Error::other("gridded-normal frame payload overflow"))?,

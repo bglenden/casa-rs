@@ -33,10 +33,7 @@ const OUTPUT_WRITE_RATE_DEMAND: &str = "spectral-cycle-output-write-rate";
 const IO_QUEUE_DEMAND: &str = "spectral-cycle-storage-queue";
 const OUTPUT_STORAGE_DEMAND: &str = "spectral-cycle-private-commit";
 const GRIDDED_REPLAY_NODE: &str = "gridded-normal-replay";
-const GRIDDED_SPILL_READ_RATE_DEMAND: &str = "gridded-normal-spill-read-rate";
-const GRIDDED_SPILL_WRITE_RATE_DEMAND: &str = "gridded-normal-spill-write-rate";
-const GRIDDED_SPILL_QUEUE_DEMAND: &str = "gridded-normal-spill-queue";
-const GRIDDED_SPILL_STORAGE_DEMAND: &str = "gridded-normal-spill-storage";
+const MANAGED_SPILL_STORAGE_DEMAND: &str = "managed-spill-storage";
 
 fn imaging_plan_diagnostics_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -87,7 +84,7 @@ pub struct SpectralCycleExecutionPolicy {
     authority: ResourceAuthority,
     resource_policy: ResourcePolicy,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
-    gridded_normal_storage: Option<GriddedNormalReplayStorage>,
+    gridded_normal_storage: Option<ManagedSpillStorage>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -117,7 +114,7 @@ impl SpectralCycleExecutionPolicy {
 
     /// Bind the runtime-private storage used by planned gridded-normal spill work.
     #[must_use]
-    pub fn with_gridded_normal_storage(mut self, storage: GriddedNormalReplayStorage) -> Self {
+    pub fn with_gridded_normal_storage(mut self, storage: ManagedSpillStorage) -> Self {
         self.gridded_normal_storage = Some(storage);
         self
     }
@@ -148,7 +145,7 @@ pub struct PlannedGriddedNormalBinding {
 
 enum PlannedGriddedNormalKind {
     Compilation {
-        storage: GriddedNormalReplayStorage,
+        storage: ManagedSpillStorage,
         maximum_bytes: u64,
     },
     Replay {
@@ -158,7 +155,7 @@ enum PlannedGriddedNormalKind {
 }
 
 impl PlannedGriddedNormalBinding {
-    fn compilation(storage: GriddedNormalReplayStorage, maximum_bytes: u64) -> Self {
+    fn compilation(storage: ManagedSpillStorage, maximum_bytes: u64) -> Self {
         Self {
             kind: PlannedGriddedNormalKind::Compilation {
                 storage,
@@ -169,7 +166,7 @@ impl PlannedGriddedNormalBinding {
 
     fn replay(
         replay: crate::FrozenGriddedNormalReplay,
-        storage: GriddedNormalReplayStorage,
+        storage: ManagedSpillStorage,
     ) -> Result<Self, SpectralCyclePlanError> {
         let descriptor = replay.descriptor();
         let retained_bytes = descriptor.bytes();
@@ -184,7 +181,7 @@ impl PlannedGriddedNormalBinding {
         })
     }
 
-    pub(crate) fn into_compilation(self) -> Option<(GriddedNormalReplayStorage, u64)> {
+    pub(crate) fn into_compilation(self) -> Option<(ManagedSpillStorage, u64)> {
         match self.kind {
             PlannedGriddedNormalKind::Compilation {
                 storage,
@@ -395,12 +392,11 @@ impl SpectralCyclePlan {
         } else {
             None
         };
-        let artifact_budget =
-            crate::complete_data_operator::project_gridded_normal_artifact_budget(
-                problem,
-                weighting.limits().max_block_samples(),
-            )
-            .map_err(|_| SpectralCyclePlanError::Overflow)?;
+        let artifact_budget = crate::complete_data_operator::project_managed_spill_budget(
+            problem,
+            weighting.limits().max_block_samples(),
+        )
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
         let gridded_replay_descriptor = gridded_replay
             .as_ref()
             .map(crate::FrozenGriddedNormalReplay::descriptor);
@@ -410,7 +406,7 @@ impl SpectralCyclePlan {
             Some(replay) => {
                 let capacity = gridded_normal_storage
                     .as_ref()
-                    .and_then(GriddedNormalReplayStorage::cpu_replay_capacity)
+                    .and_then(ManagedSpillStorage::cpu_replay_capacity)
                     .map_or(
                         crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Unknown,
                         |(cpu_data_working_set_bytes, performance_cpu_cores)| {
@@ -453,14 +449,14 @@ impl SpectralCyclePlan {
                 let replay = fragment.streaming_node().clone();
                 let mut physical = fragment.compose(&base)?;
                 if include_minor {
-                    physical = append_gridded_spill_resources(
+                    physical = append_managed_spill_resources(
                         registry,
                         physical,
                         &policy,
                         &replay,
                         pass,
                         artifact_budget,
-                        GriddedSpillMode::Write,
+                        ManagedSpillMode::Write,
                     )?;
                 }
                 (physical, source_resources, replay)
@@ -486,14 +482,14 @@ impl SpectralCyclePlan {
                             .ok_or(SpectralCyclePlanError::Overflow)?,
                     },
                 )?;
-                let physical = append_gridded_spill_resources(
+                let physical = append_managed_spill_resources(
                     registry,
                     base,
                     &policy,
                     &replay,
                     pass,
                     artifact_budget,
-                    GriddedSpillMode::Read(
+                    ManagedSpillMode::Read(
                         gridded_window_plan
                             .as_ref()
                             .ok_or(SpectralCyclePlanError::Overflow)?,
@@ -1351,19 +1347,19 @@ fn base_gridded_physical<R: ImplementationRegistry>(
 }
 
 #[derive(Clone, Copy)]
-enum GriddedSpillMode<'a> {
+enum ManagedSpillMode<'a> {
     Read(&'a crate::complete_data_operator::GriddedNormalReplayWindowPlan),
     Write,
 }
 
-fn append_gridded_spill_resources<R: ImplementationRegistry>(
+fn append_managed_spill_resources<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
     policy: &SpectralCycleExecutionPolicy,
     node: &WorkNodeId,
     pass: SpectralPassIdentity,
-    budget: crate::gridded_normal_artifact::GriddedNormalArtifactBudget,
-    mode: GriddedSpillMode<'_>,
+    budget: crate::managed_spill::ManagedSpillBudget,
+    mode: ManagedSpillMode<'_>,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let storage = policy
         .gridded_normal_storage
@@ -1373,40 +1369,28 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         "{}-{}",
         pass.ordinal(),
         match mode {
-            GriddedSpillMode::Read(_) => "read",
-            GriddedSpillMode::Write => "write",
+            ManagedSpillMode::Read(_) => "read",
+            ManagedSpillMode::Write => "write",
         }
     );
-    let rate_id = format!(
-        "{}-{suffix}",
-        match mode {
-            GriddedSpillMode::Read(_) => GRIDDED_SPILL_READ_RATE_DEMAND,
-            GriddedSpillMode::Write => GRIDDED_SPILL_WRITE_RATE_DEMAND,
-        }
-    );
-    let storage_id = format!("{GRIDDED_SPILL_STORAGE_DEMAND}-{suffix}");
-    let queue_id = base
-        .execution_dag()
-        .resource_alternative()
-        .demand
-        .queues
-        .iter()
-        .find(|demand| &demand.resource == storage.resources().queue())
-        .map(|demand| demand.demand_id.clone())
-        .unwrap_or_else(|| format!("{GRIDDED_SPILL_QUEUE_DEMAND}-{suffix}"));
-    let allocation = AllocationId::new(format!("gridded-normal-spill-buffer-{suffix}"));
+    let storage_id = format!("{MANAGED_SPILL_STORAGE_DEMAND}-{suffix}");
+    storage
+        .resources()
+        .operations_rate()
+        .ok_or(SpectralCyclePlanError::MissingManagedSpillOperationsRate)?;
+    let allocation = AllocationId::new(format!("managed-spill-buffer-{suffix}"));
     let slot = PhysicalSlotId::new(format!("{}-slot", allocation.as_str()));
     let io_kind = match mode {
-        GriddedSpillMode::Read(_) => IoBufferKind::SpillRead,
-        GriddedSpillMode::Write => IoBufferKind::SpillWrite,
+        ManagedSpillMode::Read(_) => IoBufferKind::SpillRead,
+        ManagedSpillMode::Write => IoBufferKind::SpillWrite,
     };
     let source_slots = match mode {
-        GriddedSpillMode::Read(_) => 2,
-        GriddedSpillMode::Write => 1,
+        ManagedSpillMode::Read(_) => 2,
+        ManagedSpillMode::Write => 1,
     };
     let bytes_per_slot = match mode {
-        GriddedSpillMode::Read(window) => window.source_slot_bytes(),
-        GriddedSpillMode::Write => budget.io_buffer_bytes(),
+        ManagedSpillMode::Read(window) => window.source_slot_bytes(),
+        ManagedSpillMode::Write => budget.io_buffer_bytes(),
     };
     let buffer_bytes = bytes_per_slot
         .checked_mul(source_slots)
@@ -1418,12 +1402,12 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    if matches!(mode, GriddedSpillMode::Read(_)) {
+    if matches!(mode, ManagedSpillMode::Read(_)) {
         let owner = nodes
             .iter_mut()
             .find(|candidate| candidate.id == *node)
             .ok_or(SpectralCyclePlanError::Overflow)?;
-        owner.kind = WorkKind::Prefetch;
+        owner.kind = WorkKind::Spill;
         owner.domain = WorkDomain::Io;
         owner.fences = BTreeSet::from([FenceKind::Io]);
         let reconciliation = base
@@ -1448,34 +1432,40 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         .iter_mut()
         .find(|candidate| candidate.id == *node)
         .ok_or(SpectralCyclePlanError::Overflow)?;
-    owner.claims.push(ResourceClaim {
-        resource: LeaseResource::Rate {
-            demand_id: rate_id.clone(),
-        },
-        amount: 1,
-        lifetime: lifetime.clone(),
-    });
-    if !owner.claims.iter().any(|claim| {
-        claim.resource
-            == LeaseResource::Queue {
-                demand_id: queue_id.clone(),
-            }
-            && claim.lifetime == lifetime
-    }) {
-        owner.claims.push(ResourceClaim {
-            resource: LeaseResource::Queue {
-                demand_id: queue_id.clone(),
+    owner.claims.extend([
+        ResourceClaim {
+            resource: match mode {
+                ManagedSpillMode::Read(_) => LeaseResource::StorageReadRate {
+                    demand_id: storage_id.clone(),
+                },
+                ManagedSpillMode::Write => LeaseResource::StorageWriteRate {
+                    demand_id: storage_id.clone(),
+                },
             },
             amount: 1,
             lifetime: lifetime.clone(),
-        });
-    }
+        },
+        ResourceClaim {
+            resource: LeaseResource::StorageOperationsRate {
+                demand_id: storage_id.clone(),
+            },
+            amount: 1,
+            lifetime: lifetime.clone(),
+        },
+        ResourceClaim {
+            resource: LeaseResource::StorageQueue {
+                demand_id: storage_id.clone(),
+            },
+            amount: 1,
+            lifetime: lifetime.clone(),
+        },
+    ]);
     owner.claims.push(ResourceClaim {
         resource: LeaseResource::IoBuffer(io_kind),
         amount: buffer_bytes,
         lifetime: lifetime.clone(),
     });
-    if matches!(mode, GriddedSpillMode::Write) {
+    if matches!(mode, ManagedSpillMode::Write) {
         owner.claims.push(ResourceClaim {
             resource: LeaseResource::Storage {
                 demand_id: storage_id.clone(),
@@ -1499,7 +1489,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
         alignment_bytes: 64,
         storage_mode: StorageMode::Host,
-        layout: AllocationLayout::new("gridded-normal-spill-frame"),
+        layout: AllocationLayout::new("managed-spill-frame"),
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
@@ -1514,7 +1504,7 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
         domain: storage.resources().domain().clone(),
-        temporary_bytes: if matches!(mode, GriddedSpillMode::Write) {
+        temporary_bytes: if matches!(mode, ManagedSpillMode::Write) {
             budget.maximum_artifact_bytes()
         } else {
             0
@@ -1522,10 +1512,18 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
         staged_output_bytes: 0,
         final_output_bytes: 0,
         persistent_cache_bytes: 0,
-        read_rate: CountDemand::zero(),
-        write_rate: CountDemand::zero(),
-        operations_rate: CountDemand::zero(),
-        queue_slots: CountDemand::zero(),
+        read_rate: if matches!(mode, ManagedSpillMode::Read(_)) {
+            CountDemand::new(1, 1)
+        } else {
+            CountDemand::zero()
+        },
+        write_rate: if matches!(mode, ManagedSpillMode::Write) {
+            CountDemand::new(1, 1)
+        } else {
+            CountDemand::zero()
+        },
+        operations_rate: CountDemand::new(1, 1),
+        queue_slots: CountDemand::new(1, 1),
     });
     alternative.demand.file_descriptors = CountDemand::new(
         alternative
@@ -1541,31 +1539,11 @@ fn append_gridded_spill_resources<R: ImplementationRegistry>(
             .checked_add(1)
             .ok_or(SpectralCyclePlanError::Overflow)?,
     );
-    alternative.demand.rates.push(RateDemand {
-        demand_id: rate_id,
-        resource: match mode {
-            GriddedSpillMode::Read(_) => storage.resources().read_rate().clone(),
-            GriddedSpillMode::Write => storage.resources().write_rate().clone(),
-        },
-        amount: CountDemand::new(1, 1),
-    });
-    if !alternative
-        .demand
-        .queues
-        .iter()
-        .any(|demand| demand.demand_id == queue_id)
-    {
-        alternative.demand.queues.push(QueueDemand {
-            demand_id: queue_id,
-            resource: storage.resources().queue().clone(),
-            slots: CountDemand::new(1, 1),
-        });
-    }
     match mode {
-        GriddedSpillMode::Read(_) => {
+        ManagedSpillMode::Read(_) => {
             alternative.demand.io_buffers.spill_read_bytes = buffer_bytes;
         }
-        GriddedSpillMode::Write => {
+        ManagedSpillMode::Write => {
             alternative.demand.io_buffers.spill_write_bytes = buffer_bytes;
         }
     }
@@ -2089,6 +2067,8 @@ pub enum SpectralCyclePlanError {
     CubeCleanRequiresAllPlanes,
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
+    /// Managed spill requires a calibrated operations-per-second resource.
+    MissingManagedSpillOperationsRate,
     /// A later-major plan received replay state outside its retained storage authority.
     InvalidGriddedNormalReplay,
     /// Visibility-write bounds were supplied without a logical destination.

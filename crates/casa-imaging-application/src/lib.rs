@@ -48,8 +48,8 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
-    FrozenWeightingReservation, GriddedNormalReplayStorage, ImplementationContractMetadata,
-    ImplementationRegistry, ImplementationRegistryId, ObservationReadCompletionContext,
+    FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
     PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, RunBindings,
     RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
@@ -84,7 +84,7 @@ pub struct ApplicationRuntime {
     /// receipt commits, and product publication.
     pub storage_io: StorageIoResourceBinding,
     /// Writable run-local directory capability for the private normal-operator spill.
-    pub gridded_normal_storage: GriddedNormalReplayStorage,
+    pub gridded_normal_storage: ManagedSpillStorage,
     /// Fixed-point confidence in parts per million.
     pub confidence_parts_per_million: u32,
     /// Host-use policy bound at planning and execution.

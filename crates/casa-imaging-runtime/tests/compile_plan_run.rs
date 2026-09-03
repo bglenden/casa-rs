@@ -67,10 +67,10 @@ use casa_imaging_runtime::{
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
     ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
-    GriddedNormalReplayStorage, HostInventory, ImplementationContractCatalog,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
-    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
+    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
+    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
+    MajorCycleOperatorResult, MajorCycleOperatorState, ManagedSpillStorage, MemoryCapacityDomain,
     MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
@@ -194,19 +194,20 @@ fn serial_storage_io() -> StorageIoResourceBinding {
 }
 
 fn artifact_storage_io() -> StorageIoResourceBinding {
-    StorageIoResourceBinding::new(
+    StorageIoResourceBinding::new_with_operations_rate(
         StorageDomainId::new("atomic-output"),
         RateResourceId::new("io-rate"),
         RateResourceId::new("io-rate"),
+        RateResourceId::new("io-operations-rate"),
         QueueResourceId::new("io-queue"),
     )
 }
 
-fn artifact_storage() -> GriddedNormalReplayStorage {
+fn artifact_storage() -> ManagedSpillStorage {
     let directory = Path::new("/tmp/casa-rs-imaging-runtime-tests");
-    fs::create_dir_all(directory).expect("create gridded-normal artifact directory");
-    GriddedNormalReplayStorage::bind(authority(), artifact_storage_io(), directory)
-        .expect("bind gridded-normal artifact storage")
+    fs::create_dir_all(directory).expect("create managed spill artifact directory");
+    ManagedSpillStorage::bind(authority(), artifact_storage_io(), directory)
+        .expect("bind managed spill artifact storage")
 }
 
 fn selected_observation_bindings(
@@ -2610,20 +2611,11 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         .execution_dag()
         .resource_alternative()
         .demand;
-    assert!(demand.rates.iter().any(|rate| {
-        rate.demand_id
-            .starts_with("gridded-normal-spill-write-rate")
-            && rate.resource == RateResourceId::new("io-rate")
-    }));
-    assert!(
-        demand
-            .queues
-            .iter()
-            .any(|queue| queue.resource == QueueResourceId::new("io-queue"))
-    );
-    assert!(!demand.rates.iter().any(|rate| {
-        rate.demand_id.starts_with("gridded-normal-spill")
-            && rate.resource == RateResourceId::new("transaction-io-rate")
+    assert!(demand.storage.iter().any(|storage| {
+        storage.demand_id.starts_with("managed-spill-storage")
+            && storage.write_rate.hard() > 0
+            && storage.operations_rate.hard() > 0
+            && storage.queue_slots.hard() > 0
     }));
 }
 
@@ -9099,12 +9091,9 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
     .expect("MVC storage profile");
     let mvc_authority = ResourceAuthority::detected_with_storage_profile(&storage)
         .expect("dedicated MVC authority");
-    let gridded_storage = GriddedNormalReplayStorage::bind(
-        &mvc_authority,
-        storage.io_resources(),
-        storage_root.path(),
-    )
-    .expect("MVC gridded storage");
+    let gridded_storage =
+        ManagedSpillStorage::bind(&mvc_authority, storage.io_resources(), storage_root.path())
+            .expect("MVC gridded storage");
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(6),
         WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),

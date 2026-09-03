@@ -892,7 +892,7 @@ impl CompleteDataStreamEvidence {
         self.source_pass_count
     }
 
-    /// Return exact gridded-normal artifact passes.
+    /// Return exact managed spill artifact passes.
     #[must_use]
     pub const fn artifact_pass_count(self) -> u64 {
         self.artifact_pass_count
@@ -917,7 +917,7 @@ struct SpectralCycleExecutorState {
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
-    gridded_storage: Option<crate::GriddedNormalReplayStorage>,
+    gridded_storage: Option<crate::ManagedSpillStorage>,
     gridded_storage_ceiling: Option<u64>,
     gridded_compilation: Option<GriddedNormalReplayCompilation>,
     gridded_replay: Option<FrozenGriddedNormalReplay>,
