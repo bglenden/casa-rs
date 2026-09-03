@@ -1310,6 +1310,26 @@ pub(crate) mod tests {
         );
     }
 
+    pub(crate) fn write_two_cell_test_cache(root: &Path) {
+        write_test_cache(root);
+        write_cell_at_w(
+            root,
+            "CFS_two.im",
+            false,
+            [-2.0, 2.0],
+            2.0,
+            Complex32::new(5.0, -2.0),
+        );
+        write_cell_at_w(
+            root,
+            "WTCFS_two.im",
+            true,
+            [-1.0, 1.0],
+            2.0,
+            Complex32::new(11.0, 4.0),
+        );
+    }
+
     #[test]
     fn indexes_asymmetric_same_world_window_without_loading_pixels() {
         let root = TempDir::new().unwrap();
@@ -1540,6 +1560,17 @@ pub(crate) mod tests {
     }
 
     fn write_cell(root: &Path, name: &str, weight: bool, increment: [f64; 2], value: Complex32) {
+        write_cell_at_w(root, name, weight, increment, 0.0, value);
+    }
+
+    fn write_cell_at_w(
+        root: &Path,
+        name: &str,
+        weight: bool,
+        increment: [f64; 2],
+        w_value: f64,
+        value: Complex32,
+    ) {
         let path = root.join(name);
         let shape = if weight {
             vec![32, 32, 1, 1]
@@ -1585,7 +1616,7 @@ pub(crate) mod tests {
                 field("Sampling", ScalarValue::Float64(2.0)),
                 field("TelescopeName", ScalarValue::String("EVLA".to_string())),
                 field("WIncr", ScalarValue::Float64(0.5)),
-                field("WValue", ScalarValue::Float64(0.0)),
+                field("WValue", ScalarValue::Float64(w_value)),
                 field("Xsupport", ScalarValue::Int32(support)),
                 field("Ysupport", ScalarValue::Int32(support)),
             ]))

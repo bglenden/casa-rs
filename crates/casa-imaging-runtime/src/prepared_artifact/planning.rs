@@ -12,8 +12,8 @@ use crate::{
     LogicalAllocation, MemoryDemand, ObservationTransactionWork, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction, PredictionConfidence,
     PublicationLayoutLedger, ResourceClaim, ResourceHeadroom, RuntimeOverheadDemand,
-    ScalingMetadata, SlotCompatibility, StagePrediction, StorageDemand, StorageIoResourceBinding,
-    StorageMode, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
+    ScalingMetadata, SlotCompatibility, StagePrediction, StorageDemand, StorageMode,
+    WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
 };
 
 /// Canonical plan fragment for one cold-generate, cold-load, or warm-reuse operation.
@@ -35,7 +35,8 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
         _problem: &CompiledProblem,
         registry: &R,
         implementation: WorkImplementationId,
-        storage: &StorageIoResourceBinding,
+        descriptor: &PreparedArtifactDescriptor,
+        store: &PreparedArtifactStore,
         stage_nanos: u64,
         confidence_parts_per_million: u32,
     ) -> Result<PhysicalWorkBinding, PreparedArtifactPlanError> {
@@ -43,7 +44,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
         let producer = WorkNodeId::new("prepared-phase-producer");
         let reconcile = WorkNodeId::new("prepared-phase-reconcile");
         let commit = WorkNodeId::new("prepared-phase-commit");
-        let output_demand = "prepared-phase-commit-output".to_string();
+        let output_demand = store.storage_demand_id(descriptor);
         let allocation_id = AllocationId::new("prepared-phase-commit-buffer");
         let slot_id = PhysicalSlotId::new("prepared-phase-commit-slot");
         let lifetime =
@@ -159,7 +160,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
                 overhead: RuntimeOverheadDemand::zero(),
                 storage: vec![StorageDemand {
                     demand_id: output_demand.clone(),
-                    domain: storage.domain().clone(),
+                    domain: store.storage_domain().clone(),
                     temporary_bytes: 0,
                     staged_output_bytes: 1,
                     final_output_bytes: 0,

@@ -58,14 +58,14 @@ enum PhaseImplementation {
     Operation(Box<OperationAdapter>),
 }
 
-struct OperationBatch<'a> {
+struct OperationInput<'a> {
     cache: Arc<CasaAwCache>,
     store: Arc<PreparedArtifactStore>,
     provider: PreparedAwCellProvider,
-    cells: Vec<CasaAwPreparedCell>,
+    cell: CasaAwPreparedCell,
     source_domain: &'a StorageDomain,
     operation: PreparedArtifactOperation,
-    artifacts: Vec<(CasaAwPreparedCell, PreparedArtifact)>,
+    artifact: Option<PreparedArtifact>,
     phase: u64,
 }
 
@@ -232,24 +232,22 @@ impl ImplementationRegistry for PhaseRegistry {
 }
 
 impl PhaseRegistry {
-    fn take_results(&self) -> Result<Vec<(CasaAwPreparedCell, OperationResult)>, ApplicationError> {
-        self.implementations
+    fn take_result(&self) -> Result<(CasaAwPreparedCell, OperationResult), ApplicationError> {
+        let operation = self
+            .implementations
             .values()
-            .filter_map(|implementation| match implementation {
+            .find_map(|implementation| match implementation {
                 PhaseImplementation::Base { .. } => None,
-                PhaseImplementation::Operation(op) => Some(
-                    op.result
-                        .lock()
-                        .map_err(|_| boxed("AW result state poisoned"))
-                        .and_then(|mut result| {
-                            result
-                                .take()
-                                .map(|result| (op.prepared.clone(), result))
-                                .ok_or_else(|| boxed("AW operation did not execute"))
-                        }),
-                ),
+                PhaseImplementation::Operation(op) => Some(op),
             })
-            .collect()
+            .ok_or_else(|| boxed("AW operation is absent"))?;
+        let result = operation
+            .result
+            .lock()
+            .map_err(|_| boxed("AW result state poisoned"))?
+            .take()
+            .ok_or_else(|| boxed("AW operation did not execute"))?;
+        Ok((operation.prepared.clone(), result))
     }
 }
 
@@ -295,77 +293,72 @@ pub(crate) fn prepare_aw_projection(
     let mut artifacts = Vec::new();
     let mut missing = Vec::new();
     for (ordinal, cell) in prepared.into_iter().enumerate() {
-        let reuse = run_operations(
+        let reuse = run_operation(
             problem,
             runtime,
-            OperationBatch {
+            OperationInput {
                 cache: Arc::clone(&cache),
                 store: Arc::clone(&store),
                 provider: provider.clone(),
-                cells: vec![cell],
+                cell,
                 source_domain: &deployment.storage_domain,
                 operation: PreparedArtifactOperation::Reuse,
-                artifacts: Vec::new(),
+                artifact: None,
                 phase: ordinal as u64,
             },
         )?;
         receipts.push(reuse.1);
-        for (cell, result) in reuse.0 {
-            match result {
-                OperationResult::Artifact(artifact) => artifacts.push((cell, artifact)),
-                OperationResult::Rejected => missing.push(cell),
-                OperationResult::Consumed => unreachable!(),
-            }
+        let (cell, result) = reuse.0;
+        match result {
+            OperationResult::Artifact(artifact) => artifacts.push((cell, artifact)),
+            OperationResult::Rejected => missing.push(cell),
+            OperationResult::Consumed => unreachable!(),
         }
     }
-    if !missing.is_empty() {
-        let loaded = run_operations(
+    for (ordinal, cell) in missing.into_iter().enumerate() {
+        let loaded = run_operation(
             problem,
             runtime,
-            OperationBatch {
+            OperationInput {
                 cache: Arc::clone(&cache),
                 store: Arc::clone(&store),
                 provider: provider.clone(),
-                cells: missing,
+                cell,
                 source_domain: &deployment.storage_domain,
                 operation: PreparedArtifactOperation::Load,
-                artifacts: Vec::new(),
-                phase: 1_000_000,
+                artifact: None,
+                phase: 1_000_000 + ordinal as u64,
             },
         )?;
         receipts.push(loaded.1);
-        for (cell, result) in loaded.0 {
-            if let OperationResult::Artifact(artifact) = result {
-                artifacts.push((cell, artifact));
-            } else {
-                return Err(boxed("AW cold load omitted artifact"));
-            }
+        let (cell, result) = loaded.0;
+        if let OperationResult::Artifact(artifact) = result {
+            artifacts.push((cell, artifact));
+        } else {
+            return Err(boxed("AW cold load omitted artifact"));
         }
     }
     artifacts.sort_by_key(|(cell, _)| cell.metadata().identity().as_bytes());
-    let cells = artifacts.iter().map(|(cell, _)| cell.clone()).collect();
-    let consumed = run_operations(
-        problem,
-        runtime,
-        OperationBatch {
-            cache,
-            store,
-            provider: provider.clone(),
-            cells,
-            source_domain: &deployment.storage_domain,
-            operation: PreparedArtifactOperation::Consume,
-            artifacts,
-            phase: 2_000_000,
-        },
-    )?;
-    if consumed
-        .0
-        .iter()
-        .any(|(_, result)| !matches!(result, OperationResult::Consumed))
-    {
-        return Err(boxed("AW consume phase returned a non-consume outcome"));
+    for (ordinal, (cell, artifact)) in artifacts.into_iter().enumerate() {
+        let consumed = run_operation(
+            problem,
+            runtime,
+            OperationInput {
+                cache: Arc::clone(&cache),
+                store: Arc::clone(&store),
+                provider: provider.clone(),
+                cell,
+                source_domain: &deployment.storage_domain,
+                operation: PreparedArtifactOperation::Consume,
+                artifact: Some(artifact),
+                phase: 2_000_000 + ordinal as u64,
+            },
+        )?;
+        if !matches!(consumed.0.1, OperationResult::Consumed) {
+            return Err(boxed("AW consume phase returned a non-consume outcome"));
+        }
+        receipts.push(consumed.1);
     }
-    receipts.push(consumed.1);
     if provider.resident_cells()? != entries {
         return Err(boxed(
             "AW complete catalog did not fit the resident ceiling",
@@ -383,21 +376,21 @@ pub(crate) fn prepare_aw_projection(
     })
 }
 
-fn run_operations(
+fn run_operation(
     problem: &CompiledProblem,
     runtime: &ApplicationRuntime,
-    batch: OperationBatch<'_>,
-) -> Result<(Vec<(CasaAwPreparedCell, OperationResult)>, ExecutionReceipt), ApplicationError> {
-    let OperationBatch {
+    input: OperationInput<'_>,
+) -> Result<((CasaAwPreparedCell, OperationResult), ExecutionReceipt), ApplicationError> {
+    let OperationInput {
         cache,
         store,
         provider,
-        cells,
+        cell,
         source_domain,
         operation,
-        mut artifacts,
+        artifact,
         phase,
-    } = batch;
+    } = input;
     let metadata = ImplementationContractMetadata::new(
         problem.problem_id(),
         problem.numerics_id(),
@@ -405,36 +398,25 @@ fn run_operations(
     );
     let producer = casa_imaging_runtime::WorkNodeId::new("prepared-phase-producer");
     let mut implementations = BTreeMap::new();
-    let mut sources = Vec::new();
-    for cell in cells {
-        let id = cell.descriptor().work_implementation_id(operation);
-        let artifact = artifacts
-            .iter()
-            .position(|(candidate, _)| {
-                candidate.metadata().identity() == cell.metadata().identity()
-            })
-            .map(|index| artifacts.swap_remove(index).1);
-        let source = (operation == PreparedArtifactOperation::Load)
-            .then(|| cell.import_source(&cache, source_domain, producer.clone()))
-            .transpose()?;
-        if let Some(source) = &source {
-            sources.push(source.clone());
-        }
-        implementations.insert(
-            id.clone(),
-            PhaseImplementation::Operation(Box::new(OperationAdapter {
-                id,
-                operation,
-                store: Arc::clone(&store),
-                cache: Arc::clone(&cache),
-                prepared: cell,
-                artifact: Mutex::new(artifact),
-                source,
-                provider: provider.clone(),
-                result: Mutex::new(None),
-            })),
-        );
-    }
+    let id = cell.descriptor().work_implementation_id(operation);
+    let source = (operation == PreparedArtifactOperation::Load)
+        .then(|| cell.import_source(&cache, source_domain, producer.clone()))
+        .transpose()?;
+    let sources = source.iter().cloned().collect();
+    implementations.insert(
+        id.clone(),
+        PhaseImplementation::Operation(Box::new(OperationAdapter {
+            id,
+            operation,
+            store: Arc::clone(&store),
+            cache: Arc::clone(&cache),
+            prepared: cell,
+            artifact: Mutex::new(artifact),
+            source,
+            provider: provider.clone(),
+            result: Mutex::new(None),
+        })),
+    );
     implementations.insert(
         runtime.implementation.clone(),
         PhaseImplementation::Base {
@@ -448,11 +430,20 @@ fn run_operations(
         implementations,
         prepared_artifact: crate::prepared_aw_registration(runtime.implementation.clone()),
     };
+    let descriptor = registry
+        .implementations
+        .values()
+        .find_map(|implementation| match implementation {
+            PhaseImplementation::Base { .. } => None,
+            PhaseImplementation::Operation(op) => Some(op.prepared.descriptor()),
+        })
+        .ok_or_else(|| boxed("AW operation is absent"))?;
     let mut physical = PreparedArtifactPlanFragment::standalone_base(
         problem,
         &registry,
         runtime.implementation.clone(),
-        &runtime.storage_io,
+        descriptor,
+        &store,
         runtime.stage_nanos,
         runtime.confidence_parts_per_million,
     )?;
@@ -515,7 +506,7 @@ fn run_operations(
             return Err(Box::new(error));
         }
     }
-    Ok((registry.take_results()?, runtime.receipts.open(attempt)?))
+    Ok((registry.take_result()?, runtime.receipts.open(attempt)?))
 }
 
 fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
@@ -529,7 +520,7 @@ fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{collections::BTreeSet, path::Path};
 
     use casa_imaging_model::{
         AxisOrder, CentreLaws, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
@@ -560,7 +551,7 @@ mod tests {
     }
 
     #[test]
-    fn cold_then_warm_preparation_runs_through_plan_and_receipts() {
+    fn cold_load_with_two_queue_slots_then_warm_reuse_runs_through_plan_and_receipts() {
         let root = TempDir::new().expect("temporary preparation root");
         let casa = root.path().join("casa-cache");
         std::fs::create_dir(&casa).expect("create CASA cache root");
@@ -572,7 +563,7 @@ mod tests {
             1 << 30,
             100 << 20,
             100 << 20,
-            4,
+            2,
             4,
         )
         .expect("test storage profile")
@@ -597,6 +588,16 @@ mod tests {
             .as_str();
         let load_receipt = &cold.receipts[1];
         let selected = load_receipt.selected_alternative_projection();
+        assert_eq!(
+            selected
+                .demand
+                .storage
+                .iter()
+                .map(|demand| demand.queue_slots.hard())
+                .sum::<u64>(),
+            2,
+            "cold load reserves only its concurrent source and cache operations"
+        );
         let operation_demands = selected
             .demand
             .storage
@@ -627,6 +628,74 @@ mod tests {
             .expect("warm Reuse then Consume");
         assert_eq!(warm.receipts.len(), 2);
         drop(warm.projection);
+    }
+
+    #[test]
+    fn two_cell_cold_load_keeps_every_plan_within_two_queue_slots() {
+        let root = TempDir::new().expect("temporary preparation root");
+        let casa = root.path().join("casa-cache");
+        std::fs::create_dir(&casa).expect("create CASA cache root");
+        crate::aw_cache::tests::write_two_cell_test_cache(&casa);
+        let private_root = root.path().join("prepared");
+        let profile = ProductionStorageProfile::new(
+            root.path(),
+            1 << 30,
+            1 << 30,
+            100 << 20,
+            100 << 20,
+            2,
+            4,
+        )
+        .expect("test storage profile")
+        .with_measured_operations_rate(root.path())
+        .expect("measured test storage operations");
+        let runtime = runtime(root.path(), &profile);
+        let phase = prepare_aw_projection(
+            &problem(),
+            ApplicationAwPreparation {
+                casa_cache: casa,
+                private_root,
+                storage_domain: profile.storage_domain(),
+                resident_bytes: 1 << 20,
+                conjugate_beams: true,
+            },
+            &runtime,
+        )
+        .expect("two-cell cold preparation");
+
+        let mut cache_demands = BTreeSet::new();
+        let mut cold_load_nodes = BTreeSet::new();
+        for receipt in &phase.receipts {
+            let selected = receipt.selected_alternative_projection();
+            let queue_slots = selected
+                .demand
+                .storage
+                .iter()
+                .map(|demand| demand.queue_slots.hard())
+                .sum::<u64>();
+            assert!(
+                queue_slots <= 2,
+                "{} reserves {queue_slots} storage queue slots",
+                selected.id.as_str()
+            );
+            cache_demands.extend(
+                selected
+                    .demand
+                    .storage
+                    .iter()
+                    .filter(|demand| demand.demand_id.starts_with("private-prepared-cache-"))
+                    .map(|demand| demand.demand_id.clone()),
+            );
+            cold_load_nodes.extend(
+                receipt
+                    .plan_node_identities()
+                    .into_iter()
+                    .filter(|node| node.as_str().starts_with("prepared-artifact-cold-load-")),
+            );
+        }
+        assert_eq!(cache_demands.len(), 1);
+        assert_eq!(cold_load_nodes.len(), 2);
+        drop(phase.projection);
     }
 
     fn runtime(root: &Path, profile: &ProductionStorageProfile) -> ApplicationRuntime {
