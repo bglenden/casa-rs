@@ -844,7 +844,14 @@ impl<'a> GraphBuilder<'a> {
 
     fn normalized_image_validity(&self) -> ProductValidityRule {
         match self.products.normalization() {
-            ProductNormalization::UnitResponse => ProductValidityRule::FinalNormalState,
+            ProductNormalization::UnitResponse => match self.products.validity().unit_response() {
+                crate::UnitResponseValidityPolicy::FinalNormalState => {
+                    ProductValidityRule::FinalNormalState
+                }
+                crate::UnitResponseValidityPolicy::PrimaryBeam => {
+                    ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
+                }
+            },
             ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
                 ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
             }

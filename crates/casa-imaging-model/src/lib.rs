@@ -26,8 +26,9 @@ pub use compiled_problem::{
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
     SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UvTaper, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, validate_compiled_problem_identity,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UnitResponseValidityPolicy,
+    UvTaper, WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    validate_compiled_problem_identity,
 };
 
 pub use geometry::{

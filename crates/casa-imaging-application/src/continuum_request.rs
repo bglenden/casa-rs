@@ -34,8 +34,8 @@ use casa_imaging_model::{
     ScientificContract, SelectedMainRow, SelectedRowsBuilder, SequentialContinuumTransform,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw,
-    VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UnitResponseValidityPolicy,
+    UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{
@@ -1603,17 +1603,26 @@ fn prepare(
         .and_then(|samples| samples.checked_mul(request.polarizations.len()))
         .ok_or_else(|| boxed("reconstruction model sample count overflowed"))?;
     let instrument = scientific_instrument_model(&request, &ms)?;
+    let unit_response_validity = match primary_beam_model {
+        Some(
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaAlma12mAiry
+            | casa_imaging_products::AnalyticPrimaryBeamModel::CasaAca7mAiry,
+        ) => UnitResponseValidityPolicy::PrimaryBeam,
+        _ => UnitResponseValidityPolicy::FinalNormalState,
+    };
     let specification = match continuum_transform {
         Some(transform) => specification(
             &request,
             &prepared_spectral,
             instrument.map(|value| value.0),
+            unit_response_validity,
         )?
         .with_visibility_transform(transform),
         None => specification(
             &request,
             &prepared_spectral,
             instrument.map(|value| value.0),
+            unit_response_validity,
         )?,
     };
     let masks = casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new(
@@ -2515,6 +2524,7 @@ fn specification(
     request: &ContinuumImagingRequest,
     spectral: &PreparedSpectralAxis,
     instrument_model: Option<InstrumentModel>,
+    unit_response_validity: UnitResponseValidityPolicy,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
     let mosaic = request
         .task_requirements
@@ -2654,7 +2664,8 @@ fn specification(
                     ProductSupportComparison::StrictlyGreater,
                     ProductBlankingPolicy::ZeroAndFalseMask,
                 )?,
-            ),
+            )
+            .with_unit_response(unit_response_validity),
         ),
         ObservationTransactionRequirements::new(if request.save_model_column {
             ModelColumnWrite::SelectedRows

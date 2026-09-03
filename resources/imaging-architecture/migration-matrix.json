@@ -93,7 +93,7 @@
     }
   },
   "baseline_manifest_digests": {
-    "repo://crates/casa-imaging-model/src/lib.rs": "71fc8fb5d99b467e3848931e1b8b059db55dc30be85035bfbd4646904a138170",
+    "repo://crates/casa-imaging-model/src/lib.rs": "ee81c85c52033ebb6ddb7c70dc6f4038cf1a19c38393aeb2b4c31c852509100e",
     "repo://crates/casa-imaging-model/src/measurement_equation.rs": "d2f50b9eaeaed8f5a8f9e65cd9b031ccf003e119f6e4fc458b4e8abe4392f9b3",
     "repo://crates/casa-imaging-model/src/selected_observation_sample.rs": "96e67a19f1c8ae09602695b148d0a9fe6810e531274e9e3fe54404771c614442",
     "repo://crates/casa-imaging-runtime/src/lib.rs": "bed93945b19aa470cb1d39577bc3692a7d1730091db80f96787656778dda33bf",

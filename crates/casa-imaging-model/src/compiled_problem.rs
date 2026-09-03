@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 19;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 20;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -1125,6 +1125,15 @@ pub enum ProductBlankingPolicy {
     ZeroAndFalseMask,
 }
 
+/// Validity source for uncorrected unit-response residual and restored images.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnitResponseValidityPolicy {
+    /// Preserve every plane accepted by the final normal state.
+    FinalNormalState,
+    /// Restrict published pixels to the configured primary-beam support.
+    PrimaryBeam,
+}
+
 /// Reference statistic used by the MT-MFS Taylor-support threshold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaylorSupportReference {
@@ -1245,6 +1254,7 @@ impl TaylorValidityPolicy {
 pub struct ProductValidityPolicies {
     primary_beam: PrimaryBeamValidityPolicy,
     taylor: TaylorValidityPolicy,
+    unit_response: UnitResponseValidityPolicy,
 }
 
 impl ProductValidityPolicies {
@@ -1257,7 +1267,15 @@ impl ProductValidityPolicies {
         Self {
             primary_beam,
             taylor,
+            unit_response: UnitResponseValidityPolicy::FinalNormalState,
         }
+    }
+
+    /// Select the validity source for uncorrected unit-response products.
+    #[must_use]
+    pub const fn with_unit_response(mut self, unit_response: UnitResponseValidityPolicy) -> Self {
+        self.unit_response = unit_response;
+        self
     }
 
     /// Return the primary-beam support policy.
@@ -1270,6 +1288,12 @@ impl ProductValidityPolicies {
     #[must_use]
     pub const fn taylor(self) -> TaylorValidityPolicy {
         self.taylor
+    }
+
+    /// Return the validity source for uncorrected unit-response products.
+    #[must_use]
+    pub const fn unit_response(self) -> UnitResponseValidityPolicy {
+        self.unit_response
     }
 }
 
@@ -3064,6 +3088,10 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     });
     encoder.u8(match primary_beam_validity.blanking() {
         ProductBlankingPolicy::ZeroAndFalseMask => 0,
+    });
+    encoder.u8(match products.validity.unit_response() {
+        UnitResponseValidityPolicy::FinalNormalState => 0,
+        UnitResponseValidityPolicy::PrimaryBeam => 1,
     });
     let taylor_validity = products.validity.taylor();
     encoder.u8(match taylor_validity.reference() {
