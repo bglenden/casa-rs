@@ -1882,6 +1882,7 @@ fn analytic_primary_beam_model_for_telescopes(
         .as_slice()
     {
         ["EVLA"] => Ok(casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon),
+        ["VLA"] => Ok(casa_imaging_products::AnalyticPrimaryBeamModel::CasaVlaBand),
         [] => Err(boxed(
             "standard primary-beam publication requires OBSERVATION telescope metadata",
         )),
@@ -2684,9 +2685,11 @@ fn requested_products(
         ProductKind::Model,
         ProductKind::RestoredImage,
         ProductKind::SumWeights,
-        ProductKind::Mask,
-        ProductKind::Beam,
     ];
+    if !matches!(algorithm, ContinuumAlgorithm::Dirty) {
+        products.push(ProductKind::Mask);
+    }
+    products.push(ProductKind::Beam);
     if matches!(algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
         products.extend([
             ProductKind::TaylorTerms,
@@ -3165,7 +3168,12 @@ mod tests {
             analytic_primary_beam_model_for_telescopes(&evla).expect("EVLA model"),
             casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon
         );
-        let unsupported = std::collections::BTreeSet::from(["VLA".to_string()]);
+        let vla = std::collections::BTreeSet::from(["VLA".to_string()]);
+        assert_eq!(
+            analytic_primary_beam_model_for_telescopes(&vla).expect("VLA model"),
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaVlaBand
+        );
+        let unsupported = std::collections::BTreeSet::from(["UNKNOWN".to_string()]);
         assert!(analytic_primary_beam_model_for_telescopes(&unsupported).is_err());
         assert!(
             analytic_primary_beam_model_for_telescopes(&std::collections::BTreeSet::new()).is_err()
@@ -3178,6 +3186,28 @@ mod tests {
         assert!(!instrument_model_supports_diameter(false, 12.0));
         assert!(instrument_model_supports_diameter(true, 7.0));
         assert!(instrument_model_supports_diameter(true, 12.0));
+    }
+
+    #[test]
+    fn dirty_execution_does_not_request_a_clean_mask() {
+        let dirty = requested_products(
+            &ContinuumAlgorithm::Dirty,
+            casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
+            true,
+            false,
+        );
+        assert!(!dirty.contains(&casa_imaging_model::ProductKind::Mask));
+        assert!(dirty.contains(&casa_imaging_model::ProductKind::PrimaryBeam));
+
+        let clean = requested_products(
+            &ContinuumAlgorithm::Hogbom,
+            casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
+            true,
+            false,
+        );
+        assert!(clean.contains(&casa_imaging_model::ProductKind::Mask));
     }
 
     #[test]

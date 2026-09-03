@@ -28,6 +28,7 @@ use casa_types::{
 use ndarray::ArrayD;
 
 const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
+const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -82,6 +83,14 @@ fn spectral_line_measurement_set(root: &Path) -> PathBuf {
         root,
         "line-input.ms",
         MeasurementSetFixtureOptions::new(true, true, 4, 1, 2, 1, false),
+    )
+}
+
+fn thirty_two_channel_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "thirty-two-channel-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 1, false),
     )
 }
 
@@ -644,12 +653,20 @@ fn set_production_io_environment() {
 }
 
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
-    let expected = PRODUCT_SUFFIXES
+    assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
+}
+
+fn assert_dirty_products(image_name: &Path, product_names: &[String]) {
+    assert_products(image_name, product_names, &DIRTY_PRODUCT_SUFFIXES);
+}
+
+fn assert_products(image_name: &Path, product_names: &[String], suffixes: &[&str]) {
+    let expected = suffixes
         .iter()
         .map(|suffix| (*suffix).to_string())
         .collect::<Vec<_>>();
     assert_eq!(product_names, expected);
-    for suffix in PRODUCT_SUFFIXES {
+    for suffix in suffixes {
         let path = PathBuf::from(format!("{}{}", image_name.display(), suffix));
         assert!(
             path.is_dir(),
@@ -705,17 +722,14 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
 
     assert_eq!(result.minor_iterations, 0);
     assert_eq!(result.minor_stop_reason, None);
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     for suffix in [".residual", ".image"] {
         let product =
             PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
                 .expect("reopen validity-bearing product");
-        assert_eq!(product.default_mask_name().as_deref(), Some("mask0"));
+        assert_eq!(product.default_mask_name(), None);
     }
-    let clean_mask =
-        PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
-            .expect("reopen numeric CLEAN mask");
-    assert_eq!(clean_mask.default_mask_name(), None);
+    assert!(!PathBuf::from(format!("{}.mask", image_name.display())).exists());
 }
 
 #[test]
@@ -884,7 +898,7 @@ fn application_executes_raw_linear_correlation_products_with_exact_axis() {
     imaging.task_requirements = vec![TaskRequirement::PolarizationSelection];
 
     let result = execute_continuum(imaging).expect("native raw-correlation dirty execution");
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     let product =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
             .expect("reopen raw-correlation residual");
@@ -919,7 +933,7 @@ fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
     ))
     .expect("undefined WEIGHT_SPECTRUM cells select scalar WEIGHT before traversal");
 
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
 }
 
 #[test]
@@ -933,6 +947,11 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
         ("dirty", ContinuumAlgorithm::Dirty),
         ("hogbom", ContinuumAlgorithm::Hogbom),
     ] {
+        let product_suffixes = if algorithm == ContinuumAlgorithm::Dirty {
+            DIRTY_PRODUCT_SUFFIXES.as_slice()
+        } else {
+            PRODUCT_SUFFIXES.as_slice()
+        };
         let image_name = root.path().join(format!("t31-{label}-main"));
         let outlier_name = root.path().join(format!("t31-{label}-outlier"));
         let outlier_file = root.path().join(format!("t31-{label}.outlier"));
@@ -958,7 +977,10 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
                 .domain_count(),
             2
         );
-        assert_eq!(result.outcome.output.planned_products.members().len(), 12);
+        assert_eq!(
+            result.outcome.output.planned_products.members().len(),
+            2 * product_suffixes.len()
+        );
         assert_eq!(
             result
                 .outcome
@@ -968,7 +990,7 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
                 .iter()
                 .filter(|member| member.axes().domain() == &ImageDomainRole::Main)
                 .count(),
-            6
+            product_suffixes.len()
         );
         assert_eq!(
             result
@@ -982,11 +1004,11 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
                         == &ImageDomainRole::Outlier(outlier_name.display().to_string())
                 })
                 .count(),
-            6
+            product_suffixes.len()
         );
 
         for (base, expected) in [(&image_name, [1.0, 0.5]), (&outlier_name, [1.001, 0.499])] {
-            for suffix in PRODUCT_SUFFIXES {
+            for suffix in product_suffixes {
                 assert!(
                     PathBuf::from(format!("{}{suffix}", base.display())).is_dir(),
                     "missing {label} domain product {}{suffix}",
@@ -1251,7 +1273,7 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
     imaging.beam_policy = ContinuumBeamPolicy::Common;
 
     let result = execute_continuum(imaging).expect("native common-beam application execution");
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     let restored =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.image", image_name.display())))
             .expect("reopen common-beam restored image");
@@ -1368,7 +1390,7 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
     imaging.beam_policy = ContinuumBeamPolicy::Common;
 
     let result = execute_continuum(imaging).expect("native common-beam cube execution");
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     let open = |suffix: &str| {
         PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
             .expect("reopen cube product")
@@ -1376,14 +1398,12 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
     let psf = open(".psf");
     let residual = open(".residual");
     let restored = open(".image");
-    let clean_mask = open(".mask");
-    for product in [&psf, &residual, &restored, &clean_mask] {
+    for product in [&psf, &residual, &restored] {
         assert_eq!(product.shape(), &[16, 16, 1, 4]);
     }
     assert_eq!(psf.units(), "Jy/beam");
     assert_eq!(residual.units(), "Jy/beam");
     assert_eq!(restored.units(), "Jy/beam");
-    assert_eq!(clean_mask.units(), "");
 
     let psf_beams = psf.image_info().expect("PSF ImageInfo").beam_set;
     let residual_beams = residual.image_info().expect("residual ImageInfo").beam_set;
@@ -1414,8 +1434,6 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
             .expect("product validity mask");
         assert!(valid.iter().all(|valid| *valid));
     }
-    assert_eq!(clean_mask.default_mask_name(), None);
-
     let first = restored
         .coordinates()
         .to_world(&[8.0, 8.0, 0.0, 0.0])
@@ -1425,6 +1443,56 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
         .to_world(&[8.0, 8.0, 0.0, 1.0])
         .expect("second channel world coordinate");
     assert!(first[3] > second[3], "descending spectral WCS");
+}
+
+#[test]
+fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_measurement_set(root.path());
+    let image_name = root.path().join("t607-channel-local-cube");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.spectral_window = Some("0:0~31".to_string());
+    imaging.channel_count = Some(32);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(32),
+    };
+
+    let result = execute_continuum(imaging).expect("native 32-channel cube execution");
+    assert_dirty_products(&image_name, &result.product_names);
+    assert_eq!(
+        result.outcome.output.scientific.normal_state().catalog(),
+        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedChannelSlabV1
+    );
+    let slab_depth = result
+        .outcome
+        .output
+        .initial_receipt
+        .initial_execution_knobs()
+        .slab_depth;
+    assert!((1..=32).contains(&slab_depth));
+    let residual =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
+            .expect("reopen 32-channel residual");
+    assert_eq!(residual.shape(), &[16, 16, 1, 32]);
+    let first = residual
+        .coordinates()
+        .to_world(&[8.0, 8.0, 0.0, 0.0])
+        .expect("first channel world coordinate");
+    let last = residual
+        .coordinates()
+        .to_world(&[8.0, 8.0, 0.0, 31.0])
+        .expect("last channel world coordinate");
+    assert!(last[3] > first[3], "ascending spectral WCS");
 }
 
 #[test]

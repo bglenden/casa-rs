@@ -34,7 +34,7 @@
     "usemask": "user",
     "mask_box": "192,192,319,319",
     "casa_pblimit": -0.2,
-    "write_pb": false,
+    "write_pb": true,
     "pbcor": false,
     "wterm": "none"
   },
@@ -53,12 +53,12 @@
   },
   "comparison": {
     "mode": "full",
-    "products": [".image", ".residual", ".psf", ".sumwt", ".model", ".mask"],
+    "products": [".image", ".residual", ".psf", ".sumwt", ".model", ".mask", ".pb"],
     "max_elements_per_product": 1000000,
     "full_chunk_elements": 1000000,
-    "require_exact_product_inventory": false,
+    "require_exact_product_inventory": true,
     "require_direction_wcs_parity": true,
-    "require_metadata_parity": false,
+    "require_metadata_parity": true,
     "source_regions": [
       {"id":"structured-sky-core","products":[".image",".residual",".model"],"blc":[192,192],"trc":[319,319]}
     ],

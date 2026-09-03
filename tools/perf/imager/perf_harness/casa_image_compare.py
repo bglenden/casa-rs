@@ -816,6 +816,13 @@ def compare_one(
             and allow_scientific_beam_equivalence
             and is_restoring_beam_only_metadata_mismatch(metadata)
         )
+        or documented_casa_metadata_omission_is_satisfied(
+            metadata,
+            suffix,
+            left_label,
+            right_label,
+            allow_scientific_beam_equivalence,
+        )
     )
     direction_wcs = (
         compare_direction_wcs(left_path, right_path)
@@ -1052,7 +1059,7 @@ def source_region_difference(
     max_elements,
     image_factory=None,
 ):
-    """Compare a frozen source box without materializing either full image."""
+    """Compare a frozen source box on the documented central display plane."""
 
     if max_elements < 1:
         raise ValueError("source-region chunk budget must be >= 1")
@@ -1073,7 +1080,7 @@ def source_region_difference(
             raise ValueError(
                 f"source region is outside image shape {left_shape}: {blc_xy}..{trc_xy}"
             )
-        other_axes = [0] * (len(left_shape) - 2)
+        other_axes = display_plane_bounds(left_shape)[0][2:]
         y_count = trc_xy[1] - blc_xy[1] + 1
         y_chunk = min(y_count, max_elements)
         x_chunk = max(1, max_elements // y_chunk)
@@ -1148,6 +1155,8 @@ def source_region_statistics(
     image_factory=None,
     beam_area_pixels=None,
 ):
+    """Measure a frozen source box on the documented central display plane."""
+
     if max_elements < 1:
         raise ValueError("source-region chunk budget must be >= 1")
     tool = new_image_tool(image_factory)
@@ -1160,7 +1169,7 @@ def source_region_statistics(
             raise ValueError(
                 f"source region is outside image shape {shape}: {blc_xy}..{trc_xy}"
             )
-        other_axes = [0] * (len(shape) - 2)
+        other_axes = display_plane_bounds(shape)[0][2:]
         y_count = trc_xy[1] - blc_xy[1] + 1
         y_chunk = min(y_count, max_elements)
         x_chunk = max(1, max_elements // y_chunk)
@@ -1626,6 +1635,74 @@ def is_restoring_beam_only_metadata_mismatch(metadata):
         "restoring_beam": False,
         "masks": True,
     }
+
+
+def documented_casa_metadata_omission_is_satisfied(
+    metadata,
+    suffix,
+    left_label,
+    right_label,
+    allow_scientific_beam_equivalence,
+):
+    """Accept only CASA's established PSF/residual metadata omissions."""
+
+    kind = documented_casa_metadata_omission_kind(
+        metadata, suffix, left_label, right_label
+    )
+    return kind == "psf_unit" or (
+        allow_scientific_beam_equivalence
+        and kind in {"psf_unit_and_beam_roundoff", "residual_unit_and_beam"}
+    )
+
+
+def documented_casa_metadata_omission_kind(metadata, suffix, left_label, right_label):
+    if (
+        left_label != "casa-rs"
+        or right_label != "CASA"
+        or not isinstance(metadata, dict)
+        or metadata.get("status") != "mismatch"
+    ):
+        return None
+    left = metadata.get("left")
+    right = metadata.get("right")
+    parity = metadata.get("field_parity")
+    if (
+        not isinstance(left, dict)
+        or not isinstance(right, dict)
+        or left.get("status") != "complete"
+        or right.get("status") != "complete"
+        or left.get("unit") != "Jy/beam"
+        or right.get("unit") != ""
+        or not isinstance(parity, dict)
+        or parity.get("shape") is not True
+        or parity.get("unit") is not False
+        or parity.get("coordinates") is not True
+        or parity.get("masks") is not True
+    ):
+        return None
+    left_beam = left.get("restoring_beam")
+    right_beam = right.get("restoring_beam")
+    if suffix == ".psf" or suffix.startswith(".psf."):
+        if not isinstance(left_beam, dict) or not left_beam:
+            return None
+        if not isinstance(right_beam, dict) or not right_beam:
+            return None
+        return (
+            "psf_unit"
+            if parity.get("restoring_beam") is True
+            else "psf_unit_and_beam_roundoff"
+            if parity.get("restoring_beam") is False
+            else None
+        )
+    if suffix == ".residual" or suffix.startswith(".residual."):
+        if (
+            isinstance(left_beam, dict)
+            and left_beam
+            and right_beam == {}
+            and parity.get("restoring_beam") is False
+        ):
+            return "residual_unit_and_beam"
+    return None
 
 
 def full_chunk_shape(shape, max_elements):

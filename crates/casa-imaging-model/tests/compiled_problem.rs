@@ -586,6 +586,40 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
 }
 
 #[test]
+fn publishing_a_primary_beam_does_not_change_uncorrected_product_validity() {
+    let compiled = compile_product_set(
+        vec![
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+            ProductKind::SumWeights,
+            ProductKind::PrimaryBeam,
+        ],
+        InstrumentResponse::PrimaryBeam,
+    )
+    .expect("compile unit-response products with a published primary beam");
+    let graph = compiled.product_graph();
+
+    for role in [
+        ProductRole::Residual(ProductTerm::Taylor(0)),
+        ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+    ] {
+        assert_eq!(
+            graph.node(role).expect("uncorrected product").validity(),
+            ProductValidityRule::FinalNormalState,
+        );
+    }
+    assert_eq!(
+        graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+            .expect("published primary beam")
+            .validity(),
+        ProductValidityRule::PrimaryBeam(product_validity().primary_beam()),
+    );
+}
+
+#[test]
 fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem_inputs() {
     let first = compile_request(specification(false), inputs(false)).expect("compile first");
     let different_numerics = compile_request(

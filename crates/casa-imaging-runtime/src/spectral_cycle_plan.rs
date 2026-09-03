@@ -508,13 +508,20 @@ impl SpectralCyclePlan {
                 if matches!(
                     problem.reconstruction().basis(),
                     casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
+                        | casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
                 ) =>
             {
-                let memory_ceiling = policy.authority.remaining_planning_memory_bytes(
+                let available_after_base = policy.authority.remaining_planning_memory_bytes(
                     &policy.resource_policy,
                     physical.execution_dag().resource_alternative(),
                 )?;
-                let fragment = CompleteDataPlanFragment::mvc_with_preparation_node(
+                let downstream_reservation = if include_minor {
+                    policy.limits.minor_cycle_bytes
+                } else {
+                    0
+                };
+                let memory_ceiling = available_after_base.saturating_sub(downstream_reservation);
+                let fragment = CompleteDataPlanFragment::channel_major_with_preparation_node(
                     problem,
                     weighting.limits().max_block_samples(),
                     replay.clone(),
@@ -524,9 +531,12 @@ impl SpectralCyclePlan {
                 if imaging_plan_diagnostics_enabled() {
                     let residency = fragment.residency();
                     eprintln!(
-                        "imaging_mvc_plan_summary available_after_base_bytes={} admitted_slab_depth={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} mosaic_state_bytes={} mosaic_workspace_bytes={} primitive_output_bytes={} major_cycle_model_bytes={}",
+                        "imaging_channel_major_plan_summary available_after_base_bytes={} downstream_reservation_bytes={} operator_working_set_bytes={} admitted_slab_depth={} slab_count={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} mosaic_state_bytes={} mosaic_workspace_bytes={} primitive_output_bytes={} fold_accumulator_bytes={} major_cycle_model_bytes={}",
+                        available_after_base,
+                        downstream_reservation,
                         memory_ceiling,
                         fragment.slab().core_depth(),
+                        fragment.slab_count(),
                         residency.peak_bytes(),
                         residency.grid_bytes(),
                         residency.convolution_cache_bytes(),
@@ -537,6 +547,7 @@ impl SpectralCyclePlan {
                         residency.mosaic_state_bytes(),
                         residency.mosaic_workspace_bytes(),
                         residency.primitive_output_bytes(),
+                        residency.sequential_fold_accumulator_bytes(),
                         residency.major_cycle_model_bytes(),
                     );
                 }

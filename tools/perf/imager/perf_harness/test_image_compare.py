@@ -1323,6 +1323,126 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         metadata["field_parity"]["unit"] = False
         self.assertFalse(comparator.is_restoring_beam_only_metadata_mismatch(metadata))
 
+    def test_comparator_accepts_only_documented_casa_metadata_omissions(
+        self,
+    ) -> None:
+        psf = matched_metadata([1, 1])
+        psf["right"]["unit"] = ""
+        psf["status"] = "mismatch"
+        psf["parity"] = False
+        psf["field_parity"]["unit"] = False
+
+        self.assertTrue(
+            comparator.documented_casa_metadata_omission_is_satisfied(
+                psf, ".psf", "casa-rs", "CASA", False
+            )
+        )
+        self.assertFalse(
+            comparator.documented_casa_metadata_omission_is_satisfied(
+                psf, ".psf", "left-label", "right-label", True
+            )
+        )
+
+        psf["left"]["restoring_beam"]["major"]["value"] = 2.000001
+        psf["field_parity"]["restoring_beam"] = False
+        self.assertFalse(
+            comparator.documented_casa_metadata_omission_is_satisfied(
+                psf, ".psf", "casa-rs", "CASA", False
+            )
+        )
+        self.assertTrue(
+            comparator.documented_casa_metadata_omission_is_satisfied(
+                psf, ".psf", "casa-rs", "CASA", True
+            )
+        )
+
+        residual = matched_metadata([1, 1])
+        residual["right"]["unit"] = ""
+        residual["right"]["restoring_beam"] = {}
+        residual["status"] = "mismatch"
+        residual["parity"] = False
+        residual["field_parity"]["unit"] = False
+        residual["field_parity"]["restoring_beam"] = False
+        self.assertTrue(
+            comparator.documented_casa_metadata_omission_is_satisfied(
+                residual, ".residual", "casa-rs", "CASA", True
+            )
+        )
+
+        residual["right"]["masks"] = ["different"]
+        residual["field_parity"]["masks"] = False
+        self.assertFalse(
+            comparator.documented_casa_metadata_omission_is_satisfied(
+                residual, ".residual", "casa-rs", "CASA", True
+            )
+        )
+
+    def test_host_validator_binds_casa_omissions_to_scientific_beam_reference(
+        self,
+    ) -> None:
+        tolerances = {
+            "contract_version": 2,
+            "require_full_array": True,
+            "default": {
+                "diff_rms_over_right_rms": 0.001,
+                "require_topology_parity": True,
+            },
+            "products": {
+                ".image.tt0": {
+                    "beam_area_relative": 0.001,
+                    "beam_kernel_nrmse": 0.001,
+                }
+            },
+        }
+        raw_request = comparison_request(tolerances=tolerances)
+        raw_request["left_label"] = "casa-rs"
+        raw_request["right_label"] = "CASA"
+        raw_request["products"] = [
+            ".image.tt0",
+            ".psf.tt0",
+            ".residual.tt0",
+        ]
+        request = normalize_comparison_request(raw_request)
+        output = comparison_output(request)
+        del output["products"][".psf.tt0"]["source_regions"]
+
+        image = output["products"][".image.tt0"]["metadata"]
+        image["left"]["restoring_beam"]["major"]["value"] = 2.000001
+        image["status"] = "mismatch"
+        image["parity"] = False
+        image["field_parity"]["restoring_beam"] = False
+
+        psf = output["products"][".psf.tt0"]["metadata"]
+        psf["left"]["restoring_beam"]["major"]["value"] = 2.000001
+        psf["right"]["unit"] = ""
+        psf["status"] = "mismatch"
+        psf["parity"] = False
+        psf["field_parity"]["unit"] = False
+        psf["field_parity"]["restoring_beam"] = False
+
+        residual = output["products"][".residual.tt0"]["metadata"]
+        residual["left"]["restoring_beam"]["major"]["value"] = 2.000001
+        residual["right"]["unit"] = ""
+        residual["right"]["restoring_beam"] = {}
+        residual["status"] = "mismatch"
+        residual["parity"] = False
+        residual["field_parity"]["unit"] = False
+        residual["field_parity"]["restoring_beam"] = False
+
+        validate_comparison_output(output, request)
+
+        unbound = copy.deepcopy(output)
+        unbound["products"][".residual.tt0"]["metadata"]["left"]["restoring_beam"][
+            "major"
+        ]["value"] = 2.000002
+        with self.assertRaisesRegex(ValueError, "no bound scientific-equivalence"):
+            validate_comparison_output(unbound, request)
+
+        wrong_unit = copy.deepcopy(output)
+        wrong_unit["products"][".residual.tt0"]["metadata"]["right"]["unit"] = "K"
+        with self.assertRaisesRegex(ValueError, "no bound scientific-equivalence"):
+            validate_comparison_output(wrong_unit, request)
+
     def test_comparator_defers_mask_topology_only_for_named_v2_products(self) -> None:
         contract = {
             "contract_version": 2,
@@ -1407,6 +1527,39 @@ class ImageComparisonProtocolTests(unittest.TestCase):
 
         self.assertEqual(22, result["finite_unmasked_count"])
         self.assertLessEqual(max(factory.chunk_sizes), 4)
+
+    def test_source_region_uses_central_nonspatial_plane_for_cube(self) -> None:
+        shape = (3, 3, 1, 3)
+        left = np.zeros(shape, dtype=np.float64)
+        right = np.zeros(shape, dtype=np.float64)
+        left[:, :, 0, 0] = 100.0
+        right[:, :, 0, 0] = -100.0
+        left[1, 1, 0, 1] = 4.0
+        right[1, 1, 0, 1] = 4.0
+        masks = np.ones(shape, dtype=bool)
+        factory = FakeImageFactory(
+            {"left": left, "right": right}, {"left": masks, "right": masks}
+        )
+        regions = [
+            {
+                "id": "line-source",
+                "products": [".image"],
+                "blc": [0, 0],
+                "trc": [2, 2],
+            }
+        ]
+
+        result = comparator.compare_source_regions(
+            "left",
+            "right",
+            regions,
+            max_elements=9,
+            image_factory=factory,
+        )[0]
+
+        self.assertEqual(4.0, result["left"]["integrated_pixel_sum"])
+        self.assertEqual(4.0, result["right"]["integrated_pixel_sum"])
+        self.assertEqual(0.0, result["difference"]["diff_rms_over_right_rms"])
 
     def test_source_region_exact_zero_difference_has_zero_relative_rms(self) -> None:
         data = np.zeros((4, 4, 1, 1), dtype=np.float64)

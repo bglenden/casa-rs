@@ -843,9 +843,6 @@ impl<'a> GraphBuilder<'a> {
     }
 
     fn normalized_image_validity(&self) -> ProductValidityRule {
-        if self.products.contains(ProductKind::PrimaryBeam) {
-            return ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam());
-        }
         match self.products.normalization() {
             ProductNormalization::UnitResponse => ProductValidityRule::FinalNormalState,
             ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {

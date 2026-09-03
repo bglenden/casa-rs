@@ -4,9 +4,9 @@
   "mode_id": "continuum-subtracted-cube-representative",
   "description": "Issue #607 representative 256-channel ALMA cube after first-order visibility-domain continuum subtraction of a structured multi-source sky.",
   "dataset": {
-    "key": "issue607-joint-v2",
-    "root_env": "CASA_RS_ISSUE607_JOINT_ROOT",
-    "relative_path": "joint-shaped.ms"
+    "key": "issue607-contsub-v1",
+    "root_env": "CASA_RS_ISSUE607_CONTSUB_ROOT",
+    "relative_path": "continuum-subtraction-shaped.ms"
   },
   "imaging": {
     "mode": "dirty",

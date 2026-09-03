@@ -45,7 +45,7 @@ use casa_imaging_reconstruction::{
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
     WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+        CompleteDataOwnerResult, CompleteDataOwnerSlabFold, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
         GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
         GriddedNormalRoutingMeasurements, SourceCardinalityObservation, SpectralOperatorPass,
@@ -486,7 +486,18 @@ fn problem_with_shape_response_and_mosaic(
     let is_channel_major = matches!(
         reconstruction.basis(),
         ReconstructionBasis::TaylorViaChannelMajor { .. }
+            | ReconstructionBasis::ChannelLocal { .. }
     );
+    let model_terms = match reconstruction.basis() {
+        ReconstructionBasis::Constant => 1,
+        ReconstructionBasis::Taylor { terms }
+        | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
+        ReconstructionBasis::ChannelLocal { channels } => channels,
+        ReconstructionBasis::JointContinuumLine {
+            continuum_terms,
+            line_terms,
+        } => continuum_terms + line_terms,
+    };
     let mut product_kinds = vec![
         ProductKind::Psf,
         ProductKind::Residual,
@@ -632,9 +643,9 @@ fn problem_with_shape_response_and_mosaic(
         ProblemInputIdentities::new(snapshot),
         ModelLifecycleRequirements::new(
             ModelBounds::new(
-                width * height * 2,
-                width * height * 2,
-                width * height * 2,
+                width * height * model_terms,
+                width * height * model_terms,
+                width * height * model_terms,
                 1_024,
                 1.0e30,
                 1.0e30,
@@ -682,6 +693,18 @@ fn mosaic_taylor_problem() -> casa_imaging_model::CompiledProblem {
 
 fn channel_major_problem(channels: usize) -> casa_imaging_model::CompiledProblem {
     channel_major_problem_with_shape(channels, ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH))
+}
+
+fn channel_local_problem(channels: usize) -> casa_imaging_model::CompiledProblem {
+    problem_with(
+        ReconstructionContract::new(
+            ReconstructionBasis::ChannelLocal { channels },
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(1, 0.1, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        channels,
+    )
 }
 
 fn channel_major_problem_with_shape(
@@ -1429,6 +1452,17 @@ fn nonzero_taylor_model(problem: &casa_imaging_model::CompiledProblem) -> MajorC
         .expect("prepare genuinely two-term model")
 }
 
+fn empty_model(problem: &casa_imaging_model::CompiledProblem) -> MajorCyclePreparation {
+    let lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
+        ModelExecutionAttemptId::new(identity(42, 123)),
+        1,
+    )
+    .expect("bind compact cube lifecycle");
+    let initial = lifecycle.initial_empty().expect("empty compact cube model");
+    MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare empty cube model")
+}
+
 fn compile_compact_program(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
@@ -1798,7 +1832,8 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
     );
     assert_eq!(
         gap.primitives().channel_validity(),
-        &[SpectralChannelValidity::Unmapped]
+        &[SpectralChannelValidity::Blank],
+        "flagged samples map to the output but carry zero effective weight"
     );
     assert!(
         gap.primitives()
@@ -1874,6 +1909,125 @@ fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
         folded.completion().coverage_proof_hash_calls(),
         expected_proof_hash_calls
     );
+}
+
+#[test]
+fn t607_channel_local_ordered_slab_fold_matches_one_window() {
+    let problem = channel_local_problem(4);
+    let selected = channel_major_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let preparation = empty_model(&problem);
+    let run_slab = |start, depth| {
+        complete_frozen_taylor_operator_slab(
+            &problem,
+            &frozen,
+            &preparation,
+            SpectralOperatorPass::InitialMajor,
+            None,
+            start,
+            depth,
+        )
+    };
+
+    let full = run_slab(0, 4);
+    let first = run_slab(0, 2);
+    let second = run_slab(2, 2);
+    assert_eq!(
+        first.completion().primitive_catalog(),
+        SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
+    );
+    let folded = CompleteDataOwnerSlabFold::begin(first)
+        .expect("begin channel-local fold")
+        .extend(second)
+        .expect("append adjacent channel-local slab")
+        .finish()
+        .expect("complete channel-local coverage");
+
+    assert_eq!(folded.primitives().slab().core_range(), 0..4);
+    assert_eq!(folded.primitives().dirty(), full.primitives().dirty());
+    assert_eq!(folded.primitives().psf(), full.primitives().psf());
+    assert_eq!(
+        folded.primitives().sensitivity(),
+        full.primitives().sensitivity()
+    );
+    assert_eq!(
+        folded.primitives().sum_weights(),
+        full.primitives().sum_weights()
+    );
+    assert_eq!(
+        folded.primitives().published_sum_weights(),
+        full.primitives().published_sum_weights()
+    );
+    assert_eq!(
+        folded.primitives().channel_validity(),
+        full.primitives().channel_validity()
+    );
+    assert_eq!(
+        folded.primitives().normal_state_content_identity(),
+        full.primitives().normal_state_content_identity(),
+        "ordered slab concatenation must reproduce every bound primitive bit"
+    );
+
+    let first = run_slab(0, 2);
+    let gap = run_slab(3, 1);
+    let error = CompleteDataOwnerSlabFold::begin(first)
+        .expect("begin channel-local prefix")
+        .extend(gap)
+        .expect_err("a channel gap cannot be folded");
+    assert_eq!(
+        error,
+        casa_imaging_reconstruction::SpectralOperatorError::IncompleteCoverage
+    );
+}
+
+#[test]
+fn t607_certified_zero_first_slab_emits_the_complete_visibility_stream() {
+    let problem = channel_local_problem(4);
+    let selected = channel_major_samples(&problem);
+    let frozen = freeze_taylor_replay(&problem, &selected);
+    let preparation = empty_model(&problem);
+    let specification = SpectralOperatorSpecification::for_slab(&problem, 0, 2)
+        .expect("bounded channel-local slab");
+    let workload = spectral_operator_workload(
+        &specification,
+        frozen.plan.limits().max_block_samples(),
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("bounded channel-local workload");
+    let prepared = prepare_spectral_operator(specification, workload)
+        .expect("prepare bounded channel-local operator");
+    let mut owner = prepared
+        .begin(&problem, &frozen.weighting)
+        .expect("begin bounded channel-local owner");
+    owner.enable_final_visibility_samples();
+    owner
+        .bind_major_cycle_model(preparation.final_model(), None)
+        .expect("bind certified-zero model");
+
+    let mut emitted = Vec::new();
+    for block in &frozen.blocks {
+        emitted.extend_from_slice(
+            owner
+                .consume_block(block)
+                .expect("consume bounded replay block"),
+        );
+    }
+    assert_eq!(emitted.len(), selected.len());
+    assert_eq!(
+        emitted
+            .iter()
+            .map(|sample| sample.address().channel_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3]
+    );
+    assert!(
+        emitted
+            .iter()
+            .all(|sample| sample.predicted() == num_complex::Complex64::new(0.0, 0.0))
+    );
+    owner
+        .complete(&frozen.summary, frozen.selected_generation, None)
+        .expect("complete bounded channel-local owner");
 }
 
 #[test]

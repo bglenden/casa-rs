@@ -70,10 +70,11 @@ pub mod runtime_adapter {
         gridded_normal_route_capacity_bytes,
     };
     pub use crate::spectral_operator::{
-        CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerState,
-        FinalVisibilitySample, PreparedSpectralOperator, PreparedSpectralOperatorRecycle,
-        SpectralOperatorPass, SpectralOperatorWorkload, SpectralSlabPlan,
-        prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,
+        CompleteDataOwnerState, FinalVisibilitySample, PreparedSpectralOperator,
+        PreparedSpectralOperatorRecycle, SpectralOperatorPass, SpectralOperatorWorkload,
+        SpectralSlabPlan, prepare_spectral_operator, reprepare_spectral_operator,
+        spectral_operator_workload,
     };
     pub use crate::weighting::{
         FusedWeightingPhase, WeightingReplayPhase, begin_natural_weighting_stream,

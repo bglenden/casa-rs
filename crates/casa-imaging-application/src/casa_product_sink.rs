@@ -162,7 +162,9 @@ impl SerialProductPublicationSink for CasaImageProductSink {
         image
             .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 0])
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        if member.contract().validity() != ProductValidityRule::All {
+        if member.contract().validity() != ProductValidityRule::All
+            && member.validity().iter().any(|valid| !valid)
+        {
             let validity = ArrayD::from_shape_vec(
                 IxDyn(&member.contract().axes().shape()),
                 member.validity().to_vec(),

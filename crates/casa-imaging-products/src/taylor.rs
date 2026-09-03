@@ -334,6 +334,9 @@ impl TaylorProducts {
             Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
                 analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
             }
+            Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
+                analytic_vla_primary_beam(inputs, domain_role, shape, 0)?
+            }
             Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
                 analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 10.7)?
             }
@@ -598,6 +601,38 @@ pub(crate) fn analytic_evla_primary_beam(
     Ok(values)
 }
 
+pub(crate) fn analytic_vla_primary_beam(
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &casa_imaging_model::ImageDomainRole,
+    shape: [usize; 2],
+    output_channel: usize,
+) -> Result<Vec<f32>, ProductsError> {
+    let domain = inputs
+        .problem()
+        .geometry()
+        .domains()
+        .iter()
+        .find(|domain| domain.role() == domain_role)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let direction = domain.direction();
+    let reference_pixel = direction.reference_pixel();
+    let increment_rad = direction.increment_rad();
+    let frequency_hz = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(output_channel)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let table = vla_band_voltage_table(frequency_hz)?;
+    Ok(annular_aperture_power_plane(
+        shape,
+        reference_pixel,
+        increment_rad,
+        frequency_hz,
+        &table,
+    ))
+}
+
 pub(crate) fn analytic_alma_airy_primary_beam(
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &casa_imaging_model::ImageDomainRole,
@@ -622,6 +657,22 @@ pub(crate) fn analytic_alma_airy_primary_beam(
         .channel_centre_hz(output_channel)
         .ok_or(ProductsError::UnsupportedProblem)?;
     let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
+    Ok(annular_aperture_power_plane(
+        shape,
+        reference_pixel,
+        increment_rad,
+        frequency_hz,
+        &table,
+    ))
+}
+
+fn annular_aperture_power_plane(
+    shape: [usize; 2],
+    reference_pixel: [f64; 2],
+    increment_rad: [f64; 2],
+    frequency_hz: f64,
+    table: &AnnularApertureVoltageTable,
+) -> Vec<f32> {
     let mut values = vec![0.0; shape[0] * shape[1]];
     for x in 0..shape[0] {
         let pixel_x = x as f64 - reference_pixel[0];
@@ -636,7 +687,7 @@ pub(crate) fn analytic_alma_airy_primary_beam(
             values[x * shape[1] + y] = voltage * voltage;
         }
     }
-    Ok(values)
+    values
 }
 
 fn evla_common_power_pattern(radius_rad: f64, frequency_hz: f64, coefficients: [f64; 4]) -> f32 {
@@ -667,6 +718,18 @@ fn evla_common_power_pattern(radius_rad: f64, frequency_hz: f64, coefficients: [
         0.0
     } else {
         response as f32
+    }
+}
+
+fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
+    // CASA PBMath::whichCommonPBtoUse() selects VLA_Q only inside the open
+    // 35--55 GHz interval. Other legacy-VLA bands remain unsupported until
+    // their distinct CASA models are implemented; never substitute the
+    // generic PBMath::VLA polynomial for telescope-driven selection.
+    if frequency_hz.is_finite() && frequency_hz > 35.0e9 && frequency_hz < 55.0e9 {
+        Ok(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
+    } else {
+        Err(ProductsError::UnsupportedProblem)
     }
 }
 
@@ -913,5 +976,31 @@ mod tests {
         let actual = super::evla_common_power_pattern(radius_rad, frequency_hz, coefficients);
         assert!((actual - expected_power as f32).abs() < 1.0e-7);
         assert!(super::nearest_evla_common_coefficients(850.0).is_none());
+    }
+
+    #[test]
+    fn vla_q_band_uses_casa_annular_airy_lookup_and_other_bands_fail_closed() {
+        let frequency_hz = 45_469_370_205.156_37;
+        let table = super::vla_band_voltage_table(frequency_hz)
+            .expect("issue #607 representative frequency is in VLA Q band");
+        assert_eq!(table.maximum_radius(), 0.8564 * 60.0);
+
+        let voltage = table.evaluate(29.919_033_706_45);
+        assert_eq!((voltage * voltage).to_bits(), 0x3e6d_1a6e);
+
+        for unsupported_hz in [
+            f64::NAN,
+            35.0e9,
+            55.0e9,
+            25.0e9,
+            15.0e9,
+            9.0e9,
+            5.0e9,
+            1.5e9,
+            0.3e9,
+            0.05e9,
+        ] {
+            assert!(super::vla_band_voltage_table(unsupported_hz).is_err());
+        }
     }
 }
