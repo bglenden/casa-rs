@@ -6,12 +6,18 @@ mod accounting;
 mod codec;
 mod filesystem;
 mod planning;
+mod reader;
 mod transaction;
 
 use accounting::*;
 use codec::*;
 use filesystem::*;
 pub use planning::{PreparedArtifactPlanError, PreparedArtifactPlanFragment};
+pub use reader::{
+    PreparedArtifactExecutionBinding, PreparedArtifactReader, PreparedArtifactReaderFactory,
+    PreparedArtifactReaderPlan, PreparedArtifactReaderResidency,
+    PreparedArtifactResidencyMeasurements,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -1571,7 +1577,9 @@ pub struct PreparedArtifactStore {
     budget: PreparedArtifactBudget,
     scope: CacheScope,
     storage_domain: StorageDomainId,
+    storage_read_rate: RateResourceId,
     storage_operations_rate: Option<RateResourceId>,
+    storage_queue: crate::QueueResourceId,
     state: Arc<RootState>,
     #[cfg(test)]
     fail_after_evictions: Option<usize>,
@@ -1853,6 +1861,18 @@ pub enum PreparedArtifactError {
     UnknownCacheEntry(PathBuf),
     /// A configured cache or source path belongs to CASA-visible persistence.
     CasaVisiblePath(PathBuf),
+    /// A reader was used before its plan-bound Cache node activated it.
+    ReaderInactive,
+    /// A reader session was activated more than once.
+    ReaderAlreadyActivated,
+    /// A reader was used after close, abort, or terminal release.
+    ReaderClosed,
+    /// A reader call did not match its exact plan, attempt, or lease.
+    ReaderBindingMismatch,
+    /// A requested artifact is absent from the reader's sealed catalog.
+    ReaderArtifactMissing,
+    /// Decoded-cell pins or loads were still live at the terminal fence.
+    ReaderStillInUse,
     /// An in-process cache lock was poisoned by a prior panic.
     PoisonedStore,
 }
@@ -1971,6 +1991,21 @@ impl fmt::Display for PreparedArtifactError {
                 "prepared-artifact path is CASA-visible: {}",
                 path.display()
             ),
+            Self::ReaderInactive => {
+                formatter.write_str("prepared-artifact reader has not been activated")
+            }
+            Self::ReaderAlreadyActivated => {
+                formatter.write_str("prepared-artifact reader was already activated")
+            }
+            Self::ReaderClosed => {
+                formatter.write_str("prepared-artifact reader is closed")
+            }
+            Self::ReaderBindingMismatch => formatter
+                .write_str("prepared-artifact reader does not match the executing plan binding"),
+            Self::ReaderArtifactMissing => formatter
+                .write_str("prepared-artifact reader catalog does not contain the requested artifact"),
+            Self::ReaderStillInUse => formatter
+                .write_str("prepared-artifact reader still has live decoded loads or pins"),
             Self::PoisonedStore => formatter.write_str("prepared-artifact cache lock is poisoned"),
         }
     }
@@ -2580,6 +2615,7 @@ struct ValidationEvidence {
     file_descriptors_peak: u64,
     evictions: Vec<(ArtifactIdentity, u64)>,
     materialized: Option<MaterializedArtifactEvidence>,
+    accounting_overflowed: bool,
 }
 
 impl ValidationEvidence {
@@ -2628,11 +2664,20 @@ impl ValidationEvidence {
     }
 
     fn acquire_resident(&mut self, bytes: u64) {
-        self.resident_current_bytes = self.resident_current_bytes.saturating_add(bytes);
+        self.resident_current_bytes = match self.resident_current_bytes.checked_add(bytes) {
+            Some(current) => current,
+            None => {
+                self.accounting_overflowed = true;
+                u64::MAX
+            }
+        };
         self.resident_buffer_bytes = self.resident_buffer_bytes.max(self.resident_current_bytes);
     }
 
     fn release_resident(&mut self, bytes: u64) {
+        if self.accounting_overflowed {
+            return;
+        }
         self.resident_current_bytes = self
             .resident_current_bytes
             .checked_sub(bytes)
@@ -2640,6 +2685,9 @@ impl ValidationEvidence {
     }
 
     fn ensure_resident_budget(&self) -> Result<(), PreparedArtifactError> {
+        if self.accounting_overflowed {
+            return Err(PreparedArtifactError::ArtifactTooLarge);
+        }
         if self
             .resident_limit_bytes
             .is_some_and(|budget| self.resident_buffer_bytes > budget)
@@ -2723,8 +2771,9 @@ impl ValidationEvidence {
             CacheIoClass::Control => &mut self.cache_control,
             CacheIoClass::Write => &mut self.cache_write,
         };
-        counter.bytes = counter.bytes.saturating_add(bytes);
-        counter.operations = counter.operations.saturating_add(1);
+        let overflowed = checked_accumulate(&mut counter.bytes, bytes)
+            | checked_accumulate(&mut counter.operations, 1);
+        self.accounting_overflowed |= overflowed;
     }
 
     fn record_source(&mut self, demand_id: &str, bytes: u64) {
@@ -2734,8 +2783,9 @@ impl ValidationEvidence {
             .find(|counter| counter.demand_id == demand_id)
             .expect("source counter initialized from the bound load source")
             .counter;
-        counter.bytes = counter.bytes.saturating_add(bytes);
-        counter.operations = counter.operations.saturating_add(1);
+        let overflowed = checked_accumulate(&mut counter.bytes, bytes)
+            | checked_accumulate(&mut counter.operations, 1);
+        self.accounting_overflowed |= overflowed;
     }
 
     fn record_source_bytes(&mut self, demand_id: &str, bytes: u64) {
@@ -2745,7 +2795,7 @@ impl ValidationEvidence {
             .find(|counter| counter.demand_id == demand_id)
             .expect("source counter initialized from the bound load source")
             .counter;
-        counter.bytes = counter.bytes.saturating_add(bytes);
+        self.accounting_overflowed |= checked_accumulate(&mut counter.bytes, bytes);
     }
 
     fn record_source_operations(&mut self, demand_id: &str, operations: u64) {
@@ -2755,7 +2805,7 @@ impl ValidationEvidence {
             .find(|counter| counter.demand_id == demand_id)
             .expect("source counter initialized from the bound load source")
             .counter;
-        counter.operations = counter.operations.saturating_add(operations);
+        self.accounting_overflowed |= checked_accumulate(&mut counter.operations, operations);
     }
 
     fn source_counter(&self, demand_id: &str) -> IoCounter {
@@ -2773,6 +2823,45 @@ impl ValidationEvidence {
                 bytes: total.bytes.saturating_add(source.counter.bytes),
                 operations: total.operations.saturating_add(source.counter.operations),
             })
+    }
+
+    fn exact_counter(&self, kind: IoBufferKind) -> Result<IoCounter, PreparedArtifactError> {
+        if self.accounting_overflowed {
+            return Err(PreparedArtifactError::ArtifactTooLarge);
+        }
+        let source = self.source_reads.iter().try_fold(
+            IoCounter::default(),
+            |total, source| -> Result<_, PreparedArtifactError> {
+                Ok(IoCounter {
+                    bytes: total
+                        .bytes
+                        .checked_add(source.counter.bytes)
+                        .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
+                    operations: total
+                        .operations
+                        .checked_add(source.counter.operations)
+                        .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
+                })
+            },
+        )?;
+        match kind {
+            IoBufferKind::SourceReadAhead => Ok(source),
+            IoBufferKind::Writeback => Ok(self.cache_write),
+            IoBufferKind::StorageManager => Ok(IoCounter {
+                bytes: source
+                    .bytes
+                    .checked_add(self.cache_read.bytes)
+                    .and_then(|bytes| bytes.checked_add(self.cache_write.bytes))
+                    .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
+                operations: source
+                    .operations
+                    .checked_add(self.cache_read.operations)
+                    .and_then(|operations| operations.checked_add(self.cache_write.operations))
+                    .and_then(|operations| operations.checked_add(self.cache_control.operations))
+                    .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
+            }),
+            _ => Ok(IoCounter::default()),
+        }
     }
 
     fn counter(&self, kind: IoBufferKind) -> IoCounter {
@@ -2811,6 +2900,19 @@ impl ValidationEvidence {
         let current = observed_vec_resident_bytes(&self.evictions);
         if current > prior {
             self.acquire_resident(current - prior);
+        }
+    }
+}
+
+fn checked_accumulate(total: &mut u64, value: u64) -> bool {
+    match total.checked_add(value) {
+        Some(next) => {
+            *total = next;
+            false
+        }
+        None => {
+            *total = u64::MAX;
+            true
         }
     }
 }

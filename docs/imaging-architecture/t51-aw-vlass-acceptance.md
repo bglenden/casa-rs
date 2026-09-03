@@ -11,6 +11,14 @@ The gate fails closed unless each receipt proves:
 
 - `awproject`, 32 W planes, EVLA A term, wideband conjugate beams, POINTING,
   Briggs weighting, MT-MFS with two Taylor terms, and flat-noise normalization;
+- the complete validated paired-CF inventory: exactly 1,024 cells across all 16
+  selected SPWs, with positive W, Mueller, and parallactic-angle axes;
+- one immutable private-artifact catalog identity and logical size across every
+  attempt-local reader session, with nonzero validated reads, bytes, operations,
+  decoded copies, and matching load/read counts;
+- scheduler-owned reader closure and exact measured decoded, pinned, and
+  combined residency within the 384 MiB decoded-cell ceiling and plan-owned
+  total ceiling;
 - at least 1,000,000 selected correlation-channel samples with internally
   consistent row/channel/correlation telemetry;
 - an exact 18-product dirty or 19-product clean inventory, matching metadata,
@@ -53,7 +61,7 @@ python3 tools/perf/imager/t51_aw_vlass_acceptance.py \
   --output-dir /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/receipts \
   --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/artifacts \
   --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/casa-oracle-cache \
-  --prepared-aw-casa-cache /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/3f8343a6717f48d89286e440be1fd59ba542a88324b98061540d6d4aa79e0e1c \
+  --prepared-aw-casa-cache /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/c03a1fab375d7f1747bad8cfb3fad38cf4620fea401570ed779d3def3fad1c36 \
   --prepared-aw-shared-parent /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/native-aw-cold-warm
 ```
 
@@ -64,10 +72,11 @@ each actual execution.
 It contains the two immutable workload-receipt paths, their required
 `["cold", "warm"]` sequence, the immutable CASA-oracle cache root, the distinct
 validated paired CFS/WTCFS source, the single shared native prepared-store
-parent, and the measured summary. The shared parent must not exist before an
-actual gate run. The gate rejects a preexisting private store, requires the
-dirty run to materialize private manifests, and requires the clean run to reuse
-the exact unchanged manifest set.
+parent, the exact cache inventory, and every reader-session transfer and
+residency receipt. The shared parent must not exist before an actual gate run.
+The gate rejects a preexisting private store, requires the dirty run to
+materialize exactly 1,024 private manifests, and requires the clean run to
+reuse the exact unchanged manifest set.
 
 The MeasurementSet, output directory, artifact root, CASA-oracle cache root,
 and shared native prepared-store parent must all be fresh safe paths on

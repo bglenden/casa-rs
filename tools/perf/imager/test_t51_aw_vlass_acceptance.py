@@ -137,6 +137,44 @@ def receipt() -> dict:
         "results": {
             "rust": {"status": "ran"},
             "casa": {"status": "reused"},
+            "backend_plan_logs": {
+                "aw_cache_inventory": [
+                    {
+                        "name": "imaging_aw_cache_inventory_summary",
+                        "fields": {
+                            "paired_cells": 1024,
+                            "frequencies": 16,
+                            "w_values": 32,
+                            "mueller_elements": 2,
+                            "parallactic_angles": 1,
+                            "prepared_cache_bytes": 9_663_676_416,
+                            "decoded_resident_ceiling_bytes": 384 * 1024**2,
+                        },
+                    }
+                ],
+                "prepared_artifact_readers": [
+                    {
+                        "name": "imaging_prepared_artifact_reader_summary",
+                        "fields": {
+                            "catalog": "a" * 64,
+                            "logical_bytes": 9_646_899_200,
+                            "decoded_ceiling_bytes": 384 * 1024**2,
+                            "total_ceiling_bytes": 392 * 1024**2,
+                            "reads": 4,
+                            "read_bytes": 1_048_576,
+                            "read_operations": 32,
+                            "resident_peak_bytes": 262_144,
+                            "total_peak_resident_bytes": 327_680,
+                            "pinned_peak_bytes": 131_072,
+                            "hits": 7,
+                            "loads": 4,
+                            "evicted_bytes": 0,
+                            "copied_bytes": 262_144,
+                            "aborted": False,
+                        },
+                    }
+                ],
+            },
             "product_comparison": {
                 "status": "completed",
                 "product_inventory": {"status": "matched", "observed_match": True},
@@ -222,6 +260,61 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
         )
         self.assertEqual(1_280_000, result["selected_samples"])
         self.assertEqual(len(PRODUCTS), result["product_count"])
+        self.assertEqual(1024, result["prepared_aw"]["inventory"]["paired_cells"])
+        self.assertEqual(4, result["prepared_aw"]["reader_sessions"][0]["reads"])
+
+    def test_missing_aw_inventory_receipt_fails_closed(self) -> None:
+        candidate = receipt()
+        candidate["results"]["backend_plan_logs"]["aw_cache_inventory"] = []
+        with self.assertRaisesRegex(GATE.GateError, "one AW cache inventory"):
+            GATE.validate_receipt(
+                candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
+            )
+
+    def test_incomplete_aw_catalog_receipt_fails_closed(self) -> None:
+        candidate = receipt()
+        inventory = candidate["results"]["backend_plan_logs"]["aw_cache_inventory"][0][
+            "fields"
+        ]
+        inventory["paired_cells"] = 1023
+        with self.assertRaisesRegex(GATE.GateError, "paired_cells must be 1024"):
+            GATE.validate_receipt(
+                candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
+            )
+
+    def test_reader_without_real_transfer_fails_closed(self) -> None:
+        candidate = receipt()
+        reader = candidate["results"]["backend_plan_logs"]["prepared_artifact_readers"][
+            0
+        ]["fields"]
+        reader["reads"] = 0
+        with self.assertRaisesRegex(GATE.GateError, "reads must be a positive"):
+            GATE.validate_receipt(
+                candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
+            )
+
+    def test_reader_residency_above_ceiling_fails_closed(self) -> None:
+        candidate = receipt()
+        reader = candidate["results"]["backend_plan_logs"]["prepared_artifact_readers"][
+            0
+        ]["fields"]
+        reader["resident_peak_bytes"] = 384 * 1024**2 + 1
+        reader["total_peak_resident_bytes"] = 384 * 1024**2 + 1
+        with self.assertRaisesRegex(GATE.GateError, "decoded residency ceiling"):
+            GATE.validate_receipt(
+                candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
+            )
+
+    def test_aborted_reader_receipt_fails_closed(self) -> None:
+        candidate = receipt()
+        reader = candidate["results"]["backend_plan_logs"]["prepared_artifact_readers"][
+            0
+        ]["fields"]
+        reader["aborted"] = True
+        with self.assertRaisesRegex(GATE.GateError, "was aborted"):
+            GATE.validate_receipt(
+                candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
+            )
 
     def test_exact_native_aw_command_binding_passes(self) -> None:
         candidate = receipt()
@@ -352,6 +445,16 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
         candidate["results"]["product_comparison"]["products"][".image.tt0"][
             "full_array"
         ]["diff_rms_over_right_rms"] = 0.0010001
+        with self.assertRaisesRegex(GATE.GateError, "normalized RMS exceeds"):
+            GATE.validate_receipt(
+                candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
+            )
+
+    def test_non_finite_rms_fails(self) -> None:
+        candidate = receipt()
+        candidate["results"]["product_comparison"]["products"][".image.tt0"][
+            "full_array"
+        ]["diff_rms_over_right_rms"] = float("nan")
         with self.assertRaisesRegex(GATE.GateError, "normalized RMS exceeds"):
             GATE.validate_receipt(
                 candidate, expected_workload=workload(), expected_casa_prefix=PREFIX

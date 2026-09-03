@@ -45,7 +45,6 @@ class CliExitSemanticsTests(unittest.TestCase):
     def test_completed_receipt_and_process_succeed(self) -> None:
         self._assert_main_status("completed", expected_exit=0)
 
-
     def test_recovered_publication_receipt_and_process_succeed_without_timing(
         self,
     ) -> None:
@@ -226,9 +225,7 @@ class FrozenCasaRecipeExecutionTests(unittest.TestCase):
 
         execute.assert_called_once()
         self.assertEqual(str(run_workload.BENCH_SCRIPT), execute.call_args.args[0][0])
-        self.assertEqual(
-            "1", execute.call_args.kwargs["env"]["IMAGER_BENCH_SKIP_CASA"]
-        )
+        self.assertEqual("1", execute.call_args.kwargs["env"]["IMAGER_BENCH_SKIP_CASA"])
         self.assertEqual(
             frozen,
             execute.call_args.kwargs["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
@@ -1285,7 +1282,9 @@ real 1.145408
             plan["command"]["argv"],
         )
         aw_env = plan["command"]["env"]
-        self.assertEqual("/validated/cfs", aw_env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"])
+        self.assertEqual(
+            "/validated/cfs", aw_env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"]
+        )
         self.assertEqual("/shared/aw/dirty", aw_env["IMAGER_BENCH_RUST_OUTPUT_PREFIX"])
         self.assertEqual("384", aw_env["IMAGER_BENCH_AW_CF_RESIDENT_MB"])
         self.assertEqual("1", aw_env["IMAGER_BENCH_ATERM"])
@@ -1828,6 +1827,23 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
             receipt,
             source="gridded replay summary remains log-only",
         )
+
+    def test_parse_backend_plan_logs_retains_t51_aw_receipts(self) -> None:
+        parsed = run_workload.parse_backend_plan_logs(
+            """imaging_aw_cache_inventory_summary paired_cells=1024 frequencies=16 w_values=32 mueller_elements=2 parallactic_angles=1 prepared_cache_bytes=9663676416 decoded_resident_ceiling_bytes=402653184
+imaging_prepared_artifact_reader_summary catalog=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa logical_bytes=9663676416 decoded_ceiling_bytes=402653184 total_ceiling_bytes=402718720 reads=4 read_bytes=1048576 read_operations=32 resident_peak_bytes=262144 total_peak_resident_bytes=327680 pinned_peak_bytes=131072 hits=7 loads=4 evicted_bytes=0 copied_bytes=262144 aborted=false
+"""
+        )
+
+        self.assertEqual(
+            1024, parsed["aw_cache_inventory"][0]["fields"]["paired_cells"]
+        )
+        self.assertEqual(
+            1048576,
+            parsed["prepared_artifact_readers"][0]["fields"]["read_bytes"],
+        )
+        receipt = canonical_workload_result(extra_results={"backend_plan_logs": parsed})
+        run_workload.validate_run_result(receipt, source="T51 AW runtime receipts")
 
     def test_mosaic_resident_product_diagnostic_is_parsed(self) -> None:
         buckets = run_workload.parse_backend_plan_logs(

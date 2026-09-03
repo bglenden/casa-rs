@@ -74,13 +74,16 @@ pub use observation_transaction::{
 };
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactConsumer, PreparedArtifactDescriptor,
-    PreparedArtifactError, PreparedArtifactGenerator, PreparedArtifactImportSegment,
-    PreparedArtifactImportSource, PreparedArtifactImporter, PreparedArtifactKind,
-    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
-    PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
-    PreparedArtifactPrecision, PreparedArtifactRegistration, PreparedArtifactRejection,
-    PreparedArtifactReservation, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
-    PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
+    PreparedArtifactError, PreparedArtifactExecutionBinding, PreparedArtifactGenerator,
+    PreparedArtifactImportSegment, PreparedArtifactImportSource, PreparedArtifactImporter,
+    PreparedArtifactKind, PreparedArtifactLoadSource, PreparedArtifactOperation,
+    PreparedArtifactOrder, PreparedArtifactPlanError, PreparedArtifactPlanFragment,
+    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactReader,
+    PreparedArtifactReaderFactory, PreparedArtifactReaderPlan, PreparedArtifactReaderResidency,
+    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
+    PreparedArtifactResidencyMeasurements, PreparedArtifactReuseOutcome,
+    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
+    PreparedArtifactUvAffine,
 };
 pub use product_publication::{
     AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,

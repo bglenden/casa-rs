@@ -90,6 +90,7 @@ pub struct SpectralCycleExecutionPolicy {
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<ManagedSpillStorage>,
     aw_projection: Option<PreparedAwProjection>,
+    aw_reader: Option<PreparedArtifactReaderPlan>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -115,6 +116,7 @@ impl SpectralCycleExecutionPolicy {
             visibility_write: None,
             gridded_normal_storage: None,
             aw_projection: None,
+            aw_reader: None,
         }
     }
 
@@ -122,6 +124,13 @@ impl SpectralCycleExecutionPolicy {
     #[must_use]
     pub fn with_aw_projection(mut self, projection: PreparedAwProjection) -> Self {
         self.aw_projection = Some(projection);
+        self
+    }
+
+    /// Bind the payload-free declaration of the attempt-local prepared reader.
+    #[must_use]
+    pub fn with_prepared_artifact_reader(mut self, reader: PreparedArtifactReaderPlan) -> Self {
+        self.aw_reader = Some(reader);
         self
     }
 
@@ -149,7 +158,16 @@ fn validate_aw_projection_binding(
         .measurement_equation()
         .aw_projection()
         .is_some();
-    if required != policy.aw_projection.is_some() {
+    if required != policy.aw_projection.is_some()
+        || required != policy.aw_reader.is_some()
+        || policy.aw_projection.as_ref().is_some_and(|projection| {
+            u64::try_from(projection.resident_byte_ceiling()).ok()
+                != policy
+                    .aw_reader
+                    .as_ref()
+                    .map(PreparedArtifactReaderPlan::decoded_resident_bytes)
+        })
+    {
         return Err(SpectralCyclePlanError::Complete(
             CompleteDataPlanError::PlanMismatch,
         ));
@@ -161,11 +179,15 @@ fn bind_aw_projection(
     fragment: CompleteDataPlanFragment,
     policy: &SpectralCycleExecutionPolicy,
 ) -> Result<CompleteDataPlanFragment, SpectralCyclePlanError> {
-    match policy.aw_projection.clone() {
-        Some(projection) => fragment
+    match (policy.aw_projection.clone(), policy.aw_reader.clone()) {
+        (Some(projection), Some(reader)) => fragment
             .with_aw_projection(projection)
+            .and_then(|fragment| fragment.with_prepared_artifact_reader(reader))
             .map_err(SpectralCyclePlanError::Complete),
-        None => Ok(fragment),
+        (None, None) => Ok(fragment),
+        _ => Err(SpectralCyclePlanError::Complete(
+            CompleteDataPlanError::PlanMismatch,
+        )),
     }
 }
 
@@ -589,12 +611,9 @@ impl SpectralCyclePlan {
                     0
                 };
                 let aw_prepared_pool_bytes = policy
-                    .aw_projection
+                    .aw_reader
                     .as_ref()
-                    .map(PreparedAwProjection::resident_byte_ceiling)
-                    .map(u64::try_from)
-                    .transpose()
-                    .map_err(|_| SpectralCyclePlanError::Overflow)?
+                    .map(PreparedArtifactReaderPlan::total_resident_bytes)
                     .unwrap_or(0);
                 let memory_ceiling = available_after_base
                     .saturating_sub(downstream_reservation)
@@ -685,8 +704,7 @@ impl SpectralCyclePlan {
                 &policy,
                 pass,
                 strategy,
-                complete_data.preparation_node(),
-                complete_data.replay_node(),
+                &complete_data,
                 retained_artifact_bytes.ok_or(SpectralCyclePlanError::Overflow)?,
                 gridded_window_plan
                     .as_ref()
@@ -760,12 +778,13 @@ fn append_low_memory_adaptation(
     policy: &SpectralCycleExecutionPolicy,
     pass: SpectralPassIdentity,
     strategy: GriddedNormalStrategy,
-    preparation: &WorkNodeId,
-    science_node: &WorkNodeId,
+    complete_data: &CompleteDataPlanFragment,
     retained_cache_bytes: u64,
     window_plan: &crate::complete_data_operator::GriddedNormalReplayWindowPlan,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let dag = base.execution_dag();
+    let preparation = complete_data.preparation_node();
+    let science_node = complete_data.replay_node();
     let mut initial = dag.initial_knobs().clone();
     initial.batch_size = dag
         .resource_alternative()
@@ -775,8 +794,7 @@ fn append_low_memory_adaptation(
             u64::try_from(window_plan.maximum_frames())
                 .map_err(|_| SpectralCyclePlanError::Overflow)?,
         )
-        .min(2)
-        .max(1);
+        .clamp(1, 2);
     initial.cache_retention_bytes = retained_cache_bytes.max(1);
     initial.spill = false;
     let mut target = initial.clone();
@@ -1109,16 +1127,15 @@ fn append_low_memory_adaptation(
         .nodes()
         .keys()
         .filter(|node| !base.prediction().stages().contains_key(*node))
-        .cloned()
         .map(|node| {
             let prediction = StagePrediction::new(node.clone(), policy.limits.stage_nanos);
-            if node == retained {
+            if node == &retained {
                 prediction.with_io(vec![IoPrediction::new(
                     IoBufferKind::SourceReadAhead,
                     retained_cache_bytes,
                     retained_cache_bytes.saturating_mul(4),
                 )])
-            } else if node == low_memory_io {
+            } else if node == &low_memory_io {
                 prediction.with_io(
                     replay_io
                         .iter()

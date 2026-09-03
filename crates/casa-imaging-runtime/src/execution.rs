@@ -916,6 +916,49 @@ impl PartialEq for WorkExecutionContext {
 impl Eq for WorkExecutionContext {}
 
 impl WorkExecutionContext {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        node: WorkNode,
+        knobs: ExecutionKnobs,
+        lease_epoch: u64,
+        cleanup: bool,
+        allocation_capabilities: Vec<WorkAllocationCapability>,
+    ) -> Self {
+        let resources = node
+            .claims
+            .iter()
+            .map(|claim| WorkResourceCapability {
+                resource: claim.resource.clone(),
+                amount: claim.amount,
+                lifetime: claim.lifetime.clone(),
+            })
+            .collect();
+        Self {
+            node,
+            knobs,
+            lease_epoch,
+            cleanup,
+            resources,
+            allocations: allocation_capabilities,
+            metal_execution: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_allocation_capability(
+        allocation: AllocationId,
+        physical_slot: PhysicalSlotId,
+        capacity_bytes: u64,
+        lifetime: ClaimLifetime,
+    ) -> WorkAllocationCapability {
+        WorkAllocationCapability {
+            allocation,
+            physical_slot,
+            capacity_bytes,
+            lifetime,
+        }
+    }
+
     /// Returns the exact planned work declaration.
     #[must_use]
     pub(crate) const fn node(&self) -> &WorkNode {
@@ -3405,13 +3448,14 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
                 matches!(
                     resource,
                     LeaseResource::ResidentCache
+                        | LeaseResource::IoBuffer(crate::IoBufferKind::StorageManager)
                         | LeaseResource::Storage {
                             use_kind: crate::StorageUseKind::PersistentCache,
                             ..
                         }
                 )
             },
-            "resident or persistent cache reservation",
+            "resident buffer or persistent cache reservation",
         ),
         WorkKind::FftPlanning => require_claim(
             node,
@@ -4712,4 +4756,4 @@ impl From<ResourceError> for ExecutionError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

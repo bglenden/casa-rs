@@ -3130,7 +3130,58 @@ pub struct WorkExecutionContext<'a> {
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
+#[cfg(test)]
+pub(crate) struct WorkExecutionTestBindings<'a> {
+    problem: &'a CompiledProblem,
+    implementation_registry: ImplementationRegistryId,
+    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+}
+
+#[cfg(test)]
+impl<'a> WorkExecutionTestBindings<'a> {
+    pub(crate) const fn new(
+        problem: &'a CompiledProblem,
+        implementation_registry: ImplementationRegistryId,
+        completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+    ) -> Self {
+        Self {
+            problem,
+            implementation_registry,
+            completed_observation_reads,
+        }
+    }
+}
+
 impl<'a> WorkExecutionContext<'a> {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        attempt_id: ExecutionAttemptId,
+        bindings: WorkExecutionTestBindings<'a>,
+        scheduled: &'a crate::execution::WorkExecutionContext,
+        planned_artifacts: &'a [PlannedArtifact],
+        stage_prediction: &'a StagePrediction,
+        resource_alternative: &'a crate::DemandAlternative,
+    ) -> Self {
+        Self {
+            attempt_id,
+            compiled: CompiledWorkContext {
+                problem: bindings.problem,
+            },
+            implementation_registry: bindings.implementation_registry,
+            scheduled,
+            planned_artifacts,
+            stage_prediction,
+            resource_alternative,
+            observation_consistency: None,
+            observation_reads: None,
+            visibility_writes: None,
+            publication: None,
+            publication_resources: None,
+            product_publication: None,
+            completed_observation_reads: bindings.completed_observation_reads,
+        }
+    }
+
     /// Return the execution attempt that dispatched this exact node call.
     #[must_use]
     pub const fn attempt_id(self) -> ExecutionAttemptId {

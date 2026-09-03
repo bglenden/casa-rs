@@ -15,10 +15,11 @@ use casa_imaging_runtime::{
     ExecutionAttemptId, ExecutionEvidenceError, ExecutionProvenance, ExecutionReceipt, FenceKind,
     ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId, IoBufferKind,
     IoMeasurement, ObservationReadCompletionContext, PlanningBindings, PreparedArtifact,
-    PreparedArtifactImportSource, PreparedArtifactOperation, PreparedArtifactPlanFragment,
-    PreparedArtifactRegistration, PreparedArtifactReuseOutcome, PreparedArtifactStore,
-    ResourceMeasurement, RunBindings, RunError, RunToCompletion, StorageDomain,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements, plan, run,
+    PreparedArtifactExecutionBinding, PreparedArtifactImportSource, PreparedArtifactOperation,
+    PreparedArtifactPlanFragment, PreparedArtifactReaderFactory, PreparedArtifactRegistration,
+    PreparedArtifactReuseOutcome, PreparedArtifactStore, ResourceMeasurement, RunBindings,
+    RunError, RunToCompletion, StorageDomain, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkMeasurements, plan, run,
 };
 
 use crate::{
@@ -28,14 +29,43 @@ use crate::{
 
 /// Complete pre-phase result retained by every later major cycle.
 pub(crate) struct PreparedAwPhase {
-    pub projection: PreparedAwProjection,
+    catalog: casa_imaging_reconstruction::AwPreparedCatalog,
+    prepared: Vec<CasaAwPreparedCell>,
+    reader: PreparedArtifactReaderFactory,
+    conjugate_beams: bool,
+    resident_bytes: usize,
     pub receipts: Vec<ExecutionReceipt>,
+}
+
+pub(crate) struct PreparedAwPlanBinding {
+    pub projection: PreparedAwProjection,
+    pub execution: PreparedArtifactExecutionBinding,
+}
+
+impl PreparedAwPhase {
+    pub fn bind_plan(&self) -> Result<PreparedAwPlanBinding, ApplicationError> {
+        let reader = self.reader.session();
+        let provider = PreparedAwCellProvider::new(
+            self.resident_bytes,
+            Arc::clone(&reader),
+            self.prepared.clone(),
+        )?;
+        let projection = PreparedAwProjection::new(
+            self.catalog.clone(),
+            provider.clone(),
+            self.conjugate_beams,
+            self.resident_bytes,
+        )?;
+        Ok(PreparedAwPlanBinding {
+            projection,
+            execution: PreparedArtifactExecutionBinding::new(reader, provider),
+        })
+    }
 }
 
 enum OperationResult {
     Artifact(PreparedArtifact),
     Rejected,
-    Consumed,
 }
 
 struct OperationAdapter {
@@ -44,9 +74,7 @@ struct OperationAdapter {
     store: Arc<PreparedArtifactStore>,
     cache: Arc<CasaAwCache>,
     prepared: CasaAwPreparedCell,
-    artifact: Mutex<Option<PreparedArtifact>>,
     source: Option<PreparedArtifactImportSource>,
-    provider: PreparedAwCellProvider,
     result: Mutex<Option<OperationResult>>,
 }
 
@@ -61,11 +89,9 @@ enum PhaseImplementation {
 struct OperationInput<'a> {
     cache: Arc<CasaAwCache>,
     store: Arc<PreparedArtifactStore>,
-    provider: PreparedAwCellProvider,
     cell: CasaAwPreparedCell,
     source_domain: &'a StorageDomain,
     operation: PreparedArtifactOperation,
-    artifact: Option<PreparedArtifact>,
     phase: u64,
 }
 
@@ -110,17 +136,9 @@ impl WorkImplementation for PhaseImplementation {
                 (OperationResult::Artifact(artifact), measurements)
             }
             PreparedArtifactOperation::Consume => {
-                let artifact = op
-                    .artifact
-                    .lock()
-                    .map_err(|_| io::Error::other("AW artifact state poisoned"))?
-                    .take()
-                    .ok_or_else(|| io::Error::other("AW consume omitted opaque artifact"))?;
-                let measurements = op
-                    .provider
-                    .consume_cell(&op.store, context, &op.prepared, &artifact)
-                    .map_err(io::Error::other)?;
-                (OperationResult::Consumed, measurements)
+                return Err(io::Error::other(
+                    "AW preparation cannot eagerly consume prepared payloads",
+                ));
             }
             PreparedArtifactOperation::Generate => {
                 return Err(io::Error::other("CASA AW import requires plan-listed Load"));
@@ -259,14 +277,21 @@ pub(crate) fn prepare_aw_projection(
     std::fs::create_dir_all(&deployment.private_root)?;
     let cache = Arc::new(CasaAwCache::open(&deployment.casa_cache)?);
     let catalog = cache.prepared_catalog()?;
-    let entries = cache.inventory().paired_cells;
-    let budget = casa_imaging_runtime::PreparedArtifactBudget::new(
-        u64::try_from(deployment.resident_bytes)?
-            .saturating_mul(2)
-            .saturating_add((entries as u64).saturating_mul(4096)),
+    let inventory = cache.inventory();
+    let entries = inventory.paired_cells;
+    let prepared_cache_bytes = cache.prepared_cache_bytes()?;
+    eprintln!(
+        "imaging_aw_cache_inventory_summary paired_cells={} frequencies={} w_values={} mueller_elements={} parallactic_angles={} prepared_cache_bytes={} decoded_resident_ceiling_bytes={}",
         entries,
-        8 << 20,
-    )?;
+        inventory.frequencies_hz.len(),
+        inventory.w_values_lambda.len(),
+        inventory.mueller_elements.len(),
+        inventory.parallactic_angles_deg.len(),
+        prepared_cache_bytes,
+        deployment.resident_bytes,
+    );
+    let budget =
+        casa_imaging_runtime::PreparedArtifactBudget::new(prepared_cache_bytes, entries, 8 << 20)?;
     let store = Arc::new(PreparedArtifactStore::open(
         &deployment.private_root,
         &deployment.storage_domain,
@@ -275,35 +300,32 @@ pub(crate) fn prepare_aw_projection(
     let owner =
         super::PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     let prepared = cache.prepared_cells(&store, &owner, &runtime.implementation, problem)?;
-    let decoded_bytes = prepared
+    let largest_cell = prepared
         .iter()
-        .try_fold(0_usize, |total, cell| {
-            total.checked_add(cell.decoded_resident_bytes()?)
-        })
-        .ok_or_else(|| boxed("AW decoded catalog residency overflowed"))?;
-    if decoded_bytes > deployment.resident_bytes {
+        .map(CasaAwPreparedCell::decoded_resident_bytes)
+        .collect::<Option<Vec<_>>>()
+        .and_then(|bytes| bytes.into_iter().max())
+        .ok_or_else(|| boxed("AW decoded cell residency overflowed"))?;
+    if largest_cell > deployment.resident_bytes {
         return Err(Box::new(io::Error::other(format!(
-            "AW decoded catalog requires {decoded_bytes} bytes, exceeding the {} byte ceiling",
+            "largest AW decoded cell requires {largest_cell} bytes, exceeding the {} byte ceiling",
             deployment.resident_bytes
         ))));
     }
-    let provider = PreparedAwCellProvider::new(deployment.resident_bytes)?;
     let mut receipts = Vec::new();
 
     let mut artifacts = Vec::new();
     let mut missing = Vec::new();
-    for (ordinal, cell) in prepared.into_iter().enumerate() {
+    for (ordinal, cell) in prepared.iter().cloned().enumerate() {
         let reuse = run_operation(
             problem,
             runtime,
             OperationInput {
                 cache: Arc::clone(&cache),
                 store: Arc::clone(&store),
-                provider: provider.clone(),
                 cell,
                 source_domain: &deployment.storage_domain,
                 operation: PreparedArtifactOperation::Reuse,
-                artifact: None,
                 phase: ordinal as u64,
             },
         )?;
@@ -312,7 +334,6 @@ pub(crate) fn prepare_aw_projection(
         match result {
             OperationResult::Artifact(artifact) => artifacts.push((cell, artifact)),
             OperationResult::Rejected => missing.push(cell),
-            OperationResult::Consumed => unreachable!(),
         }
     }
     for (ordinal, cell) in missing.into_iter().enumerate() {
@@ -322,11 +343,9 @@ pub(crate) fn prepare_aw_projection(
             OperationInput {
                 cache: Arc::clone(&cache),
                 store: Arc::clone(&store),
-                provider: provider.clone(),
                 cell,
                 source_domain: &deployment.storage_domain,
                 operation: PreparedArtifactOperation::Load,
-                artifact: None,
                 phase: 1_000_000 + ordinal as u64,
             },
         )?;
@@ -339,39 +358,24 @@ pub(crate) fn prepare_aw_projection(
         }
     }
     artifacts.sort_by_key(|(cell, _)| cell.metadata().identity().as_bytes());
-    for (ordinal, (cell, artifact)) in artifacts.into_iter().enumerate() {
-        let consumed = run_operation(
-            problem,
-            runtime,
-            OperationInput {
-                cache: Arc::clone(&cache),
-                store: Arc::clone(&store),
-                provider: provider.clone(),
-                cell,
-                source_domain: &deployment.storage_domain,
-                operation: PreparedArtifactOperation::Consume,
-                artifact: Some(artifact),
-                phase: 2_000_000 + ordinal as u64,
-            },
-        )?;
-        if !matches!(consumed.0.1, OperationResult::Consumed) {
-            return Err(boxed("AW consume phase returned a non-consume outcome"));
-        }
-        receipts.push(consumed.1);
+    if artifacts.len() != entries {
+        return Err(boxed("AW preparation omitted a catalog artifact"));
     }
-    if provider.resident_cells()? != entries {
-        return Err(boxed(
-            "AW complete catalog did not fit the resident ceiling",
-        ));
-    }
-    let projection = PreparedAwProjection::new(
-        catalog,
-        provider,
-        deployment.conjugate_beams,
-        deployment.resident_bytes,
+    let reader = PreparedArtifactReaderFactory::new(
+        Arc::clone(&store),
+        artifacts
+            .into_iter()
+            .map(|(cell, artifact)| (cell.descriptor().clone(), artifact))
+            .collect(),
+        runtime.implementation.clone(),
+        u64::try_from(deployment.resident_bytes)?,
     )?;
     Ok(PreparedAwPhase {
-        projection,
+        catalog,
+        prepared,
+        reader,
+        conjugate_beams: deployment.conjugate_beams,
+        resident_bytes: deployment.resident_bytes,
         receipts,
     })
 }
@@ -384,11 +388,9 @@ fn run_operation(
     let OperationInput {
         cache,
         store,
-        provider,
         cell,
         source_domain,
         operation,
-        artifact,
         phase,
     } = input;
     let metadata = ImplementationContractMetadata::new(
@@ -411,9 +413,7 @@ fn run_operation(
             store: Arc::clone(&store),
             cache: Arc::clone(&cache),
             prepared: cell,
-            artifact: Mutex::new(artifact),
             source,
-            provider: provider.clone(),
             result: Mutex::new(None),
         })),
     );
@@ -579,9 +579,9 @@ mod tests {
             conjugate_beams: true,
         };
 
-        let cold = prepare_aw_projection(&problem, deployment.clone(), &cold_runtime)
-            .expect("cold Load then Consume");
-        assert_eq!(cold.receipts.len(), 3);
+        let cold =
+            prepare_aw_projection(&problem, deployment.clone(), &cold_runtime).expect("cold Load");
+        assert_eq!(cold.receipts.len(), 2);
         let operations_rate = profile
             .operations_rate_id()
             .expect("AW profile operations calibration")
@@ -616,7 +616,7 @@ mod tests {
                 .stage_actual_io(node, IoBufferKind::StorageManager)
                 .is_some_and(|(_, operations)| operations > 0)
         }));
-        drop(cold.projection);
+        drop(cold.bind_plan().expect("fresh cold reader binding"));
 
         let mut warm_runtime = runtime(root.path(), &profile);
         warm_runtime.attempts = [
@@ -624,10 +624,9 @@ mod tests {
             ExecutionAttemptId::from_sha256([8; 32]),
             ExecutionAttemptId::from_sha256([9; 32]),
         ];
-        let warm = prepare_aw_projection(&problem, deployment, &warm_runtime)
-            .expect("warm Reuse then Consume");
-        assert_eq!(warm.receipts.len(), 2);
-        drop(warm.projection);
+        let warm = prepare_aw_projection(&problem, deployment, &warm_runtime).expect("warm Reuse");
+        assert_eq!(warm.receipts.len(), 1);
+        drop(warm.bind_plan().expect("fresh warm reader binding"));
     }
 
     #[test]
@@ -695,7 +694,7 @@ mod tests {
         }
         assert_eq!(cache_demands.len(), 1);
         assert_eq!(cold_load_nodes.len(), 2);
-        drop(phase.projection);
+        drop(phase.bind_plan().expect("fresh two-cell reader binding"));
     }
 
     fn runtime(root: &Path, profile: &ProductionStorageProfile) -> ApplicationRuntime {

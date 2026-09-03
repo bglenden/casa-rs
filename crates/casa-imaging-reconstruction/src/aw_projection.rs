@@ -56,6 +56,9 @@ pub enum AwOperatorError {
     /// A data weight is negative.
     #[error("AW data weight must be non-negative")]
     InvalidWeight,
+    /// Exact operator or provider accounting overflowed.
+    #[error("AW operator measurement accounting overflowed")]
+    MeasurementOverflow,
 }
 
 /// Logical layout of one dense oversampled convolution plane.
@@ -356,16 +359,82 @@ pub enum AwPreparedCellDisposition {
 }
 
 /// One provider-owned immutable cell plus exact cache-work measurements.
-#[derive(Clone, Debug)]
 pub struct AwPreparedCellLease {
-    /// Selected immutable pixel pair.
-    pub cell: Arc<AwConvolutionCell>,
-    /// Whether the request hit resident state or loaded pixels.
-    pub disposition: AwPreparedCellDisposition,
-    /// Payload bytes evicted while satisfying this request.
-    pub evicted_bytes: usize,
-    /// Payload bytes copied while satisfying this request.
-    pub copied_bytes: usize,
+    cell: Arc<AwConvolutionCell>,
+    disposition: AwPreparedCellDisposition,
+    evicted_bytes: usize,
+    copied_bytes: usize,
+    release: Option<Box<dyn FnOnce() + Send + 'static>>,
+}
+
+impl fmt::Debug for AwPreparedCellLease {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("AwPreparedCellLease")
+            .field("cell", &self.cell)
+            .field("disposition", &self.disposition)
+            .field("evicted_bytes", &self.evicted_bytes)
+            .field("copied_bytes", &self.copied_bytes)
+            .finish_non_exhaustive()
+    }
+}
+
+impl AwPreparedCellLease {
+    /// Bind one immutable cell and its exact provider accounting.
+    #[must_use]
+    pub fn new(
+        cell: Arc<AwConvolutionCell>,
+        disposition: AwPreparedCellDisposition,
+        evicted_bytes: usize,
+        copied_bytes: usize,
+    ) -> Self {
+        Self {
+            cell,
+            disposition,
+            evicted_bytes,
+            copied_bytes,
+            release: None,
+        }
+    }
+
+    /// Wake the provider when this non-cloneable pin is released.
+    #[must_use]
+    pub fn with_release_notifier(mut self, release: impl FnOnce() + Send + 'static) -> Self {
+        self.release = Some(Box::new(release));
+        self
+    }
+
+    /// Borrow the selected immutable cell for the lifetime of this pin.
+    #[must_use]
+    pub fn cell(&self) -> &AwConvolutionCell {
+        &self.cell
+    }
+
+    /// Return whether the request hit resident state or loaded pixels.
+    #[must_use]
+    pub const fn disposition(&self) -> AwPreparedCellDisposition {
+        self.disposition
+    }
+
+    /// Return payload bytes evicted while satisfying this request.
+    #[must_use]
+    pub const fn evicted_bytes(&self) -> usize {
+        self.evicted_bytes
+    }
+
+    /// Return payload bytes copied while satisfying this request.
+    #[must_use]
+    pub const fn copied_bytes(&self) -> usize {
+        self.copied_bytes
+    }
+}
+
+impl Drop for AwPreparedCellLease {
+    fn drop(&mut self) {
+        if let Some(release) = self.release.take() {
+            release();
+        }
+    }
 }
 
 /// Bounded pixel provider implemented by the prepared-artifact owner.
@@ -615,10 +684,10 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         validate_grid(grid, shape)?;
         let metadata = self.catalog.degrid_cell(sample)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
-        let taps = fused_taps(&cell.imaging, shape, sample, true)?;
-        self.diagnostics.selections += 1;
-        self.diagnostics.degrid_passes += 1;
-        self.diagnostics.imaging_taps += taps.len() as u64;
+        let taps = fused_taps(&cell.cell().imaging, shape, sample, true)?;
+        add_measurement(&mut self.diagnostics.selections, 1)?;
+        add_measurement(&mut self.diagnostics.degrid_passes, 1)?;
+        add_measurement(&mut self.diagnostics.imaging_taps, taps.len() as u64)?;
         Ok(taps
             .into_iter()
             .map(|tap| tap.coefficient * grid[tap.index])
@@ -644,18 +713,18 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         validate_grid(weight_grid, shape)?;
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
-        let imaging = fused_taps(&cell.imaging, shape, sample, true)?;
-        let weight = fused_taps(&cell.weight, shape, sample, false)?;
+        let imaging = fused_taps(&cell.cell().imaging, shape, sample, true)?;
+        let weight = fused_taps(&cell.cell().weight, shape, sample, false)?;
         for tap in &imaging {
             image_grid[tap.index] += tap.coefficient.conj() * visibility * data_weight;
         }
         for tap in &weight {
             weight_grid[tap.index] += tap.coefficient * data_weight;
         }
-        self.diagnostics.selections += 1;
-        self.diagnostics.grid_passes += 1;
-        self.diagnostics.imaging_taps += imaging.len() as u64;
-        self.diagnostics.weight_taps += weight.len() as u64;
+        add_measurement(&mut self.diagnostics.selections, 1)?;
+        add_measurement(&mut self.diagnostics.grid_passes, 1)?;
+        add_measurement(&mut self.diagnostics.imaging_taps, imaging.len() as u64)?;
+        add_measurement(&mut self.diagnostics.weight_taps, weight.len() as u64)?;
         Ok(())
     }
 
@@ -671,11 +740,11 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         validate_grid(compensation, shape)?;
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
-        let taps = fused_taps(&cell.imaging, shape, sample, true)?;
+        let taps = fused_taps(&cell.cell().imaging, shape, sample, true)?;
         compensated_taps(image_grid, compensation, &taps, value, true);
-        self.diagnostics.selections += 1;
-        self.diagnostics.grid_passes += 1;
-        self.diagnostics.imaging_taps += taps.len() as u64;
+        add_measurement(&mut self.diagnostics.selections, 1)?;
+        add_measurement(&mut self.diagnostics.grid_passes, 1)?;
+        add_measurement(&mut self.diagnostics.imaging_taps, taps.len() as u64)?;
         Ok(())
     }
 
@@ -694,7 +763,7 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         validate_grid(compensation, shape)?;
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
-        let taps = fused_taps(&cell.weight, shape, sample, false)?;
+        let taps = fused_taps(&cell.cell().weight, shape, sample, false)?;
         compensated_taps(
             weight_grid,
             compensation,
@@ -702,9 +771,9 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
             Complex64::new(weight, 0.0),
             false,
         );
-        self.diagnostics.selections += 1;
-        self.diagnostics.grid_passes += 1;
-        self.diagnostics.weight_taps += taps.len() as u64;
+        add_measurement(&mut self.diagnostics.selections, 1)?;
+        add_measurement(&mut self.diagnostics.grid_passes, 1)?;
+        add_measurement(&mut self.diagnostics.weight_taps, taps.len() as u64)?;
         Ok(())
     }
 }
@@ -733,28 +802,31 @@ fn load_cell<P: AwPreparedCellProvider>(
     provider: &mut P,
     metadata: &AwPreparedCellMetadata,
     diagnostics: &mut AwOperatorDiagnostics,
-) -> Result<Arc<AwConvolutionCell>, AwOperatorError> {
+) -> Result<AwPreparedCellLease, AwOperatorError> {
     let lease = provider.load(metadata, diagnostics.resident_byte_ceiling)?;
-    if lease.cell.identity != metadata.identity
-        || lease.cell.imaging.layout != metadata.imaging_layout
-        || lease.cell.weight.layout != metadata.weight_layout
+    if lease.cell().identity != metadata.identity
+        || lease.cell().imaging.layout != metadata.imaging_layout
+        || lease.cell().weight.layout != metadata.weight_layout
     {
         return Err(AwOperatorError::PreparedCellMismatch);
     }
-    if lease.cell.resident_bytes() > diagnostics.resident_byte_ceiling {
+    if lease.cell().resident_bytes() > diagnostics.resident_byte_ceiling {
         return Err(AwOperatorError::ResidencyCeilingExceeded);
     }
-    match lease.disposition {
-        AwPreparedCellDisposition::Resident => diagnostics.provider_hits += 1,
-        AwPreparedCellDisposition::Loaded => diagnostics.provider_loads += 1,
+    match lease.disposition() {
+        AwPreparedCellDisposition::Resident => add_measurement(&mut diagnostics.provider_hits, 1)?,
+        AwPreparedCellDisposition::Loaded => add_measurement(&mut diagnostics.provider_loads, 1)?,
     }
-    diagnostics.evicted_bytes = diagnostics
-        .evicted_bytes
-        .saturating_add(lease.evicted_bytes as u64);
-    diagnostics.copied_bytes = diagnostics
-        .copied_bytes
-        .saturating_add(lease.copied_bytes as u64);
-    Ok(lease.cell)
+    add_measurement(&mut diagnostics.evicted_bytes, lease.evicted_bytes() as u64)?;
+    add_measurement(&mut diagnostics.copied_bytes, lease.copied_bytes() as u64)?;
+    Ok(lease)
+}
+
+fn add_measurement(counter: &mut u64, amount: u64) -> Result<(), AwOperatorError> {
+    *counter = counter
+        .checked_add(amount)
+        .ok_or(AwOperatorError::MeasurementOverflow)?;
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -982,16 +1054,16 @@ mod tests {
                 return Err(AwOperatorError::ResidencyCeilingExceeded);
             }
             let loaded = self.seen.insert(metadata.identity.as_bytes());
-            Ok(AwPreparedCellLease {
+            Ok(AwPreparedCellLease::new(
                 cell,
-                disposition: if loaded {
+                if loaded {
                     AwPreparedCellDisposition::Loaded
                 } else {
                     AwPreparedCellDisposition::Resident
                 },
-                evicted_bytes: 0,
-                copied_bytes: 0,
-            })
+                0,
+                0,
+            ))
         }
     }
     fn operator(entries: Vec<AwPreparedCellMetadata>) -> AwProjectionOperator<Provider> {

@@ -7,7 +7,7 @@ use std::{
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
 };
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
@@ -24,9 +24,10 @@ use casa_imaging_runtime::{
     ArtifactIdentity, ImplementationRegistry, PreparedArtifact, PreparedArtifactDescriptor,
     PreparedArtifactError, PreparedArtifactImportSegment, PreparedArtifactImportSource,
     PreparedArtifactImporter, PreparedArtifactOrder, PreparedArtifactPlaneDescriptor,
-    PreparedArtifactPrecision, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
-    PreparedArtifactStore, PreparedArtifactUvAffine, StorageDomain, WorkExecutionContext,
-    WorkImplementationId, WorkMeasurements, WorkNodeId,
+    PreparedArtifactPrecision, PreparedArtifactReader, PreparedArtifactReaderResidency,
+    PreparedArtifactResidencyMeasurements, PreparedArtifactReuseOutcome,
+    PreparedArtifactSegmentDescriptor, PreparedArtifactStore, PreparedArtifactUvAffine,
+    StorageDomain, WorkExecutionContext, WorkImplementationId, WorkMeasurements, WorkNodeId,
 };
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::Array2;
@@ -262,25 +263,40 @@ struct LoadedCasaPlane {
     last: Option<(usize, Complex32)>,
 }
 
-/// Cloneable bounded provider of cells decoded by exact T50 consume nodes.
-///
-/// Cold import and warm reuse both hand their opaque artifact to
-/// [`Self::consume_cell`]. Reconstruction receives only clones of this pool,
-/// so an operator node can neither reopen CASA nor escape the private store.
+/// Cloneable view of one attempt-local, transaction-bound decoded-cell LRU.
 #[derive(Clone)]
 pub struct PreparedAwCellProvider {
-    state: Arc<Mutex<PreparedPoolState>>,
+    pool: Arc<PreparedPool>,
+}
+
+struct PreparedPool {
+    reader: Arc<PreparedArtifactReader>,
+    prepared: BTreeMap<[u8; 32], CasaAwPreparedCell>,
+    state: Mutex<PreparedPoolState>,
+    available: Condvar,
 }
 
 struct PreparedPoolState {
     ceiling: usize,
     resident: usize,
+    reserved: usize,
+    clock: u64,
     cells: BTreeMap<[u8; 32], ResidentPreparedCell>,
+    loading: BTreeSet<[u8; 32]>,
+    peak_resident: usize,
+    peak_pinned: usize,
+    hits: u64,
+    loads: u64,
+    evicted_bytes: u64,
+    copied_bytes: u64,
+    closed: bool,
+    aborted: bool,
 }
 
 struct ResidentPreparedCell {
     cell: Arc<AwConvolutionCell>,
     bytes: usize,
+    last_use: u64,
 }
 
 impl CasaAwCache {
@@ -374,6 +390,27 @@ impl CasaAwCache {
             .collect::<Result<Vec<_>, _>>()?;
         AwPreparedCatalog::new(cells)
             .map_err(|error| fail(&self.root, format!("cannot adapt catalog: {error}")))
+    }
+
+    /// Exact private-cache budget required to retain every canonical payload
+    /// and its bounded T50 manifest.
+    pub fn prepared_cache_bytes(&self) -> Result<u64, CasaAwCacheError> {
+        self.entries.values().try_fold(0_u64, |total, entry| {
+            let payload = [entry.imaging.shape, entry.weight.shape]
+                .into_iter()
+                .try_fold(0_usize, |bytes, shape| {
+                    shape[0]
+                        .checked_mul(shape[1])
+                        .and_then(|elements| elements.checked_mul(std::mem::size_of::<Complex32>()))
+                        .and_then(|plane| bytes.checked_add(plane))
+                })
+                .and_then(|bytes| u64::try_from(bytes).ok())
+                .ok_or_else(|| fail(&entry.imaging.path, "prepared payload size overflowed"))?;
+            total
+                .checked_add(payload)
+                .and_then(|bytes| bytes.checked_add(16 * 1024))
+                .ok_or_else(|| fail(&entry.imaging.path, "prepared cache budget overflowed"))
+        })
     }
 
     /// Compile one indexed pair into the private-store ownership contract.
@@ -486,23 +523,48 @@ impl PreparedArtifactImporter for CasaAwCellImporter<'_> {
 }
 
 impl PreparedAwCellProvider {
-    /// Create an empty pool with an exact total decoded-cell ceiling.
-    pub fn new(resident_byte_ceiling: usize) -> Result<Self, AwOperatorError> {
-        if resident_byte_ceiling == 0 {
+    /// Bind a fresh decoded-cell LRU to one inactive prepared reader session.
+    pub fn new(
+        resident_byte_ceiling: usize,
+        reader: Arc<PreparedArtifactReader>,
+        prepared: Vec<CasaAwPreparedCell>,
+    ) -> Result<Self, AwOperatorError> {
+        if resident_byte_ceiling == 0 || prepared.is_empty() {
             return Err(AwOperatorError::ResidencyCeilingExceeded);
         }
+        let prepared = prepared
+            .into_iter()
+            .map(|cell| (cell.metadata.identity().as_bytes(), cell))
+            .collect::<BTreeMap<_, _>>();
         Ok(Self {
-            state: Arc::new(Mutex::new(PreparedPoolState {
-                ceiling: resident_byte_ceiling,
-                resident: 0,
-                cells: BTreeMap::new(),
-            })),
+            pool: Arc::new(PreparedPool {
+                reader,
+                prepared,
+                state: Mutex::new(PreparedPoolState {
+                    ceiling: resident_byte_ceiling,
+                    resident: 0,
+                    reserved: 0,
+                    clock: 0,
+                    cells: BTreeMap::new(),
+                    loading: BTreeSet::new(),
+                    peak_resident: 0,
+                    peak_pinned: 0,
+                    hits: 0,
+                    loads: 0,
+                    evicted_bytes: 0,
+                    copied_bytes: 0,
+                    closed: false,
+                    aborted: false,
+                }),
+                available: Condvar::new(),
+            }),
         })
     }
 
     /// Exact decoded bytes currently retained across all prepared cells.
     pub fn resident_bytes(&self) -> Result<usize, AwOperatorError> {
-        self.state
+        self.pool
+            .state
             .lock()
             .map(|state| state.resident)
             .map_err(|_| AwOperatorError::PreparedCellUnavailable)
@@ -510,67 +572,11 @@ impl PreparedAwCellProvider {
 
     /// Number of exact prepared pairs currently available to operators.
     pub fn resident_cells(&self) -> Result<usize, AwOperatorError> {
-        self.state
+        self.pool
+            .state
             .lock()
             .map(|state| state.cells.len())
             .map_err(|_| AwOperatorError::PreparedCellUnavailable)
-    }
-
-    /// Decode one opaque cold-imported or warm-reused artifact inside its exact
-    /// plan-listed consume node and publish it to the bounded in-memory pool.
-    pub fn consume_cell(
-        &self,
-        store: &PreparedArtifactStore,
-        context: WorkExecutionContext<'_>,
-        prepared: &CasaAwPreparedCell,
-        artifact: &PreparedArtifact,
-    ) -> Result<WorkMeasurements, PreparedArtifactError> {
-        let mut decoder = PreparedCellDecoder::new(prepared)?;
-        let receipt = store.consume(&context, prepared.descriptor(), artifact, &mut decoder)?;
-        let cell = Arc::new(
-            decoder
-                .finish(prepared)
-                .map_err(|_| PreparedArtifactError::InvalidLayout)?,
-        );
-        self.insert_cell(prepared.metadata.identity().as_bytes(), cell)?;
-        Ok(receipt)
-    }
-
-    fn insert_cell(
-        &self,
-        identity: [u8; 32],
-        cell: Arc<AwConvolutionCell>,
-    ) -> Result<(), PreparedArtifactError> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| PreparedArtifactError::InvalidDescriptor)?;
-        let bytes = cell.resident_bytes();
-        if bytes > state.ceiling {
-            return Err(PreparedArtifactError::ResidentBudgetExceeded {
-                required: bytes as u64,
-                budget: state.ceiling as u64,
-            });
-        }
-        let previous_bytes = state.cells.get(&identity).map_or(0, |cell| cell.bytes);
-        let retained = state
-            .resident
-            .checked_sub(previous_bytes)
-            .ok_or(PreparedArtifactError::InvalidDescriptor)?;
-        let required = retained
-            .checked_add(bytes)
-            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
-        if required > state.ceiling {
-            return Err(PreparedArtifactError::ResidentBudgetExceeded {
-                required: required as u64,
-                budget: state.ceiling as u64,
-            });
-        }
-        state
-            .cells
-            .insert(identity, ResidentPreparedCell { cell, bytes });
-        state.resident = required;
-        Ok(())
     }
 }
 
@@ -580,26 +586,296 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
         metadata: &AwPreparedCellMetadata,
         ceiling: usize,
     ) -> Result<AwPreparedCellLease, AwOperatorError> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| AwOperatorError::PreparedCellUnavailable)?;
         let identity = metadata.identity().as_bytes();
-        let resident = state
-            .cells
+        let prepared = self
+            .pool
+            .prepared
             .get(&identity)
+            .cloned()
             .ok_or(AwOperatorError::PreparedCellUnavailable)?;
-        let bytes = resident.bytes;
-        if bytes > ceiling {
+        let bytes = prepared
+            .decoded_resident_bytes()
+            .ok_or(AwOperatorError::MeasurementOverflow)?;
+        if bytes > ceiling
+            || bytes
+                > self
+                    .pool
+                    .state
+                    .lock()
+                    .map_err(|_| AwOperatorError::PreparedCellUnavailable)?
+                    .ceiling
+        {
             return Err(AwOperatorError::ResidencyCeilingExceeded);
         }
-        Ok(AwPreparedCellLease {
-            cell: Arc::clone(&resident.cell),
-            disposition: AwPreparedCellDisposition::Resident,
-            evicted_bytes: 0,
-            copied_bytes: 0,
+        let mut evicted = 0_usize;
+        'load: loop {
+            let mut state = self
+                .pool
+                .state
+                .lock()
+                .map_err(|_| AwOperatorError::PreparedCellUnavailable)?;
+            if state.closed || state.aborted {
+                return Err(AwOperatorError::PreparedCellUnavailable);
+            }
+            if state.cells.contains_key(&identity) {
+                state.clock = state
+                    .clock
+                    .checked_add(1)
+                    .ok_or(AwOperatorError::MeasurementOverflow)?;
+                let clock = state.clock;
+                let cell = {
+                    let resident = state
+                        .cells
+                        .get_mut(&identity)
+                        .expect("resident identity was checked");
+                    resident.last_use = clock;
+                    Arc::clone(&resident.cell)
+                };
+                state.hits = state
+                    .hits
+                    .checked_add(1)
+                    .ok_or(AwOperatorError::MeasurementOverflow)?;
+                observe_pinned(&mut state)?;
+                drop(state);
+                return Ok(self.lease(cell, AwPreparedCellDisposition::Resident, evicted, 0));
+            }
+            if state.loading.contains(&identity) {
+                drop(
+                    self.pool
+                        .available
+                        .wait(state)
+                        .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
+                );
+                continue;
+            }
+            while state
+                .resident
+                .checked_add(state.reserved)
+                .and_then(|retained| retained.checked_add(bytes))
+                .ok_or(AwOperatorError::MeasurementOverflow)?
+                > state.ceiling
+            {
+                let victim = state
+                    .cells
+                    .iter()
+                    .filter(|(_, resident)| Arc::strong_count(&resident.cell) == 1)
+                    .min_by_key(|(victim, resident)| (resident.last_use, **victim))
+                    .map(|(victim, _)| *victim);
+                let Some(victim) = victim else {
+                    drop(
+                        self.pool
+                            .available
+                            .wait(state)
+                            .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
+                    );
+                    continue 'load;
+                };
+                let victim = state
+                    .cells
+                    .remove(&victim)
+                    .expect("selected resident victim exists");
+                state.resident = state
+                    .resident
+                    .checked_sub(victim.bytes)
+                    .ok_or(AwOperatorError::MeasurementOverflow)?;
+                evicted = evicted
+                    .checked_add(victim.bytes)
+                    .ok_or(AwOperatorError::MeasurementOverflow)?;
+                state.evicted_bytes = state
+                    .evicted_bytes
+                    .checked_add(
+                        u64::try_from(victim.bytes)
+                            .map_err(|_| AwOperatorError::MeasurementOverflow)?,
+                    )
+                    .ok_or(AwOperatorError::MeasurementOverflow)?;
+            }
+            if state.cells.contains_key(&identity) || state.loading.contains(&identity) {
+                continue;
+            }
+            state.reserved = state
+                .reserved
+                .checked_add(bytes)
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            state.loading.insert(identity);
+            state.loads = state
+                .loads
+                .checked_add(1)
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            drop(state);
+
+            let decoded = (|| {
+                let mut decoder = PreparedCellDecoder::new(&prepared)?;
+                self.pool
+                    .reader
+                    .read(prepared.descriptor().identity(), &mut decoder)?;
+                let cell = decoder
+                    .finish(&prepared)
+                    .map_err(|_| PreparedArtifactError::InvalidLayout)?;
+                if cell.resident_bytes() != bytes {
+                    return Err(PreparedArtifactError::InvalidLayout);
+                }
+                Ok::<_, PreparedArtifactError>(Arc::new(cell))
+            })();
+
+            let mut state = self
+                .pool
+                .state
+                .lock()
+                .map_err(|_| AwOperatorError::PreparedCellUnavailable)?;
+            if !state.loading.remove(&identity) {
+                return Err(AwOperatorError::PreparedCellUnavailable);
+            }
+            state.reserved = state
+                .reserved
+                .checked_sub(bytes)
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            let cell = match decoded {
+                Ok(cell) if !state.closed && !state.aborted => cell,
+                Ok(_) | Err(_) => {
+                    self.pool.available.notify_all();
+                    return Err(AwOperatorError::PreparedCellUnavailable);
+                }
+            };
+            state.resident = state
+                .resident
+                .checked_add(bytes)
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            if state.resident > state.ceiling {
+                return Err(AwOperatorError::ResidencyCeilingExceeded);
+            }
+            state.clock = state
+                .clock
+                .checked_add(1)
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            let clock = state.clock;
+            state.copied_bytes = state
+                .copied_bytes
+                .checked_add(
+                    u64::try_from(bytes).map_err(|_| AwOperatorError::MeasurementOverflow)?,
+                )
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            state.peak_resident = state.peak_resident.max(state.resident);
+            let lease_cell = Arc::clone(&cell);
+            if state
+                .cells
+                .insert(
+                    identity,
+                    ResidentPreparedCell {
+                        cell,
+                        bytes,
+                        last_use: clock,
+                    },
+                )
+                .is_some()
+            {
+                return Err(AwOperatorError::PreparedCellUnavailable);
+            }
+            observe_pinned(&mut state)?;
+            self.pool.available.notify_all();
+            drop(state);
+            return Ok(self.lease(
+                lease_cell,
+                AwPreparedCellDisposition::Loaded,
+                evicted,
+                bytes,
+            ));
+        }
+    }
+}
+
+impl PreparedAwCellProvider {
+    fn lease(
+        &self,
+        cell: Arc<AwConvolutionCell>,
+        disposition: AwPreparedCellDisposition,
+        evicted_bytes: usize,
+        copied_bytes: usize,
+    ) -> AwPreparedCellLease {
+        let pool = Arc::downgrade(&self.pool);
+        AwPreparedCellLease::new(cell, disposition, evicted_bytes, copied_bytes)
+            .with_release_notifier(move || {
+                if let Some(pool) = pool.upgrade() {
+                    pool.available.notify_all();
+                }
+            })
+    }
+
+    fn measurements(
+        state: &PreparedPoolState,
+    ) -> Result<PreparedArtifactResidencyMeasurements, PreparedArtifactError> {
+        Ok(PreparedArtifactResidencyMeasurements {
+            peak_resident_bytes: u64::try_from(state.peak_resident)
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
+            peak_pinned_bytes: u64::try_from(state.peak_pinned)
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
+            hits: state.hits,
+            loads: state.loads,
+            evicted_bytes: state.evicted_bytes,
+            copied_bytes: state.copied_bytes,
+            released_bytes: u64::try_from(state.resident)
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
         })
     }
+}
+
+impl PreparedArtifactReaderResidency for PreparedAwCellProvider {
+    fn close(&self) -> Result<PreparedArtifactResidencyMeasurements, PreparedArtifactError> {
+        let mut state = self
+            .pool
+            .state
+            .lock()
+            .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        state.closed = true;
+        if state.reserved != 0 || !state.loading.is_empty() || pinned_bytes(&state)? != 0 {
+            return Err(PreparedArtifactError::ReaderStillInUse);
+        }
+        Self::measurements(&state)
+    }
+
+    fn release(&self) -> Result<PreparedArtifactResidencyMeasurements, PreparedArtifactError> {
+        let mut state = self
+            .pool
+            .state
+            .lock()
+            .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        state.closed = true;
+        if state.reserved != 0 || !state.loading.is_empty() {
+            return Err(PreparedArtifactError::ReaderStillInUse);
+        }
+        let measurements = Self::measurements(&state)?;
+        state.cells.clear();
+        state.resident = 0;
+        self.pool.available.notify_all();
+        Ok(measurements)
+    }
+
+    fn abort(&self) {
+        if let Ok(mut state) = self.pool.state.lock() {
+            state.closed = true;
+            state.aborted = true;
+            state.cells.clear();
+            state.resident = 0;
+            self.pool.available.notify_all();
+        }
+    }
+}
+
+fn pinned_bytes(state: &PreparedPoolState) -> Result<usize, PreparedArtifactError> {
+    state
+        .cells
+        .values()
+        .filter(|resident| Arc::strong_count(&resident.cell) > 1)
+        .try_fold(0_usize, |total, resident| {
+            total
+                .checked_add(resident.bytes)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)
+        })
+}
+
+fn observe_pinned(state: &mut PreparedPoolState) -> Result<(), AwOperatorError> {
+    let pinned = pinned_bytes(state).map_err(|_| AwOperatorError::MeasurementOverflow)?;
+    state.peak_pinned = state.peak_pinned.max(pinned);
+    Ok(())
 }
 
 struct PreparedCellDecoder {
@@ -1377,32 +1653,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn streamed_cold_import_populates_owned_pool_without_a_legacy_cache_load() {
-        let root = TempDir::new().unwrap();
-        write_test_cache(root.path());
-        let cache = CasaAwCache::open(root.path()).unwrap();
-        let entry = cache.entries.values().next().unwrap();
-        let cell = Arc::new(
-            AwConvolutionCell::new(
-                entry.identity,
-                stream_cold_kernel(&entry.imaging).unwrap(),
-                stream_cold_kernel(&entry.weight).unwrap(),
-            )
-            .unwrap(),
-        );
-        let identity = entry.identity.as_bytes();
-        let bytes = cell.resident_bytes();
-        let mut provider = PreparedAwCellProvider::new(bytes).unwrap();
-        provider.insert_cell(identity, cell).unwrap();
-        fs::remove_dir_all(root.path()).unwrap();
-        let metadata = prepared_metadata(entry).unwrap();
-        let lease = provider.load(&metadata, bytes).unwrap();
-        assert_eq!(lease.disposition, AwPreparedCellDisposition::Resident);
-        assert_eq!(lease.cell.resident_bytes(), 2_176);
-        assert_eq!(provider.resident_cells().unwrap(), 1);
-    }
-
-    #[test]
     fn rejects_pair_that_does_not_cover_the_same_world_window() {
         let root = TempDir::new().unwrap();
         write_cell(
@@ -1451,46 +1701,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn rejected_pool_replacement_preserves_prior_resident_cells() {
-        let root = TempDir::new().unwrap();
-        write_test_cache(root.path());
-        let cache = CasaAwCache::open(root.path()).unwrap();
-        let identity = cache.entries.values().next().unwrap().identity;
-        let small = test_cell(identity, [0, 0]);
-        let large = test_cell(identity, [1, 1]);
-        let provider = PreparedAwCellProvider::new(large.resident_bytes()).unwrap();
-        provider.insert_cell([1; 32], Arc::clone(&small)).unwrap();
-        provider.insert_cell([2; 32], Arc::clone(&small)).unwrap();
-
-        let error = provider.insert_cell([1; 32], large).unwrap_err();
-        assert!(matches!(
-            error,
-            PreparedArtifactError::ResidentBudgetExceeded { .. }
-        ));
-        assert_eq!(provider.resident_cells().unwrap(), 2);
-        assert_eq!(
-            provider.resident_bytes().unwrap(),
-            2 * small.resident_bytes()
-        );
-        assert_eq!(
-            provider.state.lock().unwrap().cells[&[1; 32]].bytes,
-            small.resident_bytes()
-        );
-    }
-
-    #[test]
-    fn poisoned_pool_state_is_reported_instead_of_becoming_empty() {
-        let provider = PreparedAwCellProvider::new(1).unwrap();
-        let state = Arc::clone(&provider.state);
-        let _ = std::panic::catch_unwind(move || {
-            let _guard = state.lock().unwrap();
-            panic!("poison prepared AW pool for invariant test");
-        });
-        assert!(provider.resident_cells().is_err());
-        assert!(provider.resident_bytes().is_err());
-    }
-
-    #[test]
     fn rejects_an_unpaired_cache_cell() {
         let root = TempDir::new().unwrap();
         write_cell(
@@ -1512,10 +1722,11 @@ pub(crate) mod tests {
             .expect("CASA_RS_VLASS_CF_CACHE must name the frozen CASA cache root");
         let cache = CasaAwCache::open(&root).expect("validate frozen paired CASA cache");
         let inventory = cache.inventory();
+        assert_eq!(inventory.paired_cells, 1024);
+        assert_eq!(inventory.frequencies_hz.len(), 16);
         assert_eq!(inventory.w_values_lambda.len(), 32);
         assert_eq!(inventory.mueller_elements.len(), 2);
-        assert!(!inventory.frequencies_hz.is_empty());
-        assert!(!inventory.parallactic_angles_deg.is_empty());
+        assert_eq!(inventory.parallactic_angles_deg.len(), 1);
         assert_eq!(
             inventory.paired_cells,
             inventory.frequencies_hz.len()
@@ -1544,19 +1755,6 @@ pub(crate) mod tests {
         }
         let decoded = decode_complex32_plane(bytes, metadata)?;
         adapt_kernel_from_plane(metadata, decoded)
-    }
-
-    fn test_cell(
-        identity: PreparedArtifactScientificIdentity,
-        support: [usize; 2],
-    ) -> Arc<AwConvolutionCell> {
-        let layout = AwKernelLayout::new(support, 1).unwrap();
-        let taps = vec![Complex64::new(1.0, 0.0); (2 * support[0] + 1) * (2 * support[1] + 1)];
-        let kernel = || {
-            AwConvolutionKernel::new(layout, Complex64::new(taps.len() as f64, 0.0), taps.clone())
-                .unwrap()
-        };
-        Arc::new(AwConvolutionCell::new(identity, kernel(), kernel()).unwrap())
     }
 
     fn write_cell(root: &Path, name: &str, weight: bool, increment: [f64; 2], value: Complex32) {

@@ -49,8 +49,7 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MinorCycleProgram, MinorCycleStopReason, PreparedAwProjection, ReconstructionMaskSet,
-    WeightingExecutionLimits,
+    MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet, WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
@@ -58,13 +57,12 @@ use casa_imaging_runtime::{
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
     PlannerCostModelProfileBootstrap, PlanningBindings, PreparedArtifactRegistration,
-    ResourceAuthority, RunBindings, RunController, RunDirective,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan,
-    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
-    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
-    StorageIoResourceBinding, WorkExecutionContext, WorkImplementation, WorkImplementationId,
-    WorkMeasurements, plan, run,
+    ResourceAuthority, RunBindings, RunController, RunDirective, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
+    SerialProductPublicationSink, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
+    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+    SpectralCycleRegistry, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkMeasurements, plan, run,
 };
 use casa_ms::{
     ResolvedSelectedObservationAccess, SelectedObservationResolutionRequest,
@@ -372,9 +370,10 @@ where
     let prepared_aw = aw_preparation
         .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
         .transpose()?;
-    let aw_projection = prepared_aw
+    let initial_aw = prepared_aw
         .as_ref()
-        .map(|prepared| prepared.projection.clone());
+        .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
+        .transpose()?;
     let initial_access = input.initial_access;
     let residency = initial_access.certify_residency(problem)?;
     let write_targets =
@@ -384,7 +383,7 @@ where
         matches!(algorithm, ReconstructionAlgorithm::Dirty) && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let mut policy = execution_policy(&runtime, residency.clone(), aw_projection.as_ref());
+    let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref());
     if initial_write {
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
@@ -435,6 +434,9 @@ where
         ExecutableModelProblem::from_compiled(problem.clone())?,
         SpectralCyclePassInput::Initial,
     );
+    if let Some(binding) = initial_aw {
+        executor = executor.with_prepared_artifact_reader(binding.execution)?;
+    }
     if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
         executor = executor.with_frozen_weighting_reservation(
             frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
@@ -655,8 +657,11 @@ where
                 };
                 minor_outcomes.push(minor_outcome);
                 let final_input = minor.into_final_major_input();
-                let final_policy =
-                    execution_policy(&runtime, residency.clone(), aw_projection.as_ref());
+                let final_aw = prepared_aw
+                    .as_ref()
+                    .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
+                    .transpose()?;
+                let final_policy = execution_policy(&runtime, residency.clone(), final_aw.as_ref());
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let final_planned = if continue_cleaning {
@@ -699,6 +704,9 @@ where
                         .ok_or_else(|| boxed("later-major plan omitted gridded replay binding"))?,
                 )?
                 .with_frozen_weighting(frozen_weighting);
+                if let Some(binding) = final_aw {
+                    executor = executor.with_prepared_artifact_reader(binding.execution)?;
+                }
                 if continue_cleaning {
                     let remaining = controls
                         .max_minor_iterations()
@@ -773,8 +781,12 @@ where
                 let (_, access) = resolved.into_parts();
                 let output_residency = access.certify_residency(problem)?;
                 let source_state = access.source_state().clone();
+                let output_aw = prepared_aw
+                    .as_ref()
+                    .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
+                    .transpose()?;
                 let output_policy =
-                    execution_policy(&runtime, output_residency, aw_projection.as_ref())
+                    execution_policy(&runtime, output_residency, output_aw.as_ref())
                         .with_visibility_write(
                             access.selected_visibility_storage_plan(write_targets)?,
                         );
@@ -799,7 +811,7 @@ where
                     visibility_write_selection(problem, input.observation.selection())?,
                     write_targets,
                 )?;
-                let output_executor = SpectralCycleExecutor::new_selected_output(
+                let mut output_executor = SpectralCycleExecutor::new_selected_output(
                     runtime.implementation.clone(),
                     problem.clone(),
                     output_weighting,
@@ -811,6 +823,10 @@ where
                     frozen_weighting,
                 )
                 .with_final_visibility_sink(sink);
+                if let Some(binding) = output_aw {
+                    output_executor =
+                        output_executor.with_prepared_artifact_reader(binding.execution)?;
+                }
                 let output_registry = SpectralCycleRegistry::new(
                     runtime.registry,
                     runtime.implementation.clone(),
@@ -940,7 +956,7 @@ struct PriorPhaseOutcome {
 fn execution_policy(
     runtime: &ApplicationRuntime,
     residency: casa_ms::SelectedObservationResidencyCertificate,
-    aw_projection: Option<&PreparedAwProjection>,
+    aw: Option<&prepared_aw_phase::PreparedAwPlanBinding>,
 ) -> SpectralCycleExecutionPolicy {
     let policy = SpectralCycleExecutionPolicy::new(
         runtime.implementation.clone(),
@@ -956,8 +972,10 @@ fn execution_policy(
         runtime.resource_policy.clone(),
     )
     .with_gridded_normal_storage(runtime.gridded_normal_storage.clone());
-    match aw_projection {
-        Some(projection) => policy.with_aw_projection(projection.clone()),
+    match aw {
+        Some(binding) => policy
+            .with_aw_projection(binding.projection.clone())
+            .with_prepared_artifact_reader(binding.execution.plan().clone()),
         None => policy,
     }
 }

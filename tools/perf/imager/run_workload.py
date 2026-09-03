@@ -611,9 +611,7 @@ def build_plan(
         "IMAGER_BENCH_SIDELOBETHRESHOLD": str(
             float_value(imaging, "sidelobethreshold", 3.0)
         ),
-        "IMAGER_BENCH_NOISETHRESHOLD": str(
-            float_value(imaging, "noisethreshold", 5.0)
-        ),
+        "IMAGER_BENCH_NOISETHRESHOLD": str(float_value(imaging, "noisethreshold", 5.0)),
         "IMAGER_BENCH_CASA_PBLIMIT": str(
             float_value(imaging, "casa_pblimit", float_value(imaging, "pblimit", 0.2))
         ),
@@ -659,7 +657,9 @@ def build_plan(
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
     prepared_aw_casa_cache = os.environ.get("CASA_RS_BENCH_PREPARED_AW_CASA_CACHE")
-    prepared_aw_output_prefix = os.environ.get("CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX")
+    prepared_aw_output_prefix = os.environ.get(
+        "CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX"
+    )
     if prepared_aw_casa_cache:
         env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"] = prepared_aw_casa_cache
         env["IMAGER_BENCH_AW_CF_RESIDENT_MB"] = os.environ.get(
@@ -1114,9 +1114,7 @@ def run_casa_recipe_plan(
                 "recipe run.skip_casa requires an exact run.reuse_casa_prefix"
             )
         plan["products"]["casa_prefix"] = reused_casa_prefix
-        return run_benchmark_plan(
-            plan, log_path, reused_casa_prefix=reused_casa_prefix
-        )
+        return run_benchmark_plan(plan, log_path, reused_casa_prefix=reused_casa_prefix)
     return casa_tclean_workflow.run_recipe_plan(
         plan, log_path, services=recipe_execution_services()
     )
@@ -1326,7 +1324,9 @@ def parse_continuum_residual_comparison(text: str) -> dict[str, Any]:
         return {"status": "missing", "path": str(path)}
     receipt = json.loads(path.read_text(encoding="utf-8"))
     if receipt.get("schema") != "casa-rs-continuum-residual-comparison-v1":
-        raise HarnessError("continuum-residual comparison receipt has an unexpected schema")
+        raise HarnessError(
+            "continuum-residual comparison receipt has an unexpected schema"
+        )
     return {
         **receipt,
         "path": str(path),
@@ -1364,6 +1364,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "image_product_writes": [],
         "cube_plane_state_store": [],
         "visibility_geometry_cache": [],
+        "aw_cache_inventory": [],
+        "prepared_artifact_readers": [],
         "executor_limitations": [],
         "worker_diagnostics": [],
         "minor_cycle_diagnostics": [],
@@ -1439,6 +1441,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["cube_plane_state_store"].append(parsed)
         elif name == "visibility_geometry_cache_summary":
             buckets["visibility_geometry_cache"].append(parsed)
+        elif name == "imaging_aw_cache_inventory_summary":
+            buckets["aw_cache_inventory"].append(parsed)
+        elif name == "imaging_prepared_artifact_reader_summary":
+            buckets["prepared_artifact_readers"].append(parsed)
         elif name in {
             "cube_shared_direct_plane_executor_summary",
             "cube_shared_plane_executor_summary",

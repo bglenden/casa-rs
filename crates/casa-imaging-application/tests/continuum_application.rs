@@ -6,15 +6,21 @@ use std::{
 };
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, StokesType,
+    CoordinateModel, CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection,
+    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
+    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    ContinuumWeighting, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
+    execute_continuum,
 };
 use casa_imaging_model::ImageDomainRole;
+use casa_imaging_runtime::{
+    ArtifactDisposition, ArtifactRole, ClaimLifetime, FenceId, FenceKind, IoBufferKind,
+    LeaseResource, ReceiptStatus,
+};
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
     SubtableId, VisibilityDataColumn,
@@ -53,6 +59,15 @@ fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
         root,
         "polarized-input.ms",
         MeasurementSetFixtureOptions::new(true, true, 2, 1, 2, 1, false),
+    )
+}
+
+fn vla_aw_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "vla-aw-input.ms",
+        MeasurementSetFixtureOptions::new(true, false, 1, 1, 2, 1, false)
+            .with_vla_observation_metadata(),
     )
 }
 
@@ -182,6 +197,12 @@ impl MeasurementSetFixtureOptions {
     const fn with_aca_observation_metadata(mut self) -> Self {
         self.telescope_name = Some("ALMA");
         self.dish_diameter_m = 7.0;
+        self
+    }
+
+    const fn with_vla_observation_metadata(mut self) -> Self {
+        self.telescope_name = Some("EVLA");
+        self.dish_diameter_m = 25.0;
         self
     }
 
@@ -655,6 +676,108 @@ fn string(value: &str) -> Value {
     Value::Scalar(ScalarValue::String(value.to_string()))
 }
 
+fn write_aw_test_cache(root: &Path) {
+    std::fs::create_dir(root).expect("create AW cache root");
+    for (frequency_suffix, frequency_hz) in [("40ghz", 40.0e9), ("48ghz", 48.0e9)] {
+        for (polarization_suffix, mueller) in [("rr", 0), ("ll", 15)] {
+            let suffix = format!("{polarization_suffix}_{frequency_suffix}");
+            write_aw_test_cell(
+                root,
+                &format!("CFS_{suffix}.im"),
+                false,
+                [-2.0, 2.0],
+                mueller,
+                frequency_hz,
+                Complex32::new(3.0, -1.0),
+            );
+            write_aw_test_cell(
+                root,
+                &format!("WTCFS_{suffix}.im"),
+                true,
+                [-1.0, 1.0],
+                mueller,
+                frequency_hz,
+                Complex32::new(7.0, 2.0),
+            );
+        }
+    }
+}
+
+fn write_aw_test_cell(
+    root: &Path,
+    name: &str,
+    weight: bool,
+    increment: [f64; 2],
+    mueller: i32,
+    frequency_hz: f64,
+    value: Complex32,
+) {
+    let path = root.join(name);
+    let shape = if weight {
+        vec![32, 32, 1, 1]
+    } else {
+        vec![16, 16, 1, 1]
+    };
+    let reference_pixel = if weight {
+        vec![16.0, 16.0]
+    } else {
+        vec![8.0, 8.0]
+    };
+    let support = if weight { 2 } else { 1 };
+    let mut coordinates = CoordinateSystem::new();
+    coordinates.add_coordinate(
+        LinearCoordinate::new(
+            2,
+            vec!["UU".to_string(), "VV".to_string()],
+            vec!["lambda".to_string(), "lambda".to_string()],
+        )
+        .with_reference_value(vec![0.0, 0.0])
+        .with_reference_pixel(reference_pixel)
+        .with_increment(increment.to_vec()),
+    );
+    coordinates.add_coordinate(StokesCoordinate::new(vec![StokesType::RR]));
+    coordinates.add_coordinate(SpectralCoordinate::new(
+        FrequencyRef::LSRK,
+        frequency_hz,
+        1.0,
+        0.0,
+        frequency_hz,
+    ));
+    let mut image =
+        PagedImage::<Complex32>::create(shape, coordinates, &path).expect("create AW cache cell");
+    image.set(value).expect("fill AW cache cell");
+    image
+        .set_misc_info(RecordValue::new(vec![
+            RecordField::new(
+                "BandName",
+                Value::Scalar(ScalarValue::String("EVLA_Q".to_string())),
+            ),
+            RecordField::new(
+                "ConjFreq",
+                Value::Scalar(ScalarValue::Float64(frequency_hz)),
+            ),
+            RecordField::new("ConjPoln", Value::Scalar(ScalarValue::Int32(8))),
+            RecordField::new("Diameter", Value::Scalar(ScalarValue::Float64(25.0))),
+            RecordField::new("MuellerElement", Value::Scalar(ScalarValue::Int32(mueller))),
+            RecordField::new("OpCode", Value::Scalar(ScalarValue::Bool(false))),
+            RecordField::new(
+                "ParallacticAngle",
+                Value::Scalar(ScalarValue::Float64(30.0)),
+            ),
+            RecordField::new("Sampling", Value::Scalar(ScalarValue::Float64(2.0))),
+            RecordField::new(
+                "TelescopeName",
+                Value::Scalar(ScalarValue::String("EVLA".to_string())),
+            ),
+            RecordField::new("WIncr", Value::Scalar(ScalarValue::Float64(0.5))),
+            RecordField::new("WValue", Value::Scalar(ScalarValue::Float64(0.0))),
+            RecordField::new("Xsupport", Value::Scalar(ScalarValue::Int32(support))),
+            RecordField::new("Ysupport", Value::Scalar(ScalarValue::Int32(support))),
+        ]))
+        .expect("attach AW cache metadata");
+    image.save().expect("save AW cache cell");
+}
+
 fn request(
     measurement_set: PathBuf,
     image_name: PathBuf,
@@ -822,6 +945,133 @@ fn t49_application_executes_nonzero_w_through_major_cycle_replay() {
     let result = execute_continuum(imaging).expect("native W-projection execution");
     assert_eq!(result.minor_iterations, 2);
     assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = vla_aw_measurement_set(root.path());
+    let cache = root.path().join("aw-cache");
+    write_aw_test_cache(&cache);
+    let image_name = root.path().join("aw-dirty");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.aw_projection = Some(ContinuumAwProjection {
+        casa_cache: cache,
+        resident_bytes: 1 << 20,
+        w_plane_count: Some(32),
+        psf_phase_center_direction_rad: None,
+        vp_table: None,
+        a_term: true,
+        ps_term: false,
+        wideband: true,
+        conjugate_beams: true,
+        use_pointing: false,
+        pointing_offset_sigdev: Vec::new(),
+        mosaic_weighting: false,
+        compute_pa_step_deg: 360.0,
+        rotate_pa_step_deg: 360.0,
+    });
+    imaging.task_requirements = vec![TaskRequirement::AwProjection];
+
+    let result = execute_continuum(imaging).expect("native AW dirty execution");
+    assert_dirty_products(&image_name, &result.product_names);
+    let receipt = &result.outcome.output.initial_receipt;
+    assert_eq!(receipt.initial_execution_knobs().io_depth, 2);
+    let nodes = receipt.plan_node_identities();
+    let reader = nodes
+        .iter()
+        .find(|node| {
+            node.as_str().starts_with("prepared-artifact-reader-")
+                && !node
+                    .as_str()
+                    .starts_with("prepared-artifact-reader-release-")
+        })
+        .expect("plan-owned AW reader Cache node");
+    let release = nodes
+        .iter()
+        .find(|node| {
+            node.as_str()
+                .starts_with("prepared-artifact-reader-release-")
+        })
+        .expect("terminal AW reader Release node");
+    let reader_fence = FenceId::new(reader.clone(), FenceKind::Io);
+    assert_eq!(
+        receipt.fence_status(&reader_fence),
+        Some(ReceiptStatus::Completed)
+    );
+    assert!(receipt.fence_actual_elapsed_nanos(&reader_fence).is_some());
+    let (read_bytes, read_operations) = receipt
+        .stage_actual_io(reader, IoBufferKind::StorageManager)
+        .expect("reader I/O evidence is emitted only at the fence");
+    assert!(read_bytes > 0);
+    assert!(read_operations > 0);
+    assert_eq!(
+        receipt.stage_actual_io(release, IoBufferKind::StorageManager),
+        Some((0, 0))
+    );
+
+    let retained = ClaimLifetime::through_fence(FenceKind::Io);
+    let suffix = reader
+        .as_str()
+        .strip_prefix("prepared-artifact-reader-")
+        .expect("reader identity suffix");
+    assert_eq!(
+        receipt.planned_resource_amount(reader, &LeaseResource::Workers, &ClaimLifetime::Work),
+        Some(1)
+    );
+    for (resource, amount) in [
+        (
+            LeaseResource::Rate {
+                demand_id: format!("prepared-artifact-reader-rate-{suffix}"),
+            },
+            1,
+        ),
+        (
+            LeaseResource::Queue {
+                demand_id: format!("prepared-artifact-reader-queue-{suffix}"),
+            },
+            1,
+        ),
+        (LeaseResource::FileDescriptors, 2),
+    ] {
+        assert_eq!(
+            receipt.planned_resource_amount(reader, &resource, &retained),
+            Some(amount)
+        );
+    }
+    assert!(
+        receipt
+            .planned_resource_amount(
+                reader,
+                &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                &retained,
+            )
+            .is_some_and(|bytes| bytes > 0 && bytes <= (1 << 20) + (8 << 20))
+    );
+
+    let cache_artifacts = receipt
+        .artifact_identities()
+        .into_iter()
+        .filter(|identity| receipt.artifact_role(*identity) == Some(ArtifactRole::Cache))
+        .collect::<Vec<_>>();
+    assert_eq!(cache_artifacts.len(), 1);
+    let artifact = cache_artifacts[0];
+    assert_eq!(receipt.artifact_node(artifact).as_ref(), Some(reader));
+    assert_eq!(
+        receipt.artifact_disposition(artifact),
+        Some(ArtifactDisposition::Reused)
+    );
+    assert_eq!(receipt.artifact_actual_bytes(artifact), Some(40_960));
+    assert_eq!(
+        receipt.artifact_observed_identity(artifact),
+        Some(artifact.as_bytes())
+    );
 }
 
 #[test]

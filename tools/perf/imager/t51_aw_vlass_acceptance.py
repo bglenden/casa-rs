@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import pathlib
 import subprocess
@@ -26,8 +27,11 @@ CLEAN_WORKLOAD = ROOT / (
 MEMORY_CEILING_BYTES = 32 * 1024**3
 MINIMUM_SELECTED_SAMPLES = 1_000_000
 MAXIMUM_NORMALIZED_RMS = 1.0e-3
-EXPECTED_PREPARED_AW_CELLS = 64
+EXPECTED_PREPARED_AW_CELLS = 1024
+EXPECTED_PREPARED_AW_FREQUENCIES = 16
+PREPARED_MANIFEST_BYTES_PER_CELL = 16 * 1024
 AW_RESIDENT_MB = 384
+AW_RESIDENT_BYTES = AW_RESIDENT_MB * 1024**2
 SERIAL_CPU_IMAGING = {
     "parallel": False,
     "standard_mfs_acceleration": "cpu",
@@ -69,6 +73,115 @@ def _positive_int(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise GateError(f"{label} must be a positive measured integer")
     return value
+
+
+def _nonnegative_int(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise GateError(f"{label} must be a non-negative measured integer")
+    return value
+
+
+def _log_fields(value: Any, label: str) -> dict[str, Any]:
+    return _object(_object(value, label).get("fields"), f"{label}.fields")
+
+
+def validate_prepared_aw_receipts(
+    results: dict[str, Any], *, workload_id: str
+) -> dict[str, Any]:
+    """Validate exact full-cache inventory and bounded lazy-reader evidence."""
+
+    logs = _object(results.get("backend_plan_logs"), "results.backend_plan_logs")
+    inventories = logs.get("aw_cache_inventory")
+    if not isinstance(inventories, list) or len(inventories) != 1:
+        raise GateError(f"{workload_id}: expected one AW cache inventory receipt")
+    inventory = _log_fields(inventories[0], "AW cache inventory receipt")
+    for name, expected in (
+        ("paired_cells", EXPECTED_PREPARED_AW_CELLS),
+        ("frequencies", EXPECTED_PREPARED_AW_FREQUENCIES),
+        ("decoded_resident_ceiling_bytes", AW_RESIDENT_BYTES),
+    ):
+        if inventory.get(name) != expected:
+            raise GateError(f"{workload_id}: AW inventory {name} must be {expected}")
+    for name in (
+        "w_values",
+        "mueller_elements",
+        "parallactic_angles",
+        "prepared_cache_bytes",
+    ):
+        _positive_int(inventory.get(name), f"AW inventory {name}")
+
+    entries = logs.get("prepared_artifact_readers")
+    if not isinstance(entries, list) or not entries:
+        raise GateError(f"{workload_id}: lazy AW reader receipts are absent")
+    readers = [
+        _log_fields(entry, f"AW reader receipt {ordinal}")
+        for ordinal, entry in enumerate(entries)
+    ]
+    catalogs: set[str] = set()
+    logical_sizes: set[int] = set()
+    for ordinal, reader in enumerate(readers):
+        label = f"{workload_id}: AW reader receipt {ordinal}"
+        catalog = reader.get("catalog")
+        if (
+            not isinstance(catalog, str)
+            or len(catalog) != 64
+            or any(character not in "0123456789abcdef" for character in catalog)
+        ):
+            raise GateError(f"{label} has an invalid catalog identity")
+        catalogs.add(catalog)
+        logical_sizes.add(
+            _positive_int(reader.get("logical_bytes"), f"{label} logical_bytes")
+        )
+        if reader.get("decoded_ceiling_bytes") != AW_RESIDENT_BYTES:
+            raise GateError(f"{label} changed the 384 MiB decoded ceiling")
+        total_ceiling = _positive_int(
+            reader.get("total_ceiling_bytes"), f"{label} total_ceiling_bytes"
+        )
+        resident_peak = _positive_int(
+            reader.get("resident_peak_bytes"), f"{label} resident_peak_bytes"
+        )
+        total_peak = _positive_int(
+            reader.get("total_peak_resident_bytes"),
+            f"{label} total_peak_resident_bytes",
+        )
+        pinned_peak = _positive_int(
+            reader.get("pinned_peak_bytes"), f"{label} pinned_peak_bytes"
+        )
+        reads = _positive_int(reader.get("reads"), f"{label} reads")
+        loads = _positive_int(reader.get("loads"), f"{label} loads")
+        _positive_int(reader.get("read_bytes"), f"{label} read_bytes")
+        _positive_int(reader.get("read_operations"), f"{label} read_operations")
+        _positive_int(reader.get("copied_bytes"), f"{label} copied_bytes")
+        _nonnegative_int(reader.get("hits"), f"{label} hits")
+        _nonnegative_int(reader.get("evicted_bytes"), f"{label} evicted_bytes")
+        if reader.get("aborted") is not False:
+            raise GateError(f"{label} was aborted")
+        if loads != reads:
+            raise GateError(f"{label} load/read counts differ")
+        if not pinned_peak <= resident_peak <= AW_RESIDENT_BYTES:
+            raise GateError(f"{label} exceeded the decoded residency ceiling")
+        if not resident_peak <= total_peak <= total_ceiling:
+            raise GateError(f"{label} exceeded its total residency ceiling")
+        if total_ceiling < AW_RESIDENT_BYTES:
+            raise GateError(f"{label} total ceiling omits decoded residency")
+        if total_ceiling > AW_RESIDENT_BYTES + 8 * 1024**2:
+            raise GateError(f"{label} total ceiling exceeds the T50 streaming bound")
+    if len(catalogs) != 1 or len(logical_sizes) != 1:
+        raise GateError(
+            f"{workload_id}: reader sessions changed catalog identity or size"
+        )
+    logical_size = next(iter(logical_sizes))
+    expected_cache_bytes = logical_size + (
+        EXPECTED_PREPARED_AW_CELLS * PREPARED_MANIFEST_BYTES_PER_CELL
+    )
+    if inventory["prepared_cache_bytes"] != expected_cache_bytes:
+        raise GateError(
+            f"{workload_id}: prepared-cache and reader logical sizes disagree"
+        )
+    return {
+        "inventory": inventory,
+        "reader_sessions": readers,
+    }
 
 
 def validate_manifest_contract(workload: dict[str, Any]) -> dict[str, Any]:
@@ -228,6 +341,7 @@ def validate_receipt(
         raise GateError(f"{workload_id}: production casa-rs run is absent")
     if _object(results.get("casa"), "results.casa").get("status") != "reused":
         raise GateError(f"{workload_id}: CASA was not reused from frozen products")
+    prepared_aw = validate_prepared_aw_receipts(results, workload_id=workload_id)
 
     features = _object(receipt.get("benchmark_features"), "benchmark_features")
     visibility = _object(features.get("visibility"), "benchmark_features.visibility")
@@ -278,7 +392,13 @@ def validate_receipt(
         ):
             raise GateError(f"{workload_id}: {suffix} full-array validity differs")
         nrms = full.get("diff_rms_over_right_rms")
-        if not isinstance(nrms, int | float) or nrms > MAXIMUM_NORMALIZED_RMS:
+        if (
+            isinstance(nrms, bool)
+            or not isinstance(nrms, int | float)
+            or not math.isfinite(nrms)
+            or nrms < 0.0
+            or nrms > MAXIMUM_NORMALIZED_RMS
+        ):
             raise GateError(f"{workload_id}: {suffix} normalized RMS exceeds 1e-3")
 
     tolerance = _object(comparison.get("tolerance_evaluation"), "tolerance_evaluation")
@@ -291,6 +411,7 @@ def validate_receipt(
         "selected_samples": selected_samples,
         "peak_rss_bytes": peak_rss,
         "product_count": len(products),
+        "prepared_aw": prepared_aw,
         "maximum_normalized_rms": max(
             float(products[suffix]["full_array"]["diff_rms_over_right_rms"])
             for suffix in expected_products
@@ -685,17 +806,18 @@ def main() -> None:
             )
             if manifest_count != EXPECTED_PREPARED_AW_CELLS:
                 raise GateError(
-                    "native AW preparation did not retain the complete 64-cell catalog"
+                    "native AW preparation did not retain the complete "
+                    f"{EXPECTED_PREPARED_AW_CELLS}-cell catalog"
                 )
             if cold_snapshot is None:
                 cold_snapshot = snapshot
-                row["prepared_aw_operation"] = "cold-load-consume"
+                row["prepared_aw_operation"] = "cold-load-read"
             elif snapshot != cold_snapshot:
                 raise GateError(
                     "warm native AW preparation mutated the frozen private store"
                 )
             else:
-                row["prepared_aw_operation"] = "warm-reuse-consume"
+                row["prepared_aw_operation"] = "warm-reuse-read"
             row["prepared_aw_manifest_count"] = manifest_count
             row["prepared_aw_store_sha256"] = hashlib.sha256(
                 json.dumps(snapshot, sort_keys=True).encode("utf-8")
@@ -706,7 +828,7 @@ def main() -> None:
         raise GateError("dirty and clean runs do not form a cold-to-warm sequence")
 
     summary = {
-        "schema": "casa-rs-t51-aw-vlass-acceptance-v1",
+        "schema": "casa-rs-t51-aw-vlass-acceptance-v2",
         "status": "dry_run" if args.dry_run else "pass",
         "casa_execution": "reused-frozen-products-no-casa-rerun",
         "memory_ceiling_bytes_exclusive": MEMORY_CEILING_BYTES,

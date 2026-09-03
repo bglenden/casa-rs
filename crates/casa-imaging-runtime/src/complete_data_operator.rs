@@ -47,10 +47,11 @@ use crate::bounded_stream::{
 };
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
-    AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime,
+    AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime, CountDemand,
     ExecutionAttemptId, ExecutionDag, ExecutionDagSpecification, ExecutionError, FenceId,
-    FenceKind, InitializationPolicy, LeaseResource, LogicalAllocation, MemoryDemand, PhysicalSlot,
-    PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction, QuiescencePoint,
+    FenceKind, InitializationPolicy, IoBufferKind, IoPrediction, LeaseResource, LogicalAllocation,
+    MemoryDemand, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError,
+    PlanPrediction, PreparedArtifactReaderPlan, QueueDemand, QuiescencePoint, RateDemand,
     ResourceClaim, SlotCompatibility, StagePrediction, StorageMode, WeightedObservationBlock,
     WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext, WorkKind,
     WorkNode, WorkNodeId,
@@ -1746,6 +1747,7 @@ pub struct CompleteDataPlanFragment {
     replay_node: WorkNodeId,
     reconciliation_node: Option<WorkNodeId>,
     aw_projection: Option<PreparedAwProjection>,
+    aw_reader: Option<PreparedArtifactReaderPlan>,
 }
 
 impl CompleteDataPlanFragment {
@@ -1932,6 +1934,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             reconciliation_node: None,
             aw_projection: None,
+            aw_reader: None,
         })
     }
 
@@ -2007,6 +2010,7 @@ impl CompleteDataPlanFragment {
             replay_node,
             reconciliation_node: None,
             aw_projection: None,
+            aw_reader: None,
         })
     }
 
@@ -2046,6 +2050,36 @@ impl CompleteDataPlanFragment {
         Ok(self)
     }
 
+    /// Bind the payload-free declaration for the attempt-local AW reader.
+    pub fn with_prepared_artifact_reader(
+        mut self,
+        reader: PreparedArtifactReaderPlan,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let projection = self
+            .aw_projection
+            .as_ref()
+            .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        if self.aw_reader.is_some()
+            || u64::try_from(projection.resident_byte_ceiling())
+                .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?
+                != reader.decoded_resident_bytes()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let decoded = projection.resident_byte_ceiling();
+        let total = usize::try_from(reader.total_resident_bytes())
+            .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+        self.residency.peak_bytes = self
+            .residency
+            .peak_bytes
+            .checked_sub(decoded)
+            .and_then(|bytes| bytes.checked_add(total))
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        self.residency.aw_prepared_pool_bytes = total;
+        self.aw_reader = Some(reader);
+        Ok(self)
+    }
+
     /// Return the exact FFT-planning node inserted before replay.
     #[must_use]
     pub const fn preparation_node(&self) -> &WorkNodeId {
@@ -2060,6 +2094,12 @@ impl CompleteDataPlanFragment {
     #[must_use]
     pub fn reconciliation_node(&self) -> Option<&WorkNodeId> {
         self.reconciliation_node.as_ref()
+    }
+
+    /// Return the payload-free reader declaration bound to this operator.
+    #[must_use]
+    pub const fn prepared_artifact_reader(&self) -> Option<&PreparedArtifactReaderPlan> {
+        self.aw_reader.as_ref()
     }
 
     /// Return the runtime-owned resident-byte projection.
@@ -2108,7 +2148,9 @@ impl CompleteDataPlanFragment {
         if context.compiled().problem_id() != self.specification.problem_id() {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
-        if self.specification.aw_projection().is_some() != self.aw_projection.is_some() {
+        if self.specification.aw_projection().is_some() != self.aw_projection.is_some()
+            || self.aw_projection.is_some() != self.aw_reader.is_some()
+        {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
         self.validate_fft_capability(context)?;
@@ -2174,7 +2216,9 @@ impl CompleteDataPlanFragment {
         let workload = self
             .slab_workload(ordinal)
             .ok_or(CompleteDataPlanError::PlanMismatch)?;
-        if specification.aw_projection().is_some() != self.aw_projection.is_some() {
+        if specification.aw_projection().is_some() != self.aw_projection.is_some()
+            || self.aw_projection.is_some() != self.aw_reader.is_some()
+        {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
         let mut owner = reprepare_spectral_operator(specification, workload, recycle)?;
@@ -2303,7 +2347,7 @@ impl CompleteDataPlanFragment {
                 residency.gridded_replay_schedule_bytes,
             ));
         }
-        if residency.aw_prepared_pool_bytes() > 0 {
+        if residency.aw_prepared_pool_bytes() > 0 && self.aw_reader.is_none() {
             required.push((
                 format!("spectral-operator-aw-prepared-pool-{suffix}"),
                 residency.aw_prepared_pool_bytes(),
@@ -2384,20 +2428,28 @@ impl CompleteDataPlanFragment {
             .observation_transaction()
             .post_replay_reconciliation()
             .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
-        let initial = base
-            .observation_transaction()
-            .initial_consistency_check()
-            .clone();
-        let commit = base.observation_transaction().commit().clone();
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }
-        let specs = self.allocation_specs(reconciliation, &initial, &commit)?;
-        let aw_spec = if self.residency.aw_prepared_pool_bytes() > 0 {
-            Some(specs.last().ok_or(CompleteDataPlanError::PlanMismatch)?)
+        let specs = self.allocation_specs(reconciliation)?;
+        let reader = self.aw_reader.clone();
+        let operator_spec_count = if reader.is_some() {
+            specs
+                .len()
+                .checked_sub(1)
+                .ok_or(CompleteDataPlanError::PlanMismatch)?
         } else {
-            None
+            specs.len()
         };
+        let (operator_specs, trailing_specs) = specs.split_at(operator_spec_count);
+        let aw_spec = reader
+            .as_ref()
+            .map(|_| {
+                trailing_specs
+                    .first()
+                    .ok_or(CompleteDataPlanError::PlanMismatch)
+            })
+            .transpose()?;
         let gridded_specs = [
             self.route_allocation_spec()?,
             self.schedule_allocation_spec()?,
@@ -2411,15 +2463,6 @@ impl CompleteDataPlanFragment {
             .values()
             .cloned()
             .collect::<Vec<_>>();
-        if let Some(aw_spec) = aw_spec {
-            let initial_node = nodes
-                .iter_mut()
-                .find(|node| node.id == initial)
-                .ok_or(CompleteDataPlanError::PlanMismatch)?;
-            initial_node
-                .allocations
-                .push(aw_spec.usage(ClaimLifetime::Work));
-        }
         let replay = nodes
             .iter_mut()
             .find(|node| node.id == self.replay_node)
@@ -2427,7 +2470,12 @@ impl CompleteDataPlanFragment {
         if !replay.fences.contains(&FenceKind::Io) {
             return Err(CompleteDataPlanError::ReplayWithoutTerminalFence);
         }
-        let mut preparation = WorkNode {
+        if let Some(reader) = &reader {
+            if reader.implementation() != &replay.implementation {
+                return Err(CompleteDataPlanError::PlanMismatch);
+            }
+        }
+        let preparation = WorkNode {
             id: self.preparation_node.clone(),
             kind: WorkKind::FftPlanning,
             domain: WorkDomain::Cpu,
@@ -2459,14 +2507,14 @@ impl CompleteDataPlanFragment {
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
-        if let Some(aw_spec) = aw_spec {
-            preparation
-                .allocations
-                .push(aw_spec.usage(ClaimLifetime::Work));
-        }
         replay
             .dependencies
             .insert(WorkDependency::Work(self.preparation_node.clone()));
+        if let Some(reader) = &reader {
+            replay
+                .dependencies
+                .insert(WorkDependency::Work(reader.node().clone()));
+        }
         replay.allocations.extend([
             specs[0].usage(replay_fence.clone()),
             specs[1].usage(replay_fence.clone()),
@@ -2475,7 +2523,7 @@ impl CompleteDataPlanFragment {
             specs[4].usage(replay_fence.clone()),
             specs[5].usage(replay_fence),
         ]);
-        for replay_state in &specs[6..] {
+        for replay_state in &operator_specs[6..] {
             replay
                 .allocations
                 .push(replay_state.usage(ClaimLifetime::through_fence(FenceKind::Io)));
@@ -2486,12 +2534,87 @@ impl CompleteDataPlanFragment {
                 .push(spec.usage(ClaimLifetime::through_fence(FenceKind::Io)));
         }
         nodes.push(preparation.clone());
+        if let (Some(reader), Some(aw_spec)) = (&reader, aw_spec) {
+            let retained = ClaimLifetime::through_fence(FenceKind::Io);
+            nodes.push(WorkNode {
+                id: reader.node().clone(),
+                kind: WorkKind::Cache,
+                domain: WorkDomain::Io,
+                implementation: reader.implementation().clone(),
+                dependencies: BTreeSet::from([WorkDependency::Work(self.preparation_node.clone())]),
+                claims: vec![
+                    ResourceClaim {
+                        resource: LeaseResource::Workers,
+                        amount: 1,
+                        lifetime: ClaimLifetime::Work,
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::Rate {
+                            demand_id: reader.rate_demand_id().to_string(),
+                        },
+                        amount: 1,
+                        lifetime: retained.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::Queue {
+                            demand_id: reader.queue_demand_id().to_string(),
+                        },
+                        amount: 1,
+                        lifetime: retained.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                        amount: reader.total_resident_bytes(),
+                        lifetime: retained.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::FileDescriptors,
+                        amount: 2,
+                        lifetime: retained.clone(),
+                    },
+                ],
+                allocations: vec![aw_spec.usage(retained)],
+                fences: BTreeSet::from([FenceKind::Io]),
+                quiescence_after: BTreeSet::new(),
+            });
+            nodes.push(WorkNode {
+                id: reader.release_node().clone(),
+                kind: WorkKind::Release,
+                domain: WorkDomain::Cpu,
+                implementation: reader.implementation().clone(),
+                dependencies: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                    reader.node().clone(),
+                    FenceKind::Io,
+                ))]),
+                claims: vec![
+                    ResourceClaim {
+                        resource: LeaseResource::Workers,
+                        amount: 1,
+                        lifetime: ClaimLifetime::Work,
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                        amount: reader.total_resident_bytes(),
+                        lifetime: ClaimLifetime::Work,
+                    },
+                ],
+                allocations: vec![aw_spec.usage(ClaimLifetime::Work)],
+                fences: BTreeSet::new(),
+                quiescence_after: BTreeSet::new(),
+            });
+        }
         let planned_reconciliation = nodes
             .iter_mut()
             .find(|node| &node.id == reconciliation)
             .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
         if planned_reconciliation.kind != WorkKind::Compute {
             return Err(CompleteDataPlanError::MissingReconciliationNode);
+        }
+        if let Some(reader) = &reader {
+            planned_reconciliation.dependencies.extend([
+                WorkDependency::Fence(FenceId::new(reader.node().clone(), FenceKind::Io)),
+                WorkDependency::Work(reader.release_node().clone()),
+            ]);
         }
         planned_reconciliation.allocations.extend([
             specs[4].usage(ClaimLifetime::Work),
@@ -2513,13 +2636,68 @@ impl CompleteDataPlanFragment {
             .overhead
             .fft_workspace_bytes
             .max(fft_planning_bytes);
+        if let Some(reader) = &reader {
+            alternative.demand.rates.push(RateDemand {
+                demand_id: reader.rate_demand_id().to_string(),
+                resource: reader.read_rate().clone(),
+                amount: CountDemand::new(1, 1),
+            });
+            alternative.demand.queues.push(QueueDemand {
+                demand_id: reader.queue_demand_id().to_string(),
+                resource: reader.queue().clone(),
+                slots: CountDemand::new(1, 1),
+            });
+            alternative.demand.file_descriptors = CountDemand::new(
+                alternative
+                    .demand
+                    .file_descriptors
+                    .hard()
+                    .checked_add(2)
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
+                alternative
+                    .demand
+                    .file_descriptors
+                    .preferred()
+                    .checked_add(2)
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
+            );
+            alternative.demand.io_buffers.storage_manager_bytes = alternative
+                .demand
+                .io_buffers
+                .storage_manager_bytes
+                .max(reader.total_resident_bytes());
+        }
+        let reader_io_depth = u64::from(reader.is_some());
         let mut initial_knobs = base.execution_dag().initial_knobs().clone();
+        initial_knobs.io_depth = initial_knobs
+            .io_depth
+            .checked_add(reader_io_depth)
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
         if self.sequential_channel_major {
             alternative.scaling.maximum_slab_depth = u64::try_from(self.admitted_slab_depth)
                 .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
             alternative.quiescence_points.insert(QuiescencePoint::Slab);
             initial_knobs.slab_depth = alternative.scaling.maximum_slab_depth;
         }
+        let adaptations = base
+            .execution_dag()
+            .adaptations()
+            .values()
+            .cloned()
+            .map(|mut transition| {
+                transition.from.io_depth = transition
+                    .from
+                    .io_depth
+                    .checked_add(reader_io_depth)
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+                transition.to.io_depth = transition
+                    .to
+                    .io_depth
+                    .checked_add(reader_io_depth)
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+                Ok(transition)
+            })
+            .collect::<Result<Vec<_>, CompleteDataPlanError>>()?;
         let dag = ExecutionDag::new(ExecutionDagSpecification {
             required_resource_capabilities: base
                 .execution_dag()
@@ -2552,12 +2730,7 @@ impl CompleteDataPlanFragment {
                 )
                 .collect(),
             initial_knobs,
-            adaptations: base
-                .execution_dag()
-                .adaptations()
-                .values()
-                .cloned()
-                .collect(),
+            adaptations,
         })?;
         let replay_prediction = base
             .prediction()
@@ -2566,10 +2739,29 @@ impl CompleteDataPlanFragment {
             .ok_or(CompleteDataPlanError::MissingReplayPrediction)?;
         let preparation_prediction =
             StagePrediction::new(preparation.id, replay_prediction.elapsed_nanos());
+        let mut added_predictions = vec![preparation_prediction];
+        if let Some(reader) = &reader {
+            added_predictions.extend([
+                StagePrediction::new(reader.node().clone(), replay_prediction.elapsed_nanos())
+                    .with_io(vec![IoPrediction::new(
+                        IoBufferKind::StorageManager,
+                        u64::MAX,
+                        u64::MAX,
+                    )]),
+                StagePrediction::new(reader.release_node().clone(), 100)
+                    .with_io(vec![IoPrediction::new(IoBufferKind::StorageManager, 0, 0)]),
+            ]);
+        }
+        let added_elapsed = added_predictions
+            .iter()
+            .try_fold(0_u64, |total, stage| {
+                total.checked_add(stage.elapsed_nanos())
+            })
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
         let prediction = PlanPrediction::new(
             base.prediction()
                 .elapsed_nanos()
-                .checked_add(preparation_prediction.elapsed_nanos())
+                .checked_add(added_elapsed)
                 .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
             base.prediction().confidence(),
             base.prediction().uncertainty().to_vec(),
@@ -2577,14 +2769,18 @@ impl CompleteDataPlanFragment {
                 .stages()
                 .values()
                 .cloned()
-                .chain([preparation_prediction])
+                .chain(added_predictions)
                 .collect(),
         )?;
+        let mut artifacts = base.artifacts().to_vec();
+        if let Some(reader) = &reader {
+            artifacts.push(reader.planned_artifact());
+        }
         let physical = PhysicalWorkBinding::with_implementation_contract(
             base.implementation_contract().for_execution_dag(&dag)?,
             dag,
             prediction,
-            base.artifacts().to_vec(),
+            artifacts,
             base.observation_transaction().clone(),
             base.publication_layouts().clone(),
             base.product_publication_authority(),
@@ -2595,8 +2791,6 @@ impl CompleteDataPlanFragment {
     fn allocation_specs(
         &self,
         reconciliation: &WorkNodeId,
-        initial: &WorkNodeId,
-        commit: &WorkNodeId,
     ) -> Result<Vec<CompleteDataAllocation>, CompleteDataPlanError> {
         let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let residency = self.residency;
@@ -2682,16 +2876,13 @@ impl CompleteDataPlanFragment {
             &suffix,
             &self.replay_node,
         )?);
-        if residency.aw_prepared_pool_bytes() > 0 {
-            allocations.push(CompleteDataAllocation::retained_read_only(
+        if let Some(reader) = &self.aw_reader {
+            allocations.push(CompleteDataAllocation::storage_manager(
                 format!("spectral-operator-aw-prepared-pool-{suffix}"),
                 residency.aw_prepared_pool_bytes(),
-                "spectral-operator-retained-prepared-aw-cell-pool",
-                initial.clone(),
-                BTreeSet::from([
-                    WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
-                    WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Publication)),
-                ]),
+                "spectral-operator-lazy-prepared-aw-cell-pool",
+                reader.node().clone(),
+                BTreeSet::from([WorkDependency::Work(reader.release_node().clone())]),
             )?);
         }
         Ok(allocations)
@@ -2946,6 +3137,7 @@ struct CompleteDataAllocation {
     slot: PhysicalSlotId,
     bytes: u64,
     compatibility: SlotCompatibility,
+    purpose: AllocationPurpose,
     acquire_at: WorkNodeId,
     release_after: BTreeSet<WorkDependency>,
 }
@@ -2974,12 +3166,13 @@ impl CompleteDataAllocation {
                 initialization,
                 access: AllocationAccess::ReadWrite,
             },
+            purpose: AllocationPurpose::Data,
             acquire_at,
             release_after,
         })
     }
 
-    fn retained_read_only(
+    fn storage_manager(
         id: String,
         bytes: usize,
         layout: &str,
@@ -2990,11 +3183,11 @@ impl CompleteDataAllocation {
             id,
             bytes,
             layout,
-            InitializationPolicy::Preserve,
+            InitializationPolicy::OverwriteBeforeRead,
             acquire_at,
             release_after,
         )?;
-        allocation.compatibility.access = AllocationAccess::ReadOnly;
+        allocation.purpose = AllocationPurpose::IoBuffer(IoBufferKind::StorageManager);
         Ok(allocation)
     }
 
@@ -3018,7 +3211,7 @@ impl CompleteDataAllocation {
         LogicalAllocation {
             id: self.allocation.clone(),
             bytes: self.bytes,
-            purpose: AllocationPurpose::Data,
+            purpose: self.purpose,
             compatibility: self.compatibility.clone(),
             physical_slot: self.slot.clone(),
             lifetime: AllocationLifetime {
@@ -3720,11 +3913,10 @@ impl From<SpectralOperatorError> for CompleteDataOperatorError {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompleteDataAllocation, CompleteDataPlanError, CompleteDataResidency,
-        GriddedNormalReplayPlanningCapacity, GriddedNormalReplayWindowPlan,
-        GriddedNormalRouteResidency, bind_gridded_replay_window_plan,
-        gridded_buffer_claim_satisfies, gridded_normal_route_capacity_bytes,
-        mosaic_allocation_specs,
+        CompleteDataPlanError, CompleteDataResidency, GriddedNormalReplayPlanningCapacity,
+        GriddedNormalReplayWindowPlan, GriddedNormalRouteResidency,
+        bind_gridded_replay_window_plan, gridded_buffer_claim_satisfies,
+        gridded_normal_route_capacity_bytes, mosaic_allocation_specs,
     };
 
     const TEST_RECORD_BYTES: usize = 32;
@@ -3779,43 +3971,6 @@ mod tests {
                 )])
             );
         }
-    }
-
-    #[test]
-    fn t51_prepared_aw_pool_is_preserved_from_initial_check_through_commit_fences() {
-        let initial = crate::WorkNodeId::new("t51-initial-check");
-        let commit = crate::WorkNodeId::new("t51-commit");
-        let release_after = std::collections::BTreeSet::from([
-            crate::WorkDependency::Fence(crate::FenceId::new(commit.clone(), crate::FenceKind::Io)),
-            crate::WorkDependency::Fence(crate::FenceId::new(
-                commit,
-                crate::FenceKind::Publication,
-            )),
-        ]);
-        let allocation = CompleteDataAllocation::retained_read_only(
-            "spectral-operator-aw-prepared-pool-t51".to_string(),
-            4096,
-            "spectral-operator-retained-prepared-aw-cell-pool",
-            initial.clone(),
-            release_after.clone(),
-        )
-        .expect("retained AW pool allocation");
-        let logical = allocation.logical_allocation();
-        let slot = allocation.physical_slot();
-
-        assert_eq!(logical.bytes, 4096);
-        assert_eq!(logical.lifetime.acquire_at, initial);
-        assert_eq!(logical.lifetime.release_after, release_after);
-        assert_eq!(
-            logical.compatibility.initialization,
-            crate::InitializationPolicy::Preserve
-        );
-        assert_eq!(
-            logical.compatibility.access,
-            crate::AllocationAccess::ReadOnly
-        );
-        assert_eq!(slot.compatibility, logical.compatibility);
-        assert_eq!(slot.capacity_bytes, logical.bytes);
     }
 
     #[test]

@@ -130,7 +130,7 @@ fn plan_with_receipts<E>(
     }
 }
 
-fn compiled_problem() -> casa_imaging_model::CompiledProblem {
+pub(crate) fn compiled_problem() -> casa_imaging_model::CompiledProblem {
     compiled_problem_with_reference_data(Vec::new())
 }
 
