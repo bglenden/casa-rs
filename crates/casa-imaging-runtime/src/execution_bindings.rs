@@ -3446,12 +3446,12 @@ pub trait WorkImplementation {
         Ok(false)
     }
 
-    /// Abort one incomplete observation read and synchronously settle any
-    /// storage worker owned by it.
+    /// Abort node-owned observation or managed-I/O state and synchronously
+    /// settle any storage worker owned by it.
     ///
-    /// The runner invokes this before releasing the observation's logical
-    /// MeasurementSet permits on error or cancellation. Implementations whose
-    /// observation reads cannot escape synchronous work retain the default.
+    /// The runner invokes this for every launched node while draining an error
+    /// or cancellation, including nodes that completed before a downstream
+    /// failure. Implementations without escaping I/O state retain the default.
     fn abort_observation_read(&self, _owner_node: &WorkNodeId) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -4014,6 +4014,18 @@ impl std::ops::Deref for LaunchedWork {
     }
 }
 
+fn abort_launched_work<I: WorkImplementation>(
+    launched: &BTreeMap<WorkNodeId, LaunchedWork>,
+    implementations: &BTreeMap<WorkImplementationId, &I>,
+) -> Result<(), (WorkNodeId, I::Error)> {
+    for (node, work) in launched {
+        implementations[&work.node().implementation]
+            .abort_observation_read(node)
+            .map_err(|source| (node.clone(), source))?;
+    }
+    Ok(())
+}
+
 fn publication_execution_context<'a>(
     attempt_id: ExecutionAttemptId,
     problem: &'a CompiledProblem,
@@ -4225,20 +4237,8 @@ where
             match controller.directive(&status) {
                 RunDirective::Continue => {}
                 RunDirective::Cancel => {
-                    for (node, work) in &launched {
-                        if work.node().kind.reads_observation()
-                            && !completed_observation_reads.contains_key(node)
-                            && let Err(source) = implementations[&work.node().implementation]
-                                .abort_observation_read(node)
-                        {
-                            if pending.is_none() {
-                                pending = Some(PendingRunError::Execution {
-                                    node: node.clone(),
-                                    source,
-                                });
-                            }
-                            break;
-                        }
+                    if let Err((node, source)) = abort_launched_work(&launched, &implementations) {
+                        pending = Some(PendingRunError::Execution { node, source });
                     }
                     if let Err(error) = scheduler.cancel() {
                         defer_scheduler_error(&mut scheduler, &mut pending, error);
@@ -4271,15 +4271,8 @@ where
                 }
             }
         }
-        if pending.is_some() || controller_stopped {
-            for (node, work) in &launched {
-                if work.node().kind.reads_observation()
-                    && !completed_observation_reads.contains_key(node)
-                {
-                    let _ =
-                        implementations[&work.node().implementation].abort_observation_read(node);
-                }
-            }
+        if pending.is_some() {
+            let _ = abort_launched_work(&launched, &implementations);
         }
         let action = match scheduler.next_action() {
             Ok(action) => action,
@@ -4916,145 +4909,152 @@ where
                 node: publication,
                 resources,
             } => {
-                if let Some(failure) = pending.take() {
-                    return Err(failure.into_run_error());
-                }
-                if &publication != plan.observation_transaction.work().commit() {
-                    return Err(RunError::Scheduler(ExecutionError::InvalidState(format!(
-                        "scheduler exposed non-transaction publication node {}",
-                        publication.as_str()
-                    ))));
-                }
-                let work = launched.get(&publication).ok_or_else(|| {
-                    RunError::Scheduler(ExecutionError::InvalidState(
-                        "terminal publication has no launched work declaration".to_string(),
-                    ))
-                })?;
-                let implementation = implementations[&work.node().implementation];
-                let completion_context = publication_execution_context(
-                    receipt.attempt_id(),
-                    problem,
-                    plan,
-                    work,
-                    &resources,
-                    None,
-                    &completed_observation_reads,
-                );
-                let projection = implementation
-                    .complete_product_generation(completion_context)
-                    .map_err(|source| RunError::Execution {
-                        node: publication.clone(),
-                        source,
+                let outcome = (|| {
+                    if let Some(failure) = pending.take() {
+                        return Err(failure.into_run_error());
+                    }
+                    if &publication != plan.observation_transaction.work().commit() {
+                        return Err(RunError::Scheduler(ExecutionError::InvalidState(format!(
+                            "scheduler exposed non-transaction publication node {}",
+                            publication.as_str()
+                        ))));
+                    }
+                    let work = launched.get(&publication).ok_or_else(|| {
+                        RunError::Scheduler(ExecutionError::InvalidState(
+                            "terminal publication has no launched work declaration".to_string(),
+                        ))
                     })?;
-                let product_publication = match (&plan.product_publication, projection) {
-                    (ProductPublicationAuthority::Planned(planned), Some(projection)) => {
-                        let authorization = planned
-                            .authorize(&projection)
-                            .map_err(RunError::ProductPublication)?;
-                        let measurements = publication_measurements.as_ref().ok_or_else(|| {
-                            RunError::ProductPublication(
-                                crate::ProductPublicationError::MissingProjection,
-                            )
+                    let implementation = implementations[&work.node().implementation];
+                    let completion_context = publication_execution_context(
+                        receipt.attempt_id(),
+                        problem,
+                        plan,
+                        work,
+                        &resources,
+                        None,
+                        &completed_observation_reads,
+                    );
+                    let projection = implementation
+                        .complete_product_generation(completion_context)
+                        .map_err(|source| RunError::Execution {
+                            node: publication.clone(),
+                            source,
                         })?;
-                        authorization
-                            .validate_staging(measurements)
-                            .map_err(RunError::ProductPublication)?;
-                        Some(authorization)
-                    }
-                    (ProductPublicationAuthority::Planned(_), None) => {
-                        return Err(RunError::ProductPublication(
-                            crate::ProductPublicationError::MissingProjection,
-                        ));
-                    }
-                    (_, Some(_)) => {
-                        return Err(RunError::ProductPublication(
-                            crate::ProductPublicationError::UnexpectedProjection,
-                        ));
-                    }
-                    (_, None) => None,
-                };
-                let context = publication_execution_context(
-                    receipt.attempt_id(),
-                    problem,
-                    plan,
-                    work,
-                    &resources,
-                    product_publication.as_ref(),
-                    &completed_observation_reads,
-                );
-                if let Some(authorization) = product_publication.as_ref() {
-                    receipt
-                        .prepare_independent_product_publication()
-                        .map_err(RunError::Receipt)?;
-                    for entry in authorization.entries() {
-                        let outcome = implementation
-                            .publish_product_member(context, *entry)
-                            .ok_or_else(|| {
-                                RunError::ProductPublication(
-                                    crate::ProductPublicationError::MissingMemberPublisher,
-                                )
-                            })?;
-                        match outcome {
-                            Ok(measurement) => {
-                                receipt
-                                    .record_publication_measurements(&WorkMeasurements::new(
-                                        Vec::new(),
-                                        Vec::new(),
-                                        vec![measurement],
-                                    ))
-                                    .map_err(RunError::Receipt)?;
-                            }
-                            Err(failure) => {
-                                let (source, measurement) = failure.into_parts();
-                                receipt
-                                    .record_publication_measurements(&WorkMeasurements::new(
-                                        Vec::new(),
-                                        Vec::new(),
-                                        vec![measurement],
-                                    ))
-                                    .map_err(RunError::Receipt)?;
-                                receipt
-                                    .finish(
-                                        ReceiptStatus::Failed,
-                                        Some(ReceiptFailure::new(
-                                            ReceiptFailureKind::Adapter,
-                                            Some(publication.clone()),
-                                            None,
-                                        )),
+                    let product_publication = match (&plan.product_publication, projection) {
+                        (ProductPublicationAuthority::Planned(planned), Some(projection)) => {
+                            let authorization = planned
+                                .authorize(&projection)
+                                .map_err(RunError::ProductPublication)?;
+                            let measurements =
+                                publication_measurements.as_ref().ok_or_else(|| {
+                                    RunError::ProductPublication(
+                                        crate::ProductPublicationError::MissingProjection,
                                     )
-                                    .map_err(RunError::Receipt)?;
-                                return Err(RunError::Execution {
-                                    node: publication,
-                                    source,
-                                });
+                                })?;
+                            authorization
+                                .validate_staging(measurements)
+                                .map_err(RunError::ProductPublication)?;
+                            Some(authorization)
+                        }
+                        (ProductPublicationAuthority::Planned(_), None) => {
+                            return Err(RunError::ProductPublication(
+                                crate::ProductPublicationError::MissingProjection,
+                            ));
+                        }
+                        (_, Some(_)) => {
+                            return Err(RunError::ProductPublication(
+                                crate::ProductPublicationError::UnexpectedProjection,
+                            ));
+                        }
+                        (_, None) => None,
+                    };
+                    let context = publication_execution_context(
+                        receipt.attempt_id(),
+                        problem,
+                        plan,
+                        work,
+                        &resources,
+                        product_publication.as_ref(),
+                        &completed_observation_reads,
+                    );
+                    if let Some(authorization) = product_publication.as_ref() {
+                        receipt
+                            .prepare_independent_product_publication()
+                            .map_err(RunError::Receipt)?;
+                        for entry in authorization.entries() {
+                            let outcome = implementation
+                                .publish_product_member(context, *entry)
+                                .ok_or_else(|| {
+                                    RunError::ProductPublication(
+                                        crate::ProductPublicationError::MissingMemberPublisher,
+                                    )
+                                })?;
+                            match outcome {
+                                Ok(measurement) => {
+                                    receipt
+                                        .record_publication_measurements(&WorkMeasurements::new(
+                                            Vec::new(),
+                                            Vec::new(),
+                                            vec![measurement],
+                                        ))
+                                        .map_err(RunError::Receipt)?;
+                                }
+                                Err(failure) => {
+                                    let (source, measurement) = failure.into_parts();
+                                    receipt
+                                        .record_publication_measurements(&WorkMeasurements::new(
+                                            Vec::new(),
+                                            Vec::new(),
+                                            vec![measurement],
+                                        ))
+                                        .map_err(RunError::Receipt)?;
+                                    receipt
+                                        .finish(
+                                            ReceiptStatus::Failed,
+                                            Some(ReceiptFailure::new(
+                                                ReceiptFailureKind::Adapter,
+                                                Some(publication.clone()),
+                                                None,
+                                            )),
+                                        )
+                                        .map_err(RunError::Receipt)?;
+                                    return Err(RunError::Execution {
+                                        node: publication,
+                                        source,
+                                    });
+                                }
                             }
                         }
-                    }
-                    receipt
-                        .complete_independent_product_publication()
-                        .map_err(RunError::Receipt)?;
-                    scheduler
-                        .complete_publication()
-                        .map_err(RunError::Scheduler)?;
-                    return Ok(ExecutionOutcome::Succeeded);
-                }
-                let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
-                match implementation.publish(context) {
-                    Ok(()) => {
-                        receipt.complete_publication(prepared);
+                        receipt
+                            .complete_independent_product_publication()
+                            .map_err(RunError::Receipt)?;
                         scheduler
                             .complete_publication()
                             .map_err(RunError::Scheduler)?;
                         return Ok(ExecutionOutcome::Succeeded);
                     }
-                    Err(source) => {
-                        drop(prepared);
-                        return Err(RunError::Execution {
-                            node: publication,
-                            source,
-                        });
+                    let prepared = receipt.prepare_publication().map_err(RunError::Receipt)?;
+                    match implementation.publish(context) {
+                        Ok(()) => {
+                            receipt.complete_publication(prepared);
+                            scheduler
+                                .complete_publication()
+                                .map_err(RunError::Scheduler)?;
+                            Ok(ExecutionOutcome::Succeeded)
+                        }
+                        Err(source) => {
+                            drop(prepared);
+                            Err(RunError::Execution {
+                                node: publication,
+                                source,
+                            })
+                        }
                     }
+                })();
+                if outcome.is_err() {
+                    let _ = abort_launched_work(&launched, &implementations);
                 }
+                return outcome;
             }
             SchedulerAction::Complete(terminal) => {
                 return match pending.take() {

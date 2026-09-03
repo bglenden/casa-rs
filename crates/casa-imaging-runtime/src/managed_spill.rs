@@ -1657,7 +1657,7 @@ fn read_exact_at(
             Err(source) => return Err(ManagedSpillError::Io { operation, source }),
         }
     }
-    release_page_cache(file, offset, buffer.len())
+    release_page_cache(file, offset, buffer.len(), false)
 }
 
 fn write_bytes(
@@ -1701,7 +1701,7 @@ fn write_bytes(
             Err(source) => return Err(ManagedSpillError::Io { operation, source }),
         }
     }
-    release_page_cache(file, start, bytes.len())
+    release_page_cache(file, start, bytes.len(), true)
 }
 
 fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
@@ -1730,17 +1730,46 @@ fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
     Ok(())
 }
 
-fn release_page_cache(file: &File, offset: u64, bytes: usize) -> Result<(), ManagedSpillError> {
+fn release_page_cache(
+    file: &File,
+    offset: u64,
+    bytes: usize,
+    flush_dirty: bool,
+) -> Result<(), ManagedSpillError> {
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsRawFd;
 
-        let length = i64::try_from(bytes)
+        if flush_dirty {
+            file.sync_data().map_err(|source| ManagedSpillError::Io {
+                operation: "flush managed spill window before page-cache release",
+                source,
+            })?;
+        }
+        let page_bytes = system_page_bytes()?;
+        let end =
+            offset
+                .checked_add(u64::try_from(bytes).map_err(|_| {
+                    ManagedSpillError::ArithmeticOverflow("page-cache release bytes")
+                })?)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "page-cache release range",
+                ))?;
+        let aligned_offset = offset / page_bytes * page_bytes;
+        let aligned_end = end.div_ceil(page_bytes).checked_mul(page_bytes).ok_or(
+            ManagedSpillError::ArithmeticOverflow("aligned page-cache release range"),
+        )?;
+        let length = i64::try_from(aligned_end - aligned_offset)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache release bytes"))?;
-        let offset = i64::try_from(offset)
+        let aligned_offset = i64::try_from(aligned_offset)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache release offset"))?;
         let result = unsafe {
-            libc::posix_fadvise(file.as_raw_fd(), offset, length, libc::POSIX_FADV_DONTNEED)
+            libc::posix_fadvise(
+                file.as_raw_fd(),
+                aligned_offset,
+                length,
+                libc::POSIX_FADV_DONTNEED,
+            )
         };
         if result != 0 {
             return Err(ManagedSpillError::Io {
@@ -1750,8 +1779,32 @@ fn release_page_cache(file: &File, offset: u64, bytes: usize) -> Result<(), Mana
         }
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = (file, offset, bytes);
+    let _ = (file, offset, bytes, flush_dirty);
     Ok(())
+}
+
+pub(crate) fn page_cache_window_bytes(
+    bytes_per_slot: u64,
+    source_slots: u64,
+) -> Result<u64, ManagedSpillError> {
+    let page_bytes = system_page_bytes()?;
+    bytes_per_slot
+        .div_ceil(page_bytes)
+        .checked_mul(page_bytes)
+        .and_then(|bytes| bytes.checked_mul(source_slots))
+        .ok_or(ManagedSpillError::ArithmeticOverflow(
+            "managed spill page-cache window",
+        ))
+}
+
+fn system_page_bytes() -> Result<u64, ManagedSpillError> {
+    let bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    u64::try_from(bytes)
+        .ok()
+        .filter(|bytes| *bytes > 0)
+        .ok_or(ManagedSpillError::InvalidBudget(
+            "the operating-system page size is unavailable",
+        ))
 }
 
 #[cfg(test)]

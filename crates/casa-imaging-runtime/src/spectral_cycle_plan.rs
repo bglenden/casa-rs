@@ -1417,6 +1417,38 @@ impl ManagedSpillMode<'_> {
     }
 }
 
+fn reusable_physical_slot(
+    base: &PhysicalWorkBinding,
+    node: &WorkNodeId,
+    compatibility: &SlotCompatibility,
+    bytes: u64,
+    excluded: Option<&PhysicalSlotId>,
+) -> Option<PhysicalSlotId> {
+    let owner = base.execution_dag().nodes().get(node)?;
+    base.execution_dag()
+        .physical_slots()
+        .values()
+        .filter(|slot| {
+            Some(&slot.id) != excluded
+                && slot.capacity_bytes >= bytes
+                && &slot.compatibility == compatibility
+        })
+        .find(|slot| {
+            base.execution_dag()
+                .logical_allocations()
+                .values()
+                .filter(|allocation| allocation.physical_slot == slot.id)
+                .all(|allocation| {
+                    allocation
+                        .lifetime
+                        .release_after
+                        .iter()
+                        .any(|release| owner.dependencies.contains(release))
+                })
+        })
+        .map(|slot| slot.id.clone())
+}
+
 fn append_managed_spill_resources<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
@@ -1433,11 +1465,8 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     let suffix = format!("{}-{}", pass.ordinal(), mode.suffix());
     let storage_id = format!("{MANAGED_SPILL_STORAGE_DEMAND}-{suffix}");
     let allocation = AllocationId::new(format!("managed-spill-buffer-{suffix}"));
-    let slot = PhysicalSlotId::new(format!("{}-slot", allocation.as_str()));
     let serialization_allocation =
         AllocationId::new(format!("managed-spill-serialization-{suffix}"));
-    let serialization_slot =
-        PhysicalSlotId::new(format!("{}-slot", serialization_allocation.as_str()));
     let serialization_bytes = budget.serialization_buffer_bytes();
     let io_kind = mode.io_kind();
     let source_slots = mode.source_slots();
@@ -1445,6 +1474,33 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     let buffer_bytes = bytes_per_slot
         .checked_mul(source_slots)
         .ok_or(SpectralCyclePlanError::Overflow)?;
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("managed-spill-frame"),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let serialization_compatibility = SlotCompatibility {
+        layout: AllocationLayout::new("managed-spill-serialization"),
+        ..compatibility.clone()
+    };
+    let reused_slot = reusable_physical_slot(&base, node, &compatibility, buffer_bytes, None);
+    let slot = reused_slot
+        .clone()
+        .unwrap_or_else(|| PhysicalSlotId::new(format!("{}-slot", allocation.as_str())));
+    let reused_serialization_slot = reusable_physical_slot(
+        &base,
+        node,
+        &serialization_compatibility,
+        serialization_bytes,
+        Some(&slot),
+    );
+    let serialization_slot = reused_serialization_slot.clone().unwrap_or_else(|| {
+        PhysicalSlotId::new(format!("{}-slot", serialization_allocation.as_str()))
+    });
     let lifetime = ClaimLifetime::through_fence(FenceKind::Io);
     let mut nodes = base
         .execution_dag()
@@ -1536,29 +1592,24 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         allocation: serialization_allocation.clone(),
         lifetime: lifetime.clone(),
     });
-    let compatibility = SlotCompatibility {
-        memory_domain: CapacityDomainId::new("host-memory"),
-        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
-        alignment_bytes: 64,
-        storage_mode: StorageMode::Host,
-        layout: AllocationLayout::new("managed-spill-frame"),
-        initialization: InitializationPolicy::OverwriteBeforeRead,
-        access: AllocationAccess::ReadWrite,
-    };
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.id = AlternativeId::new(format!("{}-gridded-{suffix}", alternative.id.as_str()));
-    alternative.demand.memory.push(MemoryDemand {
-        allocation_id: allocation.as_str().to_string(),
-        hard_bytes: buffer_bytes,
-        preferred_bytes: buffer_bytes,
-        views: vec![CapacityViewId::new("host-memory")],
-    });
-    alternative.demand.memory.push(MemoryDemand {
-        allocation_id: serialization_allocation.as_str().to_string(),
-        hard_bytes: serialization_bytes,
-        preferred_bytes: serialization_bytes,
-        views: vec![CapacityViewId::new("host-memory")],
-    });
+    if reused_slot.is_none() {
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: allocation.as_str().to_string(),
+            hard_bytes: buffer_bytes,
+            preferred_bytes: buffer_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+    }
+    if reused_serialization_slot.is_none() {
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: serialization_allocation.as_str().to_string(),
+            hard_bytes: serialization_bytes,
+            preferred_bytes: serialization_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+    }
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
         domain: storage.resources().domain().clone(),
@@ -1608,13 +1659,16 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .serialization_bytes
         .checked_add(serialization_bytes)
         .ok_or(SpectralCyclePlanError::Overflow)?;
+    let page_cache_bytes =
+        crate::managed_spill::page_cache_window_bytes(bytes_per_slot, source_slots)
+            .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let page_cache_headroom = alternative
         .headroom
         .memory_bytes
         .entry(CapacityDomainId::new("host-memory"))
         .or_default();
     *page_cache_headroom = page_cache_headroom
-        .checked_add(buffer_bytes)
+        .checked_add(page_cache_bytes)
         .ok_or(SpectralCyclePlanError::Overflow)?;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
@@ -1648,8 +1702,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     bytes: serialization_bytes,
                     purpose: AllocationPurpose::IoBuffer(IoBufferKind::Serialization),
                     compatibility: SlotCompatibility {
-                        layout: AllocationLayout::new("managed-spill-serialization"),
-                        ..compatibility.clone()
+                        ..serialization_compatibility.clone()
                     },
                     physical_slot: serialization_slot.clone(),
                     lifetime: AllocationLifetime {
@@ -1667,32 +1720,22 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             .physical_slots()
             .values()
             .cloned()
-            .chain([
-                PhysicalSlot {
-                    id: slot,
-                    lease_resource: LeaseResource::Memory {
-                        allocation_id: allocation.as_str().to_string(),
-                    },
-                    capacity_bytes: buffer_bytes,
-                    compatibility,
+            .chain(reused_slot.is_none().then(|| PhysicalSlot {
+                id: slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: allocation.as_str().to_string(),
                 },
-                PhysicalSlot {
-                    id: serialization_slot,
-                    lease_resource: LeaseResource::Memory {
-                        allocation_id: serialization_allocation.as_str().to_string(),
-                    },
-                    capacity_bytes: serialization_bytes,
-                    compatibility: SlotCompatibility {
-                        memory_domain: CapacityDomainId::new("host-memory"),
-                        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
-                        alignment_bytes: 64,
-                        storage_mode: StorageMode::Host,
-                        layout: AllocationLayout::new("managed-spill-serialization"),
-                        initialization: InitializationPolicy::OverwriteBeforeRead,
-                        access: AllocationAccess::ReadWrite,
-                    },
+                capacity_bytes: buffer_bytes,
+                compatibility: compatibility.clone(),
+            }))
+            .chain(reused_serialization_slot.is_none().then(|| PhysicalSlot {
+                id: serialization_slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: serialization_allocation.as_str().to_string(),
                 },
-            ])
+                capacity_bytes: serialization_bytes,
+                compatibility: serialization_compatibility,
+            }))
             .collect(),
         initial_knobs: base.execution_dag().initial_knobs().clone(),
         adaptations: base

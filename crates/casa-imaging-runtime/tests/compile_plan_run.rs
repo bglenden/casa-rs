@@ -1268,6 +1268,7 @@ fn recording_executor(
         calls: AtomicUsize::new(0),
         fence_waits: AtomicUsize::new(0),
         observed_knobs: Mutex::new(Vec::new()),
+        aborted_nodes: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
         fence_measurement_node: None,
         resource_peak_overrides: BTreeMap::new(),
@@ -1499,6 +1500,7 @@ struct RecordingExecutor {
     calls: AtomicUsize,
     fence_waits: AtomicUsize,
     observed_knobs: Mutex<Vec<ExecutionKnobs>>,
+    aborted_nodes: Mutex<Vec<WorkNodeId>>,
     measurements: BTreeMap<WorkNodeId, (Vec<IoMeasurement>, Vec<ArtifactMeasurement>)>,
     fence_measurement_node: Option<WorkNodeId>,
     resource_peak_overrides: BTreeMap<WorkNodeId, u64>,
@@ -1882,6 +1884,14 @@ impl WorkImplementation for RecordingExecutor {
 
     fn implementation_id(&self) -> &WorkImplementationId {
         &self.id
+    }
+
+    fn abort_observation_read(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+        self.aborted_nodes
+            .lock()
+            .expect("recording executor abort lock")
+            .push(owner_node.clone());
+        Ok(())
     }
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
@@ -9974,6 +9984,17 @@ fn transaction_failures_leave_the_old_generation_visible() {
             0,
             "{label} cannot expose staged output"
         );
+        if label != "input mutation" {
+            assert!(
+                registry.executors[&implementation(6)]
+                    .aborted_nodes
+                    .lock()
+                    .expect("recorded aborts")
+                    .iter()
+                    .any(|node| node.as_str() == "transaction-read"),
+                "{label} must abort already-completed upstream I/O state"
+            );
+        }
     }
 
     let problem = compile(request(1)).expect("logical compilation");
