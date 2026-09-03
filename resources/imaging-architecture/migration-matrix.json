@@ -132,7 +132,7 @@
     "repo://resources/imaging-architecture/baselines/selected-observation-generation-v6.txt": "db301ab3a396d2d16f2a319d129fa2464f2f08206ced8ed911f944286b5b84e9",
     "repo://resources/imaging-architecture/baselines/selected-observation-generation-v7.txt": "94a8c912f26dccca70aed40123d2593da88b7f036eef8a2762bdfe731a2da639",
     "repo://resources/imaging-architecture/baselines/selected-observation-generation-v8.txt": "dda755a568d0d24dc1542e3fedc99d9803c03ff14564f65d1bfdaa5cfb9baa49",
-    "repo://resources/imaging-architecture/representative-science-evidence/w-projection-vla.json": "338e6467311c32210e0043b419c7d5d19f93f75519dc205ff567cb7d921b9aca",
+    "repo://resources/imaging-architecture/representative-science-evidence/w-projection-vla.json": "c80724fdbf302fe8608e512d2c0f47565f40b6e9a375d02e1a4a4c7359251bc5",
     "repo://resources/parameter-contract-history.json": "1ebd5d31152ee2cf3bde4e8bdde42c97ba79466b1177e4159070fa456adec2d3",
     "repo://resources/test-profiles/imager-cross-surface.expected.json": "53aea20857f4b1de08461b10b9ef621e94ef655e3c6ddb5aefd4af3ac31e2445",
     "repo://tools/perf/imager/evidence/imaging_performance_evidence_manifest.json": "be6dbbe33e118d12348f1cc0caafeaa43d250fefa6ff1ed278c8f5cb90c1a203",

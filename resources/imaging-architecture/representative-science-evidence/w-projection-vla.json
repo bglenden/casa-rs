@@ -60,7 +60,7 @@
     "encoded_records": 1650296,
     "grid_records": 1650296,
     "maximum_frames_per_window": 5,
-    "peak_process_rss_bytes": 217743360,
+    "peak_process_rss_bytes": 216940544,
     "planned_working_set_bytes": 909364,
     "prediction_groups": 1650296,
     "replay_blocks": 364,
@@ -68,19 +68,19 @@
   },
   "external_receipts": [
     {
-      "locator": "tools/perf/imager/evidence/artifacts/20260903T073400Z-issue535-wprojection-mfs-representative-f298abb7.json",
+      "locator": "/private/tmp/t49-clean-evidence/20260903T080257Z-issue535-wprojection-mfs-representative-00362267.log",
       "role": "production Rust execution and bounded-replay receipt",
-      "sha256": "a0b90e8880d952c7553d3e7019da678eff9c79b84df4ea33df957d9134441c7a"
+      "sha256": "51d829eef6db854b4e45162b8f6a7895d771f8674c29c2d4be110f5eef272a6f"
     },
     {
-      "locator": "tools/perf/imager/evidence/artifacts/20260903T074128Z-issue535-wprojection-mfs-representative-8f48c936.json",
+      "locator": "/private/tmp/t49-clean-evidence/20260903T080257Z-issue535-wprojection-mfs-representative-00362267.json",
       "role": "CASA oracle and frozen-tolerance comparison",
-      "sha256": "655b862fdbb6525955dc9f9e77670689d3e45bc02fb97c0a7a8f7241aa29d5ea"
+      "sha256": "199598052be492dd37649018dac05007b726706f3a93f6412c59991dd415eaec"
     },
     {
-      "locator": "tools/perf/imager/evidence/artifacts/20260903T074128Z-issue535-wprojection-mfs-representative-8f48c936.comparison.json",
+      "locator": "/private/tmp/t49-clean-evidence/20260903T080257Z-issue535-wprojection-mfs-representative-00362267.comparison.json",
       "role": "full scientific product comparison",
-      "sha256": "cf907f41a51ca2121640a3c86d6fd5352a3540d17555c98150c8651678dcfd68"
+      "sha256": "fefbf40c75a6ecd65a53675de5d10635f6605cb201cdd96f9bc3cdc31e1cd18a"
     }
   ],
   "mode": {
@@ -110,7 +110,6 @@
   "scenario_id": "w-projection-vla",
   "schema": "casa-rs-representative-science-evidence-v1",
   "status": "pass",
-  "tested_commit": "45cdf84e942e85449a864ee875d089196dd51ee8",
-  "tested_worktree_dirty": true,
+  "tested_commit": "fb3bfb04ad483c5f013f425ac5fdacb5896de630",
   "validity_rule": null
 }
