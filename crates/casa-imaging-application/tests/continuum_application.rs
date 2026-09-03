@@ -812,7 +812,12 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
 
     let result = execute_continuum(imaging).expect("native full-Stokes Högbom execution");
     assert_eq!(result.minor_iterations, 1);
-    assert_eq!(result.actual_minor_iterations, 2);
+    assert_eq!(result.actual_minor_iterations, 1);
+    assert_eq!(
+        result.minor_stop_reason,
+        Some(ContinuumStopReason::ThresholdReached),
+        "an early scientific stop reports the actual component count without CASA iteration-bound clamping"
+    );
     assert_eq!(
         result
             .outcome
