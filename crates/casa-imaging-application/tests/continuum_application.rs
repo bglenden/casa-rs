@@ -98,7 +98,7 @@ fn thirty_two_channel_multi_row_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "thirty-two-channel-multi-row-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 8, false),
+        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 8, false).with_two_fields(),
     )
 }
 
@@ -140,6 +140,7 @@ struct MeasurementSetFixtureOptions {
     parallel_hand_weights: Option<[f32; 2]>,
     telescope_name: Option<&'static str>,
     dish_diameter_m: f64,
+    field_count: usize,
 }
 
 impl MeasurementSetFixtureOptions {
@@ -164,6 +165,7 @@ impl MeasurementSetFixtureOptions {
             parallel_hand_weights: None,
             telescope_name: None,
             dish_diameter_m: 25.0,
+            field_count: 1,
         }
     }
 
@@ -180,6 +182,11 @@ impl MeasurementSetFixtureOptions {
     const fn with_aca_observation_metadata(mut self) -> Self {
         self.telescope_name = Some("ALMA");
         self.dish_diameter_m = 7.0;
+        self
+    }
+
+    const fn with_two_fields(mut self) -> Self {
+        self.field_count = 2;
         self
     }
 }
@@ -239,6 +246,7 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
         parallel_hand_weights,
         telescope_name,
         dish_diameter_m,
+        field_count,
         ..
     } = options;
     {
@@ -290,9 +298,6 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
             .expect("add OBSERVATION row");
     }
 
-    let direction = ArrayValue::Float64(
-        ArrayD::from_shape_vec(vec![2, 1], vec![1.0, 0.5]).expect("direction shape"),
-    );
     let correlation_codes = if !polarized {
         vec![1]
     } else if linear_correlations {
@@ -306,24 +311,30 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
     } else {
         vec![0, 0]
     };
-    measurement_set
-        .subtable_mut(SubtableId::Field)
-        .expect("FIELD")
-        .add_row(required_row(
-            schema::field::REQUIRED_COLUMNS,
-            &[
-                ("NAME", string("APPLICATION_FIELD")),
-                ("CODE", string("TARGET")),
-                ("NUM_POLY", int(0)),
-                ("DELAY_DIR", Value::Array(direction.clone())),
-                ("PHASE_DIR", Value::Array(direction.clone())),
-                ("REFERENCE_DIR", Value::Array(direction)),
-                ("SOURCE_ID", int(-1)),
-                ("TIME", float(59_000.0 * 86_400.0)),
-                ("FLAG_ROW", boolean(false)),
-            ],
-        ))
-        .expect("add FIELD row");
+    for field_id in 0..field_count {
+        let direction = ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![2, 1], vec![1.0 + field_id as f64 * 1.0e-4, 0.5])
+                .expect("direction shape"),
+        );
+        measurement_set
+            .subtable_mut(SubtableId::Field)
+            .expect("FIELD")
+            .add_row(required_row(
+                schema::field::REQUIRED_COLUMNS,
+                &[
+                    ("NAME", string(&format!("APPLICATION_FIELD_{field_id}"))),
+                    ("CODE", string("TARGET")),
+                    ("NUM_POLY", int(0)),
+                    ("DELAY_DIR", Value::Array(direction.clone())),
+                    ("PHASE_DIR", Value::Array(direction.clone())),
+                    ("REFERENCE_DIR", Value::Array(direction)),
+                    ("SOURCE_ID", int(-1)),
+                    ("TIME", float(59_000.0 * 86_400.0)),
+                    ("FLAG_ROW", boolean(false)),
+                ],
+            ))
+            .expect("add FIELD row");
+    }
 
     measurement_set
         .subtable_mut(SubtableId::Polarization)
@@ -495,6 +506,11 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
             &mut row_overrides,
             "DATA_DESC_ID",
             int((row % spectral_window_count) as i32),
+        );
+        replace_override(
+            &mut row_overrides,
+            "FIELD_ID",
+            int((row % field_count) as i32),
         );
         replace_override(
             &mut row_overrides,
@@ -835,6 +851,34 @@ fn t49_plane_count_does_not_infer_w_projection() {
 }
 
 #[test]
+fn t49_zero_projected_w_matches_the_production_standard_operator() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let standard_name = root.path().join("zero-w-standard");
+    let w_name = root.path().join("zero-w-requested");
+
+    execute_continuum(request(
+        measurement_set.clone(),
+        standard_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    ))
+    .expect("standard zero-W execution");
+    let mut w_request = request(measurement_set, w_name.clone(), ContinuumAlgorithm::Dirty);
+    w_request.task_requirements = vec![TaskRequirement::WProjection];
+    execute_continuum(w_request).expect("requested zero-W execution");
+
+    for suffix in DIRTY_PRODUCT_SUFFIXES {
+        assert_eq!(
+            product_plane(&standard_name, suffix),
+            product_plane(&w_name, suffix),
+            "zero projected W must reduce structurally to Standard for {suffix}",
+        );
+    }
+}
+
+#[test]
 fn t49_w_projection_composes_with_multifield_recentered_cube() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
@@ -857,6 +901,7 @@ fn t49_w_projection_composes_with_multifield_recentered_cube() {
         ContinuumAlgorithm::Dirty,
     );
     imaging.image_size = 32;
+    imaging.field_ids = Some(vec![0, 1]);
     imaging.outlier_file = Some(outlier_file);
     imaging.spectral_window = Some("0:0~31".to_string());
     imaging.channel_count = Some(32);

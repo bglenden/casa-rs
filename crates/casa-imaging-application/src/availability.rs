@@ -6,6 +6,7 @@ use std::{error::Error, fmt};
 use casa_imaging_model::{
     CompiledProblem, ImageDomainRole, InstrumentModel, InstrumentResponse, ModelStateIdentity,
     PhaseCentreLaw, PolarizationCoordinate, ProductKind, ReconstructionBasis, RequiredCapability,
+    UvwCoordinateLaw,
 };
 
 /// A task-surface requirement not represented by [`CompiledProblem`].
@@ -220,6 +221,8 @@ pub enum UnsupportedRequirement {
     NoModelColumnWrite,
     /// The implementation requires a scalar measurement equation.
     ScalarInstrumentResponse,
+    /// W projection is not installed for mosaic UVW geometry.
+    WProjectionWithMosaic,
 }
 
 impl UnsupportedRequirement {
@@ -235,7 +238,8 @@ impl UnsupportedRequirement {
             | Self::FixedPhaseCentre
             | Self::EmptyInitialModel
             | Self::NoModelColumnWrite
-            | Self::ScalarInstrumentResponse => "constraint",
+            | Self::ScalarInstrumentResponse
+            | Self::WProjectionWithMosaic => "constraint",
         }
     }
 
@@ -256,6 +260,7 @@ impl UnsupportedRequirement {
             Self::EmptyInitialModel => "constraint.empty_initial_model".to_string(),
             Self::NoModelColumnWrite => "constraint.no_model_column_write".to_string(),
             Self::ScalarInstrumentResponse => "constraint.scalar_instrument_response".to_string(),
+            Self::WProjectionWithMosaic => "constraint.w_projection_with_mosaic".to_string(),
         }
     }
 }
@@ -427,6 +432,17 @@ pub fn validate_installed_implementation(
     );
     if !installed_response {
         unsupported.push(UnsupportedRequirement::ScalarInstrumentResponse);
+    }
+    if matches!(
+        problem.geometry().uvw(),
+        UvwCoordinateLaw::MosaicPhaseTrackingCentre
+    ) && problem
+        .science()
+        .measurement_equation()
+        .w_projection()
+        .is_some()
+    {
+        unsupported.push(UnsupportedRequirement::WProjectionWithMosaic);
     }
     unsupported.sort_unstable();
     unsupported.dedup();

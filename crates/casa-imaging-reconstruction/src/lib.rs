@@ -67,14 +67,14 @@ pub mod runtime_adapter {
         GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality, GriddedNormalWork,
         SourceCardinalityObservation, gridded_normal_domain_execution_residency,
         gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes,
+        gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,
         CompleteDataOwnerState, FinalVisibilitySample, PreparedSpectralOperator,
         PreparedSpectralOperatorRecycle, SpectralOperatorPass, SpectralOperatorWorkload,
-        SpectralSlabPlan, prepare_spectral_operator, reprepare_spectral_operator,
-        spectral_operator_workload,
+        SpectralSlabPlan, WProjectionDiagnostics, prepare_spectral_operator,
+        reprepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::weighting::{
         FusedWeightingPhase, WeightingReplayPhase, begin_natural_weighting_stream,

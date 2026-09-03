@@ -32,9 +32,9 @@ use crate::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, ConvolutionOperator,
         PreparedSpectralOperator, ReusableNormalState, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps,
         SpectralOperatorError, SpectralOperatorPass, SpectralOperatorSpecification,
-        SpectralPrimitiveCatalog, SpectralSlabOperator, TapSpan, accept_polarization_input,
-        accept_weighted_input, combine_chart_updates, polarization_diagonal,
-        polarization_effective_flags, selected_model_projection,
+        SpectralPrimitiveCatalog, SpectralSlabOperator, TapSpan, WProjectionDiagnostics,
+        accept_polarization_input, accept_weighted_input, combine_chart_updates,
+        polarization_diagonal, polarization_effective_flags, selected_model_projection,
     },
     weighting::{
         CoverageEncoder, WeightingReplayChunk, WeightingReplayCoverageId, WeightingReplayId,
@@ -290,6 +290,13 @@ pub fn gridded_normal_execution_residency(
     gridded_normal_domain_execution_residency([grid_shape], coefficient_terms, convolution_support)
 }
 
+/// Return the support radius of the canonical standard convolution kernel.
+#[doc(hidden)]
+#[must_use]
+pub const fn standard_convolution_support() -> usize {
+    SUPPORT
+}
+
 /// Project exact tiled accumulation and merge residency for all image domains.
 #[doc(hidden)]
 pub fn gridded_normal_domain_execution_residency(
@@ -468,6 +475,7 @@ pub struct GriddedNormalOperatorCompiler {
     binding: LogicalIdentity,
     finite_values: casa_imaging_model::FiniteValuePolicy,
     gridders: Vec<ConvolutionOperator>,
+    w_projection_diagnostics: Box<[WProjectionDiagnostics]>,
     next_block_sequence: u64,
     sample_count: u64,
     record_count: u64,
@@ -491,10 +499,16 @@ impl GriddedNormalOperatorCompiler {
             .iter()
             .map(|chart| ConvolutionOperator::new(&chart.geometry(), specification.w_projection()))
             .collect::<Result<Vec<_>, _>>()?;
+        let w_projection_diagnostics = gridders
+            .iter()
+            .filter_map(ConvolutionOperator::w_projection_diagnostics)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
         let binding = static_binding(&specification);
         Ok(Self {
             finite_values: specification.finite_values(),
             gridders,
+            w_projection_diagnostics,
             specification,
             record_layout,
             binding,
@@ -924,6 +938,7 @@ impl GriddedNormalOperatorCompiler {
                 record_count: self.record_count,
                 record_layout: self.record_layout,
                 descriptors: self.descriptors.into_boxed_slice(),
+                w_projection_diagnostics: self.w_projection_diagnostics,
             }),
         })
     }
@@ -965,6 +980,7 @@ struct GriddedNormalOperatorManifest {
     record_count: u64,
     record_layout: GriddedNormalRecordLayout,
     descriptors: Box<[BlockDescriptor]>,
+    w_projection_diagnostics: Box<[WProjectionDiagnostics]>,
 }
 
 /// Sealed manifest for one exhaustive private gridded replay artifact.
@@ -997,6 +1013,12 @@ impl GriddedNormalOperatorProgram {
     #[must_use]
     pub fn record_count(&self) -> u64 {
         self.manifest.record_count
+    }
+
+    /// Return exact W-kernel diagnostics bound into this program.
+    #[must_use]
+    pub fn w_projection_diagnostics(&self) -> &[WProjectionDiagnostics] {
+        &self.manifest.w_projection_diagnostics
     }
 
     /// Return the private record width bound into this exact program.
@@ -2684,8 +2706,7 @@ fn encode_taylor_and_checksum(
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let mut encoded = Vec::with_capacity(capacity);
     for record in records {
-        if record.taps & !TAP_KEY_MASK != 0
-            || record.moments.len() != plan.normal_moment_count()
+        if record.moments.len() != plan.normal_moment_count()
             || record.moments.iter().any(|value| !value.is_finite())
         {
             return Err(SpectralOperatorError::GeneratedNonfinite);
@@ -2961,11 +2982,11 @@ mod tests {
         SampleTaps {
             x: TapSpan {
                 start: 1,
-                weight_index: 0,
+                weight_index: 7,
             },
             y: TapSpan {
                 start: 2,
-                weight_index: 0,
+                weight_index: 11,
             },
         }
     }

@@ -34,9 +34,10 @@
       ]
     }
   },
-  "contract_digest": "3632c0ea7792f49dc16ce4e1ec813273c8197a1ac3a6c004f96144c9cf8e12a8",
+  "contract_digest": "7def9d840af21a5264e49405e24fc1fdc14be3cd99c742de58e2e64e19ab9922",
   "dataset": {
     "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
     "image_shape": [
       512,
       512,
@@ -68,11 +69,6 @@
   },
   "external_receipts": [
     {
-      "locator": "/private/tmp/t49-clean-evidence/20260903T080257Z-issue535-wprojection-mfs-representative-00362267.log",
-      "role": "production Rust execution and bounded-replay receipt",
-      "sha256": "51d829eef6db854b4e45162b8f6a7895d771f8674c29c2d4be110f5eef272a6f"
-    },
-    {
       "locator": "/private/tmp/t49-clean-evidence/20260903T080257Z-issue535-wprojection-mfs-representative-00362267.json",
       "role": "CASA oracle and frozen-tolerance comparison",
       "sha256": "199598052be492dd37649018dac05007b726706f3a93f6412c59991dd415eaec"
@@ -96,16 +92,16 @@
   "reference": {
     "casa_python": "3.12",
     "casa_version": "6.7.6.14",
+    "identity_sha256": "fefbf40c75a6ecd65a53675de5d10635f6605cb201cdd96f9bc3cdc31e1cd18a",
     "kind": "casa"
   },
   "repository_evidence": [
     "tools/perf/imager/workloads/issue535-wprojection-mfs-representative.json",
     "scripts/bench-imager-vs-casa.sh",
-    "crates/casa-imaging-model/tests/measurement_equation_contract.rs::w_projection_is_explicit_paired_and_identity_bound",
-    "crates/casa-imaging-reconstruction/src/spectral_operator.rs::tests::t49_w_projection_kernel_diagnostics_are_explicit_and_finite",
-    "crates/casa-imaging-reconstruction/src/spectral_operator.rs::tests::t49_w_projection_grid_and_degrid_are_adjoint",
-    "crates/casa-imaging-reconstruction/src/gridded_normal_operator.rs::tests::t49_w_plan_round_trips_through_compact_tiled_replay",
-    "crates/casa-imaging-application/tests/continuum_application.rs::t49_application_executes_nonzero_w_through_major_cycle_replay"
+    "crates/casa-imaging-model/tests/measurement_equation_contract.rs",
+    "crates/casa-imaging-reconstruction/src/spectral_operator.rs",
+    "crates/casa-imaging-reconstruction/src/gridded_normal_operator.rs",
+    "crates/casa-imaging-application/tests/continuum_application.rs"
   ],
   "scenario_id": "w-projection-vla",
   "schema": "casa-rs-representative-science-evidence-v1",

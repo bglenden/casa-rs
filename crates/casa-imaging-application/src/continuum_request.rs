@@ -1083,7 +1083,7 @@ fn prepare(
     let mut selected_observation_ids = BTreeSet::new();
     let mut first_selected_time_mjd_seconds = None;
     let mut selected_time_bounds_mjd_seconds = [f64::INFINITY, f64::NEG_INFINITY];
-    let mut maximum_selected_baseline_m = 0.0_f64;
+    let mut maximum_selected_abs_w_m = 0.0_f64;
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut weight_spectrum_error = None;
@@ -1119,9 +1119,8 @@ fn prepare(
                 selected_time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
             selected_time_bounds_mjd_seconds[1] =
                 selected_time_bounds_mjd_seconds[1].max(row.time_mjd_seconds());
-            let [u_m, v_m, w_m] = row.uvw_m();
-            maximum_selected_baseline_m =
-                maximum_selected_baseline_m.max(u_m.hypot(v_m).hypot(w_m));
+            let [_, _, w_m] = row.uvw_m();
+            maximum_selected_abs_w_m = maximum_selected_abs_w_m.max(w_m.abs());
             if selected_rows_error.is_none() {
                 selected_rows_error = selected_rows
                     .push(SelectedMainRow::new(
@@ -1626,7 +1625,7 @@ fn prepare(
                 .flat_map(|window| window.frequencies_hz.iter().copied())
                 .fold(0.0_f64, f64::max);
             let maximum_abs_w_lambda =
-                maximum_selected_baseline_m * maximum_frequency_hz / 299_792_458.0;
+                maximum_selected_abs_w_m * maximum_frequency_hz / 299_792_458.0;
             let planes = request
                 .w_projection_planes
                 .map(|planes| {

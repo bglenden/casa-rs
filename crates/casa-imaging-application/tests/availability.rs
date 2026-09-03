@@ -17,7 +17,7 @@ use casa_imaging_model::{
     ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, ScientificContract,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, StageErrorBudget, UvwCoordinateLaw, VisibilityInnerProduct,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile,
+    WProjectionContract, WeightDensityScope, WeightingContract, WeightingScheme, compile,
 };
 
 mod common;
@@ -121,6 +121,30 @@ fn unavailable_task_requirements_are_exact_and_typed() {
     );
 }
 
+#[test]
+fn w_projection_with_mosaic_is_rejected_at_the_typed_availability_boundary() {
+    let request = request_with_reconstruction_geometry(
+        PhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5)),
+        Vec::new(),
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        vec![PolarizationCoordinate::StokesI],
+        UvwCoordinateLaw::MosaicPhaseTrackingCentre,
+        Some(WProjectionContract::new(100.0, None).expect("W contract")),
+    );
+    let problem = compile(request).expect("compile mosaic W request");
+    let error = require_installed_implementation(
+        &problem,
+        [TaskRequirement::MosaicGridder, TaskRequirement::WProjection],
+    )
+    .expect_err("mosaic W must reject before physical planning");
+    assert!(
+        error
+            .unsupported()
+            .contains(&UnsupportedRequirement::WProjectionWithMosaic)
+    );
+}
+
 fn standard_dirty_request() -> ImagingRequest {
     request_with_phase_centre(
         PhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5)),
@@ -158,6 +182,27 @@ fn request_with_reconstruction(
     algorithm: ReconstructionAlgorithm,
     polarizations: Vec<PolarizationCoordinate>,
 ) -> ImagingRequest {
+    request_with_reconstruction_geometry(
+        phase_centre,
+        reference_data,
+        basis,
+        algorithm,
+        polarizations,
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_with_reconstruction_geometry(
+    phase_centre: PhaseCentreLaw,
+    reference_data: Vec<(ReferenceDataKind, LogicalIdentity)>,
+    basis: ReconstructionBasis,
+    algorithm: ReconstructionAlgorithm,
+    polarizations: Vec<PolarizationCoordinate>,
+    uvw: UvwCoordinateLaw,
+    w_projection: Option<WProjectionContract>,
+) -> ImagingRequest {
     let iteration_budget = usize::from(!matches!(algorithm, ReconstructionAlgorithm::Dirty));
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -192,7 +237,7 @@ fn request_with_reconstruction(
                 MissingPointingPolicy::Reject,
             )),
         ),
-        UvwCoordinateLaw::PhaseTrackingCentre,
+        uvw,
         SpectralCoordinateSpec::new(
             FrequencyFrame::Topocentric,
             FrequencyFrame::Topocentric,
@@ -220,12 +265,26 @@ fn request_with_reconstruction(
         ProblemSpecification::new(
             ScientificContract::new(
                 SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
-                MeasurementEquationContract::new(
-                    InstrumentResponse::Scalar,
-                    DeclaredInnerProducts::new(
-                        ModelInnerProduct::HermitianEuclidean,
-                        VisibilityInnerProduct::HermitianEuclidean,
-                    ),
+                w_projection.map_or_else(
+                    || {
+                        MeasurementEquationContract::new(
+                            InstrumentResponse::Scalar,
+                            DeclaredInnerProducts::new(
+                                ModelInnerProduct::HermitianEuclidean,
+                                VisibilityInnerProduct::HermitianEuclidean,
+                            ),
+                        )
+                    },
+                    |contract| {
+                        MeasurementEquationContract::new(
+                            InstrumentResponse::Scalar,
+                            DeclaredInnerProducts::new(
+                                ModelInnerProduct::HermitianEuclidean,
+                                VisibilityInnerProduct::HermitianEuclidean,
+                            ),
+                        )
+                        .with_w_projection(contract)
+                    },
                 ),
             ),
             ReconstructionContract::new(

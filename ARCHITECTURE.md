@@ -711,20 +711,22 @@ later backend tickets transfer them, but requests for those implementations
 fail availability validation. Runtime Metal resource and receipt types define a
 future execution contract; they do not constitute a production imaging route.
 
-W-projection and AW-projection are likewise not installed application
-capabilities. Their controls may be parsed and transported, but production
-requests fail closed rather than selecting a displaced CPU, Metal, CF-cache, or
-grouped-replay implementation. The deleted pre-cutover AWProject cache reader
-and grouped Metal MT-MFS compiler are not retained owners. Future W/AW tickets
-must install their operators through the current model, reconstruction,
-runtime, and application boundaries without restoring those displaced routes.
+W-projection is installed as an explicit paired measurement transform. The
+model binds the selected projected-|W| envelope and optional plane count;
+reconstruction owns one kernel plan used by prediction and weighted adjoint
+gridding; runtime carries that same plan through bounded compact replay; and
+the application exposes only the explicit capability boundary. A zero-|W|
+selection reduces structurally to the standard convolution operator. Mosaic+W
+and AW-projection remain typed unavailable before physical planning: no AW
+alias, displaced CPU/Metal route, CF-cache reader, or grouped replay
+implementation is retained.
 
 The installed mosaic execution route therefore consists of bounded serial CPU
 constant-basis MFS and channel-local cube reconstruction. Standard MT-MFS
 remains installed through its non-mosaic Taylor route. Reconstruction and
 product crates may own reusable mosaic/Taylor data structures and product
 semantics, but application availability is the capability boundary: component
-presence alone never makes mosaic Taylor, W/AW projection, Metal execution, or
+  presence alone never makes mosaic Taylor, AW projection, Metal execution, or
 automatic backend selection available.
 
 ## Persistence / external systems

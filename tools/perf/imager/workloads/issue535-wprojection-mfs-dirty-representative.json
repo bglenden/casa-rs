@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "id": "issue535-wprojection-mfs-representative",
-  "mode_id": "wprojection-mfs-representative",
-  "description": "Issue #535 representative 512-pixel, 6.28-million-sample VLA W-projection MFS correctness row over the deterministic structured Wave 1 sky.",
+  "id": "issue535-wprojection-mfs-dirty-representative",
+  "mode_id": "wprojection-mfs-dirty-representative",
+  "description": "Issue #535 representative 512-pixel, 6.28-million-sample VLA W-projection dirty-product row over the deterministic structured Wave 1 sky.",
   "dataset": {
     "key": "wave1-vla-single-small",
     "relative_path": "wave1/vla/single/small/ms/wave1-vla-single-small.ms",
     "root_env": "CASA_RS_IMPERF_DATA_ROOT"
   },
   "imaging": {
-    "mode": "clean",
+    "mode": "dirty",
     "specmode": "mfs",
     "gridder": "wproject",
     "wterm": "wproject",
@@ -24,14 +24,10 @@
     "deconvolver": "hogbom",
     "hogbom_iteration_mode": "casa",
     "nterms": 1,
-    "niter": 25,
+    "niter": 0,
     "minor_cycle_length": 25,
-    "gain": 0.1,
-    "threshold_jy": 0.0,
-    "usemask": "user",
-    "mask_box": "0,0,511,511",
     "write_pb": true,
-    "savemodel": "modelcolumn",
+    "savemodel": "none",
     "casa_pblimit": -0.2,
     "standard_mfs_acceleration": "cpu",
     "parallel": true,
@@ -41,7 +37,7 @@
     "repeats": 1,
     "skip_profile": "1",
     "ms_staging": "copy",
-    "run_label": "issue535-representative",
+    "run_label": "issue535-representative-dirty",
     "storage_label": "external-ssd",
     "env": {
       "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND": "1000000000",
@@ -51,14 +47,36 @@
   },
   "comparison": {
     "mode": "full",
-    "products": [".image", ".residual", ".psf", ".sumwt", ".model", ".mask", ".pb"],
+    "products": [
+      ".image",
+      ".residual",
+      ".psf",
+      ".sumwt",
+      ".model",
+      ".mask",
+      ".pb"
+    ],
     "max_elements_per_product": 1000000,
     "full_chunk_elements": 1000000,
     "require_exact_product_inventory": true,
     "require_direction_wcs_parity": true,
     "require_metadata_parity": true,
     "source_regions": [
-      {"id":"structured-sky-core","products":[".image",".residual",".model"],"blc":[192,192],"trc":[319,319]}
+      {
+        "id": "structured-sky-core",
+        "products": [
+          ".image",
+          ".residual"
+        ],
+        "blc": [
+          192,
+          192
+        ],
+        "trc": [
+          319,
+          319
+        ]
+      }
     ],
     "tolerances": {
       "contract_version": 2,

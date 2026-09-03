@@ -179,6 +179,12 @@ def validate_mode_contract(
         require_mode_fact(identifier, mode, "mfs_compared", True, failures)
         if mode.get("cube_channels", 0) < 16:
             failures.append(f"{identifier}: sixteen-channel mosaic cube is not bound")
+    elif identifier == "w-projection-vla":
+        require_mode_fact(identifier, mode, "gridder", "wproject", failures)
+        require_mode_fact(identifier, mode, "rust_w_projection_planes", "automatic", failures)
+        require_mode_fact(identifier, mode, "casa_wprojplanes", -1, failures)
+        require_mode_fact(identifier, mode, "dirty_products_compared", True, failures)
+        require_mode_fact(identifier, mode, "final_prediction_model_data_compared", True, failures)
 
 
 def validate_receipt(
@@ -293,6 +299,46 @@ def validate_receipt(
                     "casa-rs": [".image", ".model", ".psf", ".residual", ".sumwt"],
                 }:
                     failures.append(f"{identifier}: produced product inventory differs")
+
+    if identifier == "w-projection-vla":
+        diagnostics = receipt.get("w_projection_diagnostics")
+        rust = diagnostics.get("rust") if isinstance(diagnostics, dict) else None
+        source_oracle = (
+            diagnostics.get("casa_source_oracle") if isinstance(diagnostics, dict) else None
+        )
+        if (
+            not isinstance(rust, dict)
+            or isinstance(rust.get("plane_count"), bool)
+            or not isinstance(rust.get("plane_count"), int)
+            or rust["plane_count"] < 2
+            or isinstance(rust.get("sampling"), bool)
+            or not isinstance(rust.get("sampling"), int)
+            or rust["sampling"] < 4
+            or isinstance(rust.get("maximum_support"), bool)
+            or not isinstance(rust.get("maximum_support"), int)
+            or rust["maximum_support"] < 1
+            or not isinstance(rust.get("plane_zero_normalization"), (int, float))
+            or not math.isfinite(rust["plane_zero_normalization"])
+            or rust["plane_zero_normalization"] <= 0.0
+            or not valid_digest(rust.get("kernel_identity_sha256"))
+        ):
+            failures.append(f"{identifier}: production Rust W-kernel diagnostics are missing")
+        sources = source_oracle.get("sources") if isinstance(source_oracle, dict) else None
+        if (
+            not isinstance(source_oracle, dict)
+            or source_oracle.get("quadratic_plane_mapping") is not True
+            or source_oracle.get("conjugate_positive_w") is not True
+            or source_oracle.get("per_sample_real_tap_normalization") is not True
+            or not isinstance(sources, list)
+            or len(sources) < 3
+            or any(
+                not isinstance(source, dict)
+                or not isinstance(source.get("locator"), str)
+                or not valid_digest(source.get("sha256"))
+                for source in sources
+            )
+        ):
+            failures.append(f"{identifier}: CASA W-kernel source oracle is missing")
 
     external = receipt.get("external_receipts")
     if not isinstance(external, list) or not external:
@@ -410,6 +456,7 @@ def main() -> int:
         589,
         590,
         591,
+        535,
     }
     missing = sorted(required - set(issues))
     extra = sorted(set(issues) - required)

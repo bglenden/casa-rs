@@ -801,6 +801,12 @@ fn gridded_buffer_claim_satisfies(
 }
 
 impl FrozenGriddedNormalReplay {
+    pub(crate) fn w_projection_diagnostics(
+        &self,
+    ) -> &[casa_imaging_reconstruction::runtime_adapter::WProjectionDiagnostics] {
+        self.program.w_projection_diagnostics()
+    }
+
     #[cfg(test)]
     pub(crate) const fn stage_local_artifact_seal(
         &self,

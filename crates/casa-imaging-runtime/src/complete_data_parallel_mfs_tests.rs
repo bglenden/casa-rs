@@ -71,8 +71,10 @@ struct StreamSummary {
     commits_completed: u64,
     peak_partial_dynamic_capacity_bytes: u64,
     peak_worker_stack_capacity_bytes: u64,
+    planned_kernel_window_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
     planned_gridded_route_capacity_bytes: u64,
+    peak_physical_route_capacity_bytes: u64,
     executed_work_identity_digest: [u8; 32],
     committed_work_identity_digest: [u8; 32],
     source_pass_count: u64,
@@ -89,8 +91,10 @@ impl From<CompleteDataStreamEvidence> for StreamSummary {
             commits_completed: evidence.commits_completed(),
             peak_partial_dynamic_capacity_bytes: evidence.peak_partial_dynamic_capacity_bytes(),
             peak_worker_stack_capacity_bytes: evidence.peak_worker_stack_capacity_bytes(),
+            planned_kernel_window_capacity_bytes: evidence.planned_kernel_window_capacity_bytes(),
             peak_kernel_window_capacity_bytes: evidence.peak_kernel_window_capacity_bytes(),
             planned_gridded_route_capacity_bytes: evidence.planned_gridded_route_capacity_bytes(),
+            peak_physical_route_capacity_bytes: evidence.peak_physical_route_capacity_bytes(),
             executed_work_identity_digest: evidence.executed_work_identity_digest(),
             committed_work_identity_digest: evidence.committed_work_identity_digest(),
             source_pass_count: evidence.source_pass_count(),
@@ -144,22 +148,22 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         );
         assert_eq!(
             run.final_stream.planned_gridded_route_capacity_bytes,
-            gridded_normal_route_capacity_bytes(3, 3, 1).unwrap(),
-            "the shared route window must cover the three exact one-record frames",
+            gridded_normal_route_capacity_bytes(0, 3, 1).unwrap(),
+            "the shared route window must cover the three exact empty frames",
         );
         assert_eq!(
             run.final_stream.peak_partial_dynamic_capacity_bytes, 0,
             "route-once replay must not retain dynamic scientific partials",
         );
-        assert!(
-            run.final_stream.peak_kernel_window_capacity_bytes
-                >= gridded_normal_route_capacity_bytes(3, 3, 1).unwrap(),
-            "the measured kernel window must include all three live frame routes",
+        assert_eq!(
+            run.final_stream.peak_physical_route_capacity_bytes,
+            run.final_stream.planned_gridded_route_capacity_bytes,
+            "the empty replay must stay within its exact physical route allocation",
         );
         assert!(
-            run.final_stream.planned_gridded_route_capacity_bytes
-                >= gridded_normal_route_capacity_bytes(3, 3, 1).unwrap(),
-            "the variable route plan must bound the live three-frame window",
+            run.final_stream.peak_kernel_window_capacity_bytes
+                <= run.final_stream.planned_kernel_window_capacity_bytes,
+            "the measured prepared/worker/partial window must stay within its admitted bound",
         );
     }
 }
@@ -332,6 +336,7 @@ fn execute_complete_data_mfs_with_policy(
     let execution_residency = gridded_normal_execution_residency(
         spectral_specification.grid_shape(),
         spectral_specification.slab().core_depth(),
+        casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
     )
     .expect("fixture two-domain residency");
     let expected_replay_grid_bytes = execution_residency.peak_complex_values()
