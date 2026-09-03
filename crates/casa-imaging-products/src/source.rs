@@ -22,6 +22,7 @@ enum ContinuumNormalStateCatalog {
     PlaneV1,
     ChannelSlabV1,
     TaylorBlockV1,
+    JointBlockV1,
 }
 
 /// Identity catalog of every source role behind one continuum generation.
@@ -90,6 +91,9 @@ impl ContinuumSourceCatalog {
             }
             NormalStateCatalog::UnnormalizedTaylorBlockV1 => {
                 ContinuumNormalStateCatalog::TaylorBlockV1
+            }
+            NormalStateCatalog::UnnormalizedJointBlockV1 => {
+                ContinuumNormalStateCatalog::JointBlockV1
             }
         };
         if mask.is_some_and(|mask| {
@@ -197,6 +201,7 @@ impl ContinuumSourceCatalog {
             ContinuumNormalStateCatalog::PlaneV1 => 0,
             ContinuumNormalStateCatalog::ChannelSlabV1 => 1,
             ContinuumNormalStateCatalog::TaylorBlockV1 => 2,
+            ContinuumNormalStateCatalog::JointBlockV1 => 3,
         });
         encoder.identity(self.input_model_generation.as_bytes());
         encoder.identity(self.final_model_generation.as_bytes());
