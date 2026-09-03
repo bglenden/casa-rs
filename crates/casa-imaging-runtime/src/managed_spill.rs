@@ -346,6 +346,14 @@ impl ManagedSpillMeasurements {
         IoMeasurement::new(kind, self.transferred_bytes, self.operations)
     }
 
+    pub(crate) const fn serialization_io_measurement(self) -> IoMeasurement {
+        IoMeasurement::new(
+            IoBufferKind::Serialization,
+            self.artifact_bytes.saturating_sub(self.payload_bytes),
+            self.frame_count.saturating_add(2),
+        )
+    }
+
     pub(crate) fn difference_since(self, earlier: Self) -> Result<Self, ManagedSpillError> {
         if self.direction != earlier.direction {
             return Err(ManagedSpillError::MeasurementDirectionMismatch);
@@ -506,9 +514,6 @@ fn validate_storage_directory(
         .ok_or(ManagedSpillError::StorageBindingMismatch)?;
     if &domain.read_rate != storage.read_rate()
         || &domain.write_rate != storage.write_rate()
-        || storage
-            .operations_rate()
-            .is_some_and(|operations| domain.operations_rate.as_ref() != Some(operations))
         || &domain.queue != storage.queue()
     {
         return Err(ManagedSpillError::StorageBindingMismatch);
@@ -575,6 +580,7 @@ impl ManagedSpillWriter {
                 operation: "create private temporary file",
                 source,
             })?;
+        configure_bounded_page_cache(file.as_file())?;
         let buffer_len = usize::try_from(budget.io_buffer_bytes)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("artifact I/O buffer allocation"))?;
         let mut writer = Self {
@@ -954,6 +960,7 @@ impl ManagedSpillArtifact {
             operation: "open artifact for replay",
             source,
         })?;
+        configure_bounded_page_cache(&file)?;
         let metadata = file.metadata().map_err(|source| ManagedSpillError::Io {
             operation: "inspect artifact before replay",
             source,
@@ -1650,7 +1657,7 @@ fn read_exact_at(
             Err(source) => return Err(ManagedSpillError::Io { operation, source }),
         }
     }
-    Ok(())
+    release_page_cache(file, offset, buffer.len())
 }
 
 fn write_bytes(
@@ -1660,6 +1667,7 @@ fn write_bytes(
     operations: &mut u64,
     operation: &'static str,
 ) -> Result<(), ManagedSpillError> {
+    let start = *bytes_written;
     let mut written = 0_usize;
     while written < bytes.len() {
         *operations = operations
@@ -1693,6 +1701,56 @@ fn write_bytes(
             Err(source) => return Err(ManagedSpillError::Io { operation, source }),
         }
     }
+    release_page_cache(file, start, bytes.len())
+}
+
+fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
+    use std::os::fd::AsRawFd;
+
+    #[cfg(target_os = "macos")]
+    {
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1) } == -1 {
+            return Err(ManagedSpillError::Io {
+                operation: "configure managed spill page-cache bypass",
+                source: io::Error::last_os_error(),
+            });
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let result =
+            unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+        if result != 0 {
+            return Err(ManagedSpillError::Io {
+                operation: "configure managed spill sequential page-cache policy",
+                source: io::Error::from_raw_os_error(result),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn release_page_cache(file: &File, offset: u64, bytes: usize) -> Result<(), ManagedSpillError> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+
+        let length = i64::try_from(bytes)
+            .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache release bytes"))?;
+        let offset = i64::try_from(offset)
+            .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache release offset"))?;
+        let result = unsafe {
+            libc::posix_fadvise(file.as_raw_fd(), offset, length, libc::POSIX_FADV_DONTNEED)
+        };
+        if result != 0 {
+            return Err(ManagedSpillError::Io {
+                operation: "release managed spill page-cache window",
+                source: io::Error::from_raw_os_error(result),
+            });
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (file, offset, bytes);
     Ok(())
 }
 
@@ -2027,6 +2085,10 @@ mod tests {
             write.io_measurement().actual(),
             Some((expected_artifact_bytes, 4))
         );
+        assert_eq!(
+            write.serialization_io_measurement().actual(),
+            Some((expected_artifact_bytes - 17, 4))
+        );
 
         let outcome = execute_artifact(&artifact, 1).expect("bounded artifact replay");
         assert_eq!(
@@ -2053,6 +2115,10 @@ mod tests {
         assert_eq!(
             read.io_measurement().actual(),
             Some((expected_artifact_bytes, 10))
+        );
+        assert_eq!(
+            read.serialization_io_measurement().actual(),
+            Some((expected_artifact_bytes - 17, 4))
         );
         let second = execute_artifact(&artifact, 1).expect("second bounded replay");
         assert_eq!(second.kernel_completion.payloads.len(), 2);
@@ -2357,14 +2423,6 @@ mod tests {
             QueueResourceId::new("foreign-queue"),
         );
         assert!(ManagedSpillStorage::bind(&authority, wrong_binding, root.path()).is_err());
-        let wrong_operations = StorageIoResourceBinding::new_with_operations_rate(
-            storage.resources().domain().clone(),
-            storage.resources().read_rate().clone(),
-            storage.resources().write_rate().clone(),
-            RateResourceId::new("foreign-operations-rate"),
-            storage.resources().queue().clone(),
-        );
-        assert!(ManagedSpillStorage::bind(&authority, wrong_operations, root.path()).is_err());
 
         let mut writer = ManagedSpillWriter::create(&storage, budget(TEST_CAPACITY_BYTES))
             .expect("artifact writer");

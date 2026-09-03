@@ -2622,9 +2622,28 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
             .execution_dag()
             .resource_alternative()
             .headroom
-            .cache_bytes
-            > 0,
+            .memory_bytes
+            .get(&CapacityDomainId::new("host-memory"))
+            .is_some_and(|bytes| *bytes > 0),
         "one bounded spill window is reserved as page-cache pressure"
+    );
+    assert_eq!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .headroom
+            .cache_bytes,
+        0,
+        "reclaimable kernel pages are not a retained application cache"
+    );
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .nodes()
+            .values()
+            .flat_map(|node| &node.claims)
+            .all(|claim| !matches!(claim.resource, LeaseResource::StorageOperationsRate { .. })),
+        "IOPS is observed from execution, never required for spill eligibility"
     );
 }
 
@@ -2790,62 +2809,6 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
                         && *available < *required
                 ))
     ));
-}
-
-#[test]
-fn managed_spill_uses_profiled_iops_without_requiring_it_for_eligibility() {
-    let problem = compile(request_with_geometry(
-        1,
-        geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
-    ))
-    .expect("logical continuum compilation");
-    let implementation_registry = test_registry(&problem, 3, 6, None);
-    fs::create_dir_all("/tmp/casa-rs-imaging-runtime-tests")
-        .expect("create managed spill artifact directory");
-    let profiled_storage = ManagedSpillStorage::bind(
-        authority(),
-        StorageIoResourceBinding::new_with_operations_rate(
-            StorageDomainId::new("atomic-output"),
-            RateResourceId::new("io-rate"),
-            RateResourceId::new("io-rate"),
-            RateResourceId::new("io-operations-rate"),
-            QueueResourceId::new("io-queue"),
-        ),
-        Path::new("/tmp/casa-rs-imaging-runtime-tests"),
-    )
-    .expect("profiled managed spill storage");
-    let plan = SpectralCyclePlan::initial(
-        &problem,
-        &implementation_registry,
-        SpectralCycleExecutionPolicy::new(
-            implementation(6),
-            WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
-            selected_content_residency(&problem),
-            serial_storage_io(),
-            SpectralCyclePlanningLimits::new(
-                1_000,
-                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
-                900_000,
-            ),
-            authority().clone(),
-            ResourcePolicy::Balanced,
-        )
-        .with_gridded_normal_storage(profiled_storage),
-    )
-    .expect("profiled spill plan");
-
-    assert!(
-        plan.physical_work()
-            .execution_dag()
-            .resource_alternative()
-            .demand
-            .storage
-            .iter()
-            .any(
-                |storage| storage.demand_id.starts_with("managed-spill-storage")
-                    && storage.operations_rate.hard() == 1
-            )
-    );
 }
 
 #[test]
@@ -3026,8 +2989,16 @@ fn managed_spill_executes_initial_and_restore_cycles_with_receipted_resources() 
             WeightDensityScope::GlobalSelection,
         ),
     ] {
-        execute_spectral_cycle_with_weighting(weighting);
+        execute_spectral_cycle_with_weighting(weighting, false);
     }
+}
+
+#[test]
+fn abort_revokes_retained_managed_spill_before_it_can_cross_plans() {
+    execute_spectral_cycle_with_weighting(
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        true,
+    );
 }
 
 struct RejectFirstVisibilityBlock {
@@ -3226,7 +3197,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     );
 }
 
-fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
+fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_after_initial: bool) {
     let geometry =
         geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]);
     let fixture_problem = compile(request_with_geometry_references_and_weighting(
@@ -3395,10 +3366,10 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                         .expect("selected source traversal reports actual buffer peak");
                     assert!(peak > 0);
                     assert!(peak <= claim.amount);
-                } else if *kind == IoBufferKind::SpillWrite {
+                } else if matches!(kind, IoBufferKind::SpillWrite | IoBufferKind::Serialization) {
                     let (bytes, operations) = receipt
                         .stage_actual_io(node_id, *kind)
-                        .expect("gridded-normal spill reports exact write I/O");
+                        .expect("gridded-normal spill reports actual I/O");
                     assert!(bytes > 0);
                     assert!(operations > 0);
                 } else {
@@ -3418,13 +3389,6 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                     .expect("bounded source queue reports its actual high-water");
                 assert!(peak <= claim.amount.saturating_sub(2));
             }
-            if matches!(claim.resource, LeaseResource::StorageOperationsRate { .. }) {
-                assert_eq!(
-                    receipt.actual_resource_peak(node_id, &claim.resource, &claim.lifetime),
-                    Some(1),
-                    "managed spill IOPS must be present in the canonical receipt"
-                );
-            }
         }
     }
     assert_eq!(
@@ -3436,6 +3400,30 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         Some(ReceiptStatus::Completed)
     );
     assert!(receipt.stage_actual_elapsed_nanos(&minor_node).is_some());
+    if abort_after_initial {
+        let spill_node = execution_plan
+            .execution_dag()
+            .nodes()
+            .values()
+            .find(|node| {
+                node.claims.iter().any(|claim| {
+                    claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillWrite)
+                })
+            })
+            .expect("initial gridded spill node");
+        runtime_registry
+            .implementation()
+            .abort_observation_read(&spill_node.id)
+            .expect("abort revokes retained managed spill");
+        assert!(
+            runtime_registry
+                .implementation()
+                .take_gridded_normal_replay()
+                .is_none(),
+            "an aborted executor cannot yield retained spill authority"
+        );
+        return;
+    }
     let minor = runtime_registry
         .implementation()
         .take_reconstruction_cycle_completion()
@@ -3817,6 +3805,13 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         final_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
     );
+    for kind in [IoBufferKind::SpillRead, IoBufferKind::Serialization] {
+        let (bytes, operations) = final_receipt
+            .stage_actual_io(&replay_node_id, kind)
+            .expect("managed replay reports actual I/O");
+        assert!(bytes > 0);
+        assert!(operations > 0);
+    }
     let final_completion = final_registry
         .implementation()
         .take_completion()
@@ -3839,6 +3834,17 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         source_delta.is_some()
     );
     assert_ne!(minor_evidence_id.as_bytes(), [0; 32]);
+    final_registry
+        .implementation()
+        .abort_observation_read(&replay_node_id)
+        .expect("abort revokes retained managed spill");
+    assert!(
+        final_registry
+            .implementation()
+            .take_gridded_normal_replay()
+            .is_none(),
+        "an aborted executor cannot yield retained spill authority"
+    );
 }
 
 fn execute_initial_reconstruction_cycle(

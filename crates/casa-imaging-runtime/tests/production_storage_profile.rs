@@ -36,9 +36,7 @@ fn production_storage_profile_rejects_missing_and_zero_facts() {
 fn detected_inventory_contains_one_path_redacted_coherent_storage_domain() {
     let root = tempfile::tempdir().expect("storage root");
     let profile = ProductionStorageProfile::new(root.path(), 10_000, 8_000, 400, 300, 4, 3)
-        .expect("valid profile")
-        .with_operations_rate(200)
-        .expect("profiled storage IOPS");
+        .expect("valid profile");
     let inventory = HostInventory::detect_with_storage_profile(&profile).expect("host inventory");
     assert_eq!(inventory.topology.storage_domains.len(), 1);
     let storage = &inventory.topology.storage_domains[0];
@@ -47,10 +45,6 @@ fn detected_inventory_contains_one_path_redacted_coherent_storage_domain() {
     assert_eq!(storage.capacity_bytes, 10_000);
     assert_eq!(&storage.read_rate, profile.read_rate_id());
     assert_eq!(&storage.write_rate, profile.write_rate_id());
-    assert_eq!(
-        storage.operations_rate.as_ref(),
-        profile.operations_rate_id()
-    );
     assert_eq!(&storage.queue, profile.queue_id());
     assert!(!profile.domain_id().as_str().contains('/'));
     assert_eq!(
@@ -70,15 +64,6 @@ fn detected_inventory_contains_one_path_redacted_coherent_storage_domain() {
             .find(|rate| &rate.id == profile.write_rate_id())
             .map(|rate| rate.units_per_second),
         Some(300)
-    );
-    assert_eq!(
-        inventory
-            .topology
-            .rate_resources
-            .iter()
-            .find(|rate| Some(&rate.id) == profile.operations_rate_id())
-            .map(|rate| (rate.unit, rate.units_per_second)),
-        Some((casa_imaging_runtime::RateUnit::OperationsPerSecond, 200))
     );
     assert_eq!(
         inventory
