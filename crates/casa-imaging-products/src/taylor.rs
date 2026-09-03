@@ -460,11 +460,7 @@ impl TaylorProducts {
     pub(crate) fn payload(&self, role: ProductRole) -> Result<Vec<f32>, ProductsError> {
         let term = |term: ProductTerm| match term {
             ProductTerm::Taylor(term) => Ok(term),
-            ProductTerm::Single
-            | ProductTerm::Continuum(_)
-            | ProductTerm::Line
-            | ProductTerm::Total
-            | ProductTerm::JointNormal { .. } => Err(ProductsError::UnsupportedProductRole {
+            ProductTerm::Single => Err(ProductsError::UnsupportedProductRole {
                 role,
                 catalog: crate::CONTINUUM_ALGORITHM_CATALOG_VERSION,
             }),
