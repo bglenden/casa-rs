@@ -1162,7 +1162,7 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
 }
 
 #[test]
-fn t46_application_executes_joint_continuum_line_through_one_native_route() {
+fn optional_joint_application_route_fails_closed_before_execution() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -1192,27 +1192,17 @@ fn t46_application_executes_joint_continuum_line_through_one_native_route() {
         }])),
     };
 
-    let result = execute_continuum(imaging).expect("native joint application execution");
-    for suffix in [
-        ".total.residual",
-        ".continuum.model.ct0",
-        ".line.model",
-        ".total.model",
-        ".line.image",
-        ".total.image",
-        ".continuum.mask",
-        ".line.mask",
-    ] {
-        assert!(
-            result.product_names.iter().any(|name| name == suffix),
-            "missing joint product {suffix}: {:?}",
-            result.product_names
-        );
-        assert!(
-            PathBuf::from(format!("{}{suffix}", image_name.display())).is_dir(),
-            "missing persisted joint product {suffix}"
-        );
-    }
+    let error = match execute_continuum(imaging) {
+        Ok(_) => panic!("optional joint reconstruction reached production execution"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("JointContinuumLineReconstruction"),
+        "wrong fail-closed error: {error}"
+    );
+    assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());
 }
 
 #[test]

@@ -179,8 +179,14 @@ defining capability, prior evidence classification, one representative
 production scenario, relevant comparators, and current result. A scenario may
 cover several tickets only when it genuinely exercises each defining
 dimension. It records frozen CASA provenance once; unchanged workloads are not
-rerun merely to refresh a date. Capabilities with no CASA analogue use an
-approved independent scientific oracle on the same representative shape.
+rerun merely to refresh a date. The imaging refactor is limited to
+CASA-equivalent scientific capability and performance work. Joint
+continuum-plus-line reconstruction has no CASA equivalent and is therefore
+optional future work outside programme #486, not a required matrix row or
+closure dependency. The landed experimental internals may remain for future
+investigation, but the installed application must reject that capability
+before physical planning or execution until separately scoped work establishes
+and accepts its scientific contract.
 
 T67/#553 consumes the completed matrix as required programme evidence. Its
 full-wave gate fails while any required row is missing, toy-only, stale,

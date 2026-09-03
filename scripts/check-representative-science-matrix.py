@@ -115,9 +115,6 @@ def validate_mode_contract(
         if mode.get("spectral_windows", 0) < 2 or mode.get("fractional_frequency_span", 0) < 0.1:
             failures.append(f"{identifier}: meaningful multi-SPW frequency leverage is missing")
         require_mode_fact(identifier, mode, "product_count", 19, failures)
-    elif identifier == "joint-continuum-line-alma":
-        require_mode_fact(identifier, mode, "analytic_joint_recovery", True, failures)
-        require_mode_fact(identifier, mode, "sequential_casa_anchor", True, failures)
     elif identifier == "mosaic-alma":
         if mode.get("pointings", 0) < 2:
             failures.append(f"{identifier}: multiple pointings are not bound")
@@ -276,7 +273,7 @@ def main() -> int:
     issues = [ticket.get("issue") for ticket in tickets]
     if len(issues) != len(set(issues)):
         failures.append("ticket issues are not unique")
-    required = set(range(504, 534)) | {
+    required = (set(range(504, 534)) - {531, 532}) | {
         500,
         540,
         574,
@@ -287,7 +284,6 @@ def main() -> int:
         589,
         590,
         591,
-        597,
     }
     missing = sorted(required - set(issues))
     extra = sorted(set(issues) - required)

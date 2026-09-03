@@ -510,7 +510,6 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::ClarkReconstruction
             | RequiredCapability::MultiscaleReconstruction
             | RequiredCapability::MtmfsReconstruction
-            | RequiredCapability::JointContinuumLineReconstruction
             | RequiredCapability::NaturalWeighting
             | RequiredCapability::UniformWeighting
             | RequiredCapability::BriggsWeighting
@@ -567,8 +566,8 @@ mod tests {
     }
 
     #[test]
-    fn t46_joint_reconstruction_is_installed_at_the_application_boundary() {
-        assert!(supports_capability(
+    fn optional_joint_reconstruction_is_not_installed_at_the_application_boundary() {
+        assert!(!supports_capability(
             RequiredCapability::JointContinuumLineReconstruction
         ));
     }

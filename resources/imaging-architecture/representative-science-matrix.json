@@ -25,7 +25,6 @@
     {"id":"continuum-subtracted-cube-alma","status":"pass","image_shape":[512,512,1,256],"selected_samples":1228800,"dimensions":["fitspw","first_order_fit","corrected_data_vs_casa_contsub_data","persistence","downstream_cube"],"receipt":"resources/imaging-architecture/representative-science-evidence/continuum-subtracted-cube-alma.json"},
     {"id":"moving-source-cube-alma","status":"pass","image_shape":[512,512,1,40],"selected_samples":4147200,"dimensions":["forty_channels","multi_spw_mvc","moving_source","spectral_coordinates","complete_products"],"receipt":"resources/imaging-architecture/representative-science-evidence/moving-source-cube-alma.json"},
     {"id":"mtmfs-alma","status":"pass","image_shape":[512,512,1,1],"selected_samples":1336320,"dimensions":["four_spw","fractional_frequency_span_0.169389","nterms_2","multiple_major_cycles","nineteen_products"],"validity_rule":"Alpha and alpha.error validity is exact across CASA pb.tt0 support and NRMS is at most 0.001 across that support; outside-PB differences are counted. Every other product retains exact validity.","receipt":"resources/imaging-architecture/representative-science-evidence/mtmfs-alma.json"},
-    {"id":"joint-continuum-line-alma","status":"pass","image_shape":[512,512,1,256],"selected_samples":1228800,"dimensions":["three_continuum_components","eight_line_channels","joint_normal_system","analytic_recovery","sequential_casa_anchor","bounded_streaming"],"casa_analogue":false,"receipt":"resources/imaging-architecture/representative-science-evidence/joint-continuum-line-alma.json"},
     {"id":"mosaic-alma","status":"pass","image_shape":[512,512,1,16],"selected_samples":1008000,"dimensions":["multiple_pointings","overlapping_primary_beams","mfs","sixteen_channel_cube","complete_products"],"receipt":"resources/imaging-architecture/representative-science-evidence/mosaic-alma.json"}
   ],
   "tickets": [
@@ -57,8 +56,6 @@
     {"ticket":"T42","issue":528,"capability":"MT-MFS normal system","existing_evidence_tiers":["diagnostic_law"],"scenario":"mtmfs-alma","comparators":["Taylor PSF","sumwt"]},
     {"ticket":"T43","issue":529,"capability":"MT-MFS solver","existing_evidence_tiers":["diagnostic_law"],"scenario":"mtmfs-alma","comparators":["Taylor model and residual","spectral index"]},
     {"ticket":"T44","issue":530,"capability":"MT-MFS publication","existing_evidence_tiers":["diagnostic_law"],"scenario":"mtmfs-alma","comparators":["nineteen CASA products","beam","flux","centroid","validity"]},
-    {"ticket":"T45","issue":531,"capability":"continuum-line composition","existing_evidence_tiers":["diagnostic_law"],"scenario":"joint-continuum-line-alma","comparators":["term topology","normal system"]},
-    {"ticket":"T46","issue":532,"capability":"joint continuum-line solve","existing_evidence_tiers":["diagnostic_law"],"scenario":"joint-continuum-line-alma","comparators":["analytic recovery","decomposition","sequential CASA anchor"]},
     {"ticket":"T47","issue":533,"capability":"mosaic imaging","existing_evidence_tiers":["representative_scientific_acceptance"],"scenario":"mosaic-alma","comparators":["overlapping PB support","MFS and cube products"]},
     {"ticket":"T54","issue":540,"capability":"bounded production execution","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["complete products","bounded execution receipt"]},
     {"ticket":"post-T23","issue":574,"capability":"canonical-route cleanup","existing_evidence_tiers":["diagnostic_law"],"scenario":"standard-mfs-hogbom-vla","comparators":["canonical production receipt"]},
@@ -68,7 +65,6 @@
     {"ticket":"T55b","issue":586,"capability":"parallel replay preservation","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["worker-count invariance","CASA products"]},
     {"ticket":"T55-followup-1","issue":589,"capability":"parallel source adaptation","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["scientific digest invariance"]},
     {"ticket":"T55-followup-2","issue":590,"capability":"parallel gridded replay","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["scientific digest invariance"]},
-    {"ticket":"T55-followup-3","issue":591,"capability":"parallel execution closeout","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["complete product parity"]},
-    {"ticket":"joint-correctness","issue":597,"capability":"joint normal-equation correctness","existing_evidence_tiers":["diagnostic_law"],"scenario":"joint-continuum-line-alma","comparators":["sequential CASA anchors","analytic joint recovery"]}
+    {"ticket":"T55-followup-3","issue":591,"capability":"parallel execution closeout","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["complete product parity"]}
   ]
 }
