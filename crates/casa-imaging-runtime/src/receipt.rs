@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 20;
+const RECEIPT_SCHEMA_VERSION: u32 = 22;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 11;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -164,6 +164,8 @@ pub enum ReceiptStatus {
     /// publication visibility is indeterminate until a terminal receipt exists.
     PublicationPrepared,
     /// A terminal attempt ended before this plan item could start.
+    /// Plan-declared conditional work also retains this state while its route
+    /// is inactive.
     NotStarted,
     /// The attempt or work item completed successfully.
     Completed,
@@ -923,6 +925,13 @@ impl ExecutionReceipt {
         Some((item.actual_bytes?, item.actual_operations?))
     }
 
+    /// Return the installed batch ceiling and largest batch consumed by one stage.
+    #[must_use]
+    pub fn stage_actual_batch(&self, node: &WorkNodeId) -> Option<(u64, u64)> {
+        let batch = self.node(node)?.actual_batch.as_ref()?;
+        Some((batch.maximum, batch.peak))
+    }
+
     /// Return the plan-declared hard amount for one node resource/lifetime pair.
     #[must_use]
     pub fn planned_resource_amount(
@@ -1537,6 +1546,10 @@ impl ReceiptBody {
         for node in &mut body.plan.nodes {
             node.status = ReceiptStatus::NotStarted;
             node.actual_elapsed_nanos = Some(u64::MAX);
+            node.actual_batch = Some(BatchProjection {
+                maximum: u64::MAX,
+                peak: u64::MAX,
+            });
             for claim in &mut node.claims {
                 claim.actual_peak = Some(claim.amount);
             }
@@ -2321,21 +2334,26 @@ struct PlanProjection {
 impl PlanProjection {
     fn new(plan: &ExecutionPlan) -> Result<Self, ReceiptError> {
         let dag = plan.execution_dag();
+        let initially_inactive = dag
+            .adaptations()
+            .values()
+            .flat_map(|transition| transition.activate_nodes.iter())
+            .collect::<BTreeSet<_>>();
         let nodes = dag
             .nodes()
             .values()
             .map(|node| {
                 let prediction = &plan.prediction().stages()[&node.id];
-                NodeProjection::new(node, prediction)
+                NodeProjection::new(node, prediction, initially_inactive.contains(&node.id))
             })
             .collect();
         let fences = dag
             .nodes()
             .values()
             .flat_map(|node| {
-                node.fences
-                    .iter()
-                    .map(|kind| FenceProjection::new(&node.id, *kind))
+                node.fences.iter().map(|kind| {
+                    FenceProjection::new(&node.id, *kind, initially_inactive.contains(&node.id))
+                })
             })
             .collect();
         let mut projection = Self {
@@ -2396,6 +2414,65 @@ impl PlanProjection {
             .physical_work_id()
             .as_bytes());
         Ok(projection)
+    }
+
+    fn applied_execution_projection(
+        &self,
+    ) -> Result<(ExecutionKnobsProjection, BTreeSet<String>), ReceiptError> {
+        let mut inactive = self
+            .adaptations
+            .iter()
+            .flat_map(|transition| transition.activate_nodes.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        let mut knobs = self.initial_execution_knobs;
+        let mut applied = self
+            .adaptations
+            .iter()
+            .filter_map(|transition| {
+                transition
+                    .applied_revision
+                    .map(|revision| (revision, transition))
+            })
+            .collect::<Vec<_>>();
+        applied.sort_by_key(|(revision, _)| *revision);
+        for (_, transition) in applied {
+            require_integrity(
+                transition.from == knobs
+                    && transition
+                        .activate_nodes
+                        .iter()
+                        .all(|node| inactive.contains(node))
+                    && transition
+                        .deactivate_nodes
+                        .iter()
+                        .all(|node| !inactive.contains(node)),
+            )?;
+            for node in &transition.activate_nodes {
+                inactive.remove(node);
+            }
+            inactive.extend(transition.deactivate_nodes.iter().cloned());
+            knobs = transition.to;
+        }
+        Ok((knobs, inactive))
+    }
+
+    fn successful_projection_is_complete(&self) -> Result<bool, ReceiptError> {
+        let (_, inactive) = self.applied_execution_projection()?;
+        Ok(self.nodes.iter().all(|node| {
+            node.status
+                == if inactive.contains(&node.node_id) {
+                    ReceiptStatus::NotStarted
+                } else {
+                    ReceiptStatus::Completed
+                }
+        }) && self.fences.iter().all(|fence| {
+            fence.status
+                == if inactive.contains(&fence.node_id) {
+                    ReceiptStatus::NotStarted
+                } else {
+                    ReceiptStatus::Completed
+                }
+        }))
     }
 }
 
@@ -3295,12 +3372,17 @@ struct NodeProjection {
     quiescence_after: Vec<String>,
     predicted_elapsed_nanos: u64,
     actual_elapsed_nanos: Option<u64>,
+    actual_batch: Option<BatchProjection>,
     io: Vec<IoProjection>,
     status: ReceiptStatus,
 }
 
 impl NodeProjection {
-    fn new(node: &crate::WorkNode, prediction: &crate::StagePrediction) -> Self {
+    fn new(
+        node: &crate::WorkNode,
+        prediction: &crate::StagePrediction,
+        initially_inactive: bool,
+    ) -> Self {
         Self {
             node_id: stable_text(node.id.as_str()),
             kind: work_kind(node.kind).to_string(),
@@ -3337,6 +3419,7 @@ impl NodeProjection {
                 .collect(),
             predicted_elapsed_nanos: prediction.elapsed_nanos(),
             actual_elapsed_nanos: None,
+            actual_batch: None,
             io: prediction
                 .io()
                 .iter()
@@ -3348,7 +3431,11 @@ impl NodeProjection {
                     actual_operations: None,
                 })
                 .collect(),
-            status: ReceiptStatus::Planned,
+            status: if initially_inactive {
+                ReceiptStatus::NotStarted
+            } else {
+                ReceiptStatus::Planned
+            },
         }
     }
 }
@@ -3369,6 +3456,12 @@ struct IoProjection {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct BatchProjection {
+    maximum: u64,
+    peak: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct ClaimProjection {
     resource: String,
     amount: u64,
@@ -3385,11 +3478,15 @@ struct FenceProjection {
 }
 
 impl FenceProjection {
-    fn new(node: &WorkNodeId, kind: FenceKind) -> Self {
+    fn new(node: &WorkNodeId, kind: FenceKind, initially_inactive: bool) -> Self {
         Self {
             node_id: stable_text(node.as_str()),
             kind: fence_kind(kind).to_string(),
-            status: ReceiptStatus::Planned,
+            status: if initially_inactive {
+                ReceiptStatus::NotStarted
+            } else {
+                ReceiptStatus::Planned
+            },
             actual_elapsed_nanos: None,
         }
     }
@@ -3626,6 +3723,8 @@ struct AdaptationProjection {
     from: ExecutionKnobsProjection,
     to: ExecutionKnobsProjection,
     quiescence: String,
+    activate_nodes: Vec<String>,
+    deactivate_nodes: Vec<String>,
     applied_revision: Option<u64>,
 }
 
@@ -3636,6 +3735,16 @@ impl AdaptationProjection {
             from: ExecutionKnobsProjection::new(&adaptation.from),
             to: ExecutionKnobsProjection::new(&adaptation.to),
             quiescence: quiescence(adaptation.at).to_string(),
+            activate_nodes: adaptation
+                .activate_nodes
+                .iter()
+                .map(|node| stable_text(node.as_str()))
+                .collect(),
+            deactivate_nodes: adaptation
+                .deactivate_nodes
+                .iter()
+                .map(|node| stable_text(node.as_str()))
+                .collect(),
             applied_revision: None,
         }
     }
@@ -3647,6 +3756,18 @@ impl AdaptationProjection {
                 from: self.from.to_runtime(),
                 to: self.to.to_runtime(),
                 at: parse_quiescence(&self.quiescence),
+                activate_nodes: self
+                    .activate_nodes
+                    .iter()
+                    .cloned()
+                    .map(WorkNodeId::new)
+                    .collect(),
+                deactivate_nodes: self
+                    .deactivate_nodes
+                    .iter()
+                    .cloned()
+                    .map(WorkNodeId::new)
+                    .collect(),
             },
             applied_revision: self.applied_revision,
         }
@@ -3684,6 +3805,11 @@ impl<'store> ReceiptRecorder<'store> {
             .iter_mut()
             .find(|item| item.node_id == node_id)
             .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?;
+        if item.status != ReceiptStatus::Planned {
+            return Err(ReceiptError::UnlistedPlanEvidence {
+                kind: "work node state",
+            });
+        }
         item.status = ReceiptStatus::Running;
         self.active_nodes.insert(node_id, Instant::now());
         self.checkpoint()
@@ -3716,7 +3842,7 @@ impl<'store> ReceiptRecorder<'store> {
 
     pub(crate) fn fences_launched(&mut self, node: &WorkNodeId) -> Result<(), ReceiptError> {
         let node_id = stable_text(node.as_str());
-        let expected = self
+        let expected_fences = self
             .body
             .plan
             .nodes
@@ -3725,6 +3851,22 @@ impl<'store> ReceiptRecorder<'store> {
             .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "work node" })?
             .fences
             .len();
+        let projected_fences = self
+            .body
+            .plan
+            .fences
+            .iter()
+            .filter(|fence| fence.node_id == node_id)
+            .collect::<Vec<_>>();
+        if projected_fences.len() != expected_fences
+            || projected_fences
+                .iter()
+                .any(|fence| fence.status != ReceiptStatus::Planned)
+        {
+            return Err(ReceiptError::UnlistedPlanEvidence {
+                kind: "asynchronous fence state",
+            });
+        }
         let mut launched = 0;
         for fence in self
             .body
@@ -3738,7 +3880,7 @@ impl<'store> ReceiptRecorder<'store> {
                 .insert((fence.node_id.clone(), fence.kind.clone()), Instant::now());
             launched += 1;
         }
-        if launched != expected {
+        if launched != expected_fences {
             return Err(ReceiptError::UnlistedPlanEvidence {
                 kind: "asynchronous fence",
             });
@@ -3765,14 +3907,90 @@ impl<'store> ReceiptRecorder<'store> {
         &mut self,
         adaptation: &AdaptationId,
     ) -> Result<(), ReceiptError> {
-        let item = self
+        let (knobs, inactive) = self.body.plan.applied_execution_projection()?;
+        let index = self
             .body
             .plan
             .adaptations
-            .iter_mut()
-            .find(|item| item.adaptation_identity == stable_text(adaptation.as_str()))
+            .iter()
+            .position(|item| item.adaptation_identity == stable_text(adaptation.as_str()))
             .ok_or(ReceiptError::UnlistedPlanEvidence { kind: "adaptation" })?;
-        item.applied_revision = Some(self.body.revision.saturating_add(1));
+        let transition = self.body.plan.adaptations[index].clone();
+        if transition.applied_revision.is_some()
+            || transition.from != knobs
+            || transition
+                .activate_nodes
+                .iter()
+                .any(|node| !inactive.contains(node))
+            || transition
+                .deactivate_nodes
+                .iter()
+                .any(|node| inactive.contains(node))
+            || transition.activate_nodes.iter().any(|node| {
+                self.body
+                    .plan
+                    .nodes
+                    .iter()
+                    .find(|item| item.node_id == *node)
+                    .is_none_or(|item| item.status != ReceiptStatus::NotStarted)
+                    || self.body.plan.fences.iter().any(|fence| {
+                        fence.node_id == *node && fence.status != ReceiptStatus::NotStarted
+                    })
+            })
+            || transition.deactivate_nodes.iter().any(|node| {
+                self.body
+                    .plan
+                    .nodes
+                    .iter()
+                    .find(|item| item.node_id == *node)
+                    .is_none_or(|item| item.status != ReceiptStatus::Planned)
+                    || self.body.plan.fences.iter().any(|fence| {
+                        fence.node_id == *node && fence.status != ReceiptStatus::Planned
+                    })
+            })
+        {
+            return Err(ReceiptError::UnlistedPlanEvidence {
+                kind: "adaptation state",
+            });
+        }
+        for node in &transition.activate_nodes {
+            self.body
+                .plan
+                .nodes
+                .iter_mut()
+                .find(|item| item.node_id == *node)
+                .expect("validated activated receipt node")
+                .status = ReceiptStatus::Planned;
+            for fence in self
+                .body
+                .plan
+                .fences
+                .iter_mut()
+                .filter(|fence| fence.node_id == *node)
+            {
+                fence.status = ReceiptStatus::Planned;
+            }
+        }
+        for node in &transition.deactivate_nodes {
+            self.body
+                .plan
+                .nodes
+                .iter_mut()
+                .find(|item| item.node_id == *node)
+                .expect("validated deactivated receipt node")
+                .status = ReceiptStatus::NotStarted;
+            for fence in self
+                .body
+                .plan
+                .fences
+                .iter_mut()
+                .filter(|fence| fence.node_id == *node)
+            {
+                fence.status = ReceiptStatus::NotStarted;
+            }
+        }
+        self.body.plan.adaptations[index].applied_revision =
+            Some(self.body.revision.saturating_add(1));
         self.checkpoint()
     }
 
@@ -3781,6 +3999,11 @@ impl<'store> ReceiptRecorder<'store> {
         status: ReceiptStatus,
         failure: Option<ReceiptFailure>,
     ) -> Result<(), ReceiptError> {
+        if status == ReceiptStatus::Completed
+            && !self.body.plan.successful_projection_is_complete()?
+        {
+            return Err(ReceiptError::IncompleteSuccess);
+        }
         for node in &mut self.body.plan.nodes {
             node.status = terminal_item_status(status, node.status)?;
         }
@@ -3799,21 +4022,11 @@ impl<'store> ReceiptRecorder<'store> {
     pub(crate) fn prepare_publication(
         &mut self,
     ) -> Result<PreparedPublicationReceipt<'store>, ReceiptError> {
+        let projection_complete = self.body.plan.successful_projection_is_complete()?;
         if self.body.status != ReceiptStatus::Running
             || !self.active_nodes.is_empty()
             || !self.active_fences.is_empty()
-            || self
-                .body
-                .plan
-                .nodes
-                .iter()
-                .any(|node| node.status != ReceiptStatus::Completed)
-            || self
-                .body
-                .plan
-                .fences
-                .iter()
-                .any(|fence| fence.status != ReceiptStatus::Completed)
+            || !projection_complete
         {
             return Err(ReceiptError::IncompleteSuccess);
         }
@@ -3872,21 +4085,11 @@ impl<'store> ReceiptRecorder<'store> {
     }
 
     pub(crate) fn prepare_independent_product_publication(&mut self) -> Result<(), ReceiptError> {
+        let projection_complete = self.body.plan.successful_projection_is_complete()?;
         if self.body.status != ReceiptStatus::Running
             || !self.active_nodes.is_empty()
             || !self.active_fences.is_empty()
-            || self
-                .body
-                .plan
-                .nodes
-                .iter()
-                .any(|node| node.status != ReceiptStatus::Completed)
-            || self
-                .body
-                .plan
-                .fences
-                .iter()
-                .any(|fence| fence.status != ReceiptStatus::Completed)
+            || !projection_complete
         {
             return Err(ReceiptError::IncompleteSuccess);
         }
@@ -4009,6 +4212,17 @@ impl<'store> ReceiptRecorder<'store> {
                     io.actual_operations = Some(operations);
                 }
             }
+            for measurement in measurements.batch_measurements() {
+                if item.actual_batch.is_some() {
+                    return Err(ReceiptError::UnlistedPlanEvidence {
+                        kind: "batch measurement",
+                    });
+                }
+                item.actual_batch = Some(BatchProjection {
+                    maximum: measurement.maximum(),
+                    peak: measurement.peak(),
+                });
+            }
         }
         for measurement in measurements.artifacts() {
             self.record_artifact(*measurement)?;
@@ -4108,6 +4322,7 @@ fn terminal_item_status(
 ) -> Result<ReceiptStatus, ReceiptError> {
     match (overall, current) {
         (ReceiptStatus::Completed, ReceiptStatus::Completed) => Ok(current),
+        (ReceiptStatus::Completed, ReceiptStatus::NotStarted) => Ok(current),
         (ReceiptStatus::Completed, _) => Err(ReceiptError::IncompleteSuccess),
         (ReceiptStatus::PublicationPrepared, _) => Err(ReceiptError::IncompleteSuccess),
         (ReceiptStatus::Cancelled, ReceiptStatus::Planned | ReceiptStatus::Running) => {
@@ -4288,20 +4503,34 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         ReceiptStatus::Planned | ReceiptStatus::NotStarted
     ))?;
     require_integrity(body.status.is_terminal() == body.finished_unix_millis.is_some())?;
+    let (_, inactive_nodes) = body.plan.applied_execution_projection()?;
+    require_integrity(body.plan.nodes.iter().all(|node| {
+        !inactive_nodes.contains(&node.node_id)
+            || (node.status == ReceiptStatus::NotStarted
+                && node.actual_elapsed_nanos.is_none()
+                && node.actual_batch.is_none()
+                && node.claims.iter().all(|claim| claim.actual_peak.is_none())
+                && node
+                    .io
+                    .iter()
+                    .all(|io| io.actual_bytes.is_none() && io.actual_operations.is_none()))
+    }))?;
+    require_integrity(body.plan.fences.iter().all(|fence| {
+        !inactive_nodes.contains(&fence.node_id)
+            || (fence.status == ReceiptStatus::NotStarted && fence.actual_elapsed_nanos.is_none())
+    }))?;
+    if body.status == ReceiptStatus::Running {
+        require_integrity(body.plan.nodes.iter().all(|node| {
+            inactive_nodes.contains(&node.node_id) || node.status != ReceiptStatus::NotStarted
+        }))?;
+        require_integrity(body.plan.fences.iter().all(|fence| {
+            inactive_nodes.contains(&fence.node_id) || fence.status != ReceiptStatus::NotStarted
+        }))?;
+    }
     match body.status {
         ReceiptStatus::Completed | ReceiptStatus::PublicationPrepared => {
             require_integrity(body.failure.is_none())?;
-            require_integrity(
-                body.plan
-                    .nodes
-                    .iter()
-                    .all(|node| node.status == ReceiptStatus::Completed)
-                    && body
-                        .plan
-                        .fences
-                        .iter()
-                        .all(|fence| fence.status == ReceiptStatus::Completed),
-            )?;
+            require_integrity(body.plan.successful_projection_is_complete()?)?;
         }
         ReceiptStatus::Failed
         | ReceiptStatus::Aborted
@@ -4507,6 +4736,7 @@ fn validate_plan_projection(
     revision: u64,
 ) -> Result<(), ReceiptError> {
     require_integrity(is_digest(&plan.product_graph_identity))?;
+    let (selected_knobs, _) = plan.applied_execution_projection()?;
     let publication_members = &product_graph.publication_member_ordinals;
     let node_ids = plan
         .nodes
@@ -4606,6 +4836,25 @@ fn validate_plan_projection(
 
     let mut used_allocations = BTreeSet::new();
     for node in &plan.nodes {
+        let requires_batch = node
+            .claims
+            .iter()
+            .any(|claim| claim.resource == "io_buffer:spill_read")
+            && plan
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.node_id == node.node_id && artifact.role == "input");
+        let batch_is_valid = match (&node.actual_batch, node.status) {
+            (Some(batch), ReceiptStatus::Completed | ReceiptStatus::Failed) => {
+                requires_batch
+                    && batch.maximum > 0
+                    && batch.peak <= batch.maximum
+                    && batch.maximum == selected_knobs.batch_size
+            }
+            (None, ReceiptStatus::Completed) => !requires_batch,
+            (None, _) => true,
+            (Some(_), _) => false,
+        };
         let node_allocations = node
             .allocation_uses
             .iter()
@@ -4643,7 +4892,8 @@ fn validate_plan_projection(
                 && node.io.iter().all(|io| {
                     io_buffer_is_valid(&io.kind)
                         && io.actual_bytes.is_some() == io.actual_operations.is_some()
-                }),
+                })
+                && batch_is_valid,
         )?;
     }
     require_integrity(used_allocations == allocation_ids)?;
@@ -4788,7 +5038,24 @@ fn validate_plan_projection(
                     .quiescence_points
                     .contains(&adaptation.quiescence)
                 && execution_knobs_are_valid(&adaptation.from)
-                && execution_knobs_are_valid(&adaptation.to),
+                && execution_knobs_are_valid(&adaptation.to)
+                && adaptation
+                    .activate_nodes
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+                && adaptation
+                    .deactivate_nodes
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+                && adaptation
+                    .activate_nodes
+                    .iter()
+                    .chain(&adaptation.deactivate_nodes)
+                    .all(|node| is_redacted_text(node) && node_ids.contains(node.as_str()))
+                && adaptation
+                    .activate_nodes
+                    .iter()
+                    .all(|node| !adaptation.deactivate_nodes.contains(node)),
         )?;
         if let Some(applied_revision) = adaptation.applied_revision {
             require_integrity(
@@ -4899,6 +5166,18 @@ fn receipt_execution_dag(plan: &PlanProjection) -> Result<ExecutionDag, ReceiptE
             from: adaptation.from.to_runtime(),
             to: adaptation.to.to_runtime(),
             at: parse_quiescence(&adaptation.quiescence),
+            activate_nodes: adaptation
+                .activate_nodes
+                .iter()
+                .cloned()
+                .map(WorkNodeId::new)
+                .collect(),
+            deactivate_nodes: adaptation
+                .deactivate_nodes
+                .iter()
+                .cloned()
+                .map(WorkNodeId::new)
+                .collect(),
         })
         .collect();
     ExecutionDag::new(ExecutionDagSpecification {

@@ -1261,6 +1261,19 @@ pub enum ResourcePolicy {
     Explicit(ResourceOverride),
 }
 
+impl ResourcePolicy {
+    /// Whether the caller supplied an explicit memory or cache ceiling that can
+    /// make a plan-declared low-memory transition preferable.
+    #[must_use]
+    pub fn has_explicit_memory_ceiling(&self) -> bool {
+        matches!(
+            self,
+            Self::Explicit(overrides)
+                if !overrides.memory_bytes.is_empty() || overrides.cache_bytes.is_some()
+        )
+    }
+}
+
 /// Explicit resource ceilings applied within detected physical limits.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResourceOverride {

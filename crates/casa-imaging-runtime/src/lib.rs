@@ -27,7 +27,7 @@ mod weighting;
 
 pub use execution_bindings::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactMeasurementError,
-    ArtifactRole, AttemptBoundObservationCompletion, BindingKind, CacheIdentity,
+    ArtifactRole, AttemptBoundObservationCompletion, BatchMeasurement, BindingKind, CacheIdentity,
     CompiledWorkContext, ExecutionEvidenceError, ExecutionPlan, ExecutionPlanId, ExecutionStatus,
     ImplementationContractCatalog, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,

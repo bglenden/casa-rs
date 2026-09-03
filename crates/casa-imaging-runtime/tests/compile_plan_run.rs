@@ -351,6 +351,82 @@ fn with_current_payload_checksum(mut document: String) -> String {
     document
 }
 
+#[derive(Clone, Copy, Debug)]
+enum BatchReceiptTamper {
+    ValidPeakZero,
+    Remove,
+    MismatchMaximum,
+}
+
+fn with_batch_receipt_tamper(document: &str, node_id: &str, tamper: BatchReceiptTamper) -> String {
+    let mut document = document.to_owned();
+    let node_marker = format!("\"node_id\": \"{node_id}\"");
+    let node_start = document
+        .find(&node_marker)
+        .expect("canonical batch-controlled replay projection");
+    let batch_marker = "\"actual_batch\": ";
+    let batch_start = document[node_start..]
+        .find(batch_marker)
+        .map(|offset| node_start + offset + batch_marker.len())
+        .expect("serialized batch measurement");
+    assert_eq!(document.as_bytes().get(batch_start), Some(&b'{'));
+    let batch_end = document[batch_start..]
+        .find('}')
+        .map(|offset| batch_start + offset + 1)
+        .expect("complete batch measurement");
+    match tamper {
+        BatchReceiptTamper::Remove => document.replace_range(batch_start..batch_end, "null"),
+        BatchReceiptTamper::ValidPeakZero | BatchReceiptTamper::MismatchMaximum => {
+            let field = match tamper {
+                BatchReceiptTamper::ValidPeakZero => "peak",
+                BatchReceiptTamper::MismatchMaximum => "maximum",
+                BatchReceiptTamper::Remove => unreachable!(),
+            };
+            let marker = format!("\"{field}\": ");
+            let start = document[batch_start..batch_end]
+                .find(&marker)
+                .map(|offset| batch_start + offset + marker.len())
+                .expect("numeric batch field");
+            let end = document[start..batch_end]
+                .find(|character: char| !character.is_ascii_digit())
+                .map(|offset| start + offset)
+                .expect("batch field terminator");
+            let replacement = if matches!(tamper, BatchReceiptTamper::ValidPeakZero) {
+                0
+            } else {
+                document[start..end]
+                    .parse::<u64>()
+                    .expect("numeric batch maximum")
+                    + 1
+            };
+            document.replace_range(start..end, &replacement.to_string());
+        }
+    }
+    with_current_payload_checksum(document)
+}
+
+fn with_node_receipt_status(
+    mut document: String,
+    node: &str,
+    current: &str,
+    replacement: &str,
+) -> String {
+    let node_marker = format!("\"node_id\": \"{node}\"");
+    let node_start = document
+        .find(&node_marker)
+        .expect("receipt node projection");
+    let status_marker = format!("\"status\": \"{current}\"");
+    let status_start = document[node_start..]
+        .find(&status_marker)
+        .map(|offset| node_start + offset)
+        .expect("receipt node status");
+    document.replace_range(
+        status_start..status_start + status_marker.len(),
+        &format!("\"status\": \"{replacement}\""),
+    );
+    with_current_payload_checksum(document)
+}
+
 fn with_usize_array(mut document: String, field: &str, values: &[usize]) -> String {
     let marker = format!("\"{field}\": [");
     let start = document.find(&marker).expect("typed projection field") + marker.len();
@@ -3207,16 +3283,137 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     );
 }
 
+fn assert_t59_low_memory_production_routes(physical: &PhysicalWorkBinding) {
+    let dag = physical.execution_dag();
+    let transition = dag
+        .adaptations()
+        .values()
+        .next()
+        .expect("explicit final-major memory ceiling seals one low-memory route");
+    assert_eq!(dag.adaptations().len(), 1);
+    assert_eq!(transition.from, *dag.initial_knobs());
+    assert_eq!(transition.from.batch_size, 2);
+    assert_eq!(transition.to.batch_size, 1);
+    assert!(transition.to.recomputation);
+    assert!(!transition.to.spill);
+    assert!(transition.to.prefetch);
+    assert_eq!(transition.activate_nodes.len(), 2);
+    assert_eq!(transition.deactivate_nodes.len(), 1);
+
+    let activated_kinds = transition
+        .activate_nodes
+        .iter()
+        .map(|node| dag.nodes()[node].kind)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        activated_kinds,
+        BTreeSet::from([WorkKind::Preparation, WorkKind::Prefetch])
+    );
+    let retained = transition
+        .deactivate_nodes
+        .iter()
+        .next()
+        .expect("retained route");
+    let retained_node = &dag.nodes()[retained];
+    assert_eq!(retained_node.kind, WorkKind::Cache);
+    assert!(
+        retained_node
+            .claims
+            .iter()
+            .any(|claim| { claim.resource == LeaseResource::ResidentCache && claim.amount > 0 })
+    );
+    assert!(retained_node.claims.iter().any(|claim| {
+        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead) && claim.amount > 0
+    }));
+
+    let prefetch = transition
+        .activate_nodes
+        .iter()
+        .find(|node| dag.nodes()[*node].kind == WorkKind::Prefetch)
+        .expect("managed replay prefetch route");
+    assert!(dag.nodes()[prefetch].claims.iter().any(|claim| {
+        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead) && claim.amount > 0
+    }));
+    let route_join = dag
+        .nodes()
+        .values()
+        .find(|node| {
+            node.kind == WorkKind::Synchronization
+                && node
+                    .dependencies
+                    .contains(&WorkDependency::Fence(FenceId::new(
+                        retained.clone(),
+                        FenceKind::Io,
+                    )))
+                && node
+                    .dependencies
+                    .contains(&WorkDependency::Fence(FenceId::new(
+                        prefetch.clone(),
+                        FenceKind::Io,
+                    )))
+        })
+        .expect("mutually exclusive routes rejoin before replay");
+    let replay = dag
+        .nodes()
+        .values()
+        .find(|node| {
+            node.kind == WorkKind::Spill
+                && node
+                    .dependencies
+                    .contains(&WorkDependency::Work(route_join.id.clone()))
+        })
+        .expect("fixed replay consumes the selected route");
+    assert!(physical.artifacts().iter().any(|artifact| {
+        artifact.node() == &replay.id && artifact.role() == ArtifactRole::Input
+    }));
+}
+
 fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_after_initial: bool) {
-    let geometry =
-        geometry_with_shape_and_increment([3.0, 3.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]);
-    let fixture_problem = compile(request_with_geometry_references_and_weighting(
-        1,
-        geometry.clone(),
-        default_references(),
-        weighting,
-    ))
-    .expect("fixture continuum compilation");
+    execute_spectral_cycle_with_weighting_mode(weighting, abort_after_initial, false, false);
+}
+
+fn execute_spectral_cycle_with_weighting_mode(
+    weighting: WeightingContract,
+    abort_after_initial: bool,
+    verify_low_memory_plan: bool,
+    apply_low_memory_route: bool,
+) {
+    let image_edge = 8;
+    let reference_pixel = if verify_low_memory_plan { 4.0 } else { 3.0 };
+    let mut geometry = geometry_with_shape_and_increment(
+        [reference_pixel, reference_pixel],
+        ImageShape::new(image_edge, image_edge),
+        [-1.0e-6, 1.0e-6],
+    );
+    if verify_low_memory_plan {
+        let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
+            channels: 2,
+            reference_pixel: 0.0,
+            reference_frequency_hz: 1.4e9,
+            increment_hz: 1.0e6,
+        });
+        geometry = geometry.with_spectral(spectral);
+    }
+    let fixture_request = if verify_low_memory_plan {
+        ImagingRequest::new(
+            standard_problem_specification(
+                weighting,
+                vec![ProductKind::Psf],
+                ModelColumnWrite::Disabled,
+            ),
+            geometry.clone(),
+            problem_inputs_with_channels(1, default_references(), ModelStateIdentity::Empty, 2),
+            model_lifecycle(ModelStateIdentity::Empty),
+        )
+    } else {
+        request_with_geometry_references_and_weighting(
+            1,
+            geometry.clone(),
+            default_references(),
+            weighting,
+        )
+    };
+    let fixture_problem = compile(fixture_request).expect("fixture continuum compilation");
     let fixture_source = &fixture_problem.inputs().observation_snapshot().sources()[0];
     match initialize_measurement_set_owner_manifest(fixture_source.provenance().locator()) {
         Ok(_) | Err(casa_ms::ObservationOwnerError::AlreadyInitialized) => {}
@@ -3270,7 +3467,8 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
             serial_storage_io(),
             SpectralCyclePlanningLimits::new(
                 1_000,
-                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                (image_edge * image_edge * std::mem::size_of::<num_complex::Complex64>()) as u64
+                    * 3,
                 900_000,
             ),
             authority().clone(),
@@ -3476,7 +3674,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
             )
         })
         .expect("initial gridded spill storage claim");
-    assert_eq!(receipt.schema_version(), 20);
+    assert_eq!(receipt.schema_version(), 22);
     assert_eq!(initial_storage_claim.lifetime, ClaimLifetime::Artifact);
     assert_eq!(
         receipt.actual_resource_peak(
@@ -3489,27 +3687,271 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
     );
 
     drop(resolution);
+    let final_resource_policy = if verify_low_memory_plan {
+        ResourcePolicy::Explicit(ResourceOverride {
+            memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 20)]),
+            workers: Some(1),
+            ..ResourceOverride::default()
+        })
+    } else {
+        ResourcePolicy::Balanced
+    };
     let final_planned = SpectralCyclePlan::final_major(
         &problem,
         &planning_registry,
         SpectralCycleExecutionPolicy::new(
             implementation(73),
-            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+            WeightingExecutionLimits::new(if verify_low_memory_plan { 2 } else { 1 }, 1)
+                .expect("weighting limits"),
             residency,
             serial_storage_io(),
             SpectralCyclePlanningLimits::new(
                 1_000,
-                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                (image_edge * image_edge * std::mem::size_of::<num_complex::Complex64>()) as u64
+                    * 3,
                 900_000,
             ),
             authority().clone(),
-            ResourcePolicy::Balanced,
+            final_resource_policy.clone(),
         )
         .with_gridded_normal_storage(gridded_storage),
         &final_input,
         gridded_replay,
     )
     .expect("production final-major plan");
+    if verify_low_memory_plan {
+        assert_t59_low_memory_production_routes(final_planned.physical_work());
+        let dag = final_planned.physical_work().execution_dag();
+        let transition = dag
+            .adaptations()
+            .values()
+            .next()
+            .expect("low-memory transition");
+        let retained_node = transition
+            .deactivate_nodes
+            .iter()
+            .next()
+            .expect("retained route")
+            .clone();
+        let recompute_node = transition
+            .activate_nodes
+            .iter()
+            .find(|node| dag.nodes()[*node].kind == WorkKind::Preparation)
+            .expect("recompute route")
+            .clone();
+        let prefetch_node = transition
+            .activate_nodes
+            .iter()
+            .find(|node| dag.nodes()[*node].kind == WorkKind::Prefetch)
+            .expect("prefetch route")
+            .clone();
+        let replay_node = dag
+            .nodes()
+            .values()
+            .find(|node| {
+                node.kind == WorkKind::Spill
+                    && node.claims.iter().any(|claim| {
+                        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead)
+                    })
+                    && !transition.activate_nodes.contains(&node.id)
+            })
+            .expect("fixed final-major replay node")
+            .id
+            .clone();
+        let cache_claim = dag.nodes()[&retained_node]
+            .claims
+            .iter()
+            .find(|claim| claim.resource == LeaseResource::ResidentCache)
+            .expect("retained route cache claim")
+            .clone();
+        let SpectralCyclePlanParts {
+            physical: final_physical,
+            weighting: final_weighting,
+            complete_data: final_complete,
+            pass: final_pass,
+            minor_cycle_node: final_minor,
+            gridded_normal: planned_gridded_normal,
+            ..
+        } = final_planned.into_parts();
+        assert!(final_minor.is_none());
+        let final_executor = SpectralCycleExecutor::new_gridded(
+            implementation(73),
+            problem.clone(),
+            final_weighting,
+            final_pass,
+            final_complete,
+            ExecutableModelProblem::from_compiled(problem.clone()).expect("final executable model"),
+            SpectralCyclePassInput::FinalMajor(final_input),
+            planned_gridded_normal.expect("final plan binds retained gridded replay"),
+        )
+        .expect("final executor accepts its planned replay")
+        .with_frozen_weighting(frozen_weighting);
+        let final_registry =
+            SpectralCycleRegistry::new(registry(73), implementation(73), &problem, final_executor);
+        let final_plan = runtime_plan(
+            &problem,
+            PlanningBindings::new(
+                registry(73),
+                final_resource_policy.clone(),
+                planning_profile(4),
+            ),
+            authority(),
+            &final_registry,
+            &receipts,
+            move |_, _| Ok::<_, io::Error>(vec![final_physical]),
+        )
+        .expect("low-memory final-major runtime plan");
+        let final_current = RunBindings::new(
+            problem.inputs().clone(),
+            &final_resource_policy,
+            cost_model(4),
+        );
+        let final_attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([75; 32]);
+        let mut controller = SelectSpectralLowMemoryRoute {
+            select: apply_low_memory_route,
+            applied: false,
+        };
+        runtime_run(
+            &executable,
+            &final_plan,
+            &final_current,
+            &final_registry,
+            authority(),
+            &mut controller,
+            receipts.bind(execution_provenance(
+                final_attempt,
+                BuildIdentity::from_sha256([76; 32]),
+            )),
+        )
+        .expect("selected final-major route executes");
+        let final_receipt = receipts.open(final_attempt).expect("final route receipt");
+        let gridded_artifact = final_plan
+            .artifacts()
+            .iter()
+            .find(|artifact| {
+                artifact.node() == &replay_node && artifact.role() == ArtifactRole::Input
+            })
+            .expect("canonical replay owns the gridded input artifact");
+        let adaptation = final_receipt
+            .adaptation_projection(&AdaptationId::new("spectral-low-memory-1"))
+            .expect("receipt projects low-memory transition");
+        assert_eq!(adaptation.was_applied(), apply_low_memory_route);
+        assert_eq!(controller.applied, apply_low_memory_route);
+        assert_eq!(
+            final_receipt.node_status(&replay_node),
+            Some(ReceiptStatus::Completed)
+        );
+        assert_eq!(
+            final_receipt.stage_actual_batch(&replay_node),
+            Some(if apply_low_memory_route {
+                (1, 1)
+            } else {
+                (2, 2)
+            }),
+            "canonical replay receipts the exact selected and consumed batch"
+        );
+        assert_eq!(final_receipt.stage_actual_batch(&retained_node), None);
+        assert_eq!(final_receipt.stage_actual_batch(&recompute_node), None);
+        assert_eq!(final_receipt.stage_actual_batch(&prefetch_node), None);
+        if apply_low_memory_route {
+            assert_eq!(
+                final_receipt.node_status(&retained_node),
+                Some(ReceiptStatus::NotStarted)
+            );
+            assert_eq!(
+                final_receipt.node_status(&recompute_node),
+                Some(ReceiptStatus::Completed)
+            );
+            assert_eq!(
+                final_receipt.node_status(&prefetch_node),
+                Some(ReceiptStatus::Completed)
+            );
+            assert!(
+                final_receipt
+                    .stage_actual_elapsed_nanos(&recompute_node)
+                    .is_some()
+            );
+            let (prefetched_bytes, prefetch_operations) = final_receipt
+                .stage_actual_io(&prefetch_node, IoBufferKind::SpillRead)
+                .expect("prefetch route reports its first-window spill read");
+            assert!(prefetched_bytes > 0 && prefetch_operations > 0);
+            let (bytes, operations) = final_receipt
+                .stage_actual_io(&replay_node, IoBufferKind::SpillRead)
+                .expect("managed route replay reports actual spill reads");
+            assert!(bytes > 0 && operations > 0);
+            assert_eq!(
+                final_receipt.artifact_disposition(gridded_artifact.identity()),
+                Some(ArtifactDisposition::Loaded)
+            );
+            assert_eq!(
+                final_receipt.stage_actual_io(&retained_node, IoBufferKind::SourceReadAhead),
+                None
+            );
+        } else {
+            assert_eq!(
+                final_receipt.node_status(&retained_node),
+                Some(ReceiptStatus::Completed)
+            );
+            assert_eq!(
+                final_receipt.node_status(&recompute_node),
+                Some(ReceiptStatus::NotStarted)
+            );
+            assert_eq!(
+                final_receipt.node_status(&prefetch_node),
+                Some(ReceiptStatus::NotStarted)
+            );
+            assert_eq!(
+                final_receipt.artifact_disposition(gridded_artifact.identity()),
+                Some(ArtifactDisposition::Reused)
+            );
+            assert_eq!(
+                final_receipt.stage_actual_io(&replay_node, IoBufferKind::SpillRead),
+                Some((0, 0))
+            );
+            let (cache_read_bytes, cache_read_operations) = final_receipt
+                .stage_actual_io(&retained_node, IoBufferKind::SourceReadAhead)
+                .expect("retained route reports the cache load I/O");
+            assert!(cache_read_bytes > 0 && cache_read_operations > 0);
+            let actual = final_receipt
+                .actual_resource_peak(&retained_node, &cache_claim.resource, &cache_claim.lifetime)
+                .expect("retained route reports actual residency");
+            assert!(actual > 0 && actual <= cache_claim.amount);
+        }
+        let receipt_path = receipts
+            .root_path()
+            .join(format!("{final_attempt}.receipt.json"));
+        let original = fs::read_to_string(&receipt_path).expect("serialized final-major receipt");
+        fs::write(
+            &receipt_path,
+            with_batch_receipt_tamper(
+                &original,
+                replay_node.as_str(),
+                BatchReceiptTamper::ValidPeakZero,
+            ),
+        )
+        .expect("rewrite checksum-valid receipt with valid batch evidence");
+        receipts
+            .open(final_attempt)
+            .expect("order-preserving batch rewrite passes envelope validation");
+        for tamper in [
+            BatchReceiptTamper::Remove,
+            BatchReceiptTamper::MismatchMaximum,
+        ] {
+            fs::write(
+                &receipt_path,
+                with_batch_receipt_tamper(&original, replay_node.as_str(), tamper),
+            )
+            .expect("rewrite checksum-valid batch-tampered receipt");
+            assert!(
+                matches!(
+                    receipts.open(final_attempt),
+                    Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+                ),
+                "{tamper:?} must fail terminal batch receipt validation"
+            );
+        }
+        return;
+    }
     let initial_nodes = execution_plan
         .execution_dag()
         .nodes()
@@ -5655,12 +6097,228 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
             from: ExecutionKnobs::serial(),
             to: adapted,
             at: QuiescencePoint::MajorCycle,
+            activate_nodes: BTreeSet::new(),
+            deactivate_nodes: BTreeSet::new(),
         }],
     };
     transaction_binding(
         &problem,
         specification,
         implementation(implementation_byte),
+        default_product_participants(),
+        false,
+        true,
+    )
+}
+
+fn conditional_adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("conditional physical-work problem");
+    let work_implementation = implementation(implementation_byte);
+    let retained = WorkNodeId::new("retained-route");
+    let streamed = WorkNodeId::new("streamed-route");
+    let retained_allocation = AllocationId::new("retained-route-buffer");
+    let streamed_allocation = AllocationId::new("streamed-route-buffer");
+    let retained_slot = PhysicalSlotId::new("retained-route-slot");
+    let streamed_slot = PhysicalSlotId::new("streamed-route-slot");
+    let route_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let route_claims = || {
+        vec![
+            ResourceClaim {
+                resource: LeaseResource::Rate {
+                    demand_id: "conditional-io-rate".to_string(),
+                },
+                amount: 1,
+                lifetime: route_lifetime.clone(),
+            },
+            ResourceClaim {
+                resource: LeaseResource::Queue {
+                    demand_id: "conditional-io-queue".to_string(),
+                },
+                amount: 1,
+                lifetime: route_lifetime.clone(),
+            },
+            ResourceClaim {
+                resource: LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead),
+                amount: 8,
+                lifetime: route_lifetime.clone(),
+            },
+        ]
+    };
+    let compatibility = |layout| SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 8,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new(layout),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let retained_compatibility = compatibility("retained-route-buffer");
+    let streamed_compatibility = compatibility("streamed-route-buffer");
+    let mut adapted = ExecutionKnobs::serial();
+    adapted.batch_size = 2;
+    let specification = ExecutionDagSpecification {
+        required_resource_capabilities: BTreeSet::new(),
+        resource_alternative: DemandAlternative {
+            id: AlternativeId::new("conditional-adaptive-cpu"),
+            capabilities: CapabilityPredicate::default(),
+            demand: DemandEnvelope {
+                host_memory_view: CapacityViewId::new("host-memory"),
+                memory: vec![
+                    MemoryDemand {
+                        allocation_id: "retained-route-slot".to_string(),
+                        hard_bytes: 8,
+                        preferred_bytes: 8,
+                        views: vec![CapacityViewId::new("host-memory")],
+                    },
+                    MemoryDemand {
+                        allocation_id: "streamed-route-slot".to_string(),
+                        hard_bytes: 8,
+                        preferred_bytes: 8,
+                        views: vec![CapacityViewId::new("host-memory")],
+                    },
+                ],
+                workers: CountDemand::new(1, 1),
+                overhead: RuntimeOverheadDemand::zero(),
+                storage: Vec::new(),
+                rates: vec![RateDemand {
+                    demand_id: "conditional-io-rate".to_string(),
+                    resource: RateResourceId::new("io-rate"),
+                    amount: CountDemand::new(1, 1),
+                }],
+                caches: CacheDemand::zero(),
+                locks: CountDemand::zero(),
+                file_descriptors: CountDemand::zero(),
+                queues: vec![QueueDemand {
+                    demand_id: "conditional-io-queue".to_string(),
+                    resource: QueueResourceId::new("io-queue"),
+                    slots: CountDemand::new(1, 1),
+                }],
+                transfers: Vec::new(),
+                accelerators: Vec::new(),
+                io_buffers: IoBufferDemand {
+                    source_read_ahead_bytes: 8,
+                    ..IoBufferDemand::zero()
+                },
+            },
+            headroom: ResourceHeadroom::default(),
+            scaling: ScalingMetadata {
+                minimum_workers: 1,
+                maximum_workers: 1,
+                maximum_batch_size: 2,
+                maximum_tile_width: 1,
+                maximum_tile_height: 1,
+                maximum_slab_depth: 1,
+                memory_bytes_per_worker: BTreeMap::new(),
+            },
+            quiescence_points: BTreeSet::from([QuiescencePoint::RunBoundary]),
+        },
+        nodes: vec![
+            WorkNode {
+                id: retained.clone(),
+                kind: WorkKind::Prefetch,
+                domain: WorkDomain::Io,
+                implementation: work_implementation.clone(),
+                dependencies: BTreeSet::new(),
+                claims: route_claims(),
+                allocations: vec![AllocationUse {
+                    allocation: retained_allocation.clone(),
+                    lifetime: route_lifetime.clone(),
+                }],
+                fences: BTreeSet::from([FenceKind::Io]),
+                quiescence_after: BTreeSet::new(),
+            },
+            WorkNode {
+                id: streamed.clone(),
+                kind: WorkKind::Prefetch,
+                domain: WorkDomain::Io,
+                implementation: work_implementation.clone(),
+                dependencies: BTreeSet::new(),
+                claims: route_claims(),
+                allocations: vec![AllocationUse {
+                    allocation: streamed_allocation.clone(),
+                    lifetime: route_lifetime.clone(),
+                }],
+                fences: BTreeSet::from([FenceKind::Io]),
+                quiescence_after: BTreeSet::new(),
+            },
+            WorkNode {
+                id: WorkNodeId::new("conditional-route-join"),
+                kind: WorkKind::Synchronization,
+                domain: WorkDomain::Control,
+                implementation: work_implementation.clone(),
+                dependencies: BTreeSet::from([
+                    WorkDependency::Fence(FenceId::new(retained.clone(), FenceKind::Io)),
+                    WorkDependency::Fence(FenceId::new(streamed.clone(), FenceKind::Io)),
+                ]),
+                claims: Vec::new(),
+                allocations: Vec::new(),
+                fences: BTreeSet::new(),
+                quiescence_after: BTreeSet::new(),
+            },
+        ],
+        logical_allocations: vec![
+            LogicalAllocation {
+                id: retained_allocation.clone(),
+                bytes: 8,
+                purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
+                compatibility: retained_compatibility.clone(),
+                physical_slot: retained_slot.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: retained.clone(),
+                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                        retained.clone(),
+                        FenceKind::Io,
+                    ))]),
+                },
+            },
+            LogicalAllocation {
+                id: streamed_allocation.clone(),
+                bytes: 8,
+                purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
+                compatibility: streamed_compatibility.clone(),
+                physical_slot: streamed_slot.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: streamed.clone(),
+                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                        streamed.clone(),
+                        FenceKind::Io,
+                    ))]),
+                },
+            },
+        ],
+        physical_slots: vec![
+            PhysicalSlot {
+                id: retained_slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: "retained-route-slot".to_string(),
+                },
+                capacity_bytes: 8,
+                compatibility: retained_compatibility,
+            },
+            PhysicalSlot {
+                id: streamed_slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: "streamed-route-slot".to_string(),
+                },
+                capacity_bytes: 8,
+                compatibility: streamed_compatibility,
+            },
+        ],
+        initial_knobs: ExecutionKnobs::serial(),
+        adaptations: vec![AdaptationTransition {
+            id: AdaptationId::new("select-streamed-route"),
+            from: ExecutionKnobs::serial(),
+            to: adapted,
+            at: QuiescencePoint::RunBoundary,
+            activate_nodes: BTreeSet::from([streamed]),
+            deactivate_nodes: BTreeSet::from([retained]),
+        }],
+    };
+    transaction_binding(
+        &problem,
+        specification,
+        work_implementation,
         default_product_participants(),
         false,
         true,
@@ -6158,6 +6816,52 @@ impl RunController for AdaptAtMajorBoundary {
     fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
         let adaptation = AdaptationId::new("larger-batch");
         if !self.applied
+            && status
+                .eligible_adaptations()
+                .iter()
+                .any(|transition| transition.id == adaptation)
+        {
+            self.applied = true;
+            RunDirective::Adapt(adaptation)
+        } else {
+            RunDirective::Continue
+        }
+    }
+}
+
+#[derive(Default)]
+struct SelectStreamedRoute {
+    applied: bool,
+}
+
+impl RunController for SelectStreamedRoute {
+    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
+        let adaptation = AdaptationId::new("select-streamed-route");
+        if !self.applied
+            && status
+                .eligible_adaptations()
+                .iter()
+                .any(|transition| transition.id == adaptation)
+        {
+            self.applied = true;
+            RunDirective::Adapt(adaptation)
+        } else {
+            RunDirective::Continue
+        }
+    }
+}
+
+#[derive(Default)]
+struct SelectSpectralLowMemoryRoute {
+    select: bool,
+    applied: bool,
+}
+
+impl RunController for SelectSpectralLowMemoryRoute {
+    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
+        let adaptation = AdaptationId::new("spectral-low-memory-1");
+        if self.select
+            && !self.applied
             && status
                 .eligible_adaptations()
                 .iter()
@@ -7940,7 +8644,7 @@ fn later_member_failure_retains_terminal_prefix_and_suffix_evidence() {
     ));
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 20);
+    assert_eq!(receipt.schema_version(), 22);
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
     let dispositions = execution_plan
         .publication_layouts()
@@ -9389,6 +10093,14 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
 }
 
 #[test]
+fn t59_explicit_memory_policy_seals_low_memory_production_adaptation() {
+    let weighting =
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable);
+    execute_spectral_cycle_with_weighting_mode(weighting, false, true, true);
+    execute_spectral_cycle_with_weighting_mode(weighting, false, true, false);
+}
+
+#[test]
 fn t607_production_plan_bounds_channel_local_cube_with_ordered_slabs() {
     let channels = 32;
     let problem = compile(channel_local_request(247, channels)).expect("channel-local cube");
@@ -10242,7 +10954,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 20);
+    assert_eq!(receipt.schema_version(), 22);
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());
@@ -10923,6 +11635,134 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     assert_eq!(adaptation.transition(), &dag.adaptations()[&adaptation_id]);
     assert!(adaptation.was_applied());
     assert!(adaptation.applied_revision().is_some());
+}
+
+#[test]
+fn receipt_records_only_the_atomically_selected_conditional_route() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(conditional_adaptive_physical_work(6)),
+    )
+    .expect("conditional adaptive physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let registry = TestRegistry {
+        id: registry(3),
+        metadata: implementation_metadata(&problem),
+        executors: BTreeMap::from([(
+            implementation(6),
+            product_publication_recording_executor(
+                &problem,
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicUsize::new(0)),
+            ),
+        )]),
+    };
+    let receipts = execution_plan.receipt_store();
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([65; 32]),
+        BuildIdentity::from_sha256([66; 32]),
+    );
+    let mut controller = SelectStreamedRoute::default();
+
+    let outcome = run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("conditional receipted execution");
+    let receipt = receipts.open(provenance.attempt_id()).expect("receipt");
+    let retained = WorkNodeId::new("retained-route");
+    let streamed = WorkNodeId::new("streamed-route");
+    let retained_fence = FenceId::new(retained.clone(), FenceKind::Io);
+    let streamed_fence = FenceId::new(streamed.clone(), FenceKind::Io);
+    let adaptation = receipt
+        .adaptation_projection(&AdaptationId::new("select-streamed-route"))
+        .expect("conditional transition projection");
+
+    assert_eq!(outcome, ExecutionOutcome::Succeeded);
+    assert!(controller.applied);
+    assert_eq!(receipt.status(), ReceiptStatus::Completed);
+    assert!(adaptation.was_applied());
+    assert_eq!(
+        adaptation.transition().activate_nodes,
+        BTreeSet::from([streamed.clone()])
+    );
+    assert_eq!(
+        adaptation.transition().deactivate_nodes,
+        BTreeSet::from([retained.clone()])
+    );
+    assert_eq!(
+        receipt.node_status(&streamed),
+        Some(ReceiptStatus::Completed)
+    );
+    assert_eq!(
+        receipt.fence_status(&streamed_fence),
+        Some(ReceiptStatus::Completed)
+    );
+    assert_eq!(
+        receipt.node_status(&retained),
+        Some(ReceiptStatus::NotStarted)
+    );
+    assert_eq!(
+        receipt.fence_status(&retained_fence),
+        Some(ReceiptStatus::NotStarted)
+    );
+    assert_eq!(
+        receipt.stage_predicted_io(&streamed, IoBufferKind::SourceReadAhead),
+        Some((8, 1))
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&streamed, IoBufferKind::SourceReadAhead),
+        Some((8, 1))
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&retained, IoBufferKind::SourceReadAhead),
+        None
+    );
+    assert!(receipt.stage_actual_elapsed_nanos(&streamed).is_some());
+    assert_eq!(receipt.stage_actual_elapsed_nanos(&retained), None);
+
+    let path = only_receipt_path(receipts.root_path());
+    let original = fs::read_to_string(&path).expect("serialized conditional receipt");
+    for (case, forged) in [
+        (
+            "inactive route reported complete",
+            with_node_receipt_status(
+                original.clone(),
+                retained.as_str(),
+                "not_started",
+                "completed",
+            ),
+        ),
+        (
+            "selected route reported not started",
+            with_node_receipt_status(
+                original.clone(),
+                streamed.as_str(),
+                "completed",
+                "not_started",
+            ),
+        ),
+    ] {
+        fs::write(&path, forged).expect("rewrite checksum-valid conditional receipt");
+        assert!(
+            matches!(
+                receipts.open(provenance.attempt_id()),
+                Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+            ),
+            "{case} must fail reconstructed route validation"
+        );
+    }
 }
 
 #[test]

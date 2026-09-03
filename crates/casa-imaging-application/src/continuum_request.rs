@@ -2898,13 +2898,17 @@ fn production_storage_profile(
     let (capacity, available) = filesystem_capacity(&input_root)?;
     let read_rate = positive_environment("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND")?;
     let write_rate = positive_environment("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND")?;
+    let queue_slots = u64::try_from(content_budget.maximum_live_blocks())
+        .map_err(|_| boxed("selected source queue depth overflowed"))?
+        .checked_add(1)
+        .ok_or_else(|| boxed("managed-spill queue depth overflowed"))?;
     Ok(Some(ProductionStorageProfile::new(
         input_root,
         capacity,
         available,
         read_rate,
         write_rate,
-        u64::try_from(content_budget.maximum_live_blocks()).unwrap_or(u64::MAX),
+        queue_slots,
         2,
     )?))
 }

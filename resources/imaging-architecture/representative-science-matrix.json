@@ -67,6 +67,7 @@
     {"ticket":"T55b","issue":586,"capability":"parallel replay preservation","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["worker-count invariance","CASA products"]},
     {"ticket":"T55-followup-1","issue":589,"capability":"parallel source adaptation","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["scientific digest invariance"]},
     {"ticket":"T55-followup-2","issue":590,"capability":"parallel gridded replay","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["scientific digest invariance"]},
-    {"ticket":"T55-followup-3","issue":591,"capability":"parallel execution closeout","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["complete product parity"]}
+    {"ticket":"T55-followup-3","issue":591,"capability":"parallel execution closeout","existing_evidence_tiers":["resource_performance"],"scenario":"standard-mfs-hogbom-vla","comparators":["complete product parity"]},
+    {"ticket":"T59","issue":545,"capability":"low-memory production adaptation","existing_evidence_tiers":["resource_performance","representative_scientific_acceptance"],"scenario":"mtmfs-alma","comparators":["ordinary constrained-request adaptation DAG","changed batching","recomputation","managed spill and prefetch I/O receipts","CASA products","metadata and validity"]}
   ]
 }

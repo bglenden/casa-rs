@@ -1,0 +1,23 @@
+# T59 low-memory adaptation source study
+
+Truth class: implementation evidence
+Source baseline: `e854bab7346ac10e08f7856b72b0195741256f9d`
+Historical baseline: `fff9c2d553eace4b6a57b1df9ded4773f2263ceb`
+
+T59 changes only the runtime-owned execution choice at plan-declared global
+cuts. Selection, weighting, Measurement Operator, reconstruction, product, and
+numerics owners remain unchanged.
+
+| Mechanism evidence | Benefit or constraint | Current owner/seam | T59 decision |
+|---|---|---|---|
+| Pre-cutover bounded source blocks and ordered producer/consumer overlap in `crates/casa-imaging/src/execution.rs`; the archived experiments summarized in `docs/imaging-dataflow-comparison.md` include a `1.098x` exact-product mosaic-cube gain and a `22.1%` cubedata loss when overlap reduced active planes. | Stream depth is workload- and residency-sensitive; it must remain bounded and preserve source order. | `casa-ms` owns canonical selected-observation traversal; `casa-imaging-runtime` owns `BoundedStreamPlan`, queue depth, leases, and receipts. | Adapt the already sealed `io_depth`/batch controls at quiescence. Do not restore the displaced frontend stream or dataset-named switches. |
+| Pre-cutover fixed-tile partitions, bounded resident-tile sets, and deterministic tile flush/reduction in `fff9c2d...:crates/casa-imaging/src/execution.rs`. | Tiles can bound grid residency, but the historical ledger contains rejected fixed-tile variants; tile shape is not intrinsically faster. | Reconstruction owns tile/halo mathematics; runtime owns admitted tile size, batches, slots, and scheduling. | Retain only plan-listed dimensions passed to the canonical owner. No MFS-only tiled runner or alternate numerical path returns. |
+| Pre-cutover spectral planning and the current channel-major runtime use bounded slabs rather than full cube materialization. CASA `task_tclean.py:177-178` also fixes `chanchunks=1`, so CASA frontend chunking is not a runtime policy model to copy. | Slab depth trades replay count against peak resident state without changing spectral coordinates or contribution order. | Reconstruction owns spectral coupling/halos; runtime owns the admitted slab depth and physical pass schedule. | Adapt slab depth only at a declared slab/stage cut and within the sealed scaling envelope. |
+| casacore `LatticeCache.h:43-77` and `LatticeCache.tcc:110-175,253-319` bound tile count, record hits/misses, and flush dirty LRU victims. CASA/LibRA `GridFT.h:73-106` and `SIImageStore.cc:1254-1296` select resident versus temporary tiled lattices from a memory allowance. | Physical retention is preferable while it fits; eviction introduces explicit read/write traffic and must settle before reuse. | Runtime owns cache leases, logical allocation lifetimes, and reusable physical slots; scientific owners define cache identities and content. | Allow declared cache-retention changes and receipt actual reuse/residency. Reuse slots only after every work/I/O fence; do not reproduce host-memory probing inside an operator. |
+| The pre-cutover gridded replay experiments retained deterministic block reduction and rejected mmap/partial-atlas thrashing. T58 now provides checksummed private managed spill, reserved storage capacity, bounded read windows, exact I/O measurements, and cleanup. | Retaining or recomputing immutable state can beat spill; when spill is selected, disk capacity is the hard feasibility boundary and synchronous I/O failure is terminal. | Reconstruction defines immutable recomputable records; runtime owns spill/prefetch work, storage reservations, buffers, and receipts. | Apply the pressure order `retain -> recompute -> managed spill/prefetch`. Missing IOPS never rejects a capacity-feasible spill; measured/profiled IOPS may affect prediction only. Reuse T58 rather than introduce another artifact format. |
+| LibRA `HPGVisBufferBucket.h:43-61,110-188` uses fixed main capacity, preserves overflow order, and resets/shrinks between submissions; `AWVisResamplerHPG.cc:625-685` submits bounded buckets and reuses storage after completion. | Batches and I/O buffers can be reused without reallocation when the prior consumer has completed. | Runtime scheduler, lease permits, physical-slot ledger, and fences. | Adapt batch and prefetch depth through the same immutable transition and receipt path; reuse compatible pool/buffer slots only after the predecessor fence. |
+
+Rejected architecture: displaced mode runners, operator-local capacity probing,
+environment-variable tuning, mmap spill, OS swap as capacity, online
+self-training, compatibility fallback, and any transition that creates work,
+resources, artifacts, or scientific semantics absent from the sealed plan.

@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -997,9 +998,51 @@ impl ManagedSpillArtifact {
             frame_counts,
             source_slot_bytes,
             blocks_filled: 0,
+            prefetched_window: None,
             initialized: false,
             finished: false,
             poisoned: false,
+        })
+    }
+
+    pub(crate) fn load_retained_block_source(
+        &self,
+        frame_counts: Arc<[usize]>,
+        source_slot_bytes: u64,
+    ) -> Result<ManagedSpillRetainedBlockSource, ManagedSpillError> {
+        let mut source = self.planned_block_source(frame_counts, source_slot_bytes)?;
+        let cancelled = AtomicBool::new(false);
+        let mut windows = VecDeque::new();
+        let mut retained_bytes = 0_u64;
+        loop {
+            let mut storage = source.create_storage(0);
+            match source.fill(
+                u64::try_from(windows.len())
+                    .map_err(|_| ManagedSpillError::ArithmeticOverflow("retained block ordinal"))?,
+                &mut storage,
+                SourceFillCancellation::new(&cancelled),
+            )? {
+                SourcePoll::Ready { .. } => {
+                    storage.bytes.truncate(storage.used_len);
+                    storage.bytes.shrink_to_fit();
+                    retained_bytes = retained_bytes
+                        .checked_add(storage.resident_capacity_bytes())
+                        .ok_or(ManagedSpillError::ArithmeticOverflow(
+                            "retained artifact residency",
+                        ))?;
+                    windows.push_back(storage);
+                }
+                SourcePoll::Exhausted => break,
+            }
+        }
+        let load = source.complete_read()?.measurements();
+        Ok(ManagedSpillRetainedBlockSource {
+            windows,
+            seal: self.seal,
+            retained_bytes,
+            load,
+            created_slots: AtomicUsize::new(0),
+            blocks_filled: 0,
         })
     }
 }
@@ -1010,6 +1053,26 @@ pub(crate) struct ManagedSpillWindowStorage {
     frame_count: usize,
     record_count: u64,
     used_len: usize,
+}
+
+#[derive(Debug)]
+pub(crate) struct ManagedSpillRetainedBlockSource {
+    windows: VecDeque<ManagedSpillWindowStorage>,
+    seal: ManagedSpillSeal,
+    retained_bytes: u64,
+    load: ManagedSpillMeasurements,
+    created_slots: AtomicUsize,
+    blocks_filled: u64,
+}
+
+impl ManagedSpillRetainedBlockSource {
+    pub(crate) const fn retained_bytes(&self) -> u64 {
+        self.retained_bytes
+    }
+
+    pub(crate) const fn load_measurements(&self) -> ManagedSpillMeasurements {
+        self.load
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1116,12 +1179,67 @@ pub(crate) struct ManagedSpillBlockSource {
     frame_counts: Arc<[usize]>,
     source_slot_bytes: u64,
     blocks_filled: u64,
+    prefetched_window: Option<ManagedSpillWindowStorage>,
     initialized: bool,
     finished: bool,
     poisoned: bool,
 }
 
 impl ManagedSpillBlockSource {
+    pub(crate) fn prefetch_first_window(
+        &mut self,
+    ) -> Result<ManagedSpillMeasurements, ManagedSpillError> {
+        if self.initialized || self.blocks_filled != 0 || self.prefetched_window.is_some() {
+            return Err(ManagedSpillError::InvalidBudget(
+                "managed spill source was prefetched after replay started",
+            ));
+        }
+        let cancelled = AtomicBool::new(false);
+        let mut storage = self.create_storage(0);
+        let poll = self.fill(0, &mut storage, SourceFillCancellation::new(&cancelled))?;
+        let SourcePoll::Ready { .. } = poll else {
+            return Err(ManagedSpillError::IncompleteRead);
+        };
+        let payload_bytes = storage.frames().try_fold(0_u64, |total, frame| {
+            total
+                .checked_add(u64::try_from(frame.payload().len()).map_err(|_| {
+                    ManagedSpillError::ArithmeticOverflow("prefetched frame payload bytes")
+                })?)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "prefetched window payload bytes",
+                ))
+        })?;
+        let frame_count = u64::try_from(storage.frame_count)
+            .map_err(|_| ManagedSpillError::ArithmeticOverflow("prefetched frame count"))?;
+        let peak_buffer_bytes = storage.resident_capacity_bytes();
+        let measurements = ManagedSpillMeasurements {
+            direction: ManagedSpillIoDirection::Read,
+            artifact_bytes: self.seal.artifact_bytes,
+            payload_bytes,
+            frame_count,
+            record_count: storage.record_count,
+            transferred_bytes: self.measurements.transferred_bytes,
+            operations: self.measurements.operations,
+            sha256_bytes: self
+                .measurements
+                .transferred_bytes
+                .checked_add(payload_bytes)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "prefetched checksum bytes",
+                ))?,
+            sha256_calls: frame_count,
+            peak_buffer_bytes,
+            payload_copy_bytes: 0,
+            payload_copy_operations: 0,
+            buffer_allocations: 1,
+            buffer_reuses: 0,
+        };
+        self.measurements = MutableReadMeasurements::default();
+        self.created_slots.store(0, Ordering::Release);
+        self.prefetched_window = Some(storage);
+        Ok(measurements)
+    }
+
     fn initialize(&mut self) -> Result<(), ManagedSpillError> {
         if self.initialized {
             return Ok(());
@@ -1446,12 +1564,34 @@ impl OrderedBlockSource for ManagedSpillBlockSource {
 
     fn fill(
         &mut self,
-        _block_ordinal: u64,
+        block_ordinal: u64,
         storage: &mut Self::Storage,
         cancellation: SourceFillCancellation<'_>,
     ) -> Result<SourcePoll, Self::Error> {
         if cancellation.is_cancelled() {
             return Ok(SourcePoll::Exhausted);
+        }
+        if let Some(mut prefetched) = self.prefetched_window.take() {
+            let source_ordinal = u32::try_from(block_ordinal)
+                .map_err(|_| ManagedSpillError::ArithmeticOverflow("artifact source ordinal"))?;
+            let logical_bytes = prefetched.frames().try_fold(0_u64, |total, frame| {
+                total
+                    .checked_add(u64::try_from(frame.payload().len()).map_err(|_| {
+                        ManagedSpillError::ArithmeticOverflow("prefetched frame payload bytes")
+                    })?)
+                    .ok_or(ManagedSpillError::ArithmeticOverflow(
+                        "prefetched window payload bytes",
+                    ))
+            })?;
+            std::mem::swap(storage, &mut prefetched);
+            return Ok(SourcePoll::Ready {
+                source_ordinal,
+                logical_units: storage.frame_count,
+                logical_bytes,
+                source_read_operations: 0,
+                resident_current_bytes: storage.resident_current_bytes(),
+                resident_capacity_bytes: storage.resident_capacity_bytes(),
+            });
         }
         storage.frame_count = 0;
         storage.record_count = 0;
@@ -1493,6 +1633,8 @@ impl OrderedBlockSource for ManagedSpillBlockSource {
         if storage.frame_count == 0 {
             return Ok(SourcePoll::Exhausted);
         }
+        let source_ordinal = u32::try_from(self.blocks_filled)
+            .map_err(|_| ManagedSpillError::ArithmeticOverflow("artifact source ordinal"))?;
         self.blocks_filled =
             self.blocks_filled
                 .checked_add(1)
@@ -1500,7 +1642,7 @@ impl OrderedBlockSource for ManagedSpillBlockSource {
                     "artifact source blocks",
                 ))?;
         Ok(SourcePoll::Ready {
-            source_ordinal: 0,
+            source_ordinal,
             logical_units: storage.frame_count,
             logical_bytes,
             source_read_operations,
@@ -1511,6 +1653,89 @@ impl OrderedBlockSource for ManagedSpillBlockSource {
 
     fn complete(self) -> Result<Self::Completion, Self::Error> {
         self.complete_read()
+    }
+}
+
+impl OrderedBlockSource for ManagedSpillRetainedBlockSource {
+    type Storage = ManagedSpillWindowStorage;
+    type Completion = ManagedSpillReadCompletion;
+    type Error = ManagedSpillError;
+
+    fn create_storage(&self, slot: usize) -> Self::Storage {
+        self.created_slots.fetch_max(slot + 1, Ordering::AcqRel);
+        ManagedSpillWindowStorage {
+            bytes: Vec::new(),
+            frame_count: 0,
+            record_count: 0,
+            used_len: 0,
+        }
+    }
+
+    fn fill(
+        &mut self,
+        block_ordinal: u64,
+        storage: &mut Self::Storage,
+        cancellation: SourceFillCancellation<'_>,
+    ) -> Result<SourcePoll, Self::Error> {
+        if cancellation.is_cancelled() {
+            return Ok(SourcePoll::Exhausted);
+        }
+        let Some(mut retained) = self.windows.pop_front() else {
+            return Ok(SourcePoll::Exhausted);
+        };
+        let source_ordinal = u32::try_from(block_ordinal)
+            .map_err(|_| ManagedSpillError::ArithmeticOverflow("retained source ordinal"))?;
+        let logical_bytes = retained.frames().try_fold(0_u64, |total, frame| {
+            total
+                .checked_add(u64::try_from(frame.payload().len()).map_err(|_| {
+                    ManagedSpillError::ArithmeticOverflow("retained frame payload bytes")
+                })?)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "retained window payload bytes",
+                ))
+        })?;
+        std::mem::swap(storage, &mut retained);
+        self.blocks_filled =
+            self.blocks_filled
+                .checked_add(1)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "retained source blocks",
+                ))?;
+        Ok(SourcePoll::Ready {
+            source_ordinal,
+            logical_units: storage.frame_count,
+            logical_bytes,
+            source_read_operations: 0,
+            resident_current_bytes: storage.resident_current_bytes(),
+            resident_capacity_bytes: storage.resident_capacity_bytes(),
+        })
+    }
+
+    fn complete(self) -> Result<Self::Completion, Self::Error> {
+        if !self.windows.is_empty() {
+            return Err(ManagedSpillError::IncompleteRead);
+        }
+        let slots = u64::try_from(self.created_slots.load(Ordering::Acquire))
+            .map_err(|_| ManagedSpillError::ArithmeticOverflow("retained source slots"))?;
+        Ok(ManagedSpillReadCompletion {
+            seal: self.seal,
+            measurements: ManagedSpillMeasurements {
+                direction: ManagedSpillIoDirection::Read,
+                artifact_bytes: self.seal.artifact_bytes,
+                payload_bytes: self.seal.payload_bytes,
+                frame_count: self.seal.frame_count,
+                record_count: self.seal.record_count,
+                transferred_bytes: 0,
+                operations: 0,
+                sha256_bytes: 0,
+                sha256_calls: 0,
+                peak_buffer_bytes: self.retained_bytes,
+                payload_copy_bytes: self.seal.payload_bytes,
+                payload_copy_operations: self.seal.frame_count,
+                buffer_allocations: slots,
+                buffer_reuses: self.blocks_filled.saturating_sub(slots),
+            },
+        })
     }
 }
 
@@ -2282,6 +2507,114 @@ mod tests {
         let second = execute_artifact(&artifact, 1).expect("second bounded replay");
         assert_eq!(second.kernel_completion.payloads.len(), 2);
         assert_private_file_count(root.path(), 1);
+    }
+
+    #[test]
+    fn retained_source_loads_once_then_replays_without_disk_io() {
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let source_slot_bytes = artifact
+            .budget
+            .source_slot_bytes(1)
+            .expect("single-frame source capacity");
+        let retained = artifact
+            .load_retained_block_source(Arc::from([1, 1]), source_slot_bytes)
+            .expect("retained source load");
+        let retained_bytes = retained.retained_bytes();
+        let load = retained.load_measurements();
+        assert_eq!(
+            load.io_measurement().actual(),
+            Some((artifact.seal.artifact_bytes, load.operations))
+        );
+        assert_eq!(
+            retained_bytes,
+            u64::try_from(2 * FRAME_HEADER_BYTES + 17).expect("retained bytes fit u64")
+        );
+
+        let outcome = execute_bounded(
+            BoundedStreamPlan::new::<(), ()>(2, 1, source_slot_bytes * 2, 1, 0)
+                .expect("bounded retained plan")
+                .with_maximum_logical_units_per_block(1)
+                .expect("single-frame retained windows"),
+            0,
+            retained,
+            CollectKernel::default(),
+        )
+        .expect("retained replay");
+
+        assert_eq!(
+            outcome.kernel_completion.payloads,
+            vec![(0, 2, b"first-frame".to_vec()), (1, 1, b"second".to_vec())]
+        );
+        let replay = outcome.source_completion.measurements();
+        assert_eq!(replay.io_measurement().actual(), Some((0, 0)));
+        assert_eq!(replay.payload_copy_bytes(), artifact.seal.payload_bytes);
+        assert_eq!(replay.payload_copy_operations(), artifact.seal.frame_count);
+        assert_eq!(replay.peak_buffer_bytes(), retained_bytes);
+    }
+
+    #[test]
+    fn prefetched_window_is_read_once_then_consumed_by_bounded_replay() {
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let source_slot_bytes = artifact
+            .budget
+            .source_slot_bytes(1)
+            .expect("single-frame source capacity");
+        let mut source = artifact
+            .planned_block_source(Arc::from([1, 1]), source_slot_bytes)
+            .expect("planned managed source");
+        let prefetch = source
+            .prefetch_first_window()
+            .expect("first sealed window is prefetched");
+        assert_eq!(prefetch.frame_count(), 1);
+        assert_eq!(prefetch.record_count(), 2);
+        assert_eq!(prefetch.payload_bytes(), b"first-frame".len() as u64);
+        assert!(prefetch.transferred_bytes() > 0);
+        assert!(prefetch.operations() > 0);
+        assert_eq!(prefetch.peak_buffer_bytes(), source_slot_bytes);
+
+        let outcome = execute_bounded(
+            BoundedStreamPlan::new::<(), ()>(2, 1, source_slot_bytes * 2, 1, 0)
+                .expect("bounded managed plan")
+                .with_maximum_logical_units_per_block(1)
+                .expect("single-frame managed windows"),
+            0,
+            source,
+            CollectKernel::default(),
+        )
+        .expect("prefetched managed replay");
+        assert_eq!(
+            outcome.kernel_completion.payloads,
+            vec![(0, 2, b"first-frame".to_vec()), (1, 1, b"second".to_vec())]
+        );
+        assert_eq!(outcome.measurements.blocks_filled, 2);
+        assert_eq!(outcome.measurements.logical_units_filled, 2);
+        assert_eq!(outcome.measurements.peak_logical_units_per_block, 1);
+        let replay = outcome.source_completion.measurements();
+        assert!(replay.transferred_bytes() > 0);
+        assert!(replay.operations() > 0);
+        assert_eq!(
+            prefetch.transferred_bytes() + replay.transferred_bytes(),
+            artifact.seal().artifact_bytes(),
+            "replay must not reread the prefetched window"
+        );
+    }
+
+    #[test]
+    fn prefetch_reports_first_window_integrity_failure_without_replay_fallback() {
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let payload_offset = (FILE_HEADER_BYTES + FRAME_HEADER_BYTES) as u64;
+        write_all_at(&artifact_file(&artifact), b"X", payload_offset);
+        let source_slot_bytes = artifact
+            .budget
+            .source_slot_bytes(1)
+            .expect("single-frame source capacity");
+        let mut source = artifact
+            .planned_block_source(Arc::from([1, 1]), source_slot_bytes)
+            .expect("planned managed source");
+        assert!(matches!(
+            source.prefetch_first_window(),
+            Err(ManagedSpillError::FrameChecksumMismatch { sequence: 0 })
+        ));
     }
 
     #[test]

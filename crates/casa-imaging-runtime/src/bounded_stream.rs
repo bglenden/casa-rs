@@ -127,6 +127,10 @@ pub(crate) enum SourcePoll {
 pub(crate) struct SourceFillCancellation<'a>(&'a AtomicBool);
 
 impl SourceFillCancellation<'_> {
+    pub(crate) const fn new(cancelled: &AtomicBool) -> SourceFillCancellation<'_> {
+        SourceFillCancellation(cancelled)
+    }
+
     #[must_use]
     pub(crate) fn is_cancelled(self) -> bool {
         self.0.load(Ordering::Acquire)

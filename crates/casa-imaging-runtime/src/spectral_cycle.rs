@@ -23,14 +23,15 @@ use casa_imaging_reconstruction::{
 
 use crate::complete_data_operator::{GriddedNormalReplayCompilation, PendingCompleteDataSlabFold};
 use crate::{
-    AttemptBoundObservationCompletion, CompleteDataOperatorResult, CompleteDataPlanFragment,
-    CompleteDataPreparedState, FenceKind, FrozenGriddedNormalReplay, FrozenWeightingArtifact,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    IoMeasurement, LeaseResource, MajorCycleOperatorResult, MajorCycleOperatorState,
-    ObservationReadCompletionContext, ResourceMeasurement, SelectedObservationSourceResources,
-    SpectralOperatorState, SpectralPassIdentity, WeightingExecutionState, WeightingPlanFragment,
-    WeightingReplayCompletion, WorkDependency, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkKind, WorkMeasurements, WorkNodeId,
+    AttemptBoundObservationCompletion, BatchMeasurement, CompleteDataOperatorResult,
+    CompleteDataPlanFragment, CompleteDataPreparedState, FenceKind, FrozenGriddedNormalReplay,
+    FrozenWeightingArtifact, ImplementationContractMetadata, ImplementationRegistry,
+    ImplementationRegistryId, IoMeasurement, LeaseResource, MajorCycleOperatorResult,
+    MajorCycleOperatorState, ObservationReadCompletionContext, ResourceMeasurement,
+    SelectedObservationSourceResources, SpectralOperatorState, SpectralPassIdentity,
+    WeightingExecutionState, WeightingPlanFragment, WeightingReplayCompletion, WorkDependency,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements,
+    WorkNodeId,
 };
 
 use casa_imaging_reconstruction::WeightingPlan;
@@ -948,6 +949,15 @@ struct SpectralCycleExecutorState {
     reconstruction_masks: Option<ReconstructionMaskSet>,
     output_completion: Option<MajorCycleCompletion>,
     complete_data_source_pass_count: u64,
+    adaptation_route: Option<SpectralAdaptationRouteBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SpectralAdaptationRouteBinding {
+    preparation: WorkNodeId,
+    knobs: crate::ExecutionKnobs,
+    low_memory: bool,
+    io_authorized: bool,
 }
 
 #[derive(Debug)]
@@ -1208,6 +1218,7 @@ impl SpectralCycleExecutor {
                 reconstruction_masks: None,
                 output_completion: None,
                 complete_data_source_pass_count: 0,
+                adaptation_route: None,
             }),
         }
     }
@@ -1272,6 +1283,7 @@ impl SpectralCycleExecutor {
                 reconstruction_masks: None,
                 output_completion: None,
                 complete_data_source_pass_count: 0,
+                adaptation_route: None,
             }),
         })
     }
@@ -1326,6 +1338,7 @@ impl SpectralCycleExecutor {
                 reconstruction_masks: None,
                 output_completion: Some(completion),
                 complete_data_source_pass_count: 0,
+                adaptation_route: None,
             }),
         }
     }
@@ -1463,6 +1476,105 @@ impl SpectralCycleExecutor {
         ))
     }
 
+    fn select_adaptation_route(
+        &self,
+        state: &mut SpectralCycleExecutorState,
+        context: WorkExecutionContext<'_>,
+        low_memory: bool,
+    ) -> io::Result<()> {
+        if state.adaptation_route.is_some()
+            || context.knobs().recomputation != low_memory
+            || state.prepared.is_none()
+        {
+            return Err(io::Error::other(
+                "spectral adaptation preparation did not select one exact route",
+            ));
+        }
+        state.adaptation_route = Some(SpectralAdaptationRouteBinding {
+            preparation: context.node().id.clone(),
+            knobs: context.knobs().clone(),
+            low_memory,
+            io_authorized: !low_memory,
+        });
+        Ok(())
+    }
+
+    fn authorize_adaptation_io(
+        &self,
+        state: &mut SpectralCycleExecutorState,
+        context: WorkExecutionContext<'_>,
+        low_memory: bool,
+    ) -> io::Result<()> {
+        let route = state
+            .adaptation_route
+            .as_mut()
+            .ok_or_else(|| io::Error::other("managed I/O route lacks its selected preparation"))?;
+        if !low_memory
+            || !route.low_memory
+            || route.knobs != *context.knobs()
+            || route.io_authorized
+            || !context
+                .node()
+                .dependencies
+                .contains(&WorkDependency::Work(route.preparation.clone()))
+        {
+            return Err(io::Error::other(
+                "managed I/O route changed its plan-selected preparation or execution knobs",
+            ));
+        }
+        match self.pass.phase() {
+            crate::SpectralPassPhase::InitialMajor => {
+                if !context.knobs().spill || context.node().kind != WorkKind::Spill {
+                    return Err(io::Error::other(
+                        "initial-major managed spill lacks its selected spill route",
+                    ));
+                }
+            }
+            crate::SpectralPassPhase::FinalMajor => {
+                if context.node().kind != WorkKind::Prefetch || !context.knobs().prefetch {
+                    return Err(io::Error::other(
+                        "gridded replay changed its selected prefetch route",
+                    ));
+                }
+                state
+                    .gridded_replay
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("sealed gridded-normal replay missing"))?
+                    .prepare_managed_source(context)?;
+            }
+        }
+        route.io_authorized = true;
+        Ok(())
+    }
+
+    fn validate_adaptation_route(
+        &self,
+        state: &SpectralCycleExecutorState,
+        context: WorkExecutionContext<'_>,
+    ) -> io::Result<()> {
+        let route_join = crate::spectral_cycle_plan::adaptation_route_join_node(self.pass);
+        if !context
+            .node()
+            .dependencies
+            .contains(&WorkDependency::Work(route_join))
+        {
+            return Ok(());
+        }
+        let route = state.adaptation_route.as_ref().ok_or_else(|| {
+            io::Error::other("spectral science work lacks its plan-selected adaptation route")
+        })?;
+        if route.knobs != *context.knobs()
+            || route.low_memory != context.knobs().recomputation
+            || ((state.gridded_storage.is_some() || state.gridded_replay.is_some())
+                && !route.io_authorized)
+        {
+            return Err(io::Error::other(
+                "spectral science work changed or bypassed its selected adaptation route",
+            ));
+        }
+        Ok(())
+    }
+
     /// Consume the authoritative phase result after run success.
     pub fn take_completion(&self) -> Option<MajorCycleOperatorResult> {
         self.state.lock().ok()?.result.take()
@@ -1558,6 +1670,7 @@ impl SpectralCycleExecutor {
         fragment: &WeightingPlanFragment<'_>,
         selected: Option<BoundSelectedObservation>,
     ) -> Result<(), io::Error> {
+        self.validate_adaptation_route(state, context)?;
         if state.gridded_compilation.is_none()
             && let Some(storage) = state.gridded_storage.as_ref()
         {
@@ -1800,6 +1913,7 @@ impl SpectralCycleExecutor {
         state: &mut SpectralCycleExecutorState,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), io::Error> {
+        self.validate_adaptation_route(state, context)?;
         let prepared = state
             .prepared
             .take()
@@ -2192,6 +2306,32 @@ impl SpectralCycleExecutor {
     ) -> Result<WorkMeasurements, io::Error> {
         let final_model_preparation =
             crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
+        let retained_route = crate::spectral_cycle_plan::retained_route_node(self.pass);
+        let low_memory_io_route = crate::spectral_cycle_plan::low_memory_io_route_node(self.pass);
+        let retained_cache_load = (context.node().id == retained_route)
+            .then(|| {
+                state
+                    .gridded_replay
+                    .as_ref()
+                    .and_then(FrozenGriddedNormalReplay::latest_cache_load_measurements)
+            })
+            .flatten();
+        let retained_cache_bytes = (context.node().id == retained_route)
+            .then(|| {
+                state
+                    .gridded_replay
+                    .as_ref()
+                    .and_then(FrozenGriddedNormalReplay::latest_cache_resident_bytes)
+            })
+            .flatten();
+        let prefetch_measurements = (context.node().id == low_memory_io_route)
+            .then(|| {
+                state
+                    .gridded_replay
+                    .as_ref()
+                    .and_then(FrozenGriddedNormalReplay::latest_prefetch_measurements)
+            })
+            .flatten();
         let replay_measurements = (context.node().id == *self.complete_data.replay_node())
             .then(|| {
                 state
@@ -2200,12 +2340,48 @@ impl SpectralCycleExecutor {
                     .and_then(FrozenGriddedNormalReplay::latest_read_measurements)
             })
             .flatten();
+        let actual_batch = (context.node().id == *self.complete_data.replay_node())
+            .then(|| {
+                state
+                    .gridded_replay
+                    .as_ref()
+                    .and_then(FrozenGriddedNormalReplay::latest_stream_measurements)
+            })
+            .flatten()
+            .map(|measurements| {
+                Ok::<_, io::Error>(BatchMeasurement::new(
+                    u64::try_from(measurements.maximum_logical_units_per_block).map_err(|_| {
+                        io::Error::other("replay batch maximum exceeds receipt domain")
+                    })?,
+                    u64::try_from(measurements.peak_logical_units_per_block).map_err(|_| {
+                        io::Error::other("replay batch peak exceeds receipt domain")
+                    })?,
+                ))
+            })
+            .transpose()?;
         let resources = context
             .node()
             .claims
             .iter()
             .map(|claim| {
                 let peak = match (&claim.resource, replay_measurements) {
+                    (&LeaseResource::ResidentCache, _) if retained_cache_bytes.is_some() => {
+                        retained_cache_bytes.expect("retained cache residency was checked")
+                    }
+                    (&LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead), _)
+                        if retained_cache_load.is_some() =>
+                    {
+                        retained_cache_load
+                            .expect("retained cache load was checked")
+                            .peak_buffer_bytes()
+                    }
+                    (&LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead), _)
+                        if prefetch_measurements.is_some() =>
+                    {
+                        prefetch_measurements
+                            .expect("prefetch measurement was checked")
+                            .peak_buffer_bytes()
+                    }
                     (
                         &LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead),
                         Some(measurements),
@@ -2228,9 +2404,25 @@ impl SpectralCycleExecutor {
             .iter()
             .filter_map(|claim| match claim.resource {
                 LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead) => {
-                    Some(replay_measurements.map_or_else(
-                        || IoMeasurement::unobserved(crate::IoBufferKind::SpillRead),
-                        |measurements| measurements.io_measurement(),
+                    Some(if let Some(measurements) = prefetch_measurements {
+                        measurements.io_measurement()
+                    } else {
+                        replay_measurements.map_or_else(
+                            || IoMeasurement::unobserved(crate::IoBufferKind::SpillRead),
+                            |measurements| measurements.io_measurement(),
+                        )
+                    })
+                }
+                LeaseResource::IoBuffer(crate::IoBufferKind::SourceReadAhead) => {
+                    Some(retained_cache_load.map_or_else(
+                        || IoMeasurement::unobserved(crate::IoBufferKind::SourceReadAhead),
+                        |measurements| {
+                            IoMeasurement::new(
+                                crate::IoBufferKind::SourceReadAhead,
+                                measurements.transferred_bytes(),
+                                measurements.operations(),
+                            )
+                        },
                     ))
                 }
                 LeaseResource::IoBuffer(crate::IoBufferKind::Serialization) => {
@@ -2262,10 +2454,19 @@ impl SpectralCycleExecutor {
                     .filter(|_| context.node().id == *self.complete_data.replay_node())
                     .map(|descriptor| {
                         let identity = descriptor.identity();
+                        let disposition = if state
+                            .adaptation_route
+                            .as_ref()
+                            .is_some_and(|route| !route.low_memory)
+                        {
+                            crate::ArtifactDisposition::Reused
+                        } else {
+                            crate::ArtifactDisposition::Loaded
+                        };
                         crate::ArtifactMeasurement::new(
                             identity,
                             Some(identity),
-                            crate::ArtifactDisposition::Loaded,
+                            disposition,
                             descriptor.bytes(),
                             None,
                         )
@@ -2273,7 +2474,11 @@ impl SpectralCycleExecutor {
                     }),
             )
             .collect();
-        Ok(WorkMeasurements::new(resources, io, artifacts))
+        let measurements = WorkMeasurements::new(resources, io, artifacts);
+        Ok(match actual_batch {
+            Some(batch) => measurements.with_batch(batch),
+            None => measurements,
+        })
     }
 }
 
@@ -2293,6 +2498,12 @@ impl WorkImplementation for SpectralCycleExecutor {
                 .map_err(|_| io::Error::other("spectral cycle state poisoned"))?;
             let final_model_preparation =
                 crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
+            let retained_route = crate::spectral_cycle_plan::retained_route_node(self.pass);
+            let recompute_route = crate::spectral_cycle_plan::recompute_route_node(self.pass);
+            let low_memory_io_route =
+                crate::spectral_cycle_plan::low_memory_io_route_node(self.pass);
+            let adaptation_route_join =
+                crate::spectral_cycle_plan::adaptation_route_join_node(self.pass);
             if context.node().id == final_model_preparation {
                 if self.mode == SpectralCycleExecutionMode::Science {
                     Self::prepare_final_model(&mut state, context)?;
@@ -2313,10 +2524,56 @@ impl WorkImplementation for SpectralCycleExecutor {
                         .prepare(context)
                         .map_err(io::Error::other)?,
                 );
+            } else if context.node().id == retained_route {
+                if context.node().kind != WorkKind::Cache {
+                    return Err(io::Error::other(
+                        "retained spectral route has the wrong work kind",
+                    ));
+                }
+                state
+                    .gridded_replay
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("sealed gridded-normal replay missing"))?
+                    .prepare_retained_source(context)?;
+                self.select_adaptation_route(&mut state, context, false)?;
+            } else if context.node().id == recompute_route {
+                if state.prepared.take().is_none() {
+                    return Err(io::Error::other(
+                        "low-memory recomputation lacks the canonical prepared state",
+                    ));
+                }
+                state.prepared = Some(
+                    self.complete_data
+                        .recompute(context)
+                        .map_err(io::Error::other)?,
+                );
+                self.select_adaptation_route(&mut state, context, true)?;
+            } else if context.node().id == low_memory_io_route {
+                self.authorize_adaptation_io(&mut state, context, true)?;
+            } else if context.node().id == adaptation_route_join {
+                let route = state.adaptation_route.as_ref().ok_or_else(|| {
+                    io::Error::other("adaptation route join lacks its selected route")
+                })?;
+                if route.knobs != *context.knobs()
+                    || route.low_memory != context.knobs().recomputation
+                    || ((state.gridded_storage.is_some() || state.gridded_replay.is_some())
+                        && !route.io_authorized)
+                {
+                    return Err(io::Error::other(
+                        "adaptation route join observed incomplete route work",
+                    ));
+                }
             } else if self.mode == SpectralCycleExecutionMode::Science
                 && self.pass.phase() == crate::SpectralPassPhase::FinalMajor
                 && context.node().id == *self.complete_data.replay_node()
             {
+                if state.adaptation_route.is_none() {
+                    state
+                        .gridded_replay
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("sealed gridded-normal replay missing"))?
+                        .prepare_managed_source(context)?;
+                }
                 self.run_gridded_replay(&mut state, context)?;
             } else if fragment
                 .as_ref()
