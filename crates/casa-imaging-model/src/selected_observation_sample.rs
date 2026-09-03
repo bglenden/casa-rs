@@ -1628,7 +1628,7 @@ mod tests {
     }
 
     #[test]
-    fn spectral_contributions_are_bounded_values_outside_the_selected_sample_schema() {
+    fn spectral_contributions_are_finite_nonzero_values_outside_the_selected_sample_schema() {
         let first = SelectedSpectralContribution::new(2, 0.25, 1.4e9).expect("finite coefficient");
         let second = SelectedSpectralContribution::new(3, 0.75, 1.4e9).expect("finite coefficient");
         let contributions = SelectedSpectralContributions::new([Some(first), Some(second)])
@@ -1643,10 +1643,22 @@ mod tests {
         );
         assert_eq!(SelectedSpectralContributions::empty().iter().count(), 0);
         assert!(SelectedSpectralContribution::new(0, f64::NAN, 1.4e9).is_none());
-        assert!(SelectedSpectralContribution::new(0, -0.5, 1.4e9).is_none());
-        assert!(SelectedSpectralContribution::new(0, 1.5, 1.4e9).is_none());
+        assert_eq!(
+            SelectedSpectralContribution::new(0, -0.5, 1.4e9)
+                .expect("cubic coefficients may be signed")
+                .factor(),
+            -0.5
+        );
+        assert!(SelectedSpectralContribution::new(0, 1.5, 1.4e9).is_some());
+        assert!(SelectedSpectralContribution::new(0, 0.0, 1.4e9).is_none());
         assert!(SelectedSpectralContribution::new(0, 1.0, f64::NAN).is_none());
-        assert!(SelectedSpectralContributions::new([None, Some(first)]).is_none());
+        assert_eq!(
+            SelectedSpectralContributions::new([None, Some(first)])
+                .expect("absent sparse entries are omitted")
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![first]
+        );
         assert!(SelectedSpectralContributions::new([Some(first), Some(first)]).is_none());
         assert_eq!(SelectedObservationSample::SCHEMA_VERSION, 5);
 
