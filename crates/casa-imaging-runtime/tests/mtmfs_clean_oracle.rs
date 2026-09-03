@@ -20,17 +20,16 @@ use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
     CpuClassCapacity, ExecutionAttemptId, ExecutionProvenance, ExecutionReceiptStore,
     ExternalPressure, FenceKind, FrozenGriddedNormalReplay, FrozenWeightingArtifact,
-    FrozenWeightingReservation, GriddedNormalReplayStorage, HostInventory,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
-    ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
-    PlanningBindings, QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit,
-    ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, ResourceTopology,
-    RunBindings, RunToCompletion, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
-    SpectralCycleRegistry, StorageDomain, StorageDomainId, StorageIoResourceBinding,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
-    plan as runtime_plan, run as runtime_run,
+    FrozenWeightingReservation, HostInventory, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, ManagedSpillStorage, MemoryCapacityDomain,
+    MemoryCapacityKind, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
+    PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings, QueueResource,
+    QueueResourceId, RateResource, RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority,
+    ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion,
+    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
+    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain,
+    StorageDomainId, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkMeasurements, plan as runtime_plan, run as runtime_run,
 };
 use serde_json::json;
 
@@ -127,11 +126,8 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     ))?;
     let gridded_normal_directory = artifact_directory.path().join("gridded-normal");
     fs::create_dir_all(&gridded_normal_directory)?;
-    let storage = GriddedNormalReplayStorage::bind(
-        authority,
-        artifact_storage_io(),
-        gridded_normal_directory,
-    )?;
+    let storage =
+        ManagedSpillStorage::bind(authority, artifact_storage_io(), gridded_normal_directory)?;
     let residency = selected.residency_certificate().clone();
     let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
         workers: Some(1),

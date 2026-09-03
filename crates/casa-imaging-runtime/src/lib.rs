@@ -10,9 +10,9 @@ mod continuum_transform;
 mod cost_model;
 mod execution;
 mod execution_bindings;
-#[allow(dead_code)]
-mod gridded_normal_artifact;
 mod major_cycle;
+#[allow(dead_code)]
+mod managed_spill;
 mod metal_runtime;
 mod observation_transaction;
 mod prepared_artifact;
@@ -63,8 +63,8 @@ pub use execution::{
     WorkAllocationCapability, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode,
     WorkNodeId, WorkResourceCapability,
 };
-pub use gridded_normal_artifact::GriddedNormalReplayStorage;
 pub use major_cycle::{MajorCycleOperatorError, MajorCycleOperatorResult, MajorCycleOperatorState};
+pub use managed_spill::ManagedSpillStorage;
 pub use metal_runtime::{
     MetalExecutionDecision, MetalNodeDecision, MetalRuntimeError, MetalRuntimeInventory,
 };

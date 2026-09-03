@@ -42,9 +42,9 @@ use casa_imaging_reconstruction::{
     ReconstructionMaskPlan, WeightingExecutionLimits, minor_cycle_workspace_bytes,
 };
 use casa_imaging_runtime::{
-    BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, GriddedNormalReplayStorage,
-    ImplementationRegistryId, PlannerCostModelProfileId, ProductionStorageProfile,
-    ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
+    ManagedSpillStorage, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
+    ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
@@ -2883,7 +2883,7 @@ fn runtime(
     let authority = ResourceAuthority::production_with_storage_profile(profile)?.clone();
     let storage_io = profile.io_resources();
     let gridded_normal_storage =
-        GriddedNormalReplayStorage::bind(&authority, storage_io.clone(), &output_directory)?;
+        ManagedSpillStorage::bind(&authority, storage_io.clone(), &output_directory)?;
     Ok(ApplicationRuntime {
         registry: ImplementationRegistryId::from_sha256(hash(b"spectral-cycle-registry")),
         implementation: WorkImplementationId::new("spectral-cycle-cpu-v1"),

@@ -54,12 +54,12 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::{
-    GriddedNormalReplayStorage, ProductionStorageProfile, ResourceAuthority,
+    ManagedSpillStorage, ProductionStorageProfile, ResourceAuthority,
     complete_data_operator::{
         GriddedNormalCompilationMeasurements, GriddedNormalReplayCompilation,
-        project_gridded_normal_artifact_budget,
+        project_managed_spill_budget,
     },
-    gridded_normal_artifact::{GriddedNormalArtifactMeasurements, GriddedNormalArtifactSeal},
+    managed_spill::{ManagedSpillMeasurements, ManagedSpillSeal},
 };
 
 const DATA_ROOT_ENV: &str = "CASA_RS_IMPERF_DATA_ROOT";
@@ -379,7 +379,7 @@ struct CapturedBlocks<'a> {
 
 struct StageLocalReplayStorage {
     _root: TempDir,
-    storage: GriddedNormalReplayStorage,
+    storage: ManagedSpillStorage,
     resource_signature: [String; 4],
     maximum_artifact_bytes: u64,
     io_buffer_bytes: u64,
@@ -409,9 +409,9 @@ struct InitialWeightedSignature {
     operator_coverage_proof_hash_calls: u64,
     normal_state_identity: String,
     artifact_identity: String,
-    artifact_seal: GriddedNormalArtifactSeal,
+    artifact_seal: ManagedSpillSeal,
     compilation: GriddedNormalCompilationMeasurements,
-    write: GriddedNormalArtifactMeasurements,
+    write: ManagedSpillMeasurements,
     resource_signature: [String; 4],
     maximum_artifact_bytes: u64,
     io_buffer_bytes: u64,
@@ -448,7 +448,7 @@ struct InitialWeightedObservation {
 
 impl StageLocalReplayStorage {
     fn new(problem: &CompiledProblem, max_block_samples: usize) -> Result<Self, Box<dyn Error>> {
-        let budget = project_gridded_normal_artifact_budget(problem, max_block_samples)?;
+        let budget = project_managed_spill_budget(problem, max_block_samples)?;
         let root = tempfile::tempdir()?;
         let profile = ProductionStorageProfile::new(
             root.path(),
@@ -467,7 +467,7 @@ impl StageLocalReplayStorage {
             resources.write_rate().as_str().to_string(),
             resources.queue().as_str().to_string(),
         ];
-        let storage = GriddedNormalReplayStorage::bind(&authority, resources, root.path())?;
+        let storage = ManagedSpillStorage::bind(&authority, resources, root.path())?;
         Ok(Self {
             _root: root,
             storage,

@@ -67,10 +67,10 @@ use casa_imaging_runtime::{
     ExecutionEvidenceError, ExecutionKnobs, ExecutionOutcome, ExecutionPlanId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ExecutionStatus,
     ExternalPressure, FenceId, FenceKind, FinalVisibilitySink, FrozenWeightingReservation,
-    GriddedNormalReplayStorage, HostInventory, ImplementationContractCatalog,
-    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
-    InitializationPolicy, IoBufferDemand, IoBufferKind, IoMeasurement, IoPrediction, LeaseResource,
-    LogicalAllocation, MajorCycleOperatorResult, MajorCycleOperatorState, MemoryCapacityDomain,
+    HostInventory, ImplementationContractCatalog, ImplementationContractMetadata,
+    ImplementationRegistry, ImplementationRegistryId, InitializationPolicy, IoBufferDemand,
+    IoBufferKind, IoMeasurement, IoPrediction, LeaseResource, LogicalAllocation,
+    MajorCycleOperatorResult, MajorCycleOperatorState, ManagedSpillStorage, MemoryCapacityDomain,
     MemoryCapacityKind, MemoryDemand, MemoryView, MemoryViewKind, ObservationReadCompletionContext,
     ObservationTransactionWork, PhysicalLayoutId, PhysicalSlot, PhysicalSlotId,
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
@@ -202,11 +202,11 @@ fn artifact_storage_io() -> StorageIoResourceBinding {
     )
 }
 
-fn artifact_storage() -> GriddedNormalReplayStorage {
+fn artifact_storage() -> ManagedSpillStorage {
     let directory = Path::new("/tmp/casa-rs-imaging-runtime-tests");
-    fs::create_dir_all(directory).expect("create gridded-normal artifact directory");
-    GriddedNormalReplayStorage::bind(authority(), artifact_storage_io(), directory)
-        .expect("bind gridded-normal artifact storage")
+    fs::create_dir_all(directory).expect("create managed spill artifact directory");
+    ManagedSpillStorage::bind(authority(), artifact_storage_io(), directory)
+        .expect("bind managed spill artifact storage")
 }
 
 fn selected_observation_bindings(
@@ -1268,6 +1268,7 @@ fn recording_executor(
         calls: AtomicUsize::new(0),
         fence_waits: AtomicUsize::new(0),
         observed_knobs: Mutex::new(Vec::new()),
+        aborted_nodes: Mutex::new(Vec::new()),
         measurements: BTreeMap::new(),
         fence_measurement_node: None,
         resource_peak_overrides: BTreeMap::new(),
@@ -1499,6 +1500,7 @@ struct RecordingExecutor {
     calls: AtomicUsize,
     fence_waits: AtomicUsize,
     observed_knobs: Mutex<Vec<ExecutionKnobs>>,
+    aborted_nodes: Mutex<Vec<WorkNodeId>>,
     measurements: BTreeMap<WorkNodeId, (Vec<IoMeasurement>, Vec<ArtifactMeasurement>)>,
     fence_measurement_node: Option<WorkNodeId>,
     resource_peak_overrides: BTreeMap<WorkNodeId, u64>,
@@ -1882,6 +1884,14 @@ impl WorkImplementation for RecordingExecutor {
 
     fn implementation_id(&self) -> &WorkImplementationId {
         &self.id
+    }
+
+    fn abort_node_io(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+        self.aborted_nodes
+            .lock()
+            .expect("recording executor abort lock")
+            .push(owner_node.clone());
+        Ok(())
     }
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
@@ -2573,7 +2583,7 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
     ))
     .expect("logical continuum compilation");
-    let registry = test_registry(&problem, 3, 6, None);
+    let implementation_registry = test_registry(&problem, 3, 6, None);
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(6),
         WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
@@ -2588,7 +2598,7 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         ResourcePolicy::Balanced,
     )
     .with_gridded_normal_storage(artifact_storage());
-    let plan = SpectralCyclePlan::initial(&problem, &registry, policy)
+    let plan = SpectralCyclePlan::initial(&problem, &implementation_registry, policy)
         .expect("production initial-major plan");
     let minor = plan.minor_cycle_node().expect("initial plan owns T21");
     let node = &plan.physical_work().execution_dag().nodes()[minor];
@@ -2610,21 +2620,205 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         .execution_dag()
         .resource_alternative()
         .demand;
-    assert!(demand.rates.iter().any(|rate| {
-        rate.demand_id
-            .starts_with("gridded-normal-spill-write-rate")
-            && rate.resource == RateResourceId::new("io-rate")
+    assert!(demand.storage.iter().any(|storage| {
+        storage.demand_id.starts_with("managed-spill-storage")
+            && storage.write_rate.hard() > 0
+            && storage.operations_rate.hard() == 0
+            && storage.queue_slots.hard() > 0
     }));
+    assert!(demand.io_buffers.serialization_bytes > 0);
     assert!(
-        demand
-            .queues
-            .iter()
-            .any(|queue| queue.resource == QueueResourceId::new("io-queue"))
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .headroom
+            .memory_bytes
+            .get(&CapacityDomainId::new("host-memory"))
+            .is_some_and(|bytes| *bytes > 0),
+        "one bounded spill window is reserved as page-cache pressure"
     );
-    assert!(!demand.rates.iter().any(|rate| {
-        rate.demand_id.starts_with("gridded-normal-spill")
-            && rate.resource == RateResourceId::new("transaction-io-rate")
-    }));
+    assert_eq!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .headroom
+            .cache_bytes,
+        0,
+        "reclaimable kernel pages are not a retained application cache"
+    );
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .nodes()
+            .values()
+            .flat_map(|node| &node.claims)
+            .all(|claim| !matches!(claim.resource, LeaseResource::StorageOperationsRate { .. })),
+        "IOPS is observed from execution, never required for spill eligibility"
+    );
+}
+
+#[test]
+fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve() {
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
+    ))
+    .expect("logical continuum compilation");
+    let implementation_registry = test_registry(&problem, 3, 6, None);
+    let plan_with =
+        |authority: &ResourceAuthority, storage_io: StorageIoResourceBinding, directory: &Path| {
+            let storage = ManagedSpillStorage::bind(authority, storage_io.clone(), directory)
+                .expect("bind managed spill storage");
+            SpectralCyclePlan::initial(
+                &problem,
+                &implementation_registry,
+                SpectralCycleExecutionPolicy::new(
+                    implementation(6),
+                    WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+                    selected_content_residency(&problem),
+                    storage_io,
+                    SpectralCyclePlanningLimits::new(
+                        1_000,
+                        8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                        900_000,
+                    ),
+                    authority.clone(),
+                    ResourcePolicy::Balanced,
+                )
+                .with_gridded_normal_storage(storage),
+            )
+        };
+
+    let baseline = SpectralCyclePlan::initial(
+        &problem,
+        &implementation_registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+            selected_content_residency(&problem),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(
+                1_000,
+                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                900_000,
+            ),
+            authority().clone(),
+            ResourcePolicy::Balanced,
+        )
+        .with_gridded_normal_storage(artifact_storage()),
+    )
+    .expect("baseline spill plan");
+    let required_storage_bytes = baseline
+        .physical_work()
+        .execution_dag()
+        .resource_alternative()
+        .demand
+        .storage
+        .iter()
+        .filter(|demand| demand.domain == StorageDomainId::new("atomic-output"))
+        .map(|demand| {
+            demand.temporary_bytes
+                + demand.staged_output_bytes
+                + demand.final_output_bytes
+                + demand.persistent_cache_bytes
+        })
+        .sum::<u64>();
+    assert!(
+        baseline.physical_work().artifacts().is_empty(),
+        "runtime-private spill must not enter the persisted artifact identity surface"
+    );
+    assert!(required_storage_bytes > 1);
+    let capacity_with_balanced_reserve = required_storage_bytes
+        .checked_mul(4)
+        .expect("test capacity fits")
+        .div_ceil(3);
+
+    let root = tempfile::tempdir().expect("profiled storage root");
+    let feasible_profile = ProductionStorageProfile::new(
+        root.path(),
+        capacity_with_balanced_reserve,
+        capacity_with_balanced_reserve,
+        16,
+        16,
+        8,
+        4,
+    )
+    .expect("feasible storage profile");
+    let feasible_authority = ResourceAuthority::detected_with_storage_profile(&feasible_profile)
+        .expect("feasible authority");
+    let feasible = plan_with(
+        &feasible_authority,
+        feasible_profile.io_resources(),
+        root.path(),
+    )
+    .expect("feasible spill candidate");
+    let feasible_receipts = ExecutionReceiptStore::new(
+        root.path().join("feasible-receipts"),
+        ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("feasible receipt store");
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &feasible_authority,
+        &implementation_registry,
+        &feasible_receipts,
+        move |_, _| Ok::<_, io::Error>(vec![feasible.into_parts().physical]),
+    )
+    .expect("verified spill bytes fit inside Balanced's storage reserve");
+    assert_eq!(execution_plan.problem_id(), problem.problem_id());
+    assert_eq!(
+        execution_plan.product_graph_id(),
+        problem.product_graph().graph_id()
+    );
+
+    let insufficient_profile = ProductionStorageProfile::new(
+        root.path(),
+        capacity_with_balanced_reserve - 1,
+        capacity_with_balanced_reserve - 1,
+        16,
+        16,
+        8,
+        4,
+    )
+    .expect("insufficient storage profile");
+    let insufficient_authority =
+        ResourceAuthority::detected_with_storage_profile(&insufficient_profile)
+            .expect("insufficient authority");
+    let insufficient = plan_with(
+        &insufficient_authority,
+        insufficient_profile.io_resources(),
+        root.path(),
+    )
+    .expect("capacity admission remains the canonical whole-plan seam");
+    let insufficient_receipts = ExecutionReceiptStore::new(
+        root.path().join("insufficient-receipts"),
+        ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("insufficient receipt store");
+    let result = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &insufficient_authority,
+        &implementation_registry,
+        &insufficient_receipts,
+        move |_, _| Ok::<_, io::Error>(vec![insufficient.into_parts().physical]),
+    );
+    assert!(matches!(
+        result,
+        Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
+            if !certificate.rejections().is_empty()
+                && certificate.rejections().iter().all(|rejection| matches!(
+                    rejection.reason(),
+                    AlternativeRejectionReason::Infeasible {
+                        resource,
+                        required,
+                        available,
+                    } if resource.starts_with("storage-domain:")
+                        && *required == required_storage_bytes
+                        && *available < *required
+                ))
+    ));
 }
 
 #[test]
@@ -2797,7 +2991,7 @@ fn spectral_cycle_initial_plan_bounds_selected_payload_traversals_by_weighting_s
 }
 
 #[test]
-fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
+fn managed_spill_executes_initial_and_restore_cycles_with_receipted_resources() {
     for weighting in [
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         WeightingContract::new(
@@ -2805,8 +2999,16 @@ fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
             WeightDensityScope::GlobalSelection,
         ),
     ] {
-        execute_spectral_cycle_with_weighting(weighting);
+        execute_spectral_cycle_with_weighting(weighting, false);
     }
+}
+
+#[test]
+fn abort_revokes_retained_managed_spill_before_it_can_cross_plans() {
+    execute_spectral_cycle_with_weighting(
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        true,
+    );
 }
 
 struct RejectFirstVisibilityBlock {
@@ -3005,7 +3207,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
     );
 }
 
-fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
+fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_after_initial: bool) {
     let geometry =
         geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]);
     let fixture_problem = compile(request_with_geometry_references_and_weighting(
@@ -3174,10 +3376,10 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                         .expect("selected source traversal reports actual buffer peak");
                     assert!(peak > 0);
                     assert!(peak <= claim.amount);
-                } else if *kind == IoBufferKind::SpillWrite {
+                } else if matches!(kind, IoBufferKind::SpillWrite | IoBufferKind::Serialization) {
                     let (bytes, operations) = receipt
                         .stage_actual_io(node_id, *kind)
-                        .expect("gridded-normal spill reports exact write I/O");
+                        .expect("gridded-normal spill reports actual I/O");
                     assert!(bytes > 0);
                     assert!(operations > 0);
                 } else {
@@ -3208,6 +3410,30 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         Some(ReceiptStatus::Completed)
     );
     assert!(receipt.stage_actual_elapsed_nanos(&minor_node).is_some());
+    if abort_after_initial {
+        let spill_node = execution_plan
+            .execution_dag()
+            .nodes()
+            .values()
+            .find(|node| {
+                node.claims.iter().any(|claim| {
+                    claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillWrite)
+                })
+            })
+            .expect("initial gridded spill node");
+        runtime_registry
+            .implementation()
+            .abort_node_io(&spill_node.id)
+            .expect("abort revokes retained managed spill");
+        assert!(
+            runtime_registry
+                .implementation()
+                .take_gridded_normal_replay()
+                .is_none(),
+            "an aborted executor cannot yield retained spill authority"
+        );
+        return;
+    }
     let minor = runtime_registry
         .implementation()
         .take_reconstruction_cycle_completion()
@@ -3357,7 +3583,15 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         .collect::<Vec<_>>();
     assert_eq!(replay_nodes.len(), 1, "one bounded artifact reader");
     let replay_node_id = replay_nodes[0].id.clone();
-    assert_eq!(replay_nodes[0].kind, WorkKind::Prefetch);
+    assert_eq!(replay_nodes[0].kind, WorkKind::Spill);
+    assert!(
+        final_physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .all(|node| node.kind != WorkKind::Prefetch),
+        "managed restore is not T59 prefetch scheduling"
+    );
     assert_eq!(final_physical.execution_dag().initial_knobs().batch_size, 1);
     assert_eq!(
         final_physical
@@ -3581,6 +3815,13 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         final_receipt.observation_transaction_publication_scope(),
         casa_imaging_runtime::ObservationTransactionPublicationScope::ReconstructionOnly
     );
+    for kind in [IoBufferKind::SpillRead, IoBufferKind::Serialization] {
+        let (bytes, operations) = final_receipt
+            .stage_actual_io(&replay_node_id, kind)
+            .expect("managed replay reports actual I/O");
+        assert!(bytes > 0);
+        assert!(operations > 0);
+    }
     let final_completion = final_registry
         .implementation()
         .take_completion()
@@ -3603,6 +3844,17 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         source_delta.is_some()
     );
     assert_ne!(minor_evidence_id.as_bytes(), [0; 32]);
+    final_registry
+        .implementation()
+        .abort_node_io(&replay_node_id)
+        .expect("abort revokes retained managed spill");
+    assert!(
+        final_registry
+            .implementation()
+            .take_gridded_normal_replay()
+            .is_none(),
+        "an aborted executor cannot yield retained spill authority"
+    );
 }
 
 fn execute_initial_reconstruction_cycle(
@@ -9099,12 +9351,9 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
     .expect("MVC storage profile");
     let mvc_authority = ResourceAuthority::detected_with_storage_profile(&storage)
         .expect("dedicated MVC authority");
-    let gridded_storage = GriddedNormalReplayStorage::bind(
-        &mvc_authority,
-        storage.io_resources(),
-        storage_root.path(),
-    )
-    .expect("MVC gridded storage");
+    let gridded_storage =
+        ManagedSpillStorage::bind(&mvc_authority, storage.io_resources(), storage_root.path())
+            .expect("MVC gridded storage");
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(6),
         WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
@@ -9735,6 +9984,17 @@ fn transaction_failures_leave_the_old_generation_visible() {
             0,
             "{label} cannot expose staged output"
         );
+        if label != "input mutation" {
+            assert!(
+                registry.executors[&implementation(6)]
+                    .aborted_nodes
+                    .lock()
+                    .expect("recorded aborts")
+                    .iter()
+                    .any(|node| node.as_str() == "transaction-read"),
+                "{label} must abort already-completed upstream I/O state"
+            );
+        }
     }
 
     let problem = compile(request(1)).expect("logical compilation");

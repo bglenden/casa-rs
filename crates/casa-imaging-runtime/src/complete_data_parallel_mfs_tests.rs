@@ -4,14 +4,14 @@
 
 use std::{collections::BTreeMap, convert::Infallible, fs, io, path::PathBuf, sync::OnceLock};
 
-use crate::complete_data_operator::project_gridded_normal_artifact_budget;
+use crate::complete_data_operator::project_managed_spill_budget;
 use crate::spectral_cycle::CompleteDataStreamEvidence;
 use crate::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
     CpuClassCapacity, ExecutionAttemptId, ExecutionProvenance, ExecutionReceiptStore,
-    ExternalPressure, FenceKind, FrozenWeightingReservation, GriddedNormalReplayStorage,
-    HostInventory, ImplementationContractMetadata, ImplementationRegistry,
-    ImplementationRegistryId, MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
+    ExternalPressure, FenceKind, FrozenWeightingReservation, HostInventory,
+    ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId,
+    ManagedSpillStorage, MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind,
     ObservationReadCompletionContext, PlannerCostModelProfileBootstrap, PlannerCostModelProfileId,
     PlanningBindings, QueueResource, QueueResourceId, RateResource, RateResourceId, RateUnit,
     ReceiptRetention, ResourceAuthority, ResourceOverride, ResourcePolicy, ResourceTopology,
@@ -216,7 +216,7 @@ fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
         )
         .expect("scalar record width");
 
-    let budget = project_gridded_normal_artifact_budget(&problem, maximum_block_samples)
+    let budget = project_managed_spill_budget(&problem, maximum_block_samples)
         .expect("faceted replay budget");
 
     assert_eq!(
@@ -781,15 +781,12 @@ fn fixture() -> &'static Fixture {
     })
 }
 
-fn artifact_storage(
-    authority: &ResourceAuthority,
-    worker_count: u64,
-) -> GriddedNormalReplayStorage {
+fn artifact_storage(authority: &ResourceAuthority, worker_count: u64) -> ManagedSpillStorage {
     let directory = fixture()
         .storage_root
         .join(format!("workers-{worker_count}"));
     fs::create_dir_all(&directory).expect("worker artifact directory");
-    GriddedNormalReplayStorage::bind(authority, artifact_storage_io(), directory)
+    ManagedSpillStorage::bind(authority, artifact_storage_io(), directory)
         .expect("bind gridded-normal storage")
 }
 

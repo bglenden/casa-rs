@@ -2891,7 +2891,11 @@ fn every_io_buffer_kind_has_exact_supported_and_unsupported_work_semantics() {
         ),
         (
             crate::IoBufferKind::Serialization,
-            &[WorkKind::Serialization][..],
+            &[
+                WorkKind::Serialization,
+                WorkKind::Spill,
+                WorkKind::ObservationRead,
+            ][..],
         ),
         (
             crate::IoBufferKind::StorageManager,

@@ -892,7 +892,7 @@ impl CompleteDataStreamEvidence {
         self.source_pass_count
     }
 
-    /// Return exact gridded-normal artifact passes.
+    /// Return exact managed spill artifact passes.
     #[must_use]
     pub const fn artifact_pass_count(self) -> u64 {
         self.artifact_pass_count
@@ -917,7 +917,7 @@ struct SpectralCycleExecutorState {
     selected: Option<BoundSelectedObservation>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
-    gridded_storage: Option<crate::GriddedNormalReplayStorage>,
+    gridded_storage: Option<crate::ManagedSpillStorage>,
     gridded_storage_ceiling: Option<u64>,
     gridded_compilation: Option<GriddedNormalReplayCompilation>,
     gridded_replay: Option<FrozenGriddedNormalReplay>,
@@ -1393,6 +1393,13 @@ impl SpectralCycleExecutor {
     /// Consume the unchanged scientific completion after selected-output traversal.
     pub fn take_selected_output_completion(&self) -> Option<MajorCycleCompletion> {
         self.state.lock().ok()?.output_completion.take()
+    }
+
+    fn discard_managed_spill(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.gridded_compilation = None;
+            state.gridded_replay = None;
+        }
     }
 
     fn abort_final_visibility_replay(&self) -> io::Result<()> {
@@ -2120,6 +2127,12 @@ impl SpectralCycleExecutor {
                         |measurements| measurements.io_measurement(),
                     ))
                 }
+                LeaseResource::IoBuffer(crate::IoBufferKind::Serialization) => {
+                    Some(gridded_write_measurements.map_or_else(
+                        || IoMeasurement::unobserved(crate::IoBufferKind::Serialization),
+                        |measurements| measurements.serialization_io_measurement(),
+                    ))
+                }
                 LeaseResource::IoBuffer(kind) => Some(IoMeasurement::unobserved(kind)),
                 _ => None,
             })
@@ -2188,6 +2201,12 @@ impl SpectralCycleExecutor {
                     Some(replay_measurements.map_or_else(
                         || IoMeasurement::unobserved(crate::IoBufferKind::SpillRead),
                         |measurements| measurements.io_measurement(),
+                    ))
+                }
+                LeaseResource::IoBuffer(crate::IoBufferKind::Serialization) => {
+                    Some(replay_measurements.map_or_else(
+                        || IoMeasurement::unobserved(crate::IoBufferKind::Serialization),
+                        |measurements| measurements.serialization_io_measurement(),
                     ))
                 }
                 LeaseResource::IoBuffer(kind) => Some(IoMeasurement::unobserved(kind)),
@@ -2414,6 +2433,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                     Some(_) | None => None,
                 }
             });
+            self.discard_managed_spill();
             match measurements {
                 Some(measurements) => io::Error::other(SpectralCycleNodeFailure {
                     source,
@@ -2541,6 +2561,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                 })();
             if result.is_err() {
                 drop(state);
+                self.discard_managed_spill();
                 let _ = self.abort_final_visibility_replay();
             }
             return result;
@@ -2594,12 +2615,16 @@ impl WorkImplementation for SpectralCycleExecutor {
         Ok(true)
     }
 
-    fn abort_observation_read(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
-        if self
+    fn abort_node_io(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+        let owns_streaming_read = self
             .fragment()
             .as_ref()
-            .is_some_and(|fragment| owner_node == fragment.streaming_node())
-        {
+            .is_some_and(|fragment| owner_node == fragment.streaming_node());
+        let owns_gridded_replay = owner_node == self.complete_data.replay_node();
+        if owns_streaming_read || owns_gridded_replay {
+            self.discard_managed_spill();
+        }
+        if owns_streaming_read {
             self.abort_final_visibility_replay()?;
         }
         Ok(())
