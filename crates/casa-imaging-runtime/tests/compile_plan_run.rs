@@ -3209,7 +3209,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
 
 fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_after_initial: bool) {
     let geometry =
-        geometry_with_shape_and_increment([2.0, 2.0], ImageShape::new(4, 4), [-1.0e-6, 1.0e-6]);
+        geometry_with_shape_and_increment([3.0, 3.0], ImageShape::new(8, 8), [-1.0e-6, 1.0e-6]);
     let fixture_problem = compile(request_with_geometry_references_and_weighting(
         1,
         geometry.clone(),
@@ -3270,7 +3270,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
             serial_storage_io(),
             SpectralCyclePlanningLimits::new(
                 1_000,
-                4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
                 900_000,
             ),
             authority().clone(),
@@ -3289,7 +3289,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
         gridded_normal: planned_gridded_normal,
         ..
     } = planned.into_parts();
-    // The exact 4x4 density scratch and selected-owner minimum fit the fixture's
+    // The exact 8x8 density scratch and selected-owner minimum fit the fixture's
     // physical 1 MiB capacity but intentionally exceed Balanced's 75% ceiling.
     let resource_policy = ResourcePolicy::Exclusive;
     let frozen_reservation = FrozenWeightingReservation::acquire(
@@ -3499,7 +3499,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
             serial_storage_io(),
             SpectralCyclePlanningLimits::new(
                 1_000,
-                4 * 4 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
                 900_000,
             ),
             authority().clone(),
@@ -3661,6 +3661,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
     let execution_residency = gridded_normal_execution_residency(
         final_specification.grid_shape(),
         final_complete.slab().core_depth(),
+        casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
     )
     .expect("gridded two-domain residency");
     let expected_grid_bytes = execution_residency.peak_complex_values()

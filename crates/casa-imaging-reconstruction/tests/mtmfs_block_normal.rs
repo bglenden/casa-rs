@@ -51,6 +51,7 @@ use casa_imaging_reconstruction::{
         GriddedNormalRoutingMeasurements, SourceCardinalityObservation, SpectralOperatorPass,
         gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
+        standard_convolution_support,
     },
 };
 
@@ -1529,6 +1530,7 @@ fn execute_compact_taylor(
     let grid_residency = gridded_normal_execution_residency(
         specification.grid_shape(),
         program.accumulation_width(),
+        standard_convolution_support(),
     )
     .expect("exact Taylor compact grid residency");
     let workload = spectral_operator_workload(
@@ -2525,14 +2527,14 @@ fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel
 }
 
 #[test]
-fn t42_compact_v3_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
+fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     let problem = problem();
     let samples = samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &samples);
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.schema_version(), 3);
+    assert_eq!(program.schema_version(), 6);
     assert_eq!(
         gridded_normal_operator_record_bytes(&problem).expect("Taylor record width"),
         32,

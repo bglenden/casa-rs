@@ -271,6 +271,7 @@ fn request(
         save_continuum_residual: false,
         write_primary_beam: false,
         pbcor: false,
+        w_projection_planes: None,
         task_requirements: vec![TaskRequirement::SerialCpu, TaskRequirement::FixedTileCpu],
         resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
     }

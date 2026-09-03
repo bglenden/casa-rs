@@ -249,6 +249,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         save_continuum_residual: config.save_continuum_residual,
         write_primary_beam: config.write_pb,
         pbcor: config.pbcor,
+        w_projection_planes: config.w_project_planes,
         task_requirements,
         resource_policy,
     })

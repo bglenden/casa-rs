@@ -36,7 +36,8 @@ use casa_imaging_model::{
     SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
     TaylorSupportReference, TaylorValidityPolicy, TimeScale, UnitResponseValidityPolicy,
     UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
-    WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    WProjectionContract, WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme,
 };
 use casa_imaging_reconstruction::{
     ReconstructionMaskPlan, WeightingExecutionLimits, minor_cycle_workspace_bytes,
@@ -328,6 +329,8 @@ pub struct ContinuumImagingRequest {
     pub write_primary_beam: bool,
     /// Publish primary-beam-corrected restored Taylor images.
     pub pbcor: bool,
+    /// Explicit W-projection plane count; `None` derives it from the selected W envelope.
+    pub w_projection_planes: Option<usize>,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
@@ -1080,6 +1083,7 @@ fn prepare(
     let mut selected_observation_ids = BTreeSet::new();
     let mut first_selected_time_mjd_seconds = None;
     let mut selected_time_bounds_mjd_seconds = [f64::INFINITY, f64::NEG_INFINITY];
+    let mut maximum_selected_abs_w_m = 0.0_f64;
     let main_table = ms.main_table();
     let mut weight_spectrum_complete = main_table.column_accessor("WEIGHT_SPECTRUM").is_ok();
     let mut weight_spectrum_error = None;
@@ -1115,6 +1119,8 @@ fn prepare(
                 selected_time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
             selected_time_bounds_mjd_seconds[1] =
                 selected_time_bounds_mjd_seconds[1].max(row.time_mjd_seconds());
+            let [_, _, w_m] = row.uvw_m();
+            maximum_selected_abs_w_m = maximum_selected_abs_w_m.max(w_m.abs());
             if selected_rows_error.is_none() {
                 selected_rows_error = selected_rows
                     .push(SelectedMainRow::new(
@@ -1610,12 +1616,34 @@ fn prepare(
         ) => UnitResponseValidityPolicy::PrimaryBeam,
         _ => UnitResponseValidityPolicy::FinalNormalState,
     };
+    let w_projection = request
+        .task_requirements
+        .contains(&TaskRequirement::WProjection)
+        .then(|| {
+            let maximum_frequency_hz = spectral_windows
+                .iter()
+                .flat_map(|window| window.frequencies_hz.iter().copied())
+                .fold(0.0_f64, f64::max);
+            let maximum_abs_w_lambda =
+                maximum_selected_abs_w_m * maximum_frequency_hz / 299_792_458.0;
+            let planes = request
+                .w_projection_planes
+                .map(|planes| {
+                    std::num::NonZeroUsize::new(planes)
+                        .ok_or_else(|| boxed("W-projection plane count must be positive"))
+                })
+                .transpose()?;
+            WProjectionContract::new(maximum_abs_w_lambda, planes)
+                .map_err(|error| Box::new(error) as crate::ApplicationError)
+        })
+        .transpose()?;
     let specification = match continuum_transform {
         Some(transform) => specification(
             &request,
             &prepared_spectral,
             instrument.map(|value| value.0),
             unit_response_validity,
+            w_projection,
         )?
         .with_visibility_transform(transform),
         None => specification(
@@ -1623,6 +1651,7 @@ fn prepare(
             &prepared_spectral,
             instrument.map(|value| value.0),
             unit_response_validity,
+            w_projection,
         )?,
     };
     let masks = casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new(
@@ -1953,6 +1982,15 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
             "MODEL_DATA persistence requires a solved final model, not a dirty-only request",
         ));
     }
+    if request.w_projection_planes.is_some()
+        && !request
+            .task_requirements
+            .contains(&TaskRequirement::WProjection)
+    {
+        return Err(boxed(
+            "w_projection_planes requires the explicit W-projection task capability",
+        ));
+    }
     if request.save_continuum_residual && request.continuum_subtraction.is_none() {
         return Err(boxed(
             "CORRECTED_DATA residual persistence requires continuum subtraction",
@@ -1969,15 +2007,13 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         ));
     }
     if request.outlier_file.is_some()
-        && (!matches!(request.spectral_mode, SpectralImagingMode::Continuum)
-            || !matches!(
-                request.algorithm,
-                ContinuumAlgorithm::Dirty | ContinuumAlgorithm::Hogbom
-            )
-            || request.weighting != ContinuumWeighting::Natural)
+        && (!matches!(
+            request.algorithm,
+            ContinuumAlgorithm::Dirty | ContinuumAlgorithm::Hogbom
+        ) || request.weighting != ContinuumWeighting::Natural)
     {
         return Err(boxed(
-            "the installed multi-domain slice requires MFS, natural weighting, and dirty or Hogbom reconstruction",
+            "the installed multi-domain slice requires natural weighting and dirty or Hogbom reconstruction",
         ));
     }
     Ok(())
@@ -2540,6 +2576,7 @@ fn specification(
     spectral: &PreparedSpectralAxis,
     instrument_model: Option<InstrumentModel>,
     unit_response_validity: UnitResponseValidityPolicy,
+    w_projection: Option<WProjectionContract>,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
     let mosaic = request
         .task_requirements
@@ -2621,6 +2658,20 @@ fn specification(
             ),
         );
     }
+    let measurement_equation = MeasurementEquationContract::new(
+        if instrument_model.is_some() {
+            InstrumentResponse::PrimaryBeam
+        } else {
+            InstrumentResponse::Scalar
+        },
+        DeclaredInnerProducts::new(
+            ModelInnerProduct::HermitianEuclidean,
+            VisibilityInnerProduct::HermitianEuclidean,
+        ),
+    );
+    let measurement_equation = w_projection.map_or(measurement_equation, |contract| {
+        measurement_equation.with_w_projection(contract)
+    });
     let mut science = ScientificContract::new(
         SpectralContract::new(
             spectral.sampling,
@@ -2633,17 +2684,7 @@ fn specification(
                 (_, ContinuumBeamPolicy::Common) => SpectralCoupling::CommonRestoringBeam,
             },
         ),
-        MeasurementEquationContract::new(
-            if instrument_model.is_some() {
-                InstrumentResponse::PrimaryBeam
-            } else {
-                InstrumentResponse::Scalar
-            },
-            DeclaredInnerProducts::new(
-                ModelInnerProduct::HermitianEuclidean,
-                VisibilityInnerProduct::HermitianEuclidean,
-            ),
-        ),
+        measurement_equation,
     );
     if let Some(model) = instrument_model {
         science = science.with_instrument_model(model);

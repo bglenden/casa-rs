@@ -788,8 +788,10 @@ pub(crate) struct CompleteDataStreamEvidence {
     commits_completed: u64,
     peak_partial_dynamic_capacity_bytes: u64,
     peak_worker_stack_capacity_bytes: u64,
+    planned_kernel_window_capacity_bytes: u64,
     peak_kernel_window_capacity_bytes: u64,
     planned_gridded_route_capacity_bytes: u64,
+    peak_physical_route_capacity_bytes: u64,
     prepare_nanos: u128,
     execute_nanos: u128,
     commit_nanos: u128,
@@ -844,6 +846,12 @@ impl CompleteDataStreamEvidence {
         self.peak_worker_stack_capacity_bytes
     }
 
+    /// Return the complete prepared/worker/partial window admitted by the plan.
+    #[must_use]
+    pub const fn planned_kernel_window_capacity_bytes(self) -> u64 {
+        self.planned_kernel_window_capacity_bytes
+    }
+
     /// Return the peak complete prepared/worker/partial window capacity.
     #[must_use]
     pub const fn peak_kernel_window_capacity_bytes(self) -> u64 {
@@ -854,6 +862,12 @@ impl CompleteDataStreamEvidence {
     #[must_use]
     pub const fn planned_gridded_route_capacity_bytes(self) -> u64 {
         self.planned_gridded_route_capacity_bytes
+    }
+
+    /// Return the peak physical route allocation measured during replay.
+    #[must_use]
+    pub const fn peak_physical_route_capacity_bytes(self) -> u64 {
+        self.peak_physical_route_capacity_bytes
     }
 
     /// Return reconstruction partition preparation time.
@@ -1094,19 +1108,22 @@ impl SpectralCycleExecutor {
         &self,
     ) -> Option<CompleteDataStreamEvidence> {
         let state = self.state.lock().ok()?;
-        let (stream, artifact_pass_count) = if let Some((replay, stream)) =
-            state.gridded_replay.as_ref().and_then(|replay| {
+        let (stream, artifact_pass_count, peak_physical_route_capacity_bytes) =
+            if let Some((replay, stream)) = state.gridded_replay.as_ref().and_then(|replay| {
                 replay
                     .latest_stream_measurements()
                     .map(|stream| (replay, stream))
             }) {
-            (
-                stream,
-                u64::from(replay.latest_read_measurements().is_some()),
-            )
-        } else {
-            (state.weighting.latest_stream_measurements()?, 0)
-        };
+                (
+                    stream,
+                    u64::from(replay.latest_read_measurements().is_some()),
+                    replay
+                        .latest_routing_measurements()?
+                        .peak_physical_route_capacity_bytes,
+                )
+            } else {
+                (state.weighting.latest_stream_measurements()?, 0, 0)
+            };
         Some(CompleteDataStreamEvidence {
             planned_workers: u64::try_from(stream.workers).ok()?,
             actual_workers: u64::try_from(stream.workers).ok()?,
@@ -1115,11 +1132,13 @@ impl SpectralCycleExecutor {
             commits_completed: stream.commits_completed,
             peak_partial_dynamic_capacity_bytes: stream.peak_partial_dynamic_capacity_bytes,
             peak_worker_stack_capacity_bytes: stream.peak_worker_stack_capacity_bytes,
+            planned_kernel_window_capacity_bytes: stream.planned_kernel_window_capacity_bytes,
             peak_kernel_window_capacity_bytes: stream.peak_kernel_window_capacity_bytes,
             planned_gridded_route_capacity_bytes: u64::try_from(
                 self.complete_data.residency().gridded_route_bytes(),
             )
             .ok()?,
+            peak_physical_route_capacity_bytes,
             prepare_nanos: stream.prepare_nanos,
             execute_nanos: stream.execute_nanos,
             commit_nanos: stream.commit_nanos,
@@ -1822,6 +1841,17 @@ impl SpectralCycleExecutor {
     }
 
     fn log_gridded_replay_measurements(&self, replay: &FrozenGriddedNormalReplay) {
+        for (chart, diagnostics) in replay.w_projection_diagnostics().iter().enumerate() {
+            eprintln!(
+                "imaging_w_projection_summary chart={} planes={} sampling={} maximum_support={} plane_zero_normalization={:.17e} kernel_identity={:02x?}",
+                chart,
+                diagnostics.plane_count(),
+                diagnostics.sampling(),
+                diagnostics.maximum_support(),
+                diagnostics.plane_zero_normalization(),
+                diagnostics.kernel_identity(),
+            );
+        }
         let (Some(stream), Some(artifact), Some(routing), Some(window)) = (
             replay.latest_stream_measurements(),
             replay.latest_read_measurements(),

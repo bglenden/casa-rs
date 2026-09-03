@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 20;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 21;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -458,11 +458,55 @@ pub enum InstrumentModel {
     CasaAlmaAcaHeterogeneousInterferometricResponseV1,
 }
 
+/// Science-owned W-projection envelope compiled into the paired measurement operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WProjectionContract {
+    maximum_abs_w_lambda_bits: u64,
+    planes: Option<std::num::NonZeroUsize>,
+}
+
+impl WProjectionContract {
+    /// Construct a bounded W-projection contract.
+    pub fn new(
+        maximum_abs_w_lambda: f64,
+        planes: Option<std::num::NonZeroUsize>,
+    ) -> Result<Self, WProjectionContractError> {
+        if !maximum_abs_w_lambda.is_finite() || maximum_abs_w_lambda < 0.0 {
+            return Err(WProjectionContractError::InvalidMaximumAbsWLambda);
+        }
+        Ok(Self {
+            maximum_abs_w_lambda_bits: maximum_abs_w_lambda.to_bits(),
+            planes,
+        })
+    }
+
+    /// Return the selected-observation W envelope in wavelengths.
+    #[must_use]
+    pub fn maximum_abs_w_lambda(self) -> f64 {
+        f64::from_bits(self.maximum_abs_w_lambda_bits)
+    }
+
+    /// Return the requested convolution-plane count, when fixed by the caller.
+    #[must_use]
+    pub const fn planes(self) -> Option<std::num::NonZeroUsize> {
+        self.planes
+    }
+}
+
+/// Invalid W-projection science contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum WProjectionContractError {
+    /// The selected-observation W envelope must be finite and non-negative.
+    #[error("maximum absolute W wavelength must be finite and non-negative")]
+    InvalidMaximumAbsWLambda,
+}
+
 /// Logical measurement-equation terms independent of an implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeasurementEquationContract {
     instrument_response: InstrumentResponse,
     inner_products: DeclaredInnerProducts,
+    w_projection: Option<WProjectionContract>,
 }
 
 impl MeasurementEquationContract {
@@ -475,7 +519,15 @@ impl MeasurementEquationContract {
         Self {
             instrument_response,
             inner_products,
+            w_projection: None,
         }
+    }
+
+    /// Include one explicit paired W-projection transform.
+    #[must_use]
+    pub const fn with_w_projection(mut self, contract: WProjectionContract) -> Self {
+        self.w_projection = Some(contract);
+        self
     }
 
     /// Return the required instrument response.
@@ -488,6 +540,12 @@ impl MeasurementEquationContract {
     #[must_use]
     pub const fn inner_products(self) -> DeclaredInnerProducts {
         self.inner_products
+    }
+
+    /// Return the W-projection envelope, when the measurement operator includes it.
+    #[must_use]
+    pub const fn w_projection(self) -> Option<WProjectionContract> {
+        self.w_projection
     }
 }
 
@@ -1644,6 +1702,8 @@ pub enum RequiredCapability {
     MultiDomainGeometry,
     /// Multiple image-domain facets.
     FacetedGeometry,
+    /// Paired W-projection convolution.
+    WProjection,
     /// Spectral reference-frame transformation.
     SpectralFrameTransform,
     /// Non-identity paired spectral sampling.
@@ -1704,6 +1764,7 @@ impl RequiredCapability {
         let mut capabilities = vec![
             Self::MultiDomainGeometry,
             Self::FacetedGeometry,
+            Self::WProjection,
             Self::SpectralFrameTransform,
             Self::SpectralResampling,
             Self::SequentialContinuumTransform,
@@ -1745,6 +1806,7 @@ impl RequiredCapability {
         match self {
             Self::MultiDomainGeometry => "multi_domain_geometry".to_string(),
             Self::FacetedGeometry => "faceted_geometry".to_string(),
+            Self::WProjection => "w_projection".to_string(),
             Self::SpectralFrameTransform => "spectral_frame_transform".to_string(),
             Self::SpectralResampling => "spectral_resampling".to_string(),
             Self::SequentialContinuumTransform => "sequential_continuum_transform".to_string(),
@@ -2740,6 +2802,9 @@ fn derive_capabilities(
     if science.spectral.sampling != SpectralSamplingLaw::IDENTITY {
         capabilities.insert(RequiredCapability::SpectralResampling);
     }
+    if science.measurement_equation.w_projection.is_some() {
+        capabilities.insert(RequiredCapability::WProjection);
+    }
     if science.spectral.coupling == SpectralCoupling::CommonRestoringBeam {
         capabilities.insert(RequiredCapability::CommonBeamSpectralCoupling);
     }
@@ -2858,6 +2923,20 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         InstrumentResponse::PrimaryBeam => 1,
         InstrumentResponse::FullMueller => 2,
     });
+    match science.measurement_equation.w_projection {
+        Some(contract) => {
+            encoder.u8(1);
+            encoder.u64(contract.maximum_abs_w_lambda_bits);
+            match contract.planes {
+                Some(planes) => {
+                    encoder.u8(1);
+                    encoder.usize(planes.get());
+                }
+                None => encoder.u8(0),
+            }
+        }
+        None => encoder.u8(0),
+    }
     encode_instrument_model(&mut encoder, science.instrument_model);
     let inner_products = science.measurement_equation.inner_products;
     encoder.u8(match inner_products.model() {
@@ -2921,6 +3000,17 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
             PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
                 encoder.u8(5);
                 encoder.usize(*channels_per_bin);
+            }
+            PairedMeasurementTransform::WProjection { contract } => {
+                encoder.u8(7);
+                encoder.u64(contract.maximum_abs_w_lambda_bits);
+                match contract.planes {
+                    Some(planes) => {
+                        encoder.u8(1);
+                        encoder.usize(planes.get());
+                    }
+                    None => encoder.u8(0),
+                }
             }
         }
     }

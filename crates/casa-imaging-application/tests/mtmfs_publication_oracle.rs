@@ -118,6 +118,7 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
         save_continuum_residual: false,
         write_primary_beam: true,
         pbcor: true,
+        w_projection_planes: None,
         task_requirements: vec![TaskRequirement::SerialCpu],
         resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
             casa_imaging_runtime::ResourceOverride {
@@ -281,6 +282,7 @@ fn representative_mtmfs_request(
         save_continuum_residual: false,
         write_primary_beam: true,
         pbcor: true,
+        w_projection_planes: None,
         task_requirements: vec![TaskRequirement::SerialCpu],
         resource_policy: ResourcePolicy::Explicit(ResourceOverride {
             workers: Some(1),

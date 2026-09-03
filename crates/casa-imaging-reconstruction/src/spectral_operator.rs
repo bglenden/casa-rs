@@ -17,11 +17,12 @@ use casa_imaging_model::{
     PointingCentreLaw, PolarizationCoordinate, Projection, ReconstructionBasis, ReductionPolicy,
     SelectedAntennaResponses, SelectedObservationGenerationId, SelectedPointingDirections,
     SelectedSampleAddress, SelectedVisibilitySample, SpectralKernel, SpectralWcs,
-    SpectralWindowCoordinateCatalog, UvwCoordinateLaw, WeightingCommitmentId,
+    SpectralWindowCoordinateCatalog, UvwCoordinateLaw, WProjectionContract, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::{Complex32, Complex64};
 use rustfft::{Fft, FftPlanner};
+use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 use thiserror::Error;
 
@@ -269,7 +270,7 @@ pub(crate) struct MosaicProjectorKey {
 
 impl SpectralOperatorSample {
     /// Construct one numerical contribution after the runtime capability check.
-    fn new(
+    pub(crate) fn new(
         output_channel: usize,
         uvw_m: [f64; 3],
         frequency_hz: f64,
@@ -328,6 +329,15 @@ impl SpectralOperatorSample {
     fn uv_lambda(self) -> [f64; 2] {
         let scale = self.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
         [self.uvw_m[0] * scale, self.uvw_m[1] * scale]
+    }
+
+    fn uvw_lambda(self) -> [f64; 3] {
+        let scale = self.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
+        [
+            self.uvw_m[0] * scale,
+            self.uvw_m[1] * scale,
+            self.uvw_m[2] * scale,
+        ]
     }
 
     fn phase(self) -> Complex64 {
@@ -444,6 +454,7 @@ pub struct SpectralOperatorSpecification {
     weighting_commitment: WeightingCommitmentId,
     finite_values: FiniteValuePolicy,
     instrument_model: Option<InstrumentModel>,
+    w_projection: Option<WProjectionContract>,
     mosaic: bool,
     mosaic_response_selections: Box<[MosaicResponseSelection]>,
     mosaic_field_capacity: usize,
@@ -841,6 +852,7 @@ impl SpectralOperatorSpecification {
             .measurement_equation()
             .instrument_response();
         let instrument_model = problem.science().instrument_model();
+        let w_projection = problem.science().measurement_equation().w_projection();
         let mosaic = matches!(
             problem.geometry().uvw(),
             UvwCoordinateLaw::MosaicPhaseTrackingCentre
@@ -851,6 +863,9 @@ impl SpectralOperatorSpecification {
                 PointingCentreLaw::Observation(_)
             )
         {
+            return Err(SpectralOperatorError::UnsupportedProblem);
+        }
+        if mosaic && w_projection.is_some() {
             return Err(SpectralOperatorError::UnsupportedProblem);
         }
         match (instrument_response, instrument_model, basis, mosaic) {
@@ -869,11 +884,14 @@ impl SpectralOperatorSpecification {
             ) => {}
             _ => return Err(SpectralOperatorError::UnsupportedProblem),
         }
-        if problem.geometry().domains().len() > 1
-            && (!matches!(basis, SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() == 1)
-                || core_start != 0
-                || core_depth != 1)
-        {
+        let multi_domain_basis_supported = match basis {
+            SpectralBasisPlan::Polynomial(plan) => {
+                plan.coefficient_term_count() == 1 && core_start == 0 && core_depth == 1
+            }
+            SpectralBasisPlan::ChannelLocal => true,
+            SpectralBasisPlan::TaylorViaChannelMajor(_) | SpectralBasisPlan::Joint { .. } => false,
+        };
+        if problem.geometry().domains().len() > 1 && !multi_domain_basis_supported {
             return Err(SpectralOperatorError::UnsupportedMultiDomainProblem);
         }
         if matches!(basis, SpectralBasisPlan::Polynomial(_)) && (core_start != 0 || core_depth != 1)
@@ -1016,6 +1034,7 @@ impl SpectralOperatorSpecification {
             weighting_commitment: problem.weighting().commitment_id(),
             finite_values: problem.numerics().finite_values(),
             instrument_model,
+            w_projection,
             mosaic,
             mosaic_response_selections,
             mosaic_field_capacity,
@@ -1127,6 +1146,42 @@ impl SpectralOperatorSpecification {
 
     pub(crate) const fn finite_values(&self) -> FiniteValuePolicy {
         self.finite_values
+    }
+
+    pub(crate) const fn w_projection(&self) -> Option<WProjectionContract> {
+        self.w_projection
+    }
+
+    /// Conservative W-kernel halo known before physical execution.
+    #[must_use]
+    pub fn maximum_convolution_support(&self) -> usize {
+        self.w_projection.map_or(SUPPORT, |_| {
+            self.charts
+                .iter()
+                .map(|chart| {
+                    let conv_size = chart.geometry.grid_shape.into_iter().max().unwrap_or(0);
+                    let contract = self.w_projection.expect("W contract is present");
+                    let half_field_angle = ((chart.geometry.image_shape[0] as f64
+                        * chart.geometry.increment_rad[0].abs())
+                    .max(
+                        chart.geometry.image_shape[1] as f64
+                            * chart.geometry.increment_rad[1].abs(),
+                    )) / 2.0;
+                    let automatic =
+                        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs())
+                            as usize;
+                    let planes = contract
+                        .planes()
+                        .map(std::num::NonZeroUsize::get)
+                        .unwrap_or(automatic.max(1));
+                    let sampling = if planes > 1 { 4 } else { 1 };
+                    ((conv_size / 2).saturating_sub(2) as f64 / sampling as f64 - 0.5)
+                        .ceil()
+                        .max(1.0) as usize
+                })
+                .max()
+                .unwrap_or(SUPPORT)
+        })
     }
 
     /// Return reconstruction polarization coordinates in canonical plane order.
@@ -1635,13 +1690,44 @@ pub fn spectral_operator_workload(
             .charts
             .iter()
             .try_fold(0_usize, |total, chart| {
-                (OVERSAMPLING + 1)
+                let standard = (OVERSAMPLING + 1)
                     .checked_mul(TAP_COUNT)
                     .and_then(|values| {
                         values.checked_add(
                             chart.geometry.grid_shape[0] + chart.geometry.grid_shape[1],
                         )
-                    })
+                    });
+                let projected = specification.w_projection.map_or(standard, |contract| {
+                    let conv_size = chart.geometry.grid_shape.into_iter().max().unwrap_or(0);
+                    let half_field_angle = ((chart.geometry.image_shape[0] as f64
+                        * chart.geometry.increment_rad[0].abs())
+                    .max(
+                        chart.geometry.image_shape[1] as f64
+                            * chart.geometry.increment_rad[1].abs(),
+                    )) / 2.0;
+                    let automatic =
+                        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs())
+                            as usize;
+                    let planes = contract
+                        .planes()
+                        .map(std::num::NonZeroUsize::get)
+                        .unwrap_or(automatic.max(1));
+                    let quarter_cells = (conv_size / 2)
+                        .saturating_sub(1)
+                        .checked_mul((conv_size / 2).saturating_sub(1));
+                    let retained = quarter_cells
+                        .and_then(|cells| cells.checked_mul(planes))
+                        .and_then(|values| values.checked_mul(2));
+                    let build_workspace = conv_size
+                        .checked_mul(conv_size)
+                        .and_then(|cells| cells.checked_mul(4));
+                    standard
+                        .and_then(|values| retained.and_then(|w| values.checked_add(w)))
+                        .and_then(|values| {
+                            build_workspace.and_then(|workspace| values.checked_add(workspace))
+                        })
+                });
+                projected
                     .and_then(|values| total.checked_add(values))
                     .ok_or(SpectralOperatorError::ResidencyOverflow)
             })?;
@@ -4015,7 +4101,7 @@ impl CompleteDataOwnerState {
             .map(|(chart, fft)| {
                 SpectralSlabOperator::new_chart(Arc::clone(&specification), chart, workload, fft, 0)
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         Ok(Self {
@@ -4062,7 +4148,7 @@ impl CompleteDataOwnerState {
             .map(|(chart, fft)| {
                 SpectralSlabOperator::new_chart(Arc::clone(&specification), chart, workload, fft, 0)
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         Ok(Self {
@@ -5245,7 +5331,7 @@ pub(crate) struct SpectralSlabOperator {
     joint_line_term_by_channel: Box<[Option<usize>]>,
     output_channel_frequencies_hz: Box<[f64]>,
     workload: SpectralOperatorWorkload,
-    gridder: StandardConvolution,
+    gridder: ConvolutionOperator,
     fft: PreparedFft,
     dirty_grids: Option<Vec<Array2<Complex64>>>,
     dirty_compensations: Option<Vec<Array2<Complex64>>>,
@@ -5293,6 +5379,7 @@ struct SpectralSlabDefinition {
     joint_line_term_by_channel: Box<[Option<usize>]>,
     output_channel_frequencies_hz: Box<[f64]>,
     instrument_model: Option<InstrumentModel>,
+    w_projection: Option<WProjectionContract>,
     mosaic: bool,
     primary_beam_cutoff: f32,
 }
@@ -5339,6 +5426,10 @@ impl fmt::Debug for SpectralSlabOperator {
 }
 
 impl SpectralSlabOperator {
+    pub(crate) fn convolution_maximum_support(&self) -> usize {
+        self.gridder.maximum_support()
+    }
+
     #[cfg(test)]
     fn new_with_geometry(
         geometry: SpectralOperatorGeometry,
@@ -5366,6 +5457,7 @@ impl SpectralSlabOperator {
                 joint_line_term_by_channel: vec![None; slab.total_channels()].into_boxed_slice(),
                 output_channel_frequencies_hz: vec![1.0; slab.total_channels()].into_boxed_slice(),
                 instrument_model: None,
+                w_projection: None,
                 mosaic: false,
                 primary_beam_cutoff: 0.0,
             },
@@ -5373,6 +5465,7 @@ impl SpectralSlabOperator {
             fft,
             workload.max_replay_block_samples,
         )
+        .expect("test convolution contract is valid")
     }
 
     fn new_inner(
@@ -5380,7 +5473,7 @@ impl SpectralSlabOperator {
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
         prediction_capacity: usize,
-    ) -> Self {
+    ) -> Result<Self, SpectralOperatorError> {
         let SpectralSlabDefinition {
             specification,
             chart_ordinal,
@@ -5394,10 +5487,11 @@ impl SpectralSlabOperator {
             joint_line_term_by_channel,
             output_channel_frequencies_hz,
             instrument_model,
+            w_projection,
             mosaic,
             primary_beam_cutoff,
         } = definition;
-        let gridder = StandardConvolution::new(&geometry);
+        let gridder = ConvolutionOperator::new(&geometry, w_projection)?;
         let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
         let plane_grids =
             |depth: usize| (0..depth).map(|_| Array2::zeros(shape)).collect::<Vec<_>>();
@@ -5424,7 +5518,7 @@ impl SpectralSlabOperator {
         let mosaic_normal_entry_capacity = specification.as_ref().map_or(0, |specification| {
             specification.mosaic_normal_entry_capacity
         });
-        Self {
+        Ok(Self {
             specification,
             chart_ordinal,
             domain_ordinal,
@@ -5503,7 +5597,7 @@ impl SpectralSlabOperator {
             normal_moment_weights: vec![0.0; basis.normal_moments(slab)],
             #[cfg(test)]
             measurements: SpectralOperatorMeasurements::default(),
-        }
+        })
     }
 
     pub(crate) fn new_chart(
@@ -5512,7 +5606,7 @@ impl SpectralSlabOperator {
         workload: SpectralOperatorWorkload,
         fft: PreparedFft,
         prediction_capacity: usize,
-    ) -> Self {
+    ) -> Result<Self, SpectralOperatorError> {
         Self::new_inner(
             SpectralSlabDefinition {
                 specification: Some(Arc::clone(&specification)),
@@ -5527,6 +5621,7 @@ impl SpectralSlabOperator {
                 joint_line_term_by_channel: specification.joint_line_term_by_channel.clone(),
                 output_channel_frequencies_hz: specification.output_channel_frequencies_hz.clone(),
                 instrument_model: specification.instrument_model,
+                w_projection: specification.w_projection,
                 mosaic: specification.mosaic,
                 primary_beam_cutoff: specification.primary_beam_cutoff,
             },
@@ -5592,7 +5687,7 @@ impl SpectralSlabOperator {
         let Some(taps) = self.operator_taps(sample)? else {
             return Ok(());
         };
-        let contributes_to_normalization = taps.contributes_to_normalization();
+        let normalization = taps.normalization(&self.gridder)?;
         let factor = sample.spectral_factor;
         match self.basis {
             SpectralBasisPlan::ChannelLocal => {
@@ -5611,7 +5706,7 @@ impl SpectralSlabOperator {
                 self.accumulate_published_sum_weight(
                     plane,
                     sample.published_weight * factor * factor,
-                    contributes_to_normalization,
+                    normalization,
                 )?;
             }
             SpectralBasisPlan::TaylorViaChannelMajor(_) => {
@@ -5665,11 +5760,7 @@ impl SpectralSlabOperator {
                 for moment in 0..self.normal_moment_weights.len() {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
-                    self.accumulate_published_sum_weight(
-                        moment,
-                        weight,
-                        contributes_to_normalization,
-                    )?;
+                    self.accumulate_published_sum_weight(moment, weight, normalization)?;
                 }
             }
             SpectralBasisPlan::Joint { .. } => {
@@ -5682,9 +5773,9 @@ impl SpectralSlabOperator {
                     .checked_add(1)
                     .ok_or(SpectralOperatorError::CoverageOverflow)?;
                 let channel = self.polarization_plane(sample.output_channel, polarization);
-                if contributes_to_normalization {
-                    let corrected =
-                        sample.imaging_weight - self.channel_sum_weight_compensations[channel];
+                if normalization > 0.0 {
+                    let corrected = sample.imaging_weight * normalization
+                        - self.channel_sum_weight_compensations[channel];
                     let updated = self.channel_sum_weights[channel] + corrected;
                     self.channel_sum_weight_compensations[channel] =
                         (updated - self.channel_sum_weights[channel]) - corrected;
@@ -5712,11 +5803,7 @@ impl SpectralSlabOperator {
                 for moment in 0..self.normal_moment_weights.len() {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
-                    self.accumulate_published_sum_weight(
-                        moment,
-                        weight,
-                        contributes_to_normalization,
-                    )?;
+                    self.accumulate_published_sum_weight(moment, weight, normalization)?;
                 }
             }
         }
@@ -5730,7 +5817,7 @@ impl SpectralSlabOperator {
         if self.mosaic_normal.is_none() {
             return Ok(self
                 .gridder
-                .taps(sample.uv_lambda())
+                .taps(sample.uvw_lambda())
                 .map(OperatorTaps::Standard));
         }
         let (field_id, pointings) = sample
@@ -5927,8 +6014,9 @@ impl SpectralSlabOperator {
             &mut self.measurements.psf_grid_tap_visits,
             TAP_VISITS_PER_SAMPLE,
         );
-        if taps.contributes_to_normalization() {
-            let corrected = weight - self.sum_weight_compensations[moment];
+        let normalization = taps.normalization(&self.gridder)?;
+        if normalization > 0.0 {
+            let corrected = weight * normalization - self.sum_weight_compensations[moment];
             let updated = self.sum_weights[moment] + corrected;
             self.sum_weight_compensations[moment] =
                 (updated - self.sum_weights[moment]) - corrected;
@@ -5947,6 +6035,7 @@ impl SpectralSlabOperator {
         let OperatorTaps::Standard(taps) = taps else {
             return Err(SpectralOperatorError::UnsupportedProblem);
         };
+        let normalization = self.gridder.normalization(taps)?;
         self.gridder.grid_compensated(
             &mut self
                 .psf_grids
@@ -5958,7 +6047,7 @@ impl SpectralSlabOperator {
                 .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
             taps,
             Complex64::new(imaging_weight, 0.0),
-        );
+        )?;
         #[cfg(test)]
         record_measurement(
             &mut self.measurements.psf_grid_tap_visits,
@@ -5968,13 +6057,13 @@ impl SpectralSlabOperator {
             &mut self.channel_major_sum_weights,
             &mut self.channel_major_sum_weight_compensations,
             plane,
-            imaging_weight,
+            imaging_weight * normalization,
         )?;
         accumulate_compensated(
             &mut self.channel_major_published_sum_weights,
             &mut self.channel_major_published_sum_weight_compensations,
             plane,
-            published_weight,
+            published_weight * normalization,
         )
     }
 
@@ -5982,9 +6071,9 @@ impl SpectralSlabOperator {
         &mut self,
         moment: usize,
         weight: f64,
-        contributes_to_normalization: bool,
+        normalization: f64,
     ) -> Result<(), SpectralOperatorError> {
-        if !contributes_to_normalization {
+        if normalization == 0.0 {
             return Ok(());
         }
         let sum = self
@@ -5995,7 +6084,7 @@ impl SpectralSlabOperator {
             .published_sum_weight_compensations
             .get_mut(moment)
             .ok_or(SpectralOperatorError::InvalidSample)?;
-        let corrected = weight - *compensation;
+        let corrected = weight * normalization - *compensation;
         let updated = *sum + corrected;
         *compensation = (updated - *sum) - corrected;
         *sum = updated;
@@ -6229,7 +6318,7 @@ impl SpectralSlabOperator {
                         let correction = if mosaic {
                             self.gridder.mosaic_image_correction(x, y)
                         } else {
-                            self.gridder.image_correction(x, y)
+                            self.gridder.model_correction(x, y)
                         };
                         grid[(
                             self.geometry.image_blc[0] + x,
@@ -6327,7 +6416,7 @@ impl SpectralSlabOperator {
                         let correction = if mosaic {
                             self.gridder.mosaic_image_correction(x, y)
                         } else {
-                            self.gridder.image_correction(x, y)
+                            self.gridder.model_correction(x, y)
                         };
                         grid[(
                             self.geometry.image_blc[0] + x,
@@ -6474,7 +6563,7 @@ impl SpectralSlabOperator {
         let Some(taps) = self.operator_taps(sample)? else {
             return Ok(());
         };
-        let contributes_to_normalization = taps.contributes_to_normalization();
+        let normalization = taps.normalization(&self.gridder)?;
         let factor = sample.spectral_factor;
         let observed_scale = sample.visibility * sample.phase() * (sample.imaging_weight * factor);
         let residual_scale =
@@ -6494,7 +6583,7 @@ impl SpectralSlabOperator {
                     self.accumulate_published_sum_weight(
                         plane,
                         sample.published_weight * factor * factor,
-                        contributes_to_normalization,
+                        normalization,
                     )?;
                 }
             }
@@ -6554,11 +6643,7 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.accumulate_published_sum_weight(
-                            moment,
-                            weight,
-                            contributes_to_normalization,
-                        )?;
+                        self.accumulate_published_sum_weight(moment, weight, normalization)?;
                     }
                 }
             }
@@ -6571,10 +6656,10 @@ impl SpectralSlabOperator {
                 *mapped = mapped
                     .checked_add(1)
                     .ok_or(SpectralOperatorError::CoverageOverflow)?;
-                if self.psf_grids.is_some() && contributes_to_normalization {
+                if self.psf_grids.is_some() && normalization > 0.0 {
                     let channel = self.polarization_plane(sample.output_channel, polarization);
-                    let corrected =
-                        sample.imaging_weight - self.channel_sum_weight_compensations[channel];
+                    let corrected = sample.imaging_weight * normalization
+                        - self.channel_sum_weight_compensations[channel];
                     let updated = self.channel_sum_weights[channel] + corrected;
                     self.channel_sum_weight_compensations[channel] =
                         (updated - self.channel_sum_weights[channel]) - corrected;
@@ -6605,11 +6690,7 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.accumulate_published_sum_weight(
-                            moment,
-                            weight,
-                            contributes_to_normalization,
-                        )?;
+                        self.accumulate_published_sum_weight(moment, weight, normalization)?;
                     }
                 }
             }
@@ -6742,7 +6823,7 @@ impl SpectralSlabOperator {
                         let correction = if mosaic {
                             self.gridder.mosaic_image_correction(x, y)
                         } else {
-                            self.gridder.image_correction(x, y)
+                            self.gridder.model_correction(x, y)
                         };
                         grid[(
                             self.geometry.image_blc[0] + x,
@@ -6968,7 +7049,7 @@ impl SpectralSlabOperator {
                 predicted += self.gridder.degrid(
                     &self.forward_grids[self.polarization_plane(term, polarization)],
                     taps,
-                ) * x.powi(
+                )? * x.powi(
                     i32::try_from(term)
                         .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
                 );
@@ -6988,7 +7069,7 @@ impl SpectralSlabOperator {
                         polarization,
                     )],
                     taps,
-                );
+                )?;
             }
             predicted *= forward_scale;
             if !predicted.re.is_finite() || !predicted.im.is_finite() {
@@ -7005,7 +7086,7 @@ impl SpectralSlabOperator {
                 let predicted = self.gridder.degrid(
                     &self.forward_grids[self.polarization_plane(resident, polarization)],
                     taps,
-                ) * forward_scale;
+                )? * forward_scale;
                 if !predicted.re.is_finite() || !predicted.im.is_finite() {
                     return Err(SpectralOperatorError::GeneratedNonfinite);
                 }
@@ -7023,7 +7104,7 @@ impl SpectralSlabOperator {
                 predicted += self.gridder.degrid(
                     &self.forward_grids[self.polarization_plane(term, polarization)],
                     taps,
-                ) * x.powi(
+                )? * x.powi(
                     i32::try_from(term)
                         .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
                 );
@@ -7044,7 +7125,7 @@ impl SpectralSlabOperator {
         let predicted = self.gridder.degrid(
             &self.forward_grids[self.polarization_plane(resident, polarization)],
             taps,
-        ) * forward_scale;
+        )? * forward_scale;
         if !predicted.re.is_finite() || !predicted.im.is_finite() {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
@@ -7073,7 +7154,7 @@ impl SpectralSlabOperator {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         for (value, grid) in model_values.iter_mut().zip(&self.forward_grids) {
-            *value = self.gridder.degrid(grid, taps);
+            *value = self.gridder.degrid(grid, taps)?;
         }
         for (row, output) in normal_values.iter_mut().enumerate() {
             let mut value = Complex64::default();
@@ -7141,7 +7222,7 @@ impl SpectralSlabOperator {
                     &mut compensations[self.polarization_plane(term, polarization)],
                     local_taps,
                     value,
-                );
+                )?;
             }
             if let Some(line) = self
                 .joint_line_term_by_channel
@@ -7156,7 +7237,7 @@ impl SpectralSlabOperator {
                     &mut compensations[term],
                     local_taps,
                     gridded,
-                );
+                )?;
             }
             let common_plane = terms
                 .checked_add(output_channel)
@@ -7167,7 +7248,7 @@ impl SpectralSlabOperator {
                 &mut compensations[common_plane],
                 local_taps,
                 gridded,
-            );
+            )?;
             return Ok(());
         }
         let plane = self
@@ -7192,7 +7273,7 @@ impl SpectralSlabOperator {
             &mut compensations[plane],
             local_taps,
             gridded,
-        );
+        )?;
         Ok(())
     }
 
@@ -7222,7 +7303,7 @@ impl SpectralSlabOperator {
                 &mut compensations[plane],
                 local_taps,
                 value,
-            );
+            )?;
         }
         Ok(())
     }
@@ -7862,7 +7943,7 @@ fn accumulate_compensated(
 fn collect_image_planes(
     grids: Option<&[Array2<Complex64>]>,
     geometry: &SpectralOperatorGeometry,
-    gridder: &StandardConvolution,
+    gridder: &ConvolutionOperator,
     mosaic: bool,
 ) -> Result<Option<Vec<Complex64>>, SpectralOperatorError> {
     let Some(grids) = grids else {
@@ -7954,16 +8035,22 @@ enum OperatorTaps {
 }
 
 impl OperatorTaps {
-    fn contributes_to_normalization(self) -> bool {
+    fn normalization(self, gridder: &ConvolutionOperator) -> Result<f64, SpectralOperatorError> {
         match self {
-            Self::Standard(_) => true,
-            Self::Mosaic { plan, .. } => MosaicProjector::contributes_to_normalization(plan),
+            Self::Standard(taps) => gridder.normalization(taps),
+            Self::Mosaic { plan, .. } => {
+                Ok(if MosaicProjector::contributes_to_normalization(plan) {
+                    1.0
+                } else {
+                    0.0
+                })
+            }
         }
     }
 }
 
 fn grid_operator_compensated(
-    standard: &StandardConvolution,
+    standard: &ConvolutionOperator,
     mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
     grid: &mut Array2<Complex64>,
     compensation: &mut Array2<Complex64>,
@@ -7971,10 +8058,7 @@ fn grid_operator_compensated(
     value: Complex64,
 ) -> Result<(), SpectralOperatorError> {
     match taps {
-        OperatorTaps::Standard(taps) => {
-            standard.grid_compensated(grid, compensation, taps, value);
-            Ok(())
-        }
+        OperatorTaps::Standard(taps) => standard.grid_compensated(grid, compensation, taps, value),
         OperatorTaps::Mosaic { response_key, plan } => mosaic
             .get(&response_key)
             .ok_or(SpectralOperatorError::ProblemMismatch)
@@ -7983,17 +8067,198 @@ fn grid_operator_compensated(
 }
 
 fn degrid_operator(
-    standard: &StandardConvolution,
+    standard: &ConvolutionOperator,
     mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
     grid: &Array2<Complex64>,
     taps: OperatorTaps,
 ) -> Result<Complex64, SpectralOperatorError> {
     match taps {
-        OperatorTaps::Standard(taps) => Ok(standard.degrid(grid, taps)),
+        OperatorTaps::Standard(taps) => standard.degrid(grid, taps),
         OperatorTaps::Mosaic { response_key, plan } => mosaic
             .get(&response_key)
             .ok_or(SpectralOperatorError::ProblemMismatch)
             .map(|projector| projector.degrid(grid, plan)),
+    }
+}
+
+pub(crate) enum ConvolutionOperator {
+    Standard(StandardConvolution),
+    WProjection(WProjectionConvolution),
+}
+
+/// Immutable diagnostics for one reconstruction-owned W-projection kernel set.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WProjectionDiagnostics {
+    plane_count: usize,
+    sampling: usize,
+    maximum_support: usize,
+    plane_zero_normalization: f64,
+    kernel_identity: [u8; 32],
+}
+
+impl WProjectionDiagnostics {
+    #[must_use]
+    pub const fn plane_count(self) -> usize {
+        self.plane_count
+    }
+
+    #[must_use]
+    pub const fn sampling(self) -> usize {
+        self.sampling
+    }
+
+    #[must_use]
+    pub const fn maximum_support(self) -> usize {
+        self.maximum_support
+    }
+
+    #[must_use]
+    pub const fn plane_zero_normalization(self) -> f64 {
+        self.plane_zero_normalization
+    }
+
+    #[must_use]
+    pub const fn kernel_identity(self) -> [u8; 32] {
+        self.kernel_identity
+    }
+}
+
+impl ConvolutionOperator {
+    pub(crate) fn new(
+        geometry: &SpectralOperatorGeometry,
+        w_projection: Option<WProjectionContract>,
+    ) -> Result<Self, SpectralOperatorError> {
+        if let Some(contract) =
+            w_projection.filter(|contract| contract.maximum_abs_w_lambda() > f64::MIN_POSITIVE)
+        {
+            Ok(Self::WProjection(WProjectionConvolution::new(
+                geometry, contract,
+            )?))
+        } else {
+            Ok(Self::Standard(StandardConvolution::new(geometry)))
+        }
+    }
+
+    pub(crate) fn taps(&self, uvw_lambda: [f64; 3]) -> Option<SampleTaps> {
+        match self {
+            Self::Standard(operator) => operator.taps([uvw_lambda[0], uvw_lambda[1]]),
+            Self::WProjection(operator) => operator.taps(uvw_lambda),
+        }
+    }
+
+    pub(crate) fn maximum_support(&self) -> usize {
+        match self {
+            Self::Standard(_) => SUPPORT,
+            Self::WProjection(operator) => operator.maximum_support(),
+        }
+    }
+
+    pub(crate) fn w_projection_diagnostics(&self) -> Option<WProjectionDiagnostics> {
+        match self {
+            Self::Standard(_) => None,
+            Self::WProjection(operator) => Some(operator.diagnostics()),
+        }
+    }
+
+    fn normalization(&self, taps: SampleTaps) -> Result<f64, SpectralOperatorError> {
+        self.validate_taps(taps)?;
+        let value = match self {
+            Self::Standard(_) => 1.0,
+            Self::WProjection(operator) => operator.normalization(taps),
+        };
+        if value.is_finite() && value > f64::MIN_POSITIVE {
+            Ok(value)
+        } else {
+            Err(SpectralOperatorError::GeneratedNonfinite)
+        }
+    }
+
+    pub(crate) fn grid_compensated(
+        &self,
+        grid: &mut Array2<Complex64>,
+        compensation: &mut Array2<Complex64>,
+        taps: SampleTaps,
+        value: Complex64,
+    ) -> Result<(), SpectralOperatorError> {
+        self.validate_taps(taps)?;
+        match self {
+            Self::Standard(operator) => operator.grid_compensated(grid, compensation, taps, value),
+            Self::WProjection(operator) => {
+                operator.grid_compensated(grid, compensation, taps, value)
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn degrid(
+        &self,
+        grid: &Array2<Complex64>,
+        taps: SampleTaps,
+    ) -> Result<Complex64, SpectralOperatorError> {
+        self.validate_taps(taps)?;
+        Ok(match self {
+            Self::Standard(operator) => operator.degrid(grid, taps),
+            Self::WProjection(operator) => operator.degrid(grid, taps),
+        })
+    }
+
+    fn model_correction(&self, x: usize, y: usize) -> f64 {
+        match self {
+            Self::Standard(operator) => operator.image_correction(x, y),
+            Self::WProjection(operator) => operator.model_correction(x, y),
+        }
+    }
+
+    fn image_correction(&self, x: usize, y: usize) -> f64 {
+        match self {
+            Self::Standard(operator) => operator.image_correction(x, y),
+            Self::WProjection(operator) => operator.image_correction(x, y),
+        }
+    }
+
+    fn mosaic_image_correction(&self, x: usize, y: usize) -> f64 {
+        self.standard().mosaic_image_correction(x, y)
+    }
+
+    fn standard(&self) -> &StandardConvolution {
+        match self {
+            Self::Standard(operator) => operator,
+            Self::WProjection(operator) => &operator.standard,
+        }
+    }
+
+    fn validate_taps(&self, taps: SampleTaps) -> Result<(), SpectralOperatorError> {
+        let (support, metadata_valid) = match self {
+            Self::Standard(operator) => (
+                SUPPORT,
+                taps.x.weight_index < operator.weights.len()
+                    && taps.y.weight_index < operator.weights.len(),
+            ),
+            Self::WProjection(operator) => (
+                operator.maximum_support(),
+                taps.x.weight_index < operator.kernels.len()
+                    && taps.y.weight_index & 0x1f < 25
+                    && taps.y.weight_index & !0x3f == 0,
+            ),
+        };
+        let shape = self.standard().grid_shape;
+        if !metadata_valid
+            || taps
+                .x
+                .start
+                .checked_add(2 * support)
+                .is_none_or(|end| end >= shape[0])
+            || taps
+                .y
+                .start
+                .checked_add(2 * support)
+                .is_none_or(|end| end >= shape[1])
+        {
+            Err(SpectralOperatorError::InvalidGriddedRecord)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -8005,6 +8270,344 @@ pub(crate) struct StandardConvolution {
     weights: Box<[[f64; TAP_COUNT]]>,
     correction_x: Box<[f64]>,
     correction_y: Box<[f64]>,
+}
+
+struct WProjectionKernel {
+    support: usize,
+    weights: Array2<Complex64>,
+}
+
+pub(crate) struct WProjectionConvolution {
+    standard: StandardConvolution,
+    sampling: usize,
+    w_scale: f64,
+    kernels: Box<[WProjectionKernel]>,
+    plane_zero_normalization: f64,
+    kernel_identity: [u8; 32],
+}
+
+impl WProjectionConvolution {
+    fn new(
+        geometry: &SpectralOperatorGeometry,
+        contract: WProjectionContract,
+    ) -> Result<Self, SpectralOperatorError> {
+        let standard = StandardConvolution::new(geometry);
+        let maximum_abs_w_lambda = contract.maximum_abs_w_lambda();
+        let half_field_angle = ((geometry.image_shape[0] as f64 * geometry.increment_rad[0].abs())
+            .max(geometry.image_shape[1] as f64 * geometry.increment_rad[1].abs()))
+            / 2.0;
+        let automatic_planes =
+            (1.05 * maximum_abs_w_lambda * half_field_angle.sin().abs()) as usize;
+        let plane_count = contract
+            .planes()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(automatic_planes.max(1));
+        let sampling = if plane_count > 1 { 4 } else { 1 };
+        let effective_max_w_lambda = if contract.planes().is_some() {
+            0.25 / geometry.increment_rad[0].abs()
+        } else {
+            1.05 * maximum_abs_w_lambda
+        };
+        let w_scale = if plane_count > 1 && effective_max_w_lambda > 0.0 {
+            ((plane_count - 1) * (plane_count - 1)) as f64 / effective_max_w_lambda
+        } else {
+            1.0
+        };
+        let conv_size = geometry.grid_shape.into_iter().max().unwrap_or(0);
+        if conv_size < 4 || conv_size % 2 != 0 {
+            return Err(SpectralOperatorError::UnsupportedGeometry);
+        }
+        let inner = (conv_size / sampling).max(2);
+        let correction_x = (0..inner)
+            .map(|index| {
+                let centre = inner as f64 / 2.0;
+                grdsf(((index as f64 - centre).abs() / centre).clamp(0.0, 1.0))
+            })
+            .collect::<Vec<_>>();
+        let correction_y = correction_x.clone();
+        let s0 = geometry.increment_rad[0].abs() * sampling as f64 * geometry.grid_shape[0] as f64
+            / conv_size as f64;
+        let s1 = geometry.increment_rad[1].abs() * sampling as f64 * geometry.grid_shape[1] as f64
+            / conv_size as f64;
+        let mut fft = PreparedFft::new([conv_size, conv_size], usize::MAX)?;
+        let mut kernels = Vec::with_capacity(plane_count);
+        let mut plane_zero_peak = None;
+        let offset_radius = (sampling + 1) / 2;
+        for plane in 0..plane_count {
+            let w_lambda = if plane_count > 1 {
+                (plane * plane) as f64 / w_scale
+            } else {
+                0.0
+            };
+            let mut screen = Array2::zeros((conv_size, conv_size));
+            for iy in -(inner as isize / 2)..(inner as isize / 2) {
+                let m = s1 * iy as f64;
+                for ix in -(inner as isize / 2)..(inner as isize / 2) {
+                    let l = s0 * ix as f64;
+                    let radius_squared = l * l + m * m;
+                    if radius_squared >= 1.0 {
+                        continue;
+                    }
+                    let phase =
+                        std::f64::consts::TAU * w_lambda * ((1.0 - radius_squared).sqrt() - 1.0);
+                    let correction = correction_x[(ix + inner as isize / 2) as usize]
+                        * correction_y[(iy + inner as isize / 2) as usize];
+                    let x = if ix >= 0 {
+                        ix as usize
+                    } else {
+                        (ix + conv_size as isize) as usize
+                    };
+                    let y = if iy >= 0 {
+                        iy as usize
+                    } else {
+                        (iy + conv_size as isize) as usize
+                    };
+                    screen[(x, y)] = Complex64::from_polar(correction, phase);
+                }
+            }
+            fft.transform_unshifted(&mut screen, false);
+            let peak = *plane_zero_peak.get_or_insert_with(|| screen[(0, 0)].norm());
+            if !(peak.is_finite() && peak > f64::MIN_POSITIVE) {
+                return Err(SpectralOperatorError::GeneratedNonfinite);
+            }
+            let quarter = conv_size / 2 - 1;
+            let mut trial = 0;
+            for candidate in (1..quarter).rev() {
+                if (screen[(candidate, 0)] / peak).norm() > 1.0e-3
+                    || (screen[(0, candidate)] / peak).norm() > 1.0e-3
+                {
+                    trial = candidate;
+                    break;
+                }
+            }
+            let maximum_support = (quarter / sampling).saturating_sub(1).max(1);
+            let support = if trial == 0 {
+                maximum_support
+            } else {
+                (((trial as f64 / sampling as f64) + 0.5).floor() as usize + 1).min(maximum_support)
+            };
+            let width = support
+                .saturating_mul(sampling)
+                .saturating_add(offset_radius)
+                .saturating_add(1)
+                .min(quarter)
+                .max(1);
+            let mut weights = Array2::zeros((width, width));
+            for x in 0..width {
+                for y in 0..width {
+                    weights[(x, y)] = screen[(x, y)] / peak;
+                }
+            }
+            kernels.push(WProjectionKernel { support, weights });
+        }
+        let plane_zero_sum = w_projection_kernel_sum(&kernels[0], sampling);
+        if !(plane_zero_sum.is_finite() && plane_zero_sum > f64::MIN_POSITIVE) {
+            return Err(SpectralOperatorError::GeneratedNonfinite);
+        }
+        for kernel in &mut kernels {
+            kernel.weights.mapv_inplace(|value| value / plane_zero_sum);
+        }
+        let mut kernel_hasher = Sha256::new();
+        kernel_hasher.update((sampling as u64).to_le_bytes());
+        for kernel in &kernels {
+            kernel_hasher.update((kernel.support as u64).to_le_bytes());
+            for weight in &kernel.weights {
+                kernel_hasher.update(weight.re.to_bits().to_le_bytes());
+                kernel_hasher.update(weight.im.to_bits().to_le_bytes());
+            }
+        }
+        Ok(Self {
+            standard,
+            sampling,
+            w_scale,
+            kernels: kernels.into_boxed_slice(),
+            plane_zero_normalization: plane_zero_sum,
+            kernel_identity: kernel_hasher.finalize().into(),
+        })
+    }
+
+    fn taps(&self, uvw_lambda: [f64; 3]) -> Option<SampleTaps> {
+        if uvw_lambda.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        let x = uvw_lambda[0] / self.standard.du_lambda + self.standard.grid_shape[0] as f64 / 2.0;
+        let y = -uvw_lambda[1] / self.standard.dv_lambda + self.standard.grid_shape[1] as f64 / 2.0;
+        let loc_x = x.round() as isize;
+        let loc_y = y.round() as isize;
+        let off_x = ((loc_x as f64 - x) * self.sampling as f64).round() as isize;
+        let off_y = ((loc_y as f64 - y) * self.sampling as f64).round() as isize;
+        let plane = if self.kernels.len() > 1 {
+            (self.w_scale * uvw_lambda[2].abs())
+                .sqrt()
+                .round()
+                .clamp(0.0, (self.kernels.len() - 1) as f64) as usize
+        } else {
+            0
+        };
+        let maximum_support = self.maximum_support() as isize;
+        if loc_x - maximum_support < 0
+            || loc_y - maximum_support < 0
+            || loc_x + maximum_support >= self.standard.grid_shape[0] as isize
+            || loc_y + maximum_support >= self.standard.grid_shape[1] as isize
+        {
+            return None;
+        }
+        let offset_code =
+            ((off_x + 2) * 5 + (off_y + 2)) as usize | (usize::from(uvw_lambda[2] > 0.0) << 5);
+        Some(SampleTaps {
+            x: TapSpan {
+                start: (loc_x - maximum_support) as usize,
+                weight_index: plane,
+            },
+            y: TapSpan {
+                start: (loc_y - maximum_support) as usize,
+                weight_index: offset_code,
+            },
+        })
+    }
+
+    fn decoded(&self, taps: SampleTaps) -> (&WProjectionKernel, isize, isize, bool) {
+        let kernel = &self.kernels[taps.x.weight_index];
+        let code = taps.y.weight_index;
+        let offsets = code & 0x1f;
+        (
+            kernel,
+            (offsets / 5) as isize - 2,
+            (offsets % 5) as isize - 2,
+            code & 0x20 != 0,
+        )
+    }
+
+    fn maximum_support(&self) -> usize {
+        self.kernels
+            .iter()
+            .map(|kernel| kernel.support)
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn diagnostics(&self) -> WProjectionDiagnostics {
+        WProjectionDiagnostics {
+            plane_count: self.kernels.len(),
+            sampling: self.sampling,
+            maximum_support: self.maximum_support(),
+            plane_zero_normalization: self.plane_zero_normalization,
+            kernel_identity: self.kernel_identity,
+        }
+    }
+
+    fn normalization(&self, taps: SampleTaps) -> f64 {
+        let (kernel, off_x, off_y, conjugate) = self.decoded(taps);
+        let support = kernel.support as isize;
+        let mut sum = 0.0;
+        for ix in -support..=support {
+            let kernel_x = (ix * self.sampling as isize + off_x).unsigned_abs();
+            for iy in -support..=support {
+                let kernel_y = (iy * self.sampling as isize + off_y).unsigned_abs();
+                let mut weight = kernel.weights[(kernel_x, kernel_y)];
+                if conjugate {
+                    weight = weight.conj();
+                }
+                sum += weight.re;
+            }
+        }
+        sum
+    }
+
+    fn grid_compensated(
+        &self,
+        grid: &mut Array2<Complex64>,
+        compensation: &mut Array2<Complex64>,
+        taps: SampleTaps,
+        value: Complex64,
+    ) {
+        let (kernel, off_x, off_y, conjugate) = self.decoded(taps);
+        let support = kernel.support as isize;
+        let maximum_support = self.maximum_support() as isize;
+        for ix in -support..=support {
+            let kernel_x = (ix * self.sampling as isize + off_x).unsigned_abs();
+            for iy in -support..=support {
+                let kernel_y = (iy * self.sampling as isize + off_y).unsigned_abs();
+                let mut weight = kernel.weights[(kernel_x, kernel_y)];
+                if conjugate {
+                    weight = weight.conj();
+                }
+                let cell = (
+                    (taps.x.start as isize + maximum_support + ix) as usize,
+                    (taps.y.start as isize + maximum_support + iy) as usize,
+                );
+                let contribution = value * weight - compensation[cell];
+                let updated = grid[cell] + contribution;
+                compensation[cell] = (updated - grid[cell]) - contribution;
+                grid[cell] = updated;
+            }
+        }
+    }
+
+    fn degrid(&self, grid: &Array2<Complex64>, taps: SampleTaps) -> Complex64 {
+        let (kernel, off_x, off_y, conjugate) = self.decoded(taps);
+        let support = kernel.support as isize;
+        let maximum_support = self.maximum_support() as isize;
+        let mut value = Complex64::default();
+        for ix in -support..=support {
+            let kernel_x = (ix * self.sampling as isize + off_x).unsigned_abs();
+            for iy in -support..=support {
+                let kernel_y = (iy * self.sampling as isize + off_y).unsigned_abs();
+                let mut weight = kernel.weights[(kernel_x, kernel_y)];
+                if conjugate {
+                    weight = weight.conj();
+                }
+                value += weight.conj()
+                    * grid[(
+                        (taps.x.start as isize + maximum_support + ix) as usize,
+                        (taps.y.start as isize + maximum_support + iy) as usize,
+                    )];
+            }
+        }
+        value
+    }
+
+    fn sinc(&self, index: usize, axis: usize) -> f64 {
+        let size = self.standard.grid_shape[axis];
+        if index == size / 2 {
+            return 1.0;
+        }
+        let argument = std::f64::consts::PI * (index as isize - size as isize / 2) as f64
+            / (size * self.sampling) as f64;
+        argument.sin() / argument
+    }
+
+    fn model_correction(&self, x: usize, y: usize) -> f64 {
+        let grid_x = self.standard.image_blc[0] + x;
+        let grid_y = self.standard.image_blc[1] + y;
+        self.standard.image_correction(x, y) * self.sinc(grid_x, 0) * self.sinc(grid_y, 1)
+    }
+
+    fn image_correction(&self, x: usize, y: usize) -> f64 {
+        let grid_x = self.standard.image_blc[0] + x;
+        let grid_y = self.standard.image_blc[1] + y;
+        let sinc = self.sinc(grid_x, 0) * self.sinc(grid_y, 1);
+        if sinc.abs() > 1.0e-12 {
+            self.standard.image_correction(x, y) / sinc
+        } else {
+            0.0
+        }
+    }
+}
+
+fn w_projection_kernel_sum(kernel: &WProjectionKernel, sampling: usize) -> f64 {
+    let support = kernel.support as isize;
+    let mut sum = 0.0;
+    for ix in -support..=support {
+        for iy in -support..=support {
+            sum += kernel.weights[(
+                (ix * sampling as isize).unsigned_abs(),
+                (iy * sampling as isize).unsigned_abs(),
+            )]
+                .re;
+        }
+    }
+    sum
 }
 
 impl StandardConvolution {
@@ -8168,6 +8771,11 @@ impl PreparedFft {
 
     pub(crate) fn transform(&mut self, data: &mut Array2<Complex64>, inverse: bool) {
         shift_even(data);
+        self.transform_unshifted(data, inverse);
+        shift_even(data);
+    }
+
+    fn transform_unshifted(&mut self, data: &mut Array2<Complex64>, inverse: bool) {
         for axis in 0..2 {
             let fft = if inverse {
                 &self.inverse[axis]
@@ -8176,7 +8784,6 @@ impl PreparedFft {
             };
             transform_axis(data, Axis(axis), fft, &mut self.lane, &mut self.scratch);
         }
-        shift_even(data);
     }
 }
 
@@ -8444,15 +9051,16 @@ mod tests {
     use smallvec::SmallVec;
 
     use super::{
-        MosaicResponsePlan, MosaicResponseSelection, PreparedFft, ReconstructionModelBinding,
-        SUPPORT, SampleTaps, SpectralBasisPlan, SpectralChannelValidity, SpectralOperatorError,
-        SpectralOperatorGeometry, SpectralOperatorMeasurements, SpectralOperatorPass,
-        SpectralOperatorPrimitives, SpectralOperatorSample, SpectralOperatorWorkload,
-        SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
-        apply_finite_value_policy, apply_input_policy, casa_persistent_complex,
-        casa_useful_mosaic_channels, checked_cells, compile_operator_geometry,
-        normalize_mosaic_psf, polarization_diagonal, polarization_effective_flags,
-        polarization_published_weights, reconstruction_model_binding, scatter_chart_planes,
+        ConvolutionOperator, MosaicResponsePlan, MosaicResponseSelection, PreparedFft,
+        ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
+        SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
+        SpectralOperatorMeasurements, SpectralOperatorPass, SpectralOperatorPrimitives,
+        SpectralOperatorSample, SpectralOperatorWorkload, SpectralSlabOperator, SpectralSlabPlan,
+        StandardConvolution, TapSpan, apply_finite_value_policy, apply_input_policy,
+        casa_persistent_complex, casa_useful_mosaic_channels, checked_cells,
+        compile_operator_geometry, normalize_mosaic_psf, polarization_diagonal,
+        polarization_effective_flags, polarization_published_weights, reconstruction_model_binding,
+        scatter_chart_planes,
     };
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
@@ -8493,6 +9101,116 @@ mod tests {
         assert_eq!(standard.image_blc, [1, 1]);
         assert_eq!(mosaic.grid_shape, [8, 8]);
         assert_eq!(mosaic.image_blc, [0, 0]);
+    }
+
+    #[test]
+    fn t49_zero_w_reduces_to_the_standard_operator() {
+        let geometry = geometry();
+        let standard = ConvolutionOperator::new(&geometry, None).unwrap();
+        let zero_w = ConvolutionOperator::new(
+            &geometry,
+            Some(casa_imaging_model::WProjectionContract::new(0.0, None).unwrap()),
+        )
+        .unwrap();
+        let coordinate = [0.25, -0.5, 0.0];
+        assert_eq!(standard.taps(coordinate), zero_w.taps(coordinate));
+        assert!(matches!(zero_w, ConvolutionOperator::Standard(_)));
+    }
+
+    #[test]
+    fn t49_w_projection_grid_and_degrid_are_adjoint() {
+        let mut geometry = geometry();
+        geometry.image_shape = [48, 48];
+        geometry.grid_shape = [64, 64];
+        geometry.image_blc = [8, 8];
+        let operator = ConvolutionOperator::new(
+            &geometry,
+            Some(
+                casa_imaging_model::WProjectionContract::new(
+                    10_000.0,
+                    std::num::NonZeroUsize::new(9),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let taps = operator
+            .taps([12.25, -7.5, 4_000.0])
+            .expect("sample fits W kernel support");
+        let value = Complex64::new(0.75, -0.4);
+        let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
+        let mut gridded = Array2::zeros(shape);
+        let mut compensation = Array2::zeros(shape);
+        operator
+            .grid_compensated(&mut gridded, &mut compensation, taps, value)
+            .unwrap();
+        let data = Array2::from_shape_fn(shape, |(x, y)| {
+            Complex64::new((x * 3 + y) as f64 / 97.0, (x + y * 2) as f64 / 113.0)
+        });
+        let left = gridded
+            .iter()
+            .zip(data.iter())
+            .map(|(x, y)| x.conj() * y)
+            .sum::<Complex64>();
+        let right = value.conj() * operator.degrid(&data, taps).unwrap();
+        assert!((left - right).norm() < 1.0e-11, "{left:?} != {right:?}");
+    }
+
+    #[test]
+    fn t49_w_projection_kernel_diagnostics_are_explicit_and_finite() {
+        let mut geometry = geometry();
+        geometry.image_shape = [48, 48];
+        geometry.grid_shape = [64, 64];
+        geometry.image_blc = [8, 8];
+        let operator = ConvolutionOperator::new(
+            &geometry,
+            Some(
+                casa_imaging_model::WProjectionContract::new(
+                    10_000.0,
+                    std::num::NonZeroUsize::new(9),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let ConvolutionOperator::WProjection(w_projection) = &operator else {
+            panic!("nonzero W must compile the W-projection operator");
+        };
+        let diagnostics = operator.w_projection_diagnostics().expect("W diagnostics");
+        assert_eq!(diagnostics.plane_count(), 9);
+        assert_eq!(diagnostics.sampling(), 4);
+        assert_eq!(
+            diagnostics.maximum_support(),
+            w_projection.maximum_support()
+        );
+        assert!(diagnostics.plane_zero_normalization().is_finite());
+        assert_ne!(diagnostics.kernel_identity(), [0; 32]);
+        assert_eq!(w_projection.sampling, 4);
+        assert_eq!(w_projection.kernels.len(), 9);
+        assert!(w_projection.w_scale.is_finite() && w_projection.w_scale > 0.0);
+        assert!(w_projection.kernels.iter().all(|kernel| {
+            kernel.support > 0
+                && kernel
+                    .weights
+                    .iter()
+                    .all(|weight| weight.re.is_finite() && weight.im.is_finite())
+        }));
+        assert!(
+            (super::w_projection_kernel_sum(&w_projection.kernels[0], w_projection.sampling) - 1.0)
+                .abs()
+                < 1.0e-12
+        );
+        assert!(
+            w_projection
+                .kernels
+                .last()
+                .unwrap()
+                .weights
+                .iter()
+                .any(|weight| weight.im.abs() > 1.0e-12),
+            "a nonzero-W plane must carry a complex phase screen"
+        );
+        assert_eq!(operator.taps([0.0, 0.0, f64::NAN]), None);
     }
 
     #[test]

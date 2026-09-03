@@ -54,6 +54,7 @@ pub struct SelectedObservationRow {
     observation_id: i32,
     time_mjd_seconds: f64,
     flag_row: bool,
+    uvw_m: [f64; 3],
 }
 
 impl SelectedObservationRow {
@@ -106,6 +107,12 @@ impl SelectedObservationRow {
     #[must_use]
     pub const fn flag_row(self) -> bool {
         self.flag_row
+    }
+
+    /// Return the stored UVW coordinates in metres.
+    #[must_use]
+    pub const fn uvw_m(self) -> [f64; 3] {
+        self.uvw_m
     }
 }
 
@@ -252,6 +259,7 @@ impl MeasurementSet {
                         observation_id: fact.observation_id(),
                         time_mjd_seconds: fact.time_mjd_seconds(),
                         flag_row: fact.flag_row(),
+                        uvw_m: fact.uvw_m(),
                     });
                 }
             }

@@ -18,7 +18,8 @@ use crate::{
         InstrumentModel, InstrumentResponse, LogicalIdentity, NumericsContractId,
         PolarizationContract, ProductKind, ProductNormalization, ReconstructionBasis,
         ReconstructionContract, RestoringBeamPolicy, ScientificContract, SpectralKernel,
-        SpectralSamplingLaw, UvTaper, WeightDensityScope, WeightingContract, WeightingScheme,
+        SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope, WeightingContract,
+        WeightingScheme,
     },
     geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
     observation::{
@@ -145,6 +146,8 @@ pub enum PairedTransformKind {
     SpectralResampling,
     /// Paired integration over source channels.
     ChannelIntegration,
+    /// W-dependent convolution and its conjugate adjoint.
+    WProjection,
 }
 
 /// One logical transform whose forward and adjoint directions cannot be separated.
@@ -181,6 +184,11 @@ pub enum PairedMeasurementTransform {
         /// Fixed source-channel count contributing to each output bin.
         channels_per_bin: usize,
     },
+    /// Apply one W-dependent convolution family in both directions.
+    WProjection {
+        /// Exact W envelope and plane identity compiled for this problem.
+        contract: WProjectionContract,
+    },
 }
 
 impl PairedMeasurementTransform {
@@ -197,6 +205,7 @@ impl PairedMeasurementTransform {
             Self::PhaseRotation { .. } => PairedTransformKind::Phase,
             Self::SpectralResampling { .. } => PairedTransformKind::SpectralResampling,
             Self::ChannelIntegration { .. } => PairedTransformKind::ChannelIntegration,
+            Self::WProjection { .. } => PairedTransformKind::WProjection,
         }
     }
 }
@@ -561,6 +570,9 @@ pub(crate) fn compile_normal_equation(
                 channels_per_bin: maximum_terms,
             });
         }
+    }
+    if let Some(contract) = science.measurement_equation().w_projection() {
+        transforms.push(PairedMeasurementTransform::WProjection { contract });
     }
     let measurement_operator = MeasurementOperatorContract {
         domain: domain.clone(),
