@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 20;
+const RECEIPT_SCHEMA_VERSION: u32 = 21;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 11;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -3626,6 +3626,8 @@ struct AdaptationProjection {
     from: ExecutionKnobsProjection,
     to: ExecutionKnobsProjection,
     quiescence: String,
+    activate_nodes: Vec<String>,
+    deactivate_nodes: Vec<String>,
     applied_revision: Option<u64>,
 }
 
@@ -3636,6 +3638,16 @@ impl AdaptationProjection {
             from: ExecutionKnobsProjection::new(&adaptation.from),
             to: ExecutionKnobsProjection::new(&adaptation.to),
             quiescence: quiescence(adaptation.at).to_string(),
+            activate_nodes: adaptation
+                .activate_nodes
+                .iter()
+                .map(|node| stable_text(node.as_str()))
+                .collect(),
+            deactivate_nodes: adaptation
+                .deactivate_nodes
+                .iter()
+                .map(|node| stable_text(node.as_str()))
+                .collect(),
             applied_revision: None,
         }
     }
@@ -3647,6 +3659,18 @@ impl AdaptationProjection {
                 from: self.from.to_runtime(),
                 to: self.to.to_runtime(),
                 at: parse_quiescence(&self.quiescence),
+                activate_nodes: self
+                    .activate_nodes
+                    .iter()
+                    .cloned()
+                    .map(WorkNodeId::new)
+                    .collect(),
+                deactivate_nodes: self
+                    .deactivate_nodes
+                    .iter()
+                    .cloned()
+                    .map(WorkNodeId::new)
+                    .collect(),
             },
             applied_revision: self.applied_revision,
         }
@@ -4788,7 +4812,24 @@ fn validate_plan_projection(
                     .quiescence_points
                     .contains(&adaptation.quiescence)
                 && execution_knobs_are_valid(&adaptation.from)
-                && execution_knobs_are_valid(&adaptation.to),
+                && execution_knobs_are_valid(&adaptation.to)
+                && adaptation
+                    .activate_nodes
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+                && adaptation
+                    .deactivate_nodes
+                    .windows(2)
+                    .all(|pair| pair[0] < pair[1])
+                && adaptation
+                    .activate_nodes
+                    .iter()
+                    .chain(&adaptation.deactivate_nodes)
+                    .all(|node| is_redacted_text(node) && node_ids.contains(node.as_str()))
+                && adaptation
+                    .activate_nodes
+                    .iter()
+                    .all(|node| !adaptation.deactivate_nodes.contains(node)),
         )?;
         if let Some(applied_revision) = adaptation.applied_revision {
             require_integrity(
@@ -4899,6 +4940,18 @@ fn receipt_execution_dag(plan: &PlanProjection) -> Result<ExecutionDag, ReceiptE
             from: adaptation.from.to_runtime(),
             to: adaptation.to.to_runtime(),
             at: parse_quiescence(&adaptation.quiescence),
+            activate_nodes: adaptation
+                .activate_nodes
+                .iter()
+                .cloned()
+                .map(WorkNodeId::new)
+                .collect(),
+            deactivate_nodes: adaptation
+                .deactivate_nodes
+                .iter()
+                .cloned()
+                .map(WorkNodeId::new)
+                .collect(),
         })
         .collect();
     ExecutionDag::new(ExecutionDagSpecification {

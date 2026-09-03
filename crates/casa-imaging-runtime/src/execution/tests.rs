@@ -3415,6 +3415,8 @@ fn adaptation_requires_the_listed_transition_at_its_quiescence_point() {
         from: ExecutionKnobs::serial(),
         to: adapted.clone(),
         at: QuiescencePoint::MajorCycle,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::new(),
     }];
     let plan = ExecutionDag::new(specification).expect("valid adaptive plan");
     let mut scheduler =
@@ -3448,6 +3450,426 @@ fn adaptation_requires_the_listed_transition_at_its_quiescence_point() {
     assert_eq!(
         scheduler.applied_adaptations(),
         &[AdaptationId::new("larger-batch")]
+    );
+}
+
+#[test]
+fn adaptation_atomically_selects_plan_listed_low_memory_work() {
+    let resident_id = WorkNodeId::new("resident-cache");
+    let recompute_id = WorkNodeId::new("recompute-immutable-state");
+    let spill_id = WorkNodeId::new("spill-state");
+    let prefetch_id = WorkNodeId::new("prefetch-state");
+
+    let mut resident = cpu_node(resident_id.as_str(), BTreeSet::new());
+    resident.kind = WorkKind::Cache;
+    resident.claims.push(ResourceClaim {
+        resource: LeaseResource::ResidentCache,
+        amount: 64,
+        lifetime: ClaimLifetime::Work,
+    });
+    let mut recompute = cpu_node(recompute_id.as_str(), BTreeSet::new());
+    recompute.kind = WorkKind::Preparation;
+    let mut spill = cpu_node(
+        spill_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(recompute_id.clone())]),
+    );
+    spill.kind = WorkKind::Spill;
+    spill.domain = WorkDomain::Io;
+    spill.claims = vec![
+        ResourceClaim {
+            resource: crate::LeaseResource::Rate {
+                demand_id: "io-rate".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        },
+        ResourceClaim {
+            resource: crate::LeaseResource::Queue {
+                demand_id: "io-queue".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        },
+    ];
+    spill.fences = BTreeSet::from([FenceKind::Io]);
+    let mut prefetch = cpu_node(
+        prefetch_id.as_str(),
+        BTreeSet::from([WorkDependency::Fence(FenceId::new(
+            spill_id.clone(),
+            FenceKind::Io,
+        ))]),
+    );
+    prefetch.kind = WorkKind::Prefetch;
+    prefetch.domain = WorkDomain::Io;
+    prefetch.claims = vec![
+        ResourceClaim {
+            resource: crate::LeaseResource::Rate {
+                demand_id: "io-rate".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        },
+        ResourceClaim {
+            resource: crate::LeaseResource::Queue {
+                demand_id: "io-queue".to_string(),
+            },
+            amount: 1,
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        },
+    ];
+    prefetch.fences = BTreeSet::from([FenceKind::Io]);
+    let join = synchronization_node(
+        "join",
+        BTreeSet::from([
+            WorkDependency::Work(resident_id.clone()),
+            WorkDependency::Work(recompute_id.clone()),
+            WorkDependency::Fence(FenceId::new(prefetch_id.clone(), FenceKind::Io)),
+        ]),
+    );
+    let mut specification = plan_spec(vec![resident, recompute, spill, prefetch, join]);
+    specification.resource_alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: 64,
+        preferred_resident_bytes: 64,
+    };
+    specification.initial_knobs.cache_retention_bytes = 64;
+    specification.initial_knobs.io_depth = 2;
+    specification.resource_alternative.demand.rates = vec![RateDemand {
+        demand_id: "io-rate".to_string(),
+        resource: RateResourceId::new("io-rate"),
+        amount: CountDemand::new(1, 1),
+    }];
+    specification.resource_alternative.demand.queues = vec![QueueDemand {
+        demand_id: "io-queue".to_string(),
+        resource: QueueResourceId::new("io-queue"),
+        slots: CountDemand::new(1, 1),
+    }];
+    let mut low_memory = specification.initial_knobs.clone();
+    low_memory.batch_size = 2;
+    low_memory.tile_width = 2;
+    low_memory.tile_height = 2;
+    low_memory.slab_depth = 2;
+    low_memory.io_depth = 1;
+    low_memory.cache_retention_bytes = 0;
+    low_memory.recomputation = true;
+    low_memory.spill = true;
+    low_memory.prefetch = true;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("select-low-memory"),
+        from: specification.initial_knobs.clone(),
+        to: low_memory.clone(),
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::from([
+            recompute_id.clone(),
+            spill_id.clone(),
+            prefetch_id.clone(),
+        ]),
+        deactivate_nodes: BTreeSet::from([resident_id.clone()]),
+    }];
+
+    let plan = ExecutionDag::new(specification).expect("sealed low-memory alternatives");
+    let mut scheduler =
+        ExecutionScheduler::start(&plan, &ResourcePolicy::Exclusive, &io_authority(), None)
+            .expect("admitted low-memory plan");
+    scheduler
+        .adapt(&AdaptationId::new("select-low-memory"))
+        .expect("atomic run-boundary selection");
+
+    let mut dispatched = Vec::new();
+    loop {
+        match scheduler.next_action().expect("low-memory scheduling") {
+            SchedulerAction::Work(work) => {
+                assert_eq!(work.knobs(), &low_memory);
+                dispatched.push(work.node().id.clone());
+                let fences = scheduler
+                    .finish_work(work.node().id.clone(), WorkResult::Succeeded)
+                    .expect("selected work settles");
+                for fence in fences {
+                    scheduler
+                        .complete_fence(fence)
+                        .expect("selected asynchronous work fence settles");
+                }
+            }
+            SchedulerAction::Complete(SchedulerTerminal::Succeeded) => break,
+            action => panic!("unexpected low-memory action: {action:?}"),
+        }
+    }
+    assert_eq!(
+        dispatched,
+        vec![recompute_id, spill_id, prefetch_id, WorkNodeId::new("join")]
+    );
+}
+
+#[test]
+fn adaptation_projection_cannot_strand_a_logical_allocation_terminal_fence() {
+    let acquire_id = WorkNodeId::new("acquire-state");
+    let boundary_id = WorkNodeId::new("adaptation-boundary");
+    let terminal_id = WorkNodeId::new("terminal-io-use");
+    let allocation_id = AllocationId::new("adaptation-state");
+    let slot_id = PhysicalSlotId::new("adaptation-slot");
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("adaptation-state"),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let mut acquire = cpu_node(acquire_id.as_str(), BTreeSet::new());
+    acquire.allocations.push(AllocationUse {
+        allocation: allocation_id.clone(),
+        lifetime: ClaimLifetime::Work,
+    });
+    let mut boundary = synchronization_node(
+        boundary_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(acquire_id.clone())]),
+    );
+    boundary.quiescence_after = BTreeSet::from([QuiescencePoint::MajorCycle]);
+    let terminal = WorkNode {
+        id: terminal_id.clone(),
+        kind: WorkKind::Io,
+        domain: WorkDomain::Io,
+        implementation: WorkImplementationId::new("cpu-reference"),
+        dependencies: BTreeSet::from([WorkDependency::Work(boundary_id)]),
+        claims: vec![
+            ResourceClaim {
+                resource: crate::LeaseResource::Rate {
+                    demand_id: "io-rate".to_string(),
+                },
+                amount: 1,
+                lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::Queue {
+                    demand_id: "io-queue".to_string(),
+                },
+                amount: 1,
+                lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+            },
+        ],
+        allocations: vec![AllocationUse {
+            allocation: allocation_id.clone(),
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        }],
+        fences: BTreeSet::from([FenceKind::Io]),
+        quiescence_after: BTreeSet::new(),
+    };
+    let mut specification = plan_spec(vec![acquire, boundary, terminal]);
+    specification
+        .resource_alternative
+        .quiescence_points
+        .insert(QuiescencePoint::MajorCycle);
+    specification.resource_alternative.demand.memory = vec![MemoryDemand {
+        allocation_id: "adaptation-slot".to_string(),
+        hard_bytes: 64,
+        preferred_bytes: 64,
+        views: vec![CapacityViewId::new("host-memory")],
+    }];
+    specification.resource_alternative.demand.rates = vec![RateDemand {
+        demand_id: "io-rate".to_string(),
+        resource: RateResourceId::new("io-rate"),
+        amount: CountDemand::new(1, 1),
+    }];
+    specification.resource_alternative.demand.queues = vec![QueueDemand {
+        demand_id: "io-queue".to_string(),
+        resource: QueueResourceId::new("io-queue"),
+        slots: CountDemand::new(1, 1),
+    }];
+    specification.logical_allocations = vec![LogicalAllocation {
+        id: allocation_id,
+        bytes: 64,
+        purpose: AllocationPurpose::Data,
+        compatibility: compatibility.clone(),
+        physical_slot: slot_id.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: acquire_id,
+            release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                terminal_id.clone(),
+                FenceKind::Io,
+            ))]),
+        },
+    }];
+    specification.physical_slots = vec![PhysicalSlot {
+        id: slot_id,
+        lease_resource: crate::LeaseResource::Memory {
+            allocation_id: "adaptation-slot".to_string(),
+        },
+        capacity_bytes: 64,
+        compatibility,
+    }];
+    let mut adapted = specification.initial_knobs.clone();
+    adapted.batch_size = 2;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("strand-terminal-fence"),
+        from: specification.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::MajorCycle,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::from([terminal_id]),
+    }];
+
+    let error = ExecutionDag::new(specification)
+        .expect_err("an active allocation must retain every terminal fence producer");
+
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("adaptation-state") && message.contains("terminal-io-use"))
+    );
+}
+
+#[test]
+fn adaptation_projection_cannot_strand_a_retained_resource_release() {
+    let acquire_id = WorkNodeId::new("retain-handle");
+    let boundary_id = WorkNodeId::new("adaptation-boundary");
+    let release_id = WorkNodeId::new("release-handle");
+    let allocation_id = AllocationId::new("release-state");
+    let slot_id = PhysicalSlotId::new("release-slot");
+    let retained = |release: &WorkNodeId| ResourceClaim {
+        resource: crate::LeaseResource::FileDescriptors,
+        amount: 1,
+        lifetime: ClaimLifetime::RetainedUntil(release.clone()),
+    };
+    let acquire = {
+        let mut node = cpu_node(acquire_id.as_str(), BTreeSet::new());
+        node.claims.push(retained(&release_id));
+        node
+    };
+    let mut boundary = synchronization_node(
+        boundary_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(acquire_id)]),
+    );
+    boundary.quiescence_after = BTreeSet::from([QuiescencePoint::MajorCycle]);
+    let mut release = cpu_node(
+        release_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(boundary_id)]),
+    );
+    release.kind = WorkKind::Release;
+    release.claims.push(retained(&release_id));
+    release.allocations.push(AllocationUse {
+        allocation: allocation_id.clone(),
+        lifetime: ClaimLifetime::Work,
+    });
+    let compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("release-state"),
+        initialization: InitializationPolicy::Preserve,
+        access: AllocationAccess::ReadOnly,
+    };
+    let mut specification = plan_spec(vec![acquire, boundary, release]);
+    specification
+        .resource_alternative
+        .quiescence_points
+        .insert(QuiescencePoint::MajorCycle);
+    specification.resource_alternative.demand.file_descriptors = CountDemand::new(1, 1);
+    specification.resource_alternative.demand.memory = vec![MemoryDemand {
+        allocation_id: "release-slot".to_string(),
+        hard_bytes: 1,
+        preferred_bytes: 1,
+        views: vec![CapacityViewId::new("host-memory")],
+    }];
+    specification.logical_allocations = vec![LogicalAllocation {
+        id: allocation_id,
+        bytes: 1,
+        purpose: AllocationPurpose::Data,
+        compatibility: compatibility.clone(),
+        physical_slot: slot_id.clone(),
+        lifetime: AllocationLifetime {
+            acquire_at: release_id.clone(),
+            release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
+        },
+    }];
+    specification.physical_slots = vec![PhysicalSlot {
+        id: slot_id,
+        lease_resource: crate::LeaseResource::Memory {
+            allocation_id: "release-slot".to_string(),
+        },
+        capacity_bytes: 1,
+        compatibility,
+    }];
+    let mut adapted = specification.initial_knobs.clone();
+    adapted.batch_size = 2;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("strand-retained-handle"),
+        from: specification.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::MajorCycle,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::from([release_id]),
+    }];
+
+    let error = ExecutionDag::new(specification)
+        .expect_err("an active retained claim must retain its release node");
+
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("FileDescriptors") && message.contains("release-handle"))
+    );
+}
+
+#[test]
+fn adaptation_projection_cannot_make_terminal_publication_conditional() {
+    let publication_id = WorkNodeId::new("terminal-publication");
+    let lifetime = ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
+    let publication = WorkNode {
+        id: publication_id.clone(),
+        kind: WorkKind::Publication,
+        domain: WorkDomain::Io,
+        implementation: WorkImplementationId::new("cpu-reference"),
+        dependencies: BTreeSet::new(),
+        claims: vec![
+            ResourceClaim {
+                resource: crate::LeaseResource::Rate {
+                    demand_id: "io-rate".to_string(),
+                },
+                amount: 1,
+                lifetime: lifetime.clone(),
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::Queue {
+                    demand_id: "io-queue".to_string(),
+                },
+                amount: 1,
+                lifetime,
+            },
+        ],
+        allocations: Vec::new(),
+        fences: BTreeSet::from([FenceKind::Io, FenceKind::Publication]),
+        quiescence_after: BTreeSet::new(),
+    };
+    let mut specification = plan_spec(vec![publication]);
+    specification.resource_alternative.demand.rates = vec![RateDemand {
+        demand_id: "io-rate".to_string(),
+        resource: RateResourceId::new("io-rate"),
+        amount: CountDemand::new(1, 1),
+    }];
+    specification.resource_alternative.demand.queues = vec![QueueDemand {
+        demand_id: "io-queue".to_string(),
+        resource: QueueResourceId::new("io-queue"),
+        slots: CountDemand::new(1, 1),
+    }];
+    let mut adapted = specification.initial_knobs.clone();
+    adapted.batch_size = 2;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("disable-publication"),
+        from: specification.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::from([publication_id.clone()]),
+    }];
+    let plan = ExecutionDag::new(specification).expect("valid conditional work plan");
+
+    let error = ExecutionScheduler::start(
+        &plan,
+        &ResourcePolicy::Exclusive,
+        &io_authority(),
+        Some(&publication_id),
+    )
+    .expect_err("terminal publication must remain active in every projection");
+
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("terminal publication") && message.contains("conditional"))
     );
 }
 
@@ -3496,12 +3918,16 @@ fn adaptation_transition_must_be_reachable_in_boundary_order() {
             from: ExecutionKnobs::serial(),
             to: after_major.clone(),
             at: QuiescencePoint::MajorCycle,
+            activate_nodes: BTreeSet::new(),
+            deactivate_nodes: BTreeSet::new(),
         },
         AdaptationTransition {
             id: AdaptationId::new("back-at-run-start"),
             from: after_major,
             to: impossible,
             at: QuiescencePoint::RunBoundary,
+            activate_nodes: BTreeSet::new(),
+            deactivate_nodes: BTreeSet::new(),
         },
     ];
 
@@ -3522,6 +3948,8 @@ fn adaptation_cannot_enable_undeclared_spill_work() {
         from: ExecutionKnobs::serial(),
         to: adapted,
         at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::new(),
     }];
 
     let error = ExecutionDag::new(specification)
@@ -3542,6 +3970,8 @@ fn adaptation_shape_must_fit_the_selected_scaling_envelope() {
         from: ExecutionKnobs::serial(),
         to: adapted,
         at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::new(),
     }];
 
     let error = ExecutionDag::new(specification)
@@ -3617,6 +4047,8 @@ fn execution_knobs_must_admit_every_reachable_mandatory_claim() {
         from: initial,
         to: ExecutionKnobs::serial(),
         at: QuiescencePoint::MajorCycle,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::new(),
     }];
 
     let error = ExecutionDag::new(transition_specification)
@@ -3674,12 +4106,16 @@ fn adaptation_feasibility_uses_the_exact_repeated_boundary_occurrence() {
             from: initial,
             to: after_first.clone(),
             at: QuiescencePoint::MajorCycle,
+            activate_nodes: BTreeSet::new(),
+            deactivate_nodes: BTreeSet::new(),
         },
         AdaptationTransition {
             id: AdaptationId::new("shrink-after-second-major"),
             from: after_first,
             to: after_second,
             at: QuiescencePoint::MajorCycle,
+            activate_nodes: BTreeSet::new(),
+            deactivate_nodes: BTreeSet::new(),
         },
     ];
 

@@ -3476,7 +3476,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
             )
         })
         .expect("initial gridded spill storage claim");
-    assert_eq!(receipt.schema_version(), 20);
+    assert_eq!(receipt.schema_version(), 21);
     assert_eq!(initial_storage_claim.lifetime, ClaimLifetime::Artifact);
     assert_eq!(
         receipt.actual_resource_peak(
@@ -5655,6 +5655,8 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
             from: ExecutionKnobs::serial(),
             to: adapted,
             at: QuiescencePoint::MajorCycle,
+            activate_nodes: BTreeSet::new(),
+            deactivate_nodes: BTreeSet::new(),
         }],
     };
     transaction_binding(
@@ -7940,7 +7942,7 @@ fn later_member_failure_retains_terminal_prefix_and_suffix_evidence() {
     ));
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 20);
+    assert_eq!(receipt.schema_version(), 21);
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
     let dispositions = execution_plan
         .publication_layouts()
@@ -10242,7 +10244,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 20);
+    assert_eq!(receipt.schema_version(), 21);
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());

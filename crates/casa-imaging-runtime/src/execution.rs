@@ -495,6 +495,10 @@ pub struct AdaptationTransition {
     pub to: ExecutionKnobs,
     /// Required safe execution boundary.
     pub at: QuiescencePoint,
+    /// Plan-declared dormant nodes activated atomically by this transition.
+    pub activate_nodes: BTreeSet<WorkNodeId>,
+    /// Plan-declared pending nodes deactivated atomically by this transition.
+    pub deactivate_nodes: BTreeSet<WorkNodeId>,
 }
 
 /// Declarative inputs consumed by [`ExecutionDag::new`].
@@ -565,6 +569,7 @@ impl ExecutionDag {
             &adaptations,
             &specification.resource_alternative,
             &nodes,
+            &logical_allocations,
             &topological_order,
         )?;
         let selected_implementations = nodes
@@ -976,6 +981,7 @@ pub(crate) struct PublicationReservation {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NodeState {
+    Inactive,
     Pending,
     CleanupPending,
     CleanupFailed,
@@ -1086,6 +1092,16 @@ impl<'plan> ExecutionScheduler<'plan> {
                     publication.as_str()
                 )));
             }
+            if let Some(adaptation) = dag.adaptations.values().find(|adaptation| {
+                adaptation.activate_nodes.contains(publication)
+                    || adaptation.deactivate_nodes.contains(publication)
+            }) {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "terminal publication node {} is conditional adaptation work in {}",
+                    publication.as_str(),
+                    adaptation.id.as_str()
+                )));
+            }
         }
         validate_topology(dag, authority.topology())?;
         let lease = authority.acquire(
@@ -1117,11 +1133,23 @@ impl<'plan> ExecutionScheduler<'plan> {
         } else {
             None
         };
+        let initially_inactive = dag
+            .adaptations
+            .values()
+            .flat_map(|transition| transition.activate_nodes.iter().cloned())
+            .collect::<BTreeSet<_>>();
         let states = dag
             .nodes
             .keys()
             .cloned()
-            .map(|id| (id, NodeState::Pending))
+            .map(|id| {
+                let state = if initially_inactive.contains(&id) {
+                    NodeState::Inactive
+                } else {
+                    NodeState::Pending
+                };
+                (id, state)
+            })
             .collect();
         let available_quiescence = if dag
             .resource_alternative
@@ -1276,7 +1304,7 @@ impl<'plan> ExecutionScheduler<'plan> {
         if self
             .states
             .values()
-            .all(|state| *state == NodeState::Settled)
+            .all(|state| matches!(state, NodeState::Inactive | NodeState::Settled))
         {
             if let Some(publication) = &self.terminal_publication {
                 let expected_allocations = self.dag.nodes[publication]
@@ -1646,6 +1674,30 @@ impl<'plan> ExecutionScheduler<'plan> {
                 adaptation.as_str()
             )));
         }
+        for node in &transition.activate_nodes {
+            if self.states.get(node) != Some(&NodeState::Inactive) {
+                return Err(ExecutionError::invalid_state(format!(
+                    "adaptation {} cannot activate work node {} from its current state",
+                    adaptation.as_str(),
+                    node.as_str()
+                )));
+            }
+        }
+        for node in &transition.deactivate_nodes {
+            if self.states.get(node) != Some(&NodeState::Pending) {
+                return Err(ExecutionError::invalid_state(format!(
+                    "adaptation {} cannot deactivate work node {} from its current state",
+                    adaptation.as_str(),
+                    node.as_str()
+                )));
+            }
+        }
+        for node in &transition.activate_nodes {
+            self.states.insert(node.clone(), NodeState::Pending);
+        }
+        for node in &transition.deactivate_nodes {
+            self.states.insert(node.clone(), NodeState::Inactive);
+        }
         self.knobs = transition.to.clone();
         self.applied_adaptations.push(adaptation.clone());
         self.available_quiescence.clear();
@@ -1656,9 +1708,12 @@ impl<'plan> ExecutionScheduler<'plan> {
         node.dependencies.iter().all(|dependency| match dependency {
             WorkDependency::Work(predecessor) => matches!(
                 self.states.get(predecessor),
-                Some(NodeState::WorkComplete | NodeState::Settled)
+                Some(NodeState::Inactive | NodeState::WorkComplete | NodeState::Settled)
             ),
-            WorkDependency::Fence(fence) => self.completed_fences.contains(fence),
+            WorkDependency::Fence(fence) => {
+                self.completed_fences.contains(fence)
+                    || self.states.get(fence.node()) == Some(&NodeState::Inactive)
+            }
         })
     }
 
@@ -1669,12 +1724,22 @@ impl<'plan> ExecutionScheduler<'plan> {
                 if predecessor_node.kind == WorkKind::Release {
                     matches!(
                         self.states.get(predecessor),
-                        Some(NodeState::Settled | NodeState::CleanupFailed | NodeState::Cancelled)
+                        Some(
+                            NodeState::Inactive
+                                | NodeState::Settled
+                                | NodeState::CleanupFailed
+                                | NodeState::Cancelled
+                        )
                     )
                 } else {
                     matches!(
                         self.states.get(predecessor),
-                        Some(NodeState::WorkComplete | NodeState::Settled | NodeState::Cancelled)
+                        Some(
+                            NodeState::Inactive
+                                | NodeState::WorkComplete
+                                | NodeState::Settled
+                                | NodeState::Cancelled
+                        )
                     )
                 }
             }
@@ -1682,9 +1747,11 @@ impl<'plan> ExecutionScheduler<'plan> {
                 if self.dag.nodes[fence.node()].kind == WorkKind::Release {
                     self.completed_fences.contains(fence)
                         || self.failed_cleanup_fences.contains(fence)
+                        || self.states.get(fence.node()) == Some(&NodeState::Inactive)
                         || self.states.get(fence.node()) == Some(&NodeState::Cancelled)
                 } else {
                     self.completed_fences.contains(fence)
+                        || self.states.get(fence.node()) == Some(&NodeState::Inactive)
                         || self.states.get(fence.node()) == Some(&NodeState::Cancelled)
                 }
             }
@@ -2477,6 +2544,12 @@ fn canonical_physical_work_id(plan: &ExecutionDag) -> PhysicalWorkId {
         encode_knobs(&mut encoder, &transition.from);
         encode_knobs(&mut encoder, &transition.to);
         encode_quiescence(&mut encoder, transition.at);
+        encode_string_set(&mut encoder, &transition.activate_nodes, |node| {
+            node.as_str()
+        });
+        encode_string_set(&mut encoder, &transition.deactivate_nodes, |node| {
+            node.as_str()
+        });
     }
     PhysicalWorkId::from_sha256(encoder.finish())
 }
@@ -4031,10 +4104,26 @@ fn validate_adaptations(
     adaptations: &BTreeMap<AdaptationId, AdaptationTransition>,
     alternative: &DemandAlternative,
     nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    allocations: &BTreeMap<AllocationId, LogicalAllocation>,
     topological_order: &[WorkNodeId],
 ) -> Result<(), ExecutionError> {
+    let initially_inactive = adaptations
+        .values()
+        .flat_map(|transition| transition.activate_nodes.iter().cloned())
+        .collect::<BTreeSet<_>>();
     validate_knob_envelope(initial, alternative, nodes)?;
-    validate_mandatory_claims(initial, nodes.values())?;
+    validate_active_projection(
+        "initial execution configuration",
+        nodes,
+        allocations,
+        &initially_inactive,
+    )?;
+    validate_mandatory_claims(
+        initial,
+        nodes
+            .values()
+            .filter(|node| !initially_inactive.contains(&node.id)),
+    )?;
     for node in nodes.values() {
         if !node
             .quiescence_after
@@ -4067,6 +4156,64 @@ fn validate_adaptations(
         }
         validate_knob_envelope(&transition.from, alternative, nodes)?;
         validate_knob_envelope(&transition.to, alternative, nodes)?;
+        if !transition
+            .activate_nodes
+            .is_disjoint(&transition.deactivate_nodes)
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "adaptation {} activates and deactivates the same work node",
+                transition.id.as_str()
+            )));
+        }
+        for node in transition
+            .activate_nodes
+            .iter()
+            .chain(&transition.deactivate_nodes)
+        {
+            if !nodes.contains_key(node) {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "adaptation {} names unknown work node {}",
+                    transition.id.as_str(),
+                    node.as_str()
+                )));
+            }
+        }
+        if !transition.from.recomputation
+            && transition.to.recomputation
+            && !transition
+                .activate_nodes
+                .iter()
+                .any(|node| nodes[node].kind == WorkKind::Preparation)
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "adaptation {} enables recomputation without activating exact preparation work",
+                transition.id.as_str()
+            )));
+        }
+        if !transition.from.spill
+            && transition.to.spill
+            && !transition
+                .activate_nodes
+                .iter()
+                .any(|node| nodes[node].kind == WorkKind::Spill)
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "adaptation {} enables spill without activating exact spill work",
+                transition.id.as_str()
+            )));
+        }
+        if !transition.from.prefetch
+            && transition.to.prefetch
+            && !transition
+                .activate_nodes
+                .iter()
+                .any(|node| nodes[node].kind == WorkKind::Prefetch)
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "adaptation {} enables prefetch without activating exact prefetch work",
+                transition.id.as_str()
+            )));
+        }
     }
     let mut boundary_occurrences = if alternative
         .quiescence_points
@@ -4080,18 +4227,53 @@ fn validate_adaptations(
         let points = &nodes[node_id].quiescence_after;
         (!points.is_empty()).then(|| (points.clone(), Some(node_id.clone())))
     }));
-    let mut reachable_configurations = BTreeSet::from([initial.clone()]);
+    let mut reachable_configurations = BTreeMap::from([(initial.clone(), initially_inactive)]);
     let mut reachable_transitions = BTreeSet::new();
     for (points, boundary_node) in boundary_occurrences {
         let entering_configurations = reachable_configurations.clone();
         for transition in adaptations.values() {
-            if entering_configurations.contains(&transition.from) && points.contains(&transition.at)
+            if let Some(inactive) = entering_configurations.get(&transition.from)
+                && points.contains(&transition.at)
             {
+                let remaining = nodes_remaining_after(nodes, boundary_node.as_ref());
+                let remaining_ids = remaining
+                    .iter()
+                    .map(|node| node.id.clone())
+                    .collect::<BTreeSet<_>>();
+                if !transition.activate_nodes.is_subset(inactive)
+                    || !transition.deactivate_nodes.is_disjoint(inactive)
+                    || !transition.activate_nodes.is_subset(&remaining_ids)
+                    || !transition.deactivate_nodes.is_subset(&remaining_ids)
+                {
+                    continue;
+                }
+                let mut next_inactive = inactive.clone();
+                for node in &transition.activate_nodes {
+                    next_inactive.remove(node);
+                }
+                next_inactive.extend(transition.deactivate_nodes.iter().cloned());
+                validate_active_projection(
+                    &format!("adaptation {}", transition.id.as_str()),
+                    nodes,
+                    allocations,
+                    &next_inactive,
+                )?;
                 validate_mandatory_claims(
                     &transition.to,
-                    nodes_remaining_after(nodes, boundary_node.as_ref()),
+                    remaining
+                        .into_iter()
+                        .filter(|node| !next_inactive.contains(&node.id)),
                 )?;
-                reachable_configurations.insert(transition.to.clone());
+                if let Some(existing) = reachable_configurations.get(&transition.to) {
+                    if existing != &next_inactive {
+                        return Err(ExecutionError::invalid_plan(format!(
+                            "adaptation {} reaches one execution configuration with conflicting active work",
+                            transition.id.as_str()
+                        )));
+                    }
+                } else {
+                    reachable_configurations.insert(transition.to.clone(), next_inactive);
+                }
                 reachable_transitions.insert(transition.id.clone());
             }
         }
@@ -4109,6 +4291,62 @@ fn validate_adaptations(
             "adaptation {} is unreachable at every declared boundary",
             unreachable.as_str()
         )));
+    }
+    Ok(())
+}
+
+fn validate_active_projection(
+    projection: &str,
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    allocations: &BTreeMap<AllocationId, LogicalAllocation>,
+    inactive: &BTreeSet<WorkNodeId>,
+) -> Result<(), ExecutionError> {
+    for allocation in allocations.values() {
+        let acquisition_inactive = inactive.contains(&allocation.lifetime.acquire_at);
+        if acquisition_inactive
+            && let Some(active_use) = nodes.values().find(|node| {
+                !inactive.contains(&node.id)
+                    && node
+                        .allocations
+                        .iter()
+                        .any(|usage| usage.allocation == allocation.id)
+            })
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "{projection} activates work node {} without logical allocation {} acquisition node {}",
+                active_use.id.as_str(),
+                allocation.id.as_str(),
+                allocation.lifetime.acquire_at.as_str()
+            )));
+        }
+        if !acquisition_inactive
+            && let Some(terminal) = allocation
+                .lifetime
+                .release_after
+                .iter()
+                .find(|event| inactive.contains(event.predecessor()))
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "{projection} strands logical allocation {} because terminal event producer {} is inactive",
+                allocation.id.as_str(),
+                terminal.predecessor().as_str()
+            )));
+        }
+    }
+    for node in nodes.values().filter(|node| !inactive.contains(&node.id)) {
+        for claim in &node.claims {
+            let ClaimLifetime::RetainedUntil(release) = &claim.lifetime else {
+                continue;
+            };
+            if inactive.contains(release) {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "{projection} strands retained resource {:?} from work node {} because release node {} is inactive",
+                    claim.resource,
+                    node.id.as_str(),
+                    release.as_str()
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -4219,9 +4457,9 @@ fn validate_knob_envelope(
             "execution configuration exceeds selected hard bounds",
         ));
     }
-    if knobs.fusion || knobs.recomputation {
+    if knobs.fusion {
         return Err(ExecutionError::invalid_plan(
-            "fusion and recomputation require a sealed alternate node configuration",
+            "fusion requires a sealed alternate node configuration",
         ));
     }
     if knobs.spill && !nodes.values().any(|node| node.kind == WorkKind::Spill) {
