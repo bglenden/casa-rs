@@ -3055,11 +3055,10 @@ mod tests {
 
     use super::{
         ContinuumAlgorithm, SourceSpectralWindow, TaskRequirement,
-        analytic_primary_beam_model_for_telescopes,
-        canonicalize_polarizations, image_coordinates, image_reference_pixel,
-        instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
-        planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
-        spectral_window_midpoint_hz,
+        analytic_primary_beam_model_for_telescopes, canonicalize_polarizations, image_coordinates,
+        image_reference_pixel, instrument_model_supports_diameter, model_plane_samples,
+        parse_phase_center_direction, planned_minor_cycle_bytes, requested_products,
+        resource_policy_for_task_requirements, spectral_window_midpoint_hz,
     };
 
     #[test]

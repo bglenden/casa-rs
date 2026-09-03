@@ -889,7 +889,7 @@ with tempfile.TemporaryDirectory() as td:
             imagename=prefix,
             datacolumn="data",
             field=field,
-            stokes="I",
+            stokes=stokes,
             usepointing=usepointing,
             specmode=specmode,
             gridder=casa_gridder,
