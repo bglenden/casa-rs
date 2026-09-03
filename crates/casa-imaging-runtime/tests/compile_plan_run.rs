@@ -351,6 +351,35 @@ fn with_current_payload_checksum(mut document: String) -> String {
     document
 }
 
+#[derive(Clone, Copy, Debug)]
+enum BatchReceiptTamper {
+    Remove,
+    MismatchMaximum,
+}
+
+fn with_batch_receipt_tamper(document: &str, node_id: &str, tamper: BatchReceiptTamper) -> String {
+    let mut value: serde_json::Value = serde_json::from_str(document).expect("receipt JSON");
+    let node = value["receipt"]["plan"]["nodes"]
+        .as_array_mut()
+        .expect("typed work-node projections")
+        .iter_mut()
+        .find(|node| node["node_id"] == node_id)
+        .expect("canonical batch-controlled replay projection");
+    let batch = node
+        .get_mut("actual_batch")
+        .expect("serialized batch measurement");
+    match tamper {
+        BatchReceiptTamper::Remove => *batch = serde_json::Value::Null,
+        BatchReceiptTamper::MismatchMaximum => {
+            let maximum = batch["maximum"].as_u64().expect("numeric batch maximum");
+            batch["maximum"] = serde_json::Value::from(maximum + 1);
+        }
+    }
+    with_current_payload_checksum(
+        serde_json::to_string_pretty(&value).expect("serialize tampered receipt"),
+    )
+}
+
 fn with_node_receipt_status(
     mut document: String,
     node: &str,
@@ -3862,6 +3891,27 @@ fn execute_spectral_cycle_with_weighting_mode(
                 .actual_resource_peak(&retained_node, &cache_claim.resource, &cache_claim.lifetime)
                 .expect("retained route reports actual residency");
             assert!(actual > 0 && actual <= cache_claim.amount);
+        }
+        let receipt_path = receipts
+            .root_path()
+            .join(format!("{final_attempt}.receipt.json"));
+        let original = fs::read_to_string(&receipt_path).expect("serialized final-major receipt");
+        for tamper in [
+            BatchReceiptTamper::Remove,
+            BatchReceiptTamper::MismatchMaximum,
+        ] {
+            fs::write(
+                &receipt_path,
+                with_batch_receipt_tamper(&original, replay_node.as_str(), tamper),
+            )
+            .expect("rewrite checksum-valid batch-tampered receipt");
+            assert!(
+                matches!(
+                    receipts.open(final_attempt),
+                    Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+                ),
+                "{tamper:?} must fail terminal batch receipt validation"
+            );
         }
         return;
     }
