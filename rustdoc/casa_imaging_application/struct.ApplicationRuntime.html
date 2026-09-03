@@ -5,7 +5,7 @@
     pub stage_nanos: <a class="primitive" href="https://doc.rust-lang.org/1.98.0/std/primitive.u64.html">u64</a>,
     pub minor_cycle_bytes: <a class="primitive" href="https://doc.rust-lang.org/1.98.0/std/primitive.u64.html">u64</a>,
     pub storage_io: StorageIoResourceBinding,
-    pub gridded_normal_storage: GriddedNormalReplayStorage,
+    pub gridded_normal_storage: ManagedSpillStorage,
     pub confidence_parts_per_million: <a class="primitive" href="https://doc.rust-lang.org/1.98.0/std/primitive.u32.html">u32</a>,
     pub resource_policy: <a class="enum" href="enum.ResourcePolicy.html" title="enum casa_imaging_application::ResourcePolicy">ResourcePolicy</a>,
     pub cost_model: PlannerCostModelProfileBootstrap,
@@ -21,7 +21,7 @@
 </div><span id="structfield.minor_cycle_bytes" class="structfield section-header"><a href="#structfield.minor_cycle_bytes" class="anchor field">§</a><code>minor_cycle_bytes: <a class="primitive" href="https://doc.rust-lang.org/1.98.0/std/primitive.u64.html">u64</a></code></span><div class="docblock"><p>Hard memory bound for the scheduler-owned minor-cycle view.</p>
 </div><span id="structfield.storage_io" class="structfield section-header"><a href="#structfield.storage_io" class="anchor field">§</a><code>storage_io: StorageIoResourceBinding</code></span><div class="docblock"><p>Exact profiled storage resources shared by selected-observation reads,
 receipt commits, and product publication.</p>
-</div><span id="structfield.gridded_normal_storage" class="structfield section-header"><a href="#structfield.gridded_normal_storage" class="anchor field">§</a><code>gridded_normal_storage: GriddedNormalReplayStorage</code></span><div class="docblock"><p>Writable run-local directory capability for the private normal-operator spill.</p>
+</div><span id="structfield.gridded_normal_storage" class="structfield section-header"><a href="#structfield.gridded_normal_storage" class="anchor field">§</a><code>gridded_normal_storage: ManagedSpillStorage</code></span><div class="docblock"><p>Writable run-local directory capability for the private normal-operator spill.</p>
 </div><span id="structfield.confidence_parts_per_million" class="structfield section-header"><a href="#structfield.confidence_parts_per_million" class="anchor field">§</a><code>confidence_parts_per_million: <a class="primitive" href="https://doc.rust-lang.org/1.98.0/std/primitive.u32.html">u32</a></code></span><div class="docblock"><p>Fixed-point confidence in parts per million.</p>
 </div><span id="structfield.resource_policy" class="structfield section-header"><a href="#structfield.resource_policy" class="anchor field">§</a><code>resource_policy: <a class="enum" href="enum.ResourcePolicy.html" title="enum casa_imaging_application::ResourcePolicy">ResourcePolicy</a></code></span><div class="docblock"><p>Host-use policy bound at planning and execution.</p>
 </div><span id="structfield.cost_model" class="structfield section-header"><a href="#structfield.cost_model" class="anchor field">§</a><code>cost_model: PlannerCostModelProfileBootstrap</code></span><div class="docblock"><p>Deployment-selected cost-model profile.</p>
