@@ -1614,10 +1614,6 @@ const fn coefficient_count(basis: ReconstructionBasis) -> usize {
         ReconstructionBasis::Taylor { terms }
         | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
         ReconstructionBasis::ChannelLocal { channels } => channels,
-        ReconstructionBasis::JointContinuumLine {
-            continuum_terms,
-            line_terms,
-        } => continuum_terms.saturating_add(line_terms),
     }
 }
 

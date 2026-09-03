@@ -418,11 +418,7 @@ impl ReconstructionCycle {
         mask: &crate::ReconstructionMask,
     ) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
         if self.policy == ChannelCyclePolicy::Coupled {
-            if !matches!(
-                normal.catalog(),
-                crate::NormalStateCatalog::UnnormalizedTaylorBlockV1
-                    | crate::NormalStateCatalog::UnnormalizedJointBlockV1
-            ) {
+            if normal.catalog() != crate::NormalStateCatalog::UnnormalizedTaylorBlockV1 {
                 return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
             }
             let validity = normal
