@@ -22,6 +22,7 @@ casa-ms = { path = "../casa-ms" }
 casa-types = { path = "../casa-types" }
 libc = "0.2"
 ndarray.workspace = true
+num-complex.workspace = true
 sha2 = "0.10"
 
 [dev-dependencies]

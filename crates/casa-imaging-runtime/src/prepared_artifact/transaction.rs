@@ -116,7 +116,10 @@ impl PreparedArtifactStore {
         Ok(PreparedArtifactReservation {
             persistent_cache_bytes: self.budget.cache_bytes,
             entry_bytes,
-            temporary_staging_bytes: if operation == PreparedArtifactOperation::Reuse {
+            temporary_staging_bytes: if matches!(
+                operation,
+                PreparedArtifactOperation::Reuse | PreparedArtifactOperation::Consume
+            ) {
                 0
             } else {
                 entry_bytes
@@ -124,7 +127,9 @@ impl PreparedArtifactStore {
             source_read_bytes,
             file_descriptors: match operation {
                 PreparedArtifactOperation::Load => 3,
-                PreparedArtifactOperation::Generate | PreparedArtifactOperation::Reuse => 2,
+                PreparedArtifactOperation::Generate
+                | PreparedArtifactOperation::Reuse
+                | PreparedArtifactOperation::Consume => 2,
             },
             source_descriptor_bytes,
             streaming_buffer_bytes,
@@ -267,6 +272,107 @@ impl PreparedArtifactStore {
                 ))
             }
         }
+    }
+
+    /// Revalidate and stream one exact private artifact to a plan-bound consumer.
+    ///
+    /// The store retains path authority and bounds every delivered chunk by the
+    /// declared streaming-buffer reservation. The supplied handle must be the
+    /// exact validated artifact selected by the consume node.
+    pub fn consume(
+        &self,
+        context: &WorkExecutionContext<'_>,
+        descriptor: &PreparedArtifactDescriptor,
+        artifact: &PreparedArtifact,
+        consumer: &mut dyn PreparedArtifactConsumer,
+    ) -> Result<WorkMeasurements, PreparedArtifactError> {
+        let operation = PreparedArtifactOperation::Consume;
+        let reservation = self.reservation(descriptor, operation)?;
+        validate_plan_binding(*context, descriptor, operation, reservation, None)?;
+        if artifact.identity != descriptor.identity
+            || artifact.cache_identity != descriptor.cache_identity()
+        {
+            return Err(PreparedArtifactError::IdentityMismatch);
+        }
+
+        let mut evidence =
+            ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
+        if let Err(error) = evidence.ensure_resident_budget() {
+            let measurements = failed_measurements(*context, descriptor, operation, &evidence);
+            return Err(error.with_measurements(measurements));
+        }
+        let mut lock = match self.lock(&mut evidence) {
+            Ok(lock) => lock,
+            Err(error) => {
+                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let consumed = (|| {
+            let cache_bytes = self.validate_raw_budget(descriptor.identity, &mut evidence)?;
+            let validated = self.validate_entry_with_evidence(
+                descriptor.identity,
+                Some(descriptor),
+                &mut evidence,
+            )?;
+            if artifact.integrity_identity
+                != derive_content_identity(descriptor, validated.payload_sha256)
+            {
+                return Err(PreparedArtifactError::IdentityMismatch);
+            }
+            let payload_path = validated.path.join(PAYLOAD_FILE);
+            evidence.store_read_operation();
+            let mut payload = File::open(payload_path).map_err(map_incomplete)?;
+            evidence.observe_file_descriptors(2);
+            let buffer_len = streaming_buffer_len(self.budget, descriptor)?;
+            let mut buffer = vec![0_u8; buffer_len];
+            evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
+                for segment in &descriptor.segments {
+                    let mut remaining = segment.byte_len()?;
+                    let scalar_bytes = segment.precision.scalar_bytes();
+                    let mut byte_offset = 0_u64;
+                    while remaining > 0 {
+                        let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
+                            .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+                        limit -= limit % scalar_bytes;
+                        read_exact_counted(
+                            &mut payload,
+                            &mut buffer[..limit],
+                            evidence,
+                            CacheIoClass::Read,
+                        )?;
+                        consumer.consume_segment(segment, byte_offset, &buffer[..limit])?;
+                        remaining -= limit as u64;
+                        byte_offset += limit as u64;
+                    }
+                }
+                let mut extra = [0_u8; 1];
+                if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
+                    return Err(PreparedArtifactError::OversizedArtifact);
+                }
+                Ok(())
+            })?;
+            Ok((validated, cache_bytes))
+        })();
+        let unlock = lock.release(&mut evidence);
+        let (validated, cache_bytes) = match (consumed, unlock) {
+            (Ok(value), Ok(())) => value,
+            (Err(error), _) | (Ok(_), Err(error)) => {
+                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        Ok(measurements(
+            *context,
+            descriptor,
+            ArtifactDisposition::Reused,
+            &validated,
+            MeasurementInput {
+                operation,
+                cache_bytes,
+                evidence,
+            },
+        ))
     }
 
     fn reuse_locked(

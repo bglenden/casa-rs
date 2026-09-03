@@ -20,10 +20,20 @@ pub(super) fn validate_plan_binding(
             validate_load_source_binding(context, descriptor, source)?;
         }
         (PreparedArtifactOperation::Load, None)
-        | (PreparedArtifactOperation::Generate | PreparedArtifactOperation::Reuse, Some(_)) => {
+        | (
+            PreparedArtifactOperation::Generate
+            | PreparedArtifactOperation::Reuse
+            | PreparedArtifactOperation::Consume,
+            Some(_),
+        ) => {
             return Err(PreparedArtifactError::UnplannedSource);
         }
-        (PreparedArtifactOperation::Generate | PreparedArtifactOperation::Reuse, None) => {}
+        (
+            PreparedArtifactOperation::Generate
+            | PreparedArtifactOperation::Reuse
+            | PreparedArtifactOperation::Consume,
+            None,
+        ) => {}
     }
     validate_plan_declaration(context, descriptor, operation, reservation, source)
 }
@@ -524,7 +534,12 @@ pub(super) fn observed_resource_peak(
         LeaseResource::Storage {
             demand_id,
             use_kind: StorageUseKind::Temporary,
-        } if demand_id == cache_demand_id && operation != PreparedArtifactOperation::Reuse => {
+        } if demand_id == cache_demand_id
+            && !matches!(
+                operation,
+                PreparedArtifactOperation::Reuse | PreparedArtifactOperation::Consume
+            ) =>
+        {
             evidence.temporary_storage_peak.max(entry_bytes)
         }
         LeaseResource::StorageReadRate { demand_id }

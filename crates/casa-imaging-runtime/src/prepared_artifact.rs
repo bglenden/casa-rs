@@ -792,6 +792,7 @@ impl PreparedArtifactDescriptor {
             PreparedArtifactOperation::Generate => ArtifactRole::Prepared,
             PreparedArtifactOperation::Load => ArtifactRole::Prepared,
             PreparedArtifactOperation::Reuse => ArtifactRole::Cache,
+            PreparedArtifactOperation::Consume => ArtifactRole::Cache,
         };
         PlannedArtifact::new(
             self.identity,
@@ -884,6 +885,8 @@ pub enum PreparedArtifactOperation {
     Load,
     /// Revalidate and reuse an exact private-cache hit.
     Reuse,
+    /// Revalidate and stream an exact private-cache hit to its prepared operator.
+    Consume,
 }
 
 impl PreparedArtifactOperation {
@@ -892,6 +895,7 @@ impl PreparedArtifactOperation {
             Self::Generate => "cold-generation",
             Self::Load => "cold-load",
             Self::Reuse => "warm-reuse",
+            Self::Consume => "consume",
         }
     }
 }
@@ -1226,6 +1230,35 @@ pub trait PreparedArtifactGenerator {
         byte_offset: u64,
         output: &mut [u8],
     ) -> Result<(), PreparedArtifactError>;
+}
+
+/// Plan-bound streaming consumer for one validated private prepared artifact.
+///
+/// Chunks are delivered in canonical segment order and never exceed the
+/// store's configured streaming-buffer ceiling. Implementations may retain a
+/// bounded decoded cell, but receive no cache path or persistence authority.
+pub trait PreparedArtifactConsumer {
+    /// Consume one exact byte chunk from a named prepared segment.
+    fn consume_segment(
+        &mut self,
+        segment: &PreparedArtifactSegmentDescriptor,
+        byte_offset: u64,
+        input: &[u8],
+    ) -> Result<(), PreparedArtifactError>;
+}
+
+impl<F> PreparedArtifactConsumer for F
+where
+    F: FnMut(&PreparedArtifactSegmentDescriptor, u64, &[u8]) -> Result<(), PreparedArtifactError>,
+{
+    fn consume_segment(
+        &mut self,
+        segment: &PreparedArtifactSegmentDescriptor,
+        byte_offset: u64,
+        input: &[u8],
+    ) -> Result<(), PreparedArtifactError> {
+        self(segment, byte_offset, input)
+    }
 }
 
 impl<F> PreparedArtifactGenerator for F
@@ -2723,6 +2756,7 @@ const fn operation_tag(operation: PreparedArtifactOperation) -> u8 {
         PreparedArtifactOperation::Generate => 1,
         PreparedArtifactOperation::Load => 2,
         PreparedArtifactOperation::Reuse => 3,
+        PreparedArtifactOperation::Consume => 4,
     }
 }
 

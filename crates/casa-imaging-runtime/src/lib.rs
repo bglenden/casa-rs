@@ -73,13 +73,13 @@ pub use observation_transaction::{
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
 pub use prepared_artifact::{
-    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactGenerator, PreparedArtifactKind, PreparedArtifactLoadSource,
-    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanError,
-    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
-    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
-    PreparedArtifactStore, PreparedArtifactUvAffine,
+    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactConsumer, PreparedArtifactDescriptor,
+    PreparedArtifactError, PreparedArtifactGenerator, PreparedArtifactKind,
+    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
+    PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
+    PreparedArtifactPrecision, PreparedArtifactRegistration, PreparedArtifactRejection,
+    PreparedArtifactReservation, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
+    PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
 };
 pub use product_publication::{
     AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,

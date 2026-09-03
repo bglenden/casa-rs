@@ -66,6 +66,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             PreparedArtifactOperation::Generate => "generate",
             PreparedArtifactOperation::Load => "load",
             PreparedArtifactOperation::Reuse => "reuse",
+            PreparedArtifactOperation::Consume => "consume",
         };
         let cell_identity = self.descriptor.identity();
         let allocation_id =

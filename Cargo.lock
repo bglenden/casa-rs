@@ -600,6 +600,7 @@ dependencies = [
  "casa-types",
  "libc",
  "ndarray",
+ "num-complex",
  "serde_json",
  "sha2",
  "tempfile",

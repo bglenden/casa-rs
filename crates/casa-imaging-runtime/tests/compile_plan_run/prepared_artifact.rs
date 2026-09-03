@@ -315,6 +315,11 @@ impl WorkImplementation for PreparedOperationAdapter {
                 };
                 (observed, measurements)
             }
+            PreparedArtifactOperation::Consume => {
+                return Err(io::Error::other(
+                    "generic prepared-operation adapter requires an explicit artifact handle for consume",
+                ));
+            }
         };
         *self.observed.lock().expect("prepared outcome lock") = Some(observed);
         Ok(measurements)
@@ -629,6 +634,7 @@ fn operation_name(operation: PreparedArtifactOperation) -> &'static str {
         PreparedArtifactOperation::Generate => "generate",
         PreparedArtifactOperation::Load => "load",
         PreparedArtifactOperation::Reuse => "reuse",
+        PreparedArtifactOperation::Consume => "consume",
     }
 }
 
