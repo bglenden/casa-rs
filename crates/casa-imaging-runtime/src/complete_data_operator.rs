@@ -2386,6 +2386,7 @@ fn project_residency(
             let residency = gridded_normal_domain_execution_residency(
                 specification.chart_grid_shapes(),
                 accumulation_terms,
+                specification.maximum_convolution_support(),
             )?;
             residency
                 .peak_complex_values()

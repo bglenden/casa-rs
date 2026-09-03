@@ -1983,6 +1983,15 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
             "MODEL_DATA persistence requires a solved final model, not a dirty-only request",
         ));
     }
+    if request.w_projection_planes.is_some()
+        && !request
+            .task_requirements
+            .contains(&TaskRequirement::WProjection)
+    {
+        return Err(boxed(
+            "w_projection_planes requires the explicit W-projection task capability",
+        ));
+    }
     if request.save_continuum_residual && request.continuum_subtraction.is_none() {
         return Err(boxed(
             "CORRECTED_DATA residual persistence requires continuum subtraction",

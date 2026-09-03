@@ -61,12 +61,14 @@ pub(super) struct GriddedNormalTileGeometry {
     key: GriddedNormalTileKey,
     origin: [usize; 2],
     shape: [usize; 2],
+    support: usize,
 }
 
 impl GriddedNormalTileGeometry {
     fn new(
         grid_shape: [usize; 2],
         key: GriddedNormalTileKey,
+        support: usize,
     ) -> Result<Self, SpectralOperatorError> {
         let axis = |extent: usize, tile: i32| -> Result<(usize, usize), SpectralOperatorError> {
             let center =
@@ -86,15 +88,16 @@ impl GriddedNormalTileGeometry {
         };
         let (x0, x1) = axis(grid_shape[0], key.x)?;
         let (y0, y1) = axis(grid_shape[1], key.y)?;
-        let origin = [x0.saturating_sub(SUPPORT), y0.saturating_sub(SUPPORT)];
+        let origin = [x0.saturating_sub(support), y0.saturating_sub(support)];
         let end = [
-            x1.saturating_add(SUPPORT).min(grid_shape[0]),
-            y1.saturating_add(SUPPORT).min(grid_shape[1]),
+            x1.saturating_add(support).min(grid_shape[0]),
+            y1.saturating_add(support).min(grid_shape[1]),
         ];
         Ok(Self {
             key,
             origin,
             shape: [end[0] - origin[0], end[1] - origin[1]],
+            support,
         })
     }
 
@@ -102,7 +105,10 @@ impl GriddedNormalTileGeometry {
         self.shape[0].checked_mul(self.shape[1])
     }
 
-    fn translated_taps(self, taps: SampleTaps) -> Result<SampleTaps, SpectralOperatorError> {
+    pub(super) fn translated_taps(
+        self,
+        taps: SampleTaps,
+    ) -> Result<SampleTaps, SpectralOperatorError> {
         let translated = SampleTaps {
             x: TapSpan {
                 start: taps
@@ -124,17 +130,27 @@ impl GriddedNormalTileGeometry {
         if translated
             .x
             .start
-            .checked_add(2 * SUPPORT)
+            .checked_add(2 * self.support)
             .is_none_or(|end| end >= self.shape[0])
             || translated
                 .y
                 .start
-                .checked_add(2 * SUPPORT)
+                .checked_add(2 * self.support)
                 .is_none_or(|end| end >= self.shape[1])
         {
             return Err(SpectralOperatorError::InvalidGriddedRecord);
         }
         Ok(translated)
+    }
+
+    #[cfg(test)]
+    pub(super) const fn origin(self) -> [usize; 2] {
+        self.origin
+    }
+
+    #[cfg(test)]
+    pub(super) const fn shape(self) -> [usize; 2] {
+        self.shape
     }
 }
 
@@ -143,6 +159,7 @@ pub(super) struct GriddedNormalTileCatalog {
     minimum_key: GriddedNormalTileKey,
     tiles_y: usize,
     pub(super) geometries: Vec<GriddedNormalTileGeometry>,
+    support: usize,
 }
 
 pub(super) struct GriddedNormalDomainTileCatalogs {
@@ -153,10 +170,11 @@ pub(super) struct GriddedNormalDomainTileCatalogs {
 impl GriddedNormalDomainTileCatalogs {
     pub(super) fn new(
         grid_shapes: impl IntoIterator<Item = [usize; 2]>,
+        support: usize,
     ) -> Result<Self, SpectralOperatorError> {
         let catalogs = grid_shapes
             .into_iter()
-            .map(GriddedNormalTileCatalog::new)
+            .map(|shape| GriddedNormalTileCatalog::new(shape, support))
             .collect::<Result<Vec<_>, _>>()?;
         if catalogs.is_empty() {
             return Err(SpectralOperatorError::UnsupportedGeometry);
@@ -264,11 +282,12 @@ impl GriddedNormalDomainTileCatalogs {
 pub(super) fn domain_execution_residency(
     grid_shapes: impl IntoIterator<Item = [usize; 2]>,
     coefficient_terms: usize,
+    support: usize,
 ) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
     if coefficient_terms == 0 {
         return Err(SpectralOperatorError::InvalidSlab);
     }
-    let catalogs = GriddedNormalDomainTileCatalogs::new(grid_shapes)?;
+    let catalogs = GriddedNormalDomainTileCatalogs::new(grid_shapes, support)?;
     let tile_halo_cells = catalogs
         .catalogs
         .iter()
@@ -379,8 +398,8 @@ pub(super) fn domain_execution_residency(
 }
 
 impl GriddedNormalTileCatalog {
-    pub(super) fn tile_count(grid_shape: [usize; 2]) -> Option<usize> {
-        Self::key_bounds(grid_shape)
+    pub(super) fn tile_count(grid_shape: [usize; 2], support: usize) -> Option<usize> {
+        Self::key_bounds(grid_shape, support)
             .ok()
             .and_then(|(minimum, maximum)| {
                 let x = i64::from(maximum.x)
@@ -393,12 +412,15 @@ impl GriddedNormalTileCatalog {
             })
     }
 
-    pub(super) fn new(grid_shape: [usize; 2]) -> Result<Self, SpectralOperatorError> {
-        let (minimum_key, maximum_key) = Self::key_bounds(grid_shape)?;
+    pub(super) fn new(
+        grid_shape: [usize; 2],
+        support: usize,
+    ) -> Result<Self, SpectralOperatorError> {
+        let (minimum_key, maximum_key) = Self::key_bounds(grid_shape, support)?;
         let tiles_y = usize::try_from(i64::from(maximum_key.y) - i64::from(minimum_key.y) + 1)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        let tile_count =
-            Self::tile_count(grid_shape).ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let tile_count = Self::tile_count(grid_shape, support)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let mut geometries = Vec::new();
         geometries
             .try_reserve_exact(tile_count)
@@ -408,6 +430,7 @@ impl GriddedNormalTileCatalog {
                 geometries.push(GriddedNormalTileGeometry::new(
                     grid_shape,
                     GriddedNormalTileKey { x, y },
+                    support,
                 )?);
             }
         }
@@ -419,15 +442,17 @@ impl GriddedNormalTileCatalog {
             minimum_key,
             tiles_y,
             geometries,
+            support,
         })
     }
 
     fn key_bounds(
         grid_shape: [usize; 2],
+        support: usize,
     ) -> Result<(GriddedNormalTileKey, GriddedNormalTileKey), SpectralOperatorError> {
         if grid_shape
             .into_iter()
-            .any(|extent| extent <= SUPPORT.saturating_mul(2))
+            .any(|extent| extent <= support.saturating_mul(2))
         {
             return Err(SpectralOperatorError::UnsupportedGeometry);
         }
@@ -441,12 +466,12 @@ impl GriddedNormalTileCatalog {
         };
         Ok((
             GriddedNormalTileKey {
-                x: axis(SUPPORT, grid_shape[0])?,
-                y: axis(SUPPORT, grid_shape[1])?,
+                x: axis(support, grid_shape[0])?,
+                y: axis(support, grid_shape[1])?,
             },
             GriddedNormalTileKey {
-                x: axis(grid_shape[0] - SUPPORT - 1, grid_shape[0])?,
-                y: axis(grid_shape[1] - SUPPORT - 1, grid_shape[1])?,
+                x: axis(grid_shape[0] - support - 1, grid_shape[0])?,
+                y: axis(grid_shape[1] - support - 1, grid_shape[1])?,
             },
         ))
     }
@@ -455,11 +480,11 @@ impl GriddedNormalTileCatalog {
         let center = [
             taps.x
                 .start
-                .checked_add(SUPPORT)
+                .checked_add(self.support)
                 .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
             taps.y
                 .start
-                .checked_add(SUPPORT)
+                .checked_add(self.support)
                 .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
         ];
         let axis = |coordinate: usize, extent: usize| -> Result<i32, SpectralOperatorError> {
@@ -1670,7 +1695,7 @@ mod tests {
 
     #[test]
     fn central_one_hot_tile_splits_into_four_balanced_canonical_shards() {
-        let catalog = GriddedNormalTileCatalog::new([128, 128]).unwrap();
+        let catalog = GriddedNormalTileCatalog::new([128, 128], SUPPORT).unwrap();
         let mut prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             &[100],
             catalog.geometries.len(),
@@ -1707,7 +1732,7 @@ mod tests {
     #[test]
     fn every_valid_support_three_center_maps_inside_its_tile_halo() {
         let shape = [130, 126];
-        let catalog = GriddedNormalTileCatalog::new(shape).unwrap();
+        let catalog = GriddedNormalTileCatalog::new(shape, SUPPORT).unwrap();
         for x in SUPPORT..shape[0] - SUPPORT {
             for y in SUPPORT..shape[1] - SUPPORT {
                 let sample = taps(x - SUPPORT, y - SUPPORT);
@@ -1720,7 +1745,7 @@ mod tests {
     #[test]
     fn planned_route_capacity_matches_exact_reusable_vector_capacities() {
         let shape = [128, 128];
-        let catalog = GriddedNormalTileCatalog::new(shape).unwrap();
+        let catalog = GriddedNormalTileCatalog::new(shape, SUPPORT).unwrap();
         let prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             &[11, 7, 5],
             catalog.geometries.len(),
@@ -1735,7 +1760,7 @@ mod tests {
 
     #[test]
     fn taylor_prediction_lanes_reuse_planned_flat_values_and_scratch() {
-        let catalog = GriddedNormalTileCatalog::new([128, 128]).unwrap();
+        let catalog = GriddedNormalTileCatalog::new([128, 128], SUPPORT).unwrap();
         let plan = crate::block_normal::BlockNormalPlan::taylor(1.0, 3).unwrap();
         let record_count = 11;
         let mut prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
@@ -1787,7 +1812,7 @@ mod tests {
     fn execution_metadata_projection_matches_all_retained_heap_descriptors() {
         let shape = [128, 128];
         let depth = 3;
-        let catalogs = GriddedNormalDomainTileCatalogs::new([shape]).unwrap();
+        let catalogs = GriddedNormalDomainTileCatalogs::new([shape], SUPPORT).unwrap();
         let prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             &[1],
             catalogs.tile_count(),
@@ -1840,7 +1865,7 @@ mod tests {
             + tile_plane_descriptors
             + merge_descriptor_bytes;
         assert_eq!(
-            gridded_normal_execution_residency(shape, depth)
+            gridded_normal_execution_residency(shape, depth, SUPPORT)
                 .unwrap()
                 .metadata_bytes(),
             actual_metadata_bytes
@@ -1850,7 +1875,7 @@ mod tests {
     #[test]
     fn prediction_lane_capacity_covers_every_adversarial_complete_group_composition() {
         let shape = [128, 128];
-        let catalog = GriddedNormalTileCatalog::new(shape).unwrap();
+        let catalog = GriddedNormalTileCatalog::new(shape, SUPPORT).unwrap();
         for records in 1_usize..=10 {
             let capacity = records.div_ceil(GRIDDED_NORMAL_LANE_COUNT) + 1;
             for boundaries in 0_usize..(1_usize << records.saturating_sub(1)) {
@@ -1893,7 +1918,7 @@ mod tests {
 
     #[test]
     fn published_predictions_support_four_concurrent_accumulation_readers() {
-        let catalog = GriddedNormalTileCatalog::new([128, 128]).unwrap();
+        let catalog = GriddedNormalTileCatalog::new([128, 128], SUPPORT).unwrap();
         let mut prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
             &[GRIDDED_NORMAL_LANE_COUNT],
             catalog.geometries.len(),

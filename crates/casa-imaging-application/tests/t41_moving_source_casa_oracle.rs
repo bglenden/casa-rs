@@ -403,6 +403,7 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
         save_continuum_residual: false,
         write_primary_beam: false,
         pbcor: false,
+        w_projection_planes: None,
         task_requirements: vec![
             TaskRequirement::SpectralCubeSource,
             TaskRequirement::SerialCpu,
@@ -465,6 +466,7 @@ fn mvc_request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagin
         save_continuum_residual: false,
         write_primary_beam: false,
         pbcor: false,
+        w_projection_planes: None,
         task_requirements: vec![
             TaskRequirement::SpectralMtmfsViaCube,
             TaskRequirement::SerialCpu,

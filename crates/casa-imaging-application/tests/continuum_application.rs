@@ -677,6 +677,7 @@ fn request(
         save_continuum_residual: false,
         write_primary_beam: false,
         pbcor: false,
+        w_projection_planes: None,
         task_requirements: Vec::new(),
         resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
     }
@@ -769,6 +770,33 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
         assert_eq!(product.default_mask_name(), None);
     }
     assert!(!PathBuf::from(format!("{}.mask", image_name.display())).exists());
+}
+
+#[test]
+fn t49_application_executes_nonzero_w_through_major_cycle_replay() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = multi_row_measurement_set(root.path());
+    let image_name = root.path().join("w-projection");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Hogbom,
+    );
+    imaging.image_size = 32;
+    imaging.iterations = 2;
+    imaging.cycle_iterations = 1;
+    imaging.maximum_major_cycles = Some(2);
+    imaging.w_projection_planes = Some(5);
+    imaging.task_requirements = vec![
+        TaskRequirement::WProjection,
+        TaskRequirement::WProjectionPlanes,
+    ];
+
+    let result = execute_continuum(imaging).expect("native W-projection execution");
+    assert_eq!(result.minor_iterations, 2);
+    assert_standard_products(&image_name, &result.product_names);
 }
 
 #[test]
