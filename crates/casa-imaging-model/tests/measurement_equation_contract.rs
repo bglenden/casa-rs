@@ -128,6 +128,10 @@ fn matrix(transform: PairedMeasurementTransform) -> Matrix {
             [Complex::new(0.5, 0.0), Complex::new(0.5, 0.0)],
             [Complex::new(0.25, 0.0), Complex::new(0.75, 0.0)],
         ],
+        PairedMeasurementTransform::WProjection { .. } => [
+            [Complex::new(0.7, -0.2), Complex::new(0.0, 0.0)],
+            [Complex::new(0.0, 0.0), Complex::new(0.7, 0.2)],
+        ],
     }
 }
 
@@ -222,20 +226,26 @@ fn geometry() -> GeometryInput {
 }
 
 fn compile_contract(sampling: SpectralSamplingLaw) -> casa_imaging_model::CompiledProblem {
-    compile_contract_with_reduction(sampling, ReductionPolicy::Compensated)
+    compile_contract_with_reduction(sampling, ReductionPolicy::Compensated, None)
 }
 
 fn compile_contract_with_reduction(
     sampling: SpectralSamplingLaw,
     reduction: ReductionPolicy,
+    w_projection: Option<casa_imaging_model::WProjectionContract>,
 ) -> casa_imaging_model::CompiledProblem {
     let inner_products = DeclaredInnerProducts::new(
         ModelInnerProduct::HermitianEuclidean,
         VisibilityInnerProduct::HermitianEuclidean,
     );
+    let measurement_equation =
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products);
+    let measurement_equation = w_projection.map_or(measurement_equation, |contract| {
+        measurement_equation.with_w_projection(contract)
+    });
     let science = ScientificContract::new(
         SpectralContract::new(sampling, SpectralCoupling::Independent),
-        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products),
+        measurement_equation,
     )
     .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
     let reconstruction = ReconstructionContract::new(
@@ -302,6 +312,7 @@ fn weighting_commitment_binds_sampling_and_numerics() {
     let deterministic = compile_contract_with_reduction(
         SpectralSamplingLaw::LINEAR,
         ReductionPolicy::DeterministicPairwise,
+        None,
     );
 
     assert_ne!(
@@ -469,7 +480,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 fn problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSamplingLaw::LINEAR);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 18);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 20);
     assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 4);
     assert_eq!(
         (
@@ -481,8 +492,34 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "8ca3b218105daf1bd53843e8eec203b1bf62c5d6739a0916c4beb60e9c2c4f91".to_string(),
+            "38c53c1f922288276e8e6855b2a6b1989025f29b6a6c5e8b04823ee20b22afbd".to_string(),
             "fb3f6fbe9f427fbdad7ce317690019841393c10a10d2c48cb163179be78db6e5".to_string(),
         )
     );
+}
+
+#[test]
+fn w_projection_is_explicit_paired_and_identity_bound() {
+    let contract =
+        casa_imaging_model::WProjectionContract::new(12_500.0, std::num::NonZeroUsize::new(17))
+            .unwrap();
+    let w = compile_contract_with_reduction(
+        SpectralSamplingLaw::LINEAR,
+        ReductionPolicy::Compensated,
+        Some(contract),
+    );
+    let standard = compile_contract(SpectralSamplingLaw::LINEAR);
+
+    assert!(
+        w.required_capabilities()
+            .contains(&casa_imaging_model::RequiredCapability::WProjection)
+    );
+    assert_eq!(
+        w.normal_equation()
+            .measurement_operator()
+            .transforms()
+            .last(),
+        Some(&PairedMeasurementTransform::WProjection { contract })
+    );
+    assert_ne!(w.problem_id(), standard.problem_id());
 }

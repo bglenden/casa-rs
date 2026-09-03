@@ -5700,6 +5700,16 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
                     *channels_per_bin,
                 );
             }
+            PairedMeasurementTransform::WProjection { contract } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.maximum_abs_w_lambda"),
+                    contract.maximum_abs_w_lambda(),
+                );
+                if let Some(planes) = contract.planes() {
+                    evidence_field(fields, format!("{prefix}.planes"), planes.get());
+                }
+            }
             PairedMeasurementTransform::PolarizationMapping
             | PairedMeasurementTransform::FeedResponse => {}
         }
@@ -7244,6 +7254,7 @@ fn paired_transform_kind(value: PairedTransformKind) -> &'static str {
         PairedTransformKind::Phase => "phase",
         PairedTransformKind::SpectralResampling => "spectral_resampling",
         PairedTransformKind::ChannelIntegration => "channel_integration",
+        PairedTransformKind::WProjection => "w_projection",
     }
 }
 
@@ -7524,6 +7535,7 @@ fn required_capability(value: RequiredCapability) -> String {
     match value {
         RequiredCapability::MultiDomainGeometry => "multi_domain_geometry".to_string(),
         RequiredCapability::FacetedGeometry => "faceted_geometry".to_string(),
+        RequiredCapability::WProjection => "w_projection".to_string(),
         RequiredCapability::SpectralFrameTransform => "spectral_frame_transform".to_string(),
         RequiredCapability::SpectralResampling => "spectral_resampling".to_string(),
         RequiredCapability::SequentialContinuumTransform => {

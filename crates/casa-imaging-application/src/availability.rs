@@ -481,6 +481,8 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::SpectralCubeSource
             | TaskRequirement::SpectralMtmfsViaCube
             | TaskRequirement::MosaicGridder
+            | TaskRequirement::WProjection
+            | TaskRequirement::WProjectionPlanes
             | TaskRequirement::PolarizationSelection
             | TaskRequirement::Automasking
             | TaskRequirement::MaskProduct
@@ -503,6 +505,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::ConstantBasis
             | RequiredCapability::FacetedGeometry
             | RequiredCapability::MultiDomainGeometry
+            | RequiredCapability::WProjection
             | RequiredCapability::TaylorBasis
             | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction
