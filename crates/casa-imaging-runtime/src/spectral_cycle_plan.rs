@@ -528,6 +528,15 @@ impl SpectralCyclePlan {
                     preparation_node,
                     memory_ceiling,
                 )?;
+                if include_minor
+                    && matches!(
+                        problem.reconstruction().basis(),
+                        casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+                    )
+                    && fragment.slab_count() != 1
+                {
+                    return Err(SpectralCyclePlanError::CubeCleanRequiresAllPlanes);
+                }
                 if imaging_plan_diagnostics_enabled() {
                     let residency = fragment.residency();
                     eprintln!(
@@ -2076,6 +2085,8 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
+    /// Cube CLEAN cannot keep every output plane resident in one synchronized cycle.
+    CubeCleanRequiresAllPlanes,
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
     /// A later-major plan received replay state outside its retained storage authority.

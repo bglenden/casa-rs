@@ -93,10 +93,10 @@ use casa_imaging_runtime::{
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
-    SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase, StagePrediction, StorageDomain,
-    StorageDomainId, StorageIoResourceBinding, StorageMode, StorageUseKind,
-    WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
+    SpectralCyclePlanError, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+    SpectralCycleRegistry, SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase,
+    StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageMode,
+    StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
     WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext,
     WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
     plan as runtime_plan, plan_continuum_transform_row, run as runtime_run,
@@ -3609,7 +3609,6 @@ fn execute_initial_reconstruction_cycle(
     problem: &casa_imaging_model::CompiledProblem,
     byte: u8,
     initial_access: ResolvedSelectedObservationAccess,
-    require_multiple_slabs: bool,
 ) -> ReconstructionCyclePhaseCompletion {
     let residency = initial_access
         .certify_residency(problem)
@@ -3639,17 +3638,6 @@ fn execute_initial_reconstruction_cycle(
     .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(problem, &planning_registry, policy)
         .expect("channel-cycle initial plan");
-    if require_multiple_slabs {
-        let slab_depth = planned
-            .physical_work()
-            .execution_dag()
-            .initial_knobs()
-            .slab_depth;
-        assert!(
-            slab_depth > 0 && slab_depth < channel_count as u64,
-            "the clean-cycle case must execute more than one planned slab"
-        );
-    }
     let cycle_node = planned
         .minor_cycle_node()
         .expect("initial plan owns reconstruction cycle")
@@ -3911,7 +3899,7 @@ fn owner_resolved_channel_local_hogbom_problem(
 #[test]
 fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(238, 3, 2);
-    let completion = execute_initial_reconstruction_cycle(&problem, 78, initial_access, false);
+    let completion = execute_initial_reconstruction_cycle(&problem, 78, initial_access);
     let evidence = completion.evidence();
     assert_eq!(
         evidence.channel_policy(),
@@ -3956,13 +3944,43 @@ fn t607_runtime_executes_resource_bounded_channel_local_slabs() {
 }
 
 #[test]
-fn t607_clean_cycle_reserves_minor_memory_before_selecting_cube_slabs() {
+fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
     let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
         .lock()
         .expect("T607 execution lock");
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(248, 28, 28);
-    let completion = execute_initial_reconstruction_cycle(&problem, 80, initial_access, true);
-    assert_eq!(completion.evidence().channels().len(), 28);
+    let residency = initial_access
+        .certify_residency(&problem)
+        .expect("owner-certified channel-cycle residency");
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(80),
+        implementation_metadata(&problem),
+        [implementation(80)],
+    );
+    let channel_count = problem.geometry().spectral().output_channels();
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(80),
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+        residency,
+        serial_storage_io(),
+        SpectralCyclePlanningLimits::new(
+            1_000,
+            (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
+            900_000,
+        ),
+        authority().clone(),
+        ResourcePolicy::Balanced,
+    )
+    .with_gridded_normal_storage(artifact_storage());
+
+    let error = match SpectralCyclePlan::initial(&problem, &planning_registry, policy) {
+        Ok(_) => panic!("cube CLEAN must not fold independently planned channel slabs"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        SpectralCyclePlanError::CubeCleanRequiresAllPlanes
+    ));
 }
 
 #[test]
