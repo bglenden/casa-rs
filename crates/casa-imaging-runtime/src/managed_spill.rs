@@ -1819,7 +1819,7 @@ fn verify_page_cache_release(
     let page_bytes_usize = usize::try_from(page_bytes)
         .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache verification page size"))?;
     let page_count = length_usize.div_ceil(page_bytes_usize);
-    let operation_count = operations
+    let operation_limit = operations
         .checked_add(u64::try_from(page_count).map_err(|_| {
             ManagedSpillError::ArithmeticOverflow("page-cache verification page count")
         })?)
@@ -1842,12 +1842,12 @@ fn verify_page_cache_release(
             source: io::Error::last_os_error(),
         });
     }
-    *operations = operation_count;
     let mut resident_pages = 0_usize;
     let mut source = None;
     for page in 0..page_count {
         let page_offset = page * page_bytes_usize;
         let mut residency = 0_u8;
+        *operations += 1;
         let result = unsafe {
             libc::mincore(
                 mapping.cast::<u8>().add(page_offset).cast(),
@@ -1861,6 +1861,7 @@ fn verify_page_cache_release(
         }
         resident_pages += usize::from(residency & 1 != 0);
     }
+    debug_assert!(*operations <= operation_limit);
     let unmap_result = unsafe { libc::munmap(mapping, length_usize) };
     if let Some(source) = source {
         return Err(ManagedSpillError::Io {
@@ -2218,9 +2219,10 @@ mod tests {
         assert_eq!(write.record_count(), 3);
         assert_eq!(write.transferred_bytes(), expected_artifact_bytes);
         #[cfg(target_os = "linux")]
-        assert_eq!(write.operations(), 16);
+        let expected_write_operations = 16;
         #[cfg(not(target_os = "linux"))]
-        assert_eq!(write.operations(), 4);
+        let expected_write_operations = 4;
+        assert_eq!(write.operations(), expected_write_operations);
         assert_eq!(write.sha256_calls(), 3);
         assert_eq!(write.payload_copy_bytes(), 17);
         assert_eq!(write.payload_copy_operations(), 2);
@@ -2236,7 +2238,7 @@ mod tests {
         );
         assert_eq!(
             write.io_measurement().actual(),
-            Some((expected_artifact_bytes, 4))
+            Some((expected_artifact_bytes, expected_write_operations))
         );
         assert_eq!(
             write.serialization_io_measurement().actual(),
@@ -2258,9 +2260,10 @@ mod tests {
         assert_eq!(read.record_count(), 3);
         assert_eq!(read.transferred_bytes(), expected_artifact_bytes);
         #[cfg(target_os = "linux")]
-        assert_eq!(read.operations(), 28);
+        let expected_read_operations = 28;
         #[cfg(not(target_os = "linux"))]
-        assert_eq!(read.operations(), 10);
+        let expected_read_operations = 10;
+        assert_eq!(read.operations(), expected_read_operations);
         assert_eq!(read.sha256_calls(), 3);
         assert_eq!(read.sha256_bytes(), write.sha256_bytes());
         assert_eq!(read.peak_buffer_bytes(), write.peak_buffer_bytes());
@@ -2270,7 +2273,7 @@ mod tests {
         assert_eq!(read.buffer_reuses(), 1);
         assert_eq!(
             read.io_measurement().actual(),
-            Some((expected_artifact_bytes, 10))
+            Some((expected_artifact_bytes, expected_read_operations))
         );
         assert_eq!(
             read.serialization_io_measurement().actual(),
