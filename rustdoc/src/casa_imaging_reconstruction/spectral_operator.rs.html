@@ -8332,7 +8332,7 @@
 <a href=#8332 id=8332 data-nosnippet>8332</a>        <span class="kw">let </span><span class="kw-2">mut </span>fft = PreparedFft::new([conv_size, conv_size], usize::MAX)<span class="question-mark">?</span>;
 <a href=#8333 id=8333 data-nosnippet>8333</a>        <span class="kw">let </span><span class="kw-2">mut </span>kernels = Vec::with_capacity(plane_count);
 <a href=#8334 id=8334 data-nosnippet>8334</a>        <span class="kw">let </span><span class="kw-2">mut </span>plane_zero_peak = <span class="prelude-val">None</span>;
-<a href=#8335 id=8335 data-nosnippet>8335</a>        <span class="kw">let </span>offset_radius = (sampling + <span class="number">1</span>) / <span class="number">2</span>;
+<a href=#8335 id=8335 data-nosnippet>8335</a>        <span class="kw">let </span>offset_radius = sampling.div_ceil(<span class="number">2</span>);
 <a href=#8336 id=8336 data-nosnippet>8336</a>        <span class="kw">for </span>plane <span class="kw">in </span><span class="number">0</span>..plane_count {
 <a href=#8337 id=8337 data-nosnippet>8337</a>            <span class="kw">let </span>w_lambda = <span class="kw">if </span>plane_count &gt; <span class="number">1 </span>{
 <a href=#8338 id=8338 data-nosnippet>8338</a>                (plane * plane) <span class="kw">as </span>f64 / w_scale
