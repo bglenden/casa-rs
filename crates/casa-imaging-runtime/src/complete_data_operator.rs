@@ -51,8 +51,8 @@ use crate::{
     ExecutionAttemptId, ExecutionDag, ExecutionDagSpecification, ExecutionError, FenceId,
     FenceKind, InitializationPolicy, IoBufferKind, IoPrediction, LeaseResource, LogicalAllocation,
     MemoryDemand, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError,
-    PlanPrediction, PreparedArtifactReaderPlan, QueueDemand, QuiescencePoint, RateDemand,
-    ResourceClaim, SlotCompatibility, StagePrediction, StorageMode, WeightedObservationBlock,
+    PlanPrediction, PreparedArtifactReaderPlan, QuiescencePoint, ResourceClaim, SlotCompatibility,
+    StagePrediction, StorageDemand, StorageMode, WeightedObservationBlock,
     WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext, WorkKind,
     WorkNode, WorkNodeId,
 };
@@ -2549,17 +2549,21 @@ impl CompleteDataPlanFragment {
                         lifetime: ClaimLifetime::Work,
                     },
                     ResourceClaim {
-                        resource: LeaseResource::Rate {
-                            demand_id: reader.rate_demand_id().to_string(),
-                        },
+                        resource: LeaseResource::Locks,
                         amount: 1,
                         lifetime: retained.clone(),
                     },
                     ResourceClaim {
-                        resource: LeaseResource::Queue {
-                            demand_id: reader.queue_demand_id().to_string(),
+                        resource: LeaseResource::FileDescriptors,
+                        amount: 2,
+                        lifetime: retained.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::Storage {
+                            demand_id: reader.storage_demand_id().to_string(),
+                            use_kind: crate::StorageUseKind::PersistentCache,
                         },
-                        amount: 1,
+                        amount: reader.persistent_cache_bytes(),
                         lifetime: retained.clone(),
                     },
                     ResourceClaim {
@@ -2568,8 +2572,31 @@ impl CompleteDataPlanFragment {
                         lifetime: retained.clone(),
                     },
                     ResourceClaim {
-                        resource: LeaseResource::FileDescriptors,
-                        amount: 2,
+                        resource: LeaseResource::StorageReadRate {
+                            demand_id: reader.storage_demand_id().to_string(),
+                        },
+                        amount: 1,
+                        lifetime: retained.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::StorageWriteRate {
+                            demand_id: reader.storage_demand_id().to_string(),
+                        },
+                        amount: 1,
+                        lifetime: retained.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::StorageOperationsRate {
+                            demand_id: reader.storage_demand_id().to_string(),
+                        },
+                        amount: 1,
+                        lifetime: retained.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::StorageQueue {
+                            demand_id: reader.storage_demand_id().to_string(),
+                        },
+                        amount: 1,
                         lifetime: retained.clone(),
                     },
                 ],
@@ -2637,16 +2664,20 @@ impl CompleteDataPlanFragment {
             .fft_workspace_bytes
             .max(fft_planning_bytes);
         if let Some(reader) = &reader {
-            alternative.demand.rates.push(RateDemand {
-                demand_id: reader.rate_demand_id().to_string(),
-                resource: reader.read_rate().clone(),
-                amount: CountDemand::new(1, 1),
-            });
-            alternative.demand.queues.push(QueueDemand {
-                demand_id: reader.queue_demand_id().to_string(),
-                resource: reader.queue().clone(),
-                slots: CountDemand::new(1, 1),
-            });
+            alternative.demand.locks = CountDemand::new(
+                alternative
+                    .demand
+                    .locks
+                    .hard()
+                    .checked_add(1)
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
+                alternative
+                    .demand
+                    .locks
+                    .preferred()
+                    .checked_add(1)
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
+            );
             alternative.demand.file_descriptors = CountDemand::new(
                 alternative
                     .demand
@@ -2666,6 +2697,48 @@ impl CompleteDataPlanFragment {
                 .io_buffers
                 .storage_manager_bytes
                 .max(reader.total_resident_bytes());
+            if let Some(storage) = alternative
+                .demand
+                .storage
+                .iter_mut()
+                .find(|storage| storage.demand_id == reader.storage_demand_id())
+            {
+                if storage.domain != *reader.storage_domain() {
+                    return Err(CompleteDataPlanError::PlanMismatch);
+                }
+                storage.persistent_cache_bytes = storage
+                    .persistent_cache_bytes
+                    .max(reader.persistent_cache_bytes());
+                storage.read_rate = CountDemand::new(
+                    storage.read_rate.hard().max(1),
+                    storage.read_rate.preferred().max(1),
+                );
+                storage.write_rate = CountDemand::new(
+                    storage.write_rate.hard().max(1),
+                    storage.write_rate.preferred().max(1),
+                );
+                storage.operations_rate = CountDemand::new(
+                    storage.operations_rate.hard().max(1),
+                    storage.operations_rate.preferred().max(1),
+                );
+                storage.queue_slots = CountDemand::new(
+                    storage.queue_slots.hard().max(1),
+                    storage.queue_slots.preferred().max(1),
+                );
+            } else {
+                alternative.demand.storage.push(StorageDemand {
+                    demand_id: reader.storage_demand_id().to_string(),
+                    domain: reader.storage_domain().clone(),
+                    temporary_bytes: 0,
+                    staged_output_bytes: 0,
+                    final_output_bytes: 0,
+                    persistent_cache_bytes: reader.persistent_cache_bytes(),
+                    read_rate: CountDemand::new(1, 1),
+                    write_rate: CountDemand::new(1, 1),
+                    operations_rate: CountDemand::new(1, 1),
+                    queue_slots: CountDemand::new(1, 1),
+                });
+            }
         }
         let reader_io_depth = u64::from(reader.is_some());
         let mut initial_knobs = base.execution_dag().initial_knobs().clone();

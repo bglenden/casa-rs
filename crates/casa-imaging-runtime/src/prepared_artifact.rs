@@ -1577,9 +1577,7 @@ pub struct PreparedArtifactStore {
     budget: PreparedArtifactBudget,
     scope: CacheScope,
     storage_domain: StorageDomainId,
-    storage_read_rate: RateResourceId,
     storage_operations_rate: Option<RateResourceId>,
-    storage_queue: crate::QueueResourceId,
     state: Arc<RootState>,
     #[cfg(test)]
     fail_after_evictions: Option<usize>,

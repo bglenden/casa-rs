@@ -312,6 +312,12 @@ pub(crate) fn prepare_aw_projection(
             deployment.resident_bytes
         ))));
     }
+    let decoder_workspace_bytes = prepared
+        .iter()
+        .map(CasaAwPreparedCell::decoder_workspace_bytes)
+        .collect::<Option<Vec<_>>>()
+        .and_then(|bytes| bytes.into_iter().max())
+        .ok_or_else(|| boxed("AW decoder workspace overflowed"))?;
     let mut receipts = Vec::new();
 
     let mut artifacts = Vec::new();
@@ -369,6 +375,7 @@ pub(crate) fn prepare_aw_projection(
             .collect(),
         runtime.implementation.clone(),
         u64::try_from(deployment.resident_bytes)?,
+        u64::try_from(decoder_workspace_bytes)?,
     )?;
     Ok(PreparedAwPhase {
         catalog,

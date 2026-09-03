@@ -27,11 +27,10 @@ pub struct PreparedArtifactReaderPlan {
     release_node: WorkNodeId,
     implementation: WorkImplementationId,
     storage_domain: StorageDomainId,
-    read_rate: RateResourceId,
-    queue: crate::QueueResourceId,
-    rate_demand_id: String,
-    queue_demand_id: String,
+    storage_demand_id: String,
+    persistent_cache_bytes: u64,
     decoded_resident_bytes: u64,
+    decoder_workspace_bytes: u64,
     store_resident_bytes: u64,
     total_resident_bytes: u64,
     logical_bytes: u64,
@@ -62,6 +61,12 @@ impl PreparedArtifactReaderPlan {
         self.decoded_resident_bytes
     }
 
+    /// Maximum concurrent encoded-decoder workspace admitted beside the LRU.
+    #[must_use]
+    pub const fn decoder_workspace_bytes(&self) -> u64 {
+        self.decoder_workspace_bytes
+    }
+
     /// Complete decoded-pool plus T50 streaming/validation residency claim.
     #[must_use]
     pub const fn total_resident_bytes(&self) -> u64 {
@@ -78,20 +83,16 @@ impl PreparedArtifactReaderPlan {
         &self.implementation
     }
 
-    pub(crate) const fn read_rate(&self) -> &RateResourceId {
-        &self.read_rate
+    pub(crate) const fn storage_domain(&self) -> &StorageDomainId {
+        &self.storage_domain
     }
 
-    pub(crate) const fn queue(&self) -> &crate::QueueResourceId {
-        &self.queue
+    pub(crate) fn storage_demand_id(&self) -> &str {
+        &self.storage_demand_id
     }
 
-    pub(crate) fn rate_demand_id(&self) -> &str {
-        &self.rate_demand_id
-    }
-
-    pub(crate) fn queue_demand_id(&self) -> &str {
-        &self.queue_demand_id
+    pub(crate) const fn persistent_cache_bytes(&self) -> u64 {
+        self.persistent_cache_bytes
     }
 
     pub(crate) fn planned_artifact(&self) -> PlannedArtifact {
@@ -128,8 +129,9 @@ impl PreparedArtifactReaderFactory {
         mut artifacts: Vec<(PreparedArtifactDescriptor, PreparedArtifact)>,
         implementation: WorkImplementationId,
         decoded_resident_bytes: u64,
+        decoder_workspace_bytes: u64,
     ) -> Result<Self, PreparedArtifactError> {
-        if artifacts.is_empty() || decoded_resident_bytes == 0 {
+        if artifacts.is_empty() || decoded_resident_bytes == 0 || decoder_workspace_bytes == 0 {
             return Err(PreparedArtifactError::InvalidDescriptor);
         }
         artifacts.sort_unstable_by_key(|(descriptor, _)| descriptor.identity());
@@ -137,6 +139,7 @@ impl PreparedArtifactReaderFactory {
         let mut logical_bytes = 0_u64;
         let mut store_resident_bytes = 0_u64;
         let mut cache_identity = None;
+        let mut storage_demand_id = None;
         let mut hasher = Sha256::new();
         hasher.update(READER_CATALOG_DOMAIN);
         hasher.update(IDENTITY_VERSION.to_le_bytes());
@@ -160,6 +163,14 @@ impl PreparedArtifactReaderFactory {
                 None => cache_identity = Some(descriptor.cache_identity()),
                 Some(_) => {}
             }
+            let descriptor_storage_demand_id = store.storage_demand_id(&descriptor);
+            match &storage_demand_id {
+                Some(id) if id != &descriptor_storage_demand_id => {
+                    return Err(PreparedArtifactError::CachePolicyMismatch);
+                }
+                None => storage_demand_id = Some(descriptor_storage_demand_id),
+                Some(_) => {}
+            }
             let payload_bytes = descriptor.payload_bytes()?;
             logical_bytes = logical_bytes
                 .checked_add(payload_bytes)
@@ -179,11 +190,16 @@ impl PreparedArtifactReaderFactory {
             });
         }
         let cache_identity = cache_identity.ok_or(PreparedArtifactError::InvalidDescriptor)?;
+        let storage_demand_id =
+            storage_demand_id.ok_or(PreparedArtifactError::InvalidDescriptor)?;
+        let persistent_cache_bytes = store.budget().cache_bytes();
         hasher.update(cache_identity.as_bytes());
         hasher.update(decoded_resident_bytes.to_le_bytes());
+        hasher.update(decoder_workspace_bytes.to_le_bytes());
         let catalog_identity = ArtifactIdentity::from_owner_digest(hasher.finalize().into());
         let total_resident_bytes = decoded_resident_bytes
-            .checked_add(store_resident_bytes)
+            .checked_add(decoder_workspace_bytes)
+            .and_then(|bytes| bytes.checked_add(store_resident_bytes))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         let suffix = catalog_identity.to_string();
         let plan = PreparedArtifactReaderPlan {
@@ -193,11 +209,10 @@ impl PreparedArtifactReaderFactory {
             release_node: WorkNodeId::new(format!("prepared-artifact-reader-release-{suffix}")),
             implementation,
             storage_domain: store.storage_domain.clone(),
-            read_rate: store.storage_read_rate.clone(),
-            queue: store.storage_queue.clone(),
-            rate_demand_id: format!("prepared-artifact-reader-rate-{suffix}"),
-            queue_demand_id: format!("prepared-artifact-reader-queue-{suffix}"),
+            storage_demand_id,
+            persistent_cache_bytes,
             decoded_resident_bytes,
+            decoder_workspace_bytes,
             store_resident_bytes,
             total_resident_bytes,
             logical_bytes,
@@ -242,6 +257,13 @@ struct ReaderState {
     read_bytes: u64,
     read_operations: u64,
     reader_resident_peak: u64,
+    cache_bytes_peak: u64,
+    locks_peak: u64,
+    file_descriptors_peak: u64,
+    read_rate_peak: u64,
+    write_rate_peak: u64,
+    operations_rate_peak: u64,
+    queue_slots_peak: u64,
     read_count: u64,
     closed: bool,
     aborted: bool,
@@ -381,6 +403,13 @@ impl PreparedArtifactReader {
             state.read_bytes = read_bytes;
             state.read_operations = read_operations;
             state.reader_resident_peak = state.reader_resident_peak.max(read.resident_buffer_bytes);
+            state.cache_bytes_peak = state.cache_bytes_peak.max(read.cache_bytes);
+            state.locks_peak = state.locks_peak.max(read.locks);
+            state.file_descriptors_peak = state.file_descriptors_peak.max(read.file_descriptors);
+            state.read_rate_peak = state.read_rate_peak.max(read.read_rate);
+            state.write_rate_peak = state.write_rate_peak.max(read.write_rate);
+            state.operations_rate_peak = state.operations_rate_peak.max(read.operations_rate);
+            state.queue_slots_peak = state.queue_slots_peak.max(read.queue_slots);
             state.read_count = read_count;
         }
         self.settled.notify_all();
@@ -415,9 +444,22 @@ impl PreparedArtifactReader {
         }
         state.closed = true;
         state.fence_emitted = true;
+        if residency.peak_resident_bytes > self.plan.decoded_resident_bytes {
+            return Err(PreparedArtifactError::ResidentBudgetExceeded {
+                required: residency.peak_resident_bytes,
+                budget: self.plan.decoded_resident_bytes,
+            });
+        }
+        if residency.peak_decoder_workspace_bytes > self.plan.decoder_workspace_bytes {
+            return Err(PreparedArtifactError::ResidentBudgetExceeded {
+                required: residency.peak_decoder_workspace_bytes,
+                budget: self.plan.decoder_workspace_bytes,
+            });
+        }
         let combined_resident = residency
             .peak_resident_bytes
-            .checked_add(state.reader_resident_peak)
+            .checked_add(residency.peak_decoder_workspace_bytes)
+            .and_then(|bytes| bytes.checked_add(state.reader_resident_peak))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         if combined_resident > self.plan.total_resident_bytes {
             return Err(PreparedArtifactError::ResidentBudgetExceeded {
@@ -437,9 +479,31 @@ impl PreparedArtifactReader {
             .map(|capability| {
                 let peak = match capability.resource() {
                     LeaseResource::IoBuffer(IoBufferKind::StorageManager) => combined_resident,
-                    LeaseResource::FileDescriptors => u64::from(state.read_count > 0) * 2,
-                    LeaseResource::Rate { .. } | LeaseResource::Queue { .. } => {
-                        u64::from(state.read_count > 0)
+                    LeaseResource::Locks => state.locks_peak,
+                    LeaseResource::FileDescriptors => state.file_descriptors_peak,
+                    LeaseResource::Storage {
+                        demand_id,
+                        use_kind: StorageUseKind::PersistentCache,
+                    } if demand_id == &self.plan.storage_demand_id => state.cache_bytes_peak,
+                    LeaseResource::StorageReadRate { demand_id }
+                        if demand_id == &self.plan.storage_demand_id =>
+                    {
+                        state.read_rate_peak
+                    }
+                    LeaseResource::StorageWriteRate { demand_id }
+                        if demand_id == &self.plan.storage_demand_id =>
+                    {
+                        state.write_rate_peak
+                    }
+                    LeaseResource::StorageOperationsRate { demand_id }
+                        if demand_id == &self.plan.storage_demand_id =>
+                    {
+                        state.operations_rate_peak
+                    }
+                    LeaseResource::StorageQueue { demand_id }
+                        if demand_id == &self.plan.storage_demand_id =>
+                    {
+                        state.queue_slots_peak
                     }
                     _ => capability.amount(),
                 };
@@ -458,15 +522,17 @@ impl PreparedArtifactReader {
             None,
         );
         eprintln!(
-            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} total_ceiling_bytes={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={}",
+            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} decoder_workspace_ceiling_bytes={} total_ceiling_bytes={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} decoder_workspace_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={}",
             self.plan.catalog_identity,
             self.plan.logical_bytes,
             self.plan.decoded_resident_bytes,
+            self.plan.decoder_workspace_bytes,
             self.plan.total_resident_bytes,
             state.read_count,
             state.read_bytes,
             state.read_operations,
             residency.peak_resident_bytes,
+            residency.peak_decoder_workspace_bytes,
             combined_resident,
             residency.peak_pinned_bytes,
             residency.hits,
@@ -615,17 +681,28 @@ impl PreparedArtifactReader {
             .count();
         let retained = ClaimLifetime::through_fence(FenceKind::Io);
         let required = [
-            LeaseResource::Rate {
-                demand_id: self.plan.rate_demand_id.clone(),
+            LeaseResource::Locks,
+            LeaseResource::Storage {
+                demand_id: self.plan.storage_demand_id.clone(),
+                use_kind: StorageUseKind::PersistentCache,
             },
-            LeaseResource::Queue {
-                demand_id: self.plan.queue_demand_id.clone(),
+            LeaseResource::StorageReadRate {
+                demand_id: self.plan.storage_demand_id.clone(),
+            },
+            LeaseResource::StorageWriteRate {
+                demand_id: self.plan.storage_demand_id.clone(),
+            },
+            LeaseResource::StorageOperationsRate {
+                demand_id: self.plan.storage_demand_id.clone(),
+            },
+            LeaseResource::StorageQueue {
+                demand_id: self.plan.storage_demand_id.clone(),
             },
             LeaseResource::IoBuffer(IoBufferKind::StorageManager),
             LeaseResource::FileDescriptors,
         ];
         if work != 1
-            || node.claims.len() != 5
+            || node.claims.len() != 9
             || required.iter().any(|resource| {
                 node.claims
                     .iter()
@@ -633,12 +710,14 @@ impl PreparedArtifactReader {
                         &claim.resource == resource
                             && claim.lifetime == retained
                             && claim.amount
-                                == if matches!(resource, LeaseResource::IoBuffer(_)) {
-                                    self.plan.total_resident_bytes
-                                } else if matches!(resource, LeaseResource::FileDescriptors) {
-                                    2
-                                } else {
-                                    1
+                                == match resource {
+                                    LeaseResource::IoBuffer(_) => self.plan.total_resident_bytes,
+                                    LeaseResource::FileDescriptors => 2,
+                                    LeaseResource::Storage {
+                                        use_kind: StorageUseKind::PersistentCache,
+                                        ..
+                                    } => self.plan.persistent_cache_bytes,
+                                    _ => 1,
                                 }
                     })
                     .count()
@@ -646,6 +725,38 @@ impl PreparedArtifactReader {
             })
         {
             return Err(PreparedArtifactError::MissingReservation("reader claims"));
+        }
+        let matching_storage = context
+            .resource_alternative()
+            .demand
+            .storage
+            .iter()
+            .filter(|demand| demand.demand_id == self.plan.storage_demand_id)
+            .collect::<Vec<_>>();
+        if matching_storage.len() != 1
+            || matching_storage[0].domain != self.plan.storage_domain
+            || matching_storage[0].persistent_cache_bytes < self.plan.persistent_cache_bytes
+            || matching_storage[0].read_rate.hard() == 0
+            || matching_storage[0].write_rate.hard() == 0
+            || matching_storage[0].operations_rate.hard() == 0
+            || matching_storage[0].queue_slots.hard() == 0
+            || context.resource_alternative().demand.locks.hard() == 0
+            || context
+                .resource_alternative()
+                .demand
+                .file_descriptors
+                .hard()
+                < 2
+            || context
+                .resource_alternative()
+                .demand
+                .io_buffers
+                .storage_manager_bytes
+                < self.plan.total_resident_bytes
+        {
+            return Err(PreparedArtifactError::MissingReservation(
+                "reader resource demand",
+            ));
         }
         if context.allocations().len() != 1
             || context.allocations()[0].capacity_bytes() != self.plan.total_resident_bytes
@@ -669,6 +780,8 @@ impl PreparedArtifactReader {
 pub struct PreparedArtifactResidencyMeasurements {
     /// Peak decoded bytes resident in the LRU, including pinned cells.
     pub peak_resident_bytes: u64,
+    /// Peak concurrent encoded-decoder workspace beside retained cells.
+    pub peak_decoder_workspace_bytes: u64,
     /// Peak decoded bytes protected from eviction by live operator leases.
     pub peak_pinned_bytes: u64,
     /// Exact resident-hit count.
@@ -769,8 +882,8 @@ mod tests {
         AllocationId, AllocationUse, AlternativeId, CacheDemand, CapabilityPredicate,
         CapacityViewId, CountDemand, DemandAlternative, DemandEnvelope, ExecutionAttemptId,
         ExecutionKnobs, IoBufferDemand, IoPrediction, PhysicalSlotId, ResourceClaim,
-        ResourceHeadroom, RuntimeOverheadDemand, ScalingMetadata, StagePrediction, StorageDomain,
-        WorkNode,
+        ResourceHeadroom, RuntimeOverheadDemand, ScalingMetadata, StagePrediction, StorageDemand,
+        StorageDomain, WorkNode,
     };
     use casa_imaging_model::{
         PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
@@ -780,6 +893,7 @@ mod tests {
 
     const PAYLOAD: &[u8] = b"prepared-reader-dummy-science";
     const DECODED_CEILING: u64 = 64;
+    const DECODER_WORKSPACE_CEILING: u64 = 32;
 
     struct ReaderFixture {
         _directory: tempfile::TempDir,
@@ -879,6 +993,7 @@ mod tests {
                 vec![(descriptor, artifact)],
                 implementation,
                 DECODED_CEILING,
+                DECODER_WORKSPACE_CEILING,
             )
             .expect("reader test factory");
             Self {
@@ -889,6 +1004,97 @@ mod tests {
                 artifact_identity,
             }
         }
+    }
+
+    #[test]
+    fn reader_reserves_the_full_store_ceiling_for_differently_sized_catalog_entries() {
+        let fixture = ReaderFixture::new();
+        let first = &fixture.factory.entries[0];
+        let first_descriptor = first.descriptor.clone();
+        let first_artifact = PreparedArtifact {
+            identity: first_descriptor.identity(),
+            integrity_identity: first.integrity_identity,
+            cache_identity: first_descriptor.cache_identity(),
+        };
+        let larger_bytes = PAYLOAD.len() as u64 + 7;
+        let larger_segment = PreparedArtifactSegmentDescriptor::new(
+            "science",
+            vec![larger_bytes],
+            vec![0],
+            vec![1],
+            None,
+            PreparedArtifactPrecision::U8,
+            PreparedArtifactOrder::Axis0ContiguousLittleEndian,
+        )
+        .expect("larger reader test segment");
+        let larger_scientific_identity = PreparedArtifactScientificIdentity::kernel(
+            PreparedArtifactKernelSemantics::new(
+                PreparedArtifactKernelAlgorithm::Gridding,
+                vec![larger_bytes],
+                vec![larger_bytes],
+            )
+            .expect("larger reader kernel semantics"),
+        )
+        .expect("larger reader scientific identity");
+        let larger_descriptor = PreparedArtifactDescriptor::from_commitments(
+            first_descriptor.owner.clone(),
+            first_descriptor.kind,
+            ScientificCommitments::from_problem(&fixture.problem, larger_scientific_identity),
+            first_descriptor.cache_scope.clone(),
+            vec![larger_segment],
+        )
+        .expect("larger reader test descriptor");
+        let larger_artifact = PreparedArtifact {
+            identity: larger_descriptor.identity(),
+            integrity_identity: derive_content_identity(&larger_descriptor, [0x52; 32]),
+            cache_identity: larger_descriptor.cache_identity(),
+        };
+        assert_ne!(
+            fixture
+                .factory
+                .store
+                .reservation(&first_descriptor, PreparedArtifactOperation::Consume)
+                .expect("first reservation")
+                .entry_bytes(),
+            fixture
+                .factory
+                .store
+                .reservation(&larger_descriptor, PreparedArtifactOperation::Consume)
+                .expect("larger reservation")
+                .entry_bytes()
+        );
+
+        let factory = PreparedArtifactReaderFactory::new(
+            Arc::clone(&fixture.factory.store),
+            vec![
+                (first_descriptor, first_artifact),
+                (larger_descriptor, larger_artifact),
+            ],
+            fixture.factory.plan.implementation.clone(),
+            DECODED_CEILING,
+            DECODER_WORKSPACE_CEILING,
+        )
+        .expect("variable-entry reader factory");
+        let plan = factory.plan();
+        assert_eq!(plan.logical_bytes(), PAYLOAD.len() as u64 + larger_bytes);
+        assert_eq!(
+            plan.persistent_cache_bytes(),
+            fixture.factory.store.budget().cache_bytes(),
+            "persistent storage is the full private-store ceiling, not one entry"
+        );
+        assert_eq!(
+            cache_node(plan)
+                .claims
+                .iter()
+                .find_map(|claim| match &claim.resource {
+                    LeaseResource::Storage {
+                        use_kind: StorageUseKind::PersistentCache,
+                        ..
+                    } => Some(claim.amount),
+                    _ => None,
+                }),
+            Some(fixture.factory.store.budget().cache_bytes())
+        );
     }
 
     fn allocation_id() -> AllocationId {
@@ -910,17 +1116,21 @@ mod tests {
                     lifetime: ClaimLifetime::Work,
                 },
                 ResourceClaim {
-                    resource: LeaseResource::Rate {
-                        demand_id: plan.rate_demand_id().to_string(),
-                    },
+                    resource: LeaseResource::Locks,
                     amount: 1,
                     lifetime: retained.clone(),
                 },
                 ResourceClaim {
-                    resource: LeaseResource::Queue {
-                        demand_id: plan.queue_demand_id().to_string(),
+                    resource: LeaseResource::FileDescriptors,
+                    amount: 2,
+                    lifetime: retained.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::Storage {
+                        demand_id: plan.storage_demand_id().to_string(),
+                        use_kind: StorageUseKind::PersistentCache,
                     },
-                    amount: 1,
+                    amount: plan.persistent_cache_bytes(),
                     lifetime: retained.clone(),
                 },
                 ResourceClaim {
@@ -929,8 +1139,31 @@ mod tests {
                     lifetime: retained.clone(),
                 },
                 ResourceClaim {
-                    resource: LeaseResource::FileDescriptors,
-                    amount: 2,
+                    resource: LeaseResource::StorageReadRate {
+                        demand_id: plan.storage_demand_id().to_string(),
+                    },
+                    amount: 1,
+                    lifetime: retained.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::StorageWriteRate {
+                        demand_id: plan.storage_demand_id().to_string(),
+                    },
+                    amount: 1,
+                    lifetime: retained.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::StorageOperationsRate {
+                        demand_id: plan.storage_demand_id().to_string(),
+                    },
+                    amount: 1,
+                    lifetime: retained.clone(),
+                },
+                ResourceClaim {
+                    resource: LeaseResource::StorageQueue {
+                        demand_id: plan.storage_demand_id().to_string(),
+                    },
+                    amount: 1,
                     lifetime: retained.clone(),
                 },
             ],
@@ -996,7 +1229,7 @@ mod tests {
         )
     }
 
-    fn alternative() -> DemandAlternative {
+    fn alternative(plan: &PreparedArtifactReaderPlan) -> DemandAlternative {
         DemandAlternative {
             id: AlternativeId::new("reader-test-alternative"),
             capabilities: CapabilityPredicate::default(),
@@ -1005,15 +1238,29 @@ mod tests {
                 memory: Vec::new(),
                 workers: CountDemand::new(1, 1),
                 overhead: RuntimeOverheadDemand::zero(),
-                storage: Vec::new(),
+                storage: vec![StorageDemand {
+                    demand_id: plan.storage_demand_id().to_string(),
+                    domain: plan.storage_domain().clone(),
+                    temporary_bytes: 0,
+                    staged_output_bytes: 0,
+                    final_output_bytes: 0,
+                    persistent_cache_bytes: plan.persistent_cache_bytes(),
+                    read_rate: CountDemand::new(1, 1),
+                    write_rate: CountDemand::new(1, 1),
+                    operations_rate: CountDemand::new(1, 1),
+                    queue_slots: CountDemand::new(1, 1),
+                }],
                 rates: Vec::new(),
                 caches: CacheDemand::zero(),
-                locks: CountDemand::zero(),
+                locks: CountDemand::new(1, 1),
                 file_descriptors: CountDemand::new(2, 2),
                 queues: Vec::new(),
                 transfers: Vec::new(),
                 accelerators: Vec::new(),
-                io_buffers: IoBufferDemand::zero(),
+                io_buffers: IoBufferDemand {
+                    storage_manager_bytes: plan.total_resident_bytes(),
+                    ..IoBufferDemand::zero()
+                },
             },
             headroom: ResourceHeadroom::default(),
             scaling: ScalingMetadata {
@@ -1068,6 +1315,7 @@ mod tests {
                 events: Arc::new(Mutex::new(Vec::new())),
                 close: PreparedArtifactResidencyMeasurements {
                     peak_resident_bytes: 48,
+                    peak_decoder_workspace_bytes: 24,
                     peak_pinned_bytes: 32,
                     hits: 1,
                     loads: 1,
@@ -1172,6 +1420,7 @@ mod tests {
         let binding = PreparedArtifactExecutionBinding::new(Arc::clone(&reader), residency);
         let plan = binding.plan();
         assert_eq!(plan.logical_bytes(), PAYLOAD.len() as u64);
+        assert_eq!(plan.decoder_workspace_bytes(), DECODER_WORKSPACE_CEILING);
         let catalog = plan.catalog_identity();
         assert_eq!(catalog, fixture.factory.plan().catalog_identity());
 
@@ -1197,7 +1446,7 @@ mod tests {
             )]);
         let release_prediction = StagePrediction::new(plan.release_node().clone(), 1)
             .with_io(vec![IoPrediction::new(IoBufferKind::StorageManager, 0, 0)]);
-        let alternative = alternative();
+        let alternative = alternative(plan);
         let completed = BTreeMap::new();
         assert!(matches!(
             binding.activate(context(
@@ -1306,6 +1555,35 @@ mod tests {
             .expect("reader storage evidence");
         assert!(io.bytes() >= PAYLOAD.len() as u64);
         assert!(io.operations() > 0);
+        for resource in [
+            LeaseResource::Locks,
+            LeaseResource::FileDescriptors,
+            LeaseResource::Storage {
+                demand_id: plan.storage_demand_id().to_string(),
+                use_kind: StorageUseKind::PersistentCache,
+            },
+            LeaseResource::StorageReadRate {
+                demand_id: plan.storage_demand_id().to_string(),
+            },
+            LeaseResource::StorageWriteRate {
+                demand_id: plan.storage_demand_id().to_string(),
+            },
+            LeaseResource::StorageOperationsRate {
+                demand_id: plan.storage_demand_id().to_string(),
+            },
+            LeaseResource::StorageQueue {
+                demand_id: plan.storage_demand_id().to_string(),
+            },
+        ] {
+            assert!(
+                closed
+                    .resources()
+                    .iter()
+                    .find(|measurement| measurement.resource() == &resource)
+                    .is_some_and(|measurement| measurement.peak() > 0),
+                "missing exact reader measurement for {resource:?}"
+            );
+        }
         assert_eq!(closed.artifacts().len(), 1);
         assert_eq!(closed.artifacts()[0].planned_identity(), catalog);
         assert_eq!(closed.artifacts()[0].observed_identity(), Some(catalog));
@@ -1364,7 +1642,7 @@ mod tests {
             )]);
         let release_prediction = StagePrediction::new(plan.release_node().clone(), 1)
             .with_io(vec![IoPrediction::new(IoBufferKind::StorageManager, 0, 0)]);
-        let alternative = alternative();
+        let alternative = alternative(plan);
         let completed = BTreeMap::new();
         binding
             .activate(context(
@@ -1438,7 +1716,7 @@ mod tests {
                 u64::MAX,
                 u64::MAX,
             )]);
-        let alternative = alternative();
+        let alternative = alternative(plan);
         let completed = BTreeMap::new();
         binding
             .activate(context(
@@ -1510,5 +1788,52 @@ mod tests {
             Err(PreparedArtifactError::ArtifactTooLarge)
         ));
         assert!(overflow_reader.state.lock().expect("reader state").aborted);
+    }
+
+    #[test]
+    fn reader_fails_closed_when_decoder_workspace_exceeds_its_separate_ceiling() {
+        let fixture = ReaderFixture::new();
+        let reader = fixture.factory.session();
+        let mut residency = RecordingResidency::bounded();
+        residency.close.peak_decoder_workspace_bytes = DECODER_WORKSPACE_CEILING + 1;
+        let binding = PreparedArtifactExecutionBinding::new(Arc::clone(&reader), residency);
+        let plan = binding.plan();
+        let cache = scheduled(cache_node(plan), plan, 23, false);
+        let fence = cache.for_fence(FenceKind::Io);
+        let planned = [plan.planned_artifact()];
+        let prediction =
+            StagePrediction::new(plan.node().clone(), 1).with_io(vec![IoPrediction::new(
+                IoBufferKind::StorageManager,
+                u64::MAX,
+                u64::MAX,
+            )]);
+        let alternative = alternative(plan);
+        let completed = BTreeMap::new();
+        binding
+            .activate(context(
+                &fixture,
+                &cache,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                6,
+            ))
+            .expect("activate workspace-overrun reader");
+        assert!(matches!(
+            binding.close(context(
+                &fixture,
+                &fence,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                6,
+            )),
+            Err(PreparedArtifactError::ResidentBudgetExceeded {
+                required: 33,
+                budget: DECODER_WORKSPACE_CEILING,
+            })
+        ));
     }
 }

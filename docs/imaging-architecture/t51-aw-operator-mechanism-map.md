@@ -2,7 +2,7 @@
 
 Truth class: implementation reconnaissance and campaign record  
 Work issue: #537  
-Parent revision: `a206609e5fd5ce1b984d2f4fea58d6359ae0ef63`  
+Parent revision: `fea9ef9c65ff3638bd186bd69d5ca83381e59750`
 Historical revision: `fff9c2d553eace4b6a57b1df9ded4773f2263ceb`
 
 ## Old-to-current mechanism map
@@ -30,7 +30,7 @@ telescopes, disabled required terms, or absent CF coverage fail specifically.
 Single candidate: current-owner paired AW consumption of validated CASA-imported
 prepared CF cells.
 
-- Parent/candidate: `a206609e5fd5ce1b984d2f4fea58d6359ae0ef63` to
+- Parent/candidate: `fea9ef9c65ff3638bd186bd69d5ca83381e59750` to
   `codex/t51-aw-projection`.
 - Causal hypothesis: replacing the typed-unavailable boundary with one
   prepared-cell-backed paired convolution operator recovers the frozen EVLA
@@ -55,4 +55,3 @@ prepared CF cells.
 - Artifact retention: frozen CASA products and accepted comparison/receipt
   bundles are durable; reduced diagnostics and failed local cache entries are
   rebuildable campaign artifacts.
-

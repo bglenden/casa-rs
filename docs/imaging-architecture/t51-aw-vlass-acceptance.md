@@ -16,8 +16,9 @@ The gate fails closed unless each receipt proves:
 - one immutable private-artifact catalog identity and logical size across every
   attempt-local reader session, with nonzero validated reads, bytes, operations,
   decoded copies, and matching load/read counts;
-- scheduler-owned reader closure and exact measured decoded, pinned, and
-  combined residency within the 384 MiB decoded-cell ceiling and plan-owned
+- scheduler-owned reader closure and exact measured decoded, pinned,
+  decoder-workspace, and combined residency within the 384 MiB decoded-cell
+  ceiling, explicit maximum-cell decoder-workspace ceiling, and plan-owned
   total ceiling;
 - at least 1,000,000 selected correlation-channel samples with internally
   consistent row/channel/correlation telemetry;
@@ -34,8 +35,9 @@ produce a passing receipt.
 ## Required external inputs
 
 ```text
-Dataset root:
-/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a
+Explicitly owner-initialized dataset root used for the retained T51 evidence
+(the immutable source MS remains unchanged):
+/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537-20260903.thHAWF/data
 
 Frozen dirty CASA prefix:
 /Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-f-all63-clean-4096-full-16-spw/cache-construction-artifacts/vlass-fragment-all-fields-dirty-4096-full-16-spw-casa/reduced_turnaround_only/20260806T112128Z-vlass-fragment-all-fields-dirty-4096-full-16-spw-casa-9f8ed92d/casa/measured-001/casa
@@ -53,8 +55,10 @@ CASA Python used only by the image-product comparator:
 ## Exact command
 
 ```bash
-CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/data/b80d5e87487ab8ab01faa064c4cd48db6d93446fd0add208c051dd574e0d353a \
+CASA_RS_VLASS_DATA_ROOT=/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537-20260903.thHAWF/data \
 CASA_RS_CASA_PYTHON=/Applications/CASA.app/Contents/Frameworks/Python.framework/Versions/3.12/bin/python3.12 \
+CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND=3000000000 \
+CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND=3000000000 \
 python3 tools/perf/imager/t51_aw_vlass_acceptance.py \
   --dirty-casa-prefix /Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-f-all63-clean-4096-full-16-spw/cache-construction-artifacts/vlass-fragment-all-fields-dirty-4096-full-16-spw-casa/reduced_turnaround_only/20260806T112128Z-vlass-fragment-all-fields-dirty-4096-full-16-spw-casa-9f8ed92d/casa/measured-001/casa \
   --clean-casa-prefix /Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-g-all63-clean-4096-full-16-spw/artifacts/vlass-fragment-all-fields-clean-4096-full-16-spw-casa/reduced_turnaround_only/20260810T221526Z-vlass-fragment-all-fields-clean-4096-full-16-spw-casa-baseline/casa/measured-001/casa \
@@ -69,6 +73,9 @@ The terminal artifact is
 `/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/receipts/t51-aw-vlass-acceptance.json`.
 Use a fresh run-specific replacement for the `t51-ticket-537` directory on
 each actual execution.
+The gate binds a conservative 3.0 GB/s read and write storage profile, below
+the cache-bypassing 1 GiB samples measured on the acceptance filesystem
+(3.16 GB/s read and 3.25 GB/s write on 2026-09-03).
 It contains the two immutable workload-receipt paths, their required
 `["cold", "warm"]` sequence, the immutable CASA-oracle cache root, the distinct
 validated paired CFS/WTCFS source, the single shared native prepared-store
@@ -78,11 +85,13 @@ The gate rejects a preexisting private store, requires the dirty run to
 materialize exactly 1,024 private manifests, and requires the clean run to
 reuse the exact unchanged manifest set.
 
-The MeasurementSet, output directory, artifact root, CASA-oracle cache root,
+The direct MeasurementSet must already contain a valid
+`CASA_RS_IMAGING_OWNER_MANIFEST`; the gate never mutates or silently migrates
+the source dataset. The output directory, artifact root, CASA-oracle cache root,
 and shared native prepared-store parent must all be fresh safe paths on
 `/Volumes/GLENDENNING`. Native production storage validation requires the
-MeasurementSet and outputs to share one filesystem; do not copy or materialize
-the MeasurementSet to satisfy this constraint. `--cf-cache-root` is only the
+MeasurementSet and outputs to share one filesystem; do not make an unrecorded
+copy merely to bypass this constraint. `--cf-cache-root` is only the
 harness/CASA-oracle cache workspace and is never forwarded as native
 `--cfcache`.
 Append `--dry-run` to validate both production plans and all path bindings

@@ -159,11 +159,13 @@ def receipt() -> dict:
                             "catalog": "a" * 64,
                             "logical_bytes": 9_646_899_200,
                             "decoded_ceiling_bytes": 384 * 1024**2,
+                            "decoder_workspace_ceiling_bytes": 512 * 1024,
                             "total_ceiling_bytes": 392 * 1024**2,
                             "reads": 4,
                             "read_bytes": 1_048_576,
                             "read_operations": 32,
                             "resident_peak_bytes": 262_144,
+                            "decoder_workspace_peak_bytes": 65_536,
                             "total_peak_resident_bytes": 327_680,
                             "pinned_peak_bytes": 131_072,
                             "hits": 7,
@@ -215,6 +217,13 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
         candidate["imaging"]["standard_mfs_acceleration"] = "metal"
         with self.assertRaisesRegex(GATE.GateError, "standard_mfs_acceleration"):
             GATE.validate_manifest_contract(candidate)
+
+    def test_gate_rejects_unmeasured_storage_profile(self) -> None:
+        with self.assertRaisesRegex(GATE.GateError, "SPILL_READ"):
+            GATE.validate_storage_profile_environment({})
+
+    def test_gate_accepts_bound_storage_profile(self) -> None:
+        GATE.validate_storage_profile_environment(GATE.STORAGE_PROFILE_ENV)
 
     @mock.patch.object(GATE.subprocess, "run")
     def test_cli_preflight_requires_checked_shell_marker(self, run: mock.Mock) -> None:
@@ -301,6 +310,20 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
         reader["resident_peak_bytes"] = 384 * 1024**2 + 1
         reader["total_peak_resident_bytes"] = 384 * 1024**2 + 1
         with self.assertRaisesRegex(GATE.GateError, "decoded residency ceiling"):
+            GATE.validate_receipt(
+                candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
+            )
+
+    def test_reader_decoder_workspace_above_ceiling_fails_closed(self) -> None:
+        candidate = receipt()
+        reader = candidate["results"]["backend_plan_logs"]["prepared_artifact_readers"][
+            0
+        ]["fields"]
+        reader["decoder_workspace_peak_bytes"] = (
+            reader["decoder_workspace_ceiling_bytes"] + 1
+        )
+        reader["total_peak_resident_bytes"] += 1
+        with self.assertRaisesRegex(GATE.GateError, "decoder workspace ceiling"):
             GATE.validate_receipt(
                 candidate, expected_workload=workload(), expected_casa_prefix=PREFIX
             )

@@ -19,7 +19,7 @@ use casa_imaging_application::{
 use casa_imaging_model::ImageDomainRole;
 use casa_imaging_runtime::{
     ArtifactDisposition, ArtifactRole, ClaimLifetime, FenceId, FenceKind, IoBufferKind,
-    LeaseResource, ReceiptStatus,
+    LeaseResource, ReceiptStatus, StorageUseKind,
 };
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
@@ -1017,34 +1017,69 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
     );
 
     let retained = ClaimLifetime::through_fence(FenceKind::Io);
-    let suffix = reader
-        .as_str()
-        .strip_prefix("prepared-artifact-reader-")
-        .expect("reader identity suffix");
     assert_eq!(
         receipt.planned_resource_amount(reader, &LeaseResource::Workers, &ClaimLifetime::Work),
         Some(1)
     );
+    let selected = receipt.selected_alternative_projection();
+    let prepared_storage = selected
+        .demand
+        .storage
+        .iter()
+        .find(|demand| demand.demand_id.starts_with("private-prepared-cache-"))
+        .expect("reader private-cache storage demand");
+    assert!(prepared_storage.persistent_cache_bytes > 0);
+    assert!(prepared_storage.read_rate.hard() > 0);
+    assert!(prepared_storage.write_rate.hard() > 0);
+    assert!(prepared_storage.operations_rate.hard() > 0);
+    assert!(prepared_storage.queue_slots.hard() > 0);
+    assert!(selected.demand.locks.hard() > 0);
+    assert!(selected.demand.file_descriptors.hard() >= 2);
     for (resource, amount) in [
-        (
-            LeaseResource::Rate {
-                demand_id: format!("prepared-artifact-reader-rate-{suffix}"),
-            },
-            1,
-        ),
-        (
-            LeaseResource::Queue {
-                demand_id: format!("prepared-artifact-reader-queue-{suffix}"),
-            },
-            1,
-        ),
+        (LeaseResource::Locks, 1),
         (LeaseResource::FileDescriptors, 2),
+        (
+            LeaseResource::StorageReadRate {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
+        (
+            LeaseResource::StorageWriteRate {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
+        (
+            LeaseResource::StorageOperationsRate {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
+        (
+            LeaseResource::StorageQueue {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
     ] {
         assert_eq!(
             receipt.planned_resource_amount(reader, &resource, &retained),
             Some(amount)
         );
     }
+    assert_eq!(
+        receipt.planned_resource_amount(
+            reader,
+            &LeaseResource::Storage {
+                demand_id: prepared_storage.demand_id.clone(),
+                use_kind: StorageUseKind::PersistentCache,
+            },
+            &retained,
+        ),
+        Some(prepared_storage.persistent_cache_bytes)
+    );
+    let decoder_workspace_bytes = 2 * (40_960 / 4);
     assert!(
         receipt
             .planned_resource_amount(
@@ -1052,7 +1087,10 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
                 &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
                 &retained,
             )
-            .is_some_and(|bytes| bytes > 0 && bytes <= (1 << 20) + (8 << 20))
+            .is_some_and(|bytes| {
+                bytes > (1 << 20) + decoder_workspace_bytes
+                    && bytes <= (1 << 20) + decoder_workspace_bytes + (8 << 20)
+            })
     );
 
     let cache_artifacts = receipt

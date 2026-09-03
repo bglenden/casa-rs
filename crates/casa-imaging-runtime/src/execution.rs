@@ -3448,14 +3448,13 @@ fn validate_kind(node: &WorkNode) -> Result<(), ExecutionError> {
                 matches!(
                     resource,
                     LeaseResource::ResidentCache
-                        | LeaseResource::IoBuffer(crate::IoBufferKind::StorageManager)
                         | LeaseResource::Storage {
                             use_kind: crate::StorageUseKind::PersistentCache,
                             ..
                         }
                 )
             },
-            "resident buffer or persistent cache reservation",
+            "resident or persistent cache reservation",
         ),
         WorkKind::FftPlanning => require_claim(
             node,

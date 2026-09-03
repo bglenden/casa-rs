@@ -179,6 +179,20 @@ impl CasaAwPreparedCell {
             .and_then(|count| count.checked_mul(std::mem::size_of::<Complex64>()))
     }
 
+    /// Conservative encoded workspace required while producing the decoded cell.
+    #[must_use]
+    pub fn decoder_workspace_bytes(&self) -> Option<usize> {
+        [self.imaging.shape, self.weight.shape]
+            .into_iter()
+            .try_fold(0_usize, |bytes, shape| {
+                shape[0]
+                    .checked_mul(shape[1])
+                    .and_then(|elements| elements.checked_mul(std::mem::size_of::<Complex32>()))
+                    .and_then(|plane| bytes.checked_add(plane))
+            })?
+            .checked_mul(2)
+    }
+
     /// Execute this descriptor's explicit cold-import node. The CASA adapter,
     /// not the generic store, owns all source-table access.
     pub fn import_cold(
@@ -278,12 +292,15 @@ struct PreparedPool {
 
 struct PreparedPoolState {
     ceiling: usize,
+    workspace_ceiling: usize,
     resident: usize,
     reserved: usize,
+    reserved_workspace: usize,
     clock: u64,
     cells: BTreeMap<[u8; 32], ResidentPreparedCell>,
     loading: BTreeSet<[u8; 32]>,
     peak_resident: usize,
+    peak_workspace: usize,
     peak_pinned: usize,
     hits: u64,
     loads: u64,
@@ -532,6 +549,20 @@ impl PreparedAwCellProvider {
         if resident_byte_ceiling == 0 || prepared.is_empty() {
             return Err(AwOperatorError::ResidencyCeilingExceeded);
         }
+        let workspace_ceiling = usize::try_from(reader.plan().decoder_workspace_bytes())
+            .map_err(|_| AwOperatorError::MeasurementOverflow)?;
+        if u64::try_from(resident_byte_ceiling).ok() != Some(reader.plan().decoded_resident_bytes())
+            || prepared
+                .iter()
+                .map(CasaAwPreparedCell::decoder_workspace_bytes)
+                .try_fold(0_usize, |maximum, bytes| {
+                    bytes.map(|bytes| maximum.max(bytes))
+                })
+                .filter(|required| *required > 0 && *required <= workspace_ceiling)
+                .is_none()
+        {
+            return Err(AwOperatorError::ResidencyCeilingExceeded);
+        }
         let prepared = prepared
             .into_iter()
             .map(|cell| (cell.metadata.identity().as_bytes(), cell))
@@ -542,12 +573,15 @@ impl PreparedAwCellProvider {
                 prepared,
                 state: Mutex::new(PreparedPoolState {
                     ceiling: resident_byte_ceiling,
+                    workspace_ceiling,
                     resident: 0,
                     reserved: 0,
+                    reserved_workspace: 0,
                     clock: 0,
                     cells: BTreeMap::new(),
                     loading: BTreeSet::new(),
                     peak_resident: 0,
+                    peak_workspace: 0,
                     peak_pinned: 0,
                     hits: 0,
                     loads: 0,
@@ -596,6 +630,9 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
         let bytes = prepared
             .decoded_resident_bytes()
             .ok_or(AwOperatorError::MeasurementOverflow)?;
+        let workspace = prepared
+            .decoder_workspace_bytes()
+            .ok_or(AwOperatorError::MeasurementOverflow)?;
         if bytes > ceiling
             || bytes
                 > self
@@ -640,6 +677,20 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 return Ok(self.lease(cell, AwPreparedCellDisposition::Resident, evicted, 0));
             }
             if state.loading.contains(&identity) {
+                drop(
+                    self.pool
+                        .available
+                        .wait(state)
+                        .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
+                );
+                continue;
+            }
+            if state
+                .reserved_workspace
+                .checked_add(workspace)
+                .ok_or(AwOperatorError::MeasurementOverflow)?
+                > state.workspace_ceiling
+            {
                 drop(
                     self.pool
                         .available
@@ -696,6 +747,11 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 .reserved
                 .checked_add(bytes)
                 .ok_or(AwOperatorError::MeasurementOverflow)?;
+            state.reserved_workspace = state
+                .reserved_workspace
+                .checked_add(workspace)
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            state.peak_workspace = state.peak_workspace.max(state.reserved_workspace);
             state.loading.insert(identity);
             state.loads = state
                 .loads
@@ -728,6 +784,10 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
             state.reserved = state
                 .reserved
                 .checked_sub(bytes)
+                .ok_or(AwOperatorError::MeasurementOverflow)?;
+            state.reserved_workspace = state
+                .reserved_workspace
+                .checked_sub(workspace)
                 .ok_or(AwOperatorError::MeasurementOverflow)?;
             let cell = match decoded {
                 Ok(cell) if !state.closed && !state.aborted => cell,
@@ -806,6 +866,8 @@ impl PreparedAwCellProvider {
         Ok(PreparedArtifactResidencyMeasurements {
             peak_resident_bytes: u64::try_from(state.peak_resident)
                 .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
+            peak_decoder_workspace_bytes: u64::try_from(state.peak_workspace)
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
             peak_pinned_bytes: u64::try_from(state.peak_pinned)
                 .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
             hits: state.hits,
@@ -826,7 +888,11 @@ impl PreparedArtifactReaderResidency for PreparedAwCellProvider {
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
         state.closed = true;
-        if state.reserved != 0 || !state.loading.is_empty() || pinned_bytes(&state)? != 0 {
+        if state.reserved != 0
+            || state.reserved_workspace != 0
+            || !state.loading.is_empty()
+            || pinned_bytes(&state)? != 0
+        {
             return Err(PreparedArtifactError::ReaderStillInUse);
         }
         Self::measurements(&state)
@@ -839,7 +905,7 @@ impl PreparedArtifactReaderResidency for PreparedAwCellProvider {
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
         state.closed = true;
-        if state.reserved != 0 || !state.loading.is_empty() {
+        if state.reserved != 0 || state.reserved_workspace != 0 || !state.loading.is_empty() {
             return Err(PreparedArtifactError::ReaderStillInUse);
         }
         let measurements = Self::measurements(&state)?;
@@ -904,11 +970,13 @@ impl PreparedCellDecoder {
             .descriptor
             .weight_plane()
             .ok_or(PreparedArtifactError::SegmentMismatch)?;
+        let imaging_expected = expected(imaging)?;
+        let weight_expected = expected(weight)?;
         Ok(Self {
-            imaging: Vec::new(),
-            weight: Vec::new(),
-            imaging_expected: expected(imaging)?,
-            weight_expected: expected(weight)?,
+            imaging: Vec::with_capacity(imaging_expected),
+            weight: Vec::with_capacity(weight_expected),
+            imaging_expected,
+            weight_expected,
         })
     }
 

@@ -32,6 +32,10 @@ EXPECTED_PREPARED_AW_FREQUENCIES = 16
 PREPARED_MANIFEST_BYTES_PER_CELL = 16 * 1024
 AW_RESIDENT_MB = 384
 AW_RESIDENT_BYTES = AW_RESIDENT_MB * 1024**2
+STORAGE_PROFILE_ENV = {
+    "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND": "3000000000",
+    "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND": "3000000000",
+}
 SERIAL_CPU_IMAGING = {
     "parallel": False,
     "standard_mfs_acceleration": "cpu",
@@ -119,6 +123,7 @@ def validate_prepared_aw_receipts(
     ]
     catalogs: set[str] = set()
     logical_sizes: set[int] = set()
+    decoder_workspace_ceilings: set[int] = set()
     for ordinal, reader in enumerate(readers):
         label = f"{workload_id}: AW reader receipt {ordinal}"
         catalog = reader.get("catalog")
@@ -134,6 +139,11 @@ def validate_prepared_aw_receipts(
         )
         if reader.get("decoded_ceiling_bytes") != AW_RESIDENT_BYTES:
             raise GateError(f"{label} changed the 384 MiB decoded ceiling")
+        decoder_workspace_ceiling = _positive_int(
+            reader.get("decoder_workspace_ceiling_bytes"),
+            f"{label} decoder_workspace_ceiling_bytes",
+        )
+        decoder_workspace_ceilings.add(decoder_workspace_ceiling)
         total_ceiling = _positive_int(
             reader.get("total_ceiling_bytes"), f"{label} total_ceiling_bytes"
         )
@@ -143,6 +153,10 @@ def validate_prepared_aw_receipts(
         total_peak = _positive_int(
             reader.get("total_peak_resident_bytes"),
             f"{label} total_peak_resident_bytes",
+        )
+        decoder_workspace_peak = _positive_int(
+            reader.get("decoder_workspace_peak_bytes"),
+            f"{label} decoder_workspace_peak_bytes",
         )
         pinned_peak = _positive_int(
             reader.get("pinned_peak_bytes"), f"{label} pinned_peak_bytes"
@@ -160,15 +174,25 @@ def validate_prepared_aw_receipts(
             raise GateError(f"{label} load/read counts differ")
         if not pinned_peak <= resident_peak <= AW_RESIDENT_BYTES:
             raise GateError(f"{label} exceeded the decoded residency ceiling")
-        if not resident_peak <= total_peak <= total_ceiling:
+        if decoder_workspace_peak > decoder_workspace_ceiling:
+            raise GateError(f"{label} exceeded the decoder workspace ceiling")
+        if not resident_peak + decoder_workspace_peak <= total_peak <= total_ceiling:
             raise GateError(f"{label} exceeded its total residency ceiling")
-        if total_ceiling < AW_RESIDENT_BYTES:
-            raise GateError(f"{label} total ceiling omits decoded residency")
-        if total_ceiling > AW_RESIDENT_BYTES + 8 * 1024**2:
+        if total_ceiling < AW_RESIDENT_BYTES + decoder_workspace_ceiling:
+            raise GateError(
+                f"{label} total ceiling omits decoded or decoder-workspace residency"
+            )
+        if total_ceiling > (
+            AW_RESIDENT_BYTES + decoder_workspace_ceiling + 8 * 1024**2
+        ):
             raise GateError(f"{label} total ceiling exceeds the T50 streaming bound")
     if len(catalogs) != 1 or len(logical_sizes) != 1:
         raise GateError(
             f"{workload_id}: reader sessions changed catalog identity or size"
+        )
+    if len(decoder_workspace_ceilings) != 1:
+        raise GateError(
+            f"{workload_id}: reader sessions changed decoder workspace ceiling"
         )
     logical_size = next(iter(logical_sizes))
     expected_cache_bytes = logical_size + (
@@ -292,6 +316,14 @@ def validate_manifest_contract(workload: dict[str, Any]) -> dict[str, Any]:
         if run.get(name) != expected:
             raise GateError(f"{workload_id}: manifest run.{name} must be {expected!r}")
     return imaging
+
+
+def validate_storage_profile_environment(environment: dict[str, str]) -> None:
+    """Require measured Rust planning inputs without rebinding frozen CASA."""
+
+    for name, expected in STORAGE_PROFILE_ENV.items():
+        if environment.get(name) != expected:
+            raise GateError(f"T51 acceptance requires {name}={expected}")
 
 
 def validate_receipt(
@@ -724,6 +756,7 @@ def main() -> None:
         help="validate both production plans without executing imaging or comparison",
     )
     args = parser.parse_args()
+    validate_storage_profile_environment(os.environ)
 
     for path in (args.dirty_casa_prefix, args.clean_casa_prefix):
         if not path.parent.is_dir():
@@ -834,6 +867,7 @@ def main() -> None:
         "memory_ceiling_bytes_exclusive": MEMORY_CEILING_BYTES,
         "minimum_selected_samples": MINIMUM_SELECTED_SAMPLES,
         "maximum_normalized_rms": MAXIMUM_NORMALIZED_RMS,
+        "storage_profile_environment": STORAGE_PROFILE_ENV,
         "casa_oracle_cache_root": str(args.cf_cache_root.resolve()),
         "prepared_aw_casa_cache": str(args.prepared_aw_casa_cache.resolve()),
         "prepared_aw_shared_parent": str(args.prepared_aw_shared_parent.resolve()),

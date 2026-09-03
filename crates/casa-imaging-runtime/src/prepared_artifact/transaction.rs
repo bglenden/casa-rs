@@ -8,6 +8,13 @@ pub(super) struct PreparedArtifactSessionRead {
     pub(super) read_bytes: u64,
     pub(super) read_operations: u64,
     pub(super) resident_buffer_bytes: u64,
+    pub(super) cache_bytes: u64,
+    pub(super) locks: u64,
+    pub(super) file_descriptors: u64,
+    pub(super) read_rate: u64,
+    pub(super) write_rate: u64,
+    pub(super) operations_rate: u64,
+    pub(super) queue_slots: u64,
 }
 
 impl PreparedArtifactStore {
@@ -53,9 +60,7 @@ impl PreparedArtifactStore {
             budget,
             scope,
             storage_domain: storage_domain.id.clone(),
-            storage_read_rate: storage_domain.read_rate.clone(),
             storage_operations_rate: storage_domain.operations_rate.clone(),
-            storage_queue: storage_domain.queue.clone(),
             state,
             #[cfg(test)]
             fail_after_evictions: None,
@@ -448,7 +453,7 @@ impl PreparedArtifactStore {
         evidence.ensure_resident_budget()?;
         let mut lock = self.lock(&mut evidence)?;
         let consumed = (|| {
-            self.validate_raw_budget(descriptor.identity, &mut evidence)?;
+            let cache_bytes = self.validate_raw_budget(descriptor.identity, &mut evidence)?;
             let validated = self.validate_entry_with_evidence(
                 descriptor.identity,
                 Some(descriptor),
@@ -491,10 +496,10 @@ impl PreparedArtifactStore {
                 }
                 Ok(())
             })?;
-            Ok(validated)
+            Ok((validated, cache_bytes))
         })();
         let unlock = lock.release(&mut evidence);
-        let validated = match (consumed, unlock) {
+        let (validated, cache_bytes) = match (consumed, unlock) {
             (Ok(validated), Ok(())) => validated,
             (Err(error), _) | (Ok(_), Err(error)) => return Err(error),
         };
@@ -505,6 +510,13 @@ impl PreparedArtifactStore {
             read_bytes: counter.bytes,
             read_operations: counter.operations,
             resident_buffer_bytes: evidence.resident_buffer_bytes,
+            cache_bytes,
+            locks: evidence.locks_peak,
+            file_descriptors: evidence.file_descriptors_peak,
+            read_rate: u64::from(evidence.cache_read.operations > 0),
+            write_rate: u64::from(evidence.cache_write.operations > 0),
+            operations_rate: u64::from(counter.operations > 0),
+            queue_slots: u64::from(counter.operations > 0),
         })
     }
 
