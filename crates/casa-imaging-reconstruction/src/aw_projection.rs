@@ -32,10 +32,7 @@ pub enum AwOperatorError {
     /// The requested Mueller term is not represented.
     #[error("AW Mueller term is unsupported")]
     UnsupportedMueller,
-    /// The requested W plane lies outside prepared coverage.
-    #[error("AW W coordinate is unsupported")]
-    UnsupportedW,
-    /// The requested direct or conjugate frequency lies outside prepared coverage.
+    /// The requested conjugate-frequency transform has no finite positive result.
     #[error("AW frequency is unsupported")]
     UnsupportedFrequency,
     /// The requested parallactic angle has no represented bin.
@@ -319,14 +316,11 @@ impl AwPreparedCatalog {
             return Err(AwOperatorError::UnsupportedMueller);
         }
         let frequencies = unique_sorted(mueller_cells.iter().map(|cell| cell.frequency_hz));
-        if frequency < frequencies[0] || frequency > frequencies[frequencies.len() - 1] {
-            return Err(AwOperatorError::UnsupportedFrequency);
-        }
         let selected_frequency = nearest_linear(&frequencies, frequency);
         let w_values = unique_sorted(mueller_cells.iter().map(|cell| cell.w_value_lambda));
-        let selected_w = *w_values
-            .get((self.w_increment * w.abs()).sqrt().round() as usize)
-            .ok_or(AwOperatorError::UnsupportedW)?;
+        let w_index =
+            ((self.w_increment * w.abs()).sqrt().round() as usize).min(w_values.len() - 1);
+        let selected_w = w_values[w_index];
         let pa_values = unique_sorted(mueller_cells.iter().map(|cell| cell.parallactic_angle_deg));
         let selected_pa = pa_values
             .iter()
@@ -1111,14 +1105,90 @@ mod tests {
             ),
             (12, 12.0, 2.0, -179.0)
         );
+        let degrid = catalog.degrid_cell(s).unwrap();
         assert_eq!(
-            catalog.degrid_cell(s),
-            Err(AwOperatorError::UnsupportedFrequency)
+            (
+                degrid.mueller_element,
+                degrid.frequency_hz,
+                degrid.w_value_lambda,
+                degrid.parallactic_angle_deg
+            ),
+            (3, 8.0, 2.0, -179.0)
         );
         let direct = sample(10.0, 4.0, 3, 20.0);
         assert_eq!(catalog.degrid_cell(direct).unwrap().mueller_element, 12);
         assert_eq!(catalog.grid_cell(direct, false).unwrap().mueller_element, 3);
     }
+
+    #[test]
+    fn t51_vlass_endpoint_frequency_and_w_requests_follow_casa_nearest_maps() {
+        const LOWEST_CF_FREQUENCY_HZ: f64 = 2_091_000_000.0;
+        const HIGHEST_CF_FREQUENCY_HZ: f64 = 4_011_000_000.0;
+        const VLASS_REFERENCE_FREQUENCY_HZ: f64 = 2_987_890_978.473_236_6;
+        const HIGHEST_CHANNEL_CONJUGATE_HZ: f64 = 1_329_234_365.521_561_9;
+
+        let mut entries = Vec::new();
+        for frequency in [LOWEST_CF_FREQUENCY_HZ, HIGHEST_CF_FREQUENCY_HZ] {
+            for w in [0.0, 1.0, 2.0] {
+                entries.push(metadata(frequency, w, 3, 0.0));
+            }
+        }
+        let catalog = AwPreparedCatalog::new(entries).unwrap();
+        let sample = AwVisibilitySample::new(
+            HIGHEST_CF_FREQUENCY_HZ,
+            VLASS_REFERENCE_FREQUENCY_HZ,
+            100.0,
+            3,
+            0.0,
+            [4.25, 4.75],
+            [17.0, -5.0],
+            [2e-4, -3e-4],
+        )
+        .unwrap();
+        let requested_conjugate =
+            conjugate_frequency(sample.frequency_hz, sample.reference_frequency_hz).unwrap();
+        assert!((requested_conjugate - HIGHEST_CHANNEL_CONJUGATE_HZ).abs() < 1.0e-6);
+        assert!(requested_conjugate < LOWEST_CF_FREQUENCY_HZ);
+
+        let direct_spw2 = AwVisibilitySample::new(
+            1_965_000_000.0,
+            VLASS_REFERENCE_FREQUENCY_HZ,
+            1.0,
+            3,
+            0.0,
+            [4.25, 4.75],
+            [17.0, -5.0],
+            [2e-4, -3e-4],
+        )
+        .unwrap();
+        let direct_lower_endpoint = catalog.grid_cell(direct_spw2, false).unwrap();
+        assert_eq!(direct_lower_endpoint.frequency_hz, LOWEST_CF_FREQUENCY_HZ);
+
+        let lower_endpoint = catalog.grid_cell(sample, true).unwrap();
+        assert_eq!(lower_endpoint.frequency_hz, LOWEST_CF_FREQUENCY_HZ);
+        assert_eq!(lower_endpoint.w_value_lambda, 2.0);
+
+        let upper_endpoint = catalog
+            .select(HIGHEST_CF_FREQUENCY_HZ + 1.0e9, -100.0, 3, 0.0)
+            .unwrap();
+        assert_eq!(upper_endpoint.frequency_hz, HIGHEST_CF_FREQUENCY_HZ);
+        assert_eq!(upper_endpoint.w_value_lambda, 2.0);
+    }
+
+    #[test]
+    fn t51_frequency_midpoint_tie_selects_the_lower_casa_cell() {
+        let catalog = AwPreparedCatalog::new(vec![
+            metadata(10.0, 0.0, 3, 0.0),
+            metadata(12.0, 0.0, 3, 0.0),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            catalog.select(11.0, 0.0, 3, 0.0).unwrap().frequency_hz,
+            10.0
+        );
+    }
+
     #[test]
     fn t51_asymmetric_pair_is_bounded_and_applied_with_separate_footprints() {
         let entries = vec![metadata(10.0, 0.0, 12, 0.0)];
@@ -1177,7 +1247,7 @@ mod tests {
             Err(AwOperatorError::MissingCell)
         );
         assert_eq!(
-            sparse.select(13.0, 0.0, 3, 0.0),
+            conjugate_frequency(15.0, 10.0),
             Err(AwOperatorError::UnsupportedFrequency)
         );
         assert_eq!(
