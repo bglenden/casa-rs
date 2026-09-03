@@ -942,7 +942,8 @@ Verification: <code>just docs-check</code>; <code>casars params --help</code></p
 startup settings. A profile can be loaded by the CLI, edited in the TUI or
 native GUI, or manipulated from Python without changing the parameter names or
 their meaning.</p>
-<p>This guide describes the implemented interface from ADR-0006. Provider JSON
+<p>This guide describes the implemented interface from ADR-0006, with current-only
+surface evolution defined by ADR-0012. Provider JSON
 requests, results, progress, and session events remain machine transports; TOML
 is the sole human-authored parameter-profile format.</p>
 <p>The <a href="../reference/task-parameters/">generated parameter reference</a> lists every
@@ -955,7 +956,7 @@ designed to paste cleanly into Markdown:</p>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"imager"</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">15</span>
 
 <span class="k">[parameters]</span>
 <span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
@@ -979,6 +980,12 @@ expressions, and executable selection are not part of the format. Unknown,
 duplicate, inactive, or wrong-surface parameters are errors with source
 locations where possible. A compound value is replaced as one value; profiles
 are not recursive merge patches.</p>
+<p>The imager profile contract is current-only. Its <code>contract</code> must equal the
+current imager surface contract listed in the generated parameter reference,
+and <code>[parameters]</code> must use canonical names. Stale contracts and historical
+aliases are rejected rather than migrated or silently interpreted. Other
+surfaces retain older profiles only when their canonical definition publishes
+an explicit ordered migration chain.</p>
 <p>Relative dataset and product paths resolve against the explicit workspace, GUI
 project root, or process current directory. They do not resolve relative to the
 profile file merely because the file lives elsewhere.</p>
