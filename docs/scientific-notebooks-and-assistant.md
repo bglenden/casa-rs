@@ -64,7 +64,7 @@ User-authored prose remains ordinary Markdown.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 3
+contract = 15
 
 [parameters]
 vis = "data/twhya.ms"
@@ -113,7 +113,8 @@ syntax remains intact. Raw HTML is not executed in rich rendering. External
 modifications are detected; conflicting dirty edits pause saving and require
 reconciliation rather than being overwritten.
 
-Task cells contain sparse ADR-0006 TOML. Selecting or double-clicking the
+Task cells contain sparse ADR-0006 TOML and follow ADR-0012 when their surface
+is current-only. Selecting or double-clicking the
 parameter block opens a normal task tab populated from that intent. A new task
 tab loads directly; replacing an already edited task tab first displays a typed
 diff and requires confirmation. Rerunning a cell creates a new immutable

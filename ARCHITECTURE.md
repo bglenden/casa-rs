@@ -174,9 +174,11 @@ Additional constraints:
   `casa-provider-contracts`. Each provider bundle embeds the exact referenced
   concepts so the boundary remains self-contained. Task and session
   `SurfaceDefinition` bindings supply defaults, conditional activation,
-  narrowing refinements, migrations, presentation, and projection metadata;
-  they cannot redefine concept meaning, normalization, units, role, or
-  persistence. Frontends may not redefine those semantics locally.
+  narrowing refinements, optional ordered migrations, presentation, and
+  projection metadata; under ADR-0012, an empty migration set declares the
+  surface current-only. Bindings cannot redefine concept meaning, normalization,
+  units, role, or persistence. Frontends may not redefine those semantics
+  locally.
 - `casa-task-runtime` owns profile mechanics, managed state, and application
   lifecycle transitions from source parsing and resolution through Last/
   LastSuccessful persistence, task completion, and session debounce/coalescing.

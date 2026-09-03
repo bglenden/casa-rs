@@ -2,7 +2,8 @@
 
 ## Common parameter API
 
-ADR-0006 defines this common surface for task and session profiles:
+ADR-0006 defines this common surface for task and session profiles; ADR-0012
+defines the current-only option used by imager:
 
 ```python
 casars.parameters.defaults(surface, *, workspace=None)

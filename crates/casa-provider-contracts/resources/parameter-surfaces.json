@@ -7936,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 14,
+      "contract_version": 15,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8813,9 +8813,7 @@
               "hidden": false
             }
           },
-          "aliases": [
-            "polarization"
-          ],
+          "aliases": [],
           "reviewed_homonym": null
         },
         {
@@ -12670,97 +12668,7 @@
           "reviewed_homonym": null
         }
       ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {
-              "kind": "rename",
-              "from": "polarization",
-              "to": "stokes"
-            }
-          ],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 6,
-          "to_contract": 7,
-          "steps": [],
-          "changed_defaults": [
-            "imaging_memory_pressure_policy"
-          ]
-        },
-        {
-          "from_contract": 7,
-          "to_contract": 8,
-          "steps": [],
-          "changed_defaults": [
-            "imaging_fft_backend",
-            "standard_mfs_acceleration"
-          ]
-        },
-        {
-          "from_contract": 8,
-          "to_contract": 9,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 9,
-          "to_contract": 10,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 10,
-          "to_contract": 11,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 11,
-          "to_contract": 12,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 12,
-          "to_contract": 13,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 13,
-          "to_contract": 14,
-          "steps": [],
-          "changed_defaults": []
-        }
-      ]
+      "migrations": []
     },
     {
       "kind": "task",

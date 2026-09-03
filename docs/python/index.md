@@ -7,7 +7,7 @@
 - `casars.tasks` provides higher-level task wrappers backed by the versioned
   provider binaries.
 - `casars.parameters` is the accepted common API for typed task and session
-  profiles described by ADR-0006.
+  profiles described by ADR-0006 and the current-only option in ADR-0012.
 
 The generic `casars.tasks.run()` entry point accepts every catalog task. Every
 task is also exposed exactly once as `casars.tasks.<task>` through a generated
