@@ -27,6 +27,44 @@ def valid_digest(value: object) -> bool:
     return isinstance(value, str) and SHA256.fullmatch(value) is not None
 
 
+def load_external_receipts(
+    identifier: str,
+    bindings: list[object],
+    require_external: bool,
+    failures: list[str],
+) -> dict[str, dict[str, object]]:
+    loaded: dict[str, dict[str, object]] = {}
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            continue
+        role = binding.get("role")
+        locator = binding.get("locator")
+        digest = binding.get("sha256")
+        if not isinstance(role, str) or not role or not isinstance(locator, str):
+            continue
+        path = Path(locator)
+        if not path.is_absolute():
+            path = ROOT / path
+        if not path.is_file():
+            if require_external:
+                failures.append(f"{identifier}: bound external receipt is unavailable: {locator}")
+            continue
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual != digest:
+            failures.append(f"{identifier}: external receipt digest differs: {locator}")
+            continue
+        try:
+            document = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            failures.append(f"{identifier}: external receipt cannot be read: {error}")
+            continue
+        if not isinstance(document, dict):
+            failures.append(f"{identifier}: external receipt is not an object: {locator}")
+            continue
+        loaded[role] = document
+    return loaded
+
+
 def scenario_contract_digest(scenario: dict[str, object]) -> str:
     contract = {
         key: scenario[key]
@@ -66,8 +104,27 @@ def validate_mode_contract(
         require_mode_fact(identifier, mode, "weightings", ["briggs", "natural"], failures)
     elif identifier == "standard-mfs-hogbom-vla":
         require_mode_fact(identifier, mode, "deconvolver", "hogbom", failures)
-        require_mode_fact(identifier, mode, "worker_counts", [1, 4], failures)
-        require_mode_fact(identifier, mode, "worker_science_equal", True, failures)
+        require_mode_fact(
+            identifier,
+            mode,
+            "representative_worker_counts",
+            [1],
+            failures,
+        )
+        require_mode_fact(
+            identifier,
+            mode,
+            "parallel_preservation_worker_counts",
+            [1, 4],
+            failures,
+        )
+        require_mode_fact(
+            identifier,
+            mode,
+            "parallel_products_bitwise_equal",
+            True,
+            failures,
+        )
     elif identifier == "standard-mfs-clark-vla":
         require_mode_fact(identifier, mode, "deconvolver", "clark", failures)
     elif identifier == "standard-mfs-multiscale-vla":
@@ -125,7 +182,10 @@ def validate_mode_contract(
 
 
 def validate_receipt(
-    scenario: dict[str, object], contract: dict[str, object], failures: list[str]
+    scenario: dict[str, object],
+    contract: dict[str, object],
+    require_external: bool,
+    failures: list[str],
 ) -> None:
     identifier = str(scenario["id"])
     relative = scenario.get("receipt")
@@ -223,6 +283,16 @@ def validate_receipt(
                 or observed != required
             ):
                 failures.append(f"{identifier}: required product inventory is not exact")
+            if identifier == "continuum-subtracted-cube-alma":
+                if inventory.get("exact_inventory_required") is not False:
+                    failures.append(
+                        f"{identifier}: asymmetric non-required products are not disclosed"
+                    )
+                if inventory.get("produced") != {
+                    "casa": [".image", ".model", ".pb", ".psf", ".residual", ".sumwt"],
+                    "casa-rs": [".image", ".model", ".psf", ".residual", ".sumwt"],
+                }:
+                    failures.append(f"{identifier}: produced product inventory differs")
 
     external = receipt.get("external_receipts")
     if not isinstance(external, list) or not external:
@@ -231,10 +301,62 @@ def validate_receipt(
         for binding in external:
             if (
                 not isinstance(binding, dict)
+                or not isinstance(binding.get("locator"), str)
                 or not binding.get("role")
                 or not valid_digest(binding.get("sha256"))
             ):
                 failures.append(f"{identifier}: external receipt binding is malformed")
+        loaded = load_external_receipts(identifier, external, require_external, failures)
+        if identifier == "standard-mfs-hogbom-vla" and loaded:
+            serial = loaded.get("serial production execution", {})
+            serial_comparison = loaded.get("serial CASA oracle comparison", {})
+            serial_env = serial.get("command", {}).get("env", {})
+            if serial_env.get("IMAGER_BENCH_PARALLEL") not in {None, "0"}:
+                failures.append(f"{identifier}: serial receipt is not serial")
+            if serial_comparison.get("status") != "completed" or serial_comparison.get(
+                "product_inventory", {}
+            ).get("status") != "matched":
+                failures.append(f"{identifier}: serial CASA comparison is not complete")
+            parallel_evidence = ROOT / (
+                "tools/perf/imager/evidence/artifacts/"
+                "20260829-issue581-route-once-discriminator.md"
+            )
+            parallel_text = parallel_evidence.read_text()
+            if not all(
+                statement in parallel_text
+                for statement in (
+                    "Active worker slots | 1 | 4 | expected",
+                    "every product has `diff_rms=0`, `diff_abs_max=0`, and normalized RMS zero",
+                    "Exact product inventory and metadata match",
+                )
+            ):
+                failures.append(f"{identifier}: T55 serial/four-worker science evidence differs")
+        elif identifier == "standard-mfs-multiscale-vla" and loaded:
+            executions = [
+                document
+                for document in loaded.values()
+                if isinstance(document.get("command"), dict)
+            ]
+            scales = [
+                document["command"].get("env", {}).get("IMAGER_BENCH_SCALES")
+                for document in executions
+            ]
+            if "0,5,15" not in scales:
+                failures.append(f"{identifier}: retained execution does not bind scales 0,5,15")
+        elif identifier == "continuum-subtracted-cube-alma" and loaded:
+            residual = loaded.get("continuum residual CASA column comparison", {})
+            residual_result = residual.get("continuum_residual", {})
+            downstream = loaded.get("downstream cube CASA oracle comparison", {})
+            if (
+                residual.get("status") != "pass"
+                or residual.get("reopen_succeeded") is not True
+                or residual_result.get("finite") is not True
+                or residual_result.get("normalized_rms", math.inf)
+                > residual_result.get("maximum_normalized_rms", 0.0)
+            ):
+                failures.append(f"{identifier}: corrected-data CASA comparison is not a pass")
+            if downstream.get("status") != "completed":
+                failures.append(f"{identifier}: downstream cube CASA comparison is not complete")
     repository_evidence = receipt.get("repository_evidence")
     if not isinstance(repository_evidence, list) or not repository_evidence:
         failures.append(f"{identifier}: repository evidence is missing")
@@ -246,6 +368,10 @@ def validate_receipt(
 
 
 def main() -> int:
+    if sys.argv[1:] not in ([], ["--require-external"]):
+        print("usage: check-representative-science-matrix.py [--require-external]", file=sys.stderr)
+        return 2
+    require_external = sys.argv[1:] == ["--require-external"]
     document = json.loads(MATRIX.read_text())
     failures: list[str] = []
     if document.get("schema") != "casa-rs-representative-science-matrix-v2":
@@ -267,7 +393,7 @@ def main() -> int:
             failures.append(f"{identifier}: selected sample volume is below contract")
         if not scenario.get("dimensions"):
             failures.append(f"{identifier}: defining dimensions are missing")
-        validate_receipt(scenario, contract, failures)
+        validate_receipt(scenario, contract, require_external, failures)
 
     tickets = document.get("tickets", [])
     issues = [ticket.get("issue") for ticket in tickets]

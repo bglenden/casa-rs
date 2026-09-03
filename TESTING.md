@@ -42,6 +42,13 @@ applicable, and independent beam, flux, centroid, spectral, polarization,
 mask/support, and persistence facts. A recorded exception must explain why the
 dimension is scientifically inapplicable and requires programme-owner approval.
 
+Run the validator with `--require-external` for issue closure whenever the
+bound evidence volume is mounted. That mode verifies every available external
+receipt digest and reconciles the retained worker, multiscale, continuum-data,
+and downstream-cube facts used by the compact checked-in receipts. The
+argument-free CI form validates the durable matrix and receipt structure when
+host-specific external evidence is unavailable.
+
 CASA oracles are generated once and frozen with their CASA version, dataset
 identity and selection, image and solver parameters, comparator, and artifact
 inventory. Regenerate only when one of those contracts changes. Tiny fixtures

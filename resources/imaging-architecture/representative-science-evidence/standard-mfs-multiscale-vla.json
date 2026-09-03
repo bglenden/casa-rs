@@ -63,8 +63,8 @@
     "deconvolver": "multiscale",
     "scales": [
       0,
-      3,
-      10
+      5,
+      15
     ]
   },
   "production_path": true,

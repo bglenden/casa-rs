@@ -8,12 +8,30 @@
     },
     "maximum_normalized_rms": 7.152637423524498e-07,
     "product_inventory": {
+      "exact_inventory_required": false,
       "observed": [
         ".image",
         ".psf",
         ".residual",
         ".sumwt"
       ],
+      "produced": {
+        "casa": [
+          ".image",
+          ".model",
+          ".pb",
+          ".psf",
+          ".residual",
+          ".sumwt"
+        ],
+        "casa-rs": [
+          ".image",
+          ".model",
+          ".psf",
+          ".residual",
+          ".sumwt"
+        ]
+      },
       "required": [
         ".image",
         ".psf",
@@ -46,13 +64,18 @@
   "external_receipts": [
     {
       "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/contsub-gate-v4-recompare/results/20260903T015837Z-issue607-continuum-subtracted-cube-representative-7f3d98bf.json",
-      "role": "CASA oracle and production comparison",
+      "role": "downstream cube production execution",
       "sha256": "096152d5c2ea0842bbf65ffdeebcab724eb5b6a3cf65f4e52c9dc64bf32d9697"
     },
     {
       "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/contsub-gate-v4-recompare/results/20260903T015837Z-issue607-continuum-subtracted-cube-representative-7f3d98bf.comparison.json",
-      "role": "additional production comparison",
+      "role": "downstream cube CASA oracle comparison",
       "sha256": "8ffca85198f0e9ddce8436fa7125971da197942c5dc3e61b8f19b91c1163c9a2"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/contsub-gate-v4/products/20260903T015412Z-issue607-continuum-subtracted-cube-representative-8712cf44/continuum-residual-comparison.json",
+      "role": "continuum residual CASA column comparison",
+      "sha256": "de90ee33db317e3cf6532ab8f4e8109634ff91d26aa7df97cccefb28056d08aa"
     }
   ],
   "mode": {
