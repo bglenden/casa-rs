@@ -883,11 +883,14 @@ impl SpectralOperatorSpecification {
             ) => {}
             _ => return Err(SpectralOperatorError::UnsupportedProblem),
         }
-        if problem.geometry().domains().len() > 1
-            && (!matches!(basis, SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() == 1)
-                || core_start != 0
-                || core_depth != 1)
-        {
+        let multi_domain_basis_supported = match basis {
+            SpectralBasisPlan::Polynomial(plan) => {
+                plan.coefficient_term_count() == 1 && core_start == 0 && core_depth == 1
+            }
+            SpectralBasisPlan::ChannelLocal => true,
+            SpectralBasisPlan::TaylorViaChannelMajor(_) | SpectralBasisPlan::Joint { .. } => false,
+        };
+        if problem.geometry().domains().len() > 1 && !multi_domain_basis_supported {
             return Err(SpectralOperatorError::UnsupportedMultiDomainProblem);
         }
         if matches!(basis, SpectralBasisPlan::Polynomial(_)) && (core_start != 0 || core_depth != 1)
@@ -9059,6 +9062,54 @@ mod tests {
             .sum::<Complex64>();
         let right = value.conj() * operator.degrid(&data, taps).unwrap();
         assert!((left - right).norm() < 1.0e-11, "{left:?} != {right:?}");
+    }
+
+    #[test]
+    fn t49_w_projection_kernel_diagnostics_are_explicit_and_finite() {
+        let mut geometry = geometry();
+        geometry.image_shape = [48, 48];
+        geometry.grid_shape = [64, 64];
+        geometry.image_blc = [8, 8];
+        let operator = ConvolutionOperator::new(
+            &geometry,
+            Some(
+                casa_imaging_model::WProjectionContract::new(
+                    10_000.0,
+                    std::num::NonZeroUsize::new(9),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let ConvolutionOperator::WProjection(w_projection) = &operator else {
+            panic!("nonzero W must compile the W-projection operator");
+        };
+        assert_eq!(w_projection.sampling, 4);
+        assert_eq!(w_projection.kernels.len(), 9);
+        assert!(w_projection.w_scale.is_finite() && w_projection.w_scale > 0.0);
+        assert!(w_projection.kernels.iter().all(|kernel| {
+            kernel.support > 0
+                && kernel
+                    .weights
+                    .iter()
+                    .all(|weight| weight.re.is_finite() && weight.im.is_finite())
+        }));
+        assert!(
+            (super::w_projection_kernel_sum(&w_projection.kernels[0], w_projection.sampling) - 1.0)
+                .abs()
+                < 1.0e-12
+        );
+        assert!(
+            w_projection
+                .kernels
+                .last()
+                .unwrap()
+                .weights
+                .iter()
+                .any(|weight| weight.im.abs() > 1.0e-12),
+            "a nonzero-W plane must carry a complex phase screen"
+        );
+        assert_eq!(operator.taps([0.0, 0.0, f64::NAN]), None);
     }
 
     #[test]

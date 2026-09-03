@@ -1,0 +1,116 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 0.0007981002064008772,
+    "normalized_rms": {
+      ".image": 0.0002638849258418512,
+      ".mask": 0.0,
+      ".model": 7.889863415027368e-7,
+      ".psf": 0.0007981002064008772,
+      ".residual": 0.00026991315477266017,
+      ".sumwt": 0.0001984661274702831
+    },
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".mask",
+        ".model",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".mask",
+        ".model",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "3632c0ea7792f49dc16ce4e1ec813273c8197a1ac3a6c004f96144c9cf8e12a8",
+  "dataset": {
+    "correlations": 2,
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "nonzero_w",
+    "automatic_w_planes",
+    "paired_prediction_and_adjoint",
+    "compact_bounded_replay",
+    "complete_products",
+    "exact_validity"
+  ],
+  "execution": {
+    "artifact_bytes": 66122456,
+    "encoded_records": 1650296,
+    "grid_records": 1650296,
+    "maximum_frames_per_window": 5,
+    "peak_process_rss_bytes": 217743360,
+    "planned_working_set_bytes": 909364,
+    "prediction_groups": 1650296,
+    "replay_blocks": 364,
+    "sector_rescans": 0
+  },
+  "external_receipts": [
+    {
+      "locator": "tools/perf/imager/evidence/artifacts/20260903T073400Z-issue535-wprojection-mfs-representative-f298abb7.json",
+      "role": "production Rust execution and bounded-replay receipt",
+      "sha256": "a0b90e8880d952c7553d3e7019da678eff9c79b84df4ea33df957d9134441c7a"
+    },
+    {
+      "locator": "tools/perf/imager/evidence/artifacts/20260903T074128Z-issue535-wprojection-mfs-representative-8f48c936.json",
+      "role": "CASA oracle and frozen-tolerance comparison",
+      "sha256": "655b862fdbb6525955dc9f9e77670689d3e45bc02fb97c0a7a8f7241aa29d5ea"
+    },
+    {
+      "locator": "tools/perf/imager/evidence/artifacts/20260903T074128Z-issue535-wprojection-mfs-representative-8f48c936.comparison.json",
+      "role": "full scientific product comparison",
+      "sha256": "cf907f41a51ca2121640a3c86d6fd5352a3540d17555c98150c8651678dcfd68"
+    }
+  ],
+  "mode": {
+    "casa_wprojplanes": -1,
+    "deconvolver": "hogbom",
+    "gridder": "wproject",
+    "niter": 25,
+    "rust_w_projection_planes": "automatic",
+    "specmode": "mfs",
+    "weighting": "briggs"
+  },
+  "production_path": true,
+  "reference": {
+    "casa_python": "3.12",
+    "casa_version": "6.7.6.14",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "tools/perf/imager/workloads/issue535-wprojection-mfs-representative.json",
+    "scripts/bench-imager-vs-casa.sh",
+    "crates/casa-imaging-model/tests/measurement_equation_contract.rs::w_projection_is_explicit_paired_and_identity_bound",
+    "crates/casa-imaging-reconstruction/src/spectral_operator.rs::tests::t49_w_projection_kernel_diagnostics_are_explicit_and_finite",
+    "crates/casa-imaging-reconstruction/src/spectral_operator.rs::tests::t49_w_projection_grid_and_degrid_are_adjoint",
+    "crates/casa-imaging-reconstruction/src/gridded_normal_operator.rs::tests::t49_w_plan_round_trips_through_compact_tiled_replay",
+    "crates/casa-imaging-application/tests/continuum_application.rs::t49_application_executes_nonzero_w_through_major_cycle_replay"
+  ],
+  "scenario_id": "w-projection-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "45cdf84e942e85449a864ee875d089196dd51ee8",
+  "tested_worktree_dirty": true,
+  "validity_rule": null
+}

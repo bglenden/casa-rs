@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "id": "issue535-wprojection-mfs-representative",
+  "mode_id": "wprojection-mfs-representative",
+  "description": "Issue #535 representative 512-pixel, 6.28-million-sample VLA W-projection MFS correctness row over the deterministic structured Wave 1 sky.",
+  "dataset": {
+    "key": "wave1-vla-single-small",
+    "relative_path": "wave1/vla/single/small/ms/wave1-vla-single-small.ms",
+    "root_env": "CASA_RS_IMPERF_DATA_ROOT"
+  },
+  "imaging": {
+    "mode": "clean",
+    "specmode": "mfs",
+    "gridder": "wproject",
+    "wterm": "wproject",
+    "field": "0",
+    "spw": "0",
+    "channel_start": 0,
+    "channel_count": 24,
+    "imsize": 512,
+    "cell_arcsec": 0.35,
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "hogbom",
+    "hogbom_iteration_mode": "casa",
+    "nterms": 1,
+    "niter": 25,
+    "minor_cycle_length": 25,
+    "gain": 0.1,
+    "threshold_jy": 0.0,
+    "usemask": "user",
+    "mask_box": "0,0,511,511",
+    "write_pb": false,
+    "savemodel": "none",
+    "casa_pblimit": -0.2,
+    "standard_mfs_acceleration": "cpu",
+    "imaging_fft_backend": "rustfft"
+  },
+  "run": {
+    "repeats": 1,
+    "skip_profile": "1",
+    "ms_staging": "copy",
+    "run_label": "issue535-representative",
+    "storage_label": "external-ssd",
+    "env": {
+      "CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND": "1000000000",
+      "CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND": "1000000000"
+    },
+    "evidence_role": "representative_scientific_acceptance"
+  },
+  "comparison": {
+    "mode": "full",
+    "products": [".image", ".residual", ".psf", ".sumwt", ".model", ".mask"],
+    "max_elements_per_product": 1000000,
+    "full_chunk_elements": 1000000,
+    "require_exact_product_inventory": false,
+    "require_direction_wcs_parity": true,
+    "require_metadata_parity": false,
+    "source_regions": [
+      {"id":"structured-sky-core","products":[".image",".residual",".model"],"blc":[192,192],"trc":[319,319]}
+    ],
+    "tolerances": {
+      "contract_version": 2,
+      "require_full_array": true,
+      "default": {
+        "diff_rms_over_right_rms": 0.001
+      },
+      "products": {
+        ".image": {
+          "beam_area_relative": 0.001,
+          "beam_kernel_nrmse": 0.001,
+          "beam_major_relative": 0.001,
+          "beam_minor_relative": 0.001,
+          "beam_pa_degrees": 0.1,
+          "centroid_pixels": 0.05,
+          "integrated_flux_relative": 0.001,
+          "peak_relative": 0.001
+        }
+      }
+    }
+  }
+}

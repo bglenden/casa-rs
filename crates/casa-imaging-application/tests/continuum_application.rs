@@ -94,6 +94,14 @@ fn thirty_two_channel_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+fn thirty_two_channel_multi_row_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "thirty-two-channel-multi-row-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 8, false),
+    )
+}
+
 fn joint_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -797,6 +805,137 @@ fn t49_application_executes_nonzero_w_through_major_cycle_replay() {
     let result = execute_continuum(imaging).expect("native W-projection execution");
     assert_eq!(result.minor_iterations, 2);
     assert_standard_products(&image_name, &result.product_names);
+}
+
+#[test]
+fn t49_plane_count_does_not_infer_w_projection() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = tiny_measurement_set(root.path());
+    let image_name = root.path().join("w-planes-without-capability");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.w_projection_planes = Some(5);
+
+    let error = match execute_continuum(imaging) {
+        Ok(_) => panic!("plane count inferred W projection"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("requires the explicit W-projection task capability"),
+        "wrong explicit-W error: {error}"
+    );
+    assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());
+}
+
+#[test]
+fn t49_w_projection_composes_with_multifield_recentered_cube() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let image_name = root.path().join("w-cube-main");
+    let outlier_name = root.path().join("w-cube-outlier");
+    let outlier_file = root.path().join("w-cube.outlier");
+    std::fs::write(
+        &outlier_file,
+        format!(
+            "imagename={}\nimsize=[32,32]\ncell=[1arcsec,1arcsec]\nphasecenter=J2000 1.001rad 0.499rad\nmask=circle[[16pix,16pix],8pix]\n",
+            outlier_name.display()
+        ),
+    )
+    .expect("write recentered W-cube outlier");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.image_size = 32;
+    imaging.outlier_file = Some(outlier_file);
+    imaging.spectral_window = Some("0:0~31".to_string());
+    imaging.channel_count = Some(32);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(32),
+    };
+    imaging.w_projection_planes = Some(5);
+    imaging.task_requirements = vec![
+        TaskRequirement::SpectralCube,
+        TaskRequirement::WProjection,
+        TaskRequirement::WProjectionPlanes,
+    ];
+
+    let result = execute_continuum(imaging)
+        .expect("native recentered, faceted, multi-domain W-cube execution");
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .domain_count(),
+        2
+    );
+    assert_eq!(result.outcome.output.planned_products.members().len(), 10);
+    for base in [&image_name, &outlier_name] {
+        for suffix in DIRTY_PRODUCT_SUFFIXES {
+            let product =
+                PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", base.display())))
+                    .expect("open W-cube product");
+            assert_eq!(
+                product.shape(),
+                if suffix == ".sumwt" {
+                    &[1, 1, 1, 32]
+                } else {
+                    &[32, 32, 1, 32]
+                },
+                "{suffix}"
+            );
+        }
+    }
+}
+
+#[test]
+fn t49_w_projection_composes_with_faceted_continuum() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = multi_row_measurement_set(root.path());
+    let image_name = root.path().join("w-faceted-continuum");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.image_size = 32;
+    imaging.facets = 2;
+    imaging.w_projection_planes = Some(5);
+    imaging.task_requirements = vec![
+        TaskRequirement::WProjection,
+        TaskRequirement::WProjectionPlanes,
+    ];
+
+    let result =
+        execute_continuum(imaging).expect("native faceted W-projection continuum execution");
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .scientific
+            .normal_state()
+            .domain_count(),
+        1
+    );
+    assert_dirty_products(&image_name, &result.product_names);
 }
 
 #[test]

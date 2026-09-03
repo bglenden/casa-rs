@@ -2008,15 +2008,13 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         ));
     }
     if request.outlier_file.is_some()
-        && (!matches!(request.spectral_mode, SpectralImagingMode::Continuum)
-            || !matches!(
-                request.algorithm,
-                ContinuumAlgorithm::Dirty | ContinuumAlgorithm::Hogbom
-            )
-            || request.weighting != ContinuumWeighting::Natural)
+        && (!matches!(
+            request.algorithm,
+            ContinuumAlgorithm::Dirty | ContinuumAlgorithm::Hogbom
+        ) || request.weighting != ContinuumWeighting::Natural)
     {
         return Err(boxed(
-            "the installed multi-domain slice requires MFS, natural weighting, and dirty or Hogbom reconstruction",
+            "the installed multi-domain slice requires natural weighting and dirty or Hogbom reconstruction",
         ));
     }
     Ok(())

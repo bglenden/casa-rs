@@ -3268,6 +3268,47 @@ mod tests {
     }
 
     #[test]
+    fn t49_w_records_are_canonical_and_permutation_independent() {
+        let mut geometry = geometry();
+        geometry.image_shape = [48, 48];
+        geometry.grid_shape = [64, 64];
+        geometry.image_blc = [8, 8];
+        let operator = ConvolutionOperator::new(
+            &geometry,
+            Some(
+                casa_imaging_model::WProjectionContract::new(
+                    10_000.0,
+                    std::num::NonZeroUsize::new(9),
+                )
+                .unwrap(),
+            ),
+        )
+        .unwrap();
+        let first = operator
+            .taps([12.25, -7.5, 4_000.0])
+            .expect("first W sample fits the grid");
+        let second = operator
+            .taps([-8.5, 9.25, -7_000.0])
+            .expect("second W sample fits the grid");
+        let (left, _) = encode_reduced::<false>(scalar_groups([
+            (first, 0.75),
+            (second, 0.4),
+            (first, 1.25),
+            (second, 0.6),
+        ]))
+        .expect("encode W records");
+        let (right, _) = encode_reduced::<false>(scalar_groups([
+            (second, 0.6),
+            (first, 1.25),
+            (second, 0.4),
+            (first, 0.75),
+        ]))
+        .expect("encode permuted W records");
+        assert_eq!(left, right);
+        assert_eq!(left.len(), 2 * GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
+    }
+
+    #[test]
     fn compilation_measurements_distinguish_allocations_from_map_insertions() {
         let mut operations = 0;
         let mut bytes = 0;
