@@ -80,7 +80,7 @@
     "imaging_prepare_workers": 1,
     "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "f64",
-    "imaging_fft_backend": "fftw",
+    "imaging_fft_backend": "rustfft",
     "imaging_memory_target_mb": 16384
   },
   "run": {

@@ -50,15 +50,17 @@ CASA_RS_CASA_PYTHON=/Applications/CASA.app/Contents/Frameworks/Python.framework/
 python3 tools/perf/imager/t51_aw_vlass_acceptance.py \
   --dirty-casa-prefix /Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-f-all63-clean-4096-full-16-spw/cache-construction-artifacts/vlass-fragment-all-fields-dirty-4096-full-16-spw-casa/reduced_turnaround_only/20260806T112128Z-vlass-fragment-all-fields-dirty-4096-full-16-spw-casa-9f8ed92d/casa/measured-001/casa \
   --clean-casa-prefix /Volumes/GLENDENNING/casa-rs-vlass/issue-446/recovery-references/casa-g-all63-clean-4096-full-16-spw/artifacts/vlass-fragment-all-fields-clean-4096-full-16-spw-casa/reduced_turnaround_only/20260810T221526Z-vlass-fragment-all-fields-clean-4096-full-16-spw-casa-baseline/casa/measured-001/casa \
-  --output-dir /Volumes/GLENDENNING/casa-rs-vlass/issue-537/receipts \
-  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-537/artifacts \
-  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-537/casa-oracle-cache \
+  --output-dir /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/receipts \
+  --artifact-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/artifacts \
+  --cf-cache-root /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/casa-oracle-cache \
   --prepared-aw-casa-cache /Volumes/GLENDENNING/casa-rs-vlass/issue-446/cf-cache/6.7.5.9/3f8343a6717f48d89286e440be1fd59ba542a88324b98061540d6d4aa79e0e1c \
-  --prepared-aw-shared-parent /Volumes/GLENDENNING/casa-rs-vlass/issue-537/native-aw-cold-warm
+  --prepared-aw-shared-parent /Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/native-aw-cold-warm
 ```
 
 The terminal artifact is
-`/Volumes/GLENDENNING/casa-rs-vlass/issue-537/receipts/t51-aw-vlass-acceptance.json`.
+`/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-ticket-537/receipts/t51-aw-vlass-acceptance.json`.
+Use a fresh run-specific replacement for the `t51-ticket-537` directory on
+each actual execution.
 It contains the two immutable workload-receipt paths, their required
 `["cold", "warm"]` sequence, the immutable CASA-oracle cache root, the distinct
 validated paired CFS/WTCFS source, the single shared native prepared-store

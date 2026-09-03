@@ -68,6 +68,7 @@
     "pointingoffsetsigdev": 0.0,
     "pblimit": 0.0001,
     "normtype": "flatnoise",
+    "imaging_fft_backend": "rustfft",
     "write_pb": true,
     "pbcor": false,
     "restoration": true,

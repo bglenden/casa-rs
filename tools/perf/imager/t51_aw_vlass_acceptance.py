@@ -77,6 +77,7 @@ def validate_receipt(
         "conjbeams": True,
         "usepointing": True,
         "normtype": "flatnoise",
+        "imaging_fft_backend": "rustfft",
     }
     for name, expected in required_imaging.items():
         if imaging.get(name) != expected:
@@ -344,6 +345,7 @@ def validate_aw_command_binding(
         "IMAGER_BENCH_PSFPHASECENTER": str(imaging["psfphasecenter"]),
         "IMAGER_BENCH_VPTABLE": str(imaging["vptable"]),
         "IMAGER_BENCH_GRIDDER": str(imaging["gridder"]),
+        "IMAGER_BENCH_IMAGING_FFT_BACKEND": str(imaging["imaging_fft_backend"]),
         "IMAGER_BENCH_WTERM": str(imaging["wterm"]),
         "IMAGER_BENCH_WPROJPLANES": str(imaging["wprojplanes"]),
         "IMAGER_BENCH_FACETS": str(imaging["facets"]),
