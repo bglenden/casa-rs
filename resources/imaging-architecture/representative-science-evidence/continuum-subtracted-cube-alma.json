@@ -1,0 +1,78 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 7.152637423524498e-07,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "c64137b0e45d2f6437b3eb2acd26dc933dd26caa94b05e0b0cc668a3414a4c51",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "f6869e57635164d98f71661c0aab588601fd5864af7ddd36c97130e8d756e37f",
+    "image_shape": [
+      512,
+      512,
+      1,
+      256
+    ],
+    "selected_channels": 256,
+    "selected_rows": 2400,
+    "selected_samples": 1228800
+  },
+  "dimensions": [
+    "fitspw",
+    "first_order_fit",
+    "corrected_data_vs_casa_contsub_data",
+    "persistence",
+    "downstream_cube"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/contsub-gate-v4-recompare/results/20260903T015837Z-issue607-continuum-subtracted-cube-representative-7f3d98bf.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "096152d5c2ea0842bbf65ffdeebcab724eb5b6a3cf65f4e52c9dc64bf32d9697"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/contsub-gate-v4-recompare/results/20260903T015837Z-issue607-continuum-subtracted-cube-representative-7f3d98bf.comparison.json",
+      "role": "additional production comparison",
+      "sha256": "8ffca85198f0e9ddce8436fa7125971da197942c5dc3e61b8f19b91c1163c9a2"
+    }
+  ],
+  "mode": {
+    "corrected_data_matches_casa": true,
+    "downstream_cube_compared": true,
+    "fitorder": 1
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "096152d5c2ea0842bbf65ffdeebcab724eb5b6a3cf65f4e52c9dc64bf32d9697",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "tools/science/issue607_contsub_fixture.py",
+    "tools/perf/imager/workloads/issue607-continuum-subtracted-cube-representative.json"
+  ],
+  "scenario_id": "continuum-subtracted-cube-alma",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "ff70e0f4714f97978a465587dc88ad72f68ebb8b",
+  "validity_rule": null
+}

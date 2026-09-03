@@ -1,0 +1,85 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 7.668669325568177e-07,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "4e0010eddcff0a9c5ae84897867415aa61fa442c2f33df6370d63cd98f137555",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "multiscale",
+    "multiple_scales",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021219Z-issue607-standard-mfs-representative-98bdb2e7.comparison.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "0768c46822638eb7103431e483d405949465d7215c47e1ba9467fe2d95ae6650"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021219Z-issue607-standard-mfs-representative-98bdb2e7.json",
+      "role": "additional production comparison",
+      "sha256": "32abb84a287afb390b6d9157896b8d7eed4190b6e785bab4134cb5a32471ebf5"
+    }
+  ],
+  "mode": {
+    "deconvolver": "multiscale",
+    "scales": [
+      0,
+      3,
+      10
+    ]
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "0768c46822638eb7103431e483d405949465d7215c47e1ba9467fe2d95ae6650",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "scripts/bench-imager-vs-casa.sh",
+    "scripts/run-issue607-standard-portfolio.sh"
+  ],
+  "scenario_id": "standard-mfs-multiscale-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "b809244e72611baefd928a06fd1cdea4bf2093c4",
+  "validity_rule": null
+}

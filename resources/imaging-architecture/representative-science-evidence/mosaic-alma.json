@@ -1,0 +1,86 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 7.867473212191123e-05,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".image.pbcor",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt",
+        ".weight"
+      ],
+      "required": [
+        ".image",
+        ".image.pbcor",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt",
+        ".weight"
+      ]
+    }
+  },
+  "contract_digest": "c5086468df45f1e835522ab9a587802a08d56b038516a34c1070f63408d7145e",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "fe39f1920104bbb9317f0ee1bcb61e0c0ce3ecc2da2a7be7d471dd3a72c0a290",
+    "image_shape": [
+      512,
+      512,
+      1,
+      16
+    ],
+    "selected_channels": 16,
+    "selected_rows": 31500,
+    "selected_samples": 1008000
+  },
+  "dimensions": [
+    "multiple_pointings",
+    "overlapping_primary_beams",
+    "mfs",
+    "sixteen_channel_cube",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/private/tmp/t47-compare-mfs-closeout2.comparison.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "fe39f1920104bbb9317f0ee1bcb61e0c0ce3ecc2da2a7be7d471dd3a72c0a290"
+    },
+    {
+      "locator": "/private/tmp/t47-compare-cube-closeout3.comparison.json",
+      "role": "additional production comparison",
+      "sha256": "9e9844be4f7811d6d4f9fae8e950d5cb44af78368ab62fbc1946ffebf53cc47a"
+    }
+  ],
+  "mode": {
+    "cube_channels": 16,
+    "mfs_compared": true,
+    "overlapping_primary_beams": true,
+    "pointings": 7
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "fe39f1920104bbb9317f0ee1bcb61e0c0ce3ecc2da2a7be7d471dd3a72c0a290",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "crates/casa-imaging-reconstruction/src/mosaic.rs"
+  ],
+  "scenario_id": "mosaic-alma",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "c994cb7a6ca1138e6168e3e3631684f1e370d650",
+  "validity_rule": null
+}

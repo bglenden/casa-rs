@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "e8bc9bd14442daef07646888424ee2cff87c3bd7be515e9b56356c32315d3a0f"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "8c78b2b812883f7ee8704df8018342300ff54d8d09fe0a4cbca91394858b9642"
+    "7f3ba45504b29ad36ad2128c6155b786ddc9962505d64770598be9d4b80f9a9f"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 81
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2231,6 +2231,7 @@ def validate_t18_global_weighting_sources(
             "visibility": "SelectedVisibilitySample",
             "channel_flag": "bool",
             "parallel_hand_group_flag": "bool",
+            "input_weight_group_flag": "bool",
             "row_flag": "bool",
             "input_weight": "f32",
             "raw_input_weight": "f32",

@@ -1,0 +1,81 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 7.668669325568177e-07,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "1a4b0a6b35bf02f316b4f085c53dd8d7e7a7cf5f9bad8f6e7e16959ad4767e90",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "auto_multithresh",
+    "exact_mask_support",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021404Z-issue607-standard-mfs-representative-e97ecfe2.comparison.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "5fae1656e9b43607999a23668cc6a8765ae07f719a09c580db291d5cccb4083a"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021404Z-issue607-standard-mfs-representative-e97ecfe2.json",
+      "role": "additional production comparison",
+      "sha256": "4a4d81f18b801a40d6430aa59f1cbdf510c9f111167974bb53e85a0a0ea2f51b"
+    }
+  ],
+  "mode": {
+    "exact_mask_support": true,
+    "mask": "auto-multithresh"
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "5fae1656e9b43607999a23668cc6a8765ae07f719a09c580db291d5cccb4083a",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "scripts/bench-imager-vs-casa.sh",
+    "scripts/run-issue607-standard-portfolio.sh"
+  ],
+  "scenario_id": "standard-mfs-automask-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "b809244e72611baefd928a06fd1cdea4bf2093c4",
+  "validity_rule": null
+}

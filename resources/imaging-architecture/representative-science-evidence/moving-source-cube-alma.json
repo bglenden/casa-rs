@@ -1,0 +1,98 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 1.654e-06,
+    "product_inventory": {
+      "observed": [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".image.tt0",
+        ".image.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".mask",
+        ".alpha",
+        ".alpha.error"
+      ],
+      "required": [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".image.tt0",
+        ".image.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".mask",
+        ".alpha",
+        ".alpha.error"
+      ]
+    }
+  },
+  "contract_digest": "35762f2ce3a848d5ea81f8f0634399bfdfde4518cab588f097395a66fb10f7ab",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "ad70efb4916903a0810905bd88e7bc7faa90b705fdb0bd92b98e5ae7dd959ef9",
+    "image_shape": [
+      512,
+      512,
+      1,
+      40
+    ],
+    "selected_channels": 1280,
+    "selected_rows": 1620,
+    "selected_samples": 4147200
+  },
+  "dimensions": [
+    "forty_channels",
+    "multi_spw_mvc",
+    "moving_source",
+    "spectral_coordinates",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/private/tmp/t41-mvc-casa-oracle-spw01-nchan40-niter1/manifest.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "ad70efb4916903a0810905bd88e7bc7faa90b705fdb0bd92b98e5ae7dd959ef9"
+    },
+    {
+      "locator": "/private/tmp/t41-mvc-rust-oracle-spw01-nchan40-niter1/.casa-rs-imaging-receipts/3a2cbd2328b5ca7612b0904e166280c29a94bbe82aed9696308c7c71df462b00.receipt.json",
+      "role": "additional production comparison",
+      "sha256": "b453966ea85b963cd0b52b95bd35cb5eeab9ca6bf118ee3c4ee328cda005b0ff"
+    }
+  ],
+  "mode": {
+    "moving_source_correction": true,
+    "specmode": "cube"
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "ad70efb4916903a0810905bd88e7bc7faa90b705fdb0bd92b98e5ae7dd959ef9",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "crates/casa-imaging-application/tests/t41_moving_source_casa_oracle.rs"
+  ],
+  "scenario_id": "moving-source-cube-alma",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "c77addd74680a94d93f067b400280b562b506a08",
+  "validity_rule": null
+}
