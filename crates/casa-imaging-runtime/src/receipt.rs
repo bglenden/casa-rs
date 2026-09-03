@@ -5989,6 +5989,37 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
                     evidence_field(fields, format!("{prefix}.planes"), planes.get());
                 }
             }
+            PairedMeasurementTransform::AwProjection { contract } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.maximum_abs_w_lambda"),
+                    contract.maximum_abs_w_lambda(),
+                );
+                evidence_field(fields, format!("{prefix}.planes"), contract.planes().get());
+                evidence_field(fields, format!("{prefix}.a_term"), contract.a_term());
+                evidence_field(fields, format!("{prefix}.ps_term"), contract.ps_term());
+                evidence_field(fields, format!("{prefix}.wideband"), contract.wideband());
+                evidence_field(
+                    fields,
+                    format!("{prefix}.conjugate_beams"),
+                    contract.conjugate_beams(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.use_pointing"),
+                    contract.use_pointing(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.compute_pa_step_deg"),
+                    contract.compute_pa_step_deg(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.rotate_pa_step_deg"),
+                    contract.rotate_pa_step_deg(),
+                );
+            }
             PairedMeasurementTransform::PolarizationMapping
             | PairedMeasurementTransform::FeedResponse => {}
         }
@@ -7509,6 +7540,7 @@ const fn instrument_model_name(value: InstrumentModel) -> &'static str {
         InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => {
             "casa-alma-aca-heterogeneous-interferometric-response-v1"
         }
+        InstrumentModel::CasaEvlaWidebandAwV1 => "casa-evla-wideband-aw-v1",
     }
 }
 
@@ -7534,6 +7566,7 @@ fn paired_transform_kind(value: PairedTransformKind) -> &'static str {
         PairedTransformKind::SpectralResampling => "spectral_resampling",
         PairedTransformKind::ChannelIntegration => "channel_integration",
         PairedTransformKind::WProjection => "w_projection",
+        PairedTransformKind::AwProjection => "aw_projection",
     }
 }
 
@@ -7815,6 +7848,7 @@ fn required_capability(value: RequiredCapability) -> String {
         RequiredCapability::MultiDomainGeometry => "multi_domain_geometry".to_string(),
         RequiredCapability::FacetedGeometry => "faceted_geometry".to_string(),
         RequiredCapability::WProjection => "w_projection".to_string(),
+        RequiredCapability::AwProjection => "aw_projection".to_string(),
         RequiredCapability::SpectralFrameTransform => "spectral_frame_transform".to_string(),
         RequiredCapability::SpectralResampling => "spectral_resampling".to_string(),
         RequiredCapability::SequentialContinuumTransform => {

@@ -1003,6 +1003,7 @@ fn project_stored_run_row(
                     .ok_or(BoundObservationSourceError::InvalidRowGeometry)?,
             })
         }
+        Some(InstrumentModel::CasaEvlaWidebandAwV1) => None,
     };
     let physical_row = u64::try_from(stored.physical_row())
         .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?;

@@ -190,6 +190,39 @@ pub struct ContinuumAutoMaskControls {
     pub minimum_percent_change: f64,
 }
 
+/// Complete native AW-projection request retained through application preparation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContinuumAwProjection {
+    /// Read-only CASA `CFS_`/`WTCFS_` cache root.
+    pub casa_cache: PathBuf,
+    /// Hard ceiling for simultaneously resident paired convolution cells.
+    pub resident_bytes: usize,
+    /// Explicit W-plane count, when supplied by the task surface.
+    pub w_plane_count: Option<usize>,
+    /// Optional distinct PSF phase centre in radians.
+    pub psf_phase_center_direction_rad: Option<[f64; 2]>,
+    /// Optional voltage-pattern table.
+    pub vp_table: Option<PathBuf>,
+    /// Enable the EVLA aperture term.
+    pub a_term: bool,
+    /// Enable the prolate-spheroidal term.
+    pub ps_term: bool,
+    /// Enable wideband A-projection frequency selection.
+    pub wideband: bool,
+    /// Enable conjugate-frequency beam selection.
+    pub conjugate_beams: bool,
+    /// Use row-local POINTING-table offsets.
+    pub use_pointing: bool,
+    /// Pointing-offset standard deviations in arcseconds.
+    pub pointing_offset_sigdev: Vec<f64>,
+    /// Enable mosaic weight-density behavior.
+    pub mosaic_weighting: bool,
+    /// Parallactic-angle computation step in degrees.
+    pub compute_pa_step_deg: f64,
+    /// Parallactic-angle rotation step in degrees.
+    pub rotate_pa_step_deg: f64,
+}
+
 /// Application projection of the native minor-cycle terminal reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContinuumStopReason {
@@ -331,6 +364,8 @@ pub struct ContinuumImagingRequest {
     pub pbcor: bool,
     /// Explicit W-projection plane count; `None` derives it from the selected W envelope.
     pub w_projection_planes: Option<usize>,
+    /// Complete AW-projection cache and term contract; mutually exclusive with W-projection.
+    pub aw_projection: Option<ContinuumAwProjection>,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.

@@ -5545,7 +5545,10 @@ impl SpectralSlabOperator {
                 && matches!(basis, SpectralBasisPlan::Joint { .. }))
             .then(|| plane_grids(slab.total_channels() * polarization_count)),
             reused_normal_state: None,
-            primary_beam: instrument_model.map(|instrument_model| {
+            primary_beam: instrument_model.and_then(|instrument_model| {
+                if instrument_model == InstrumentModel::CasaEvlaWidebandAwV1 {
+                    return None;
+                }
                 let response = PreparedPrimaryBeamPower::casa_alma_aca_interferometric_direct(
                     geometry.reference_pixel,
                     geometry.increment_rad,
@@ -5561,10 +5564,13 @@ impl SpectralSlabOperator {
                 )
                 .expect("compiled response geometry is valid");
                 match instrument_model {
-                    InstrumentModel::CasaAca7mInterferometricDirectPbV1 => response,
+                    InstrumentModel::CasaAca7mInterferometricDirectPbV1 => Some(response),
                     InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => {
-                        response.with_casa_aca_hetarray_convolution()
+                        Some(response.with_casa_aca_hetarray_convolution())
                     }
+                    InstrumentModel::CasaEvlaWidebandAwV1 => unreachable!(
+                        "EVLA AW response is consumed from paired prepared convolution functions"
+                    ),
                 }
             }),
             mosaic_normal: mosaic.then(|| {

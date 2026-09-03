@@ -8,6 +8,7 @@
 //! submit requests here; they do not compose native execution stages directly.
 
 mod availability;
+mod aw_cache;
 mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
@@ -17,16 +18,17 @@ pub use availability::{
     TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
     validate_installed_implementation,
 };
+pub use aw_cache::{CasaAwCache, CasaAwCacheError, CasaAwCacheInventory, CasaAwCellKey};
 pub use casa_imaging_model::{
     HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
 };
 pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumImagingResult, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
-    ContinuumWeighting, SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
-    resource_policy_for_task_requirements,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
+    ContinuumImagingRequest, ContinuumImagingResult, ContinuumMask, ContinuumMaskBox,
+    ContinuumStopReason, ContinuumWeighting, SpectralImagingMode, VisibilityContinuumSubtraction,
+    execute_continuum, resource_policy_for_task_requirements,
 };
 
 use std::{error::Error, fmt, io, sync::Arc};

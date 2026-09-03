@@ -32,6 +32,7 @@ use num_complex::Complex64;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod aw_projection;
 mod block_normal;
 mod continuum_transform;
 mod gridded_normal_operator;
@@ -47,6 +48,11 @@ mod spectral_operator;
 mod spectral_sampling;
 mod weighting;
 
+pub use aw_projection::{
+    AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorDiagnostics, AwOperatorError,
+    AwPreparedCatalog, AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,
+    AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample,
+};
 pub use spectral_operator::{
     SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabPlan,

@@ -5,11 +5,11 @@
 use std::time::Instant;
 
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
-    HogbomIterationAccounting, ImagingCapabilityRequirement, PolarizationCoordinate,
-    ProductNormalization, ResourcePolicy, SpectralImagingMode, TaskRequirement,
-    UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
+    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    ContinuumWeighting, HogbomIterationAccounting, ImagingCapabilityRequirement,
+    PolarizationCoordinate, ProductNormalization, ResourcePolicy, SpectralImagingMode,
+    TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
     installed_imaging_capability_catalog, resource_policy_for_task_requirements,
 };
 
@@ -250,6 +250,25 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         write_primary_beam: config.write_pb,
         pbcor: config.pbcor,
         w_projection_planes: config.w_project_planes,
+        aw_projection: config
+            .aw_project
+            .as_ref()
+            .map(|controls| ContinuumAwProjection {
+                casa_cache: controls.cf_cache.clone(),
+                resident_bytes: controls.cf_resident_bytes,
+                w_plane_count: controls.w_plane_count,
+                psf_phase_center_direction_rad: controls.psf_phase_center_direction_rad,
+                vp_table: controls.vp_table.clone(),
+                a_term: controls.a_term,
+                ps_term: controls.ps_term,
+                wideband: controls.wb_awp,
+                conjugate_beams: controls.conjugate_beams,
+                use_pointing: controls.use_pointing,
+                pointing_offset_sigdev: controls.pointing_offset_sigdev.clone(),
+                mosaic_weighting: controls.mosaic_weighting,
+                compute_pa_step_deg: controls.compute_pa_step_deg,
+                rotate_pa_step_deg: controls.rotate_pa_step_deg,
+            }),
         task_requirements,
         resource_policy,
     })
