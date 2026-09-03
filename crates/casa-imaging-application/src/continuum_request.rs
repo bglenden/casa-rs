@@ -400,6 +400,7 @@ struct PreparedSpectralAxis {
     anchor: SpectralFrameAnchor,
     wcs: SpectralWcs,
     rest_frequency: RestFrequency,
+    image_rest_frequency_hz: f64,
     doppler: DopplerConvention,
     sampling: SpectralSamplingLaw,
     basis: ReconstructionBasis,
@@ -476,6 +477,7 @@ fn prepare_spectral_axis(
                     increment_hz,
                 },
                 rest_frequency: RestFrequency::NotApplicable,
+                image_rest_frequency_hz: reference_frequency_hz,
                 doppler: DopplerConvention::NotApplicable,
                 sampling: SpectralSamplingLaw::IDENTITY,
                 basis: ReconstructionBasis::Constant,
@@ -525,6 +527,7 @@ fn prepare_spectral_axis(
                     increment_hz,
                 },
                 rest_frequency: RestFrequency::NotApplicable,
+                image_rest_frequency_hz: spectral_window_midpoint_hz(window),
                 doppler: DopplerConvention::NotApplicable,
                 sampling: SpectralSamplingLaw::IDENTITY,
                 basis: ReconstructionBasis::ChannelLocal {
@@ -626,6 +629,9 @@ fn prepare_spectral_axis(
                     increment_hz,
                 },
                 rest_frequency,
+                image_rest_frequency_hz: axis
+                    .rest_frequency_hz
+                    .unwrap_or_else(|| spectral_window_midpoint_hz(window)),
                 doppler,
                 sampling,
                 basis: ReconstructionBasis::ChannelLocal {
@@ -725,6 +731,7 @@ fn prepare_spectral_axis(
                 rest_frequency: RestFrequency::Line {
                     hertz: rest_frequency_hz,
                 },
+                image_rest_frequency_hz: rest_frequency_hz,
                 doppler: match axis.veltype {
                     DopplerRef::RADIO => DopplerConvention::Radio,
                     DopplerRef::Z => DopplerConvention::Optical,
@@ -939,6 +946,9 @@ fn prepare_mvc_spectral_axis(
             increment_hz,
         },
         rest_frequency,
+        image_rest_frequency_hz: axis
+            .rest_frequency_hz
+            .unwrap_or(expansion_reference_frequency_hz),
         doppler,
         sampling,
         basis: ReconstructionBasis::ChannelLocal {
@@ -1402,10 +1412,7 @@ fn prepare(
         frequency_reference: prepared_spectral.output_frequency_reference,
         reference_frequency_hz: prepared_spectral.reference_frequency_hz,
         increment_hz: prepared_spectral.increment_hz,
-        rest_frequency_hz: coordinate_rest_frequency(
-            prepared_spectral.rest_frequency,
-            prepared_spectral.reference_frequency_hz,
-        ),
+        rest_frequency_hz: prepared_spectral.image_rest_frequency_hz,
     };
     let observation_id = if selected_observation_ids.len() == 1 {
         usize::try_from(
@@ -2233,11 +2240,10 @@ const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
     }
 }
 
-const fn coordinate_rest_frequency(rest: RestFrequency, fallback_hz: f64) -> f64 {
-    match rest {
-        RestFrequency::NotApplicable => fallback_hz,
-        RestFrequency::Line { hertz } => hertz,
-    }
+fn spectral_window_midpoint_hz(window: &SourceSpectralWindow) -> f64 {
+    let first = window.frequencies_hz[0];
+    let last = window.frequencies_hz[window.frequencies_hz.len() - 1];
+    first + (last - first) / 2.0
 }
 
 const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
@@ -3048,16 +3054,30 @@ mod tests {
     use casa_types::measures::frequency::FrequencyRef;
 
     use super::{
-        ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
+        ContinuumAlgorithm, SourceSpectralWindow, TaskRequirement,
+        analytic_primary_beam_model_for_telescopes,
         canonicalize_polarizations, image_coordinates, image_reference_pixel,
         instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
         planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
+        spectral_window_midpoint_hz,
     };
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
         assert_eq!(image_reference_pixel(16), 8.0);
         assert_eq!(image_reference_pixel(15), 7.5);
+    }
+
+    #[test]
+    fn cube_default_image_rest_frequency_uses_full_spw_midpoint() {
+        let window = SourceSpectralWindow {
+            spw_id: 0,
+            frequency_reference: FrequencyRef::LSRK,
+            frequencies_hz: vec![44.0e9, 76.704e9, 109.408e9],
+            channel_widths_hz: vec![1.0; 3],
+        };
+
+        assert_eq!(spectral_window_midpoint_hz(&window), 76.704e9);
     }
 
     #[test]
