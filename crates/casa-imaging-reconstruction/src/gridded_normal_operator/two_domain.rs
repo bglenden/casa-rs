@@ -168,13 +168,24 @@ pub(super) struct GriddedNormalDomainTileCatalogs {
 }
 
 impl GriddedNormalDomainTileCatalogs {
+    #[cfg(test)]
     pub(super) fn new(
         grid_shapes: impl IntoIterator<Item = [usize; 2]>,
         support: usize,
     ) -> Result<Self, SpectralOperatorError> {
+        Self::new_for_projection(grid_shapes, support, false)
+    }
+
+    pub(super) fn new_for_projection(
+        grid_shapes: impl IntoIterator<Item = [usize; 2]>,
+        support: usize,
+        aw_projection: bool,
+    ) -> Result<Self, SpectralOperatorError> {
         let catalogs = grid_shapes
             .into_iter()
-            .map(|shape| GriddedNormalTileCatalog::new(shape, support))
+            .map(|shape| {
+                GriddedNormalTileCatalog::new_for_projection(shape, support, aw_projection)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         if catalogs.is_empty() {
             return Err(SpectralOperatorError::UnsupportedGeometry);
@@ -218,6 +229,20 @@ impl GriddedNormalDomainTileCatalogs {
             .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
         self.offsets[domain_ordinal]
             .checked_add(catalog.tile_ordinal(taps)?)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
+    }
+
+    pub(super) fn tile_ordinal_center(
+        &self,
+        domain_ordinal: usize,
+        center: [usize; 2],
+    ) -> Result<usize, SpectralOperatorError> {
+        let catalog = self
+            .catalogs
+            .get(domain_ordinal)
+            .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+        self.offsets[domain_ordinal]
+            .checked_add(catalog.tile_ordinal_center(center)?)
             .ok_or(SpectralOperatorError::ResidencyOverflow)
     }
 
@@ -284,10 +309,20 @@ pub(super) fn domain_execution_residency(
     coefficient_terms: usize,
     support: usize,
 ) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
+    domain_execution_residency_for_projection(grid_shapes, coefficient_terms, support, false)
+}
+
+pub(super) fn domain_execution_residency_for_projection(
+    grid_shapes: impl IntoIterator<Item = [usize; 2]>,
+    coefficient_terms: usize,
+    support: usize,
+    aw_projection: bool,
+) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
     if coefficient_terms == 0 {
         return Err(SpectralOperatorError::InvalidSlab);
     }
-    let catalogs = GriddedNormalDomainTileCatalogs::new(grid_shapes, support)?;
+    let catalogs =
+        GriddedNormalDomainTileCatalogs::new_for_projection(grid_shapes, support, aw_projection)?;
     let tile_halo_cells = catalogs
         .catalogs
         .iter()
@@ -412,11 +447,21 @@ impl GriddedNormalTileCatalog {
             })
     }
 
+    #[cfg(test)]
     pub(super) fn new(
         grid_shape: [usize; 2],
         support: usize,
     ) -> Result<Self, SpectralOperatorError> {
-        let (minimum_key, maximum_key) = Self::key_bounds(grid_shape, support)?;
+        Self::new_for_projection(grid_shape, support, false)
+    }
+
+    fn new_for_projection(
+        grid_shape: [usize; 2],
+        support: usize,
+        aw_projection: bool,
+    ) -> Result<Self, SpectralOperatorError> {
+        let (minimum_key, maximum_key) =
+            Self::key_bounds_for_projection(grid_shape, support, aw_projection)?;
         let tiles_y = usize::try_from(i64::from(maximum_key.y) - i64::from(minimum_key.y) + 1)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         let tile_count = Self::tile_count(grid_shape, support)
@@ -450,6 +495,14 @@ impl GriddedNormalTileCatalog {
         grid_shape: [usize; 2],
         support: usize,
     ) -> Result<(GriddedNormalTileKey, GriddedNormalTileKey), SpectralOperatorError> {
+        Self::key_bounds_for_projection(grid_shape, support, false)
+    }
+
+    fn key_bounds_for_projection(
+        grid_shape: [usize; 2],
+        support: usize,
+        aw_projection: bool,
+    ) -> Result<(GriddedNormalTileKey, GriddedNormalTileKey), SpectralOperatorError> {
         if grid_shape
             .into_iter()
             .any(|extent| extent <= support.saturating_mul(2))
@@ -466,12 +519,26 @@ impl GriddedNormalTileCatalog {
         };
         Ok((
             GriddedNormalTileKey {
-                x: axis(support, grid_shape[0])?,
-                y: axis(support, grid_shape[1])?,
+                x: axis(if aw_projection { 0 } else { support }, grid_shape[0])?,
+                y: axis(if aw_projection { 0 } else { support }, grid_shape[1])?,
             },
             GriddedNormalTileKey {
-                x: axis(grid_shape[0] - support - 1, grid_shape[0])?,
-                y: axis(grid_shape[1] - support - 1, grid_shape[1])?,
+                x: axis(
+                    if aw_projection {
+                        grid_shape[0] - 1
+                    } else {
+                        grid_shape[0] - support - 1
+                    },
+                    grid_shape[0],
+                )?,
+                y: axis(
+                    if aw_projection {
+                        grid_shape[1] - 1
+                    } else {
+                        grid_shape[1] - support - 1
+                    },
+                    grid_shape[1],
+                )?,
             },
         ))
     }
@@ -487,6 +554,13 @@ impl GriddedNormalTileCatalog {
                 .checked_add(self.support)
                 .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
         ];
+        self.tile_ordinal_center(center)
+    }
+
+    fn tile_ordinal_center(&self, center: [usize; 2]) -> Result<usize, SpectralOperatorError> {
+        if center[0] >= self.grid_shape[0] || center[1] >= self.grid_shape[1] {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
         let axis = |coordinate: usize, extent: usize| -> Result<i32, SpectralOperatorError> {
             let coordinate =
                 i64::try_from(coordinate).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
@@ -571,6 +645,7 @@ pub(super) struct GriddedNormalClassification {
     group_ordinal: u32,
     frame_ordinal: u32,
     record_ordinal: u32,
+    tap_count: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -578,6 +653,7 @@ pub(super) struct GriddedNormalRoute {
     group_ordinal: u32,
     frame_ordinal: u32,
     record_ordinal: u32,
+    tap_count: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -618,6 +694,7 @@ pub(super) struct PreparedGriddedNormalTwoDomainWindow {
     tile_offsets: Vec<u32>,
     tasks: Vec<GriddedNormalTileTask>,
     lane_record_counts: [u64; GRIDDED_NORMAL_LANE_COUNT],
+    lane_tap_visit_counts: [u64; GRIDDED_NORMAL_LANE_COUNT],
     pub(super) active_frames: usize,
     first_sequence: Option<u64>,
     record_count: u64,
@@ -625,15 +702,25 @@ pub(super) struct PreparedGriddedNormalTwoDomainWindow {
 }
 
 impl PreparedGriddedNormalTwoDomainWindow {
+    #[cfg(test)]
     pub(super) fn with_record_capacities(
         record_capacities: &[usize],
         tile_count: usize,
         record_layout: GriddedNormalRecordLayout,
     ) -> Result<Self, SpectralOperatorError> {
+        Self::with_projection_record_capacities(record_capacities, tile_count, record_layout, false)
+    }
+
+    pub(super) fn with_projection_record_capacities(
+        record_capacities: &[usize],
+        tile_count: usize,
+        record_layout: GriddedNormalRecordLayout,
+        aw_projection: bool,
+    ) -> Result<Self, SpectralOperatorError> {
         if record_capacities.is_empty() || tile_count == 0 {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
-        let record_bytes = record_layout.record_bytes()?;
+        let record_bytes = record_bytes(record_layout, aw_projection)?;
         let prediction_width = record_layout.prediction_width();
         if record_bytes == 0 || prediction_width == 0 {
             return Err(SpectralOperatorError::ResidencyOverflow);
@@ -676,6 +763,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
             tile_offsets,
             tasks: planned_vec(tile_count + GRIDDED_NORMAL_HOT_TILE_DUPLICATES)?,
             lane_record_counts: [0; GRIDDED_NORMAL_LANE_COUNT],
+            lane_tap_visit_counts: [0; GRIDDED_NORMAL_LANE_COUNT],
             active_frames: 0,
             first_sequence: None,
             record_count: 0,
@@ -689,6 +777,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         descriptors: &[BlockDescriptor],
         frames: I,
         catalogs: &GriddedNormalDomainTileCatalogs,
+        operators: &[SpectralSlabOperator],
         output_channels: usize,
     ) -> Result<(), SpectralOperatorError>
     where
@@ -707,6 +796,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.tile_cursors.fill(0);
         self.tile_offsets.fill(0);
         self.lane_record_counts.fill(0);
+        self.lane_tap_visit_counts.fill(0);
 
         let prepared = (|| {
             for (frame_ordinal, (sequence, encoded)) in frames.into_iter().enumerate() {
@@ -748,14 +838,30 @@ impl PreparedGriddedNormalTwoDomainWindow {
                             let record = decode_domain_record(bytes, catalogs, output_channels)?;
                             let group_ordinal = u32::try_from(self.groups.len())
                                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-                            let tile_ordinal =
-                                catalogs.tile_ordinal(record.chart_ordinal, record.taps)?;
+                            let (tile_ordinal, tap_count) = if let Some(aw) = record.aw {
+                                let (center, tap_count) = operators
+                                    .get(record.chart_ordinal)
+                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
+                                    .aw_gridded_grid_footprint(aw)?;
+                                (
+                                    catalogs.tile_ordinal_center(record.chart_ordinal, center)?,
+                                    tap_count,
+                                )
+                            } else {
+                                (
+                                    catalogs.tile_ordinal(record.chart_ordinal, record.taps)?,
+                                    usize::try_from(GRIDDED_NORMAL_TAPS_PER_RECORD)
+                                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                                )
+                            };
                             self.classifications.push(GriddedNormalClassification {
                                 tile_ordinal: u32::try_from(tile_ordinal)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                                 group_ordinal,
                                 frame_ordinal: frame_ordinal_u32,
                                 record_ordinal: u32::try_from(record_ordinal)
+                                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                                tap_count: u32::try_from(tap_count)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                             });
                             self.tile_counts[tile_ordinal] = self.tile_counts[tile_ordinal]
@@ -798,6 +904,8 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                 group_ordinal,
                                 frame_ordinal: frame_ordinal_u32,
                                 record_ordinal: u32::try_from(record_ordinal)
+                                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                                tap_count: u32::try_from(GRIDDED_NORMAL_TAPS_PER_RECORD)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                             });
                             self.tile_counts[tile_ordinal] = self.tile_counts[tile_ordinal]
@@ -921,6 +1029,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                 group_ordinal: classification.group_ordinal,
                 frame_ordinal: classification.frame_ordinal,
                 record_ordinal: classification.record_ordinal,
+                tap_count: classification.tap_count,
             };
             self.tile_cursors[tile] = self.tile_cursors[tile]
                 .checked_add(1)
@@ -975,24 +1084,39 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.tasks.sort_unstable_by_key(|task| {
             (Reverse(task.record_count()), task.tile_ordinal, task.shard)
         });
-        let mut lane_loads = [0_u64; GRIDDED_NORMAL_LANE_COUNT];
+        let mut lane_record_loads = [0_u64; GRIDDED_NORMAL_LANE_COUNT];
+        let mut lane_tap_loads = [0_u64; GRIDDED_NORMAL_LANE_COUNT];
         for task in &mut self.tasks {
-            let lane = lane_loads
+            let lane = lane_tap_loads
                 .iter()
                 .enumerate()
-                .min_by_key(|(lane, load)| (**load, *lane))
+                .min_by_key(|(lane, load)| (**load, lane_record_loads[*lane], *lane))
                 .map(|(lane, _)| lane)
                 .expect("four logical lanes");
             let records = u64::try_from(task.record_count())
                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-            lane_loads[lane] = lane_loads[lane]
+            let route_start = usize::try_from(task.routes.start)
+                .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+            let route_end = usize::try_from(task.routes.end)
+                .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+            let taps = self.routes[route_start..route_end]
+                .iter()
+                .try_fold(0_u64, |total, route| {
+                    total.checked_add(u64::from(route.tap_count))
+                })
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            lane_record_loads[lane] = lane_record_loads[lane]
                 .checked_add(records)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            lane_tap_loads[lane] = lane_tap_loads[lane]
+                .checked_add(taps)
                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
             task.lane = u8::try_from(lane).map_err(|_| SpectralOperatorError::CoverageOverflow)?;
         }
         self.tasks
             .sort_unstable_by_key(|task| (task.tile_ordinal, task.shard));
-        self.lane_record_counts = lane_loads;
+        self.lane_record_counts = lane_record_loads;
+        self.lane_tap_visit_counts = lane_tap_loads;
         Ok(())
     }
 
@@ -1014,6 +1138,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.tile_cursors.fill(0);
         self.tile_offsets.fill(0);
         self.lane_record_counts.fill(0);
+        self.lane_tap_visit_counts.fill(0);
         self.active_frames = 0;
         self.first_sequence = None;
         self.record_count = 0;
@@ -1123,6 +1248,7 @@ pub struct GriddedNormalWork {
     lane: usize,
     kind: GriddedNormalWorkKind,
     routed_record_count: u64,
+    tap_visit_count: u64,
     shared_route_capacity_bytes: u64,
 }
 
@@ -1157,12 +1283,7 @@ impl GriddedNormalWork {
     /// Return convolutional visits; prediction lanes perform no accumulation taps.
     #[must_use]
     pub const fn tap_visit_count(self) -> u64 {
-        match self.kind {
-            GriddedNormalWorkKind::Prediction => 0,
-            GriddedNormalWorkKind::Accumulation => {
-                self.routed_record_count * GRIDDED_NORMAL_TAPS_PER_RECORD
-            }
-        }
+        self.tap_visit_count
     }
 
     /// Return shared reusable planning capacity exactly once per window.
@@ -1219,6 +1340,7 @@ impl GriddedNormalOperatorApply {
             &self.program.manifest.descriptors,
             frames,
             &self.tile_catalogs,
+            &self.operators,
             self.program.output_plane_count()?,
         )?;
         for task in &prepared.tasks {
@@ -1277,6 +1399,10 @@ impl GriddedNormalOperatorApply {
                 prepared.lane_record_counts[lane],
             )
         };
+        let tap_visit_count = match kind {
+            GriddedNormalWorkKind::Prediction => 0,
+            GriddedNormalWorkKind::Accumulation => prepared.lane_tap_visit_counts[lane],
+        };
         Ok(GriddedNormalWork {
             first_block_sequence: first_sequence,
             frame_count: u64::try_from(frame_count)
@@ -1285,6 +1411,7 @@ impl GriddedNormalOperatorApply {
             lane,
             kind,
             routed_record_count: records,
+            tap_visit_count,
             shared_route_capacity_bytes: if local_ordinal == 0 {
                 prepared.route_capacity_bytes()?
             } else {
@@ -1361,16 +1488,25 @@ impl GriddedNormalOperatorApply {
                                     self.program.manifest.specification.polarization_count();
                                 let output_channel = record.output_channel / polarizations;
                                 let polarization = record.output_channel % polarizations;
-                                prediction += self
+                                let operator = self
                                     .operators
                                     .get(record.chart_ordinal)
-                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
-                                    .predict_gridded_normal_polarization(
+                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+                                prediction += if let Some(aw) = record.aw {
+                                    operator.predict_gridded_normal_aw_polarization(
+                                        output_channel,
+                                        polarization,
+                                        aw,
+                                        record.forward_scale,
+                                    )?
+                                } else {
+                                    operator.predict_gridded_normal_polarization(
                                         output_channel,
                                         polarization,
                                         record.taps,
                                         record.forward_scale,
-                                    )?;
+                                    )?
+                                };
                             }
                             if !prediction.re.is_finite() || !prediction.im.is_finite() {
                                 return Err(SpectralOperatorError::GeneratedNonfinite);
@@ -1510,18 +1646,33 @@ impl GriddedNormalOperatorApply {
                                         .ok_or(SpectralOperatorError::IncompleteCoverage)?;
                                     let polarizations =
                                         self.program.manifest.specification.polarization_count();
-                                    self.operators[domain_ordinal]
-                                        .grid_gridded_normal_local_polarization(
-                                            grids,
-                                            compensations,
-                                            GriddedNormalLocalContribution::new(
-                                                geometry.translated_taps(record.taps)?,
+                                    if let Some(aw) = record.aw {
+                                        self.operators[domain_ordinal]
+                                            .grid_gridded_normal_local_aw_polarization(
+                                                grids,
+                                                compensations,
+                                                geometry.origin,
                                                 record.output_channel / polarizations,
                                                 record.output_channel % polarizations,
                                                 predicted,
                                                 record.forward_scale.conj() * record.imaging_weight,
-                                            ),
-                                        )?;
+                                                aw,
+                                            )?;
+                                    } else {
+                                        self.operators[domain_ordinal]
+                                            .grid_gridded_normal_local_polarization(
+                                                grids,
+                                                compensations,
+                                                GriddedNormalLocalContribution::new(
+                                                    geometry.translated_taps(record.taps)?,
+                                                    record.output_channel / polarizations,
+                                                    record.output_channel % polarizations,
+                                                    predicted,
+                                                    record.forward_scale.conj()
+                                                        * record.imaging_weight,
+                                                ),
+                                            )?;
+                                    }
                                 }
                                 GriddedNormalRecordLayout::Taylor(plan) => {
                                     let record = decode_taylor_record(
@@ -1710,11 +1861,16 @@ mod tests {
                 group_ordinal: record,
                 frame_ordinal: 0,
                 record_ordinal: record,
+                tap_count: GRIDDED_NORMAL_TAPS_PER_RECORD as u32,
             }));
         prepared.tile_counts[tile] = 100;
         prepared.prepare_tile_routes().unwrap();
         assert_eq!(prepared.tasks.len(), 4);
         assert_eq!(prepared.lane_record_counts, [25, 25, 25, 25]);
+        assert_eq!(
+            prepared.lane_tap_visit_counts,
+            [25 * GRIDDED_NORMAL_TAPS_PER_RECORD; GRIDDED_NORMAL_LANE_COUNT]
+        );
         assert_eq!(
             prepared
                 .tasks

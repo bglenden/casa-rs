@@ -7,7 +7,7 @@ use std::{
     error::Error,
     fmt, fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use casa_coordinates::{Coordinate, CoordinateModel, CoordinateSystem, CoordinateType};
@@ -20,8 +20,16 @@ use casa_imaging_reconstruction::{
     AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorError, AwPreparedCatalog,
     AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata, AwPreparedCellProvider,
 };
+use casa_imaging_runtime::{
+    ArtifactIdentity, ImplementationRegistry, PreparedArtifact, PreparedArtifactDescriptor,
+    PreparedArtifactError, PreparedArtifactImportSegment, PreparedArtifactImportSource,
+    PreparedArtifactImporter, PreparedArtifactOrder, PreparedArtifactPlaneDescriptor,
+    PreparedArtifactPrecision, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
+    PreparedArtifactStore, PreparedArtifactUvAffine, StorageDomain, WorkExecutionContext,
+    WorkImplementationId, WorkMeasurements, WorkNodeId,
+};
 use casa_types::{RecordValue, ScalarValue, Value};
-use ndarray::{Array2, ArrayD, Axis, Ix4};
+use ndarray::Array2;
 use num_complex::{Complex32, Complex64};
 
 const IMAGING_PREFIX: &str = "CFS_";
@@ -50,15 +58,11 @@ impl Error for CasaAwCacheError {}
 
 /// Exact scientific lookup key carried by one paired CASA cache cell.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CasaAwCellKey {
-    /// Spectral-coordinate reference frequency in Hz.
-    pub frequency_hz: f64,
-    /// W coordinate in wavelengths.
-    pub w_value_lambda: f64,
-    /// CASA Mueller-matrix element number.
-    pub mueller_element: u32,
-    /// Parallactic-angle bin in degrees.
-    pub parallactic_angle_deg: f64,
+struct CasaAwCellKey {
+    frequency_hz: f64,
+    w_value_lambda: f64,
+    mueller_element: u32,
+    parallactic_angle_deg: f64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -128,18 +132,155 @@ struct Entry {
     weight: KernelMetadata,
 }
 
-/// Metadata-only CASA cache index and non-retaining cold-import pixel provider.
+/// Metadata-only CASA cache index and read-only cold-import source.
 ///
-/// Opening reads table coordinates and misc-info only. [`Self::load_cell`] and
-/// the [`AwPreparedCellProvider`] implementation reopen exactly one selected
-/// `CFS_`/`WTCFS_` pair and do not retain any pixel array. Production residency
-/// remains owned by the private prepared-artifact layer.
+/// Opening reads table coordinates and misc-info only. Cold import reopens one
+/// selected `CFS_`/`WTCFS_` pair; production pixel access is available only
+/// through [`PreparedAwCellProvider`] and the private prepared-artifact layer.
 #[derive(Clone, Debug)]
 pub struct CasaAwCache {
     root: PathBuf,
     entries: BTreeMap<StableKey, Entry>,
     identities: BTreeMap<[u8; 32], StableKey>,
     inventory: CasaAwCacheInventory,
+}
+
+/// One cache cell compiled for the private prepared-artifact owner.
+#[derive(Clone, Debug)]
+pub struct CasaAwPreparedCell {
+    metadata: AwPreparedCellMetadata,
+    descriptor: PreparedArtifactDescriptor,
+    stable_key: StableKey,
+    imaging: KernelMetadata,
+    weight: KernelMetadata,
+}
+
+impl CasaAwPreparedCell {
+    /// Metadata used by the reconstruction-owned selector.
+    #[must_use]
+    pub const fn metadata(&self) -> &AwPreparedCellMetadata {
+        &self.metadata
+    }
+
+    /// Exact T50 private-store descriptor for this paired cell.
+    #[must_use]
+    pub const fn descriptor(&self) -> &PreparedArtifactDescriptor {
+        &self.descriptor
+    }
+
+    /// Exact decoded complex-pixel residency required by this paired cell.
+    #[must_use]
+    pub fn decoded_resident_bytes(&self) -> Option<usize> {
+        canonical_count(&self.imaging)
+            .and_then(|left| {
+                canonical_count(&self.weight).and_then(|right| left.checked_add(right))
+            })
+            .and_then(|count| count.checked_mul(std::mem::size_of::<Complex64>()))
+    }
+
+    /// Execute this descriptor's explicit cold-import node. The CASA adapter,
+    /// not the generic store, owns all source-table access.
+    pub fn import_cold(
+        &self,
+        cache: &CasaAwCache,
+        store: &PreparedArtifactStore,
+        source: &PreparedArtifactImportSource,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
+        let mut importer = cache
+            .importer(self)
+            .map_err(|_| PreparedArtifactError::SourceIdentityMismatch)?;
+        store.import(&context, &self.descriptor, source, &mut importer)
+    }
+
+    /// Bind this validated CASA pair as a plan-listed structured load source.
+    pub fn import_source(
+        &self,
+        cache: &CasaAwCache,
+        storage_domain: &StorageDomain,
+        producer: WorkNodeId,
+    ) -> Result<PreparedArtifactImportSource, PreparedArtifactError> {
+        let entry = cache
+            .entries
+            .get(&self.stable_key)
+            .filter(|entry| entry.identity == self.metadata.identity())
+            .ok_or(PreparedArtifactError::SourceIdentityMismatch)?;
+        let source_identity = ArtifactIdentity::from_sha256(entry.identity.as_bytes());
+        let segment = |name: &str, metadata: &KernelMetadata| {
+            let width = u64::try_from(metadata.shape[0])
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+            let height = u64::try_from(metadata.shape[1])
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+            let elements = width
+                .checked_mul(height)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+            let bytes = elements
+                .checked_mul(8)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+            let operations = elements
+                .checked_add(1)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+            PreparedArtifactImportSegment::new(
+                name,
+                metadata.path.clone(),
+                source_identity,
+                bytes,
+                operations,
+                storage_domain,
+            )
+        };
+        PreparedArtifactImportSource::new(
+            &self.descriptor,
+            producer,
+            vec![
+                segment("imaging", &entry.imaging)?,
+                segment("weight", &entry.weight)?,
+            ],
+        )
+    }
+
+    /// Execute this descriptor's exact warm-reuse node.
+    pub fn reuse_warm(
+        &self,
+        store: &PreparedArtifactStore,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<(PreparedArtifactReuseOutcome, WorkMeasurements), PreparedArtifactError> {
+        store.reuse(&context, &self.descriptor)
+    }
+}
+
+/// Explicit cold importer which translates one selected CASA pair into the
+/// private prepared representation without giving the generic store a CASA path.
+pub struct CasaAwCellImporter<'a> {
+    entry: &'a Entry,
+    loaded: Option<LoadedCasaPlane>,
+}
+
+struct LoadedCasaPlane {
+    name: &'static str,
+    image: PagedImage<Complex32>,
+    last: Option<(usize, Complex32)>,
+}
+
+/// Cloneable bounded provider of cells decoded by exact T50 consume nodes.
+///
+/// Cold import and warm reuse both hand their opaque artifact to
+/// [`Self::consume_cell`]. Reconstruction receives only clones of this pool,
+/// so an operator node can neither reopen CASA nor escape the private store.
+#[derive(Clone)]
+pub struct PreparedAwCellProvider {
+    state: Arc<Mutex<PreparedPoolState>>,
+}
+
+struct PreparedPoolState {
+    ceiling: usize,
+    resident: usize,
+    cells: BTreeMap<[u8; 32], ResidentPreparedCell>,
+}
+
+struct ResidentPreparedCell {
+    cell: Arc<AwConvolutionCell>,
+    bytes: usize,
 }
 
 impl CasaAwCache {
@@ -235,47 +376,403 @@ impl CasaAwCache {
             .map_err(|error| fail(&self.root, format!("cannot adapt catalog: {error}")))
     }
 
-    /// Load and adapt exactly one indexed imaging/weight pair.
-    pub fn load_cell(&self, key: CasaAwCellKey) -> Result<AwConvolutionCell, CasaAwCacheError> {
+    /// Compile one indexed pair into the private-store ownership contract.
+    pub fn prepared_cell<R: ImplementationRegistry>(
+        &self,
+        metadata: &AwPreparedCellMetadata,
+        store: &PreparedArtifactStore,
+        registry: &R,
+        implementation: &WorkImplementationId,
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<CasaAwPreparedCell, CasaAwCacheError> {
+        let stable_key = *self
+            .identities
+            .get(&metadata.identity().as_bytes())
+            .ok_or_else(|| {
+                fail(
+                    &self.root,
+                    "prepared metadata is not owned by this CASA cache",
+                )
+            })?;
         let entry = self
             .entries
-            .get(&StableKey::from(key))
-            .ok_or_else(|| fail(&self.root, format!("no exact paired cell for {key:?}")))?;
-        load_entry(entry)
+            .get(&stable_key)
+            .ok_or_else(|| fail(&self.root, "prepared CASA cell disappeared from the index"))?;
+        let descriptor = PreparedArtifactDescriptor::convolution_function(
+            store,
+            registry,
+            implementation,
+            problem,
+            entry.identity,
+            plane_descriptor(&entry.imaging)?,
+            plane_descriptor(&entry.weight)?,
+        )
+        .map_err(|error| fail(&self.root, format!("cannot compile private cell: {error}")))?;
+        Ok(CasaAwPreparedCell {
+            metadata: metadata.clone(),
+            descriptor,
+            stable_key,
+            imaging: entry.imaging.clone(),
+            weight: entry.weight.clone(),
+        })
+    }
+
+    /// Compile the complete metadata-only catalog into exact per-cell private
+    /// descriptors. No CASA pixel plane is opened by this operation.
+    pub fn prepared_cells<R: ImplementationRegistry>(
+        &self,
+        store: &PreparedArtifactStore,
+        registry: &R,
+        implementation: &WorkImplementationId,
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<Vec<CasaAwPreparedCell>, CasaAwCacheError> {
+        self.entries
+            .values()
+            .map(|entry| {
+                let metadata = prepared_metadata(entry)?;
+                self.prepared_cell(&metadata, store, registry, implementation, problem)
+            })
+            .collect()
+    }
+
+    /// Create the explicit plan-bound cold importer for one compiled cell.
+    pub fn importer<'a>(
+        &'a self,
+        prepared: &CasaAwPreparedCell,
+    ) -> Result<CasaAwCellImporter<'a>, CasaAwCacheError> {
+        let entry = self
+            .entries
+            .get(&prepared.stable_key)
+            .filter(|entry| entry.identity == prepared.metadata.identity())
+            .ok_or_else(|| fail(&self.root, "compiled cell is not owned by this CASA cache"))?;
+        Ok(CasaAwCellImporter {
+            entry,
+            loaded: None,
+        })
     }
 }
 
-impl AwPreparedCellProvider for CasaAwCache {
+impl PreparedArtifactImporter for CasaAwCellImporter<'_> {
+    fn fill_segment(
+        &mut self,
+        segment: &PreparedArtifactSegmentDescriptor,
+        byte_offset: u64,
+        output: &mut [u8],
+    ) -> Result<u64, PreparedArtifactError> {
+        let (name, metadata) = match segment.name() {
+            "imaging" => ("imaging", &self.entry.imaging),
+            "weight" => ("weight", &self.entry.weight),
+            _ => return Err(PreparedArtifactError::SegmentMismatch),
+        };
+        let opened = self.loaded.as_ref().map(|loaded| loaded.name) != Some(name);
+        if opened {
+            self.loaded = Some(LoadedCasaPlane {
+                name,
+                image: PagedImage::<Complex32>::open(&metadata.path)
+                    .map_err(|_| PreparedArtifactError::SourceIdentityMismatch)?,
+                last: None,
+            });
+        }
+        let reads = encode_complex32_range(
+            self.loaded.as_mut().expect("loaded above"),
+            metadata.shape,
+            byte_offset,
+            output,
+        )?;
+        reads
+            .checked_add(u64::from(opened))
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)
+    }
+}
+
+impl PreparedAwCellProvider {
+    /// Create an empty pool with an exact total decoded-cell ceiling.
+    pub fn new(resident_byte_ceiling: usize) -> Result<Self, AwOperatorError> {
+        if resident_byte_ceiling == 0 {
+            return Err(AwOperatorError::ResidencyCeilingExceeded);
+        }
+        Ok(Self {
+            state: Arc::new(Mutex::new(PreparedPoolState {
+                ceiling: resident_byte_ceiling,
+                resident: 0,
+                cells: BTreeMap::new(),
+            })),
+        })
+    }
+
+    /// Exact decoded bytes currently retained across all prepared cells.
+    pub fn resident_bytes(&self) -> Result<usize, AwOperatorError> {
+        self.state
+            .lock()
+            .map(|state| state.resident)
+            .map_err(|_| AwOperatorError::PreparedCellUnavailable)
+    }
+
+    /// Number of exact prepared pairs currently available to operators.
+    pub fn resident_cells(&self) -> Result<usize, AwOperatorError> {
+        self.state
+            .lock()
+            .map(|state| state.cells.len())
+            .map_err(|_| AwOperatorError::PreparedCellUnavailable)
+    }
+
+    /// Decode one opaque cold-imported or warm-reused artifact inside its exact
+    /// plan-listed consume node and publish it to the bounded in-memory pool.
+    pub fn consume_cell(
+        &self,
+        store: &PreparedArtifactStore,
+        context: WorkExecutionContext<'_>,
+        prepared: &CasaAwPreparedCell,
+        artifact: &PreparedArtifact,
+    ) -> Result<WorkMeasurements, PreparedArtifactError> {
+        let mut decoder = PreparedCellDecoder::new(prepared)?;
+        let receipt = store.consume(&context, prepared.descriptor(), artifact, &mut decoder)?;
+        let cell = Arc::new(
+            decoder
+                .finish(prepared)
+                .map_err(|_| PreparedArtifactError::InvalidLayout)?,
+        );
+        self.insert_cell(prepared.metadata.identity().as_bytes(), cell)?;
+        Ok(receipt)
+    }
+
+    fn insert_cell(
+        &self,
+        identity: [u8; 32],
+        cell: Arc<AwConvolutionCell>,
+    ) -> Result<(), PreparedArtifactError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PreparedArtifactError::InvalidDescriptor)?;
+        let bytes = cell.resident_bytes();
+        if bytes > state.ceiling {
+            return Err(PreparedArtifactError::ResidentBudgetExceeded {
+                required: bytes as u64,
+                budget: state.ceiling as u64,
+            });
+        }
+        let previous_bytes = state.cells.get(&identity).map_or(0, |cell| cell.bytes);
+        let retained = state
+            .resident
+            .checked_sub(previous_bytes)
+            .ok_or(PreparedArtifactError::InvalidDescriptor)?;
+        let required = retained
+            .checked_add(bytes)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        if required > state.ceiling {
+            return Err(PreparedArtifactError::ResidentBudgetExceeded {
+                required: required as u64,
+                budget: state.ceiling as u64,
+            });
+        }
+        state
+            .cells
+            .insert(identity, ResidentPreparedCell { cell, bytes });
+        state.resident = required;
+        Ok(())
+    }
+}
+
+impl AwPreparedCellProvider for PreparedAwCellProvider {
     fn load(
         &mut self,
         metadata: &AwPreparedCellMetadata,
         ceiling: usize,
     ) -> Result<AwPreparedCellLease, AwOperatorError> {
-        let stable = self
-            .identities
-            .get(&metadata.identity().as_bytes())
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| AwOperatorError::PreparedCellUnavailable)?;
+        let identity = metadata.identity().as_bytes();
+        let resident = state
+            .cells
+            .get(&identity)
             .ok_or(AwOperatorError::PreparedCellUnavailable)?;
-        let entry = self
-            .entries
-            .get(stable)
-            .ok_or(AwOperatorError::PreparedCellUnavailable)?;
-        let bytes = canonical_count(&entry.imaging)
-            .and_then(|count| {
-                canonical_count(&entry.weight).and_then(|other| count.checked_add(other))
-            })
-            .and_then(|count| count.checked_mul(std::mem::size_of::<Complex64>()))
-            .ok_or(AwOperatorError::ResidencyCeilingExceeded)?;
+        let bytes = resident.bytes;
         if bytes > ceiling {
             return Err(AwOperatorError::ResidencyCeilingExceeded);
         }
-        let cell = load_entry(entry).map_err(|_| AwOperatorError::PreparedCellUnavailable)?;
         Ok(AwPreparedCellLease {
-            cell: Arc::new(cell),
-            disposition: AwPreparedCellDisposition::Loaded,
+            cell: Arc::clone(&resident.cell),
+            disposition: AwPreparedCellDisposition::Resident,
             evicted_bytes: 0,
-            copied_bytes: bytes,
+            copied_bytes: 0,
         })
     }
+}
+
+struct PreparedCellDecoder {
+    imaging: Vec<u8>,
+    weight: Vec<u8>,
+    imaging_expected: usize,
+    weight_expected: usize,
+}
+
+impl PreparedCellDecoder {
+    fn new(prepared: &CasaAwPreparedCell) -> Result<Self, PreparedArtifactError> {
+        let expected = |segment: &PreparedArtifactSegmentDescriptor| {
+            segment
+                .shape()
+                .iter()
+                .try_fold(1_u64, |count, extent| count.checked_mul(*extent))
+                .and_then(|count| count.checked_mul(8))
+                .and_then(|bytes| usize::try_from(bytes).ok())
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)
+        };
+        let imaging = prepared
+            .descriptor
+            .imaging_plane()
+            .ok_or(PreparedArtifactError::SegmentMismatch)?;
+        let weight = prepared
+            .descriptor
+            .weight_plane()
+            .ok_or(PreparedArtifactError::SegmentMismatch)?;
+        Ok(Self {
+            imaging: Vec::new(),
+            weight: Vec::new(),
+            imaging_expected: expected(imaging)?,
+            weight_expected: expected(weight)?,
+        })
+    }
+
+    fn finish(self, prepared: &CasaAwPreparedCell) -> Result<AwConvolutionCell, CasaAwCacheError> {
+        if self.imaging.len() != self.imaging_expected || self.weight.len() != self.weight_expected
+        {
+            return Err(fail(
+                &prepared.imaging.path,
+                "private payload ended before its declared shape",
+            ));
+        }
+        let imaging_plane = decode_complex32_plane(self.imaging, &prepared.imaging)?;
+        let weight_plane = decode_complex32_plane(self.weight, &prepared.weight)?;
+        let imaging = adapt_kernel_from_plane(&prepared.imaging, imaging_plane)?;
+        let weight = adapt_kernel_from_plane(&prepared.weight, weight_plane)?;
+        AwConvolutionCell::new(prepared.metadata.identity(), imaging, weight)
+            .map_err(|error| fail(&prepared.imaging.path, error.to_string()))
+    }
+}
+
+impl casa_imaging_runtime::PreparedArtifactConsumer for PreparedCellDecoder {
+    fn consume_segment(
+        &mut self,
+        segment: &PreparedArtifactSegmentDescriptor,
+        byte_offset: u64,
+        input: &[u8],
+    ) -> Result<(), PreparedArtifactError> {
+        let (output, expected) = match segment.name() {
+            "imaging" => (&mut self.imaging, self.imaging_expected),
+            "weight" => (&mut self.weight, self.weight_expected),
+            _ => return Err(PreparedArtifactError::SegmentMismatch),
+        };
+        if usize::try_from(byte_offset).ok() != Some(output.len())
+            || output.len().saturating_add(input.len()) > expected
+        {
+            return Err(PreparedArtifactError::SegmentMismatch);
+        }
+        output.extend_from_slice(input);
+        Ok(())
+    }
+}
+
+fn plane_descriptor(
+    metadata: &KernelMetadata,
+) -> Result<PreparedArtifactPlaneDescriptor, CasaAwCacheError> {
+    let uv = PreparedArtifactUvAffine::new(
+        metadata.uv.reference_value.map(f64::from_bits),
+        metadata.uv.reference_pixel.map(f64::from_bits),
+        metadata.uv.increment.map(f64::from_bits),
+        metadata.uv.pc.map(|row| row.map(f64::from_bits)),
+    )
+    .map_err(|error| fail(&metadata.path, error.to_string()))?;
+    PreparedArtifactPlaneDescriptor::new(
+        metadata.shape.map(|extent| extent as u64),
+        metadata.support.map(|extent| extent as u64),
+        metadata.sampling as u64,
+        uv,
+        PreparedArtifactPrecision::ComplexF32,
+        PreparedArtifactOrder::LastAxisContiguousLittleEndian,
+    )
+    .map_err(|error| fail(&metadata.path, error.to_string()))
+}
+
+fn encode_complex32_range(
+    loaded: &mut LoadedCasaPlane,
+    shape: [usize; 2],
+    byte_offset: u64,
+    output: &mut [u8],
+) -> Result<u64, PreparedArtifactError> {
+    let offset =
+        usize::try_from(byte_offset).map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+    let elements = shape[0]
+        .checked_mul(shape[1])
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let scalars = elements
+        .checked_mul(2)
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let total = scalars
+        .checked_mul(4)
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    if offset
+        .checked_add(output.len())
+        .filter(|end| *end <= total)
+        .is_none()
+    {
+        return Err(PreparedArtifactError::SegmentMismatch);
+    }
+    let mut reads = 0_u64;
+    for (output_index, byte) in output.iter_mut().enumerate() {
+        let position = offset + output_index;
+        let scalar_index = position / 4;
+        let element = scalar_index / 2;
+        if loaded.last.map(|(index, _)| index) != Some(element) {
+            let x = element / shape[1];
+            let y = element % shape[1];
+            let complex = loaded
+                .image
+                .get_at(&[x, y, 0, 0])
+                .map_err(|_| PreparedArtifactError::SourceIdentityMismatch)?;
+            loaded.last = Some((element, complex));
+            reads = reads
+                .checked_add(1)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        }
+        let complex = loaded.last.expect("loaded element").1;
+        let scalar = if scalar_index % 2 == 0 {
+            complex.re
+        } else {
+            complex.im
+        };
+        *byte = scalar.to_le_bytes()[position % 4];
+    }
+    Ok(reads)
+}
+
+fn decode_complex32_plane(
+    bytes: Vec<u8>,
+    metadata: &KernelMetadata,
+) -> Result<Array2<Complex32>, CasaAwCacheError> {
+    let chunks = bytes.chunks_exact(8);
+    if !chunks.remainder().is_empty() {
+        return Err(fail(
+            &metadata.path,
+            "private complex payload is not element aligned",
+        ));
+    }
+    let values = chunks
+        .map(|chunk| {
+            Complex32::new(
+                f32::from_le_bytes(chunk[..4].try_into().expect("four bytes")),
+                f32::from_le_bytes(chunk[4..].try_into().expect("four bytes")),
+            )
+        })
+        .collect::<Vec<_>>();
+    Array2::from_shape_vec((metadata.shape[0], metadata.shape[1]), values).map_err(|error| {
+        fail(
+            &metadata.path,
+            format!("cannot decode private plane: {error}"),
+        )
+    })
 }
 
 fn prepared_metadata(entry: &Entry) -> Result<AwPreparedCellMetadata, CasaAwCacheError> {
@@ -296,15 +793,10 @@ fn prepared_metadata(entry: &Entry) -> Result<AwPreparedCellMetadata, CasaAwCach
     .map_err(|error| fail(&entry.imaging.path, error.to_string()))
 }
 
-fn load_entry(entry: &Entry) -> Result<AwConvolutionCell, CasaAwCacheError> {
-    let imaging = adapt_kernel(&entry.imaging)?;
-    let weight = adapt_kernel(&entry.weight)?;
-    AwConvolutionCell::new(entry.identity, imaging, weight)
-        .map_err(|error| fail(&entry.imaging.path, error.to_string()))
-}
-
-fn adapt_kernel(metadata: &KernelMetadata) -> Result<AwConvolutionKernel, CasaAwCacheError> {
-    let plane = read_pixels(metadata)?;
+fn adapt_kernel_from_plane(
+    metadata: &KernelMetadata,
+    plane: Array2<Complex32>,
+) -> Result<AwConvolutionKernel, CasaAwCacheError> {
     let mut taps = Vec::with_capacity(
         canonical_count(metadata)
             .ok_or_else(|| fail(&metadata.path, "logical tap-count overflow"))?,
@@ -386,39 +878,6 @@ fn canonical_count(metadata: &KernelMetadata) -> Option<usize> {
         .checked_mul(metadata.support[1].checked_mul(2)?.checked_add(1)?)?
         .checked_mul(metadata.sampling)?
         .checked_mul(metadata.sampling)
-}
-
-fn read_pixels(metadata: &KernelMetadata) -> Result<Array2<Complex32>, CasaAwCacheError> {
-    let image = PagedImage::<Complex32>::open(&metadata.path)
-        .map_err(|error| fail(&metadata.path, format!("cannot reopen pixels: {error}")))?;
-    let pixels = image
-        .get()
-        .map_err(|error| fail(&metadata.path, format!("cannot read pixels: {error}")))?;
-    first_plane(pixels, metadata)
-}
-
-fn first_plane(
-    pixels: ArrayD<Complex32>,
-    metadata: &KernelMetadata,
-) -> Result<Array2<Complex32>, CasaAwCacheError> {
-    if pixels.shape() != [metadata.shape[0], metadata.shape[1], 1, 1] {
-        return Err(fail(&metadata.path, "pixel shape changed after indexing"));
-    }
-    if pixels
-        .iter()
-        .any(|value| !value.re.is_finite() || !value.im.is_finite())
-    {
-        return Err(fail(
-            &metadata.path,
-            "pixel array contains non-finite values",
-        ));
-    }
-    let pixels = pixels
-        .into_dimensionality::<Ix4>()
-        .map_err(|error| fail(&metadata.path, error.to_string()))?;
-    Ok(pixels
-        .index_axis_move(Axis(3), 0)
-        .index_axis_move(Axis(2), 0))
 }
 
 fn read_metadata(path: &Path) -> Result<(CasaAwCellKey, KernelMetadata), CasaAwCacheError> {
@@ -581,9 +1040,9 @@ fn validate_kernel(metadata: &KernelMetadata) -> Result<(), CasaAwCacheError> {
             "UU/VV reference pixels must be integral",
         ));
     }
-    for axis in 0..2 {
+    for (axis, center) in center.into_iter().enumerate() {
         source_index(
-            center[axis],
+            center,
             0,
             metadata.support[axis],
             metadata.sampling,
@@ -592,7 +1051,7 @@ fn validate_kernel(metadata: &KernelMetadata) -> Result<(), CasaAwCacheError> {
             &metadata.path,
         )?;
         source_index(
-            center[axis],
+            center,
             metadata.support[axis] * 2,
             metadata.support[axis],
             metadata.sampling,
@@ -828,14 +1287,31 @@ fn fail(path: impl AsRef<Path>, detail: impl Into<String>) -> CasaAwCacheError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use casa_coordinates::{LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType};
     use casa_types::{RecordField, ScalarValue, measures::frequency::FrequencyRef};
     use tempfile::TempDir;
 
+    pub(crate) fn write_test_cache(root: &Path) {
+        write_cell(
+            root,
+            "CFS_one.im",
+            false,
+            [-2.0, 2.0],
+            Complex32::new(3.0, -1.0),
+        );
+        write_cell(
+            root,
+            "WTCFS_one.im",
+            true,
+            [-1.0, 1.0],
+            Complex32::new(7.0, 2.0),
+        );
+    }
+
     #[test]
-    fn indexes_asymmetric_same_world_window_and_loads_one_pair() {
+    fn indexes_asymmetric_same_world_window_without_loading_pixels() {
         let root = TempDir::new().unwrap();
         write_cell(
             root.path(),
@@ -852,7 +1328,7 @@ mod tests {
             Complex32::new(7.0, 2.0),
         );
 
-        let mut cache = CasaAwCache::open(root.path()).unwrap();
+        let cache = CasaAwCache::open(root.path()).unwrap();
         assert_eq!(cache.inventory().paired_cells, 1);
         let catalog = cache.prepared_catalog().unwrap();
         let metadata = prepared_metadata(cache.entries.values().next().unwrap()).unwrap();
@@ -877,13 +1353,33 @@ mod tests {
         )
         .unwrap();
         assert_eq!(metadata.identity(), expected_identity);
-        let lease = AwPreparedCellProvider::load(&mut cache, &metadata, usize::MAX).unwrap();
-
-        assert_eq!(lease.disposition, AwPreparedCellDisposition::Loaded);
-        assert_eq!(lease.evicted_bytes, 0);
-        assert_eq!(lease.copied_bytes, 2_176);
-        assert_eq!(lease.cell.resident_bytes(), 2_176);
         drop(catalog);
+    }
+
+    #[test]
+    fn streamed_cold_import_populates_owned_pool_without_a_legacy_cache_load() {
+        let root = TempDir::new().unwrap();
+        write_test_cache(root.path());
+        let cache = CasaAwCache::open(root.path()).unwrap();
+        let entry = cache.entries.values().next().unwrap();
+        let cell = Arc::new(
+            AwConvolutionCell::new(
+                entry.identity,
+                stream_cold_kernel(&entry.imaging).unwrap(),
+                stream_cold_kernel(&entry.weight).unwrap(),
+            )
+            .unwrap(),
+        );
+        let identity = entry.identity.as_bytes();
+        let bytes = cell.resident_bytes();
+        let mut provider = PreparedAwCellProvider::new(bytes).unwrap();
+        provider.insert_cell(identity, cell).unwrap();
+        fs::remove_dir_all(root.path()).unwrap();
+        let metadata = prepared_metadata(entry).unwrap();
+        let lease = provider.load(&metadata, bytes).unwrap();
+        assert_eq!(lease.disposition, AwPreparedCellDisposition::Resident);
+        assert_eq!(lease.cell.resident_bytes(), 2_176);
+        assert_eq!(provider.resident_cells().unwrap(), 1);
     }
 
     #[test]
@@ -912,7 +1408,7 @@ mod tests {
     }
 
     #[test]
-    fn pixel_validation_is_deferred_until_the_selected_pair_loads() {
+    fn pixel_validation_is_deferred_until_cold_import_reads_the_selected_pair() {
         let root = TempDir::new().unwrap();
         write_cell(
             root.path(),
@@ -930,8 +1426,48 @@ mod tests {
         );
 
         let cache = CasaAwCache::open(root.path()).unwrap();
-        let error = cache.load_cell(key()).unwrap_err().to_string();
-        assert!(error.contains("non-finite"), "{error}");
+        let entry = cache.entries.values().next().unwrap();
+        assert!(stream_cold_kernel(&entry.imaging).is_err());
+    }
+
+    #[test]
+    fn rejected_pool_replacement_preserves_prior_resident_cells() {
+        let root = TempDir::new().unwrap();
+        write_test_cache(root.path());
+        let cache = CasaAwCache::open(root.path()).unwrap();
+        let identity = cache.entries.values().next().unwrap().identity;
+        let small = test_cell(identity, [0, 0]);
+        let large = test_cell(identity, [1, 1]);
+        let provider = PreparedAwCellProvider::new(large.resident_bytes()).unwrap();
+        provider.insert_cell([1; 32], Arc::clone(&small)).unwrap();
+        provider.insert_cell([2; 32], Arc::clone(&small)).unwrap();
+
+        let error = provider.insert_cell([1; 32], large).unwrap_err();
+        assert!(matches!(
+            error,
+            PreparedArtifactError::ResidentBudgetExceeded { .. }
+        ));
+        assert_eq!(provider.resident_cells().unwrap(), 2);
+        assert_eq!(
+            provider.resident_bytes().unwrap(),
+            2 * small.resident_bytes()
+        );
+        assert_eq!(
+            provider.state.lock().unwrap().cells[&[1; 32]].bytes,
+            small.resident_bytes()
+        );
+    }
+
+    #[test]
+    fn poisoned_pool_state_is_reported_instead_of_becoming_empty() {
+        let provider = PreparedAwCellProvider::new(1).unwrap();
+        let state = Arc::clone(&provider.state);
+        let _ = std::panic::catch_unwind(move || {
+            let _guard = state.lock().unwrap();
+            panic!("poison prepared AW pool for invariant test");
+        });
+        assert!(provider.resident_cells().is_err());
+        assert!(provider.resident_bytes().is_err());
     }
 
     #[test]
@@ -948,13 +1484,59 @@ mod tests {
         assert!(error.contains("paired WTCFS_ cell is missing"), "{error}");
     }
 
-    fn key() -> CasaAwCellKey {
-        CasaAwCellKey {
-            frequency_hz: 1.0e9,
-            w_value_lambda: 0.0,
-            mueller_element: 0,
-            parallactic_angle_deg: 30.0,
+    #[test]
+    #[ignore = "requires the frozen VLASS CASA AW cache"]
+    fn t51_frozen_vlass_cache_is_a_complete_bounded_paired_catalog() {
+        let root = std::env::var_os("CASA_RS_VLASS_CF_CACHE")
+            .map(PathBuf::from)
+            .expect("CASA_RS_VLASS_CF_CACHE must name the frozen CASA cache root");
+        let cache = CasaAwCache::open(&root).expect("validate frozen paired CASA cache");
+        let inventory = cache.inventory();
+        assert_eq!(inventory.w_values_lambda.len(), 32);
+        assert_eq!(inventory.mueller_elements.len(), 2);
+        assert!(!inventory.frequencies_hz.is_empty());
+        assert!(!inventory.parallactic_angles_deg.is_empty());
+        assert_eq!(
+            inventory.paired_cells,
+            inventory.frequencies_hz.len()
+                * inventory.w_values_lambda.len()
+                * inventory.mueller_elements.len()
+                * inventory.parallactic_angles_deg.len()
+        );
+        cache
+            .prepared_catalog()
+            .expect("compile metadata-only catalog");
+    }
+
+    fn stream_cold_kernel(
+        metadata: &KernelMetadata,
+    ) -> Result<AwConvolutionKernel, CasaAwCacheError> {
+        let mut loaded = LoadedCasaPlane {
+            name: "test",
+            image: PagedImage::<Complex32>::open(&metadata.path)
+                .map_err(|error| fail(&metadata.path, error.to_string()))?,
+            last: None,
+        };
+        let mut bytes = vec![0_u8; metadata.shape[0] * metadata.shape[1] * 8];
+        for (chunk, offset) in bytes.chunks_mut(12).zip((0_u64..).step_by(12)) {
+            encode_complex32_range(&mut loaded, metadata.shape, offset, chunk)
+                .map_err(|error| fail(&metadata.path, error.to_string()))?;
         }
+        let decoded = decode_complex32_plane(bytes, metadata)?;
+        adapt_kernel_from_plane(metadata, decoded)
+    }
+
+    fn test_cell(
+        identity: PreparedArtifactScientificIdentity,
+        support: [usize; 2],
+    ) -> Arc<AwConvolutionCell> {
+        let layout = AwKernelLayout::new(support, 1).unwrap();
+        let taps = vec![Complex64::new(1.0, 0.0); (2 * support[0] + 1) * (2 * support[1] + 1)];
+        let kernel = || {
+            AwConvolutionKernel::new(layout, Complex64::new(taps.len() as f64, 0.0), taps.clone())
+                .unwrap()
+        };
+        Arc::new(AwConvolutionCell::new(identity, kernel(), kernel()).unwrap())
     }
 
     fn write_cell(root: &Path, name: &str, weight: bool, increment: [f64; 2], value: Complex32) {

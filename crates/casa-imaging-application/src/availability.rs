@@ -474,6 +474,12 @@ fn instrument_response_is_installed(
                 ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. },
                 true,
             )
+            | (
+                InstrumentResponse::PrimaryBeam,
+                Some(InstrumentModel::CasaEvlaWidebandAwV1),
+                _,
+                _,
+            )
     )
 }
 
@@ -498,6 +504,7 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::SpectralMtmfsViaCube
             | TaskRequirement::MosaicGridder
             | TaskRequirement::WProjection
+            | TaskRequirement::AwProjection
             | TaskRequirement::WProjectionPlanes
             | TaskRequirement::PolarizationSelection
             | TaskRequirement::Automasking
@@ -522,6 +529,7 @@ const fn supports_capability(capability: RequiredCapability) -> bool {
             | RequiredCapability::FacetedGeometry
             | RequiredCapability::MultiDomainGeometry
             | RequiredCapability::WProjection
+            | RequiredCapability::AwProjection
             | RequiredCapability::TaylorBasis
             | RequiredCapability::ChannelLocalBasis
             | RequiredCapability::DirtyReconstruction
@@ -711,7 +719,7 @@ mod tests {
                         == ImagingCapabilityRequirement::Task(TaskRequirement::AwProjection)
                 })
                 .and_then(ImagingCapabilityCatalogEntry::unsupported),
-            Some(UnsupportedRequirement::Task(TaskRequirement::AwProjection))
+            None
         );
         assert!(
             catalog

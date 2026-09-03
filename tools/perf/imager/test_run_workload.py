@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import tempfile
 import sys
+import subprocess
 
 import numpy as np
 
@@ -43,6 +44,7 @@ class CliExitSemanticsTests(unittest.TestCase):
 
     def test_completed_receipt_and_process_succeed(self) -> None:
         self._assert_main_status("completed", expected_exit=0)
+
 
     def test_recovered_publication_receipt_and_process_succeed_without_timing(
         self,
@@ -146,6 +148,97 @@ class CliExitSemanticsTests(unittest.TestCase):
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
             self.assertEqual(status, receipt["status"])
             self.assertEqual(expected_exit, receipt["exit_code"])
+
+
+class FrozenCasaRecipeExecutionTests(unittest.TestCase):
+    def test_skip_casa_without_frozen_prefix_fails_before_any_process(self) -> None:
+        plan = {
+            "command": {"kind": "casa_tclean_protocol"},
+            "run": {"skip_casa": "1", "reuse_casa_prefix": None},
+        }
+        with mock.patch.object(run_workload, "run_benchmark_command") as execute:
+            with self.assertRaisesRegex(
+                run_workload.HarnessError, "requires an exact.*reuse_casa_prefix"
+            ):
+                run_workload.run_casa_recipe_plan(plan, Path("unused.log"))
+        execute.assert_not_called()
+
+    def test_reuse_runs_rust_benchmark_without_casa_and_compares_products(self) -> None:
+        frozen = "/frozen/casa/reference"
+        rust = "/shared/aw/rust-dirty"
+        plan = {
+            "command": {
+                "kind": "casa_tclean_protocol",
+                "argv": [str(run_workload.BENCH_SCRIPT), "/data/vlass.ms"],
+                "env": {
+                    "IMAGER_BENCH_SKIP_CASA": "1",
+                    "IMAGER_BENCH_REUSE_CASA_PREFIX": frozen,
+                },
+            },
+            "run": {
+                "skip_casa": "1",
+                "reuse_casa_prefix": frozen,
+                "stream_log": False,
+            },
+            "products": {"rust_prefix": rust, "casa_prefix": frozen},
+            "comparison": {"tolerances": None},
+        }
+        output = "\n".join(
+            [
+                "Rust release CLI timings (seconds):",
+                "  run=1 real=2.5",
+                "  median=2.5",
+                f"rust_prefix={rust}",
+                f"casa_prefix={frozen}",
+            ]
+        )
+        compared = {
+            "status": "completed",
+            "products": {".image": {"status": "compared"}},
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(
+                run_workload,
+                "run_benchmark_command",
+                return_value=subprocess.CompletedProcess([], 0, output),
+            ) as execute,
+            mock.patch.object(
+                run_workload, "compare_products", return_value=compared
+            ) as compare,
+            mock.patch.object(
+                run_workload, "build_benchmark_feature_summary", return_value={}
+            ),
+            mock.patch.object(run_workload, "attach_stage_breakdown"),
+            mock.patch.object(
+                run_workload,
+                "comparison_evidence_status",
+                return_value=("completed", None),
+            ),
+            mock.patch.object(run_workload, "human_review_gate", return_value={}),
+            mock.patch.object(
+                run_workload.casa_tclean_workflow, "run_recipe_plan"
+            ) as casa_protocol,
+        ):
+            result = run_workload.run_casa_recipe_plan(
+                plan, Path(directory) / "benchmark.log"
+            )
+
+        execute.assert_called_once()
+        self.assertEqual(str(run_workload.BENCH_SCRIPT), execute.call_args.args[0][0])
+        self.assertEqual(
+            "1", execute.call_args.kwargs["env"]["IMAGER_BENCH_SKIP_CASA"]
+        )
+        self.assertEqual(
+            frozen,
+            execute.call_args.kwargs["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
+        )
+        casa_protocol.assert_not_called()
+        compare.assert_called_once()
+        self.assertEqual(frozen, compare.call_args.args[0]["products"]["casa_prefix"])
+        self.assertEqual("ran", result["results"]["rust"]["status"])
+        self.assertEqual("reused", result["results"]["casa"]["status"])
+        self.assertIs(compared, result["results"]["product_comparison"])
 
 
 class CompletedRecipeReceiptRecoveryTests(unittest.TestCase):
@@ -1141,7 +1234,7 @@ real 1.145408
                 result,
             )
 
-    def test_vlass_recipe_plan_preserves_real_aw_and_reports_rust_unavailable(
+    def test_vlass_recipe_plan_preserves_real_aw_and_reports_rust_runnable(
         self,
     ) -> None:
         manifest_path = run_workload.WORKLOAD_DIR / "vlass-fragment-smoke-cold.json"
@@ -1151,6 +1244,8 @@ real 1.145408
             {
                 "CASA_RS_VLASS_DATA_ROOT": "/Volumes/GLENDENNING/test-data",
                 "CASA_RS_CASA_PYTHON": sys.executable,
+                "CASA_RS_BENCH_PREPARED_AW_CASA_CACHE": "/validated/cfs",
+                "CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX": "/shared/aw/dirty",
             },
             clear=False,
         ):
@@ -1170,13 +1265,10 @@ real 1.145408
             dry_run=True,
         )
 
-        self.assertEqual("casa_only", plan["run_support"]["status"])
+        self.assertEqual("runnable", plan["run_support"]["status"])
+        self.assertEqual("runnable", plan["run_support"]["targets"]["rust"]["status"])
         self.assertEqual(
-            "unavailable", plan["run_support"]["targets"]["rust"]["status"]
-        )
-        self.assertIn(
-            "true EVLA A-term",
-            plan["run_support"]["targets"]["rust"]["reason"],
+            [], plan["run_support"]["targets"]["rust"]["missing_capabilities"]
         )
         effective = plan["command"]["casa"]["effective_plan"]["effective_kwargs"]
         self.assertEqual("awproject", effective["gridder"])
@@ -1188,6 +1280,25 @@ real 1.145408
         self.assertEqual(
             "awproject", plan["command"]["rust"]["intended_parameters"]["gridder"]
         )
+        self.assertEqual(
+            [str(run_workload.BENCH_SCRIPT), plan["dataset"]["path"]],
+            plan["command"]["argv"],
+        )
+        aw_env = plan["command"]["env"]
+        self.assertEqual("/validated/cfs", aw_env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"])
+        self.assertEqual("/shared/aw/dirty", aw_env["IMAGER_BENCH_RUST_OUTPUT_PREFIX"])
+        self.assertEqual("384", aw_env["IMAGER_BENCH_AW_CF_RESIDENT_MB"])
+        self.assertEqual("1", aw_env["IMAGER_BENCH_ATERM"])
+        self.assertEqual("0", aw_env["IMAGER_BENCH_PSTERM"])
+        self.assertEqual("1", aw_env["IMAGER_BENCH_WBAWP"])
+        self.assertEqual("1", aw_env["IMAGER_BENCH_CONJBEAMS"])
+        self.assertEqual("360.0", aw_env["IMAGER_BENCH_COMPUTEPASTEP"])
+        self.assertEqual("360.0", aw_env["IMAGER_BENCH_ROTATEPASTEP"])
+        self.assertEqual("flatnoise", aw_env["IMAGER_BENCH_NORMTYPE"])
+        self.assertEqual("0", aw_env["IMAGER_BENCH_MOSWEIGHT"])
+        self.assertEqual("", aw_env["IMAGER_BENCH_PSFPHASECENTER"])
+        self.assertEqual("", aw_env["IMAGER_BENCH_VPTABLE"])
+        self.assertEqual("/shared/aw/dirty", plan["products"]["rust_prefix"])
         self.assertEqual(
             "/Volumes/GLENDENNING/casa-rs-vlass/issue-446",
             plan["command"]["evidence_storage"]["required_root"],
@@ -1205,6 +1316,53 @@ real 1.145408
         self.assertNotIn("source_path", cache_geometry)
         self.assertNotIn("status", cache_geometry["dataset"])
         self.assertNotIn("path", plan["command"]["casa"]["cache_plan"]["dataset"])
+
+    def test_vlass_recipe_rejects_unimplemented_aw_contract_variant(self) -> None:
+        manifest_path = run_workload.WORKLOAD_DIR / "vlass-fragment-smoke-cold.json"
+        manifest = run_workload.load_manifest(manifest_path)
+        manifest["imaging"]["psterm"] = True
+        support = run_workload.casa_tclean_workflow.recipe_run_support(
+            workload_id=manifest["id"],
+            imaging=manifest["imaging"],
+            skip_casa=False,
+            skip_rust=True,
+        )
+
+        self.assertEqual("casa_only", support["status"])
+        self.assertEqual("unavailable", support["targets"]["rust"]["status"])
+        self.assertIn(
+            "true EVLA A-term",
+            support["targets"]["rust"]["reason"],
+        )
+
+    def test_vlass_recipe_rejects_wrong_or_omitted_w_and_pa_controls(self) -> None:
+        manifest_path = run_workload.WORKLOAD_DIR / "vlass-fragment-smoke-cold.json"
+        baseline = run_workload.load_manifest(manifest_path)
+        mutations = (
+            ("omitted-wterm", "wterm", None),
+            ("wrong-wterm", "wterm", "none"),
+            ("omitted-wprojplanes", "wprojplanes", None),
+            ("wrong-wprojplanes", "wprojplanes", 31),
+            ("omitted-computepastep", "computepastep", None),
+            ("wrong-computepastep", "computepastep", 180.0),
+            ("omitted-rotatepastep", "rotatepastep", None),
+            ("wrong-rotatepastep", "rotatepastep", 180.0),
+        )
+        for label, field, value in mutations:
+            with self.subTest(label=label):
+                imaging = copy.deepcopy(baseline["imaging"])
+                if value is None:
+                    imaging.pop(field)
+                else:
+                    imaging[field] = value
+                support = run_workload.casa_tclean_workflow.recipe_run_support(
+                    workload_id=baseline["id"],
+                    imaging=imaging,
+                    skip_casa=False,
+                    skip_rust=True,
+                )
+                self.assertEqual("casa_only", support["status"])
+                self.assertEqual("unavailable", support["targets"]["rust"]["status"])
 
     def test_vlass_cold_and_warm_smokes_share_one_complete_cf_plan(self) -> None:
         plan_hashes = []
@@ -1463,9 +1621,7 @@ real 1.145408
         self.assertEqual(
             "208,208,303,303", plan["command"]["env"]["IMAGER_BENCH_MASK_BOX"]
         )
-        self.assertEqual(
-            "0:0~7;16~23", plan["command"]["env"]["IMAGER_BENCH_FITSPW"]
-        )
+        self.assertEqual("0:0~7;16~23", plan["command"]["env"]["IMAGER_BENCH_FITSPW"])
         self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_FITORDER"])
         self.assertEqual(
             "1", plan["command"]["env"]["IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL"]

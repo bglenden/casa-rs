@@ -11,7 +11,7 @@ use std::{
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{
-    WeightingExecutionLimits, WeightingPlan, plan_weighting,
+    PreparedAwProjection, WeightingExecutionLimits, WeightingPlan, plan_weighting,
     runtime_adapter::{GRIDDED_NORMAL_LANE_COUNT, SpectralOperatorPass},
 };
 use casa_ms::{SelectedObservationResidencyCertificate, SelectedVisibilityStoragePlan};
@@ -89,6 +89,7 @@ pub struct SpectralCycleExecutionPolicy {
     resource_policy: ResourcePolicy,
     visibility_write: Option<SelectedVisibilityStoragePlan>,
     gridded_normal_storage: Option<ManagedSpillStorage>,
+    aw_projection: Option<PreparedAwProjection>,
 }
 
 impl SpectralCycleExecutionPolicy {
@@ -113,7 +114,15 @@ impl SpectralCycleExecutionPolicy {
             resource_policy,
             visibility_write: None,
             gridded_normal_storage: None,
+            aw_projection: None,
         }
+    }
+
+    /// Bind the prepared AW-cell pool that the physical plan must retain.
+    #[must_use]
+    pub fn with_aw_projection(mut self, projection: PreparedAwProjection) -> Self {
+        self.aw_projection = Some(projection);
+        self
     }
 
     /// Bind the runtime-private storage used by planned gridded-normal spill work.
@@ -128,6 +137,35 @@ impl SpectralCycleExecutionPolicy {
     pub const fn with_visibility_write(mut self, plan: SelectedVisibilityStoragePlan) -> Self {
         self.visibility_write = Some(plan);
         self
+    }
+}
+
+fn validate_aw_projection_binding(
+    problem: &CompiledProblem,
+    policy: &SpectralCycleExecutionPolicy,
+) -> Result<(), SpectralCyclePlanError> {
+    let required = problem
+        .science()
+        .measurement_equation()
+        .aw_projection()
+        .is_some();
+    if required != policy.aw_projection.is_some() {
+        return Err(SpectralCyclePlanError::Complete(
+            CompleteDataPlanError::PlanMismatch,
+        ));
+    }
+    Ok(())
+}
+
+fn bind_aw_projection(
+    fragment: CompleteDataPlanFragment,
+    policy: &SpectralCycleExecutionPolicy,
+) -> Result<CompleteDataPlanFragment, SpectralCyclePlanError> {
+    match policy.aw_projection.clone() {
+        Some(projection) => fragment
+            .with_aw_projection(projection)
+            .map_err(SpectralCyclePlanError::Complete),
+        None => Ok(fragment),
     }
 }
 
@@ -353,6 +391,7 @@ impl SpectralCyclePlan {
         policy: SpectralCycleExecutionPolicy,
         ordinal: u32,
     ) -> Result<Self, SpectralCyclePlanError> {
+        validate_aw_projection_binding(problem, &policy)?;
         let pass = SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, ordinal);
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
         let (base, source_resources) = base_physical(problem, registry, &policy, pass, None)?;
@@ -377,6 +416,7 @@ impl SpectralCyclePlan {
             pass_node("spectral-output-fft-plan", pass),
             SpectralOperatorPass::ResidualRefresh,
         )?;
+        let complete_data = bind_aw_projection(complete_data, &policy)?;
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
         if let Some(bounds) = policy.visibility_write {
             if problem
@@ -410,6 +450,7 @@ impl SpectralCyclePlan {
         phase_input: Option<ArtifactIdentity>,
         mut gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
     ) -> Result<Self, SpectralCyclePlanError> {
+        validate_aw_projection_binding(problem, &policy)?;
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
         let strategy =
             select_gridded_normal_strategy(pass, include_minor, gridded_replay.is_some())?;
@@ -547,7 +588,17 @@ impl SpectralCyclePlan {
                 } else {
                     0
                 };
-                let memory_ceiling = available_after_base.saturating_sub(downstream_reservation);
+                let aw_prepared_pool_bytes = policy
+                    .aw_projection
+                    .as_ref()
+                    .map(PreparedAwProjection::resident_byte_ceiling)
+                    .map(u64::try_from)
+                    .transpose()
+                    .map_err(|_| SpectralCyclePlanError::Overflow)?
+                    .unwrap_or(0);
+                let memory_ceiling = available_after_base
+                    .saturating_sub(downstream_reservation)
+                    .saturating_sub(aw_prepared_pool_bytes);
                 let fragment = CompleteDataPlanFragment::channel_major_with_preparation_node(
                     problem,
                     weighting.limits().max_block_samples(),
@@ -608,6 +659,7 @@ impl SpectralCyclePlan {
                 )?
             }
         };
+        let complete_data = bind_aw_projection(complete_data, &policy)?;
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
         if let Some(bounds) = policy.visibility_write {
             if problem

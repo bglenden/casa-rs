@@ -82,7 +82,7 @@ flowchart LR
 
 `casars-imager` does not own MeasurementSet interpretation, scientific
 operators, planning, product generation, or persistence. Unsupported cube,
-mosaic, W/AW-projection, and backend choices fail as
+mosaic, projection specifics, and backend choices fail as
 `TemporarilyUnavailable`; they do not enter the pre-T23 runners described
 below.
 
@@ -365,7 +365,7 @@ Refactoring signals visible here:
 | MFS dirty/clean path | `run_imaging()` | `SynthesisImager::makePSF/runMajorCycle` plus deconvolver | residual/model jobs plus sky-model solvers | Dataflow is simple enough to benchmark first. |
 | MTMFS path | `run_mtmfs()` for standard gridding; `run_mosaic_mtmfs_from_single_plane_stream()` for the supported `nterms <= 2` mosaic slice | `MultiTermFT`, multi-term image stores, deconvolver/normalizer helpers | wide-band and multi-term transform/sky-model classes | The mosaic path reuses the bounded single-plane stream and shared product writer rather than adding retained visibility state. |
 | Cube path | bounded row-block/slab consumers for supported cube, cubedata, and mosaic-cube modes; unsupported retained routes reject before visibility reads | parallel cube helper and cube C++ algorithms | SPW partitioning and image-solver workflow | Shared read-ahead and spectral residency guards now apply here; remaining work is unsupported mode breadth, not a retained full-materialization fallback. |
-| Mosaic/A/AW path | `MosaicGridderConfig`, `ScreenProjector`, PB products; AW-family rejected at task edge | `MosaicFT`, `AWProjectFT`, `AWProjectWBFT`, PB/CF families | `MosaicFT`, `AWProjectFT`, `PBMosaicFT`, `nPBWProjectFT` | CASA/LibRA show the likely future class family; Rust should first stabilize a smaller projection-plan abstraction. |
+| Mosaic/A/AW path | Mosaic response and PB products plus a distinct prepared-CF-backed EVLA/VLA paired AW operator; unsupported telescope, Mueller, cache, and control specifics reject typed | `MosaicFT`, `AWProjectFT`, `AWProjectWBFT`, PB/CF families | `MosaicFT`, `AWProjectFT`, `PBMosaicFT`, `nPBWProjectFT` | Keep the Rust operator behind the compiled paired-transform and prepared-artifact boundaries; do not restore mode-specific runners or W-only aliases. |
 | Minor cycle | `run_cotton_schwab_controller`, Hogbom/Clark/Multiscale variants | `synthesisdeconvolver`, image-store family | `CleanImageSkyModel` family | Keep algorithm choice distinct from task routing and product writing. |
 | Residual refresh / prediction | core major-cycle refresh plus bounded stream model prediction/writeback where implemented | `runMajorCycle`, `predictModel`, `VisibilityIterator::Model` writes | `ResidualAlgorithm`, `PredictAlgorithm`, `WriteMSAlgorithm` | This is the bridge where I/O, degrid, grid, and MS writes collide. |
 | Product writing | `write_products()`, coordinate builder, previews | image-store plus normalizer/deconvolver helpers and task history | gather/normalize/restore jobs | Product writing is correctness-heavy but should be isolated from mode execution. |

@@ -45,6 +45,7 @@ impl PreparedArtifactStore {
             budget,
             scope,
             storage_domain: storage_domain.id.clone(),
+            storage_operations_rate: storage_domain.operations_rate.clone(),
             state,
             #[cfg(test)]
             fail_after_evictions: None,
@@ -69,6 +70,10 @@ impl PreparedArtifactStore {
     #[must_use]
     pub const fn storage_domain(&self) -> &StorageDomainId {
         &self.storage_domain
+    }
+
+    pub(super) fn storage_demand_id(&self, descriptor: &PreparedArtifactDescriptor) -> String {
+        descriptor.storage_demand_id(self.storage_operations_rate.as_ref())
     }
 
     /// Derive exact resource/storage bounds for one explicit cache operation.
@@ -176,6 +181,33 @@ impl PreparedArtifactStore {
         )
     }
 
+    /// Translate, validate, and atomically publish one plan-listed structured source.
+    ///
+    /// The importer owns format-specific access while the store owns the bounded
+    /// output buffer, source accounting, private publication, and receipts.
+    pub fn import(
+        &self,
+        context: &WorkExecutionContext<'_>,
+        descriptor: &PreparedArtifactDescriptor,
+        source: &PreparedArtifactImportSource,
+        importer: &mut dyn PreparedArtifactImporter,
+    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
+        if source
+            .segments
+            .iter()
+            .any(|segment| segment.source.starts_with(&self.root))
+        {
+            return Err(PreparedArtifactError::InvalidSource);
+        }
+        self.publish(
+            context,
+            descriptor,
+            PreparedArtifactOperation::Load,
+            ArtifactDisposition::Loaded,
+            PreparedArtifactMaterialization::Import { source, importer },
+        )
+    }
+
     /// Revalidate and reuse the exact warm artifact selected by planning.
     ///
     /// A successful result exposes identity only; a rejection returns durable
@@ -194,6 +226,7 @@ impl PreparedArtifactStore {
             PreparedArtifactOperation::Reuse,
             reservation,
             None,
+            &self.storage_demand_id(descriptor),
         )?;
         let mut evidence =
             ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
@@ -288,7 +321,14 @@ impl PreparedArtifactStore {
     ) -> Result<WorkMeasurements, PreparedArtifactError> {
         let operation = PreparedArtifactOperation::Consume;
         let reservation = self.reservation(descriptor, operation)?;
-        validate_plan_binding(*context, descriptor, operation, reservation, None)?;
+        validate_plan_binding(
+            *context,
+            descriptor,
+            operation,
+            reservation,
+            None,
+            &self.storage_demand_id(descriptor),
+        )?;
         if artifact.identity != descriptor.identity
             || artifact.cache_identity != descriptor.cache_identity()
         {
@@ -426,9 +466,21 @@ impl PreparedArtifactStore {
         let reservation = self.reservation(descriptor, operation)?;
         let source = match &materialization {
             PreparedArtifactMaterialization::Generate(_) => None,
-            PreparedArtifactMaterialization::Load(source) => Some(*source),
+            PreparedArtifactMaterialization::Load(source) => {
+                Some(PreparedArtifactSourceBinding::Files(source))
+            }
+            PreparedArtifactMaterialization::Import { source, .. } => {
+                Some(PreparedArtifactSourceBinding::Import(source))
+            }
         };
-        validate_plan_binding(*context, descriptor, operation, reservation, source)?;
+        validate_plan_binding(
+            *context,
+            descriptor,
+            operation,
+            reservation,
+            source,
+            &self.storage_demand_id(descriptor),
+        )?;
         let mut evidence =
             ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
         if let Some(source) = source {
@@ -557,6 +609,20 @@ impl PreparedArtifactStore {
                                     return Err(PreparedArtifactError::SourceIdentityMismatch);
                                 }
                                 digest
+                            }
+                            PreparedArtifactMaterialization::Import { source, importer } => {
+                                import_segment(
+                                    *importer,
+                                    &source.segments[index],
+                                    source.identity,
+                                    segment,
+                                    ImportStream {
+                                        output: &mut payload,
+                                        payload_hasher: &mut payload_hasher,
+                                        buffer: &mut buffer,
+                                        evidence,
+                                    },
+                                )?
                             }
                         };
                         manifest_segments.push(ManifestSegment {

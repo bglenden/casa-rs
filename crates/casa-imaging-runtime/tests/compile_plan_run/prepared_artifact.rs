@@ -416,11 +416,34 @@ impl WorkImplementation for PreparedSuiteImplementation {
         }
     }
 
+    fn complete_product_generation(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<Option<PublicationProjection>, Self::Error> {
+        match self {
+            Self::Base(adapter) => adapter.complete_product_generation(context),
+            Self::Prepared(adapter) => adapter.complete_product_generation(context),
+            Self::Failure(adapter) => adapter.complete_product_generation(context),
+        }
+    }
+
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         match self {
             Self::Base(adapter) => adapter.publish(context),
             Self::Prepared(adapter) => adapter.publish(context),
             Self::Failure(adapter) => adapter.publish(context),
+        }
+    }
+
+    fn publish_product_member(
+        &self,
+        context: WorkExecutionContext<'_>,
+        entry: AuthorizedProductPublicationEntry,
+    ) -> Option<Result<ArtifactMeasurement, ProductMemberPublicationFailure<Self::Error>>> {
+        match self {
+            Self::Base(adapter) => adapter.publish_product_member(context, entry),
+            Self::Prepared(adapter) => adapter.publish_product_member(context, entry),
+            Self::Failure(adapter) => adapter.publish_product_member(context, entry),
         }
     }
 }
@@ -650,11 +673,16 @@ fn prepared_release_node_id(
 }
 
 fn prepared_base_executor(
+    problem: &casa_imaging_model::CompiledProblem,
     descriptor: &PreparedArtifactDescriptor,
     operation: PreparedArtifactOperation,
     bound_source: Option<&PreparedArtifactLoadSource>,
 ) -> RecordingExecutor {
-    let mut base = recording_executor(6, None, None);
+    let mut base = product_publication_recording_executor(
+        problem,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
     if operation == PreparedArtifactOperation::Load {
         let sources = bound_source.is_none().then(PreparedSourceFiles::new);
         let source = if let Some(source) = bound_source {
@@ -695,8 +723,16 @@ fn prepared_storage_resource(
     use_kind: StorageUseKind,
 ) -> LeaseResource {
     LeaseResource::Storage {
-        demand_id: format!("private-prepared-cache-{}", descriptor.cache_identity()),
+        demand_id: prepared_cache_demand_id(descriptor),
         use_kind,
+    }
+}
+
+fn prepared_cache_demand_id(descriptor: &PreparedArtifactDescriptor) -> String {
+    let base = format!("private-prepared-cache-{}", descriptor.cache_identity());
+    match &prepared_storage_domain().operations_rate {
+        Some(rate) => format!("{base}-operations-{}", rate.as_str()),
+        None => base,
     }
 }
 
@@ -742,6 +778,7 @@ fn prepared_registry(
     .find(|operation| adapter.descriptor.work_implementation_id(*operation) == prepared_id)
     .expect("adapter identity names one canonical prepared operation");
     let base = prepared_base_executor(
+        problem,
         &adapter.descriptor,
         planned_operation,
         adapter.bound_source.as_ref(),
@@ -1322,7 +1359,7 @@ fn cold_load_source_identity_is_owned_and_accounted_by_its_predecessor_receipt()
         &store,
         PreparedArtifactOperation::Load,
     );
-    let cache_demand_id = format!("private-prepared-cache-{}", descriptor.cache_identity());
+    let cache_demand_id = prepared_cache_demand_id(&descriptor);
     let source_read_resource = work.execution_dag().nodes()
         [&descriptor.work_node_id(PreparedArtifactOperation::Load)]
         .claims
@@ -3255,6 +3292,7 @@ fn failed_prepared_receipt_retains_materialization_eviction_and_io_evidence() {
             (
                 implementation(6),
                 PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
+                    &problem,
                     &descriptor,
                     operation,
                     None,
@@ -3761,6 +3799,7 @@ fn prepared_resource_overrun_fails_closed_without_censoring_the_peak() {
             (
                 implementation(6),
                 PreparedSuiteImplementation::Base(Box::new(prepared_base_executor(
+                    &problem,
                     &descriptor,
                     operation,
                     None,

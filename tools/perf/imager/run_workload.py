@@ -572,6 +572,8 @@ def build_plan(
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
         "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
+        "IMAGER_BENCH_UVRANGE": str_value(imaging, "uvrange", ""),
+        "IMAGER_BENCH_INTENT": str_value(imaging, "intent", ""),
         "IMAGER_BENCH_USEPOINTING": boolean_env_value(
             imaging, "usepointing", gridder == "mosaic"
         ),
@@ -594,8 +596,13 @@ def build_plan(
         ),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
         "IMAGER_BENCH_USEMASK": str_value(imaging, "usemask", "user"),
+        "IMAGER_BENCH_MASK_IMAGE": str_value(imaging, "mask_image", ""),
         "IMAGER_BENCH_MASK_BOX": str_value(imaging, "mask_box", ""),
         "IMAGER_BENCH_SAVEMODEL": str_value(imaging, "savemodel", "none"),
+        "IMAGER_BENCH_SMALL_SCALE_BIAS": str(
+            float_value(imaging, "smallscalebias", 0.6)
+        ),
+        "IMAGER_BENCH_RESTORING_BEAM": str_value(imaging, "restoringbeam", ""),
         "IMAGER_BENCH_FITSPW": str_value(imaging, "fitspw", ""),
         "IMAGER_BENCH_FITORDER": str(int_value(imaging, "fitorder", 0)),
         "IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL": boolean_env_value(
@@ -651,6 +658,35 @@ def build_plan(
         "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
+    prepared_aw_casa_cache = os.environ.get("CASA_RS_BENCH_PREPARED_AW_CASA_CACHE")
+    prepared_aw_output_prefix = os.environ.get("CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX")
+    if prepared_aw_casa_cache:
+        env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"] = prepared_aw_casa_cache
+        env["IMAGER_BENCH_AW_CF_RESIDENT_MB"] = os.environ.get(
+            "CASA_RS_BENCH_AW_CF_RESIDENT_MB"
+        ) or str(int_value(imaging, "cf_resident_mb", 384))
+        for imaging_key, env_key in {
+            "aterm": "IMAGER_BENCH_ATERM",
+            "psterm": "IMAGER_BENCH_PSTERM",
+            "wbawp": "IMAGER_BENCH_WBAWP",
+            "conjbeams": "IMAGER_BENCH_CONJBEAMS",
+            "computepastep": "IMAGER_BENCH_COMPUTEPASTEP",
+            "rotatepastep": "IMAGER_BENCH_ROTATEPASTEP",
+            "pointingoffsetsigdev": "IMAGER_BENCH_POINTINGOFFSETSIGDEV",
+            "normtype": "IMAGER_BENCH_NORMTYPE",
+            "mosweight": "IMAGER_BENCH_MOSWEIGHT",
+            "psfphasecenter": "IMAGER_BENCH_PSFPHASECENTER",
+            "vptable": "IMAGER_BENCH_VPTABLE",
+        }.items():
+            if imaging.get(imaging_key) is not None:
+                value = imaging[imaging_key]
+                env[env_key] = (
+                    boolean_env_value(imaging, imaging_key, False)
+                    if isinstance(value, bool)
+                    else str(value)
+                )
+    if prepared_aw_output_prefix:
+        env["IMAGER_BENCH_RUST_OUTPUT_PREFIX"] = prepared_aw_output_prefix
     if reuse_rust_prefix:
         env["IMAGER_BENCH_REUSE_RUST_PREFIX"] = reuse_rust_prefix
     if reuse_casa_prefix:
@@ -696,6 +732,8 @@ def build_plan(
         command_plan["evidence_storage"] = casa_tclean_workflow.storage_requirement(
             run, dataset
         )
+        command_plan["argv"] = command
+        command_plan["env"] = env
     else:
         command_plan = {"kind": "legacy_benchmark_script", "argv": command, "env": env}
     plan = {
@@ -986,6 +1024,17 @@ def review_panel_status(comparison: dict[str, Any]) -> tuple[str, str | None]:
 def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     if plan.get("command", {}).get("kind") == "casa_tclean_protocol":
         return run_casa_recipe_plan(plan, log_path)
+    return run_benchmark_plan(plan, log_path)
+
+
+def run_benchmark_plan(
+    plan: dict[str, Any],
+    log_path: pathlib.Path,
+    *,
+    reused_casa_prefix: str | None = None,
+) -> dict[str, Any]:
+    """Execute the checked-in benchmark command and compare retained products."""
+
     env = os.environ.copy()
     env.update(plan["command"]["env"])
     if bool(plan.get("run", {}).get("stream_log", False)):
@@ -1020,6 +1069,13 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         }
 
     parsed = parse_benchmark_log(completed.stdout)
+    if reused_casa_prefix is not None:
+        parsed["casa"] = {
+            "status": "reused",
+            "reason": "frozen CASA products were reused; CASA was not executed",
+            "timings_seconds": {"runs": [], "median": None},
+        }
+        parsed.setdefault("product_paths", {})["casa_prefix"] = reused_casa_prefix
     parsed["backend_plan_logs"] = parse_backend_plan_logs(completed.stdout)
     parsed["benchmark_features"] = build_benchmark_feature_summary(plan, parsed)
     attach_stage_breakdown(plan, parsed)
@@ -1050,6 +1106,17 @@ def run_casa_recipe_plan(
 ) -> dict[str, Any]:
     """Dispatch a recipe-backed plan through the shared tclean workflow."""
 
+    run = plan.get("run", {})
+    reused_casa_prefix = run.get("reuse_casa_prefix")
+    if boolean_flag(str(run.get("skip_casa", "0"))):
+        if not isinstance(reused_casa_prefix, str) or not reused_casa_prefix:
+            raise HarnessError(
+                "recipe run.skip_casa requires an exact run.reuse_casa_prefix"
+            )
+        plan["products"]["casa_prefix"] = reused_casa_prefix
+        return run_benchmark_plan(
+            plan, log_path, reused_casa_prefix=reused_casa_prefix
+        )
     return casa_tclean_workflow.run_recipe_plan(
         plan, log_path, services=recipe_execution_services()
     )

@@ -51,7 +51,7 @@ mod weighting;
 pub use aw_projection::{
     AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorDiagnostics, AwOperatorError,
     AwPreparedCatalog, AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,
-    AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample,
+    AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, PreparedAwProjection,
 };
 pub use spectral_operator::{
     SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
@@ -71,9 +71,10 @@ pub mod runtime_adapter {
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
         GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality, GriddedNormalWork,
-        SourceCardinalityObservation, gridded_normal_domain_execution_residency,
-        gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, standard_convolution_support,
+        SourceCardinalityObservation, gridded_normal_aw_domain_execution_residency,
+        gridded_normal_domain_execution_residency, gridded_normal_execution_residency,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        standard_convolution_support,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,

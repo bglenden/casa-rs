@@ -123,9 +123,12 @@ def recipe_run_support(
         "reason": "; ".join(missing) if missing else None,
         "missing_capabilities": missing,
     }
-    if skip_casa:
+    if skip_casa and missing:
         status = "dry_run_only"
-        reason = f"{workload_id}: CASA oracle is disabled for a recipe-backed run"
+        reason = (
+            f"{workload_id}: CASA oracle is disabled and casa-rs cannot execute "
+            "the frozen semantics: " + "; ".join(missing)
+        )
     elif missing and not skip_rust:
         status = "dry_run_only"
         reason = (
@@ -150,6 +153,8 @@ def recipe_run_support(
 
 
 def rust_missing_capabilities(imaging: dict[str, Any]) -> list[str]:
+    if _is_supported_paired_aw_request(imaging):
+        return []
     missing: list[str] = []
     if imaging.get("gridder") in {"awproject", "awp2", "awphpg"} and any(
         imaging.get(name) for name in ("aterm", "wbawp", "conjbeams")
@@ -167,6 +172,37 @@ def rust_missing_capabilities(imaging: dict[str, Any]) -> list[str]:
     if imaging.get("normtype") or imaging.get("restoringbeam"):
         missing.append("CASA normalization and common-beam restoration semantics")
     return list(dict.fromkeys(missing))
+
+
+def _is_supported_paired_aw_request(imaging: dict[str, Any]) -> bool:
+    """Recognize the exact production paired-AW surface implemented by T51."""
+
+    return all(
+        (
+            imaging.get("gridder") == "awproject",
+            imaging.get("wterm") == "wproject",
+            imaging.get("wprojplanes") == 32,
+            imaging.get("specmode") == "mfs",
+            imaging.get("stokes", "I") == "I",
+            imaging.get("facets", 1) == 1,
+            imaging.get("aterm") is True,
+            imaging.get("psterm") is False,
+            imaging.get("wbawp") is True,
+            imaging.get("conjbeams") is True,
+            imaging.get("usepointing") is True,
+            imaging.get("computepastep") == 360.0,
+            imaging.get("rotatepastep") == 360.0,
+            imaging.get("pointingoffsetsigdev", 0.0) == 0.0,
+            imaging.get("mosweight", False) is False,
+            imaging.get("vptable", "") == "",
+            imaging.get("deconvolver") == "mtmfs",
+            imaging.get("nterms") == 2,
+            imaging.get("normtype") == "flatnoise",
+            imaging.get("restoringbeam") == "common",
+            imaging.get("chanchunks", 1) == 1,
+            imaging.get("parallel", False) is False,
+        )
+    )
 
 
 def resolve_recipe_path(casa: dict[str, Any]) -> pathlib.Path:
@@ -676,7 +712,7 @@ def attach_output_paths(
             "cache_plan_sha256": cache_plan_sha256,
         }
     )
-    plan["command"]["argv"] = [
+    plan["command"]["casa"]["planned_argv"] = [
         str(plan["command"]["casa"]["python"]),
         str(CASA_TCLEAN_PROTOCOL),
         str(planned_request_path),
@@ -684,7 +720,9 @@ def attach_output_paths(
     ]
     plan["products"] = {
         "root": None if dry_run else str(final_root),
-        "rust_prefix": None,
+        "rust_prefix": plan["command"]["env"].get(
+            "IMAGER_BENCH_RUST_OUTPUT_PREFIX"
+        ),
         "casa_prefix": None if dry_run else str(retained_prefix),
         "execution_root": str(execution_root),
         "execution_casa_prefix": str(execution_prefix),

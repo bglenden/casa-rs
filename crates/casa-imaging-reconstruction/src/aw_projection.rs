@@ -6,7 +6,7 @@
 //! provider so cold CASA import and warm private reuse converge on the same
 //! typed cell without materializing the complete CF cache here.
 
-use std::{collections::BTreeSet, mem::size_of, sync::Arc};
+use std::{collections::BTreeSet, fmt, mem::size_of, sync::Arc};
 
 use casa_imaging_model::{PreparedArtifactScientificIdentity, PreparedArtifactScientificKind};
 use num_complex::Complex64;
@@ -250,6 +250,16 @@ impl AwPreparedCatalog {
         })
     }
 
+    /// Maximum integral imaging-CF support radius represented by this catalog.
+    #[must_use]
+    pub fn maximum_imaging_support(&self) -> usize {
+        self.cells
+            .iter()
+            .flat_map(|cell| cell.imaging_layout.support)
+            .max()
+            .unwrap_or(0)
+    }
+
     fn grid_cell(
         &self,
         sample: AwVisibilitySample,
@@ -368,6 +378,85 @@ pub trait AwPreparedCellProvider {
     ) -> Result<AwPreparedCellLease, AwOperatorError>;
 }
 
+impl<T: AwPreparedCellProvider + ?Sized> AwPreparedCellProvider for Box<T> {
+    fn load(
+        &mut self,
+        metadata: &AwPreparedCellMetadata,
+        resident_byte_ceiling: usize,
+    ) -> Result<AwPreparedCellLease, AwOperatorError> {
+        (**self).load(metadata, resident_byte_ceiling)
+    }
+}
+
+type AwProviderFactory = dyn Fn() -> Box<dyn AwPreparedCellProvider + Send> + Send + Sync + 'static;
+
+/// Cloneable, opaque AW binding carried from application preparation to each
+/// reconstruction-owned physical chart.
+#[derive(Clone)]
+pub struct PreparedAwProjection {
+    catalog: AwPreparedCatalog,
+    provider: Arc<AwProviderFactory>,
+    conjugate_beams: bool,
+    resident_byte_ceiling: usize,
+}
+
+impl fmt::Debug for PreparedAwProjection {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedAwProjection")
+            .field("catalog", &self.catalog)
+            .field("conjugate_beams", &self.conjugate_beams)
+            .field("resident_byte_ceiling", &self.resident_byte_ceiling)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PreparedAwProjection {
+    /// Freeze a validated metadata catalog and a cloneable bounded cell provider.
+    pub fn new<P>(
+        catalog: AwPreparedCatalog,
+        provider: P,
+        conjugate_beams: bool,
+        resident_byte_ceiling: usize,
+    ) -> Result<Self, AwOperatorError>
+    where
+        P: AwPreparedCellProvider + Clone + Send + Sync + 'static,
+    {
+        if resident_byte_ceiling == 0 {
+            return Err(AwOperatorError::ResidencyCeilingExceeded);
+        }
+        Ok(Self {
+            catalog,
+            provider: Arc::new(move || Box::new(provider.clone())),
+            conjugate_beams,
+            resident_byte_ceiling,
+        })
+    }
+
+    /// Exact maximum simultaneously resident paired-CF payload bytes.
+    #[must_use]
+    pub const fn resident_byte_ceiling(&self) -> usize {
+        self.resident_byte_ceiling
+    }
+
+    /// Maximum imaging-CF support radius needed by bounded tile replay.
+    #[must_use]
+    pub fn maximum_imaging_support(&self) -> usize {
+        self.catalog.maximum_imaging_support()
+    }
+
+    pub(crate) fn instantiate(
+        &self,
+    ) -> Result<AwProjectionOperator<Box<dyn AwPreparedCellProvider + Send>>, AwOperatorError> {
+        AwProjectionOperator::new(
+            self.catalog.clone(),
+            (self.provider)(),
+            self.conjugate_beams,
+            self.resident_byte_ceiling,
+        )
+    }
+}
+
 /// Row-local coordinates needed to select and place one AW visibility.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AwVisibilitySample {
@@ -483,6 +572,39 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
     pub const fn diagnostics(&self) -> AwOperatorDiagnostics {
         self.diagnostics
     }
+
+    /// Select the gridding metadata and return the exact integral footprint
+    /// center and tap count without loading the paired payload.
+    pub(crate) fn grid_footprint(
+        &self,
+        shape: [usize; 2],
+        sample: AwVisibilitySample,
+    ) -> Result<([usize; 2], usize), AwOperatorError> {
+        let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        let (x, _) = fractional_bin(
+            sample.grid_position[0],
+            metadata.imaging_layout.oversampling,
+        )?;
+        let (y, _) = fractional_bin(
+            sample.grid_position[1],
+            metadata.imaging_layout.oversampling,
+        )?;
+        let center = [
+            usize::try_from(x).map_err(|_| AwOperatorError::InvalidGridLayout)?,
+            usize::try_from(y).map_err(|_| AwOperatorError::InvalidGridLayout)?,
+        ];
+        for axis in 0..2 {
+            let support = metadata.imaging_layout.support[axis];
+            if center[axis] < support
+                || center[axis]
+                    .checked_add(support)
+                    .is_none_or(|end| end >= shape[axis])
+            {
+                return Err(AwOperatorError::InvalidGridLayout);
+            }
+        }
+        Ok((center, metadata.imaging_layout.integral_tap_count()))
+    }
     /// Predict one visibility with CASA's normal-frequency/swapped-Mueller selection.
     pub fn degrid(
         &mut self,
@@ -535,6 +657,75 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         self.diagnostics.imaging_taps += imaging.len() as u64;
         self.diagnostics.weight_taps += weight.len() as u64;
         Ok(())
+    }
+
+    pub(crate) fn grid_imaging_compensated(
+        &mut self,
+        image_grid: &mut [Complex64],
+        compensation: &mut [Complex64],
+        shape: [usize; 2],
+        sample: AwVisibilitySample,
+        value: Complex64,
+    ) -> Result<(), AwOperatorError> {
+        validate_grid(image_grid, shape)?;
+        validate_grid(compensation, shape)?;
+        let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        let taps = fused_taps(&cell.imaging, shape, sample, true)?;
+        compensated_taps(image_grid, compensation, &taps, value, true);
+        self.diagnostics.selections += 1;
+        self.diagnostics.grid_passes += 1;
+        self.diagnostics.imaging_taps += taps.len() as u64;
+        Ok(())
+    }
+
+    pub(crate) fn grid_weight_compensated(
+        &mut self,
+        weight_grid: &mut [Complex64],
+        compensation: &mut [Complex64],
+        shape: [usize; 2],
+        sample: AwVisibilitySample,
+        weight: f64,
+    ) -> Result<(), AwOperatorError> {
+        if !weight.is_finite() || weight < 0.0 {
+            return Err(AwOperatorError::InvalidWeight);
+        }
+        validate_grid(weight_grid, shape)?;
+        validate_grid(compensation, shape)?;
+        let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        let taps = fused_taps(&cell.weight, shape, sample, false)?;
+        compensated_taps(
+            weight_grid,
+            compensation,
+            &taps,
+            Complex64::new(weight, 0.0),
+            false,
+        );
+        self.diagnostics.selections += 1;
+        self.diagnostics.grid_passes += 1;
+        self.diagnostics.weight_taps += taps.len() as u64;
+        Ok(())
+    }
+}
+
+fn compensated_taps(
+    grid: &mut [Complex64],
+    compensation: &mut [Complex64],
+    taps: &[FusedTap],
+    value: Complex64,
+    adjoint: bool,
+) {
+    for tap in taps {
+        let coefficient = if adjoint {
+            tap.coefficient.conj()
+        } else {
+            tap.coefficient
+        };
+        let contribution = coefficient * value - compensation[tap.index];
+        let updated = grid[tap.index] + contribution;
+        compensation[tap.index] = (updated - grid[tap.index]) - contribution;
+        grid[tap.index] = updated;
     }
 }
 
@@ -599,7 +790,7 @@ fn fused_taps(
                 coefficient = coefficient.conj();
             }
             taps.push(FusedTap {
-                index: y * shape[0] + x,
+                index: x * shape[1] + y,
                 coefficient: coefficient * pointing,
             });
         }
@@ -771,6 +962,7 @@ mod tests {
             .unwrap(),
         )
     }
+    #[derive(Clone)]
     struct Provider {
         cells: BTreeMap<[u8; 32], Arc<AwConvolutionCell>>,
         seen: BTreeSet<[u8; 32]>,
@@ -950,5 +1142,33 @@ mod tests {
             AwPreparedCatalog::new(cells.clone()).unwrap(),
             AwPreparedCatalog::new(cells.into_iter().rev().collect()).unwrap()
         );
+    }
+
+    #[test]
+    fn t51_prepared_binding_instantiates_independent_bounded_chart_providers() {
+        let entries = vec![metadata(10.0, 0.0, 3, 0.0), metadata(10.0, 0.0, 12, 0.0)];
+        let cells = entries
+            .iter()
+            .map(|entry| (entry.identity.as_bytes(), resident(entry)))
+            .collect();
+        let prepared = PreparedAwProjection::new(
+            AwPreparedCatalog::new(entries).unwrap(),
+            Provider {
+                cells,
+                seen: BTreeSet::new(),
+            },
+            true,
+            64 * 1024,
+        )
+        .unwrap();
+        let mut first = prepared.instantiate().unwrap();
+        let mut second = prepared.instantiate().unwrap();
+        let sample = sample(10.0, 0.1, 3, 0.0);
+        let grid = vec![Complex64::new(1.0, 0.0); 100];
+        first.degrid(&grid, [10, 10], sample).unwrap();
+        second.degrid(&grid, [10, 10], sample).unwrap();
+        assert_eq!(first.diagnostics().provider_loads, 1);
+        assert_eq!(second.diagnostics().provider_loads, 1);
+        assert_eq!(prepared.resident_byte_ceiling(), 64 * 1024);
     }
 }

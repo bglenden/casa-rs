@@ -1662,6 +1662,7 @@ def _validate_result_command(value: Any, *, source: str) -> None:
         "cache_path",
         "cache_receipt_path",
         "cache_plan_sha256",
+        "planned_argv",
     }
     _allowed_fields(casa, casa_fields, f"{source}: casa")
     for key in ("python", "runner", "expected_version"):
@@ -1669,6 +1670,8 @@ def _validate_result_command(value: Any, *, source: str) -> None:
     for key in ("cache_path", "cache_receipt_path", "cache_plan_sha256"):
         if key in casa:
             _nonempty_string(casa, key, f"{source}: casa")
+    if "planned_argv" in casa:
+        _string_list_allow_empty(casa["planned_argv"], f"{source}: casa.planned_argv")
     recipe = _require_dict(casa.get("recipe"), f"{source}: casa.recipe")
     _allowed_fields(
         recipe, {"path", "sha256", "task", "parameter_names"}, f"{source}: casa.recipe"

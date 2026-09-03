@@ -19,9 +19,10 @@ use casa_imaging_model::{
     SelectedObservationGenerationId, SpectralKernel, WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
-    FinalNormalState, MajorCyclePreparation, SpectralChannelValidity, SpectralOperatorError,
-    SpectralOperatorPrimitives, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
-    WeightingAlgorithmState, WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
+    FinalNormalState, MajorCyclePreparation, PreparedAwProjection, SpectralChannelValidity,
+    SpectralOperatorError, SpectralOperatorPrimitives, SpectralOperatorSpecification,
+    SpectralPrimitiveCatalog, WeightingAlgorithmState, WeightingGenerationId,
+    WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerSlabFold, CompleteDataOwnerState,
         GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalOperatorApply,
@@ -29,9 +30,10 @@ use casa_imaging_reconstruction::{
         GriddedNormalOperatorProgram, GriddedNormalPartial, GriddedNormalRoutingMeasurements,
         GriddedNormalSourceCardinality, GriddedNormalWork, PreparedSpectralOperator,
         PreparedSpectralOperatorRecycle, SourceCardinalityObservation, SpectralOperatorPass,
-        SpectralOperatorWorkload, gridded_normal_domain_execution_residency,
-        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
-        prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
+        SpectralOperatorWorkload, gridded_normal_aw_domain_execution_residency,
+        gridded_normal_domain_execution_residency, gridded_normal_operator_record_bytes,
+        gridded_normal_route_capacity_bytes, prepare_spectral_operator,
+        reprepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -1608,6 +1610,7 @@ pub struct CompleteDataResidency {
     mosaic_workspace_bytes: usize,
     gridded_route_bytes: usize,
     gridded_replay_schedule_bytes: usize,
+    aw_prepared_pool_bytes: usize,
     primitive_output_bytes: usize,
     sequential_fold_accumulator_bytes: usize,
     major_cycle_model_bytes: usize,
@@ -1685,6 +1688,12 @@ impl CompleteDataResidency {
         self.gridded_route_bytes
     }
 
+    /// Bytes reserved for the complete prepared AW cell pool.
+    #[must_use]
+    pub const fn aw_prepared_pool_bytes(self) -> usize {
+        self.aw_prepared_pool_bytes
+    }
+
     /// Bytes covering retained prior state plus newly produced normal-state primitives.
     #[must_use]
     pub const fn primitive_output_bytes(self) -> usize {
@@ -1736,6 +1745,7 @@ pub struct CompleteDataPlanFragment {
     preparation_node: WorkNodeId,
     replay_node: WorkNodeId,
     reconciliation_node: Option<WorkNodeId>,
+    aw_projection: Option<PreparedAwProjection>,
 }
 
 impl CompleteDataPlanFragment {
@@ -1921,6 +1931,7 @@ impl CompleteDataPlanFragment {
             preparation_node,
             replay_node,
             reconciliation_node: None,
+            aw_projection: None,
         })
     }
 
@@ -1995,7 +2006,44 @@ impl CompleteDataPlanFragment {
             preparation_node,
             replay_node,
             reconciliation_node: None,
+            aw_projection: None,
         })
+    }
+
+    /// Bind a fixed, application-validated AW prepared-cell capability.
+    pub fn with_aw_projection(
+        mut self,
+        projection: PreparedAwProjection,
+    ) -> Result<Self, CompleteDataPlanError> {
+        if self.specification.aw_projection().is_none() || self.aw_projection.is_some() {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let pool_bytes = projection.resident_byte_ceiling();
+        let grid_bytes = if self.execution_role == CompleteDataExecutionRole::GriddedArtifact {
+            let projected = gridded_normal_aw_domain_execution_residency(
+                self.specification.chart_grid_shapes(),
+                self.workload.coefficient_terms(),
+                projection.maximum_imaging_support(),
+            )?;
+            projected
+                .peak_complex_values()
+                .checked_mul(size_of::<num_complex::Complex64>())
+                .and_then(|bytes| bytes.checked_add(projected.metadata_bytes()))
+                .ok_or(CompleteDataPlanError::ResidencyOverflow)?
+        } else {
+            self.residency.grid_bytes
+        };
+        self.residency.peak_bytes = self
+            .residency
+            .peak_bytes
+            .checked_sub(self.residency.grid_bytes)
+            .and_then(|bytes| bytes.checked_add(grid_bytes))
+            .and_then(|bytes| bytes.checked_add(pool_bytes))
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        self.residency.grid_bytes = grid_bytes;
+        self.residency.aw_prepared_pool_bytes = pool_bytes;
+        self.aw_projection = Some(projection);
+        Ok(self)
     }
 
     /// Return the exact FFT-planning node inserted before replay.
@@ -2060,9 +2108,16 @@ impl CompleteDataPlanFragment {
         if context.compiled().problem_id() != self.specification.problem_id() {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
+        if self.specification.aw_projection().is_some() != self.aw_projection.is_some() {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
         self.validate_fft_capability(context)?;
+        let mut owner = prepare_spectral_operator(self.specification.clone(), self.workload)?;
+        if let Some(projection) = self.aw_projection.clone() {
+            owner = owner.with_aw_projection(projection)?;
+        }
         Ok(CompleteDataPreparedState {
-            owner: prepare_spectral_operator(self.specification.clone(), self.workload)?,
+            owner,
             problem: self.specification.problem_id(),
             attempt: context.attempt_id(),
             preparation_node: self.preparation_node.clone(),
@@ -2119,8 +2174,15 @@ impl CompleteDataPlanFragment {
         let workload = self
             .slab_workload(ordinal)
             .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        if specification.aw_projection().is_some() != self.aw_projection.is_some() {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let mut owner = reprepare_spectral_operator(specification, workload, recycle)?;
+        if let Some(projection) = self.aw_projection.clone() {
+            owner = owner.with_aw_projection(projection)?;
+        }
         Ok(CompleteDataPreparedState {
-            owner: reprepare_spectral_operator(specification, workload, recycle)?,
+            owner,
             problem: self.specification.problem_id(),
             attempt: context.attempt_id(),
             preparation_node: self.preparation_node.clone(),
@@ -2241,6 +2303,12 @@ impl CompleteDataPlanFragment {
                 residency.gridded_replay_schedule_bytes,
             ));
         }
+        if residency.aw_prepared_pool_bytes() > 0 {
+            required.push((
+                format!("spectral-operator-aw-prepared-pool-{suffix}"),
+                residency.aw_prepared_pool_bytes(),
+            ));
+        }
         for (allocation, bytes) in required {
             let bytes =
                 u64::try_from(bytes).map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
@@ -2316,10 +2384,20 @@ impl CompleteDataPlanFragment {
             .observation_transaction()
             .post_replay_reconciliation()
             .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
+        let initial = base
+            .observation_transaction()
+            .initial_consistency_check()
+            .clone();
+        let commit = base.observation_transaction().commit().clone();
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }
-        let specs = self.allocation_specs(reconciliation)?;
+        let specs = self.allocation_specs(reconciliation, &initial, &commit)?;
+        let aw_spec = if self.residency.aw_prepared_pool_bytes() > 0 {
+            Some(specs.last().ok_or(CompleteDataPlanError::PlanMismatch)?)
+        } else {
+            None
+        };
         let gridded_specs = [
             self.route_allocation_spec()?,
             self.schedule_allocation_spec()?,
@@ -2333,6 +2411,15 @@ impl CompleteDataPlanFragment {
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        if let Some(aw_spec) = aw_spec {
+            let initial_node = nodes
+                .iter_mut()
+                .find(|node| node.id == initial)
+                .ok_or(CompleteDataPlanError::PlanMismatch)?;
+            initial_node
+                .allocations
+                .push(aw_spec.usage(ClaimLifetime::Work));
+        }
         let replay = nodes
             .iter_mut()
             .find(|node| node.id == self.replay_node)
@@ -2340,7 +2427,7 @@ impl CompleteDataPlanFragment {
         if !replay.fences.contains(&FenceKind::Io) {
             return Err(CompleteDataPlanError::ReplayWithoutTerminalFence);
         }
-        let preparation = WorkNode {
+        let mut preparation = WorkNode {
             id: self.preparation_node.clone(),
             kind: WorkKind::FftPlanning,
             domain: WorkDomain::Cpu,
@@ -2372,6 +2459,11 @@ impl CompleteDataPlanFragment {
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
+        if let Some(aw_spec) = aw_spec {
+            preparation
+                .allocations
+                .push(aw_spec.usage(ClaimLifetime::Work));
+        }
         replay
             .dependencies
             .insert(WorkDependency::Work(self.preparation_node.clone()));
@@ -2503,6 +2595,8 @@ impl CompleteDataPlanFragment {
     fn allocation_specs(
         &self,
         reconciliation: &WorkNodeId,
+        initial: &WorkNodeId,
+        commit: &WorkNodeId,
     ) -> Result<Vec<CompleteDataAllocation>, CompleteDataPlanError> {
         let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let residency = self.residency;
@@ -2588,6 +2682,18 @@ impl CompleteDataPlanFragment {
             &suffix,
             &self.replay_node,
         )?);
+        if residency.aw_prepared_pool_bytes() > 0 {
+            allocations.push(CompleteDataAllocation::retained_read_only(
+                format!("spectral-operator-aw-prepared-pool-{suffix}"),
+                residency.aw_prepared_pool_bytes(),
+                "spectral-operator-retained-prepared-aw-cell-pool",
+                initial.clone(),
+                BTreeSet::from([
+                    WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
+                    WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Publication)),
+                ]),
+            )?);
+        }
         Ok(allocations)
     }
 
@@ -2771,6 +2877,7 @@ fn project_residency(
         mosaic_workspace_bytes,
         gridded_route_bytes,
         gridded_replay_schedule_bytes,
+        aw_prepared_pool_bytes: 0,
         primitive_output_bytes,
         sequential_fold_accumulator_bytes: 0,
         major_cycle_model_bytes,
@@ -2870,6 +2977,25 @@ impl CompleteDataAllocation {
             acquire_at,
             release_after,
         })
+    }
+
+    fn retained_read_only(
+        id: String,
+        bytes: usize,
+        layout: &str,
+        acquire_at: WorkNodeId,
+        release_after: BTreeSet<WorkDependency>,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let mut allocation = Self::new(
+            id,
+            bytes,
+            layout,
+            InitializationPolicy::Preserve,
+            acquire_at,
+            release_after,
+        )?;
+        allocation.compatibility.access = AllocationAccess::ReadOnly;
+        Ok(allocation)
     }
 
     fn usage(&self, lifetime: ClaimLifetime) -> AllocationUse {
@@ -3594,10 +3720,11 @@ impl From<SpectralOperatorError> for CompleteDataOperatorError {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompleteDataPlanError, CompleteDataResidency, GriddedNormalReplayPlanningCapacity,
-        GriddedNormalReplayWindowPlan, GriddedNormalRouteResidency,
-        bind_gridded_replay_window_plan, gridded_buffer_claim_satisfies,
-        gridded_normal_route_capacity_bytes, mosaic_allocation_specs,
+        CompleteDataAllocation, CompleteDataPlanError, CompleteDataResidency,
+        GriddedNormalReplayPlanningCapacity, GriddedNormalReplayWindowPlan,
+        GriddedNormalRouteResidency, bind_gridded_replay_window_plan,
+        gridded_buffer_claim_satisfies, gridded_normal_route_capacity_bytes,
+        mosaic_allocation_specs,
     };
 
     const TEST_RECORD_BYTES: usize = 32;
@@ -3623,6 +3750,7 @@ mod tests {
             mosaic_workspace_bytes: 11,
             gridded_route_bytes: 0,
             gridded_replay_schedule_bytes: 0,
+            aw_prepared_pool_bytes: 0,
             primitive_output_bytes: 0,
             sequential_fold_accumulator_bytes: 0,
             major_cycle_model_bytes: 0,
@@ -3651,6 +3779,43 @@ mod tests {
                 )])
             );
         }
+    }
+
+    #[test]
+    fn t51_prepared_aw_pool_is_preserved_from_initial_check_through_commit_fences() {
+        let initial = crate::WorkNodeId::new("t51-initial-check");
+        let commit = crate::WorkNodeId::new("t51-commit");
+        let release_after = std::collections::BTreeSet::from([
+            crate::WorkDependency::Fence(crate::FenceId::new(commit.clone(), crate::FenceKind::Io)),
+            crate::WorkDependency::Fence(crate::FenceId::new(
+                commit,
+                crate::FenceKind::Publication,
+            )),
+        ]);
+        let allocation = CompleteDataAllocation::retained_read_only(
+            "spectral-operator-aw-prepared-pool-t51".to_string(),
+            4096,
+            "spectral-operator-retained-prepared-aw-cell-pool",
+            initial.clone(),
+            release_after.clone(),
+        )
+        .expect("retained AW pool allocation");
+        let logical = allocation.logical_allocation();
+        let slot = allocation.physical_slot();
+
+        assert_eq!(logical.bytes, 4096);
+        assert_eq!(logical.lifetime.acquire_at, initial);
+        assert_eq!(logical.lifetime.release_after, release_after);
+        assert_eq!(
+            logical.compatibility.initialization,
+            crate::InitializationPolicy::Preserve
+        );
+        assert_eq!(
+            logical.compatibility.access,
+            crate::AllocationAccess::ReadOnly
+        );
+        assert_eq!(slot.compatibility, logical.compatibility);
+        assert_eq!(slot.capacity_bytes, logical.bytes);
     }
 
     #[test]

@@ -3,16 +3,28 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Write};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 use crate::{ExecutionAttemptId, ReceiptStatus};
 
 use casa_imaging_model::MeasurementSetIdentity;
 use sha2::{Digest, Sha256};
+use tempfile::Builder;
 
 static PRODUCTION_AUTHORITY: OnceLock<Result<ResourceAuthority, ResourceError>> = OnceLock::new();
+static STORAGE_OPERATIONS_CALIBRATIONS: OnceLock<
+    Mutex<BTreeMap<StorageOperationsCalibrationKey, StorageOperationsCalibration>>,
+> = OnceLock::new();
+
+const STORAGE_OPERATIONS_PROBE_VERSION: u32 = 1;
+const STORAGE_OPERATIONS_PROBE_BYTES: usize = 4096;
+const STORAGE_OPERATIONS_RATE_DOMAIN: &[u8] = b"casa-rs/storage-operations-rate/v1\0";
 
 /// Stable identity of one physical memory-capacity domain.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -385,7 +397,21 @@ pub struct ProductionStorageProfile {
     domain: StorageDomainId,
     read_rate: RateResourceId,
     write_rate: RateResourceId,
+    operations_rate: RateResourceId,
     queue: QueueResourceId,
+    operations_calibration: Option<StorageOperationsCalibration>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct StorageOperationsCalibrationKey {
+    filesystem_root: PathBuf,
+    device: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StorageOperationsCalibration {
+    operations_per_second: u64,
+    evidence: [u8; 32],
 }
 
 impl ProductionStorageProfile {
@@ -431,8 +457,76 @@ impl ProductionStorageProfile {
             domain: StorageDomainId::new(format!("production-output-{suffix}")),
             read_rate: RateResourceId::new(format!("production-output-read-{suffix}")),
             write_rate: RateResourceId::new(format!("production-output-write-{suffix}")),
+            operations_rate: RateResourceId::new(format!(
+                "production-output-operations-v{STORAGE_OPERATIONS_PROBE_VERSION}-{suffix}"
+            )),
             queue: QueueResourceId::new(format!("production-output-queue-{suffix}")),
+            operations_calibration: None,
         })
+    }
+
+    /// Measure a bounded direct-filesystem operations rate at the exact writable domain.
+    ///
+    /// The probe protocol is runtime-owned and exposes no raw rate setter. The
+    /// first successful measurement for a canonical filesystem root/device is
+    /// retained for the process, so repeated construction reuses identical
+    /// calibration evidence rather than treating timing jitter as new topology.
+    pub fn with_measured_operations_rate(
+        mut self,
+        writable_directory: impl AsRef<Path>,
+    ) -> Result<Self, ResourceError> {
+        let filesystem_root = self
+            .filesystem_root
+            .canonicalize()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        let writable_directory = writable_directory
+            .as_ref()
+            .canonicalize()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        let root_metadata = filesystem_root
+            .metadata()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        let directory_metadata = writable_directory
+            .metadata()
+            .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+        if !writable_directory.starts_with(&filesystem_root)
+            || !directory_metadata.file_type().is_dir()
+            || root_metadata.dev() != directory_metadata.dev()
+        {
+            return Err(ResourceError::StorageOperationsCalibration(
+                "probe directory is not on the configured filesystem".to_string(),
+            ));
+        }
+        let key = StorageOperationsCalibrationKey {
+            filesystem_root,
+            device: directory_metadata.dev(),
+        };
+        let calibrations = STORAGE_OPERATIONS_CALIBRATIONS.get_or_init(Default::default);
+        let mut calibrations = calibrations
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let calibration = if let Some(calibration) = calibrations.get(&key) {
+            calibration.clone()
+        } else {
+            let calibration = measure_storage_operations(&key, &writable_directory)?;
+            calibrations.insert(key, calibration.clone());
+            calibration
+        };
+        self.operations_calibration = Some(calibration);
+        let calibration = self
+            .operations_calibration
+            .as_ref()
+            .expect("calibration was just installed");
+        let evidence = calibration
+            .evidence
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        self.operations_rate = RateResourceId::new(format!(
+            "production-output-operations-v{STORAGE_OPERATIONS_PROBE_VERSION}-{}-{evidence}",
+            calibration.operations_per_second
+        ));
+        Ok(self)
     }
 
     /// Return the path-free storage-domain identity.
@@ -453,6 +547,14 @@ impl ProductionStorageProfile {
         &self.write_rate
     }
 
+    /// Return the measured operations-rate identity when this profile was calibrated.
+    #[must_use]
+    pub fn operations_rate_id(&self) -> Option<&RateResourceId> {
+        self.operations_calibration
+            .as_ref()
+            .map(|_| &self.operations_rate)
+    }
+
     /// Return the bounded output queue identity.
     #[must_use]
     pub const fn queue_id(&self) -> &QueueResourceId {
@@ -470,14 +572,128 @@ impl ProductionStorageProfile {
         )
     }
 
+    /// Return the exact filesystem-backed storage domain registered by this profile.
+    #[must_use]
+    pub fn storage_domain(&self) -> StorageDomain {
+        StorageDomain {
+            id: self.domain.clone(),
+            root: self.filesystem_root.clone(),
+            capacity_bytes: self.capacity_bytes,
+            read_rate: self.read_rate.clone(),
+            write_rate: self.write_rate.clone(),
+            operations_rate: self
+                .operations_calibration
+                .as_ref()
+                .map(|_| self.operations_rate.clone()),
+            queue: self.queue.clone(),
+        }
+    }
+
     fn same_calibration(&self, other: &Self) -> bool {
         self.filesystem_root == other.filesystem_root
             && self.capacity_bytes == other.capacity_bytes
             && self.read_bytes_per_second == other.read_bytes_per_second
             && self.write_bytes_per_second == other.write_bytes_per_second
+            && self.operations_calibration == other.operations_calibration
             && self.queue_slots == other.queue_slots
             && self.table_lock_slots == other.table_lock_slots
     }
+}
+
+fn measure_storage_operations(
+    key: &StorageOperationsCalibrationKey,
+    writable_directory: &Path,
+) -> Result<StorageOperationsCalibration, ResourceError> {
+    let temporary = Builder::new()
+        .prefix(".casa-rs-storage-operations-")
+        .tempdir_in(writable_directory)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    let initial = temporary.path().join("probe-initial");
+    let renamed = temporary.path().join("probe-renamed");
+    let payload = [0xA5_u8; STORAGE_OPERATIONS_PROBE_BYTES];
+    let mut operations = 0_u64;
+    let started = Instant::now();
+
+    operations += 1;
+    let mut output = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&initial)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    output
+        .write_all(&payload)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    output
+        .sync_all()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    drop(output);
+
+    operations += 1;
+    std::fs::rename(&initial, &renamed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    let directory = File::open(temporary.path())
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    directory
+        .sync_all()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+
+    operations += 1;
+    let mut input = File::open(&renamed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    let mut observed = [0_u8; STORAGE_OPERATIONS_PROBE_BYTES];
+    operations += 1;
+    input
+        .read_exact(&mut observed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    if observed != payload {
+        return Err(ResourceError::StorageOperationsCalibration(
+            "probe read did not reproduce the synchronized bytes".to_string(),
+        ));
+    }
+    drop(input);
+
+    operations += 1;
+    std::fs::remove_file(&renamed)
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    operations += 1;
+    directory
+        .sync_all()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+    drop(directory);
+    operations += 1;
+    temporary
+        .close()
+        .map_err(|error| ResourceError::StorageOperationsCalibration(error.to_string()))?;
+
+    let elapsed_nanos = started.elapsed().as_nanos();
+    let numerator = u128::from(operations)
+        .checked_mul(1_000_000_000)
+        .ok_or(ResourceError::Overflow("storage operations calibration"))?;
+    let operations_per_second = numerator
+        .checked_div(elapsed_nanos)
+        .and_then(|rate| u64::try_from(rate).ok())
+        .filter(|rate| *rate > 0)
+        .ok_or_else(|| {
+            ResourceError::StorageOperationsCalibration(
+                "probe produced no bounded nonzero operations rate".to_string(),
+            )
+        })?;
+    let mut hasher = Sha256::new();
+    hasher.update(STORAGE_OPERATIONS_RATE_DOMAIN);
+    hasher.update(STORAGE_OPERATIONS_PROBE_VERSION.to_le_bytes());
+    hasher.update(key.filesystem_root.as_os_str().as_encoded_bytes());
+    hasher.update(key.device.to_le_bytes());
+    hasher.update(operations.to_le_bytes());
+    hasher.update(elapsed_nanos.to_le_bytes());
+    hasher.update(operations_per_second.to_le_bytes());
+    Ok(StorageOperationsCalibration {
+        operations_per_second,
+        evidence: hasher.finalize().into(),
+    })
 }
 
 impl HostInventory {
@@ -502,6 +718,12 @@ impl HostInventory {
             .pressure
             .rate_available_per_second
             .insert(profile.write_rate.clone(), profile.write_bytes_per_second);
+        if let Some(calibration) = &profile.operations_calibration {
+            inventory.pressure.rate_available_per_second.insert(
+                profile.operations_rate.clone(),
+                calibration.operations_per_second,
+            );
+        }
         inventory
             .pressure
             .queue_available_slots
@@ -512,7 +734,10 @@ impl HostInventory {
             capacity_bytes: profile.capacity_bytes,
             read_rate: profile.read_rate.clone(),
             write_rate: profile.write_rate.clone(),
-            operations_rate: None,
+            operations_rate: profile
+                .operations_calibration
+                .as_ref()
+                .map(|_| profile.operations_rate.clone()),
             queue: profile.queue.clone(),
         });
         inventory.topology.rate_resources.extend([
@@ -527,6 +752,13 @@ impl HostInventory {
                 profile.write_bytes_per_second,
             ),
         ]);
+        if let Some(calibration) = &profile.operations_calibration {
+            inventory.topology.rate_resources.push(RateResource::new(
+                profile.operations_rate.clone(),
+                RateUnit::OperationsPerSecond,
+                calibration.operations_per_second,
+            ));
+        }
         inventory.topology.queue_resources.push(QueueResource::new(
             profile.queue.clone(),
             profile.queue_slots,
@@ -1370,6 +1602,8 @@ pub enum ResourceError {
     Overflow(&'static str),
     /// Production host detection failed.
     Detection(String),
+    /// The runtime-owned direct-filesystem operations probe failed.
+    StorageOperationsCalibration(String),
     /// The process production authority was already initialized.
     ProductionAlreadyInitialized,
     /// The process authority was initialized with another storage profile.
@@ -1573,6 +1807,12 @@ impl fmt::Display for ResourceError {
             Self::Invalid(message) => write!(formatter, "invalid resource declaration: {message}"),
             Self::Overflow(category) => write!(formatter, "{category} arithmetic overflowed"),
             Self::Detection(message) => write!(formatter, "resource detection failed: {message}"),
+            Self::StorageOperationsCalibration(message) => {
+                write!(
+                    formatter,
+                    "storage operations calibration failed: {message}"
+                )
+            }
             Self::ProductionAlreadyInitialized => {
                 formatter.write_str("production resource authority is already initialized")
             }
@@ -1784,6 +2024,12 @@ impl ResourceAuthority {
         pressure
             .rate_available_per_second
             .insert(profile.write_rate.clone(), profile.write_bytes_per_second);
+        if let Some(calibration) = &profile.operations_calibration {
+            pressure.rate_available_per_second.insert(
+                profile.operations_rate.clone(),
+                calibration.operations_per_second,
+            );
+        }
         pressure
             .queue_available_slots
             .insert(profile.queue.clone(), profile.queue_slots);

@@ -7,7 +7,8 @@ pub(super) fn validate_plan_binding(
     descriptor: &PreparedArtifactDescriptor,
     operation: PreparedArtifactOperation,
     reservation: PreparedArtifactReservation,
-    source: Option<&PreparedArtifactLoadSource>,
+    source: Option<PreparedArtifactSourceBinding<'_>>,
+    cache_demand_id: &str,
 ) -> Result<(), PreparedArtifactError> {
     if descriptor.owner.implementation_registry != context.implementation_registry_id() {
         return Err(PreparedArtifactError::ImplementationRegistryMismatch);
@@ -17,7 +18,7 @@ pub(super) fn validate_plan_binding(
     }
     match (operation, source) {
         (PreparedArtifactOperation::Load, Some(source)) => {
-            validate_load_source_binding(context, descriptor, source)?;
+            validate_source_binding(context, descriptor, source)?;
         }
         (PreparedArtifactOperation::Load, None)
         | (
@@ -35,32 +36,74 @@ pub(super) fn validate_plan_binding(
             None,
         ) => {}
     }
-    validate_plan_declaration(context, descriptor, operation, reservation, source)
+    validate_plan_declaration(
+        context,
+        descriptor,
+        operation,
+        reservation,
+        source,
+        cache_demand_id,
+    )
 }
 
-pub(super) fn validate_load_source_binding(
+fn validate_source_binding(
     context: WorkExecutionContext<'_>,
     descriptor: &PreparedArtifactDescriptor,
-    source: &PreparedArtifactLoadSource,
+    source: PreparedArtifactSourceBinding<'_>,
 ) -> Result<(), PreparedArtifactError> {
-    validate_source_segments(descriptor, &source.segments)?;
-    if derive_load_source_identity(descriptor, &source.segments)? != source.identity {
-        return Err(PreparedArtifactError::SourceIdentityMismatch);
+    match source {
+        PreparedArtifactSourceBinding::Files(source) => {
+            validate_source_segments(descriptor, &source.segments)?;
+            if derive_load_source_identity(descriptor, &source.segments)? != source.identity {
+                return Err(PreparedArtifactError::SourceIdentityMismatch);
+            }
+        }
+        PreparedArtifactSourceBinding::Import(source) => {
+            validate_import_segments(descriptor, &source.segments)?;
+            if derive_import_source_identity(descriptor, &source.segments)? != source.identity {
+                return Err(PreparedArtifactError::SourceIdentityMismatch);
+            }
+            for segment in &source.segments {
+                let canonical = segment
+                    .source
+                    .canonicalize()
+                    .map_err(|_| PreparedArtifactError::InvalidSource)?;
+                let metadata = canonical
+                    .metadata()
+                    .map_err(|_| PreparedArtifactError::InvalidSource)?;
+                if canonical.as_path() != segment.source.as_ref()
+                    || !canonical.starts_with(segment.storage_root.as_ref())
+                    || !metadata.file_type().is_dir()
+                    || metadata.dev() != segment.source_device
+                    || metadata.ino() != segment.source_inode
+                {
+                    return Err(PreparedArtifactError::InvalidSource);
+                }
+            }
+        }
     }
+    validate_source_producer(context, source.identity(), source.producer())
+}
+
+fn validate_source_producer(
+    context: WorkExecutionContext<'_>,
+    identity: ArtifactIdentity,
+    producer: &WorkNodeId,
+) -> Result<(), PreparedArtifactError> {
     let planned = context
-        .plan_artifact(source.identity)
+        .plan_artifact(identity)
         .ok_or(PreparedArtifactError::UnplannedSource)?;
-    if planned.node() != &source.producer
+    if planned.node() != producer
         || planned.role() != ArtifactRole::Input
         || planned.cache_identity().is_some()
-        || source.producer == context.node().id
+        || producer == &context.node().id
         || !context
             .node()
             .dependencies
             .iter()
             .any(|dependency| match dependency {
-                WorkDependency::Work(node) => node == &source.producer,
-                WorkDependency::Fence(fence) => fence.node() == &source.producer,
+                WorkDependency::Work(node) => node == producer,
+                WorkDependency::Fence(fence) => fence.node() == producer,
             })
     {
         return Err(PreparedArtifactError::SourceProducerMismatch);
@@ -73,7 +116,8 @@ pub(super) fn validate_plan_declaration(
     descriptor: &PreparedArtifactDescriptor,
     operation: PreparedArtifactOperation,
     reservation: PreparedArtifactReservation,
-    source: Option<&PreparedArtifactLoadSource>,
+    source: Option<PreparedArtifactSourceBinding<'_>>,
+    cache_demand_id: &str,
 ) -> Result<(), PreparedArtifactError> {
     let node = context.node();
     let planned = context.planned_artifacts().cloned().collect::<Vec<_>>();
@@ -119,7 +163,7 @@ pub(super) fn validate_plan_declaration(
     {
         return Err(PreparedArtifactError::UnplannedOperation);
     }
-    let demand_id = descriptor.storage_demand_id();
+    let demand_id = cache_demand_id.to_string();
     let storage_domain = descriptor.storage_domain_id();
     let matching_demands = alternative
         .demand
@@ -236,7 +280,7 @@ pub(super) fn validate_plan_declaration(
         require_claim(node, |claim| claim == &resource, 1, label)?;
     }
     let source_demands = source
-        .map(PreparedArtifactLoadSource::storage_demands)
+        .map(PreparedArtifactSourceBinding::storage_demands)
         .unwrap_or_default();
     for (source_demand_id, source_domain) in source_demands {
         let matching = alternative
@@ -494,6 +538,18 @@ pub(super) fn resource_measurements(
     entry_bytes: u64,
     evidence: &ValidationEvidence,
 ) -> Vec<ResourceMeasurement> {
+    let cache_demand_prefix = format!("private-prepared-cache-{}", descriptor.cache_identity());
+    let cache_demand_id = context
+        .resources()
+        .iter()
+        .find_map(|capability| match capability.resource() {
+            LeaseResource::Storage {
+                demand_id,
+                use_kind: StorageUseKind::PersistentCache,
+            } if demand_id.starts_with(&cache_demand_prefix) => Some(demand_id.as_str()),
+            _ => None,
+        })
+        .expect("validated prepared operation has one private-cache demand");
     context
         .resources()
         .iter()
@@ -503,7 +559,7 @@ pub(super) fn resource_measurements(
                 capability.lifetime().clone(),
                 observed_resource_peak(
                     capability.resource(),
-                    &descriptor.storage_demand_id(),
+                    cache_demand_id,
                     operation,
                     cache_bytes,
                     entry_bytes,
@@ -607,6 +663,7 @@ pub(super) fn rejection_for(error: &PreparedArtifactError) -> Option<PreparedArt
         | PreparedArtifactError::UnplannedSource
         | PreparedArtifactError::SourceProducerMismatch
         | PreparedArtifactError::SourceIdentityMismatch
+        | PreparedArtifactError::InvalidSourceMeasurement
         | PreparedArtifactError::UnknownSchema { .. }
         | PreparedArtifactError::InvalidManifest
         | PreparedArtifactError::IdentityMismatch

@@ -74,7 +74,8 @@ pub use observation_transaction::{
 };
 pub use prepared_artifact::{
     PreparedArtifact, PreparedArtifactBudget, PreparedArtifactConsumer, PreparedArtifactDescriptor,
-    PreparedArtifactError, PreparedArtifactGenerator, PreparedArtifactKind,
+    PreparedArtifactError, PreparedArtifactGenerator, PreparedArtifactImportSegment,
+    PreparedArtifactImportSource, PreparedArtifactImporter, PreparedArtifactKind,
     PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
     PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
     PreparedArtifactPrecision, PreparedArtifactRegistration, PreparedArtifactRejection,

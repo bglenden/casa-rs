@@ -36,9 +36,9 @@ use tempfile::Builder;
 use crate::{
     ArtifactDisposition, ArtifactIdentity, ArtifactMeasurement, ArtifactRole, CacheIdentity,
     ImplementationRegistry, ImplementationRegistryId, IoBufferKind, IoMeasurement, LeaseResource,
-    PlannedArtifact, RedactedPath, ResourceMeasurement, StorageDomain, StorageDomainId,
-    StorageUseKind, WorkDependency, WorkExecutionContext, WorkImplementationId, WorkKind,
-    WorkMeasurements, WorkNodeId,
+    PlannedArtifact, RateResourceId, RedactedPath, ResourceMeasurement, StorageDomain,
+    StorageDomainId, StorageUseKind, WorkDependency, WorkExecutionContext, WorkImplementationId,
+    WorkKind, WorkMeasurements, WorkNodeId,
 };
 
 const ARTIFACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/identity\0";
@@ -46,6 +46,7 @@ const CONTENT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/conte
 const CACHE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/cache\0";
 const CACHE_ROOT_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/root\0";
 const LOAD_SOURCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/load-source\0";
+const IMPORT_SOURCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/import-source\0";
 const WORK_NODE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/work-node\0";
 const WORK_IMPLEMENTATION_ID_DOMAIN: &[u8] =
     b"casa-rs/private-prepared-artifact/work-implementation\0";
@@ -645,8 +646,12 @@ pub struct PreparedArtifactDescriptor {
 }
 
 impl PreparedArtifactDescriptor {
-    fn storage_demand_id(&self) -> String {
-        format!("private-prepared-cache-{}", self.cache_identity)
+    fn storage_demand_id(&self, operations_rate: Option<&RateResourceId>) -> String {
+        let base = format!("private-prepared-cache-{}", self.cache_identity);
+        match operations_rate {
+            Some(rate) => format!("{base}-operations-{}", rate.as_str()),
+            None => base,
+        }
     }
 
     fn storage_domain_id(&self) -> StorageDomainId {
@@ -1089,6 +1094,7 @@ pub struct PreparedArtifactSourceSegment {
     source: Box<Path>,
     sha256: [u8; 32],
     storage_domain: StorageDomainId,
+    storage_operations_rate: Option<RateResourceId>,
     storage_root: Box<Path>,
     storage_root_identity: [u8; 32],
 }
@@ -1142,17 +1148,23 @@ impl PreparedArtifactSourceSegment {
             source: source.into_boxed_path(),
             sha256,
             storage_domain: storage_domain.id.clone(),
+            storage_operations_rate: storage_domain.operations_rate.clone(),
             storage_root: domain_root.clone().into_boxed_path(),
             storage_root_identity: derive_cache_root_identity(&domain_root),
         })
     }
 
     fn storage_demand_id(&self, source_identity: ArtifactIdentity) -> String {
-        format!(
+        let base = format!(
             "private-prepared-source-{source_identity}-{}-{}",
             self.storage_domain.as_str(),
             encode_hex(&self.storage_root_identity)
-        )
+        );
+        self.storage_operations_rate
+            .as_ref()
+            .map_or(base.clone(), |rate| {
+                format!("{base}-operations-{}", rate.as_str())
+            })
     }
 }
 
@@ -1217,6 +1229,210 @@ impl PreparedArtifactLoadSource {
     }
 }
 
+/// One validated implementation-owned source segment translated during a cold load.
+///
+/// Unlike [`PreparedArtifactSourceSegment`], this locator may name a structured
+/// directory such as a CASA image table. The generic store never opens it. It
+/// binds the adapter-owned source to a storage domain and exact logical I/O
+/// ceilings so translation cannot hide source reads inside generation work.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedArtifactImportSegment {
+    name: Box<str>,
+    source: Box<Path>,
+    source_identity: ArtifactIdentity,
+    source_bytes: u64,
+    source_operations: u64,
+    storage_domain: StorageDomainId,
+    storage_operations_rate: Option<crate::RateResourceId>,
+    storage_root: Box<Path>,
+    storage_root_identity: [u8; 32],
+    source_device: u64,
+    source_inode: u64,
+}
+
+impl PreparedArtifactImportSegment {
+    /// Bind one canonical structured source and its exact logical read ceiling.
+    pub fn new(
+        name: impl Into<String>,
+        source: impl Into<PathBuf>,
+        source_identity: ArtifactIdentity,
+        source_bytes: u64,
+        source_operations: u64,
+        storage_domain: &StorageDomain,
+    ) -> Result<Self, PreparedArtifactError> {
+        let name = name.into();
+        let source = source
+            .into()
+            .canonicalize()
+            .map_err(|_| PreparedArtifactError::InvalidSource)?;
+        let storage_root = storage_domain
+            .root
+            .canonicalize()
+            .map_err(|_| PreparedArtifactError::InvalidSource)?;
+        let metadata = source
+            .metadata()
+            .map_err(|_| PreparedArtifactError::InvalidSource)?;
+        if !valid_segment_name(&name)
+            || !source.is_absolute()
+            || !source.starts_with(&storage_root)
+            || !metadata.file_type().is_dir()
+            || source_bytes == 0
+            || source_operations == 0
+            || !valid_identifier(storage_domain.id.as_str())
+            || storage_root.as_os_str().as_encoded_bytes().len() > MAX_SOURCE_PATH_BYTES
+            || source.as_os_str().as_encoded_bytes().len() > MAX_SOURCE_PATH_BYTES
+        {
+            return Err(PreparedArtifactError::InvalidSource);
+        }
+        Ok(Self {
+            name: name.into_boxed_str(),
+            source: source.into_boxed_path(),
+            source_identity,
+            source_bytes,
+            source_operations,
+            storage_domain: storage_domain.id.clone(),
+            storage_operations_rate: storage_domain.operations_rate.clone(),
+            storage_root_identity: derive_cache_root_identity(&storage_root),
+            storage_root: storage_root.into_boxed_path(),
+            source_device: metadata.dev(),
+            source_inode: metadata.ino(),
+        })
+    }
+
+    fn storage_demand_id(&self, source_identity: ArtifactIdentity) -> String {
+        let base = format!(
+            "private-prepared-import-{source_identity}-{}-{}",
+            self.storage_domain.as_str(),
+            encode_hex(&self.storage_root_identity)
+        );
+        self.storage_operations_rate
+            .as_ref()
+            .map_or(base.clone(), |rate| {
+                format!("{base}-operations-{}", rate.as_str())
+            })
+    }
+}
+
+/// Exact structured source owned by a declared predecessor node for cold import.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PreparedArtifactImportSource {
+    identity: ArtifactIdentity,
+    producer: WorkNodeId,
+    segments: Vec<PreparedArtifactImportSegment>,
+}
+
+impl PreparedArtifactImportSource {
+    /// Bind validated adapter sources to one prepared descriptor and producer.
+    pub fn new(
+        descriptor: &PreparedArtifactDescriptor,
+        producer: WorkNodeId,
+        segments: Vec<PreparedArtifactImportSegment>,
+    ) -> Result<Self, PreparedArtifactError> {
+        validate_import_segments(descriptor, &segments)?;
+        let identity = derive_import_source_identity(descriptor, &segments)?;
+        Ok(Self {
+            identity,
+            producer,
+            segments,
+        })
+    }
+
+    /// Return the source identity retained by planning and receipts.
+    #[must_use]
+    pub const fn identity(&self) -> ArtifactIdentity {
+        self.identity
+    }
+
+    /// Return the node that owns the validated source evidence.
+    #[must_use]
+    pub const fn producer(&self) -> &WorkNodeId {
+        &self.producer
+    }
+
+    /// Return the exact logical source bytes translated by this import.
+    #[must_use]
+    pub fn source_read_bytes(&self) -> u64 {
+        self.segments
+            .iter()
+            .map(|segment| segment.source_bytes)
+            .sum()
+    }
+
+    /// Declare this validated structured source as a predecessor-owned input.
+    #[must_use]
+    pub fn planned_artifact(&self) -> PlannedArtifact {
+        PlannedArtifact::new(
+            self.identity,
+            self.producer.clone(),
+            ArtifactRole::Input,
+            None,
+        )
+    }
+
+    fn source_operations(&self) -> Result<u64, PreparedArtifactError> {
+        self.segments.iter().try_fold(0_u64, |total, segment| {
+            total
+                .checked_add(segment.source_operations)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)
+        })
+    }
+
+    fn storage_demands(&self) -> BTreeMap<String, StorageDomainId> {
+        self.segments
+            .iter()
+            .map(|segment| {
+                (
+                    segment.storage_demand_id(self.identity),
+                    segment.storage_domain.clone(),
+                )
+            })
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PreparedArtifactSourceBinding<'a> {
+    Files(&'a PreparedArtifactLoadSource),
+    Import(&'a PreparedArtifactImportSource),
+}
+
+impl<'a> PreparedArtifactSourceBinding<'a> {
+    const fn identity(self) -> ArtifactIdentity {
+        match self {
+            Self::Files(source) => source.identity,
+            Self::Import(source) => source.identity,
+        }
+    }
+
+    fn producer(self) -> &'a WorkNodeId {
+        match self {
+            Self::Files(source) => &source.producer,
+            Self::Import(source) => &source.producer,
+        }
+    }
+
+    fn planned_artifact(self) -> PlannedArtifact {
+        match self {
+            Self::Files(source) => source.planned_artifact(),
+            Self::Import(source) => source.planned_artifact(),
+        }
+    }
+
+    fn storage_demands(self) -> BTreeMap<String, StorageDomainId> {
+        match self {
+            Self::Files(source) => source.storage_demands(),
+            Self::Import(source) => source.storage_demands(),
+        }
+    }
+
+    fn import_operations(self) -> Result<u64, PreparedArtifactError> {
+        match self {
+            Self::Files(_) => Ok(0),
+            Self::Import(source) => source.source_operations(),
+        }
+    }
+}
+
 /// Plan-selected generator for one immutable prepared artifact.
 ///
 /// The store owns the only bounded output buffer and calls this interface from
@@ -1230,6 +1446,21 @@ pub trait PreparedArtifactGenerator {
         byte_offset: u64,
         output: &mut [u8],
     ) -> Result<(), PreparedArtifactError>;
+}
+
+/// Plan-bound translator for one validated structured cold-load source.
+///
+/// Implementations fill the store-owned bounded output buffer and return the
+/// exact number of logical source-storage operations performed for that call.
+/// The translated source byte count is exactly the output slice length.
+pub trait PreparedArtifactImporter {
+    /// Fill one canonical segment range and report source operations performed.
+    fn fill_segment(
+        &mut self,
+        segment: &PreparedArtifactSegmentDescriptor,
+        byte_offset: u64,
+        output: &mut [u8],
+    ) -> Result<u64, PreparedArtifactError>;
 }
 
 /// Plan-bound streaming consumer for one validated private prepared artifact.
@@ -1282,6 +1513,10 @@ where
 enum PreparedArtifactMaterialization<'a> {
     Generate(&'a mut dyn PreparedArtifactGenerator),
     Load(&'a PreparedArtifactLoadSource),
+    Import {
+        source: &'a PreparedArtifactImportSource,
+        importer: &'a mut dyn PreparedArtifactImporter,
+    },
 }
 
 /// Validated immutable identity of one private prepared artifact.
@@ -1336,6 +1571,7 @@ pub struct PreparedArtifactStore {
     budget: PreparedArtifactBudget,
     scope: CacheScope,
     storage_domain: StorageDomainId,
+    storage_operations_rate: Option<RateResourceId>,
     state: Arc<RootState>,
     #[cfg(test)]
     fail_after_evictions: Option<usize>,
@@ -1579,6 +1815,8 @@ pub enum PreparedArtifactError {
     SourceProducerMismatch,
     /// Cold-load source bytes disagreed with their plan-listed content commitment.
     SourceIdentityMismatch,
+    /// A structured importer disagreed with its plan-listed source I/O.
+    InvalidSourceMeasurement,
     /// A source descriptor was relative, unbounded, non-regular, or cache-owned.
     InvalidSource,
     /// A stream or published entry ended before its exact size.
@@ -1690,8 +1928,11 @@ impl fmt::Display for PreparedArtifactError {
             Self::SourceIdentityMismatch => formatter.write_str(
                 "prepared-artifact cold-load source bytes do not match the planned identity",
             ),
+            Self::InvalidSourceMeasurement => formatter.write_str(
+                "prepared-artifact importer disagrees with its plan-listed source I/O",
+            ),
             Self::InvalidSource => formatter.write_str(
-                "prepared-artifact source must be a bounded absolute regular-file path outside the private cache",
+                "prepared-artifact source must be a bounded absolute validated path outside the private cache",
             ),
             Self::IncompleteArtifact => formatter.write_str("prepared artifact is incomplete"),
             Self::OversizedArtifact => {
@@ -2039,6 +2280,36 @@ fn derive_load_source_identity(
         hasher.update(segment.sha256);
         hash_bytes(&mut hasher, segment.storage_domain.as_str().as_bytes())?;
         hasher.update(segment.storage_root_identity);
+        if let Some(rate) = &segment.storage_operations_rate {
+            hash_bytes(&mut hasher, rate.as_str().as_bytes())?;
+        }
+    }
+    Ok(ArtifactIdentity::from_owner_digest(
+        hasher.finalize().into(),
+    ))
+}
+
+fn derive_import_source_identity(
+    descriptor: &PreparedArtifactDescriptor,
+    segments: &[PreparedArtifactImportSegment],
+) -> Result<ArtifactIdentity, PreparedArtifactError> {
+    let mut hasher = Sha256::new();
+    hasher.update(IMPORT_SOURCE_IDENTITY_DOMAIN);
+    hasher.update(IDENTITY_VERSION.to_le_bytes());
+    hasher.update(descriptor.identity.as_bytes());
+    hash_len(&mut hasher, segments.len())?;
+    for segment in segments {
+        hash_bytes(&mut hasher, segment.name.as_bytes())?;
+        hasher.update(segment.source_identity.as_bytes());
+        hasher.update(segment.source_bytes.to_le_bytes());
+        hasher.update(segment.source_operations.to_le_bytes());
+        hash_bytes(&mut hasher, segment.storage_domain.as_str().as_bytes())?;
+        hasher.update(segment.storage_root_identity);
+        if let Some(rate) = &segment.storage_operations_rate {
+            hash_bytes(&mut hasher, rate.as_str().as_bytes())?;
+        }
+        hasher.update(segment.source_device.to_le_bytes());
+        hasher.update(segment.source_inode.to_le_bytes());
     }
     Ok(ArtifactIdentity::from_owner_digest(
         hasher.finalize().into(),
@@ -2068,6 +2339,21 @@ fn validate_source_segments(
     }
 }
 
+fn validate_import_segments(
+    descriptor: &PreparedArtifactDescriptor,
+    inputs: &[PreparedArtifactImportSegment],
+) -> Result<(), PreparedArtifactError> {
+    if inputs.len() != descriptor.segments.len() {
+        return Err(PreparedArtifactError::SegmentMismatch);
+    }
+    for (segment, input) in descriptor.segments.iter().zip(inputs) {
+        if segment.name != input.name.as_ref() || segment.byte_len()? != input.source_bytes {
+            return Err(PreparedArtifactError::SegmentMismatch);
+        }
+    }
+    Ok(())
+}
+
 fn generate_segment(
     generator: &mut dyn PreparedArtifactGenerator,
     output: &mut dyn Write,
@@ -2093,6 +2379,57 @@ fn generate_segment(
         remaining -= limit as u64;
         byte_offset += limit as u64;
         scalar += (limit / scalar_bytes) as u64;
+    }
+    Ok(segment_hasher.finalize().into())
+}
+
+struct ImportStream<'a> {
+    output: &'a mut dyn Write,
+    payload_hasher: &'a mut Sha256,
+    buffer: &'a mut [u8],
+    evidence: &'a mut ValidationEvidence,
+}
+
+fn import_segment(
+    importer: &mut dyn PreparedArtifactImporter,
+    input: &PreparedArtifactImportSegment,
+    source_identity: ArtifactIdentity,
+    segment: &PreparedArtifactSegmentDescriptor,
+    stream: ImportStream<'_>,
+) -> Result<[u8; 32], PreparedArtifactError> {
+    let ImportStream {
+        output,
+        payload_hasher,
+        buffer,
+        evidence,
+    } = stream;
+    let mut remaining = segment.byte_len()?;
+    let scalar_bytes = segment.precision.scalar_bytes();
+    let mut byte_offset = 0_u64;
+    let mut scalar = 0_u64;
+    let mut source_operations = 0_u64;
+    let source_demand_id = input.storage_demand_id(source_identity);
+    let mut segment_hasher = Sha256::new();
+    while remaining > 0 {
+        let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
+            .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+        limit -= limit % scalar_bytes;
+        let operations = importer.fill_segment(segment, byte_offset, &mut buffer[..limit])?;
+        source_operations = source_operations
+            .checked_add(operations)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        evidence.record_source_bytes(&source_demand_id, limit as u64);
+        evidence.record_source_operations(&source_demand_id, operations);
+        validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
+        write_all_counted(output, &buffer[..limit], evidence, CacheIoClass::Write)?;
+        payload_hasher.update(&buffer[..limit]);
+        segment_hasher.update(&buffer[..limit]);
+        remaining -= limit as u64;
+        byte_offset += limit as u64;
+        scalar += (limit / scalar_bytes) as u64;
+    }
+    if source_operations != input.source_operations {
+        return Err(PreparedArtifactError::InvalidSourceMeasurement);
     }
     Ok(segment_hasher.finalize().into())
 }
@@ -2337,8 +2674,15 @@ impl ValidationEvidence {
         *current = next;
     }
 
-    fn observe_source_inputs(&mut self, source: &PreparedArtifactLoadSource) {
-        self.observe_source_descriptors(&source.segments);
+    fn observe_source_inputs(&mut self, source: PreparedArtifactSourceBinding<'_>) {
+        match source {
+            PreparedArtifactSourceBinding::Files(source) => {
+                self.observe_source_descriptors(&source.segments);
+            }
+            PreparedArtifactSourceBinding::Import(source) => {
+                self.acquire_resident(observed_import_descriptor_bytes(&source.segments));
+            }
+        }
         self.source_reads = source
             .storage_demands()
             .into_keys()
@@ -2392,6 +2736,16 @@ impl ValidationEvidence {
             .counter;
         counter.bytes = counter.bytes.saturating_add(bytes);
         counter.operations = counter.operations.saturating_add(1);
+    }
+
+    fn record_source_bytes(&mut self, demand_id: &str, bytes: u64) {
+        let counter = &mut self
+            .source_reads
+            .iter_mut()
+            .find(|counter| counter.demand_id == demand_id)
+            .expect("source counter initialized from the bound load source")
+            .counter;
+        counter.bytes = counter.bytes.saturating_add(bytes);
     }
 
     fn record_source_operations(&mut self, demand_id: &str, operations: u64) {
@@ -2687,6 +3041,29 @@ fn observed_source_descriptor_bytes(inputs: &[PreparedArtifactSourceSegment]) ->
             .saturating_add(input.name.len())
             .saturating_add(input.source.as_os_str().as_encoded_bytes().len())
             .saturating_add(input.storage_domain.as_str().len())
+            .saturating_add(
+                input
+                    .storage_operations_rate
+                    .as_ref()
+                    .map_or(0, |rate| rate.as_str().len()),
+            )
+            .saturating_add(input.storage_root.as_os_str().as_encoded_bytes().len())
+    }));
+    u64::try_from(bytes).unwrap_or(u64::MAX)
+}
+
+fn observed_import_descriptor_bytes(inputs: &[PreparedArtifactImportSegment]) -> u64 {
+    let bytes = size_of_val(inputs).saturating_add(inputs.iter().fold(0_usize, |total, input| {
+        total
+            .saturating_add(input.name.len())
+            .saturating_add(input.source.as_os_str().as_encoded_bytes().len())
+            .saturating_add(input.storage_domain.as_str().len())
+            .saturating_add(
+                input
+                    .storage_operations_rate
+                    .as_ref()
+                    .map_or(0, |rate| rate.as_str().len()),
+            )
             .saturating_add(input.storage_root.as_os_str().as_encoded_bytes().len())
     }));
     u64::try_from(bytes).unwrap_or(u64::MAX)

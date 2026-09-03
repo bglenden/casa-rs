@@ -12,13 +12,17 @@ mod aw_cache;
 mod casa_product_sink;
 mod continuum_domains;
 mod continuum_request;
+mod prepared_aw_phase;
 
 pub use availability::{
     ImagingCapabilityCatalogEntry, ImagingCapabilityRequirement, ImplementationUnavailable,
     TaskRequirement, UnsupportedRequirement, installed_imaging_capability_catalog,
     validate_installed_implementation,
 };
-pub use aw_cache::{CasaAwCache, CasaAwCacheError, CasaAwCacheInventory, CasaAwCellKey};
+pub use aw_cache::{
+    CasaAwCache, CasaAwCacheError, CasaAwCacheInventory, CasaAwCellImporter, CasaAwPreparedCell,
+    PreparedAwCellProvider,
+};
 pub use casa_imaging_model::{
     HogbomIterationAccounting, ImagingRequestVersion, PolarizationCoordinate, ProductNormalization,
 };
@@ -31,7 +35,7 @@ pub use continuum_request::{
     execute_continuum, resource_policy_for_task_requirements,
 };
 
-use std::{error::Error, fmt, io, sync::Arc};
+use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 
 use casa_imaging_model::{
     CompileProblemError, CompiledProblem, GeometryInput, ImagingRequest,
@@ -45,15 +49,17 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet, WeightingExecutionLimits,
+    MinorCycleProgram, MinorCycleStopReason, PreparedAwProjection, ReconstructionMaskSet,
+    WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
     ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind, FinalVisibilityReplay,
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
-    PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, RunBindings,
-    RunController, RunDirective, SerialProductPublicationExecutor, SerialProductPublicationPlan,
+    PlannerCostModelProfileBootstrap, PlanningBindings, PreparedArtifactRegistration,
+    ResourceAuthority, RunBindings, RunController, RunDirective,
+    SerialProductPublicationExecutor, SerialProductPublicationPlan,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
     SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
@@ -133,6 +139,18 @@ pub struct ApplicationNative<S> {
     pub runtime: ApplicationRuntime,
     /// Product-generation and independently atomic publication configuration.
     pub publication: ApplicationPublication<S>,
+    /// Optional validated AW cache and private prepared-store deployment input.
+    pub aw_preparation: Option<ApplicationAwPreparation>,
+}
+
+/// Deployment-only inputs for the AW prepared-artifact pre-phase.
+#[derive(Clone)]
+pub struct ApplicationAwPreparation {
+    casa_cache: PathBuf,
+    private_root: PathBuf,
+    storage_domain: casa_imaging_runtime::StorageDomain,
+    resident_bytes: usize,
+    conjugate_beams: bool,
 }
 
 /// Product-generation controls, deployment resources, and sole storage sink.
@@ -145,6 +163,8 @@ pub struct ApplicationPublication<S> {
 
 /// Typed native result retained with every ordinary execution receipt.
 pub struct NativeApplicationOutcome {
+    /// Ordered warm-probe, optional cold-import, and consume receipts for AW preparation.
+    pub aw_preparation_receipts: Vec<ExecutionReceipt>,
     /// Initial-major receipt (also the final scientific pass for dirty imaging).
     pub initial_receipt: ExecutionReceipt,
     /// Mandatory post-minor final-major receipt for Högbom imaging.
@@ -346,8 +366,15 @@ where
     let ApplicationNative {
         runtime,
         publication,
+        aw_preparation,
     } = input.native?;
     let algorithm = problem.reconstruction().algorithm().clone();
+    let prepared_aw = aw_preparation
+        .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
+        .transpose()?;
+    let aw_projection = prepared_aw
+        .as_ref()
+        .map(|prepared| prepared.projection.clone());
     let initial_access = input.initial_access;
     let residency = initial_access.certify_residency(problem)?;
     let write_targets =
@@ -357,7 +384,7 @@ where
         matches!(algorithm, ReconstructionAlgorithm::Dirty) && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    let mut policy = execution_policy(&runtime, residency.clone());
+    let mut policy = execution_policy(&runtime, residency.clone(), aw_projection.as_ref());
     if initial_write {
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
@@ -628,7 +655,8 @@ where
                 };
                 minor_outcomes.push(minor_outcome);
                 let final_input = minor.into_final_major_input();
-                let final_policy = execution_policy(&runtime, residency.clone());
+                let final_policy =
+                    execution_policy(&runtime, residency.clone(), aw_projection.as_ref());
                 let ordinal =
                     u32::try_from(cycle).map_err(|_| boxed("major-cycle ordinal exceeds u32"))?;
                 let final_planned = if continue_cleaning {
@@ -745,8 +773,11 @@ where
                 let (_, access) = resolved.into_parts();
                 let output_residency = access.certify_residency(problem)?;
                 let source_state = access.source_state().clone();
-                let output_policy = execution_policy(&runtime, output_residency)
-                    .with_visibility_write(access.selected_visibility_storage_plan(write_targets)?);
+                let output_policy =
+                    execution_policy(&runtime, output_residency, aw_projection.as_ref())
+                        .with_visibility_write(
+                            access.selected_visibility_storage_plan(write_targets)?,
+                        );
                 let output_planned = SpectralCyclePlan::selected_output(
                     problem,
                     &planning_registry,
@@ -834,6 +865,8 @@ where
         runtime,
         publication,
         PriorPhaseOutcome {
+            aw_preparation_receipts: prepared_aw
+                .map_or_else(Vec::new, |prepared| prepared.receipts),
             initial_receipt,
             final_major_receipt,
             minor_cycles,
@@ -892,6 +925,7 @@ fn visibility_write_selection(
 }
 
 struct PriorPhaseOutcome {
+    aw_preparation_receipts: Vec<ExecutionReceipt>,
     initial_receipt: ExecutionReceipt,
     final_major_receipt: Option<ExecutionReceipt>,
     minor_cycles: Vec<NativeMinorCycleOutcome>,
@@ -906,8 +940,9 @@ struct PriorPhaseOutcome {
 fn execution_policy(
     runtime: &ApplicationRuntime,
     residency: casa_ms::SelectedObservationResidencyCertificate,
+    aw_projection: Option<&PreparedAwProjection>,
 ) -> SpectralCycleExecutionPolicy {
-    SpectralCycleExecutionPolicy::new(
+    let policy = SpectralCycleExecutionPolicy::new(
         runtime.implementation.clone(),
         runtime.weighting_limits,
         residency,
@@ -920,7 +955,11 @@ fn execution_policy(
         runtime.authority.clone(),
         runtime.resource_policy.clone(),
     )
-    .with_gridded_normal_storage(runtime.gridded_normal_storage.clone())
+    .with_gridded_normal_storage(runtime.gridded_normal_storage.clone());
+    match aw_projection {
+        Some(projection) => policy.with_aw_projection(projection.clone()),
+        None => policy,
+    }
 }
 
 enum ApplicationRunController {
@@ -1129,6 +1168,7 @@ where
         .ok_or_else(|| boxed("publication execution omitted its product completion"))?;
     let (planned_products, scientific, products) = completion.into_parts();
     Ok(NativeApplicationOutcome {
+        aw_preparation_receipts: prior.aw_preparation_receipts,
         initial_receipt: prior.initial_receipt,
         final_major_receipt: prior.final_major_receipt,
         minor_cycles: prior.minor_cycles,
@@ -1149,6 +1189,7 @@ struct PlanningRegistry {
     implementation_id: WorkImplementationId,
     metadata: ImplementationContractMetadata,
     implementation: PlanningImplementation,
+    prepared_artifact: PreparedArtifactRegistration,
 }
 
 impl PlanningRegistry {
@@ -1160,6 +1201,7 @@ impl PlanningRegistry {
         Self {
             id,
             implementation: PlanningImplementation(implementation_id.clone()),
+            prepared_artifact: prepared_aw_registration(implementation_id.clone()),
             implementation_id,
             metadata: ImplementationContractMetadata::new(
                 problem.problem_id(),
@@ -1187,6 +1229,23 @@ impl ImplementationRegistry for PlanningRegistry {
     ) -> Option<ImplementationContractMetadata> {
         (id == &self.implementation_id).then(|| self.metadata.clone())
     }
+
+    fn prepared_artifact_registration(
+        &self,
+        implementation: &WorkImplementationId,
+    ) -> Option<&PreparedArtifactRegistration> {
+        (implementation == &self.implementation_id).then_some(&self.prepared_artifact)
+    }
+}
+
+fn prepared_aw_registration(implementation: WorkImplementationId) -> PreparedArtifactRegistration {
+    PreparedArtifactRegistration::new(
+        "casa-rs-imaging-v1",
+        "native-awproject",
+        env!("CARGO_PKG_VERSION"),
+        implementation,
+    )
+    .expect("static AW preparation registration is valid")
 }
 
 struct PlanningImplementation(WorkImplementationId);

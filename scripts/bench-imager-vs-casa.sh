@@ -41,6 +41,8 @@ profile_repeats="${BENCH_PROFILE_REPEATS:-${IMAGER_BENCH_PROFILE_REPEATS:-$repea
 profile_warmups="${BENCH_PROFILE_WARMUPS:-${IMAGER_BENCH_PROFILE_WARMUPS:-0}}"
 field="${IMAGER_BENCH_FIELD:-0}"
 stokes="${IMAGER_BENCH_STOKES:-I}"
+uvrange="${IMAGER_BENCH_UVRANGE:-}"
+intent="${IMAGER_BENCH_INTENT:-}"
 usepointing="${IMAGER_BENCH_USEPOINTING:-}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
@@ -84,6 +86,7 @@ perchanweightdensity="${IMAGER_BENCH_PERCHANWEIGHTDENSITY:-}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
 usemask="${IMAGER_BENCH_USEMASK:-user}"
 mask_box="${IMAGER_BENCH_MASK_BOX:-}"
+mask_image="${IMAGER_BENCH_MASK_IMAGE:-}"
 savemodel="${IMAGER_BENCH_SAVEMODEL:-none}"
 fitspw="${IMAGER_BENCH_FITSPW:-}"
 fitorder="${IMAGER_BENCH_FITORDER:-0}"
@@ -134,6 +137,20 @@ skip_rust="${IMAGER_BENCH_SKIP_RUST:-0}"
 skip_profile="${IMAGER_BENCH_SKIP_PROFILE:-0}"
 reuse_rust_prefix="${IMAGER_BENCH_REUSE_RUST_PREFIX:-}"
 reuse_casa_prefix="${IMAGER_BENCH_REUSE_CASA_PREFIX:-}"
+rust_output_prefix="${IMAGER_BENCH_RUST_OUTPUT_PREFIX:-}"
+prepared_aw_casa_cache="${IMAGER_BENCH_PREPARED_AW_CASA_CACHE:-}"
+aw_cf_resident_mb="${IMAGER_BENCH_AW_CF_RESIDENT_MB:-384}"
+aterm="${IMAGER_BENCH_ATERM:-1}"
+psterm="${IMAGER_BENCH_PSTERM:-0}"
+wbawp="${IMAGER_BENCH_WBAWP:-1}"
+conjbeams="${IMAGER_BENCH_CONJBEAMS:-1}"
+computepastep="${IMAGER_BENCH_COMPUTEPASTEP:-360.0}"
+rotatepastep="${IMAGER_BENCH_ROTATEPASTEP:-360.0}"
+pointingoffsetsigdev="${IMAGER_BENCH_POINTINGOFFSETSIGDEV:-0.0}"
+normtype="${IMAGER_BENCH_NORMTYPE:-flatnoise}"
+mosweight="${IMAGER_BENCH_MOSWEIGHT:-0}"
+psfphasecenter="${IMAGER_BENCH_PSFPHASECENTER:-}"
+vptable="${IMAGER_BENCH_VPTABLE:-}"
 casa_result_json="${IMAGER_BENCH_CASA_RESULT_JSON:-}"
 casa_log_file="${IMAGER_BENCH_CASA_LOG_FILE:-}"
 
@@ -475,7 +492,11 @@ if [[ "$ms_staging" == "copy" && "$skip_casa" != "1" && "$skip_casa" != "true" &
   casa_ms_path="$tmpdir/casa-benchmark.ms"
   cp -R "$source_ms_path" "$casa_ms_path"
 fi
-if [[ -n "$keep_output_root" ]]; then
+if [[ -n "$rust_output_prefix" ]]; then
+  mkdir -p "$(dirname "$rust_output_prefix")"
+  rust_keep_prefix="$rust_output_prefix"
+  casa_keep_prefix=""
+elif [[ -n "$keep_output_root" ]]; then
   mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
   rust_keep_prefix="$keep_output_root/rust/rust"
   casa_keep_prefix="$keep_output_root/casa/casa"
@@ -514,6 +535,30 @@ rust_pointing_flags=()
 if [[ "$usepointing_enabled" == "1" ]]; then
   rust_pointing_flags+=(--usepointing)
 fi
+rust_selection_flags=()
+if [[ -n "$uvrange" ]]; then
+  rust_selection_flags+=(--uvrange "$uvrange")
+fi
+if [[ -n "$intent" ]]; then
+  rust_selection_flags+=(--intent "$intent")
+fi
+rust_aw_flags=()
+if [[ -n "$prepared_aw_casa_cache" ]]; then
+  rust_aw_flags+=(--cfcache "$prepared_aw_casa_cache" --cf-resident-mb "$aw_cf_resident_mb")
+  rust_aw_flags+=(--computepastep "$computepastep" --rotatepastep "$rotatepastep")
+  rust_aw_flags+=(--pointingoffsetsigdev "$pointingoffsetsigdev" --normtype "$normtype")
+  if [[ -n "$psfphasecenter" ]]; then
+    rust_aw_flags+=(--psfphasecenter "$psfphasecenter")
+  fi
+  if [[ -n "$vptable" ]]; then
+    rust_aw_flags+=(--vptable "$vptable")
+  fi
+  case "$aterm" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--aterm);; *) rust_aw_flags+=(--no-aterm);; esac
+  case "$psterm" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--psterm);; *) rust_aw_flags+=(--no-psterm);; esac
+  case "$wbawp" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--wbawp);; *) rust_aw_flags+=(--no-wbawp);; esac
+  case "$conjbeams" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--conjbeams);; *) rust_aw_flags+=(--no-conjbeams);; esac
+  case "$mosweight" in 1|true|TRUE|yes|YES|on|ON) rust_aw_flags+=(--mosweight);; *) rust_aw_flags+=(--no-mosweight);; esac
+fi
 rust_continuum_flags=()
 if [[ -n "$fitspw" ]]; then
   rust_continuum_flags+=(--fitspw "$fitspw" --fitorder "$fitorder")
@@ -545,8 +590,15 @@ rust_mask_flags=(--usemask "$usemask")
 if [[ -n "$mask_box" ]]; then
   rust_mask_flags+=(--mask-box "$mask_box")
 fi
+if [[ -n "$mask_image" ]]; then
+  rust_mask_flags+=(--mask-image "$mask_image")
+fi
 if [[ -n "$standard_mfs_metal_minor_cycle_chunk" ]]; then
   rust_thread_flags+=(--standard-mfs-metal-minor-cycle-chunk "$standard_mfs_metal_minor_cycle_chunk")
+fi
+rust_restoring_flags=()
+if [[ -n "$restoring_beam" ]]; then
+  rust_restoring_flags+=(--restoringbeam "$restoring_beam")
 fi
 
 echo "Rust release CLI timings (seconds):"
@@ -579,6 +631,8 @@ for run in $(seq 1 "$repeats"); do
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
+      --stokes "$stokes" \
+      ${rust_selection_flags[@]+"${rust_selection_flags[@]}"} \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -592,6 +646,7 @@ for run in $(seq 1 "$repeats"); do
       --robust "$robust" \
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
+      ${rust_aw_flags[@]+"${rust_aw_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --savemodel "$savemodel" \
       ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
@@ -605,6 +660,7 @@ for run in $(seq 1 "$repeats"); do
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
       --scales "$scales" \
+      --smallscalebias "$small_scale_bias" \
       --niter "$niter" \
       --nmajor "$nmajor" \
       --gain "$gain" \
@@ -612,6 +668,7 @@ for run in $(seq 1 "$repeats"); do
       --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
       ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
+      ${rust_restoring_flags[@]+"${rust_restoring_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
       --minpsffraction "$min_psf_fraction" \
@@ -631,6 +688,8 @@ for run in $(seq 1 "$repeats"); do
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
       --field "$field" \
+      --stokes "$stokes" \
+      ${rust_selection_flags[@]+"${rust_selection_flags[@]}"} \
       --spw "$spw" \
       --channel-start "$channel_start" \
       --channel-count "$channel_count" \
@@ -644,6 +703,7 @@ for run in $(seq 1 "$repeats"); do
       --robust "$robust" \
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
       ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
+      ${rust_aw_flags[@]+"${rust_aw_flags[@]}"} \
       --deconvolver "$deconvolver" \
       --savemodel "$savemodel" \
       ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
@@ -656,6 +716,7 @@ for run in $(seq 1 "$repeats"); do
       ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
+      --smallscalebias "$small_scale_bias" \
       --niter "$niter" \
       --nmajor "$nmajor" \
       --gain "$gain" \
@@ -663,6 +724,7 @@ for run in $(seq 1 "$repeats"); do
       --nsigma "$nsigma" \
       --psfcutoff "$psfcutoff" \
       ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
+      ${rust_restoring_flags[@]+"${rust_restoring_flags[@]}"} \
       --minor-cycle-length "$minor_cycle_length" \
       --cyclefactor "$cyclefactor" \
       --minpsffraction "$min_psf_fraction" \
