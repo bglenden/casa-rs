@@ -27,7 +27,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "imager"
 kind = "task"
-contract = 1
+contract = 15
 
 [parameters]
 vis = "data/target.ms"
@@ -52,6 +52,13 @@ expressions, and executable selection are not part of the format. Unknown,
 duplicate, inactive, or wrong-surface parameters are errors with source
 locations where possible. A compound value is replaced as one value; profiles
 are not recursive merge patches.
+
+The imager profile contract is current-only. Its `contract` must equal the
+current imager surface contract listed in the generated parameter reference,
+and `[parameters]` must use canonical names. Stale contracts and historical
+aliases are rejected rather than migrated or silently interpreted. Other
+surfaces retain older profiles only when their canonical definition publishes
+an explicit ordered migration chain.
 
 Relative dataset and product paths resolve against the explicit workspace, GUI
 project root, or process current directory. They do not resolve relative to the

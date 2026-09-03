@@ -1280,7 +1280,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.contractVersion, bundle.surface.contractVersion)
         XCTAssertEqual(snapshot.states["gridder"]?.value, .string(value: "awproject"))
         XCTAssertFalse(snapshot.diagnostics.contains { $0.level == "error" }, "\(snapshot.diagnostics)")
-        XCTAssertTrue(snapshot.diagnostics.contains { $0.code == "migrated" })
+        XCTAssertTrue(snapshot.diagnostics.isEmpty)
         let wideFieldNames = ["cfcache", "cf_resident_mb", "aterm", "psterm", "wbawp", "conjbeams"]
         for name in wideFieldNames + ["usepointing", "normtype"] {
             XCTAssertTrue(try XCTUnwrap(snapshot.states[name]).active, "\(name) must activate for AWProject")
@@ -1327,10 +1327,9 @@ final class WorkbenchStoreTests: XCTestCase {
         let invocation = try client.providerInvocation(surfaceID: "imager", values: activeValues)
         XCTAssertEqual(invocation.args, ["--managed-output", "true", "--json-run", "-"])
         XCTAssertEqual(invocation.protocolName, "casa_imager_task")
-        XCTAssertEqual(invocation.protocolVersion, 6)
+        XCTAssertEqual(invocation.protocolVersion, 7)
         let unsupported = Set(invocation.unsupportedReasons.map(\.id))
-        XCTAssertTrue(unsupported.contains("task.aw_projection"))
-        XCTAssertTrue(unsupported.contains("task.w_projection_planes"))
+        XCTAssertEqual(unsupported, Set(["task.aw_projection", "task.memory_target"]))
 
         let stdin = try XCTUnwrap(invocation.stdin)
         let envelope = try XCTUnwrap(

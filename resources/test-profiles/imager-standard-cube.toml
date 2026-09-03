@@ -1,0 +1,27 @@
+[casars]
+format = 1
+surface = "imager"
+kind = "task"
+contract = 15
+
+[parameters]
+vis = ["representative-cube.ms"]
+imagename = "products/representative-cube"
+imsize = [768, 768]
+cell = ["0.4arcsec", "0.4arcsec"]
+field = "1"
+spw = "5:10~33"
+channel_start = 10
+channel_count = 24
+stokes = "XX"
+specmode = "cube"
+start = "1.1GHz"
+width = 1
+outframe = "BARY"
+veltype = "OPTICAL"
+interpolation = "nearest"
+restfreq = "1.42GHz"
+restoringbeam = "common"
+niter = 200
+weighting = "uniform"
+parallel = false

@@ -2132,14 +2132,9 @@ fn detects_cycle(
 }
 
 fn validate_migrations(surface: &SurfaceDefinition, errors: &mut Vec<ContractValidationError>) {
-    if surface.contract_version() > 1 && surface.migrations().is_empty() {
-        errors.push(
-            ContractValidationError::new(
-                "missing_migrations",
-                "surface contracts newer than 1 require a complete migration chain from contract 1",
-            )
-            .at(surface.id(), None),
-        );
+    // An empty migration set is an explicit current-only contract: readers
+    // accept exactly `contract_version` and retain no compatibility path.
+    if surface.migrations().is_empty() {
         return;
     }
     let mut expected = 1;
@@ -3025,7 +3020,7 @@ mod tests {
     }
 
     #[test]
-    fn contract_bumps_require_a_complete_migration_chain_from_v1() {
+    fn empty_migrations_declare_a_current_only_surface() {
         let concept = concept("example.name", "name", ParameterType::String);
         let binding = binding(
             &concept,
@@ -3038,12 +3033,7 @@ mod tests {
             unreachable!()
         };
         definition.contract_version = 2;
-        let errors = bundle.validate().unwrap_err();
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.code == "missing_migrations")
-        );
+        bundle.validate().unwrap();
     }
 
     #[test]

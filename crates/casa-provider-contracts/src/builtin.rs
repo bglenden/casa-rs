@@ -355,7 +355,7 @@ mod tests {
     fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 14);
+        assert_eq!(surface.contract_version(), 15);
         assert_eq!(surface.bindings().len(), 94);
         for binding in surface.bindings() {
             let concept = catalog
@@ -505,7 +505,18 @@ mod tests {
             .find(|binding| binding.name == "stokes")
             .unwrap();
         assert_eq!(stokes.concept.id.as_str(), "image.selection.stokes");
-        assert_eq!(stokes.aliases, ["polarization"]);
+        assert!(stokes.aliases.is_empty());
+        assert!(
+            surface
+                .bindings()
+                .iter()
+                .all(|binding| binding.aliases.is_empty()),
+            "current imager profiles expose canonical names only"
+        );
+        assert!(
+            surface.migrations().is_empty(),
+            "current imager profiles retain no migration reader"
+        );
 
         for name in [
             "imaging_memory_target_mb",
@@ -552,15 +563,6 @@ mod tests {
         assert!(memory_policy_note.contains("oversubscribe"));
         assert!(!memory_policy_note.contains("stage-aware"));
         assert!(!memory_policy_note.contains("hybrid"));
-        let migration = surface
-            .migrations()
-            .iter()
-            .find(|migration| migration.from_contract == 6)
-            .expect("imager contract 6 to 7 migration");
-        assert_eq!(
-            migration.changed_defaults,
-            vec!["imaging_memory_pressure_policy".to_string()]
-        );
     }
 
     #[test]
