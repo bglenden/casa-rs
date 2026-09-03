@@ -64,7 +64,7 @@ User-authored prose remains ordinary Markdown.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 3
+contract = 15
 
 [parameters]
 vis = "data/twhya.ms"

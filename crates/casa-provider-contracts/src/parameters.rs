@@ -2135,6 +2135,17 @@ fn validate_migrations(surface: &SurfaceDefinition, errors: &mut Vec<ContractVal
     // An empty migration set is an explicit current-only contract: readers
     // accept exactly `contract_version` and retain no compatibility path.
     if surface.migrations().is_empty() {
+        for binding in surface.bindings() {
+            if !binding.aliases.is_empty() {
+                errors.push(
+                    ContractValidationError::new(
+                        "current_only_alias",
+                        "current-only surfaces cannot retain compatibility aliases",
+                    )
+                    .at(surface.id(), Some(&binding.name)),
+                );
+            }
+        }
         return;
     }
     let mut expected = 1;
@@ -3022,18 +3033,31 @@ mod tests {
     #[test]
     fn empty_migrations_declare_a_current_only_surface() {
         let concept = concept("example.name", "name", ParameterType::String);
-        let binding = binding(
+        let mut binding = binding(
             &concept,
             DefaultSpec::Literal {
                 value: "default".into(),
             },
         );
-        let mut bundle = bundle(concept, binding);
-        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
+        let mut current_only_bundle = bundle(concept.clone(), binding.clone());
+        let SurfaceDefinition::Task(definition) = &mut current_only_bundle.surface else {
             unreachable!()
         };
         definition.contract_version = 2;
-        bundle.validate().unwrap();
+        current_only_bundle.validate().unwrap();
+
+        binding.aliases.push("legacy_name".to_string());
+        let mut aliased_bundle = bundle(concept, binding);
+        let SurfaceDefinition::Task(definition) = &mut aliased_bundle.surface else {
+            unreachable!()
+        };
+        definition.contract_version = 2;
+        let errors = aliased_bundle.validate().unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.code == "current_only_alias")
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ Open the parameter block below to load the sparse tutorial overrides directly in
 format = 1
 surface = "imager"
 kind = "task"
-contract = 1
+contract = 15
 
 [parameters]
 vis = "data/twhya_calibrated.ms"

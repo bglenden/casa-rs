@@ -45,11 +45,23 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
             .all(|binding| binding.aliases.is_empty())
     );
 
-    for (name, source) in [
-        ("vlass-single", VLASS_SINGLE),
-        ("vlass-all", VLASS_ALL),
-        ("standard-continuum", CONTINUUM),
-        ("standard-cube", CUBE),
+    for (name, source, measurement_set) in [
+        (
+            "vlass-single",
+            VLASS_SINGLE,
+            "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
+        ),
+        (
+            "vlass-all",
+            VLASS_ALL,
+            "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
+        ),
+        (
+            "standard-continuum",
+            CONTINUUM,
+            "representative-continuum.ms",
+        ),
+        ("standard-cube", CUBE, "representative-cube.ms"),
     ] {
         let parsed = parse_profile(source)?;
         assert_eq!(
@@ -88,17 +100,7 @@ fn current_sparse_profiles_round_trip_through_one_canonical_request() -> Result<
         }
 
         let request = request_from_profile(name, source)?;
-        assert_eq!(
-            request.measurement_set,
-            PathBuf::from(match name {
-                "vlass-single" | "vlass-all" => {
-                    "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms"
-                }
-                "standard-continuum" => "representative-continuum.ms",
-                "standard-cube" => "representative-cube.ms",
-                _ => unreachable!(),
-            })
-        );
+        assert_eq!(request.measurement_set, PathBuf::from(measurement_set));
         match name {
             "vlass-single" => {
                 assert_eq!(request.field_ids.as_deref(), Some(&[1525][..]));
