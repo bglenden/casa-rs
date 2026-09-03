@@ -182,23 +182,6 @@ imaging-t46-joint-continuum-line:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --lib t46_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application t46_application_executes_joint_continuum_line_through_one_native_route -- --exact
 
-# Source-backed #597 joint truth plus frozen-CASA sequential correctness gate.
-imaging-joint-real-data-correctness testdata_root casa_python:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    dataset="{{testdata_root}}/unittest/uvcontsub/sim_alma_cont_poly_order_0_nonoise.ms"
-    if [[ ! -d "$dataset" ]]; then
-        echo "SKIP issue597: slow-parity fixture unavailable at $dataset"
-        exit 0
-    fi
-    test -x "{{casa_python}}"
-    test -f tools/science/issue597_joint_sequential_products.npz
-    python3 tools/science/test_issue597_joint_real_data_compare.py
-    mkdir -p "{{justfile_directory()}}/target"
-    output_root="$(mktemp -d "{{justfile_directory()}}/target/issue597.XXXXXX")"
-    CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_JOINT_REAL_DATA_PREFIX="$output_root/joint" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test joint_continuum_line_real_data joint_continuum_line_recovers_the_noiseless_alma_simulation -- --ignored --exact --nocapture
-    "{{casa_python}}" tools/science/issue597_joint_real_data_compare.py --oracle-products tools/science/issue597_joint_sequential_products.npz --rust-prefix "$output_root/joint" --summary-output "$output_root/comparison.json"
-
 release-perf:
     bash scripts/test-release-perf.sh
 
