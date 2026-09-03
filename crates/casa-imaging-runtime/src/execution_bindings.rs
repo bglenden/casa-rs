@@ -1013,6 +1013,11 @@ pub enum ExecutionEvidenceError {
         /// Exact node.
         node: WorkNodeId,
     },
+    /// A completed batch-controlled consumer omitted its batch observation.
+    MissingBatchMeasurement {
+        /// Exact node.
+        node: WorkNodeId,
+    },
     /// The adapter's concrete batch observation contradicted the selected knobs.
     InvalidBatchMeasurement {
         /// Exact node.
@@ -1079,6 +1084,7 @@ impl ExecutionEvidenceError {
             | Self::UnplannedIo { node, .. }
             | Self::MissingIo { node, .. }
             | Self::DuplicateBatchMeasurement { node }
+            | Self::MissingBatchMeasurement { node }
             | Self::InvalidBatchMeasurement { node, .. }
             | Self::DuplicateArtifact { node, .. }
             | Self::UnplannedArtifact { node, .. }
@@ -1147,6 +1153,11 @@ impl fmt::Display for ExecutionEvidenceError {
             Self::DuplicateBatchMeasurement { node } => write!(
                 formatter,
                 "node {} repeated consuming-batch measurement",
+                node.as_str()
+            ),
+            Self::MissingBatchMeasurement { node } => write!(
+                formatter,
+                "node {} omitted its consuming-batch measurement",
                 node.as_str()
             ),
             Self::InvalidBatchMeasurement {
@@ -3892,14 +3903,23 @@ fn validate_measurements(
         }
     }
 
-    validate_batch_measurements(node, work.knobs().batch_size, measurements)?;
-
     let planned_artifacts = plan
         .artifacts
         .iter()
         .filter(|artifact| artifact.node() == node)
         .map(|artifact| (artifact.identity(), artifact))
         .collect::<BTreeMap<_, _>>();
+    let requires_batch = predicted_io.contains_key(&IoBufferKind::SpillRead)
+        && planned_artifacts
+            .values()
+            .any(|artifact| artifact.role() == ArtifactRole::Input);
+    validate_batch_measurements(
+        node,
+        work.knobs().batch_size,
+        requires_batch,
+        requires_batch && require_complete,
+        measurements,
+    )?;
     let artifact_error = match validate_artifact_measurements(
         node,
         work.node().kind,
@@ -3932,16 +3952,23 @@ fn validate_measurements(
 fn validate_batch_measurements(
     node: &WorkNodeId,
     selected: u64,
+    allowed: bool,
+    required: bool,
     measurements: &WorkMeasurements,
 ) -> Result<(), ExecutionEvidenceError> {
     let mut batch_measurements = measurements.batch_measurements().iter().copied();
     let Some(measurement) = batch_measurements.next() else {
-        return Ok(());
+        return if required {
+            Err(ExecutionEvidenceError::MissingBatchMeasurement { node: node.clone() })
+        } else {
+            Ok(())
+        };
     };
     if batch_measurements.next().is_some() {
         return Err(ExecutionEvidenceError::DuplicateBatchMeasurement { node: node.clone() });
     }
-    if measurement.maximum() == 0
+    if !allowed
+        || measurement.maximum() == 0
         || measurement.peak() > measurement.maximum()
         || measurement.maximum() != selected
     {
@@ -5709,15 +5736,25 @@ mod batch_measurement_tests {
         ] {
             let measurements = WorkMeasurements::default().with_batch(measurement);
             assert!(matches!(
-                validate_batch_measurements(&node, 2, &measurements),
+                validate_batch_measurements(&node, 2, true, true, &measurements),
                 Err(ExecutionEvidenceError::InvalidBatchMeasurement { .. })
             ));
         }
 
         let measurements = WorkMeasurements::default().with_batch(BatchMeasurement::new(2, 0));
-        assert_eq!(validate_batch_measurements(&node, 2, &measurements), Ok(()));
+        assert_eq!(
+            validate_batch_measurements(&node, 2, true, true, &measurements),
+            Ok(())
+        );
         let measurements = WorkMeasurements::default().with_batch(BatchMeasurement::new(2, 2));
-        assert_eq!(validate_batch_measurements(&node, 2, &measurements), Ok(()));
+        assert_eq!(
+            validate_batch_measurements(&node, 2, true, true, &measurements),
+            Ok(())
+        );
+        assert_eq!(
+            validate_batch_measurements(&node, 2, true, true, &WorkMeasurements::default()),
+            Err(ExecutionEvidenceError::MissingBatchMeasurement { node })
+        );
     }
 
     #[test]
@@ -5727,7 +5764,7 @@ mod batch_measurement_tests {
             .with_batch(BatchMeasurement::new(2, 1))
             .with_batch(BatchMeasurement::new(2, 2));
         assert_eq!(
-            validate_batch_measurements(&node, 2, &measurements),
+            validate_batch_measurements(&node, 2, true, true, &measurements),
             Err(ExecutionEvidenceError::DuplicateBatchMeasurement { node })
         );
     }

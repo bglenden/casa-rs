@@ -4736,6 +4736,7 @@ fn validate_plan_projection(
     revision: u64,
 ) -> Result<(), ReceiptError> {
     require_integrity(is_digest(&plan.product_graph_identity))?;
+    let (selected_knobs, _) = plan.applied_execution_projection()?;
     let publication_members = &product_graph.publication_member_ordinals;
     let node_ids = plan
         .nodes
@@ -4835,6 +4836,25 @@ fn validate_plan_projection(
 
     let mut used_allocations = BTreeSet::new();
     for node in &plan.nodes {
+        let requires_batch = node
+            .claims
+            .iter()
+            .any(|claim| claim.resource == "io_buffer:spill_read")
+            && plan
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.node_id == node.node_id && artifact.role == "input");
+        let batch_is_valid = match (&node.actual_batch, node.status) {
+            (Some(batch), ReceiptStatus::Completed | ReceiptStatus::Failed) => {
+                requires_batch
+                    && batch.maximum > 0
+                    && batch.peak <= batch.maximum
+                    && batch.maximum == selected_knobs.batch_size
+            }
+            (None, ReceiptStatus::Completed) => !requires_batch,
+            (None, _) => true,
+            (Some(_), _) => false,
+        };
         let node_allocations = node
             .allocation_uses
             .iter()
@@ -4873,14 +4893,7 @@ fn validate_plan_projection(
                     io_buffer_is_valid(&io.kind)
                         && io.actual_bytes.is_some() == io.actual_operations.is_some()
                 })
-                && node.actual_batch.as_ref().is_none_or(|batch| {
-                    batch.maximum > 0
-                        && batch.peak <= batch.maximum
-                        && matches!(
-                            node.status,
-                            ReceiptStatus::Completed | ReceiptStatus::Failed
-                        )
-                }),
+                && batch_is_valid,
         )?;
     }
     require_integrity(used_allocations == allocation_ids)?;
