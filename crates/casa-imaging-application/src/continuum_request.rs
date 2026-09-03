@@ -51,7 +51,7 @@ use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
     SelectedObservationResolutionRequest, SelectedObservationRow, SelectedObservationRowSelection,
     SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
-    SelectedObservationSpectralWindow, VisibilityDataColumn, parse_spw_selector,
+    SelectedObservationSpectralWindow, SubtableId, VisibilityDataColumn, parse_spw_selector,
     resolve_channel_selector_selection,
 };
 use casa_types::ArrayValue;
@@ -585,7 +585,9 @@ fn prepare_spectral_axis(
             }
             let output_frequency_reference = setup.output_freq_ref;
             let output_frame = imaging_frequency_frame(output_frequency_reference)?;
-            let (rest_frequency, doppler) = match axis.rest_frequency_hz {
+            let (resolved_rest_frequency_hz, image_rest_frequency_hz) =
+                cube_rest_frequency_hz(axis.rest_frequency_hz, source_rest_frequency_hz, window);
+            let (rest_frequency, doppler) = match resolved_rest_frequency_hz {
                 None => (
                     RestFrequency::NotApplicable,
                     DopplerConvention::NotApplicable,
@@ -629,9 +631,7 @@ fn prepare_spectral_axis(
                     increment_hz,
                 },
                 rest_frequency,
-                image_rest_frequency_hz: axis
-                    .rest_frequency_hz
-                    .unwrap_or_else(|| spectral_window_midpoint_hz(window)),
+                image_rest_frequency_hz,
                 doppler,
                 sampling,
                 basis: ReconstructionBasis::ChannelLocal {
@@ -1333,7 +1333,7 @@ fn prepare(
         moving_rest_frame.as_ref(),
         if matches!(
             request.spectral_mode,
-            SpectralImagingMode::CubeSource { .. }
+            SpectralImagingMode::Cube { .. } | SpectralImagingMode::CubeSource { .. }
         ) {
             source_rest_frequency(&ms, field_id, &spectral_windows)?
         } else {
@@ -1688,6 +1688,9 @@ fn source_rest_frequency(
     if source_id < 0 {
         return Ok(None);
     }
+    if measurement_set.subtable(SubtableId::Source).is_none() {
+        return Ok(None);
+    }
     let source = measurement_set.source()?;
     let selected = spectral_windows
         .iter()
@@ -1717,6 +1720,18 @@ fn source_rest_frequency(
         resolved = Some(value);
     }
     Ok(resolved)
+}
+
+fn cube_rest_frequency_hz(
+    explicit_hz: Option<f64>,
+    source_hz: Option<f64>,
+    spectral_window: &SourceSpectralWindow,
+) -> (Option<f64>, f64) {
+    let resolved = explicit_hz.or(source_hz);
+    (
+        resolved,
+        resolved.unwrap_or_else(|| spectral_window_midpoint_hz(spectral_window)),
+    )
 }
 
 fn attached_field_ephemerides(
@@ -3066,10 +3081,10 @@ mod tests {
 
     use super::{
         ContinuumAlgorithm, SourceSpectralWindow, TaskRequirement,
-        analytic_primary_beam_model_for_telescopes, canonicalize_polarizations, image_coordinates,
-        image_reference_pixel, instrument_model_supports_diameter, model_plane_samples,
-        parse_phase_center_direction, planned_minor_cycle_bytes, requested_products,
-        resource_policy_for_task_requirements, spectral_window_midpoint_hz,
+        analytic_primary_beam_model_for_telescopes, canonicalize_polarizations,
+        cube_rest_frequency_hz, image_coordinates, image_reference_pixel,
+        instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
+        planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
     };
 
     #[test]
@@ -3079,7 +3094,7 @@ mod tests {
     }
 
     #[test]
-    fn cube_default_image_rest_frequency_uses_full_spw_midpoint() {
+    fn cube_rest_frequency_follows_casa_precedence() {
         let window = SourceSpectralWindow {
             spw_id: 0,
             frequency_reference: FrequencyRef::LSRK,
@@ -3087,7 +3102,18 @@ mod tests {
             channel_widths_hz: vec![1.0; 3],
         };
 
-        assert_eq!(spectral_window_midpoint_hz(&window), 76.704e9);
+        assert_eq!(
+            cube_rest_frequency_hz(Some(115.0e9), Some(110.0e9), &window),
+            (Some(115.0e9), 115.0e9)
+        );
+        assert_eq!(
+            cube_rest_frequency_hz(None, Some(110.0e9), &window),
+            (Some(110.0e9), 110.0e9)
+        );
+        assert_eq!(
+            cube_rest_frequency_hz(None, None, &window),
+            (None, 76.704e9)
+        );
     }
 
     #[test]
