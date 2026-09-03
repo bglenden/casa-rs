@@ -353,31 +353,56 @@ fn with_current_payload_checksum(mut document: String) -> String {
 
 #[derive(Clone, Copy, Debug)]
 enum BatchReceiptTamper {
+    ValidPeakZero,
     Remove,
     MismatchMaximum,
 }
 
 fn with_batch_receipt_tamper(document: &str, node_id: &str, tamper: BatchReceiptTamper) -> String {
-    let mut value: serde_json::Value = serde_json::from_str(document).expect("receipt JSON");
-    let node = value["receipt"]["plan"]["nodes"]
-        .as_array_mut()
-        .expect("typed work-node projections")
-        .iter_mut()
-        .find(|node| node["node_id"] == node_id)
+    let mut document = document.to_owned();
+    let node_marker = format!("\"node_id\": \"{node_id}\"");
+    let node_start = document
+        .find(&node_marker)
         .expect("canonical batch-controlled replay projection");
-    let batch = node
-        .get_mut("actual_batch")
+    let batch_marker = "\"actual_batch\": ";
+    let batch_start = document[node_start..]
+        .find(batch_marker)
+        .map(|offset| node_start + offset + batch_marker.len())
         .expect("serialized batch measurement");
+    assert_eq!(document.as_bytes().get(batch_start), Some(&b'{'));
+    let batch_end = document[batch_start..]
+        .find('}')
+        .map(|offset| batch_start + offset + 1)
+        .expect("complete batch measurement");
     match tamper {
-        BatchReceiptTamper::Remove => *batch = serde_json::Value::Null,
-        BatchReceiptTamper::MismatchMaximum => {
-            let maximum = batch["maximum"].as_u64().expect("numeric batch maximum");
-            batch["maximum"] = serde_json::Value::from(maximum + 1);
+        BatchReceiptTamper::Remove => document.replace_range(batch_start..batch_end, "null"),
+        BatchReceiptTamper::ValidPeakZero | BatchReceiptTamper::MismatchMaximum => {
+            let field = match tamper {
+                BatchReceiptTamper::ValidPeakZero => "peak",
+                BatchReceiptTamper::MismatchMaximum => "maximum",
+                BatchReceiptTamper::Remove => unreachable!(),
+            };
+            let marker = format!("\"{field}\": ");
+            let start = document[batch_start..batch_end]
+                .find(&marker)
+                .map(|offset| batch_start + offset + marker.len())
+                .expect("numeric batch field");
+            let end = document[start..batch_end]
+                .find(|character: char| !character.is_ascii_digit())
+                .map(|offset| start + offset)
+                .expect("batch field terminator");
+            let replacement = if matches!(tamper, BatchReceiptTamper::ValidPeakZero) {
+                0
+            } else {
+                document[start..end]
+                    .parse::<u64>()
+                    .expect("numeric batch maximum")
+                    + 1
+            };
+            document.replace_range(start..end, &replacement.to_string());
         }
     }
-    with_current_payload_checksum(
-        serde_json::to_string_pretty(&value).expect("serialize tampered receipt"),
-    )
+    with_current_payload_checksum(document)
 }
 
 fn with_node_receipt_status(
@@ -3896,6 +3921,18 @@ fn execute_spectral_cycle_with_weighting_mode(
             .root_path()
             .join(format!("{final_attempt}.receipt.json"));
         let original = fs::read_to_string(&receipt_path).expect("serialized final-major receipt");
+        fs::write(
+            &receipt_path,
+            with_batch_receipt_tamper(
+                &original,
+                replay_node.as_str(),
+                BatchReceiptTamper::ValidPeakZero,
+            ),
+        )
+        .expect("rewrite checksum-valid receipt with valid batch evidence");
+        receipts
+            .open(final_attempt)
+            .expect("order-preserving batch rewrite passes envelope validation");
         for tamper in [
             BatchReceiptTamper::Remove,
             BatchReceiptTamper::MismatchMaximum,
