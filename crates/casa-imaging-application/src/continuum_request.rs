@@ -2132,12 +2132,10 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         ));
     }
     if request.w_projection_planes.is_some()
-        && !request
-            .task_requirements
-            .contains(&TaskRequirement::WProjection)
+        && !supports_projected_w_planes(&request.task_requirements)
     {
         return Err(boxed(
-            "w_projection_planes requires the explicit W-projection task capability",
+            "w_projection_planes requires the explicit W- or AW-projection task capability",
         ));
     }
     if request.save_continuum_residual && request.continuum_subtraction.is_none() {
@@ -2166,6 +2164,11 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         ));
     }
     Ok(())
+}
+
+fn supports_projected_w_planes(requirements: &[TaskRequirement]) -> bool {
+    requirements.contains(&TaskRequirement::WProjection)
+        || requirements.contains(&TaskRequirement::AwProjection)
 }
 
 fn prepare_continuum_transform(
@@ -3296,7 +3299,19 @@ mod tests {
         cube_rest_frequency_hz, image_coordinates, image_reference_pixel,
         instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
         planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
+        supports_projected_w_planes,
     };
+
+    #[test]
+    fn projected_w_planes_belong_to_w_and_aw_projection() {
+        assert!(supports_projected_w_planes(&[TaskRequirement::WProjection]));
+        assert!(supports_projected_w_planes(&[
+            TaskRequirement::AwProjection
+        ]));
+        assert!(!supports_projected_w_planes(&[
+            TaskRequirement::WProjectionPlanes,
+        ]));
+    }
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {

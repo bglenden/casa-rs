@@ -17,6 +17,20 @@ if [[ $# -gt 1 ]]; then
   exit 2
 fi
 
+validate_rust_cli_only="${IMAGER_BENCH_VALIDATE_RUST_CLI_ONLY:-0}"
+case "$validate_rust_cli_only" in
+  1|true|TRUE|yes|YES|on|ON)
+    validate_rust_cli_only_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    validate_rust_cli_only_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_VALIDATE_RUST_CLI_ONLY must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
+
 if [[ $# -eq 1 ]]; then
   ms_path="$1"
 elif [[ -n "${CASA_RS_TESTDATA_ROOT:-}" ]]; then
@@ -26,12 +40,12 @@ else
   exit 2
 fi
 
-if [[ ! -d "$ms_path" ]]; then
+if [[ "$validate_rust_cli_only_enabled" == "0" && ! -d "$ms_path" ]]; then
   echo "error: MeasurementSet not found: $ms_path" >&2
   exit 2
 fi
 
-if [[ -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
+if [[ "$validate_rust_cli_only_enabled" == "0" && -z "${CASA_RS_CASA_PYTHON:-}" ]]; then
   echo "error: CASA_RS_CASA_PYTHON is not set and no default CASA python was found" >&2
   exit 2
 fi
@@ -131,6 +145,9 @@ if [[ -d "/Volumes/GLENDENNING" ]]; then
   default_tmp_root="/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/tmp"
 fi
 tmp_root="${IMAGER_BENCH_TMP_ROOT:-$default_tmp_root}"
+if [[ "$validate_rust_cli_only_enabled" == "1" ]]; then
+  tmp_root="${TMPDIR:-/tmp}"
+fi
 phase_probe="${IMAGER_BENCH_PHASE_PROBE:-0}"
 skip_casa="${IMAGER_BENCH_SKIP_CASA:-0}"
 skip_rust="${IMAGER_BENCH_SKIP_RUST:-0}"
@@ -467,7 +484,7 @@ emit_rust_backend_diagnostics() {
 }
 
 echo "ms_path=$ms_path"
-echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
+echo "CASA_RS_CASA_PYTHON=${CASA_RS_CASA_PYTHON:-}"
 echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder facets=$facets field=$field stokes=$stokes usepointing=$usepointing_enabled phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
@@ -492,7 +509,10 @@ if [[ "$ms_staging" == "copy" && "$skip_casa" != "1" && "$skip_casa" != "true" &
   casa_ms_path="$tmpdir/casa-benchmark.ms"
   cp -R "$source_ms_path" "$casa_ms_path"
 fi
-if [[ -n "$rust_output_prefix" ]]; then
+if [[ "$validate_rust_cli_only_enabled" == "1" ]]; then
+  rust_keep_prefix=""
+  casa_keep_prefix=""
+elif [[ -n "$rust_output_prefix" ]]; then
   mkdir -p "$(dirname "$rust_output_prefix")"
   rust_keep_prefix="$rust_output_prefix"
   casa_keep_prefix=""
@@ -601,6 +621,109 @@ if [[ -n "$restoring_beam" ]]; then
   rust_restoring_flags+=(--restoringbeam "$restoring_beam")
 fi
 
+build_rust_cli_args() {
+  local requested_ms="$1"
+  local requested_prefix="$2"
+  rust_cli_args=(
+    target/release/casars-imager
+    --ms "$requested_ms"
+    --imagename "$requested_prefix"
+    --imsize "$imsize"
+    --cell-arcsec "$cell_arcsec"
+    --field "$field"
+    --stokes "$stokes"
+  )
+  rust_cli_args+=(${rust_selection_flags[@]+"${rust_selection_flags[@]}"})
+  rust_cli_args+=(
+    --spw "$spw"
+    --channel-start "$channel_start"
+    --channel-count "$channel_count"
+    --specmode "$specmode"
+    --gridder "$gridder"
+    --facets "$facets"
+    --interpolation "$interpolation"
+  )
+  rust_cli_args+=(${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"})
+  rust_cli_args+=(
+    --datacolumn DATA
+    --weighting "$weighting"
+    --robust "$robust"
+  )
+  rust_cli_args+=(${rust_density_flags[@]+"${rust_density_flags[@]}"})
+  rust_cli_args+=(${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"})
+  rust_cli_args+=(${rust_aw_flags[@]+"${rust_aw_flags[@]}"})
+  rust_cli_args+=(
+    --deconvolver "$deconvolver"
+    --savemodel "$savemodel"
+  )
+  rust_cli_args+=(${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"})
+  rust_cli_args+=(${rust_mask_flags[@]+"${rust_mask_flags[@]}"})
+  rust_cli_args+=(
+    --standard-mfs-acceleration "$standard_mfs_acceleration"
+    --imaging-fft-precision "$imaging_fft_precision"
+    --imaging-fft-backend "$imaging_fft_backend"
+  )
+  rust_cli_args+=(${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"})
+  rust_cli_args+=(${rust_thread_flags[@]+"${rust_thread_flags[@]}"})
+  rust_cli_args+=(${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"})
+  rust_cli_args+=(
+    --hogbom-iteration-mode "$hogbom_iteration_mode"
+    --nterms "$nterms"
+  )
+  if [[ -n "$scales" ]]; then
+    rust_cli_args+=(--scales "$scales")
+  fi
+  rust_cli_args+=(
+    --smallscalebias "$small_scale_bias"
+    --niter "$niter"
+    --nmajor "$nmajor"
+    --gain "$gain"
+    --threshold-jy "$threshold_jy"
+    --nsigma "$nsigma"
+    --psfcutoff "$psfcutoff"
+  )
+  rust_cli_args+=(${rust_pb_flags[@]+"${rust_pb_flags[@]}"})
+  rust_cli_args+=(${rust_restoring_flags[@]+"${rust_restoring_flags[@]}"})
+  rust_cli_args+=(
+    --minor-cycle-length "$minor_cycle_length"
+    --cyclefactor "$cyclefactor"
+    --minpsffraction "$min_psf_fraction"
+    --maxpsffraction "$max_psf_fraction"
+    --wterm "$wterm"
+  )
+  rust_cli_args+=(${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"})
+  rust_cli_args+=(--no-preview-pngs)
+  if [[ -n "$phasecenter_field" ]]; then
+    rust_cli_args+=(--phasecenter-field "$phasecenter_field")
+  fi
+  if [[ -n "$dirty_flag" ]]; then
+    rust_cli_args+=("$dirty_flag")
+  fi
+}
+
+if [[ "$validate_rust_cli_only_enabled" == "1" ]]; then
+  preflight_ms="$tmpdir/t51-cli-preflight-missing.ms"
+  preflight_prefix="$tmpdir/t51-cli-preflight-output"
+  preflight_stdout="$tmpdir/t51-cli-preflight.stdout"
+  preflight_stderr="$tmpdir/t51-cli-preflight.stderr"
+  build_rust_cli_args "$preflight_ms" "$preflight_prefix"
+  set +e
+  "${rust_cli_args[@]}" >"$preflight_stdout" 2>"$preflight_stderr"
+  preflight_status="$?"
+  set -e
+  if [[ "$preflight_status" == "0" ]]; then
+    echo "error: Rust CLI preflight unexpectedly executed a missing MeasurementSet" >&2
+    exit 1
+  fi
+  if ! grep -Fq "table path does not exist:" "$preflight_stderr"; then
+    echo "error: Rust CLI preflight failed before the expected MeasurementSet-open boundary" >&2
+    cat "$preflight_stderr" >&2
+    exit 1
+  fi
+  echo "rust_cli_preflight=validated-before-measurement-set-open"
+  exit 0
+fi
+
 echo "Rust release CLI timings (seconds):"
 rust_cli_file="$tmpdir/rust-cli.txt"
 run_with_optional_phasecenter() {
@@ -624,119 +747,11 @@ for run in $(seq 1 "$repeats"); do
   fi
   echo "rust_run_start run=$run prefix=$prefix"
   rust_stderr="$tmpdir/rust-$run.stderr"
-  if [[ -n "$scales" ]]; then
-    if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$rust_ms_path" \
-      --imagename "$prefix" \
-      --imsize "$imsize" \
-      --cell-arcsec "$cell_arcsec" \
-      --field "$field" \
-      --stokes "$stokes" \
-      ${rust_selection_flags[@]+"${rust_selection_flags[@]}"} \
-      --spw "$spw" \
-      --channel-start "$channel_start" \
-      --channel-count "$channel_count" \
-      --specmode "$specmode" \
-      --gridder "$gridder" \
-      --facets "$facets" \
-      --interpolation "$interpolation" \
-      ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
-      --datacolumn DATA \
-      --weighting "$weighting" \
-      --robust "$robust" \
-      ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
-      ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
-      ${rust_aw_flags[@]+"${rust_aw_flags[@]}"} \
-      --deconvolver "$deconvolver" \
-      --savemodel "$savemodel" \
-      ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
-      ${rust_mask_flags[@]+"${rust_mask_flags[@]}"} \
-      --standard-mfs-acceleration "$standard_mfs_acceleration" \
-      --imaging-fft-precision "$imaging_fft_precision" \
-      --imaging-fft-backend "$imaging_fft_backend" \
-      ${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"} \
-      ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
-      ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
-      --hogbom-iteration-mode "$hogbom_iteration_mode" \
-      --nterms "$nterms" \
-      --scales "$scales" \
-      --smallscalebias "$small_scale_bias" \
-      --niter "$niter" \
-      --nmajor "$nmajor" \
-      --gain "$gain" \
-      --threshold-jy "$threshold_jy" \
-      --nsigma "$nsigma" \
-      --psfcutoff "$psfcutoff" \
-      ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
-      ${rust_restoring_flags[@]+"${rust_restoring_flags[@]}"} \
-      --minor-cycle-length "$minor_cycle_length" \
-      --cyclefactor "$cyclefactor" \
-      --minpsffraction "$min_psf_fraction" \
-      --maxpsffraction "$max_psf_fraction" \
-      --wterm "$wterm" \
-      ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
-      --no-preview-pngs \
-      $dirty_flag; then
-      echo "error: Rust casars-imager run $run failed" >&2
-      cat "$rust_stderr" >&2
-      exit 1
-    fi
-  else
-    if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$rust_ms_path" \
-      --imagename "$prefix" \
-      --imsize "$imsize" \
-      --cell-arcsec "$cell_arcsec" \
-      --field "$field" \
-      --stokes "$stokes" \
-      ${rust_selection_flags[@]+"${rust_selection_flags[@]}"} \
-      --spw "$spw" \
-      --channel-start "$channel_start" \
-      --channel-count "$channel_count" \
-      --specmode "$specmode" \
-      --gridder "$gridder" \
-      --facets "$facets" \
-      --interpolation "$interpolation" \
-      ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
-      --datacolumn DATA \
-      --weighting "$weighting" \
-      --robust "$robust" \
-      ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
-      ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
-      ${rust_aw_flags[@]+"${rust_aw_flags[@]}"} \
-      --deconvolver "$deconvolver" \
-      --savemodel "$savemodel" \
-      ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
-      ${rust_mask_flags[@]+"${rust_mask_flags[@]}"} \
-      --standard-mfs-acceleration "$standard_mfs_acceleration" \
-      --imaging-fft-precision "$imaging_fft_precision" \
-      --imaging-fft-backend "$imaging_fft_backend" \
-      ${rust_parallel_flags[@]+"${rust_parallel_flags[@]}"} \
-      ${rust_thread_flags[@]+"${rust_thread_flags[@]}"} \
-      ${rust_source_stream_flags[@]+"${rust_source_stream_flags[@]}"} \
-      --hogbom-iteration-mode "$hogbom_iteration_mode" \
-      --nterms "$nterms" \
-      --smallscalebias "$small_scale_bias" \
-      --niter "$niter" \
-      --nmajor "$nmajor" \
-      --gain "$gain" \
-      --threshold-jy "$threshold_jy" \
-      --nsigma "$nsigma" \
-      --psfcutoff "$psfcutoff" \
-      ${rust_pb_flags[@]+"${rust_pb_flags[@]}"} \
-      ${rust_restoring_flags[@]+"${rust_restoring_flags[@]}"} \
-      --minor-cycle-length "$minor_cycle_length" \
-      --cyclefactor "$cyclefactor" \
-      --minpsffraction "$min_psf_fraction" \
-      --maxpsffraction "$max_psf_fraction" \
-      --wterm "$wterm" \
-      ${rust_wproject_flags[@]+"${rust_wproject_flags[@]}"} \
-      --no-preview-pngs \
-      $dirty_flag; then
-      echo "error: Rust casars-imager run $run failed" >&2
-      cat "$rust_stderr" >&2
-      exit 1
-    fi
+  build_rust_cli_args "$rust_ms_path" "$prefix"
+  if ! run_timed_command "$rust_stderr" "${rust_cli_args[@]}"; then
+    echo "error: Rust casars-imager run $run failed" >&2
+    cat "$rust_stderr" >&2
+    exit 1
   fi
   real_seconds="$(awk '/^real / {print $2}' "$rust_stderr")"
   printf "  run=%s real=%s\n" "$run" "$real_seconds"

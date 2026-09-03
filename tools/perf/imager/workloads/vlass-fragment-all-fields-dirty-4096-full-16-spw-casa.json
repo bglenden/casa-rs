@@ -51,7 +51,6 @@
     "max_psf_fraction": 0.8,
     "facets": 1,
     "psfphasecenter": "",
-    "chanchunks": 1,
     "vptable": "",
     "mosweight": false,
     "aterm": true,
@@ -75,13 +74,9 @@
     "calcres": true,
     "calcpsf": true,
     "parallel": false,
-    "standard_mfs_acceleration": "metal",
-    "standard_mfs_grid_threads": 2,
-    "imaging_prepare_workers": 1,
-    "imaging_read_ahead_blocks": 1,
-    "imaging_fft_precision": "f64",
-    "imaging_fft_backend": "rustfft",
-    "imaging_memory_target_mb": 16384
+    "standard_mfs_acceleration": "cpu",
+    "imaging_fft_precision": "auto",
+    "imaging_fft_backend": "rustfft"
   },
   "run": {
     "repeats": 1,

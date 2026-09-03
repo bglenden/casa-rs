@@ -845,7 +845,7 @@ fn t49_plane_count_does_not_infer_w_projection() {
     assert!(
         error
             .to_string()
-            .contains("requires the explicit W-projection task capability"),
+            .contains("requires the explicit W- or AW-projection task capability"),
         "wrong explicit-W error: {error}"
     );
     assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());

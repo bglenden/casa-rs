@@ -7,6 +7,7 @@ import copy
 import importlib.util
 import pathlib
 import unittest
+from unittest import mock
 
 
 SCRIPT = pathlib.Path(__file__).with_name("t51_aw_vlass_acceptance.py")
@@ -18,20 +19,48 @@ SPEC.loader.exec_module(GATE)
 
 PRODUCTS = [".image.tt0", ".residual.tt0", ".psf.tt0", ".weight.tt0"]
 PREFIX = pathlib.Path("/frozen/casa")
+WORKLOAD_ID = "t51-test-dirty"
 
 
 def workload() -> dict:
     return {
-        "id": "t51-test",
+        "id": WORKLOAD_ID,
         "imaging": {
+            "mode": "dirty",
+            "specmode": "mfs",
             "gridder": "awproject",
+            "casa_gridder": "awproject",
             "wterm": "wproject",
             "wprojplanes": 32,
             "field": "1107~1127,1512~1532,1542~1562",
+            "phasecenter_field": 1525,
             "spw": "2~17",
+            "channel_start": 0,
             "channel_count": 64,
             "imsize": 4096,
+            "cell_arcsec": 0.6,
+            "datacolumn": "data",
+            "stokes": "I",
+            "projection": "SIN",
+            "interpolation": "linear",
+            "uvrange": "<12km",
+            "intent": "OBSERVE_TARGET#UNSPECIFIED",
+            "weighting": "briggs",
+            "robust": 1.0,
+            "perchanweightdensity": True,
+            "deconvolver": "mtmfs",
             "nterms": 2,
+            "scales": [0, 5, 12],
+            "smallscalebias": 0.0,
+            "niter": 0,
+            "gain": 0.1,
+            "threshold_jy": 0.0,
+            "nsigma": 5.0,
+            "minor_cycle_length": 2000,
+            "cyclefactor": 3.0,
+            "min_psf_fraction": 0.05,
+            "max_psf_fraction": 0.8,
+            "facets": 1,
             "aterm": True,
             "psterm": False,
             "wbawp": True,
@@ -40,19 +69,34 @@ def workload() -> dict:
             "computepastep": 360.0,
             "rotatepastep": 360.0,
             "pointingoffsetsigdev": 0.0,
+            "pblimit": 0.0001,
             "normtype": "flatnoise",
+            "write_pb": True,
+            "pbcor": False,
+            "restoration": True,
+            "restoringbeam": "common",
+            "interactive": False,
+            "usemask": "user",
+            "restart": False,
+            "savemodel": "none",
+            "calcres": True,
+            "calcpsf": True,
+            "parallel": False,
+            "standard_mfs_acceleration": "cpu",
+            "imaging_fft_precision": "auto",
             "imaging_fft_backend": "rustfft",
             "mosweight": False,
             "psfphasecenter": "",
             "vptable": "",
-            "facets": 1,
-            "uvrange": "<12km",
-            "intent": "OBSERVE_TARGET#UNSPECIFIED",
-            "smallscalebias": 0.0,
-            "restoringbeam": "common",
         },
         "comparison": {"products": PRODUCTS},
-        "run": {"cf_cache_role": "cold"},
+        "run": {
+            "repeats": 1,
+            "warmups": 0,
+            "ms_staging": "direct",
+            "skip_profile": "1",
+            "cf_cache_role": "cold",
+        },
     }
 
 
@@ -73,7 +117,7 @@ def receipt() -> dict:
     return {
         "status": "completed",
         "exit_code": 0,
-        "workload": {"id": "t51-test"},
+        "workload": {"id": WORKLOAD_ID},
         "mode": {"image_shape": [4096, 4096], "gridder": "awproject", "nterms": 2},
         "run": {
             "skip_casa": "1",
@@ -104,6 +148,62 @@ def receipt() -> dict:
 
 
 class T51AwVlassAcceptanceTests(unittest.TestCase):
+    def test_checked_in_manifests_use_current_serial_cli_contract(self) -> None:
+        for path in (GATE.DIRTY_WORKLOAD, GATE.CLEAN_WORKLOAD):
+            candidate = GATE._load_json(path)
+            imaging = GATE.validate_manifest_contract(candidate)
+            self.assertEqual("cpu", imaging["standard_mfs_acceleration"])
+            self.assertEqual("auto", imaging["imaging_fft_precision"])
+            self.assertEqual("rustfft", imaging["imaging_fft_backend"])
+            self.assertIs(imaging["parallel"], False)
+            self.assertTrue(
+                all(name not in imaging for name in GATE.FORBIDDEN_RUNTIME_OVERRIDES)
+            )
+
+    def test_manifest_rejects_retired_runtime_controls(self) -> None:
+        for name, value in (
+            ("chanchunks", 1),
+            ("standard_mfs_grid_threads", 2),
+            ("imaging_memory_target_mb", 16_384),
+        ):
+            with self.subTest(name=name):
+                candidate = workload()
+                candidate["imaging"][name] = value
+                with self.assertRaisesRegex(GATE.GateError, name):
+                    GATE.validate_manifest_contract(candidate)
+
+    def test_manifest_rejects_non_serial_acceleration(self) -> None:
+        candidate = workload()
+        candidate["imaging"]["standard_mfs_acceleration"] = "metal"
+        with self.assertRaisesRegex(GATE.GateError, "standard_mfs_acceleration"):
+            GATE.validate_manifest_contract(candidate)
+
+    @mock.patch.object(GATE.subprocess, "run")
+    def test_cli_preflight_requires_checked_shell_marker(self, run: mock.Mock) -> None:
+        run.return_value = mock.Mock(
+            returncode=0,
+            stdout=GATE.CLI_PREFLIGHT_MARKER + "\n",
+            stderr="",
+        )
+        candidate = {"command": {"argv": ["/runner", "/missing.ms"], "env": {}}}
+
+        GATE.run_rust_cli_preflight(candidate, base_environment={"BASE": "1"})
+
+        self.assertEqual(["/runner", "/missing.ms"], run.call_args.args[0])
+        self.assertEqual(
+            "1",
+            run.call_args.kwargs["env"]["IMAGER_BENCH_VALIDATE_RUST_CLI_ONLY"],
+        )
+
+    @mock.patch.object(GATE.subprocess, "run")
+    def test_cli_preflight_fails_without_checked_shell_marker(
+        self, run: mock.Mock
+    ) -> None:
+        run.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+        candidate = {"command": {"argv": ["/runner", "/missing.ms"], "env": {}}}
+        with self.assertRaisesRegex(GATE.GateError, "validation marker"):
+            GATE.run_rust_cli_preflight(candidate, base_environment={})
+
     def test_preflight_requires_runnable_aw_route(self) -> None:
         candidate = receipt()
         candidate["status"] = "dry_run"
@@ -146,7 +246,40 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
                 "IMAGER_BENCH_PSFPHASECENTER": "",
                 "IMAGER_BENCH_VPTABLE": "",
                 "IMAGER_BENCH_GRIDDER": "awproject",
+                "IMAGER_BENCH_SPECMODE": "mfs",
+                "IMAGER_BENCH_FIELD": "1107~1127,1512~1532,1542~1562",
+                "IMAGER_BENCH_PHASECENTER_FIELD": "1525",
+                "IMAGER_BENCH_SPW": "2~17",
+                "IMAGER_BENCH_CHANNEL_START": "0",
+                "IMAGER_BENCH_CHANNEL_COUNT": "64",
+                "IMAGER_BENCH_IMSIZE": "4096",
+                "IMAGER_BENCH_CELL_ARCSEC": "0.6",
+                "IMAGER_BENCH_STOKES": "I",
+                "IMAGER_BENCH_INTERPOLATION": "linear",
+                "IMAGER_BENCH_WEIGHTING": "briggs",
+                "IMAGER_BENCH_ROBUST": "1.0",
+                "IMAGER_BENCH_PERCHANWEIGHTDENSITY": "1",
+                "IMAGER_BENCH_DECONVOLVER": "mtmfs",
+                "IMAGER_BENCH_NTERMS": "2",
+                "IMAGER_BENCH_SCALES": "0,5,12",
+                "IMAGER_BENCH_NITER": "0",
+                "IMAGER_BENCH_NMAJOR": "-1",
+                "IMAGER_BENCH_GAIN": "0.1",
+                "IMAGER_BENCH_THRESHOLD_JY": "0.0",
+                "IMAGER_BENCH_NSIGMA": "5.0",
+                "IMAGER_BENCH_MINOR_CYCLE_LENGTH": "2000",
+                "IMAGER_BENCH_CYCLEFACTOR": "3.0",
+                "IMAGER_BENCH_MIN_PSFFRACTION": "0.05",
+                "IMAGER_BENCH_MAX_PSFFRACTION": "0.8",
+                "IMAGER_BENCH_PBLIMIT": "0.0001",
+                "IMAGER_BENCH_WRITE_PB": "1",
+                "IMAGER_BENCH_PBCOR": "0",
+                "IMAGER_BENCH_USEMASK": "user",
+                "IMAGER_BENCH_SAVEMODEL": "none",
+                "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": "cpu",
+                "IMAGER_BENCH_IMAGING_FFT_PRECISION": "auto",
                 "IMAGER_BENCH_IMAGING_FFT_BACKEND": "rustfft",
+                "IMAGER_BENCH_PARALLEL": "0",
                 "IMAGER_BENCH_WTERM": "wproject",
                 "IMAGER_BENCH_WPROJPLANES": "32",
                 "IMAGER_BENCH_FACETS": "1",
@@ -155,6 +288,10 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
                 "IMAGER_BENCH_MASK_IMAGE": "",
                 "IMAGER_BENCH_SMALL_SCALE_BIAS": "0.0",
                 "IMAGER_BENCH_RESTORING_BEAM": "common",
+                "IMAGER_BENCH_MS_STAGING": "direct",
+                "IMAGER_BENCH_SKIP_CASA": "1",
+                "IMAGER_BENCH_SKIP_RUST": "0",
+                "IMAGER_BENCH_SKIP_PROFILE": "1",
             },
         }
         candidate["products"] = {"rust_prefix": str(rust)}
