@@ -913,9 +913,10 @@ impl FrozenGriddedNormalReplay {
             .ok_or_else(|| io::Error::other("gridded-normal replay buffer claim missing"))?;
         let maximum_frames_per_block = usize::try_from(context.knobs().batch_size)
             .map_err(|_| io::Error::other("gridded-normal replay window overflow"))?;
-        if maximum_frames_per_block != window_plan.maximum_frames() {
+        if maximum_frames_per_block == 0 || maximum_frames_per_block > window_plan.maximum_frames()
+        {
             return Err(io::Error::other(
-                "gridded-normal replay window disagrees with the compiled plan",
+                "gridded-normal replay window exceeds the compiled plan",
             ));
         }
         let per_slot = window_plan.source_slot_bytes();

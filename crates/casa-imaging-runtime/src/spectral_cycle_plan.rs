@@ -174,9 +174,7 @@ fn select_gridded_normal_strategy(
             // strategy that preserves the required gridded-normal input.
             Ok(GriddedNormalStrategy::CreateManagedSpill)
         }
-        (SpectralPassPhase::FinalMajor, false, true) => {
-            Ok(GriddedNormalStrategy::ReuseManagedSpill)
-        }
+        (SpectralPassPhase::FinalMajor, _, true) => Ok(GriddedNormalStrategy::ReuseManagedSpill),
         _ => Err(SpectralCyclePlanError::MissingGriddedNormalStorage),
     }
 }
@@ -623,6 +621,9 @@ impl SpectralCyclePlan {
         if let Some(minor) = &minor_cycle_node {
             physical = append_minor(registry, physical, &policy, minor)?;
         }
+        if policy.resource_policy.has_explicit_memory_ceiling() {
+            physical = append_low_memory_adaptation(registry, physical, &policy, pass, strategy)?;
+        }
         let gridded_normal = match (strategy, gridded_normal_storage, gridded_replay) {
             (GriddedNormalStrategy::ReuseManagedSpill, Some(storage), Some(replay)) => {
                 Some(PlannedGriddedNormalBinding::replay(replay, storage)?)
@@ -667,6 +668,48 @@ impl SpectralCyclePlan {
             gridded_normal: self.gridded_normal,
         }
     }
+}
+
+fn append_low_memory_adaptation<R: ImplementationRegistry>(
+    registry: &R,
+    base: PhysicalWorkBinding,
+    policy: &SpectralCycleExecutionPolicy,
+    pass: SpectralPassIdentity,
+    strategy: GriddedNormalStrategy,
+) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
+    let dag = base.execution_dag();
+    let mut initial = dag.initial_knobs().clone();
+    initial.batch_size = dag.resource_alternative().scaling.maximum_batch_size;
+    let mut target = initial.clone();
+    target.batch_size = target.batch_size.div_ceil(2).max(1);
+    target.recomputation = true;
+    target.spill = strategy == GriddedNormalStrategy::CreateManagedSpill;
+    target.prefetch = strategy == GriddedNormalStrategy::ReuseManagedSpill;
+    let transition = AdaptationTransition {
+        id: AdaptationId::new(format!("spectral-low-memory-{}", pass.ordinal())),
+        from: initial.clone(),
+        to: target,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::new(),
+    };
+    let resealed = ExecutionDag::new(ExecutionDagSpecification {
+        required_resource_capabilities: dag.required_resource_capabilities().clone(),
+        resource_alternative: dag.resource_alternative().clone(),
+        nodes: dag.nodes().values().cloned().collect(),
+        logical_allocations: dag.logical_allocations().values().cloned().collect(),
+        physical_slots: dag.physical_slots().values().cloned().collect(),
+        initial_knobs: initial,
+        adaptations: dag
+            .adaptations()
+            .values()
+            .cloned()
+            .chain([transition])
+            .collect(),
+    })?;
+    let catalog =
+        ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
+    Ok(base.reseal_execution_dag(catalog, resealed)?)
 }
 
 fn base_physical<R: ImplementationRegistry>(

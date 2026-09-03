@@ -3,7 +3,7 @@
 //! End-to-end T44 application/publication gate against the frozen CASA oracle.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     error::Error,
     fs,
     path::{Path, PathBuf},
@@ -16,7 +16,10 @@ use casa_imaging_application::{
     ContinuumWeighting, HogbomIterationAccounting, SpectralImagingMode, TaskRequirement,
     execute_continuum,
 };
-use casa_imaging_runtime::{ReceiptStatus, ResourceOverride, ResourcePolicy, WorkNodeId};
+use casa_imaging_runtime::{
+    ArtifactDisposition, CapacityDomainId, ClaimLifetime, FenceKind, IoBufferKind, LeaseResource,
+    ReceiptStatus, ResourceOverride, ResourcePolicy, WorkNodeId,
+};
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 
 const DATASET: &str = "measurementset/vla/ref_vlass_wtsp_creation.ms";
@@ -229,8 +232,95 @@ fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn E
         1_336_320,
         "representative MT-MFS selected sample count changed",
     );
+    assert_low_memory_receipt(
+        &result.outcome.output.initial_receipt,
+        IoBufferKind::SpillWrite,
+        true,
+        false,
+        true,
+    );
+    assert_low_memory_receipt(
+        result
+            .outcome
+            .output
+            .final_major_receipt
+            .as_ref()
+            .ok_or("representative low-memory run omitted its final-major receipt")?,
+        IoBufferKind::SpillRead,
+        false,
+        true,
+        false,
+    );
     assert_representative_products_match_casa(&output, &casa_prefix)?;
     Ok(())
+}
+
+fn assert_low_memory_receipt(
+    receipt: &casa_imaging_runtime::ExecutionReceipt,
+    io_kind: IoBufferKind,
+    spill: bool,
+    prefetch: bool,
+    expect_smaller_batch: bool,
+) {
+    let adaptation = receipt
+        .adaptation_identities()
+        .into_iter()
+        .next()
+        .and_then(|id| receipt.adaptation_projection(&id))
+        .expect("production low-memory adaptation receipt");
+    assert!(adaptation.was_applied());
+    let batch = (
+        adaptation.transition().from.batch_size,
+        adaptation.transition().to.batch_size,
+    );
+    if expect_smaller_batch {
+        assert!(
+            batch.1 < batch.0,
+            "low-memory run did not execute its plan-sealed smaller batch: from={}, to={}",
+            batch.0,
+            batch.1,
+        );
+    } else {
+        assert_eq!(
+            batch,
+            (1, 1),
+            "single-frame replay must preserve its authority-sealed batch while adapting prefetch",
+        );
+    }
+    assert!(adaptation.transition().to.recomputation);
+    assert_eq!(adaptation.transition().to.spill, spill);
+    assert_eq!(adaptation.transition().to.prefetch, prefetch);
+
+    let io_node = receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| receipt.stage_predicted_io(node, io_kind).is_some())
+        .expect("low-memory plan lacks predicted managed I/O");
+    assert!(receipt.stage_actual_io(&io_node, io_kind).is_some());
+    assert!(
+        receipt
+            .actual_resource_peak(
+                &io_node,
+                &LeaseResource::IoBuffer(io_kind),
+                &ClaimLifetime::through_fence(FenceKind::Io),
+            )
+            .is_some(),
+        "low-memory managed-I/O residency was not receipted",
+    );
+    let preparation = receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| node.as_str().contains("fft-plan"))
+        .expect("low-memory plan lacks recomputation work");
+    assert!(receipt.stage_actual_elapsed_nanos(&preparation).is_some());
+    if prefetch {
+        assert!(
+            receipt.artifact_identities().into_iter().any(|artifact| {
+                receipt.artifact_disposition(artifact) == Some(ArtifactDisposition::Loaded)
+            }),
+            "low-memory prefetch did not receipt reuse of its sealed spill artifact",
+        );
+    }
 }
 
 fn representative_mtmfs_request(
@@ -286,6 +376,7 @@ fn representative_mtmfs_request(
         task_requirements: vec![TaskRequirement::SerialCpu],
         resource_policy: ResourcePolicy::Explicit(ResourceOverride {
             workers: Some(1),
+            memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 30)]),
             ..ResourceOverride::default()
         }),
     }

@@ -172,6 +172,16 @@ imaging-t44-mtmfs-products testdata_root casa_python casa_prefix:
     CASA_RS_TESTDATA_ROOT="{{testdata_root}}" CASA_RS_T44_APPLICATION_PREFIX="{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle t44_application_mtmfs_publishes_frozen_casa_product_contract -- --ignored --exact --nocapture
     "{{casa_python}}" tools/science/t44_mtmfs_products_compare.py --casa-prefix "{{casa_prefix}}" --rust-prefix "{{justfile_directory()}}/target/t43-t44-casa-oracle/rust-application/casa" --summary-output "{{justfile_directory()}}/target/t43-t44-casa-oracle/t44-comparison.json"
 
+# Focused #545 sealed low-memory transitions and representative frozen-CASA production gate.
+imaging-t59-low-memory representative_ms casa_prefix:
+    test -d "{{representative_ms}}"
+    test -e "{{casa_prefix}}.psf.tt0"
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime adaptation_ --lib
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run receipt_records_only_the_atomically_selected_conditional_route -- --exact
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-runtime --test compile_plan_run t59_explicit_memory_policy_seals_low_memory_production_adaptation -- --exact
+    CASA_RS_ISSUE607_MTMFS_MS="{{representative_ms}}" CASA_RS_ISSUE607_MTMFS_CASA_PREFIX="{{casa_prefix}}" CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test mtmfs_publication_oracle issue607_representative_mtmfs_matches_casa_products --release -- --ignored --exact --nocapture
+    python3 scripts/check-representative-science-matrix.py
+
 release-perf:
     bash scripts/test-release-perf.sh
 

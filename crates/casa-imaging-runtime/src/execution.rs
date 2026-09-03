@@ -120,6 +120,13 @@ impl WorkKind {
     pub const fn reads_observation(self) -> bool {
         matches!(self, Self::ObservationRead | Self::ObservationReadWriteback)
     }
+
+    const fn is_execution_only_adaptation_work(self) -> bool {
+        matches!(
+            self,
+            Self::Preparation | Self::Cache | Self::Spill | Self::Prefetch
+        )
+    }
 }
 
 /// Runtime domain in which one work node executes.
@@ -654,7 +661,6 @@ impl ExecutionDag {
         if workers < scaling.minimum_workers
             || workers > scaling.maximum_workers
             || scaling.minimum_workers == scaling.maximum_workers
-            || !self.adaptations.is_empty()
             || self.initial_knobs.workers != scaling.maximum_workers
             || self.resource_alternative.demand.workers
                 != CountDemand::new(scaling.maximum_workers, scaling.maximum_workers)
@@ -706,6 +712,20 @@ impl ExecutionDag {
         alternative.scaling.maximum_workers = workers;
         let mut initial_knobs = self.initial_knobs.clone();
         initial_knobs.workers = workers;
+        let adaptations = self
+            .adaptations
+            .values()
+            .cloned()
+            .map(|mut transition| {
+                if transition.from.workers == template_workers {
+                    transition.from.workers = workers;
+                }
+                if transition.to.workers == template_workers {
+                    transition.to.workers = workers;
+                }
+                transition
+            })
+            .collect();
         Self::new(ExecutionDagSpecification {
             required_resource_capabilities: self.required_resource_capabilities.clone(),
             resource_alternative: alternative,
@@ -713,7 +733,7 @@ impl ExecutionDag {
             logical_allocations: self.logical_allocations.values().cloned().collect(),
             physical_slots: self.physical_slots.values().cloned().collect(),
             initial_knobs,
-            adaptations: Vec::new(),
+            adaptations,
         })
     }
 }
@@ -4124,6 +4144,13 @@ fn validate_adaptations(
             .values()
             .filter(|node| !initially_inactive.contains(&node.id)),
     )?;
+    validate_enabled_adaptation_work(
+        "initial execution configuration",
+        initial,
+        nodes
+            .values()
+            .filter(|node| !initially_inactive.contains(&node.id)),
+    )?;
     for node in nodes.values() {
         if !node
             .quiescence_after
@@ -4178,42 +4205,6 @@ fn validate_adaptations(
                 )));
             }
         }
-        if !transition.from.recomputation
-            && transition.to.recomputation
-            && !transition
-                .activate_nodes
-                .iter()
-                .any(|node| nodes[node].kind == WorkKind::Preparation)
-        {
-            return Err(ExecutionError::invalid_plan(format!(
-                "adaptation {} enables recomputation without activating exact preparation work",
-                transition.id.as_str()
-            )));
-        }
-        if !transition.from.spill
-            && transition.to.spill
-            && !transition
-                .activate_nodes
-                .iter()
-                .any(|node| nodes[node].kind == WorkKind::Spill)
-        {
-            return Err(ExecutionError::invalid_plan(format!(
-                "adaptation {} enables spill without activating exact spill work",
-                transition.id.as_str()
-            )));
-        }
-        if !transition.from.prefetch
-            && transition.to.prefetch
-            && !transition
-                .activate_nodes
-                .iter()
-                .any(|node| nodes[node].kind == WorkKind::Prefetch)
-        {
-            return Err(ExecutionError::invalid_plan(format!(
-                "adaptation {} enables prefetch without activating exact prefetch work",
-                transition.id.as_str()
-            )));
-        }
     }
     let mut boundary_occurrences = if alternative
         .quiescence_points
@@ -4261,7 +4252,16 @@ fn validate_adaptations(
                 validate_mandatory_claims(
                     &transition.to,
                     remaining
-                        .into_iter()
+                        .iter()
+                        .copied()
+                        .filter(|node| !next_inactive.contains(&node.id)),
+                )?;
+                validate_enabled_adaptation_work(
+                    &format!("adaptation {}", transition.id.as_str()),
+                    &transition.to,
+                    remaining
+                        .iter()
+                        .copied()
                         .filter(|node| !next_inactive.contains(&node.id)),
                 )?;
                 if let Some(existing) = reachable_configurations.get(&transition.to) {
@@ -4292,6 +4292,23 @@ fn validate_adaptations(
             unreachable.as_str()
         )));
     }
+    for transition in adaptations.values() {
+        for node_id in transition
+            .activate_nodes
+            .iter()
+            .chain(&transition.deactivate_nodes)
+        {
+            let node = &nodes[node_id];
+            if !node.kind.is_execution_only_adaptation_work() {
+                return Err(ExecutionError::invalid_plan(format!(
+                    "adaptation {} makes {:?} work node {} conditional; only execution-only Preparation, Cache, Spill, and Prefetch work may be conditional",
+                    transition.id.as_str(),
+                    node.kind,
+                    node.id.as_str()
+                )));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -4301,6 +4318,20 @@ fn validate_active_projection(
     allocations: &BTreeMap<AllocationId, LogicalAllocation>,
     inactive: &BTreeSet<WorkNodeId>,
 ) -> Result<(), ExecutionError> {
+    for node in nodes.values().filter(|node| !inactive.contains(&node.id)) {
+        if node.kind != WorkKind::Synchronization
+            && let Some(dependency) = node
+                .dependencies
+                .iter()
+                .find(|dependency| inactive.contains(dependency.predecessor()))
+        {
+            return Err(ExecutionError::invalid_plan(format!(
+                "{projection} lets active work node {} bypass inactive dependency {}; conditional execution-only alternatives must rejoin through Synchronization work",
+                node.id.as_str(),
+                dependency.predecessor().as_str()
+            )));
+        }
+    }
     for allocation in allocations.values() {
         let acquisition_inactive = inactive.contains(&allocation.lifetime.acquire_at);
         if acquisition_inactive
@@ -4349,6 +4380,50 @@ fn validate_active_projection(
         }
     }
     Ok(())
+}
+
+fn validate_enabled_adaptation_work<'node>(
+    projection: &str,
+    knobs: &ExecutionKnobs,
+    nodes: impl IntoIterator<Item = &'node WorkNode>,
+) -> Result<(), ExecutionError> {
+    let active = nodes.into_iter().collect::<Vec<_>>();
+    if knobs.recomputation
+        && !active
+            .iter()
+            .any(|node| matches!(node.kind, WorkKind::Preparation | WorkKind::FftPlanning))
+    {
+        return Err(ExecutionError::invalid_plan(format!(
+            "{projection} enables recomputation without active exact preparation work"
+        )));
+    }
+    if knobs.spill && !active.iter().any(|node| declares_spill_work(node)) {
+        return Err(ExecutionError::invalid_plan(format!(
+            "{projection} enables spill without active exact spill work"
+        )));
+    }
+    if knobs.prefetch && !active.iter().any(|node| declares_prefetch_work(node)) {
+        return Err(ExecutionError::invalid_plan(format!(
+            "{projection} enables prefetch without active exact prefetch work"
+        )));
+    }
+    Ok(())
+}
+
+fn declares_spill_work(node: &WorkNode) -> bool {
+    node.kind == WorkKind::Spill
+        || node
+            .claims
+            .iter()
+            .any(|claim| claim.resource == LeaseResource::IoBuffer(crate::IoBufferKind::SpillWrite))
+}
+
+fn declares_prefetch_work(node: &WorkNode) -> bool {
+    node.kind == WorkKind::Prefetch
+        || node
+            .claims
+            .iter()
+            .any(|claim| claim.resource == LeaseResource::IoBuffer(crate::IoBufferKind::SpillRead))
 }
 
 fn validate_quiescence_marker(
@@ -4462,12 +4537,12 @@ fn validate_knob_envelope(
             "fusion requires a sealed alternate node configuration",
         ));
     }
-    if knobs.spill && !nodes.values().any(|node| node.kind == WorkKind::Spill) {
+    if knobs.spill && !nodes.values().any(declares_spill_work) {
         return Err(ExecutionError::invalid_plan(
             "spill adaptation lacks an exact declared spill work node and resources",
         ));
     }
-    if knobs.prefetch && !nodes.values().any(|node| node.kind == WorkKind::Prefetch) {
+    if knobs.prefetch && !nodes.values().any(declares_prefetch_work) {
         return Err(ExecutionError::invalid_plan(
             "prefetch adaptation lacks an exact declared prefetch work node and resources",
         ));

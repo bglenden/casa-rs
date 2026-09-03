@@ -1512,6 +1512,30 @@ fn implementation_ids(execution_dag: &ExecutionDag) -> BTreeMap<WorkNodeId, Work
 }
 
 impl PhysicalWorkBinding {
+    pub(crate) fn reseal_execution_dag(
+        self,
+        catalog: ImplementationContractCatalog,
+        execution_dag: ExecutionDag,
+    ) -> Result<Self, PhysicalWorkBindingError> {
+        let Self {
+            prediction,
+            artifacts,
+            observation_transaction,
+            publication_layouts,
+            product_publication,
+            ..
+        } = self;
+        Self::with_implementation_contract(
+            ImplementationContractCommitment::from_catalog(&catalog, &execution_dag)?,
+            execution_dag,
+            prediction,
+            artifacts,
+            observation_transaction,
+            publication_layouts,
+            product_publication,
+        )
+    }
+
     /// Bind a complete immutable physical work DAG, prediction, artifacts,
     /// and transaction to an explicit registry-owned implementation contract.
     pub fn new_reconstruction(

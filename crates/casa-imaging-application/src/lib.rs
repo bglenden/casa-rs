@@ -47,11 +47,11 @@ use casa_imaging_reconstruction::{
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
-    ExecutionReceipt, ExecutionReceiptStore, FenceKind, FinalVisibilityReplay,
+    ExecutionReceipt, ExecutionReceiptStore, ExecutionStatus, FenceKind, FinalVisibilityReplay,
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
     PlannerCostModelProfileBootstrap, PlanningBindings, ResourceAuthority, RunBindings,
-    RunToCompletion, SerialProductPublicationExecutor, SerialProductPublicationPlan,
+    RunController, RunDirective, SerialProductPublicationExecutor, SerialProductPublicationPlan,
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
     SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
@@ -921,6 +921,33 @@ fn execution_policy(
     .with_gridded_normal_storage(runtime.gridded_normal_storage.clone())
 }
 
+enum ApplicationRunController {
+    Continue,
+    ApplyEligible,
+}
+
+impl RunController for ApplicationRunController {
+    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
+        match self {
+            Self::ApplyEligible => status
+                .eligible_adaptations()
+                .first()
+                .map_or(RunDirective::Continue, |transition| {
+                    RunDirective::Adapt(transition.id.clone())
+                }),
+            Self::Continue => RunDirective::Continue,
+        }
+    }
+}
+
+fn application_controller(runtime: &ApplicationRuntime) -> ApplicationRunController {
+    if runtime.resource_policy.has_explicit_memory_ceiling() {
+        ApplicationRunController::ApplyEligible
+    } else {
+        ApplicationRunController::Continue
+    }
+}
+
 fn run_phase(
     problem: &CompiledProblem,
     execution_plan: &casa_imaging_runtime::ExecutionPlan,
@@ -934,7 +961,7 @@ fn run_phase(
         &runtime.resource_policy,
         runtime.cost_model.profile_id(),
     );
-    let mut controller = RunToCompletion;
+    let mut controller = application_controller(runtime);
     run(
         &executable,
         execution_plan,
@@ -1081,7 +1108,7 @@ where
         &runtime.resource_policy,
         runtime.cost_model.profile_id(),
     );
-    let mut controller = RunToCompletion;
+    let mut controller = application_controller(&runtime);
     run(
         &executable,
         &execution_plan,

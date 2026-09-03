@@ -351,6 +351,28 @@ fn with_current_payload_checksum(mut document: String) -> String {
     document
 }
 
+fn with_node_receipt_status(
+    mut document: String,
+    node: &str,
+    current: &str,
+    replacement: &str,
+) -> String {
+    let node_marker = format!("\"node_id\": \"{node}\"");
+    let node_start = document
+        .find(&node_marker)
+        .expect("receipt node projection");
+    let status_marker = format!("\"status\": \"{current}\"");
+    let status_start = document[node_start..]
+        .find(&status_marker)
+        .map(|offset| node_start + offset)
+        .expect("receipt node status");
+    document.replace_range(
+        status_start..status_start + status_marker.len(),
+        &format!("\"status\": \"{replacement}\""),
+    );
+    with_current_payload_checksum(document)
+}
+
 fn with_usize_array(mut document: String, field: &str, values: &[usize]) -> String {
     let marker = format!("\"{field}\": [");
     let start = document.find(&marker).expect("typed projection field") + marker.len();
@@ -5669,6 +5691,220 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     )
 }
 
+fn conditional_adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
+    let problem = compile(request(1)).expect("conditional physical-work problem");
+    let work_implementation = implementation(implementation_byte);
+    let retained = WorkNodeId::new("retained-route");
+    let streamed = WorkNodeId::new("streamed-route");
+    let retained_allocation = AllocationId::new("retained-route-buffer");
+    let streamed_allocation = AllocationId::new("streamed-route-buffer");
+    let retained_slot = PhysicalSlotId::new("retained-route-slot");
+    let streamed_slot = PhysicalSlotId::new("streamed-route-slot");
+    let route_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let route_claims = || {
+        vec![
+            ResourceClaim {
+                resource: LeaseResource::Rate {
+                    demand_id: "conditional-io-rate".to_string(),
+                },
+                amount: 1,
+                lifetime: route_lifetime.clone(),
+            },
+            ResourceClaim {
+                resource: LeaseResource::Queue {
+                    demand_id: "conditional-io-queue".to_string(),
+                },
+                amount: 1,
+                lifetime: route_lifetime.clone(),
+            },
+            ResourceClaim {
+                resource: LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead),
+                amount: 8,
+                lifetime: route_lifetime.clone(),
+            },
+        ]
+    };
+    let compatibility = |layout| SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 8,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new(layout),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let retained_compatibility = compatibility("retained-route-buffer");
+    let streamed_compatibility = compatibility("streamed-route-buffer");
+    let mut adapted = ExecutionKnobs::serial();
+    adapted.batch_size = 2;
+    let specification = ExecutionDagSpecification {
+        required_resource_capabilities: BTreeSet::new(),
+        resource_alternative: DemandAlternative {
+            id: AlternativeId::new("conditional-adaptive-cpu"),
+            capabilities: CapabilityPredicate::default(),
+            demand: DemandEnvelope {
+                host_memory_view: CapacityViewId::new("host-memory"),
+                memory: vec![
+                    MemoryDemand {
+                        allocation_id: "retained-route-slot".to_string(),
+                        hard_bytes: 8,
+                        preferred_bytes: 8,
+                        views: vec![CapacityViewId::new("host-memory")],
+                    },
+                    MemoryDemand {
+                        allocation_id: "streamed-route-slot".to_string(),
+                        hard_bytes: 8,
+                        preferred_bytes: 8,
+                        views: vec![CapacityViewId::new("host-memory")],
+                    },
+                ],
+                workers: CountDemand::new(1, 1),
+                overhead: RuntimeOverheadDemand::zero(),
+                storage: Vec::new(),
+                rates: vec![RateDemand {
+                    demand_id: "conditional-io-rate".to_string(),
+                    resource: RateResourceId::new("io-rate"),
+                    amount: CountDemand::new(1, 1),
+                }],
+                caches: CacheDemand::zero(),
+                locks: CountDemand::zero(),
+                file_descriptors: CountDemand::zero(),
+                queues: vec![QueueDemand {
+                    demand_id: "conditional-io-queue".to_string(),
+                    resource: QueueResourceId::new("io-queue"),
+                    slots: CountDemand::new(1, 1),
+                }],
+                transfers: Vec::new(),
+                accelerators: Vec::new(),
+                io_buffers: IoBufferDemand {
+                    source_read_ahead_bytes: 8,
+                    ..IoBufferDemand::zero()
+                },
+            },
+            headroom: ResourceHeadroom::default(),
+            scaling: ScalingMetadata {
+                minimum_workers: 1,
+                maximum_workers: 1,
+                maximum_batch_size: 2,
+                maximum_tile_width: 1,
+                maximum_tile_height: 1,
+                maximum_slab_depth: 1,
+                memory_bytes_per_worker: BTreeMap::new(),
+            },
+            quiescence_points: BTreeSet::from([QuiescencePoint::RunBoundary]),
+        },
+        nodes: vec![
+            WorkNode {
+                id: retained.clone(),
+                kind: WorkKind::Prefetch,
+                domain: WorkDomain::Io,
+                implementation: work_implementation.clone(),
+                dependencies: BTreeSet::new(),
+                claims: route_claims(),
+                allocations: vec![AllocationUse {
+                    allocation: retained_allocation.clone(),
+                    lifetime: route_lifetime.clone(),
+                }],
+                fences: BTreeSet::from([FenceKind::Io]),
+                quiescence_after: BTreeSet::new(),
+            },
+            WorkNode {
+                id: streamed.clone(),
+                kind: WorkKind::Prefetch,
+                domain: WorkDomain::Io,
+                implementation: work_implementation.clone(),
+                dependencies: BTreeSet::new(),
+                claims: route_claims(),
+                allocations: vec![AllocationUse {
+                    allocation: streamed_allocation.clone(),
+                    lifetime: route_lifetime.clone(),
+                }],
+                fences: BTreeSet::from([FenceKind::Io]),
+                quiescence_after: BTreeSet::new(),
+            },
+            WorkNode {
+                id: WorkNodeId::new("conditional-route-join"),
+                kind: WorkKind::Synchronization,
+                domain: WorkDomain::Control,
+                implementation: work_implementation.clone(),
+                dependencies: BTreeSet::from([
+                    WorkDependency::Fence(FenceId::new(retained.clone(), FenceKind::Io)),
+                    WorkDependency::Fence(FenceId::new(streamed.clone(), FenceKind::Io)),
+                ]),
+                claims: Vec::new(),
+                allocations: Vec::new(),
+                fences: BTreeSet::new(),
+                quiescence_after: BTreeSet::new(),
+            },
+        ],
+        logical_allocations: vec![
+            LogicalAllocation {
+                id: retained_allocation.clone(),
+                bytes: 8,
+                purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
+                compatibility: retained_compatibility.clone(),
+                physical_slot: retained_slot.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: retained.clone(),
+                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                        retained.clone(),
+                        FenceKind::Io,
+                    ))]),
+                },
+            },
+            LogicalAllocation {
+                id: streamed_allocation.clone(),
+                bytes: 8,
+                purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
+                compatibility: streamed_compatibility.clone(),
+                physical_slot: streamed_slot.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: streamed.clone(),
+                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                        streamed.clone(),
+                        FenceKind::Io,
+                    ))]),
+                },
+            },
+        ],
+        physical_slots: vec![
+            PhysicalSlot {
+                id: retained_slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: "retained-route-slot".to_string(),
+                },
+                capacity_bytes: 8,
+                compatibility: retained_compatibility,
+            },
+            PhysicalSlot {
+                id: streamed_slot,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: "streamed-route-slot".to_string(),
+                },
+                capacity_bytes: 8,
+                compatibility: streamed_compatibility,
+            },
+        ],
+        initial_knobs: ExecutionKnobs::serial(),
+        adaptations: vec![AdaptationTransition {
+            id: AdaptationId::new("select-streamed-route"),
+            from: ExecutionKnobs::serial(),
+            to: adapted,
+            at: QuiescencePoint::RunBoundary,
+            activate_nodes: BTreeSet::from([streamed]),
+            deactivate_nodes: BTreeSet::from([retained]),
+        }],
+    };
+    transaction_binding(
+        &problem,
+        specification,
+        work_implementation,
+        default_product_participants(),
+        false,
+        true,
+    )
+}
+
 fn auditable_physical_work(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
@@ -6159,6 +6395,28 @@ struct AdaptAtMajorBoundary {
 impl RunController for AdaptAtMajorBoundary {
     fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
         let adaptation = AdaptationId::new("larger-batch");
+        if !self.applied
+            && status
+                .eligible_adaptations()
+                .iter()
+                .any(|transition| transition.id == adaptation)
+        {
+            self.applied = true;
+            RunDirective::Adapt(adaptation)
+        } else {
+            RunDirective::Continue
+        }
+    }
+}
+
+#[derive(Default)]
+struct SelectStreamedRoute {
+    applied: bool,
+}
+
+impl RunController for SelectStreamedRoute {
+    fn directive(&mut self, status: &ExecutionStatus) -> RunDirective {
+        let adaptation = AdaptationId::new("select-streamed-route");
         if !self.applied
             && status
                 .eligible_adaptations()
@@ -9391,6 +9649,84 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
 }
 
 #[test]
+fn t59_explicit_memory_policy_seals_low_memory_production_adaptation() {
+    let problem = compile(channel_major_taylor_request_with_shape(
+        249,
+        8,
+        ImageShape::new(512, 512),
+    ))
+    .expect("representative production problem");
+    let registry = test_registry(&problem, 3, 6, None);
+    let storage_root = tempfile::tempdir().expect("production storage root");
+    let storage = ProductionStorageProfile::new(
+        storage_root.path(),
+        1 << 30,
+        1 << 30,
+        1_000_000,
+        1_000_000,
+        64,
+        8,
+    )
+    .expect("production storage profile");
+    let authority = ResourceAuthority::detected_with_storage_profile(&storage)
+        .expect("production resource authority");
+    let spill = ManagedSpillStorage::bind(&authority, storage.io_resources(), storage_root.path())
+        .expect("production managed spill");
+    let source_residency = selected_content_residency_with(&problem, |_| {
+        SelectedObservationContentBudget::new(4 * SELECTED_CONTENT_BYTES, 4, 4)
+    });
+    let build = |resource_policy| {
+        SpectralCyclePlan::initial(
+            &problem,
+            &registry,
+            SpectralCycleExecutionPolicy::new(
+                implementation(6),
+                WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
+                source_residency.clone(),
+                storage.io_resources(),
+                SpectralCyclePlanningLimits::new(
+                    1_000,
+                    512 * 512 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                    900_000,
+                ),
+                authority.clone(),
+                resource_policy,
+            )
+            .with_gridded_normal_storage(spill.clone()),
+        )
+        .expect("ordinary production plan")
+    };
+
+    let constrained = build(ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1 << 30)]),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    }));
+    let dag = constrained.physical_work().execution_dag();
+    let transition = dag
+        .adaptations()
+        .values()
+        .next()
+        .expect("explicit memory ceiling seals one low-memory route");
+    assert_eq!(dag.adaptations().len(), 1);
+    assert_eq!(transition.from, *dag.initial_knobs());
+    assert!(transition.to.batch_size < transition.from.batch_size);
+    assert!(transition.to.recomputation);
+    assert!(transition.to.spill);
+    assert!(!transition.to.prefetch);
+
+    let well_resourced = build(ResourcePolicy::Exclusive);
+    assert!(
+        well_resourced
+            .physical_work()
+            .execution_dag()
+            .adaptations()
+            .is_empty(),
+        "the same production seam legitimately leaves an unconstrained request unadapted"
+    );
+}
+
+#[test]
 fn t607_production_plan_bounds_channel_local_cube_with_ordered_slabs() {
     let channels = 32;
     let problem = compile(channel_local_request(247, channels)).expect("channel-local cube");
@@ -10925,6 +11261,134 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     assert_eq!(adaptation.transition(), &dag.adaptations()[&adaptation_id]);
     assert!(adaptation.was_applied());
     assert!(adaptation.applied_revision().is_some());
+}
+
+#[test]
+fn receipt_records_only_the_atomically_selected_conditional_route() {
+    let problem = compile(request(1)).expect("logical compilation");
+    let execution_plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(conditional_adaptive_physical_work(6)),
+    )
+    .expect("conditional adaptive physical planning");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(4),
+    );
+    let registry = TestRegistry {
+        id: registry(3),
+        metadata: implementation_metadata(&problem),
+        executors: BTreeMap::from([(
+            implementation(6),
+            product_publication_recording_executor(
+                &problem,
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicUsize::new(0)),
+            ),
+        )]),
+    };
+    let receipts = execution_plan.receipt_store();
+    let provenance = execution_provenance(
+        casa_imaging_runtime::ExecutionAttemptId::from_sha256([65; 32]),
+        BuildIdentity::from_sha256([66; 32]),
+    );
+    let mut controller = SelectStreamedRoute::default();
+
+    let outcome = run_receipted(
+        &problem,
+        &execution_plan,
+        &current,
+        &registry,
+        authority(),
+        &mut controller,
+        receipts.bind(provenance.clone()),
+    )
+    .expect("conditional receipted execution");
+    let receipt = receipts.open(provenance.attempt_id()).expect("receipt");
+    let retained = WorkNodeId::new("retained-route");
+    let streamed = WorkNodeId::new("streamed-route");
+    let retained_fence = FenceId::new(retained.clone(), FenceKind::Io);
+    let streamed_fence = FenceId::new(streamed.clone(), FenceKind::Io);
+    let adaptation = receipt
+        .adaptation_projection(&AdaptationId::new("select-streamed-route"))
+        .expect("conditional transition projection");
+
+    assert_eq!(outcome, ExecutionOutcome::Succeeded);
+    assert!(controller.applied);
+    assert_eq!(receipt.status(), ReceiptStatus::Completed);
+    assert!(adaptation.was_applied());
+    assert_eq!(
+        adaptation.transition().activate_nodes,
+        BTreeSet::from([streamed.clone()])
+    );
+    assert_eq!(
+        adaptation.transition().deactivate_nodes,
+        BTreeSet::from([retained.clone()])
+    );
+    assert_eq!(
+        receipt.node_status(&streamed),
+        Some(ReceiptStatus::Completed)
+    );
+    assert_eq!(
+        receipt.fence_status(&streamed_fence),
+        Some(ReceiptStatus::Completed)
+    );
+    assert_eq!(
+        receipt.node_status(&retained),
+        Some(ReceiptStatus::NotStarted)
+    );
+    assert_eq!(
+        receipt.fence_status(&retained_fence),
+        Some(ReceiptStatus::NotStarted)
+    );
+    assert_eq!(
+        receipt.stage_predicted_io(&streamed, IoBufferKind::SourceReadAhead),
+        Some((8, 1))
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&streamed, IoBufferKind::SourceReadAhead),
+        Some((8, 1))
+    );
+    assert_eq!(
+        receipt.stage_actual_io(&retained, IoBufferKind::SourceReadAhead),
+        None
+    );
+    assert!(receipt.stage_actual_elapsed_nanos(&streamed).is_some());
+    assert_eq!(receipt.stage_actual_elapsed_nanos(&retained), None);
+
+    let path = only_receipt_path(receipts.root_path());
+    let original = fs::read_to_string(&path).expect("serialized conditional receipt");
+    for (case, forged) in [
+        (
+            "inactive route reported complete",
+            with_node_receipt_status(
+                original.clone(),
+                retained.as_str(),
+                "not_started",
+                "completed",
+            ),
+        ),
+        (
+            "selected route reported not started",
+            with_node_receipt_status(
+                original.clone(),
+                streamed.as_str(),
+                "completed",
+                "not_started",
+            ),
+        ),
+    ] {
+        fs::write(&path, forged).expect("rewrite checksum-valid conditional receipt");
+        assert!(
+            matches!(
+                receipts.open(provenance.attempt_id()),
+                Err(casa_imaging_runtime::ReceiptError::IntegrityMismatch)
+            ),
+            "{case} must fail reconstructed route validation"
+        );
+    }
 }
 
 #[test]

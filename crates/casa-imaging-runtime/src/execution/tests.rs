@@ -3600,6 +3600,120 @@ fn adaptation_atomically_selects_plan_listed_low_memory_work() {
 }
 
 #[test]
+fn adaptation_can_enable_already_active_exact_execution_work() {
+    let mut preparation = cpu_node("recompute-state", BTreeSet::new());
+    preparation.kind = WorkKind::Preparation;
+    let mut specification = plan_spec(vec![preparation]);
+    let mut recomputing = specification.initial_knobs.clone();
+    recomputing.recomputation = true;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("enable-recomputation"),
+        from: specification.initial_knobs.clone(),
+        to: recomputing,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::new(),
+    }];
+
+    ExecutionDag::new(specification)
+        .expect("a target projection may use exact execution work that was already active");
+}
+
+#[test]
+fn adaptation_cannot_make_science_bearing_compute_conditional() {
+    let compute_id = WorkNodeId::new("mandatory-science-kernel");
+    let mut specification = plan_spec(vec![cpu_node(compute_id.as_str(), BTreeSet::new())]);
+    let mut adapted = specification.initial_knobs.clone();
+    adapted.batch_size = 2;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("drop-science-kernel"),
+        from: specification.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::from([compute_id]),
+    }];
+
+    let error = ExecutionDag::new(specification)
+        .expect_err("execution-only adaptation cannot remove mandatory science work");
+
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("Compute work node mandatory-science-kernel") && message.contains("execution-only"))
+    );
+}
+
+#[test]
+fn adaptation_cannot_bypass_an_inactive_observation_dependency() {
+    let observation_id = WorkNodeId::new("mandatory-observation-read");
+    let compute_id = WorkNodeId::new("science-kernel");
+    let measurement_set = casa_imaging_model::MeasurementSetIdentity::new(identity(42));
+    let observation = WorkNode {
+        id: observation_id.clone(),
+        kind: WorkKind::ObservationRead,
+        domain: WorkDomain::Io,
+        implementation: WorkImplementationId::new("cpu-reference"),
+        dependencies: BTreeSet::new(),
+        claims: vec![
+            ResourceClaim {
+                resource: crate::LeaseResource::Rate {
+                    demand_id: "io-rate".to_string(),
+                },
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::Queue {
+                    demand_id: "io-queue".to_string(),
+                },
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            },
+            ResourceClaim {
+                resource: crate::LeaseResource::MeasurementSetLock { measurement_set },
+                amount: 1,
+                lifetime: ClaimLifetime::Work,
+            },
+        ],
+        allocations: Vec::new(),
+        fences: BTreeSet::new(),
+        quiescence_after: BTreeSet::new(),
+    };
+    let compute = cpu_node(
+        compute_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(observation_id.clone())]),
+    );
+    let mut specification = plan_spec(vec![observation, compute]);
+    specification.resource_alternative.demand.rates = vec![RateDemand {
+        demand_id: "io-rate".to_string(),
+        resource: RateResourceId::new("io-rate"),
+        amount: CountDemand::new(1, 1),
+    }];
+    specification.resource_alternative.demand.queues = vec![QueueDemand {
+        demand_id: "io-queue".to_string(),
+        resource: QueueResourceId::new("io-queue"),
+        slots: CountDemand::new(1, 1),
+    }];
+    specification.resource_alternative.demand.locks = CountDemand::new(1, 1);
+    let mut adapted = specification.initial_knobs.clone();
+    adapted.batch_size = 2;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("bypass-observation-read"),
+        from: specification.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::from([observation_id]),
+    }];
+
+    let error = ExecutionDag::new(specification)
+        .expect_err("inactive observation work cannot satisfy a science dependency");
+
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("science-kernel") && message.contains("mandatory-observation-read") && message.contains("rejoin through Synchronization"))
+    );
+}
+
+#[test]
 fn adaptation_projection_cannot_strand_a_logical_allocation_terminal_fence() {
     let acquire_id = WorkNodeId::new("acquire-state");
     let boundary_id = WorkNodeId::new("adaptation-boundary");
@@ -3808,7 +3922,7 @@ fn adaptation_projection_cannot_strand_a_retained_resource_release() {
 }
 
 #[test]
-fn adaptation_projection_cannot_make_terminal_publication_conditional() {
+fn adaptation_cannot_make_publication_conditional() {
     let publication_id = WorkNodeId::new("terminal-publication");
     let lifetime = ClaimLifetime::through_fences([FenceKind::Io, FenceKind::Publication]);
     let publication = WorkNode {
@@ -3858,18 +3972,11 @@ fn adaptation_projection_cannot_make_terminal_publication_conditional() {
         activate_nodes: BTreeSet::new(),
         deactivate_nodes: BTreeSet::from([publication_id.clone()]),
     }];
-    let plan = ExecutionDag::new(specification).expect("valid conditional work plan");
-
-    let error = ExecutionScheduler::start(
-        &plan,
-        &ResourcePolicy::Exclusive,
-        &io_authority(),
-        Some(&publication_id),
-    )
-    .expect_err("terminal publication must remain active in every projection");
+    let error = ExecutionDag::new(specification)
+        .expect_err("publication is never execution-only conditional work");
 
     assert!(
-        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("terminal publication") && message.contains("conditional"))
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("Publication work node terminal-publication") && message.contains("execution-only"))
     );
 }
 
