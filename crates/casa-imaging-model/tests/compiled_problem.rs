@@ -360,6 +360,7 @@ fn t46_joint_contract_is_canonical_identifiable_and_distinct() {
         JointContinuumLineContract::new([0, 1, 2, 3, 4, 5, 6, 7], [], 1.0e8),
         JointContinuumLineContract::new([0, 1, 2, 5, 6, 7], [2, 3], 1.0e8),
         JointContinuumLineContract::new([0], [1, 2, 3, 4, 5, 6, 7], 1.0e8),
+        JointContinuumLineContract::new([0, 1, 2, 5, 6, 7], [3, 3], 1.0e8),
     ] {
         assert!(matches!(
             compile_with_geometry(

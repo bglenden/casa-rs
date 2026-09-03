@@ -180,6 +180,7 @@ imaging-t46-joint-continuum-line:
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-reconstruction --test mtmfs_block_normal t46_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-products --test taylor_products t46_
     CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --lib t46_
+    CARGO_INCREMENTAL=0 cargo test -p casa-imaging-application --test continuum_application t46_application_executes_joint_continuum_line_through_one_native_route -- --exact
 
 release-perf:
     bash scripts/test-release-perf.sh
