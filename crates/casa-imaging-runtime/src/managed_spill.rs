@@ -497,6 +497,8 @@ pub(crate) enum ManagedSpillError {
     GlobalChecksumMismatch,
     #[error("managed spill artifact reader is poisoned after an earlier failure")]
     ReaderPoisoned,
+    #[error("managed spill page-cache release retained {resident_pages} resident pages")]
+    PageCacheRetention { resident_pages: usize },
     #[error("managed spill artifact read was not completed through its terminal footer and EOF")]
     IncompleteRead,
 }
@@ -1795,9 +1797,86 @@ fn release_page_cache(
                 source: io::Error::from_raw_os_error(result),
             });
         }
+        verify_page_cache_release(file, aligned_offset, length, page_bytes, operations)?;
     }
     #[cfg(not(target_os = "linux"))]
     let _ = (file, offset, bytes, flush_dirty, operations);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn verify_page_cache_release(
+    file: &File,
+    aligned_offset: i64,
+    length: i64,
+    page_bytes: u64,
+    operations: &mut u64,
+) -> Result<(), ManagedSpillError> {
+    use std::os::fd::AsRawFd;
+
+    let length_usize = usize::try_from(length)
+        .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache verification bytes"))?;
+    let page_bytes_usize = usize::try_from(page_bytes)
+        .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache verification page size"))?;
+    let page_count = length_usize.div_ceil(page_bytes_usize);
+    let operation_count = operations
+        .checked_add(u64::try_from(page_count).map_err(|_| {
+            ManagedSpillError::ArithmeticOverflow("page-cache verification page count")
+        })?)
+        .ok_or(ManagedSpillError::ArithmeticOverflow(
+            "managed spill operation count",
+        ))?;
+    let mapping = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            length_usize,
+            libc::PROT_NONE,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            aligned_offset,
+        )
+    };
+    if mapping == libc::MAP_FAILED {
+        return Err(ManagedSpillError::Io {
+            operation: "map managed spill page-cache verification window",
+            source: io::Error::last_os_error(),
+        });
+    }
+    *operations = operation_count;
+    let mut resident_pages = 0_usize;
+    let mut source = None;
+    for page in 0..page_count {
+        let page_offset = page * page_bytes_usize;
+        let mut residency = 0_u8;
+        let result = unsafe {
+            libc::mincore(
+                mapping.cast::<u8>().add(page_offset).cast(),
+                page_bytes_usize,
+                &mut residency,
+            )
+        };
+        if result == -1 {
+            source = Some(io::Error::last_os_error());
+            break;
+        }
+        resident_pages += usize::from(residency & 1 != 0);
+    }
+    let unmap_result = unsafe { libc::munmap(mapping, length_usize) };
+    if let Some(source) = source {
+        return Err(ManagedSpillError::Io {
+            operation: "verify managed spill page-cache release",
+            source,
+        });
+    }
+    if unmap_result == -1 {
+        return Err(ManagedSpillError::Io {
+            operation: "unmap managed spill page-cache verification window",
+            source: io::Error::last_os_error(),
+        });
+    }
+    if resident_pages != 0 {
+        return Err(ManagedSpillError::PageCacheRetention { resident_pages });
+    }
     Ok(())
 }
 
@@ -2138,6 +2217,9 @@ mod tests {
         assert_eq!(write.frame_count(), 2);
         assert_eq!(write.record_count(), 3);
         assert_eq!(write.transferred_bytes(), expected_artifact_bytes);
+        #[cfg(target_os = "linux")]
+        assert_eq!(write.operations(), 16);
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(write.operations(), 4);
         assert_eq!(write.sha256_calls(), 3);
         assert_eq!(write.payload_copy_bytes(), 17);
@@ -2175,6 +2257,9 @@ mod tests {
         assert_eq!(read.frame_count(), 2);
         assert_eq!(read.record_count(), 3);
         assert_eq!(read.transferred_bytes(), expected_artifact_bytes);
+        #[cfg(target_os = "linux")]
+        assert_eq!(read.operations(), 28);
+        #[cfg(not(target_os = "linux"))]
         assert_eq!(read.operations(), 10);
         assert_eq!(read.sha256_calls(), 3);
         assert_eq!(read.sha256_bytes(), write.sha256_bytes());

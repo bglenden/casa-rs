@@ -1746,8 +1746,8 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             .collect(),
     })?;
     let predicted_spill_operations = budget
-        .maximum_serialization_operations()
-        .checked_mul(if mode.is_read { 4 } else { 3 })
+        .maximum_artifact_bytes()
+        .checked_mul(4)
         .ok_or(SpectralCyclePlanError::Overflow)?;
     let stages = base
         .prediction()
