@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 21;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 22;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -456,6 +456,128 @@ pub enum InstrumentModel {
     /// CASA-compatible paired voltage response for heterogeneous ALMA 12 m
     /// and ACA 7 m interferometric baselines, version 1.
     CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+    /// CASA-compatible EVLA wideband aperture, pointing, and conjugate-beam
+    /// response consumed through validated paired AW convolution functions.
+    CasaEvlaWidebandAwV1,
+}
+
+/// Science-owned A/W-projection controls compiled into one paired operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AwProjectionContract {
+    maximum_abs_w_lambda_bits: u64,
+    planes: std::num::NonZeroUsize,
+    a_term: bool,
+    ps_term: bool,
+    wideband: bool,
+    conjugate_beams: bool,
+    use_pointing: bool,
+    compute_pa_step_deg_bits: u64,
+    rotate_pa_step_deg_bits: u64,
+}
+
+impl AwProjectionContract {
+    /// Construct one complete paired A/W request independent of cache state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        maximum_abs_w_lambda: f64,
+        planes: std::num::NonZeroUsize,
+        a_term: bool,
+        ps_term: bool,
+        wideband: bool,
+        conjugate_beams: bool,
+        use_pointing: bool,
+        compute_pa_step_deg: f64,
+        rotate_pa_step_deg: f64,
+    ) -> Result<Self, AwProjectionContractError> {
+        if !maximum_abs_w_lambda.is_finite() || maximum_abs_w_lambda < 0.0 {
+            return Err(AwProjectionContractError::InvalidMaximumAbsWLambda);
+        }
+        if !compute_pa_step_deg.is_finite() || compute_pa_step_deg <= 0.0 {
+            return Err(AwProjectionContractError::InvalidComputePaStep);
+        }
+        if !rotate_pa_step_deg.is_finite() || rotate_pa_step_deg <= 0.0 {
+            return Err(AwProjectionContractError::InvalidRotatePaStep);
+        }
+        Ok(Self {
+            maximum_abs_w_lambda_bits: maximum_abs_w_lambda.to_bits(),
+            planes,
+            a_term,
+            ps_term,
+            wideband,
+            conjugate_beams,
+            use_pointing,
+            compute_pa_step_deg_bits: compute_pa_step_deg.to_bits(),
+            rotate_pa_step_deg_bits: rotate_pa_step_deg.to_bits(),
+        })
+    }
+
+    /// Return the selected-observation W envelope in wavelengths.
+    #[must_use]
+    pub fn maximum_abs_w_lambda(self) -> f64 {
+        f64::from_bits(self.maximum_abs_w_lambda_bits)
+    }
+
+    /// Return the exact requested W-plane count.
+    #[must_use]
+    pub const fn planes(self) -> std::num::NonZeroUsize {
+        self.planes
+    }
+
+    /// Return whether the aperture term is required.
+    #[must_use]
+    pub const fn a_term(self) -> bool {
+        self.a_term
+    }
+
+    /// Return whether the prolate-spheroidal term is required.
+    #[must_use]
+    pub const fn ps_term(self) -> bool {
+        self.ps_term
+    }
+
+    /// Return whether frequency-dependent aperture cells are required.
+    #[must_use]
+    pub const fn wideband(self) -> bool {
+        self.wideband
+    }
+
+    /// Return whether conjugate-frequency beam cells are required.
+    #[must_use]
+    pub const fn conjugate_beams(self) -> bool {
+        self.conjugate_beams
+    }
+
+    /// Return whether row-local POINTING directions are required.
+    #[must_use]
+    pub const fn use_pointing(self) -> bool {
+        self.use_pointing
+    }
+
+    /// Return the CF computation parallactic-angle step in degrees.
+    #[must_use]
+    pub fn compute_pa_step_deg(self) -> f64 {
+        f64::from_bits(self.compute_pa_step_deg_bits)
+    }
+
+    /// Return the CF rotation parallactic-angle step in degrees.
+    #[must_use]
+    pub fn rotate_pa_step_deg(self) -> f64 {
+        f64::from_bits(self.rotate_pa_step_deg_bits)
+    }
+}
+
+/// Invalid paired A/W-projection science contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum AwProjectionContractError {
+    /// The selected-observation W envelope must be finite and non-negative.
+    #[error("maximum absolute W wavelength must be finite and non-negative")]
+    InvalidMaximumAbsWLambda,
+    /// The CF computation PA step must be finite and positive.
+    #[error("AW computation parallactic-angle step must be finite and positive")]
+    InvalidComputePaStep,
+    /// The CF rotation PA step must be finite and positive.
+    #[error("AW rotation parallactic-angle step must be finite and positive")]
+    InvalidRotatePaStep,
 }
 
 /// Science-owned W-projection envelope compiled into the paired measurement operator.
@@ -507,6 +629,7 @@ pub struct MeasurementEquationContract {
     instrument_response: InstrumentResponse,
     inner_products: DeclaredInnerProducts,
     w_projection: Option<WProjectionContract>,
+    aw_projection: Option<AwProjectionContract>,
 }
 
 impl MeasurementEquationContract {
@@ -520,6 +643,7 @@ impl MeasurementEquationContract {
             instrument_response,
             inner_products,
             w_projection: None,
+            aw_projection: None,
         }
     }
 
@@ -527,6 +651,13 @@ impl MeasurementEquationContract {
     #[must_use]
     pub const fn with_w_projection(mut self, contract: WProjectionContract) -> Self {
         self.w_projection = Some(contract);
+        self
+    }
+
+    /// Include one explicit paired A/W-projection transform.
+    #[must_use]
+    pub const fn with_aw_projection(mut self, contract: AwProjectionContract) -> Self {
+        self.aw_projection = Some(contract);
         self
     }
 
@@ -546,6 +677,12 @@ impl MeasurementEquationContract {
     #[must_use]
     pub const fn w_projection(self) -> Option<WProjectionContract> {
         self.w_projection
+    }
+
+    /// Return the paired A/W-projection contract, when requested.
+    #[must_use]
+    pub const fn aw_projection(self) -> Option<AwProjectionContract> {
+        self.aw_projection
     }
 }
 
@@ -1704,6 +1841,8 @@ pub enum RequiredCapability {
     FacetedGeometry,
     /// Paired W-projection convolution.
     WProjection,
+    /// Paired prepared-convolution-function A/W projection.
+    AwProjection,
     /// Spectral reference-frame transformation.
     SpectralFrameTransform,
     /// Non-identity paired spectral sampling.
@@ -1765,6 +1904,7 @@ impl RequiredCapability {
             Self::MultiDomainGeometry,
             Self::FacetedGeometry,
             Self::WProjection,
+            Self::AwProjection,
             Self::SpectralFrameTransform,
             Self::SpectralResampling,
             Self::SequentialContinuumTransform,
@@ -1807,6 +1947,7 @@ impl RequiredCapability {
             Self::MultiDomainGeometry => "multi_domain_geometry".to_string(),
             Self::FacetedGeometry => "faceted_geometry".to_string(),
             Self::WProjection => "w_projection".to_string(),
+            Self::AwProjection => "aw_projection".to_string(),
             Self::SpectralFrameTransform => "spectral_frame_transform".to_string(),
             Self::SpectralResampling => "spectral_resampling".to_string(),
             Self::SequentialContinuumTransform => "sequential_continuum_transform".to_string(),
@@ -2247,6 +2388,7 @@ fn validate_science(
                 Some(
                     InstrumentModel::CasaAca7mInterferometricDirectPbV1
                         | InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                        | InstrumentModel::CasaEvlaWidebandAwV1
                 )
             )
     ) {
@@ -2262,6 +2404,20 @@ fn validate_science(
     {
         return Err(CompileProblemError::InvalidScientificContract {
             reason: "direction-dependent response requires bound instrument reference data",
+        });
+    }
+    if science.measurement_equation.w_projection.is_some()
+        && science.measurement_equation.aw_projection.is_some()
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "W projection and AW projection are distinct paired operators",
+        });
+    }
+    if science.measurement_equation.aw_projection.is_some()
+        && science.instrument_model != Some(InstrumentModel::CasaEvlaWidebandAwV1)
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "the paired AW contract requires the exact EVLA wideband instrument model",
         });
     }
     Ok(())
@@ -2805,6 +2961,9 @@ fn derive_capabilities(
     if science.measurement_equation.w_projection.is_some() {
         capabilities.insert(RequiredCapability::WProjection);
     }
+    if science.measurement_equation.aw_projection.is_some() {
+        capabilities.insert(RequiredCapability::AwProjection);
+    }
     if science.spectral.coupling == SpectralCoupling::CommonRestoringBeam {
         capabilities.insert(RequiredCapability::CommonBeamSpectralCoupling);
     }
@@ -2937,6 +3096,13 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         }
         None => encoder.u8(0),
     }
+    match science.measurement_equation.aw_projection {
+        Some(contract) => {
+            encoder.u8(1);
+            encode_aw_projection_contract(&mut encoder, contract);
+        }
+        None => encoder.u8(0),
+    }
     encode_instrument_model(&mut encoder, science.instrument_model);
     let inner_products = science.measurement_equation.inner_products;
     encoder.u8(match inner_products.model() {
@@ -3011,6 +3177,10 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
                     }
                     None => encoder.u8(0),
                 }
+            }
+            PairedMeasurementTransform::AwProjection { contract } => {
+                encoder.u8(8);
+                encode_aw_projection_contract(&mut encoder, *contract);
             }
         }
     }
@@ -3433,7 +3603,20 @@ const fn instrument_model_tag(model: InstrumentModel) -> u8 {
         InstrumentModel::CasaAca7mInterferometricDirectPbV1 => 3,
         // Tag 1 is reserved for the retired homogeneous direct-PB v1 model.
         InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => 2,
+        InstrumentModel::CasaEvlaWidebandAwV1 => 4,
     }
+}
+
+fn encode_aw_projection_contract(encoder: &mut CanonicalEncoder, contract: AwProjectionContract) {
+    encoder.u64(contract.maximum_abs_w_lambda_bits);
+    encoder.usize(contract.planes.get());
+    encoder.u8(u8::from(contract.a_term));
+    encoder.u8(u8::from(contract.ps_term));
+    encoder.u8(u8::from(contract.wideband));
+    encoder.u8(u8::from(contract.conjugate_beams));
+    encoder.u8(u8::from(contract.use_pointing));
+    encoder.u64(contract.compute_pa_step_deg_bits);
+    encoder.u64(contract.rotate_pa_step_deg_bits);
 }
 
 fn product_tag(product: ProductKind) -> u8 {

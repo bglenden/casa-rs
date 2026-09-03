@@ -15,13 +15,14 @@ mod transaction;
 mod visibility_transform;
 
 pub use compiled_problem::{
-    CompileProblemError, CompiledProblem, CompiledProblemId, FiniteValuePolicy,
-    HogbomIterationAccounting, ImagingRequest, ImagingRequestVersion, InstrumentModel,
-    InstrumentResponse, JointContinuumLineContract, LogicalIdentity, MeasurementEquationContract,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, NumericsContractId,
-    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
-    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
-    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    AwProjectionContract, AwProjectionContractError, CompileProblemError, CompiledProblem,
+    CompiledProblemId, FiniteValuePolicy, HogbomIterationAccounting, ImagingRequest,
+    ImagingRequestVersion, InstrumentModel, InstrumentResponse, JointContinuumLineContract,
+    LogicalIdentity, MeasurementEquationContract, ModelStateIdentity, NumericPrecision,
+    NumericalStage, NumericsContract, NumericsContractId, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
     ProductValidityPolicyError, ReconstructionAlgorithm, ReconstructionBasis,
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
