@@ -11,8 +11,7 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId,
-    ModelInputCommitment, ReconstructionBasis,
+    CompiledProblem, LogicalIdentity, ModelDeltaTerm, ModelExecutionAttemptId, ModelInputCommitment,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletion, FinalModelContinuation,
@@ -1629,21 +1628,19 @@ impl SpectralCycleExecutor {
         }
         result?;
 
-        if !matches!(
-            self.problem.reconstruction().basis(),
-            ReconstructionBasis::TaylorViaChannelMajor { .. }
-        ) {
+        if self.complete_data.slab_count() == 1 {
             return Ok(());
         }
         let (replay, selected_generation, continuum_generation) = weighting
             .pending_replay_inputs()
-            .ok_or_else(|| io::Error::other("initial MVC replay summary missing"))?;
+            .ok_or_else(|| io::Error::other("initial slab replay summary missing"))?;
         let first_operator = operator
             .take()
-            .ok_or_else(|| io::Error::other("initial MVC operator missing"))?;
-        let (mut folded, mut recycle) = first_operator
+            .ok_or_else(|| io::Error::other("initial slab operator missing"))?;
+        let (first, mut recycle) = first_operator
             .complete_initial_slab_recycled(replay, selected_generation, continuum_generation)
             .map_err(io::Error::other)?;
+        let mut folded = first.begin_fold().map_err(io::Error::other)?;
 
         for ordinal in 1..self.complete_data.slab_count() {
             let prepared = self
@@ -1660,7 +1657,7 @@ impl SpectralCycleExecutor {
             let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
                 operator
                     .as_mut()
-                    .ok_or_else(|| io::Error::other("MVC slab operator missing"))?
+                    .ok_or_else(|| io::Error::other("channel slab operator missing"))?
                     .consume_bounded_replay_chunk(block)
                     .map(|_| ())
                     .map_err(io::Error::other)
@@ -1677,22 +1674,26 @@ impl SpectralCycleExecutor {
                 .checked_add(
                     weighting
                         .latest_traversal_measurements()
-                        .ok_or_else(|| io::Error::other("MVC source-pass measurements missing"))?
+                        .ok_or_else(|| {
+                            io::Error::other("channel slab source-pass measurements missing")
+                        })?
                         .source_pass_count(),
                 )
-                .ok_or_else(|| io::Error::other("MVC source-pass measurements overflow"))?;
+                .ok_or_else(|| {
+                    io::Error::other("channel slab source-pass measurements overflow")
+                })?;
             let (replay, selected_generation, continuum_generation) = weighting
                 .pending_replay_inputs()
-                .ok_or_else(|| io::Error::other("MVC replay summary missing"))?;
+                .ok_or_else(|| io::Error::other("channel slab replay summary missing"))?;
             let next_operator = operator
                 .take()
-                .ok_or_else(|| io::Error::other("MVC slab operator missing"))?;
+                .ok_or_else(|| io::Error::other("channel slab operator missing"))?;
             let (next, next_recycle) = next_operator
                 .complete_initial_slab_recycled(replay, selected_generation, continuum_generation)
                 .map_err(io::Error::other)?;
             folded = folded.fold(next).map_err(io::Error::other)?;
             recycle = next_recycle;
-            self.log_stream_measurements(weighting, "weighted-replay-mvc-slab");
+            self.log_stream_measurements(weighting, "weighted-replay-channel-slab");
         }
         *pending_complete_data_slabs = Some(folded);
         Ok(())

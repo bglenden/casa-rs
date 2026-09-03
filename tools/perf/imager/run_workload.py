@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import datetime as dt
+import hashlib
+import json
 import os
 import pathlib
 import re
@@ -72,7 +74,7 @@ SUPPORTED_HOGBOM_ITERATION_MODES = {
 }
 SUPPORTED_MS_STAGING = {"copy", "direct"}
 SUPPORTED_BOOLEAN_FLAGS = {"0", "1", "false", "true", "no", "yes", "off", "on"}
-STRING_IMAGING_OVERRIDE_KEYS = {"start", "width"}
+STRING_IMAGING_OVERRIDE_KEYS = {"mask_box", "start", "width"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
 STRUCTURED_DIFFERENCE_REVIEW_LEGEND = {
     "good": "No review action expected from this check.",
@@ -412,6 +414,9 @@ def apply_imaging_overrides(manifest: dict[str, Any], overrides: list[str]) -> N
         key, value = override.split("=", 1)
         if not key:
             raise HarnessError("--set-imaging key must not be empty")
+        if key == "mask_box" and value.strip().lower() in {"null", "none"}:
+            imaging.pop(key, None)
+            continue
         imaging[key] = parse_override_value(key, value)
 
 
@@ -588,6 +593,23 @@ def build_plan(
             specmode in {"cube", "cubedata"},
         ),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
+        "IMAGER_BENCH_USEMASK": str_value(imaging, "usemask", "user"),
+        "IMAGER_BENCH_MASK_BOX": str_value(imaging, "mask_box", ""),
+        "IMAGER_BENCH_SAVEMODEL": str_value(imaging, "savemodel", "none"),
+        "IMAGER_BENCH_FITSPW": str_value(imaging, "fitspw", ""),
+        "IMAGER_BENCH_FITORDER": str(int_value(imaging, "fitorder", 0)),
+        "IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL": boolean_env_value(
+            imaging, "save_continuum_residual", False
+        ),
+        "IMAGER_BENCH_SIDELOBETHRESHOLD": str(
+            float_value(imaging, "sidelobethreshold", 3.0)
+        ),
+        "IMAGER_BENCH_NOISETHRESHOLD": str(
+            float_value(imaging, "noisethreshold", 5.0)
+        ),
+        "IMAGER_BENCH_CASA_PBLIMIT": str(
+            float_value(imaging, "casa_pblimit", float_value(imaging, "pblimit", 0.2))
+        ),
         "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": str_value(
             imaging, "standard_mfs_acceleration", "auto"
         ),
@@ -1198,6 +1220,50 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
         "casa_clean_control_diagnostics": parse_casa_clean_control_diagnostics(text),
         "product_paths": parse_product_paths(text),
+        "model_data_comparison": parse_model_data_comparison(text),
+        "continuum_residual_comparison": parse_continuum_residual_comparison(text),
+    }
+
+
+def parse_model_data_comparison(text: str) -> dict[str, Any]:
+    match = re.search(
+        r"^model_data_comparison=(.+) status=(pass|fail) nrms=([^\s]+)$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return {"status": "not_run"}
+    path = pathlib.Path(match.group(1).strip())
+    if not path.is_file():
+        return {"status": "missing", "path": str(path)}
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    if receipt.get("schema") != "casa-rs-model-data-comparison-v1":
+        raise HarnessError("MODEL_DATA comparison receipt has an unexpected schema")
+    return {
+        **receipt,
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def parse_continuum_residual_comparison(text: str) -> dict[str, Any]:
+    match = re.search(
+        r"^continuum_residual_comparison=(.+) status=(pass|fail) nrms=([^\s]+)$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return {"status": "not_run"}
+    path = pathlib.Path(match.group(1).strip())
+    if not path.is_file():
+        return {"status": "missing", "path": str(path)}
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    if receipt.get("schema") != "casa-rs-continuum-residual-comparison-v1":
+        raise HarnessError("continuum-residual comparison receipt has an unexpected schema")
+    return {
+        **receipt,
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
 
 

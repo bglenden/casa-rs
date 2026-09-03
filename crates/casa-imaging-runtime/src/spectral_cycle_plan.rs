@@ -508,25 +508,44 @@ impl SpectralCyclePlan {
                 if matches!(
                     problem.reconstruction().basis(),
                     casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
+                        | casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
                 ) =>
             {
-                let memory_ceiling = policy.authority.remaining_planning_memory_bytes(
+                let available_after_base = policy.authority.remaining_planning_memory_bytes(
                     &policy.resource_policy,
                     physical.execution_dag().resource_alternative(),
                 )?;
-                let fragment = CompleteDataPlanFragment::mvc_with_preparation_node(
+                let downstream_reservation = if include_minor {
+                    policy.limits.minor_cycle_bytes
+                } else {
+                    0
+                };
+                let memory_ceiling = available_after_base.saturating_sub(downstream_reservation);
+                let fragment = CompleteDataPlanFragment::channel_major_with_preparation_node(
                     problem,
                     weighting.limits().max_block_samples(),
                     replay.clone(),
                     preparation_node,
                     memory_ceiling,
                 )?;
+                if include_minor
+                    && matches!(
+                        problem.reconstruction().basis(),
+                        casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+                    )
+                    && fragment.slab_count() != 1
+                {
+                    return Err(SpectralCyclePlanError::CubeCleanRequiresAllPlanes);
+                }
                 if imaging_plan_diagnostics_enabled() {
                     let residency = fragment.residency();
                     eprintln!(
-                        "imaging_mvc_plan_summary available_after_base_bytes={} admitted_slab_depth={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} mosaic_state_bytes={} mosaic_workspace_bytes={} primitive_output_bytes={} major_cycle_model_bytes={}",
+                        "imaging_channel_major_plan_summary available_after_base_bytes={} downstream_reservation_bytes={} operator_working_set_bytes={} admitted_slab_depth={} slab_count={} operator_peak_bytes={} grid_bytes={} convolution_cache_bytes={} fft_resident_bytes={} fft_planning_bytes={} forward_workspace_bytes={} response_workspace_bytes={} mosaic_state_bytes={} mosaic_workspace_bytes={} primitive_output_bytes={} fold_accumulator_bytes={} major_cycle_model_bytes={}",
+                        available_after_base,
+                        downstream_reservation,
                         memory_ceiling,
                         fragment.slab().core_depth(),
+                        fragment.slab_count(),
                         residency.peak_bytes(),
                         residency.grid_bytes(),
                         residency.convolution_cache_bytes(),
@@ -537,6 +556,7 @@ impl SpectralCyclePlan {
                         residency.mosaic_state_bytes(),
                         residency.mosaic_workspace_bytes(),
                         residency.primitive_output_bytes(),
+                        residency.sequential_fold_accumulator_bytes(),
                         residency.major_cycle_model_bytes(),
                     );
                 }
@@ -1681,7 +1701,7 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
         .unwrap_or_else(|| "serial-visibility-write-queue".to_string());
     let persistent_bytes = storage_plan.additional_persistent_bytes();
     let write_bytes = storage_plan.write_bytes().max(1);
-    let cell_bytes = storage_plan.maximum_cell_bytes().max(1);
+    let cell_bytes = storage_plan.write_buffer_bytes().max(1);
     let block_copy_bytes = u64::try_from(policy.weighting_limits.max_block_samples())
         .ok()
         .and_then(|samples| {
@@ -2065,6 +2085,8 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
+    /// Cube CLEAN cannot keep every output plane resident in one synchronized cycle.
+    CubeCleanRequiresAllPlanes,
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
     /// A later-major plan received replay state outside its retained storage authority.

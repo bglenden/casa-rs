@@ -91,6 +91,31 @@ class ImagingToleranceTests(unittest.TestCase):
             evaluate_comparison_tolerances(comparison, make_contract())["status"],
         )
 
+    def test_per_channel_beams_use_the_worst_channel_metric(self) -> None:
+        comparison = make_comparison()
+        product = comparison["products"][".image.tt0"]
+        beam = lambda major: {
+            "major": {"value": major, "unit": "arcsec"},
+            "minor": {"value": 1.0, "unit": "arcsec"},
+            "positionangle": {"value": 10.0, "unit": "deg"},
+        }
+        product["metadata"]["left"]["restoring_beam"] = {
+            "beams": {"*0": {"*0": beam(2.0)}, "*1": {"*0": beam(2.001)}}
+        }
+        product["metadata"]["right"]["restoring_beam"] = {
+            "beams": {"*0": {"*0": beam(2.0)}, "*1": {"*0": beam(2.0)}}
+        }
+
+        self.assertEqual(
+            "passed",
+            evaluate_comparison_tolerances(comparison, make_contract())["status"],
+        )
+        product["metadata"]["left"]["restoring_beam"]["beams"]["*1"]["*0"] = beam(2.01)
+        self.assertEqual(
+            "failed",
+            evaluate_comparison_tolerances(comparison, make_contract())["status"],
+        )
+
     def test_contract_rejects_unknown_or_negative_thresholds(self) -> None:
         contract = make_contract()
         contract["default"]["magic"] = 1.0

@@ -93,10 +93,10 @@ use casa_imaging_runtime::{
     SerialProductPublicationExecutor, SerialProductPublicationPlan, SerialProductPublicationPolicy,
     SerialProductPublicationRegistry, SerialProductPublicationSink, SlotCompatibility,
     SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry,
-    SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase, StagePrediction, StorageDomain,
-    StorageDomainId, StorageIoResourceBinding, StorageMode, StorageUseKind,
-    WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
+    SpectralCyclePlanError, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+    SpectralCycleRegistry, SpectralOperatorState, SpectralPassIdentity, SpectralPassPhase,
+    StagePrediction, StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageMode,
+    StorageUseKind, WeightedObservationBlock, WeightingExecutionState, WeightingPlanFragment,
     WeightingReplayCompletion, WorkDependency, WorkDomain, WorkExecutionContext,
     WorkImplementation, WorkImplementationId, WorkKind, WorkMeasurements, WorkNode, WorkNodeId,
     plan as runtime_plan, plan_continuum_transform_row, run as runtime_run,
@@ -168,6 +168,7 @@ use common::{
 };
 
 const SELECTED_CONTENT_BYTES: usize = 160 * 1024;
+static T607_CHANNEL_SLAB_EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 const fn selected_content_budget() -> SelectedObservationContentBudget {
     SelectedObservationContentBudget::new(SELECTED_CONTENT_BYTES, 1, 4)
@@ -3741,6 +3742,114 @@ fn execute_initial_reconstruction_cycle(
         .expect("channel-cycle completion")
 }
 
+fn execute_dirty_channel_local_slabs(
+    problem: &casa_imaging_model::CompiledProblem,
+    byte: u8,
+    initial_access: ResolvedSelectedObservationAccess,
+) -> MajorCycleCompletion {
+    let residency = initial_access
+        .certify_residency(problem)
+        .expect("owner-certified dirty-cube residency");
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(byte),
+        implementation_metadata(problem),
+        [implementation(byte)],
+    );
+    let planned = SpectralCyclePlan::dirty(
+        problem,
+        &planning_registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(byte),
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+            residency.clone(),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+            authority().clone(),
+            ResourcePolicy::Balanced,
+        ),
+    )
+    .expect("resource-bounded dirty-cube plan");
+    let slab_depth = planned
+        .physical_work()
+        .execution_dag()
+        .initial_knobs()
+        .slab_depth;
+    assert!(
+        slab_depth > 0 && slab_depth < problem.geometry().spectral().output_channels() as u64,
+        "the runtime case must execute more than one planned slab"
+    );
+    let SpectralCyclePlanParts {
+        physical,
+        weighting,
+        complete_data,
+        source_resources,
+        pass,
+        ..
+    } = planned.into_parts();
+    let executor = SpectralCycleExecutor::new(
+        implementation(byte),
+        problem.clone(),
+        weighting,
+        source_resources,
+        pass,
+        complete_data,
+        initial_access
+            .open(problem)
+            .expect("owner-validated dirty-cube observation"),
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube model"),
+        SpectralCyclePassInput::Initial,
+    );
+    let runtime_registry =
+        SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
+    let directory = tempfile::tempdir().expect("dirty-cube receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(2, 1_048_576).expect("retention"),
+    )
+    .expect("receipt store");
+    let execution_plan = runtime_plan(
+        problem,
+        PlanningBindings::new(
+            registry(byte),
+            ResourcePolicy::Balanced,
+            planning_profile(byte),
+        ),
+        authority(),
+        &runtime_registry,
+        &receipts,
+        move |_, _| Ok::<_, io::Error>(vec![physical]),
+    )
+    .expect("dirty-cube runtime plan");
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &ResourcePolicy::Balanced,
+        cost_model(byte),
+    );
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([byte; 32]);
+    runtime_run(
+        &ExecutableModelProblem::from_compiled(problem.clone()).expect("executable"),
+        &execution_plan,
+        &current,
+        &runtime_registry,
+        authority(),
+        &mut RunToCompletion,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([byte.wrapping_add(1); 32]),
+        )),
+    )
+    .expect("resource-bounded dirty-cube execution");
+    assert_eq!(
+        receipts.open(attempt).expect("dirty-cube receipt").status(),
+        ReceiptStatus::Completed
+    );
+    runtime_registry
+        .implementation()
+        .take_completion()
+        .expect("dirty-cube completion")
+        .into_completion()
+}
+
 fn owner_resolved_channel_local_hogbom_problem(
     observation: u8,
     output_channels: usize,
@@ -3818,6 +3927,60 @@ fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
         .collect::<BTreeSet<_>>();
     assert_eq!(coefficients, BTreeSet::from([0, 1]));
     assert!(completion.into_final_major_input().source_delta().is_some());
+}
+
+#[test]
+fn t607_runtime_executes_resource_bounded_channel_local_slabs() {
+    let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
+        .lock()
+        .expect("T607 execution lock");
+    let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(247, 32, 32);
+    let completion = execute_dirty_channel_local_slabs(&problem, 79, initial_access);
+    assert_eq!(
+        completion.normal_state().catalog(),
+        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedChannelSlabV1
+    );
+    assert_eq!(completion.normal_state().sample_count(), 32);
+}
+
+#[test]
+fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
+    let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
+        .lock()
+        .expect("T607 execution lock");
+    let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(248, 28, 28);
+    let residency = initial_access
+        .certify_residency(&problem)
+        .expect("owner-certified channel-cycle residency");
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(80),
+        implementation_metadata(&problem),
+        [implementation(80)],
+    );
+    let channel_count = problem.geometry().spectral().output_channels();
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(80),
+        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+        residency,
+        serial_storage_io(),
+        SpectralCyclePlanningLimits::new(
+            1_000,
+            (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
+            900_000,
+        ),
+        authority().clone(),
+        ResourcePolicy::Balanced,
+    )
+    .with_gridded_normal_storage(artifact_storage());
+
+    let error = match SpectralCyclePlan::initial(&problem, &planning_registry, policy) {
+        Ok(_) => panic!("cube CLEAN must not fold independently planned channel slabs"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        SpectralCyclePlanError::CubeCleanRequiresAllPlanes
+    ));
 }
 
 #[test]
@@ -8740,10 +8903,12 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
         one.grid_bytes(),
         "later major passes retain only residual plus compensation grids"
     );
+    let initial_only_chart_bytes =
+        8 * 8 * (4 * std::mem::size_of::<num_complex::Complex64>() + std::mem::size_of::<f64>());
     assert_eq!(
-        residual_refresh.residency().primitive_output_bytes(),
-        one.primitive_output_bytes(),
-        "the primitive lease covers prior invariants overlapping the new residual"
+        one.primitive_output_bytes() - residual_refresh.residency().primitive_output_bytes(),
+        initial_only_chart_bytes,
+        "residual refresh reuses invariant parent state instead of rebuilding initial chart primitives"
     );
     assert_eq!(
         two.primitive_output_bytes(),
@@ -8971,6 +9136,53 @@ fn t41_production_plan_schedules_planner_bounded_mvc_slabs_for_realistic_image_s
     let complete = plan.into_parts().complete_data;
     assert_eq!(complete.slab().core_range(), 0..8);
     assert_eq!(complete.residency(), full.residency());
+}
+
+#[test]
+fn t607_production_plan_bounds_channel_local_cube_with_ordered_slabs() {
+    let channels = 32;
+    let problem = compile(channel_local_request(247, channels)).expect("channel-local cube");
+    let registry = test_registry(&problem, 3, 6, None);
+    let full = CompleteDataPlanFragment::for_slab(
+        &problem,
+        256,
+        WorkNodeId::new("t607-channel-local-full-depth"),
+        0,
+        channels,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .expect("full-depth comparison fragment");
+    let plan = SpectralCyclePlan::dirty(
+        &problem,
+        &registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(256, 3).expect("bounded weighting limits"),
+            selected_content_residency(&problem),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+            authority().clone(),
+            ResourcePolicy::Balanced,
+        ),
+    )
+    .expect("resource-bounded channel-local plan");
+    let slab_depth = plan
+        .physical_work()
+        .execution_dag()
+        .initial_knobs()
+        .slab_depth;
+    assert!(slab_depth > 0 && slab_depth < channels as u64);
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .quiescence_points
+            .contains(&QuiescencePoint::Slab)
+    );
+    let complete = plan.into_parts().complete_data;
+    assert_eq!(complete.slab().core_range(), 0..slab_depth as usize);
+    assert!(complete.residency().sequential_fold_accumulator_bytes() > 0);
+    assert!(complete.residency().peak_bytes() < full.residency().peak_bytes());
 }
 
 #[test]

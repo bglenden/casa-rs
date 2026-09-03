@@ -1,0 +1,83 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 1.682477052e-06,
+    "product_inventory": {
+      "observed": [
+        "main.image",
+        "main.model",
+        "main.psf",
+        "main.residual",
+        "main.sumwt",
+        "outlier.image",
+        "outlier.model",
+        "outlier.psf",
+        "outlier.residual",
+        "outlier.sumwt"
+      ],
+      "required": [
+        "main.image",
+        "main.model",
+        "main.psf",
+        "main.residual",
+        "main.sumwt",
+        "outlier.image",
+        "outlier.model",
+        "outlier.psf",
+        "outlier.residual",
+        "outlier.sumwt"
+      ]
+    }
+  },
+  "contract_digest": "7a28203d8ff31d82688776745744af584ebe1d7d87e803a4ef57dcbba93f3ae5",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "5748c8b8cc95c1777a8925030e3c63f858874024013d0cc969fdb368152fe57a",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "main_and_outlier",
+    "overlapping_wcs",
+    "later_domain_ownership",
+    "dirty_and_hogbom",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/outlier-v5/oracle.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "21c0450e3d002cd3e2f9fae4951b42a738f5cb701aec50dac5d6d7a980e8a186"
+    }
+  ],
+  "mode": {
+    "domain_count": 2,
+    "overlap_ownership_exact": true
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "21c0450e3d002cd3e2f9fae4951b42a738f5cb701aec50dac5d6d7a980e8a186",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "crates/casa-imaging-application/tests/t31_multidomain_casa_oracle.rs"
+  ],
+  "scenario_id": "multidomain-outlier-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "19ad97e2b02b3f0e1eed6642702223bcc3d4b6ee",
+  "validity_rule": null
+}

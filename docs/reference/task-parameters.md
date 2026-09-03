@@ -19,7 +19,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
 | [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 13 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 14 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -231,7 +231,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `13`
+- Contract version: `14`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -320,7 +320,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>rotatepastep</code> | <code>parameter.rotatepastep@r1</code> | <code>float; unit dimension: angle</code> | <code>360.0</code>; optional | Advanced Wide-Field | AW convolution-function parallactic-angle rotation step in degrees |
 | <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r1</code> | <code>string</code> | <code>"0"</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
 | <code>mosweight</code> | <code>parameter.mosweight@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use per-pointing mosaic weight-density handling |
-| <code>normtype</code> | <code>parameter.normtype@r1</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | AWProject sensitivity normalization policy |
+| <code>normtype</code> | <code>parameter.normtype@r1</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
 | <code>imaging_memory_target_mb</code> | <code>parameter.imaging_memory_target_mb@r2</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required when imaging_memory_pressure_policy="oversubscribe" | Execution Resources | Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom. |
 | <code>imaging_memory_pressure_policy</code> | <code>parameter.imaging_memory_pressure_policy@r2</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging memory-pressure policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. |
 | <code>imaging_prepare_buffer_mb</code> | <code>parameter.imaging_prepare_buffer_mb@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; optional | Execution Resources | Optional source-stream preparation buffer in MiB |

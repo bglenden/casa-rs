@@ -1,7 +1,7 @@
 # Imaging architecture lessons and next-tranche contract
 
 Truth class: normative programme delivery
-Last reality check: 2026-08-25
+Last reality check: 2026-09-02
 Verification: `just docs-check`; `just arch-check`
 
 This document records the delivery consequences learned while implementing and
@@ -163,6 +163,44 @@ programme gate remains unchanged.
 The 45-minute clock pauses while a named gate is visibly running; record its
 command and start once, then its result. The post-repair closure check is not a
 second review and may not reopen design or inspect untouched work.
+
+### Representative scientific evidence
+
+Programme correctness is not inferred from toy fixtures, performance runs, or
+persistence checks. Those evidence tiers remain valuable but cannot substitute
+for a representative scientific row. The normative dataset-shape and
+comparison contract is in `TESTING.md`; the closed-ticket audit and reusable
+scenario portfolio are owned by
+`resources/imaging-architecture/representative-science-matrix.json` and checked
+by `scripts/check-representative-science-matrix.py`.
+
+The matrix binds each closed science-bearing or science-executing ticket to its
+defining capability, prior evidence classification, one representative
+production scenario, relevant comparators, and current result. A scenario may
+cover several tickets only when it genuinely exercises each defining
+dimension. It records frozen CASA provenance once; unchanged workloads are not
+rerun merely to refresh a date. The imaging refactor is limited to
+CASA-equivalent scientific capability and performance work. Joint
+continuum-plus-line reconstruction has no CASA equivalent and is therefore
+optional future work outside programme #486, not a required matrix row or
+closure dependency. The landed experimental internals may remain for future
+investigation, but the installed application must reject that capability
+before physical planning or execution until separately scoped work establishes
+and accepts its scientific contract.
+
+T67/#553 consumes the completed matrix as required programme evidence. Its
+full-wave gate fails while any required row is missing, toy-only, stale,
+blocked, or failed, and it must run the matrix validator before the broader
+scientific and resource sweep. Future mosaic and W/AW owners add or update
+their own representative rows when those capabilities land; #607 does not
+predeclare or duplicate their still-open acceptance contracts.
+
+Heterogeneous mosaic imaging, including CLEAN and deconvolution-normalization
+parity, is optional future work outside the remaining T-ticket imaging refactor
+scope. The landed T48 heterogeneous dirty-response implementation may remain as
+non-harmful early work, but T48 is not retroactively added to the #607 or T67
+matrix and neither dirty nor clean heterogeneous-mosaic acceptance can block an
+otherwise complete T-ticket closure.
 
 ## Corrected next tranche
 

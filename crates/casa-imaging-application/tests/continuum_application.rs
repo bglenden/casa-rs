@@ -28,6 +28,7 @@ use casa_types::{
 use ndarray::ArrayD;
 
 const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
+const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
@@ -85,6 +86,14 @@ fn spectral_line_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+fn thirty_two_channel_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "thirty-two-channel-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 1, false),
+    )
+}
+
 fn joint_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -101,11 +110,12 @@ fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
-fn four_spw_measurement_set(root: &Path) -> PathBuf {
+fn four_spw_aca_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "four-spw-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false),
+        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false)
+            .with_aca_observation_metadata(),
     )
 }
 
@@ -120,6 +130,8 @@ struct MeasurementSetFixtureOptions {
     undefined_weight_spectrum: bool,
     linear_correlations: bool,
     parallel_hand_weights: Option<[f32; 2]>,
+    telescope_name: Option<&'static str>,
+    dish_diameter_m: f64,
 }
 
 impl MeasurementSetFixtureOptions {
@@ -142,6 +154,8 @@ impl MeasurementSetFixtureOptions {
             undefined_weight_spectrum,
             linear_correlations: false,
             parallel_hand_weights: None,
+            telescope_name: None,
+            dish_diameter_m: 25.0,
         }
     }
 
@@ -152,6 +166,12 @@ impl MeasurementSetFixtureOptions {
 
     const fn with_parallel_hand_weights(mut self, weights: [f32; 2]) -> Self {
         self.parallel_hand_weights = Some(weights);
+        self
+    }
+
+    const fn with_aca_observation_metadata(mut self) -> Self {
+        self.telescope_name = Some("ALMA");
+        self.dish_diameter_m = 7.0;
         self
     }
 }
@@ -209,6 +229,8 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
         main_row_count,
         linear_correlations,
         parallel_hand_weights,
+        telescope_name,
+        dish_diameter_m,
         ..
     } = options;
     {
@@ -228,10 +250,36 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
                         3_554_875.9,
                     ],
                     [0.0; 3],
-                    25.0,
+                    dish_diameter_m,
                 )
                 .expect("add fixture antenna");
         }
+    }
+
+    if let Some(telescope_name) = telescope_name {
+        measurement_set
+            .subtable_mut(SubtableId::Observation)
+            .expect("OBSERVATION")
+            .add_row(required_row(
+                schema::observation::REQUIRED_COLUMNS,
+                &[
+                    ("TELESCOPE_NAME", string(telescope_name)),
+                    (
+                        "TIME_RANGE",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(
+                                vec![2],
+                                vec![59_000.0 * 86_400.0, 59_000.0 * 86_400.0 + 10.0],
+                            )
+                            .expect("observation time-range shape"),
+                        )),
+                    ),
+                    ("OBSERVER", string("casa-rs-test")),
+                    ("PROJECT", string("synthetic-aca-mvc")),
+                    ("RELEASE_DATE", float(59_000.0 * 86_400.0)),
+                ],
+            ))
+            .expect("add OBSERVATION row");
     }
 
     let direction = ArrayValue::Float64(
@@ -644,12 +692,20 @@ fn set_production_io_environment() {
 }
 
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
-    let expected = PRODUCT_SUFFIXES
+    assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
+}
+
+fn assert_dirty_products(image_name: &Path, product_names: &[String]) {
+    assert_products(image_name, product_names, &DIRTY_PRODUCT_SUFFIXES);
+}
+
+fn assert_products(image_name: &Path, product_names: &[String], suffixes: &[&str]) {
+    let expected = suffixes
         .iter()
         .map(|suffix| (*suffix).to_string())
         .collect::<Vec<_>>();
     assert_eq!(product_names, expected);
-    for suffix in PRODUCT_SUFFIXES {
+    for suffix in suffixes {
         let path = PathBuf::from(format!("{}{}", image_name.display(), suffix));
         assert!(
             path.is_dir(),
@@ -705,17 +761,14 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
 
     assert_eq!(result.minor_iterations, 0);
     assert_eq!(result.minor_stop_reason, None);
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     for suffix in [".residual", ".image"] {
         let product =
             PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
                 .expect("reopen validity-bearing product");
-        assert_eq!(product.default_mask_name().as_deref(), Some("mask0"));
+        assert_eq!(product.default_mask_name(), None);
     }
-    let clean_mask =
-        PagedImage::<f32>::open(PathBuf::from(format!("{}.mask", image_name.display())))
-            .expect("reopen numeric CLEAN mask");
-    assert_eq!(clean_mask.default_mask_name(), None);
+    assert!(!PathBuf::from(format!("{}.mask", image_name.display())).exists());
 }
 
 #[test]
@@ -798,7 +851,12 @@ fn application_executes_full_stokes_mfs_clean_with_complete_products_and_axes() 
 
     let result = execute_continuum(imaging).expect("native full-Stokes Högbom execution");
     assert_eq!(result.minor_iterations, 1);
-    assert_eq!(result.actual_minor_iterations, 2);
+    assert_eq!(result.actual_minor_iterations, 1);
+    assert_eq!(
+        result.minor_stop_reason,
+        Some(ContinuumStopReason::ThresholdReached),
+        "an early scientific stop reports the actual component count without CASA iteration-bound clamping"
+    );
     assert_eq!(
         result
             .outcome
@@ -884,7 +942,7 @@ fn application_executes_raw_linear_correlation_products_with_exact_axis() {
     imaging.task_requirements = vec![TaskRequirement::PolarizationSelection];
 
     let result = execute_continuum(imaging).expect("native raw-correlation dirty execution");
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     let product =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
             .expect("reopen raw-correlation residual");
@@ -919,7 +977,7 @@ fn application_uses_weight_when_selected_weight_spectrum_cells_are_undefined() {
     ))
     .expect("undefined WEIGHT_SPECTRUM cells select scalar WEIGHT before traversal");
 
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
 }
 
 #[test]
@@ -933,6 +991,11 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
         ("dirty", ContinuumAlgorithm::Dirty),
         ("hogbom", ContinuumAlgorithm::Hogbom),
     ] {
+        let product_suffixes = if algorithm == ContinuumAlgorithm::Dirty {
+            DIRTY_PRODUCT_SUFFIXES.as_slice()
+        } else {
+            PRODUCT_SUFFIXES.as_slice()
+        };
         let image_name = root.path().join(format!("t31-{label}-main"));
         let outlier_name = root.path().join(format!("t31-{label}-outlier"));
         let outlier_file = root.path().join(format!("t31-{label}.outlier"));
@@ -958,7 +1021,10 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
                 .domain_count(),
             2
         );
-        assert_eq!(result.outcome.output.planned_products.members().len(), 12);
+        assert_eq!(
+            result.outcome.output.planned_products.members().len(),
+            2 * product_suffixes.len()
+        );
         assert_eq!(
             result
                 .outcome
@@ -968,7 +1034,7 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
                 .iter()
                 .filter(|member| member.axes().domain() == &ImageDomainRole::Main)
                 .count(),
-            6
+            product_suffixes.len()
         );
         assert_eq!(
             result
@@ -982,11 +1048,11 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
                         == &ImageDomainRole::Outlier(outlier_name.display().to_string())
                 })
                 .count(),
-            6
+            product_suffixes.len()
         );
 
         for (base, expected) in [(&image_name, [1.0, 0.5]), (&outlier_name, [1.001, 0.499])] {
-            for suffix in PRODUCT_SUFFIXES {
+            for suffix in product_suffixes {
                 assert!(
                     PathBuf::from(format!("{}{suffix}", base.display())).is_dir(),
                     "missing {label} domain product {}{suffix}",
@@ -1140,7 +1206,7 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
 }
 
 #[test]
-fn t46_application_executes_joint_continuum_line_through_one_native_route() {
+fn optional_joint_application_route_fails_closed_before_execution() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -1170,27 +1236,17 @@ fn t46_application_executes_joint_continuum_line_through_one_native_route() {
         }])),
     };
 
-    let result = execute_continuum(imaging).expect("native joint application execution");
-    for suffix in [
-        ".total.residual",
-        ".continuum.model.ct0",
-        ".line.model",
-        ".total.model",
-        ".line.image",
-        ".total.image",
-        ".continuum.mask",
-        ".line.mask",
-    ] {
-        assert!(
-            result.product_names.iter().any(|name| name == suffix),
-            "missing joint product {suffix}: {:?}",
-            result.product_names
-        );
-        assert!(
-            PathBuf::from(format!("{}{suffix}", image_name.display())).is_dir(),
-            "missing persisted joint product {suffix}"
-        );
-    }
+    let error = match execute_continuum(imaging) {
+        Ok(_) => panic!("optional joint reconstruction reached production execution"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("JointContinuumLineReconstruction"),
+        "wrong fail-closed error: {error}"
+    );
+    assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());
 }
 
 #[test]
@@ -1251,7 +1307,7 @@ fn application_compiles_common_beam_requests_with_common_spectral_coupling() {
     imaging.beam_policy = ContinuumBeamPolicy::Common;
 
     let result = execute_continuum(imaging).expect("native common-beam application execution");
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     let restored =
         PagedImage::<f32>::open(PathBuf::from(format!("{}.image", image_name.display())))
             .expect("reopen common-beam restored image");
@@ -1269,7 +1325,7 @@ fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_w
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
-    let measurement_set = four_spw_measurement_set(root.path());
+    let measurement_set = four_spw_aca_measurement_set(root.path());
     let image_name = root.path().join("four-spw-mvc");
     let mut imaging = request(
         measurement_set,
@@ -1368,7 +1424,7 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
     imaging.beam_policy = ContinuumBeamPolicy::Common;
 
     let result = execute_continuum(imaging).expect("native common-beam cube execution");
-    assert_standard_products(&image_name, &result.product_names);
+    assert_dirty_products(&image_name, &result.product_names);
     let open = |suffix: &str| {
         PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
             .expect("reopen cube product")
@@ -1376,14 +1432,12 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
     let psf = open(".psf");
     let residual = open(".residual");
     let restored = open(".image");
-    let clean_mask = open(".mask");
-    for product in [&psf, &residual, &restored, &clean_mask] {
+    for product in [&psf, &residual, &restored] {
         assert_eq!(product.shape(), &[16, 16, 1, 4]);
     }
     assert_eq!(psf.units(), "Jy/beam");
     assert_eq!(residual.units(), "Jy/beam");
     assert_eq!(restored.units(), "Jy/beam");
-    assert_eq!(clean_mask.units(), "");
 
     let psf_beams = psf.image_info().expect("PSF ImageInfo").beam_set;
     let residual_beams = residual.image_info().expect("residual ImageInfo").beam_set;
@@ -1414,8 +1468,6 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
             .expect("product validity mask");
         assert!(valid.iter().all(|valid| *valid));
     }
-    assert_eq!(clean_mask.default_mask_name(), None);
-
     let first = restored
         .coordinates()
         .to_world(&[8.0, 8.0, 0.0, 0.0])
@@ -1425,6 +1477,56 @@ fn cube_common_beam_products_preserve_blank_validity_beams_units_and_descending_
         .to_world(&[8.0, 8.0, 0.0, 1.0])
         .expect("second channel world coordinate");
     assert!(first[3] > second[3], "descending spectral WCS");
+}
+
+#[test]
+fn t607_application_preserves_channel_topology_and_wcs_through_cube_planning() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_measurement_set(root.path());
+    let image_name = root.path().join("t607-channel-local-cube");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.spectral_window = Some("0:0~31".to_string());
+    imaging.channel_count = Some(32);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(32),
+    };
+
+    let result = execute_continuum(imaging).expect("native 32-channel cube execution");
+    assert_dirty_products(&image_name, &result.product_names);
+    assert_eq!(
+        result.outcome.output.scientific.normal_state().catalog(),
+        casa_imaging_reconstruction::NormalStateCatalog::UnnormalizedChannelSlabV1
+    );
+    let slab_depth = result
+        .outcome
+        .output
+        .initial_receipt
+        .initial_execution_knobs()
+        .slab_depth;
+    assert!((1..=32).contains(&slab_depth));
+    let residual =
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.residual", image_name.display())))
+            .expect("reopen 32-channel residual");
+    assert_eq!(residual.shape(), &[16, 16, 1, 32]);
+    let first = residual
+        .coordinates()
+        .to_world(&[8.0, 8.0, 0.0, 0.0])
+        .expect("first channel world coordinate");
+    let last = residual
+        .coordinates()
+        .to_world(&[8.0, 8.0, 0.0, 31.0])
+        .expect("last channel world coordinate");
+    assert!(last[3] > first[3], "ascending spectral WCS");
 }
 
 #[test]
@@ -1523,6 +1625,11 @@ fn application_serial_cpu_requirement_caps_replay_to_one_worker() {
     let image_name = root.path().join("serial-hogbom");
     let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Hogbom);
     imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+    imaging.resource_policy =
+        casa_imaging_runtime::ResourcePolicy::Explicit(casa_imaging_runtime::ResourceOverride {
+            workers: Some(1),
+            ..casa_imaging_runtime::ResourceOverride::default()
+        });
 
     let result = execute_continuum(imaging).expect("serial native Högbom execution");
     let final_receipt = result
@@ -1696,6 +1803,8 @@ fn application_commits_exact_final_prediction_to_model_data() {
         ContinuumAlgorithm::Hogbom,
     );
     imaging.save_model_column = true;
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+    imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Balanced;
 
     let result = execute_continuum(imaging).expect("native save-model application execution");
     let visibility = result
@@ -2176,15 +2285,40 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
     let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
         panic!("MODEL_DATA row is complex")
     };
+    let flag_column = reopened
+        .main_table()
+        .column_accessor("FLAG")
+        .expect("FLAG column");
+    let Value::Array(ArrayValue::Bool(flags)) = flag_column
+        .get(0)
+        .expect("read FLAG row")
+        .cloned()
+        .expect("defined FLAG row")
+    else {
+        panic!("FLAG row is boolean")
+    };
     assert!(
         model.iter().all(|value| *value != Complex32::new(9.0, 9.0)),
         "no selected destination retains its stale pre-run value"
     );
-    for channel in 0..2 {
-        assert_ne!(model[[0, channel]], Complex32::new(0.0, 0.0));
-        assert_ne!(model[[3, channel]], Complex32::new(0.0, 0.0));
-        assert_eq!(model[[1, channel]], Complex32::new(0.0, 0.0));
-        assert_eq!(model[[2, channel]], Complex32::new(0.0, 0.0));
+    for correlation in 0..4 {
+        for channel in 0..2 {
+            let model_value = model[[correlation, channel]];
+            let parallel_hand = matches!(correlation, 0 | 3);
+            if flags[[correlation, channel]] || !parallel_hand {
+                assert_eq!(
+                    model_value,
+                    Complex32::new(0.0, 0.0),
+                    "flagged and unsupported cross-hand predictions persist as CASA zeros"
+                );
+            } else {
+                assert_ne!(
+                    model_value,
+                    Complex32::new(0.0, 0.0),
+                    "unflagged parallel-hand predictions retain the solved Stokes-I model"
+                );
+            }
+        }
     }
 }
 

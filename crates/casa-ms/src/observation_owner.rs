@@ -44,6 +44,7 @@ use crate::{
 const OWNER_MANIFEST_KEYWORD: &str = "CASA_RS_IMAGING_OWNER_MANIFEST";
 const OWNER_MANIFEST_SCHEMA_VERSION: u32 = 1;
 const OWNER_IDENTITY_DOMAIN: &[u8] = b"casa-rs-ms-owner-manifest-v1";
+const VISIBILITY_WRITE_BATCH_ROWS: u64 = 10_000;
 static OWNER_INITIALIZATION_MUTEX: Mutex<()> = Mutex::new(());
 
 const TRACKED_COLUMNS: &[(MsColumnKind, &str)] = &[
@@ -247,6 +248,7 @@ pub struct SelectedVisibilityWrite {
     incomplete_marker: Option<std::path::PathBuf>,
     targets: SelectedVisibilityWriteTargets,
     pending_cell: Option<PendingVisibilityCells>,
+    pending_rows: Vec<usize>,
     completed: bool,
 }
 
@@ -266,6 +268,7 @@ pub struct SelectedVisibilityStoragePlan {
     additional_persistent_bytes: u64,
     write_bytes: u64,
     maximum_cell_bytes: u64,
+    write_buffer_bytes: u64,
 }
 
 impl SelectedVisibilityStoragePlan {
@@ -288,6 +291,12 @@ impl SelectedVisibilityStoragePlan {
     #[must_use]
     pub const fn maximum_cell_bytes(self) -> u64 {
         self.maximum_cell_bytes
+    }
+
+    /// Maximum payload bytes retained by the bounded row-batch writer.
+    #[must_use]
+    pub const fn write_buffer_bytes(self) -> u64 {
+        self.write_buffer_bytes
     }
 }
 
@@ -342,10 +351,11 @@ impl SelectedVisibilityWrite {
                 .prepare_write()
                 .add_tiled_column_clone("DATA", "MODEL_DATA", "TiledModelData")?;
             let row_count = measurement_set.main_table().row_count();
+            let mut pending_rows = Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize);
             for row in 0..row_count {
                 let data_description_id = main_data_description_id(&measurement_set, row)?;
                 let shape = model_cell_shape(&measurement_set, data_description_id)?;
-                persist_visibility_cell(
+                queue_visibility_cell(
                     measurement_set.main_table_mut(),
                     "MODEL_DATA",
                     row,
@@ -353,6 +363,22 @@ impl SelectedVisibilityWrite {
                         ndarray::IxDyn(&shape),
                         Complex32::new(0.0, 0.0),
                     )),
+                )?;
+                pending_rows.push(row);
+                if pending_rows.len() == VISIBILITY_WRITE_BATCH_ROWS as usize {
+                    persist_visibility_rows(
+                        measurement_set.main_table_mut(),
+                        &["MODEL_DATA"],
+                        &pending_rows,
+                    )?;
+                    pending_rows.clear();
+                }
+            }
+            if !pending_rows.is_empty() {
+                persist_visibility_rows(
+                    measurement_set.main_table_mut(),
+                    &["MODEL_DATA"],
+                    &pending_rows,
                 )?;
             }
         }
@@ -362,6 +388,7 @@ impl SelectedVisibilityWrite {
             incomplete_marker,
             targets,
             pending_cell: None,
+            pending_rows: Vec::with_capacity(VISIBILITY_WRITE_BATCH_ROWS as usize),
             completed: false,
         })
     }
@@ -439,6 +466,7 @@ impl SelectedVisibilityWrite {
             return Err(ObservationOwnerError::WriteGenerationMismatch);
         }
         self.flush_pending_cell()?;
+        self.persist_pending_rows()?;
         let measurement_set = self
             .measurement_set
             .as_mut()
@@ -489,7 +517,7 @@ impl SelectedVisibilityWrite {
             .as_mut()
             .ok_or(ObservationOwnerError::TransactionClosed)?;
         if let Some(values) = cell.model_data {
-            persist_visibility_cell(
+            queue_visibility_cell(
                 measurement_set.main_table_mut(),
                 "MODEL_DATA",
                 cell.row,
@@ -497,13 +525,40 @@ impl SelectedVisibilityWrite {
             )?;
         }
         if let Some(values) = cell.corrected_data {
-            persist_visibility_cell(
+            queue_visibility_cell(
                 measurement_set.main_table_mut(),
                 "CORRECTED_DATA",
                 cell.row,
                 ArrayValue::Complex32(values),
             )?;
         }
+        self.pending_rows.push(cell.row);
+        if self.pending_rows.len() == VISIBILITY_WRITE_BATCH_ROWS as usize {
+            self.persist_pending_rows()?;
+        }
+        Ok(())
+    }
+
+    fn persist_pending_rows(&mut self) -> Result<(), ObservationOwnerError> {
+        if self.pending_rows.is_empty() {
+            return Ok(());
+        }
+        let columns = match (self.targets.model_data, self.targets.corrected_data) {
+            (true, true) => &["MODEL_DATA", "CORRECTED_DATA"][..],
+            (true, false) => &["MODEL_DATA"][..],
+            (false, true) => &["CORRECTED_DATA"][..],
+            (false, false) => return Err(ObservationOwnerError::EmptyWriteTargets),
+        };
+        let measurement_set = self
+            .measurement_set
+            .as_mut()
+            .ok_or(ObservationOwnerError::TransactionClosed)?;
+        persist_visibility_rows(
+            measurement_set.main_table_mut(),
+            columns,
+            &self.pending_rows,
+        )?;
+        self.pending_rows.clear();
         Ok(())
     }
 }
@@ -575,6 +630,7 @@ impl ResolvedSelectedObservationAccess {
             additional_persistent_bytes: 0,
             write_bytes: 0,
             maximum_cell_bytes: 0,
+            write_buffer_bytes: 0,
         };
         let corrected = if targets.corrected_data {
             if !measurement_set
@@ -605,15 +661,20 @@ impl ResolvedSelectedObservationAccess {
         } else {
             empty
         };
+        let maximum_cell_bytes = model
+            .maximum_cell_bytes
+            .checked_add(corrected.maximum_cell_bytes)
+            .ok_or(ObservationOwnerError::PredictionAddress)?;
         Ok(SelectedVisibilityStoragePlan {
             additional_persistent_bytes: model.additional_persistent_bytes,
             write_bytes: model
                 .write_bytes
                 .checked_add(corrected.write_bytes)
                 .ok_or(ObservationOwnerError::PredictionAddress)?,
-            maximum_cell_bytes: model
-                .maximum_cell_bytes
-                .checked_add(corrected.maximum_cell_bytes)
+            maximum_cell_bytes,
+            write_buffer_bytes: model
+                .write_buffer_bytes
+                .checked_add(corrected.write_buffer_bytes)
                 .ok_or(ObservationOwnerError::PredictionAddress)?,
         })
     }
@@ -1469,15 +1530,25 @@ fn derive_column_storage_plan(
     let write_bytes = additional_persistent_bytes
         .checked_add(selected_write_bytes)
         .ok_or(ObservationOwnerError::PredictionAddress)?;
+    let possible_buffer_rows = if create_if_absent && !has_column {
+        u64::try_from(measurement_set.row_count())
+            .map_err(|_| ObservationOwnerError::PredictionAddress)?
+    } else {
+        selection.rows().selected_row_count()
+    }
+    .min(VISIBILITY_WRITE_BATCH_ROWS);
     Ok(SelectedVisibilityStoragePlan {
         additional_persistent_bytes,
         write_bytes,
         maximum_cell_bytes,
+        write_buffer_bytes: maximum_cell_bytes
+            .checked_mul(possible_buffer_rows)
+            .ok_or(ObservationOwnerError::PredictionAddress)?,
     })
 }
 
 #[cfg(unix)]
-fn persist_visibility_cell(
+fn queue_visibility_cell(
     table: &mut Table,
     column: &str,
     row: usize,
@@ -1488,10 +1559,17 @@ fn persist_visibility_cell(
         prepared.seek(row)?;
         prepared.set_value_at(0, Value::Array(value))?;
     }
-    table
-        .prepare_write()
-        .save_selected_rows(&[column], &[row])?;
-    table.discard_persisted_cell_updates(&[column], &[row]);
+    Ok(())
+}
+
+#[cfg(unix)]
+fn persist_visibility_rows(
+    table: &mut Table,
+    columns: &[&str],
+    rows: &[usize],
+) -> Result<(), ObservationOwnerError> {
+    table.prepare_write().save_selected_rows(columns, rows)?;
+    table.discard_persisted_cell_updates(columns, rows);
     Ok(())
 }
 
@@ -1545,9 +1623,19 @@ mod tests {
     }
 
     fn one_row_selection_with_channels(channel_indices: Vec<u32>) -> ObservationSelection {
+        one_row_selection_with_total_rows(channel_indices, 1)
+    }
+
+    fn one_row_selection_with_total_rows(
+        channel_indices: Vec<u32>,
+        total_rows: usize,
+    ) -> ObservationSelection {
+        let rows = (0..total_rows)
+            .map(|row| SelectedMainRow::new(row as u64, 0))
+            .collect::<Vec<_>>();
         ObservationSelection::new(
-            SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
-                .expect("one-row selection manifest"),
+            SelectedRows::from_ordered_main_rows(total_rows as u64, rows)
+                .expect("ordered selection manifest"),
             RowSelection::new(
                 IdSelection::All,
                 TimeSelection::All,
@@ -1691,8 +1779,27 @@ mod tests {
         channel_frequencies_hz: &[f64],
         channel_widths_hz: &[f64],
     ) {
+        create_ms_columns_with_spectral_coordinates_and_rows(
+            path,
+            model_data,
+            corrected_data,
+            channel_frequencies_hz,
+            channel_widths_hz,
+            1,
+        );
+    }
+
+    fn create_ms_columns_with_spectral_coordinates_and_rows(
+        path: &Path,
+        model_data: bool,
+        corrected_data: bool,
+        channel_frequencies_hz: &[f64],
+        channel_widths_hz: &[f64],
+        row_count: usize,
+    ) {
         assert_eq!(channel_frequencies_hz.len(), channel_widths_hz.len());
         assert!(!channel_frequencies_hz.is_empty());
+        assert!(row_count > 0);
         let channel_count = channel_frequencies_hz.len();
         let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
         if model_data {
@@ -1834,10 +1941,13 @@ mod tests {
                 RecordField::new(column.name(), value)
             })
             .collect();
-        measurement_set
-            .main_table_mut()
-            .add_row(RecordValue::new(main))
-            .expect("add MAIN row");
+        let main = RecordValue::new(main);
+        for _ in 0..row_count {
+            measurement_set
+                .main_table_mut()
+                .add_row(main.clone())
+                .expect("add MAIN row");
+        }
         measurement_set.save().expect("save test MeasurementSet");
     }
 
@@ -2096,6 +2206,7 @@ mod tests {
         assert_eq!(plan.additional_persistent_bytes(), 8);
         assert_eq!(plan.write_bytes(), 16);
         assert_eq!(plan.maximum_cell_bytes(), 8);
+        assert_eq!(plan.write_buffer_bytes(), 8);
 
         let existing_path = directory.path().join("model-plan-overwrite.ms");
         create_ms(&existing_path, true);
@@ -2111,6 +2222,7 @@ mod tests {
         assert_eq!(existing_plan.additional_persistent_bytes(), 0);
         assert_eq!(existing_plan.write_bytes(), 8);
         assert_eq!(existing_plan.maximum_cell_bytes(), 8);
+        assert_eq!(existing_plan.write_buffer_bytes(), 8);
     }
 
     #[test]
@@ -2236,6 +2348,122 @@ mod tests {
             after.access.source_state().generations().model_column(),
             ModelColumnState::Present(generation)
         );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn model_column_creation_is_not_persisted_one_row_at_a_time() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("model-create-throughput.ms");
+        create_ms_columns_with_spectral_coordinates_and_rows(
+            &path,
+            false,
+            false,
+            &[1.0e9],
+            &[1.0e6],
+            4_096,
+        );
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let selection = one_row_selection_with_total_rows(vec![0], 4_096);
+        let before = resolve_selected_observation(SelectedObservationResolutionRequest::new(
+            path.display().to_string(),
+            identity(2),
+            selection.clone(),
+            VisibilityColumn::Data,
+            WeightColumn::Weight,
+            Vec::new(),
+            ModelStateIdentity::Empty,
+            SelectedObservationContentBudget::new(1 << 20, 1, 4),
+            casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+        ))
+        .expect("resolve owner");
+        let expected = before.access.source_state().clone();
+
+        let started = std::time::Instant::now();
+        let writer = SelectedVisibilityWrite::begin(
+            &path,
+            &expected,
+            &selection,
+            SelectedVisibilityWriteTargets::new(true, false),
+        )
+        .expect("begin MODEL_DATA creation");
+        let elapsed = started.elapsed();
+        drop(writer);
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "creating a 4096-row MODEL_DATA column took {elapsed:?}; the creation path must not persist one row per transaction"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn model_column_updates_are_persisted_in_bounded_row_batches() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("model-update-throughput.ms");
+        create_ms_columns_with_spectral_coordinates_and_rows(
+            &path,
+            true,
+            false,
+            &[1.0e9],
+            &[1.0e6],
+            4_096,
+        );
+        initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+        let selection = one_row_selection_with_total_rows(vec![0], 4_096);
+        let before = resolve_selected_observation(SelectedObservationResolutionRequest::new(
+            path.display().to_string(),
+            identity(2),
+            selection.clone(),
+            VisibilityColumn::Data,
+            WeightColumn::Weight,
+            Vec::new(),
+            ModelStateIdentity::Empty,
+            SelectedObservationContentBudget::new(1 << 20, 1, 4),
+            casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+        ))
+        .expect("resolve owner");
+        let expected = before.access.source_state().clone();
+
+        let started = std::time::Instant::now();
+        let mut writer = SelectedVisibilityWrite::begin(
+            &path,
+            &expected,
+            &selection,
+            SelectedVisibilityWriteTargets::new(true, false),
+        )
+        .expect("begin MODEL_DATA update");
+        for row in 0..4_096 {
+            writer
+                .write(
+                    MsColumnKind::ModelData,
+                    row,
+                    0,
+                    0,
+                    Complex32::new(row as f32, -1.0),
+                )
+                .expect("write predicted row");
+        }
+        writer
+            .complete(SelectedVisibilityWriteGenerations {
+                model_data: Some(identity(76)),
+                corrected_data: None,
+            })
+            .expect("complete MODEL_DATA update");
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "updating a 4096-row MODEL_DATA column took {elapsed:?}; row updates must use bounded batches"
+        );
+        let reopened = MeasurementSet::open(&path).expect("reopen updated MODEL_DATA");
+        let model = reopened
+            .data_column(crate::VisibilityDataColumn::ModelData)
+            .expect("MODEL_DATA column");
+        let ArrayValue::Complex32(last) = model.get(4_095).expect("last MODEL_DATA row") else {
+            panic!("MODEL_DATA is complex")
+        };
+        assert_eq!(last[[0, 0]], Complex32::new(4_095.0, -1.0));
     }
 
     #[test]

@@ -30,13 +30,16 @@ use crate::restore::{
     MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
 };
 use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
-use crate::taylor::{TaylorProducts, analytic_evla_primary_beam};
+use crate::taylor::{
+    TaylorProducts, analytic_alma_airy_primary_beam, analytic_evla_primary_beam,
+    analytic_vla_primary_beam,
+};
 
 /// Version of the native continuum product-algorithm catalog.
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 7;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 8;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -46,6 +49,12 @@ pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT
 pub enum AnalyticPrimaryBeamModel {
     /// CASA's common EVLA primary-beam power polynomial with sampled radial lookup.
     CasaEvlaCommon,
+    /// CASA's frequency-selected legacy-VLA primary-beam family.
+    CasaVlaBand,
+    /// CASA's 10.7 m effective Airy aperture for homogeneous ALMA 12 m data.
+    CasaAlma12mAiry,
+    /// CASA's 6.25 m effective Airy aperture for homogeneous ACA 7 m data.
+    CasaAca7mAiry,
     /// CASA mosaic PB formed from the reconstruction-owned sensitivity image.
     MosaicSensitivity,
 }
@@ -256,7 +265,10 @@ impl ProductGenerationAuthority {
         encoder.u32(controls.psf_cutoff().to_bits());
         match controls.primary_beam_model() {
             Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => encoder.u8(1),
-            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => encoder.u8(2),
+            Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => encoder.u8(2),
+            Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => encoder.u8(3),
+            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => encoder.u8(4),
+            Some(AnalyticPrimaryBeamModel::CasaVlaBand) => encoder.u8(5),
             None => encoder.u8(0),
         }
         encoder.usize(members.len());
@@ -1698,6 +1710,23 @@ fn primary_beam_plane(
         Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
             analytic_evla_primary_beam(inputs, domain_role, plane.shape, plane.output_channel)
         }
+        Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
+            analytic_vla_primary_beam(inputs, domain_role, plane.shape, plane.output_channel)
+        }
+        Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => analytic_alma_airy_primary_beam(
+            inputs,
+            domain_role,
+            plane.shape,
+            plane.output_channel,
+            10.7,
+        ),
+        Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => analytic_alma_airy_primary_beam(
+            inputs,
+            domain_role,
+            plane.shape,
+            plane.output_channel,
+            6.25,
+        ),
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
             Ok(MosaicSensitivity::new(plane.sensitivity)?.primary_beam())
         }

@@ -2419,6 +2419,7 @@ fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
         vec![(0, 0), (1, 0)]
     );
     assert!(rows.iter().all(|row| !row.flag_row()));
+    assert!(rows.iter().all(|row| row.observation_id() == 0));
 }
 
 #[test]

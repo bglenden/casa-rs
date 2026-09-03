@@ -749,6 +749,43 @@ fn unequal_parallel_hands_share_the_casa_float_mean_for_natural_weighting() {
 }
 
 #[test]
+fn one_flagged_correlation_suppresses_the_complete_casa_imaging_weight_group() {
+    for scheme in [WeightingScheme::Natural, WeightingScheme::Uniform] {
+        let density_scope = match scheme {
+            WeightingScheme::Natural => WeightDensityScope::NotApplicable,
+            _ => WeightDensityScope::GlobalSelection,
+        };
+        let problem = problem(scheme, density_scope, None);
+        let base = exact_samples(&problem)[0].clone();
+        let types = [
+            CorrelationType::LinearXx,
+            CorrelationType::LinearXy,
+            CorrelationType::LinearYx,
+            CorrelationType::LinearYy,
+        ];
+        let samples = types
+            .into_iter()
+            .enumerate()
+            .map(|(ordinal, correlation_type)| {
+                let mut sample = base.clone();
+                sample.address.correlation_index = ordinal as u32;
+                sample.address.correlation_type = correlation_type;
+                sample
+            })
+            .collect::<Vec<_>>();
+        let group = SelectedInputWeightGroup::correlation_run(1.0, 1.0, 4).with_imaging_flag(true);
+        let groups = (0..4)
+            .map(|ordinal| group.with_density_owner(ordinal == 0))
+            .collect::<Vec<_>>();
+
+        let (weights, sum_weights) = grouped_weighting(&problem, &samples, &groups);
+
+        assert_eq!(weights, [0.0; 4]);
+        assert_eq!(sum_weights, [0.0]);
+    }
+}
+
+#[test]
 fn parallel_hand_groups_contribute_density_once_for_uniform_and_briggs() {
     for scheme in [
         WeightingScheme::Uniform,

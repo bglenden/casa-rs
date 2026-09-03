@@ -1,0 +1,76 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 1.9687908802189238e-06,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "75f9588837712fb9d5f15c4d29db6387fca344184cbef117e3daff14bf744ebb",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
+    "image_shape": [
+      512,
+      512,
+      1,
+      24
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "twenty_four_channels",
+    "hogbom_per_channel",
+    "per_channel_beams",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/cube-restfreq-fix/20260903T022217Z-issue607-standard-cube-clean-representative-f0db2d42.comparison.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "ee56c4c3e13cc535b78d7cea21014d5323cac2c5f60ecabe51dd1facae039f92"
+    }
+  ],
+  "mode": {
+    "specmode": "cube"
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "ee56c4c3e13cc535b78d7cea21014d5323cac2c5f60ecabe51dd1facae039f92",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "scripts/bench-imager-vs-casa.sh",
+    "tools/perf/imager/workloads/issue607-standard-cube-clean-representative.json"
+  ],
+  "scenario_id": "spectral-cube-clean-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "b809244e72611baefd928a06fd1cdea4bf2093c4",
+  "validity_rule": null
+}

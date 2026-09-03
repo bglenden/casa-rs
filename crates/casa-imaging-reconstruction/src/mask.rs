@@ -33,21 +33,33 @@ pub fn reproject_mask_support(
     let mut target_support = vec![false; target_shape[0] * target_shape[1]];
     for x in 0..target_shape[0] {
         for y in 0..target_shape[1] {
-            let world = direction_pixel_to_world(target_coordinate, [x as f64, y as f64])?;
-            let source = direction_world_to_pixel(source_coordinate, world)?;
-            let sx = source[0].round();
-            let sy = source[1].round();
-            if sx >= 0.0
-                && sy >= 0.0
-                && sx < source_shape[0] as f64
-                && sy < source_shape[1] as f64
-                && source_support[sx as usize * source_shape[1] + sy as usize]
+            if reprojected_pixel(source_coordinate, source_shape, target_coordinate, [x, y])?
+                .is_some_and(|[sx, sy]| source_support[sx * source_shape[1] + sy])
             {
                 target_support[x * target_shape[1] + y] = true;
             }
         }
     }
     Ok(target_support.into_boxed_slice())
+}
+
+pub(crate) fn reprojected_pixel(
+    source_coordinate: DirectionCoordinateSpec,
+    source_shape: [usize; 2],
+    target_coordinate: DirectionCoordinateSpec,
+    target_pixel: [usize; 2],
+) -> Result<Option<[usize; 2]>, MaskError> {
+    let world = direction_pixel_to_world(
+        target_coordinate,
+        [target_pixel[0] as f64, target_pixel[1] as f64],
+    )?;
+    let source = direction_world_to_pixel(source_coordinate, world)?;
+    let x = source[0].round();
+    let y = source[1].round();
+    Ok(
+        (x >= 0.0 && y >= 0.0 && x < source_shape[0] as f64 && y < source_shape[1] as f64)
+            .then_some([x as usize, y as usize]),
+    )
 }
 
 pub(crate) fn direction_pixel_to_world(
@@ -1049,10 +1061,7 @@ pub fn auto_multithresh(
         .map(|value| (value - residual_median).abs())
         .collect::<Vec<_>>();
     let robust_rms = 1.482_602_218_505_602 * median(&deviations);
-    let absolute_peak = residual
-        .iter()
-        .map(|value| (value - residual_median).abs())
-        .fold(0.0_f64, f64::max);
+    let absolute_peak = casa_residual_absolute_peak(&residual);
     let sidelobe_level = beam.sidelobe_fraction;
     let positive_offset = (controls.sidelobe_factor * sidelobe_level * absolute_peak)
         .max(controls.noise_factor * robust_rms);
@@ -1070,8 +1079,8 @@ pub fn auto_multithresh(
         .zip(valid_support)
         .map(|(value, valid)| {
             *valid
-                && (*value >= positive_threshold
-                    || negative_threshold.is_some_and(|threshold| *value <= threshold))
+                && (*value > positive_threshold
+                    || negative_threshold.is_some_and(|threshold| *value < threshold))
         })
         .collect::<Vec<_>>();
     if evolution_stopped {
@@ -1265,6 +1274,10 @@ fn median(values: &[f64]) -> f64 {
     }
 }
 
+fn casa_residual_absolute_peak(residual: &[f64]) -> f64 {
+    residual.iter().map(|value| value.abs()).fold(0.0, f64::max)
+}
+
 fn prune_regions(mask: &mut [bool], shape: [usize; 2], minimum: usize) {
     if minimum <= 1 {
         return;
@@ -1339,7 +1352,7 @@ fn smooth_and_cut(
     let peak = smoothed.iter().copied().fold(0.0_f64, f64::max);
     smoothed
         .into_iter()
-        .map(|value| value >= cut * peak)
+        .map(|value| value > cut * peak)
         .collect()
 }
 
@@ -1476,5 +1489,23 @@ mod tests {
         .expect("shifted reference-pixel reprojection");
         assert!(projected[2 * 3 + 1]);
         assert_eq!(projected.iter().filter(|value| **value).count(), 1);
+    }
+
+    #[test]
+    fn automask_sidelobe_peak_is_not_recentred_by_the_residual_median() {
+        let residual = [-41.103_744_5, -1.269_142_15, 128.983_596_8];
+        assert_eq!(casa_residual_absolute_peak(&residual), 128.983_596_8);
+    }
+
+    #[test]
+    fn automask_cut_threshold_is_strict_like_casa() {
+        let beam = AutoMaskBeam {
+            major_fwhm_pixels: 1.0,
+            minor_fwhm_pixels: 1.0,
+            position_angle_rad: 0.0,
+            area_pixels: 1.0,
+            sidelobe_fraction: 0.0,
+        };
+        assert_eq!(smooth_and_cut(&[true], [1, 1], 1.0, beam, 1.0), [false]);
     }
 }

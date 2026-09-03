@@ -10,7 +10,7 @@ use std::{
 };
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate,
+    CoordinateModel, CoordinateSystem, CoordinateType, DirectionCoordinate, ObsInfo,
     Projection as CoordinateProjection, ProjectionType, SpectralCoordinate, StokesCoordinate,
     StokesType,
 };
@@ -34,8 +34,8 @@ use casa_imaging_model::{
     ScientificContract, SelectedMainRow, SelectedRowsBuilder, SequentialContinuumTransform,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw,
-    VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UnitResponseValidityPolicy,
+    UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
 };
 use casa_imaging_reconstruction::{
@@ -51,14 +51,14 @@ use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationEphemeris, SelectedObservationMeasures,
     SelectedObservationResolutionRequest, SelectedObservationRow, SelectedObservationRowSelection,
     SelectedObservationSpectralEnvelope, SelectedObservationSpectralEnvelopeReducer,
-    SelectedObservationSpectralWindow, VisibilityDataColumn, parse_spw_selector,
+    SelectedObservationSpectralWindow, SubtableId, VisibilityDataColumn, parse_spw_selector,
     resolve_channel_selector_selection,
 };
 use casa_types::ArrayValue;
 use casa_types::measures::{
     direction::{DirectionRef, MDirection},
     doppler::DopplerRef,
-    epoch::EpochRef,
+    epoch::{EpochRef, MEpoch},
     frame::MeasFrame,
     frequency::FrequencyRef,
 };
@@ -400,6 +400,7 @@ struct PreparedSpectralAxis {
     anchor: SpectralFrameAnchor,
     wcs: SpectralWcs,
     rest_frequency: RestFrequency,
+    image_rest_frequency_hz: f64,
     doppler: DopplerConvention,
     sampling: SpectralSamplingLaw,
     basis: ReconstructionBasis,
@@ -476,6 +477,7 @@ fn prepare_spectral_axis(
                     increment_hz,
                 },
                 rest_frequency: RestFrequency::NotApplicable,
+                image_rest_frequency_hz: reference_frequency_hz,
                 doppler: DopplerConvention::NotApplicable,
                 sampling: SpectralSamplingLaw::IDENTITY,
                 basis: ReconstructionBasis::Constant,
@@ -525,6 +527,7 @@ fn prepare_spectral_axis(
                     increment_hz,
                 },
                 rest_frequency: RestFrequency::NotApplicable,
+                image_rest_frequency_hz: spectral_window_midpoint_hz(window),
                 doppler: DopplerConvention::NotApplicable,
                 sampling: SpectralSamplingLaw::IDENTITY,
                 basis: ReconstructionBasis::ChannelLocal {
@@ -582,7 +585,9 @@ fn prepare_spectral_axis(
             }
             let output_frequency_reference = setup.output_freq_ref;
             let output_frame = imaging_frequency_frame(output_frequency_reference)?;
-            let (rest_frequency, doppler) = match axis.rest_frequency_hz {
+            let (resolved_rest_frequency_hz, image_rest_frequency_hz) =
+                cube_rest_frequency_hz(axis.rest_frequency_hz, source_rest_frequency_hz, window);
+            let (rest_frequency, doppler) = match resolved_rest_frequency_hz {
                 None => (
                     RestFrequency::NotApplicable,
                     DopplerConvention::NotApplicable,
@@ -626,6 +631,7 @@ fn prepare_spectral_axis(
                     increment_hz,
                 },
                 rest_frequency,
+                image_rest_frequency_hz,
                 doppler,
                 sampling,
                 basis: ReconstructionBasis::ChannelLocal {
@@ -725,6 +731,7 @@ fn prepare_spectral_axis(
                 rest_frequency: RestFrequency::Line {
                     hertz: rest_frequency_hz,
                 },
+                image_rest_frequency_hz: rest_frequency_hz,
                 doppler: match axis.veltype {
                     DopplerRef::RADIO => DopplerConvention::Radio,
                     DopplerRef::Z => DopplerConvention::Optical,
@@ -939,6 +946,9 @@ fn prepare_mvc_spectral_axis(
             increment_hz,
         },
         rest_frequency,
+        image_rest_frequency_hz: axis
+            .rest_frequency_hz
+            .unwrap_or(expansion_reference_frequency_hz),
         doppler,
         sampling,
         basis: ReconstructionBasis::ChannelLocal {
@@ -1067,6 +1077,7 @@ fn prepare(
     let mut selected_rows_error = None;
     let mut selected_ddids = BTreeSet::new();
     let mut selected_fields = BTreeSet::new();
+    let mut selected_observation_ids = BTreeSet::new();
     let mut first_selected_time_mjd_seconds = None;
     let mut selected_time_bounds_mjd_seconds = [f64::INFINITY, f64::NEG_INFINITY];
     let main_table = ms.main_table();
@@ -1098,6 +1109,7 @@ fn prepare(
             }
             selected_ddids.insert(row.data_description_id());
             selected_fields.insert(row.field_id());
+            selected_observation_ids.insert(row.observation_id());
             first_selected_time_mjd_seconds.get_or_insert(row.time_mjd_seconds());
             selected_time_bounds_mjd_seconds[0] =
                 selected_time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
@@ -1166,6 +1178,7 @@ fn prepare(
         }
         source_frequency_reference.get_or_insert(reference);
     }
+    let stored_phase = casa_ms::derived::engine::raw_field_phase_direction(&ms, field_id)?;
     let phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(&ms, field_id)?;
     let default_main_direction = SkyDirection::new(
         DirectionFrame::J2000,
@@ -1252,6 +1265,13 @@ fn prepare(
         let frame = frame_engine
             .spectral_frame_observatory_direction(anchor_time_mjd_seconds, phase.clone())?;
         phase.convert_to(DirectionRef::ICRS, &frame)?
+    } else if request.phase_center.is_none()
+        && matches!(
+            stored_phase.refer(),
+            DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC
+        )
+    {
+        stored_phase
     } else {
         phase.clone()
     };
@@ -1259,7 +1279,12 @@ fn prepare(
     let image_direction_frame = if ephemeris.is_some() {
         DirectionFrame::Icrs
     } else {
-        DirectionFrame::J2000
+        match image_centre.refer() {
+            DirectionRef::ICRS => DirectionFrame::Icrs,
+            DirectionRef::B1950 => DirectionFrame::B1950,
+            DirectionRef::GALACTIC => DirectionFrame::Galactic,
+            _ => DirectionFrame::J2000,
+        }
     };
     let direction = direction_spec_for_frame(
         request.image_size,
@@ -1308,7 +1333,7 @@ fn prepare(
         moving_rest_frame.as_ref(),
         if matches!(
             request.spectral_mode,
-            SpectralImagingMode::CubeSource { .. }
+            SpectralImagingMode::Cube { .. } | SpectralImagingMode::CubeSource { .. }
         ) {
             source_rest_frequency(&ms, field_id, &spectral_windows)?
         } else {
@@ -1387,11 +1412,40 @@ fn prepare(
         frequency_reference: prepared_spectral.output_frequency_reference,
         reference_frequency_hz: prepared_spectral.reference_frequency_hz,
         increment_hz: prepared_spectral.increment_hz,
-        rest_frequency_hz: coordinate_rest_frequency(
-            prepared_spectral.rest_frequency,
-            prepared_spectral.reference_frequency_hz,
-        ),
+        rest_frequency_hz: prepared_spectral.image_rest_frequency_hz,
     };
+    let observation_id = if selected_observation_ids.len() == 1 {
+        usize::try_from(
+            *selected_observation_ids
+                .first()
+                .expect("one selected observation identifier"),
+        )
+        .map_err(|_| boxed("selected OBSERVATION_ID is negative"))?
+    } else {
+        return Err(boxed(format!(
+            "image observation metadata requires one selected OBSERVATION_ID; found {selected_observation_ids:?}"
+        )));
+    };
+    let observation = ms.observation()?;
+    let (telescope_name, observer) = if observation_id < observation.row_count() {
+        (
+            observation.string(observation_id, "TELESCOPE_NAME")?,
+            observation.string(observation_id, "OBSERVER")?,
+        )
+    } else {
+        (String::new(), String::new())
+    };
+    let pointing_longitude = (right_ascension + std::f64::consts::PI)
+        .rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::PI;
+    let observation_info = ObsInfo::new(telescope_name)
+        .with_observer(observer)
+        .with_date(MEpoch::from_mjd(
+            anchor_time_mjd_seconds / 86_400.0,
+            frame_engine.time_reference(),
+        ))
+        .with_telescope_position(frame_engine.observatory_position().clone())
+        .with_pointing_center(pointing_longitude, declination);
     let mut prepared_domains = vec![PreparedImageDomain {
         role: ImageDomainRole::Main,
         output: request.image_name.clone(),
@@ -1404,6 +1458,7 @@ fn prepare(
             [right_ascension, declination],
             &request.polarizations,
             image_spectral_coordinate,
+            &observation_info,
         ),
         mask: request.mask.clone(),
     }];
@@ -1428,6 +1483,7 @@ fn prepare(
                     [centre.longitude_rad(), centre.latitude_rad()],
                     &request.polarizations,
                     image_spectral_coordinate,
+                    &observation_info,
                 ),
                 mask: input.mask,
             });
@@ -1547,17 +1603,26 @@ fn prepare(
         .and_then(|samples| samples.checked_mul(request.polarizations.len()))
         .ok_or_else(|| boxed("reconstruction model sample count overflowed"))?;
     let instrument = scientific_instrument_model(&request, &ms)?;
+    let unit_response_validity = match primary_beam_model {
+        Some(
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaAlma12mAiry
+            | casa_imaging_products::AnalyticPrimaryBeamModel::CasaAca7mAiry,
+        ) => UnitResponseValidityPolicy::PrimaryBeam,
+        _ => UnitResponseValidityPolicy::FinalNormalState,
+    };
     let specification = match continuum_transform {
         Some(transform) => specification(
             &request,
             &prepared_spectral,
             instrument.map(|value| value.0),
+            unit_response_validity,
         )?
         .with_visibility_transform(transform),
         None => specification(
             &request,
             &prepared_spectral,
             instrument.map(|value| value.0),
+            unit_response_validity,
         )?,
     };
     let masks = casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new(
@@ -1623,6 +1688,9 @@ fn source_rest_frequency(
     if source_id < 0 {
         return Ok(None);
     }
+    if measurement_set.subtable(SubtableId::Source).is_none() {
+        return Ok(None);
+    }
     let source = measurement_set.source()?;
     let selected = spectral_windows
         .iter()
@@ -1652,6 +1720,18 @@ fn source_rest_frequency(
         resolved = Some(value);
     }
     Ok(resolved)
+}
+
+fn cube_rest_frequency_hz(
+    explicit_hz: Option<f64>,
+    source_hz: Option<f64>,
+    spectral_window: &SourceSpectralWindow,
+) -> (Option<f64>, f64) {
+    let resolved = explicit_hz.or(source_hz);
+    (
+        resolved,
+        resolved.unwrap_or_else(|| spectral_window_midpoint_hz(spectral_window)),
+    )
 }
 
 fn attached_field_ephemerides(
@@ -1694,7 +1774,46 @@ fn standard_primary_beam_model(
                 .map(|name| name.trim().to_string())
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
-    analytic_primary_beam_model_for_telescopes(&telescopes)
+    match telescopes
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["ALMA"] => homogeneous_alma_primary_beam_model(
+            ms,
+            10.0..13.0,
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaAlma12mAiry,
+        ),
+        ["ACA"] => homogeneous_alma_primary_beam_model(
+            ms,
+            6.0..8.0,
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaAca7mAiry,
+        ),
+        _ => analytic_primary_beam_model_for_telescopes(&telescopes),
+    }
+}
+
+fn homogeneous_alma_primary_beam_model(
+    ms: &MeasurementSet,
+    diameter_range_m: std::ops::Range<f64>,
+    model: casa_imaging_products::AnalyticPrimaryBeamModel,
+) -> Result<casa_imaging_products::AnalyticPrimaryBeamModel, crate::ApplicationError> {
+    let antenna = ms.antenna()?;
+    if antenna.row_count() == 0 {
+        return Err(boxed(
+            "ALMA primary-beam publication requires ANTENNA dish metadata",
+        ));
+    }
+    for row in 0..antenna.row_count() {
+        let diameter = antenna.dish_diameter(row)?;
+        if !diameter.is_finite() || !diameter_range_m.contains(&diameter) {
+            return Err(boxed(format!(
+                "ALMA primary-beam publication requires one homogeneous dish class; row {row} has diameter {diameter} m"
+            )));
+        }
+    }
+    Ok(model)
 }
 
 fn scientific_instrument_model(
@@ -1794,6 +1913,7 @@ fn analytic_primary_beam_model_for_telescopes(
         .as_slice()
     {
         ["EVLA"] => Ok(casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon),
+        ["VLA"] => Ok(casa_imaging_products::AnalyticPrimaryBeamModel::CasaVlaBand),
         [] => Err(boxed(
             "standard primary-beam publication requires OBSERVATION telescope metadata",
         )),
@@ -2101,6 +2221,7 @@ fn image_coordinates(
     phase: [f64; 2],
     polarizations: &[PolarizationCoordinate],
     spectral: ImageSpectralCoordinate,
+    observation: &ObsInfo,
 ) -> CoordinateSystem {
     let cell = cell_arcsec * std::f64::consts::PI / (180.0 * 3600.0);
     let reference_pixel = image_reference_pixel(image_size);
@@ -2122,6 +2243,7 @@ fn image_coordinates(
         0.0,
         spectral.rest_frequency_hz,
     ));
+    *coordinates.obs_info_mut() = observation.clone();
     coordinates
 }
 
@@ -2142,11 +2264,10 @@ const fn direction_ref(frame: DirectionFrame) -> DirectionRef {
     }
 }
 
-const fn coordinate_rest_frequency(rest: RestFrequency, fallback_hz: f64) -> f64 {
-    match rest {
-        RestFrequency::NotApplicable => fallback_hz,
-        RestFrequency::Line { hertz } => hertz,
-    }
+fn spectral_window_midpoint_hz(window: &SourceSpectralWindow) -> f64 {
+    let first = window.frequencies_hz[0];
+    let last = window.frequencies_hz[window.frequencies_hz.len() - 1];
+    first + (last - first) / 2.0
 }
 
 const fn stokes_type(coordinate: PolarizationCoordinate) -> StokesType {
@@ -2418,6 +2539,7 @@ fn specification(
     request: &ContinuumImagingRequest,
     spectral: &PreparedSpectralAxis,
     instrument_model: Option<InstrumentModel>,
+    unit_response_validity: UnitResponseValidityPolicy,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
     let mosaic = request
         .task_requirements
@@ -2557,7 +2679,8 @@ fn specification(
                     ProductSupportComparison::StrictlyGreater,
                     ProductBlankingPolicy::ZeroAndFalseMask,
                 )?,
-            ),
+            )
+            .with_unit_response(unit_response_validity),
         ),
         ObservationTransactionRequirements::new(if request.save_model_column {
             ModelColumnWrite::SelectedRows
@@ -2594,9 +2717,11 @@ fn requested_products(
         ProductKind::Model,
         ProductKind::RestoredImage,
         ProductKind::SumWeights,
-        ProductKind::Mask,
-        ProductKind::Beam,
     ];
+    if !matches!(algorithm, ContinuumAlgorithm::Dirty) {
+        products.push(ProductKind::Mask);
+    }
+    products.push(ProductKind::Beam);
     if matches!(algorithm, ContinuumAlgorithm::Mtmfs { .. }) {
         products.extend([
             ProductKind::TaylorTerms,
@@ -2776,10 +2901,7 @@ fn runtime(
         storage_io,
         gridded_normal_storage,
         confidence_parts_per_million: 900_000,
-        resource_policy: match resource_policy_for_task_requirements(&request.task_requirements) {
-            ResourcePolicy::Explicit(serial) => ResourcePolicy::Explicit(serial),
-            _ => request.resource_policy.clone(),
-        },
+        resource_policy: request.resource_policy.clone(),
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority,
@@ -2958,8 +3080,9 @@ mod tests {
     use casa_types::measures::frequency::FrequencyRef;
 
     use super::{
-        ContinuumAlgorithm, TaskRequirement, analytic_primary_beam_model_for_telescopes,
-        canonicalize_polarizations, image_coordinates, image_reference_pixel,
+        ContinuumAlgorithm, SourceSpectralWindow, TaskRequirement,
+        analytic_primary_beam_model_for_telescopes, canonicalize_polarizations,
+        cube_rest_frequency_hz, image_coordinates, image_reference_pixel,
         instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
         planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
     };
@@ -2968,6 +3091,29 @@ mod tests {
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
         assert_eq!(image_reference_pixel(16), 8.0);
         assert_eq!(image_reference_pixel(15), 7.5);
+    }
+
+    #[test]
+    fn cube_rest_frequency_follows_casa_precedence() {
+        let window = SourceSpectralWindow {
+            spw_id: 0,
+            frequency_reference: FrequencyRef::LSRK,
+            frequencies_hz: vec![44.0e9, 76.704e9, 109.408e9],
+            channel_widths_hz: vec![1.0; 3],
+        };
+
+        assert_eq!(
+            cube_rest_frequency_hz(Some(115.0e9), Some(110.0e9), &window),
+            (Some(115.0e9), 115.0e9)
+        );
+        assert_eq!(
+            cube_rest_frequency_hz(None, Some(110.0e9), &window),
+            (Some(110.0e9), 110.0e9)
+        );
+        assert_eq!(
+            cube_rest_frequency_hz(None, None, &window),
+            (None, 76.704e9)
+        );
     }
 
     #[test]
@@ -3008,6 +3154,7 @@ mod tests {
                 increment_hz: 1.0,
                 rest_frequency_hz: 1.0e9,
             },
+            &casa_coordinates::ObsInfo::default(),
         );
         let polarization_coordinate = coordinates
             .find_coordinate(CoordinateType::Stokes)
@@ -3077,7 +3224,12 @@ mod tests {
             analytic_primary_beam_model_for_telescopes(&evla).expect("EVLA model"),
             casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon
         );
-        let unsupported = std::collections::BTreeSet::from(["VLA".to_string()]);
+        let vla = std::collections::BTreeSet::from(["VLA".to_string()]);
+        assert_eq!(
+            analytic_primary_beam_model_for_telescopes(&vla).expect("VLA model"),
+            casa_imaging_products::AnalyticPrimaryBeamModel::CasaVlaBand
+        );
+        let unsupported = std::collections::BTreeSet::from(["UNKNOWN".to_string()]);
         assert!(analytic_primary_beam_model_for_telescopes(&unsupported).is_err());
         assert!(
             analytic_primary_beam_model_for_telescopes(&std::collections::BTreeSet::new()).is_err()
@@ -3090,6 +3242,28 @@ mod tests {
         assert!(!instrument_model_supports_diameter(false, 12.0));
         assert!(instrument_model_supports_diameter(true, 7.0));
         assert!(instrument_model_supports_diameter(true, 12.0));
+    }
+
+    #[test]
+    fn dirty_execution_does_not_request_a_clean_mask() {
+        let dirty = requested_products(
+            &ContinuumAlgorithm::Dirty,
+            casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
+            true,
+            false,
+        );
+        assert!(!dirty.contains(&casa_imaging_model::ProductKind::Mask));
+        assert!(dirty.contains(&casa_imaging_model::ProductKind::PrimaryBeam));
+
+        let clean = requested_products(
+            &ContinuumAlgorithm::Hogbom,
+            casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
+            true,
+            false,
+        );
+        assert!(clean.contains(&casa_imaging_model::ProductKind::Mask));
     }
 
     #[test]

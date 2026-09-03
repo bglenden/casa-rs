@@ -586,6 +586,82 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
 }
 
 #[test]
+fn unit_response_primary_beam_validity_is_explicit_request_semantics() {
+    let validity = product_validity()
+        .with_unit_response(casa_imaging_model::UnitResponseValidityPolicy::PrimaryBeam);
+    let compiled = compile_request(
+        ProblemSpecification::new(
+            science(),
+            reconstruction(),
+            weighting(),
+            ProductRequirements::new(
+                vec![
+                    ProductKind::Residual,
+                    ProductKind::Model,
+                    ProductKind::RestoredImage,
+                    ProductKind::PrimaryBeam,
+                ],
+                ProductNormalization::UnitResponse,
+                RestoringBeamPolicy::PerPlane,
+                validity,
+            ),
+            read_only_transaction(),
+            numerics(false),
+        ),
+        inputs(false),
+    )
+    .expect("compile explicit primary-beam validity");
+
+    for role in [
+        ProductRole::Residual(ProductTerm::Taylor(0)),
+        ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+    ] {
+        assert_eq!(
+            compiled
+                .product_graph()
+                .node(role)
+                .expect("uncorrected product")
+                .validity(),
+            ProductValidityRule::PrimaryBeam(validity.primary_beam()),
+        );
+    }
+}
+
+#[test]
+fn publishing_a_primary_beam_does_not_change_uncorrected_product_validity() {
+    let compiled = compile_product_set(
+        vec![
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+            ProductKind::SumWeights,
+            ProductKind::PrimaryBeam,
+        ],
+        InstrumentResponse::PrimaryBeam,
+    )
+    .expect("compile unit-response products with a published primary beam");
+    let graph = compiled.product_graph();
+
+    for role in [
+        ProductRole::Residual(ProductTerm::Taylor(0)),
+        ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+    ] {
+        assert_eq!(
+            graph.node(role).expect("uncorrected product").validity(),
+            ProductValidityRule::FinalNormalState,
+        );
+    }
+    assert_eq!(
+        graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+            .expect("published primary beam")
+            .validity(),
+        ProductValidityRule::PrimaryBeam(product_validity().primary_beam()),
+    );
+}
+
+#[test]
 fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem_inputs() {
     let first = compile_request(specification(false), inputs(false)).expect("compile first");
     let different_numerics = compile_request(
@@ -715,6 +791,13 @@ fn spectral_index_error_and_pb_correction_name_every_scientific_input() {
             .expect("primary-beam Taylor-zero product")
             .validity(),
         ProductValidityRule::PrimaryBeam(product_validity().primary_beam())
+    );
+    assert_eq!(
+        graph
+            .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+            .expect("primary-beam Taylor-one product")
+            .validity(),
+        ProductValidityRule::All
     );
     assert!(
         graph
@@ -1266,7 +1349,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 18);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 20);
 }
 
 #[test]
@@ -1722,13 +1805,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_eighteen_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_twenty_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 18);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 20);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "eece7a455a6f7ea7b8cfe48fb355134a0550ea93d6aedd7ba6cc6a90aabc6b57"
+        "8a660e2eaeef8cb12d4f3a19ad35016e53f670e627dc412a8f603bf935300548"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

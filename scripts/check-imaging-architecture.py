@@ -54,12 +54,12 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "e8bc9bd14442daef07646888424ee2cff87c3bd7be515e9b56356c32315d3a0f"
+    "bd12828dfa0ae70ecea12a1731044394a1630d46e6a6cef1111dac14d9f1dbc6"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "e73c66523f50e5ace2f8aa6a05316d85bf3cb82a493e75ec5d70d4aabd5a4918"
+    "ad2d59074b12fb58e9a3dfa36a81141134124bab3858a6637540858bfda2aacc"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 80
+ACCEPTED_MATRIX_CONTRACT_REVISION = 81
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -2231,6 +2231,7 @@ def validate_t18_global_weighting_sources(
             "visibility": "SelectedVisibilitySample",
             "channel_flag": "bool",
             "parallel_hand_group_flag": "bool",
+            "input_weight_group_flag": "bool",
             "row_flag": "bool",
             "input_weight": "f32",
             "raw_input_weight": "f32",

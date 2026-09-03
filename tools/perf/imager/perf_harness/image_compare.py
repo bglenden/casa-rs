@@ -487,6 +487,8 @@ def validate_comparison_output(
                 products=products,
                 tolerance_contract=request["tolerances"],
                 metadata_contract=request.get("metadata_contract"),
+                left_label=request["left_label"],
+                right_label=request["right_label"],
             )
             _validate_product_source_regions(
                 product,
@@ -613,6 +615,8 @@ def _validate_product_metadata(
     products: dict[str, Any],
     tolerance_contract: dict[str, Any] | None,
     metadata_contract: dict[str, Any] | None,
+    left_label: str,
+    right_label: str,
 ) -> None:
     label = f"image comparison product {suffix}"
     if product.get("metadata_parity_required") is not required:
@@ -621,9 +625,8 @@ def _validate_product_metadata(
     if not isinstance(metadata, dict):
         raise ValueError(f"{label} metadata result is missing")
     if not required:
-        if metadata != {"status": "not_required", "parity": None}:
-            raise ValueError(f"{label} unrequested metadata result is invalid")
-        return
+        if metadata == {"status": "not_required", "parity": None}:
+            return
 
     expected_fields = {"status", "parity", "field_parity", "left", "right"}
     if set(metadata) != expected_fields:
@@ -674,6 +677,8 @@ def _validate_product_metadata(
         or metadata.get("parity") is not exact
     ):
         raise ValueError(f"{label} metadata parity is not derived from operands")
+    if not required:
+        return
     if exact or metadata_contract is not None:
         return
     beam_only = expected_parity == {
@@ -683,20 +688,38 @@ def _validate_product_metadata(
         "restoring_beam": False,
         "masks": True,
     }
-    reference = (
-        _scientific_beam_reference(
-            suffix,
-            products,
-            tolerance_contract,
-        )
-        if beam_only
-        else None
+    if beam_only and _scientific_beam_reference(
+        suffix,
+        products,
+        tolerance_contract,
+    ) is not None:
+        return
+
+    omission = _documented_casa_metadata_omission_kind(
+        metadata,
+        suffix,
+        left_label,
+        right_label,
     )
-    if reference is None:
-        raise ValueError(
-            f"{label} required metadata parity is not matched and the restoring "
-            "beam mismatch has no bound scientific-equivalence reference"
-        )
+    if omission == "psf_unit":
+        return
+    if omission == "psf_unit_and_beam_roundoff" and _scientific_beam_reference(
+        suffix,
+        products,
+        tolerance_contract,
+    ) is not None:
+        return
+    if omission == "residual_unit_and_beam" and _scientific_left_beam_reference(
+        suffix,
+        products,
+        tolerance_contract,
+    ) is not None:
+        return
+
+    raise ValueError(
+        f"{label} required metadata parity is not matched and the restoring "
+        "beam mismatch has no bound scientific-equivalence reference"
+    )
 
 
 def _validate_shape_mismatch_product(
@@ -910,6 +933,107 @@ def _scientific_beam_reference(
             and candidate_right.get("restoring_beam") == target_right
         ):
             return candidate_suffix
+    return None
+
+
+def _scientific_left_beam_reference(
+    suffix: str,
+    products: dict[str, Any],
+    contract: dict[str, Any] | None,
+) -> str | None:
+    product = products.get(suffix)
+    metadata = product.get("metadata") if isinstance(product, dict) else None
+    left = metadata.get("left") if isinstance(metadata, dict) else None
+    if not isinstance(left, dict):
+        return None
+    target_left = left.get("restoring_beam")
+    if not isinstance(target_left, dict) or not target_left:
+        return None
+
+    candidates = [suffix, *sorted(set(products) - {suffix})]
+    for candidate_suffix in candidates:
+        if not _has_scientific_beam_tolerance(contract, candidate_suffix):
+            continue
+        candidate = products.get(candidate_suffix)
+        candidate_metadata = (
+            candidate.get("metadata") if isinstance(candidate, dict) else None
+        )
+        candidate_left = (
+            candidate_metadata.get("left")
+            if isinstance(candidate_metadata, dict)
+            else None
+        )
+        candidate_right = (
+            candidate_metadata.get("right")
+            if isinstance(candidate_metadata, dict)
+            else None
+        )
+        if not isinstance(candidate_left, dict) or not isinstance(
+            candidate_right, dict
+        ):
+            continue
+        right_beam = candidate_right.get("restoring_beam")
+        if (
+            candidate_left.get("restoring_beam") == target_left
+            and isinstance(right_beam, dict)
+            and right_beam
+        ):
+            return candidate_suffix
+    return None
+
+
+def _documented_casa_metadata_omission_kind(
+    metadata: Any,
+    suffix: str,
+    left_label: str,
+    right_label: str,
+) -> str | None:
+    if (
+        left_label != "casa-rs"
+        or right_label != "CASA"
+        or not isinstance(metadata, dict)
+        or metadata.get("status") != "mismatch"
+    ):
+        return None
+    left = metadata.get("left")
+    right = metadata.get("right")
+    parity = metadata.get("field_parity")
+    if (
+        not isinstance(left, dict)
+        or not isinstance(right, dict)
+        or left.get("status") != "complete"
+        or right.get("status") != "complete"
+        or left.get("unit") != "Jy/beam"
+        or right.get("unit") != ""
+        or not isinstance(parity, dict)
+        or parity.get("shape") is not True
+        or parity.get("unit") is not False
+        or parity.get("coordinates") is not True
+        or parity.get("masks") is not True
+    ):
+        return None
+
+    left_beam = left.get("restoring_beam")
+    right_beam = right.get("restoring_beam")
+    if suffix == ".psf" or suffix.startswith(".psf."):
+        if not isinstance(left_beam, dict) or not left_beam:
+            return None
+        if not isinstance(right_beam, dict) or not right_beam:
+            return None
+        if parity.get("restoring_beam") is True:
+            return "psf_unit"
+        if parity.get("restoring_beam") is False:
+            return "psf_unit_and_beam_roundoff"
+        return None
+
+    if suffix == ".residual" or suffix.startswith(".residual."):
+        if (
+            isinstance(left_beam, dict)
+            and left_beam
+            and right_beam == {}
+            and parity.get("restoring_beam") is False
+        ):
+            return "residual_unit_and_beam"
     return None
 
 

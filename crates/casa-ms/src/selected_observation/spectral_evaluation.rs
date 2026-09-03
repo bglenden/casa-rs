@@ -696,6 +696,10 @@ impl<'a> SelectedObservationTraversalRun<'a> {
 
     /// Iterate through validated correlation members in canonical order.
     pub fn samples(&self) -> impl Iterator<Item = SelectedObservationTraversalSample<'_>> {
+        let imaging_flag = self
+            .correlations
+            .iter()
+            .any(|correlation| correlation.channel_flag);
         let input_weight_group = self.correlations.first().map(|first| {
             SelectedInputWeightGroup::correlation_run(
                 first.input_weight,
@@ -705,6 +709,7 @@ impl<'a> SelectedObservationTraversalRun<'a> {
                     .input_weight,
                 self.correlations.len(),
             )
+            .with_imaging_flag(imaging_flag)
         });
         self.correlations
             .iter()

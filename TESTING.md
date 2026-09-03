@@ -1,7 +1,7 @@
 # Testing Strategy
 
 Truth class: normative
-Last reality check: 2026-08-14
+Last reality check: 2026-09-02
 Verification: just verify
 
 ## Test categories
@@ -15,6 +15,52 @@ Verification: just verify
   that launch `casars-mac`, address controls through stable accessibility
   identifiers, and verify critical user workflows against deterministic fixture
   adapters
+
+Imaging evidence uses four non-substitutable tiers:
+
+- diagnostic/law evidence localizes algorithms, invariants, and edge cases and
+  may use tiny synthetic fixtures;
+- representative scientific acceptance executes the application production
+  compile/plan/run owner on a mode-faithful real or realistically shaped
+  MeasurementSet;
+- resource/performance evidence proves memory, I/O, scheduling, and turnaround
+  contracts without standing in for scientific comparison; and
+- persistence/interoperability evidence proves durable CASA-compatible bytes,
+  metadata, reopen behavior, and model-column effects.
+
+For programme #486, the reviewable and machine-checked coverage owner is
+`resources/imaging-architecture/representative-science-matrix.json`. Its
+validator is `scripts/check-representative-science-matrix.py`. A representative
+image-producing row normally has at least a 512x512 image and 1,000,000 selected
+correlation-channel samples, uses the production route, and exercises the
+mode's load-bearing dimensions. Full Stokes requires four correlations with
+meaningful cross-hand flags and weights; a cube requires at least sixteen
+meaningful channels; a mosaic requires overlapping pointings; MT-MFS requires
+a meaningful multi-SPW frequency lever arm. Each row checks every relevant
+product, exact topology/metadata/validity, NRMS no greater than 0.001 where
+applicable, and independent beam, flux, centroid, spectral, polarization,
+mask/support, and persistence facts. A recorded exception must explain why the
+dimension is scientifically inapplicable and requires programme-owner approval.
+
+Run the validator with `--require-external` for issue closure whenever the
+bound evidence volume is mounted. That mode verifies every available external
+receipt digest and reconciles the retained worker, multiscale, continuum-data,
+and downstream-cube facts used by the compact checked-in receipts. The
+argument-free CI form validates the durable matrix and receipt structure when
+host-specific external evidence is unavailable.
+
+CASA oracles are generated once and frozen with their CASA version, dataset
+identity and selection, image and solver parameters, comparator, and artifact
+inventory. Regenerate only when one of those contracts changes. Tiny fixtures
+remain required when they provide faster failure localization, but a green toy
+end-to-end test cannot make a matrix row representative.
+
+For #607's frozen MT-MFS row, the programme owner approved one narrow support
+rule on 2026-09-02: `.alpha` and `.alpha.error` validity is exact within CASA's
+`.pb.tt0` support, alpha values across that full supported plane remain subject
+to NRMS <= 0.001, and outside-PB validity differences are counted and reported.
+This does not change CASA's strict Taylor support law, add a numerical epsilon,
+or relax any other product's exact validity comparison.
 
 ## Required discipline
 

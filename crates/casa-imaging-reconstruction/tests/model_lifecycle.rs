@@ -138,6 +138,62 @@ fn geometry_with_direction_and_spectral(
     )
 }
 
+fn overlapping_geometry(width: usize, domains: usize) -> GeometryInput {
+    assert!(domains >= 2);
+    let direction = |reference_x| {
+        DirectionCoordinateSpec::new(
+            Projection::Sin,
+            SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+            [reference_x, 0.0],
+            [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+            [[1.0, 0.0], [0.0, 1.0]],
+            [180.0, 0.0],
+        )
+    };
+    let image_domains = (0..domains)
+        .map(|ordinal| {
+            ImageDomainSpec::new(
+                if ordinal == 0 {
+                    ImageDomainRole::Main
+                } else {
+                    ImageDomainRole::Outlier(format!("outlier-{ordinal}"))
+                },
+                ImageShape::new(width, 1),
+                direction(ordinal as f64),
+                FacetLayout::Single,
+                AxisOrder::new([
+                    ImageAxis::DirectionLongitude,
+                    ImageAxis::DirectionLatitude,
+                    ImageAxis::Polarization,
+                    ImageAxis::Spectral,
+                ]),
+            )
+        })
+        .collect();
+    GeometryInput::new(
+        image_domains,
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(direction(0.0).reference_direction()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 1,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            DopplerConvention::NotApplicable,
+        ),
+    )
+}
+
 fn problem(
     observation: u8,
     width: usize,
@@ -399,6 +455,44 @@ fn non_power_of_two_delta_bound_uses_the_explicit_canonical_capacity() {
         .expect("compile the full non-power-of-two delta bound");
 
     assert_eq!(delta.terms().len(), TERMS);
+}
+
+#[test]
+fn final_model_restores_highest_ordinal_domain_across_overlaps() {
+    let compiled = problem_with_geometry(
+        3,
+        overlapping_geometry(3, 3),
+        ModelStateIdentity::Empty,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let mut owner = bind_direct(&compiled, attempt(88), 1);
+    let base = owner.initial_empty().expect("empty multi-domain model");
+    let terms = [
+        ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [0, 0]), value(1.0)),
+        ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [2, 0]), value(2.0)),
+        ModelDeltaTerm::new(ModelCell::new(1, 0, 0, [1, 0]), value(10.0)),
+        ModelDeltaTerm::new(ModelCell::new(2, 0, 0, [2, 0]), value(30.0)),
+    ];
+    let delta = owner
+        .compile_delta(&base, terms)
+        .expect("multi-domain delta");
+    let update = owner
+        .apply_final_delta(base, delta)
+        .expect("restore canonical overlap ownership");
+    let shape = update.generation().shape();
+    let sample = |domain, x| {
+        update.generation().samples()[shape
+            .flat_index(ModelCell::new(domain, 0, 0, [x, 0]))
+            .expect("model cell")]
+        .value()
+        .value()
+    };
+
+    assert_eq!(sample(0, 0), 30.0, "highest domain ordinal wins");
+    assert_eq!(sample(1, 1), 30.0, "later owner is restored transitively");
+    assert_eq!(sample(0, 2), 2.0, "non-overlapping model remains unchanged");
+    assert_eq!(sample(2, 2), 30.0, "owner model remains unchanged");
 }
 
 #[test]

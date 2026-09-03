@@ -193,6 +193,47 @@ class CompletedRecipeReceiptRecoveryTests(unittest.TestCase):
 
 
 class StageBreakdownTests(unittest.TestCase):
+    def test_continuum_residual_comparison_is_bound_to_the_run_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "continuum-residual-comparison.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": "casa-rs-continuum-residual-comparison-v1",
+                        "status": "pass",
+                        "continuum_residual": {"normalized_rms": 3.0e-5},
+                    }
+                )
+            )
+            parsed = run_workload.parse_benchmark_log(
+                f"continuum_residual_comparison={path} status=pass nrms=3.000000000e-05\n"
+            )
+
+        comparison = parsed["continuum_residual_comparison"]
+        self.assertEqual("pass", comparison["status"])
+        self.assertEqual(str(path), comparison["path"])
+        self.assertRegex(comparison["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_model_data_comparison_is_bound_to_the_run_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "model-data-comparison.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": "casa-rs-model-data-comparison-v1",
+                        "status": "pass",
+                        "model_data": {"normalized_rms": 2.5e-5},
+                    }
+                )
+            )
+            parsed = run_workload.parse_benchmark_log(
+                f"model_data_comparison={path} status=pass nrms=2.500000000e-05\n"
+            )
+
+        self.assertEqual("pass", parsed["model_data_comparison"]["status"])
+        self.assertEqual(str(path), parsed["model_data_comparison"]["path"])
+        self.assertRegex(parsed["model_data_comparison"]["sha256"], r"^[0-9a-f]{64}$")
+
     def test_parse_log_marks_missing_timing_sections_without_claiming_runs(
         self,
     ) -> None:
@@ -944,6 +985,8 @@ real 1.145408
             bench,
         )
         self.assertIn('CASA_RS_BENCH_MS_PATH="$casa_ms_path"', bench)
+        self.assertIn('casa_ms_path="$tmpdir/casa-benchmark.ms"', bench)
+        self.assertIn('cp -R "$source_ms_path" "$casa_ms_path"', bench)
 
     def test_reuse_prefixes_imply_skipping_the_reused_implementation(self) -> None:
         manifest = {
@@ -1389,6 +1432,10 @@ real 1.145408
                 "niter=1000",
                 "pbcor=true",
                 "scales=0,10,30",
+                "mask_box=208,208,303,303",
+                "fitspw=0:0~7;16~23",
+                "fitorder=1",
+                "save_continuum_residual=true",
             ],
         )
         plan = run_workload.build_plan(
@@ -1413,6 +1460,19 @@ real 1.145408
         self.assertEqual(1000, plan["mode"]["niter"])
         self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PBCOR"])
         self.assertEqual("0,10,30", plan["command"]["env"]["IMAGER_BENCH_SCALES"])
+        self.assertEqual(
+            "208,208,303,303", plan["command"]["env"]["IMAGER_BENCH_MASK_BOX"]
+        )
+        self.assertEqual(
+            "0:0~7;16~23", plan["command"]["env"]["IMAGER_BENCH_FITSPW"]
+        )
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_FITORDER"])
+        self.assertEqual(
+            "1", plan["command"]["env"]["IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL"]
+        )
+
+        run_workload.apply_imaging_overrides(manifest, ["mask_box=null"])
+        self.assertNotIn("mask_box", manifest["imaging"])
 
     def test_imaging_overrides_are_forbidden_for_frozen_recipe_evidence(self) -> None:
         manifest = {

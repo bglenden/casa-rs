@@ -1,0 +1,103 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 0.00028712,
+    "product_inventory": {
+      "observed": [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".image.tt0",
+        ".image.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".mask",
+        ".pb.tt0",
+        ".pb.tt1",
+        ".image.tt0.pbcor",
+        ".image.tt1.pbcor",
+        ".alpha",
+        ".alpha.error"
+      ],
+      "required": [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".image.tt0",
+        ".image.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".mask",
+        ".pb.tt0",
+        ".pb.tt1",
+        ".image.tt0.pbcor",
+        ".image.tt1.pbcor",
+        ".alpha",
+        ".alpha.error"
+      ]
+    }
+  },
+  "contract_digest": "9652047f8f9ee748b5101ab750c3fc5bb99faff8aa2f3771672da006efe65502",
+  "dataset": {
+    "correlations": 4,
+    "identity_sha256": "06a6668898d0c193fe55f83e9bf0226bcbd02a1da07d278243c9dfe56c2eb8b7",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 8,
+    "selected_rows": 41760,
+    "selected_samples": 1336320
+  },
+  "dimensions": [
+    "four_spw",
+    "fractional_frequency_span_0.169389",
+    "nterms_2",
+    "multiple_major_cycles",
+    "nineteen_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/mtmfs-v7/oracle.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "8e9ac198b97f4f20d83a057858635091507e68e8b92a2a6334e4d743bab73cb6"
+    }
+  ],
+  "mode": {
+    "fractional_frequency_span": 0.1693887575527978,
+    "nterms": 2,
+    "product_count": 19,
+    "spectral_windows": 4
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "8e9ac198b97f4f20d83a057858635091507e68e8b92a2a6334e4d743bab73cb6",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "crates/casa-imaging-application/tests/mtmfs_publication_oracle.rs"
+  ],
+  "scenario_id": "mtmfs-alma",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "7ad4fd3fc5b09e3d89ebe756731e2a28e81c6d00",
+  "validity_rule": "Alpha and alpha.error validity is exact across CASA pb.tt0 support and NRMS is at most 0.001 across that support; outside-PB differences are counted. Every other product retains exact validity."
+}
