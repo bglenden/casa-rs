@@ -537,7 +537,7 @@ impl GriddedNormalReplayCompilation {
         max_block_samples: usize,
     ) -> io::Result<Self> {
         let budget = project_managed_spill_budget(problem, max_block_samples)?;
-        validate_gridded_artifact_context(
+        validate_managed_spill_context(
             context,
             budget,
             crate::IoBufferKind::SpillWrite,
@@ -745,7 +745,7 @@ impl GriddedNormalReplayCompilation {
     }
 }
 
-fn validate_gridded_artifact_context(
+fn validate_managed_spill_context(
     context: WorkExecutionContext<'_>,
     budget: ManagedSpillBudget,
     io_kind: crate::IoBufferKind,
@@ -755,6 +755,12 @@ fn validate_gridded_artifact_context(
     let has_buffer = claims.iter().any(|claim| {
         claim.resource == LeaseResource::IoBuffer(io_kind)
             && gridded_buffer_claim_satisfies(io_kind, claim.amount, minimum_buffer_bytes)
+    });
+    let has_serialization = claims.iter().any(|claim| {
+        matches!(
+            claim.resource,
+            LeaseResource::IoBuffer(crate::IoBufferKind::Serialization)
+        ) && claim.amount >= budget.serialization_buffer_bytes()
     });
     let has_storage = io_kind == crate::IoBufferKind::SpillRead
         || claims.iter().any(|claim| {
@@ -776,13 +782,10 @@ fn validate_gridded_artifact_context(
             LeaseResource::StorageReadRate { .. } | LeaseResource::StorageWriteRate { .. }
         )
     });
-    let has_operations_rate = claims
-        .iter()
-        .any(|claim| matches!(claim.resource, LeaseResource::StorageOperationsRate { .. }));
     let has_queue = claims
         .iter()
         .any(|claim| matches!(claim.resource, LeaseResource::StorageQueue { .. }));
-    if has_buffer && has_storage && has_file && has_byte_rate && has_operations_rate && has_queue {
+    if has_buffer && has_serialization && has_storage && has_file && has_byte_rate && has_queue {
         Ok(())
     } else {
         Err(io::Error::other(
@@ -887,7 +890,7 @@ impl FrozenGriddedNormalReplay {
             .source_slot_bytes()
             .checked_mul(2)
             .ok_or_else(|| io::Error::other("gridded-normal replay buffer claim overflow"))?;
-        validate_gridded_artifact_context(
+        validate_managed_spill_context(
             context,
             budget,
             crate::IoBufferKind::SpillRead,

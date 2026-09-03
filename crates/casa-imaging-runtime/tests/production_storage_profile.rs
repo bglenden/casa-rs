@@ -49,7 +49,7 @@ fn detected_inventory_contains_one_path_redacted_coherent_storage_domain() {
     assert_eq!(&storage.write_rate, profile.write_rate_id());
     assert_eq!(
         storage.operations_rate.as_ref(),
-        Some(profile.operations_rate_id())
+        profile.operations_rate_id()
     );
     assert_eq!(&storage.queue, profile.queue_id());
     assert!(!profile.domain_id().as_str().contains('/'));
@@ -76,7 +76,7 @@ fn detected_inventory_contains_one_path_redacted_coherent_storage_domain() {
             .topology
             .rate_resources
             .iter()
-            .find(|rate| &rate.id == profile.operations_rate_id())
+            .find(|rate| Some(&rate.id) == profile.operations_rate_id())
             .map(|rate| (rate.unit, rate.units_per_second)),
         Some((casa_imaging_runtime::RateUnit::OperationsPerSecond, 200))
     );

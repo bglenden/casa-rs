@@ -502,12 +502,10 @@ impl ProductionStorageProfile {
         &self.write_rate
     }
 
-    /// Return the calibrated operations-per-second identity.
+    /// Return the calibrated operations-per-second identity when profiled.
     #[must_use]
-    pub fn operations_rate_id(&self) -> &RateResourceId {
-        self.operations_rate
-            .as_ref()
-            .expect("operations rate requested from an unprofiled storage domain")
+    pub const fn operations_rate_id(&self) -> Option<&RateResourceId> {
+        self.operations_rate.as_ref()
     }
 
     /// Return the bounded output queue identity.

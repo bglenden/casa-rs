@@ -118,6 +118,8 @@ pub(crate) struct ManagedSpillBudget {
     maximum_artifact_bytes: u64,
     maximum_frame_payload_bytes: usize,
     io_buffer_bytes: u64,
+    maximum_serialization_bytes: u64,
+    maximum_serialization_operations: u64,
 }
 
 impl ManagedSpillBudget {
@@ -138,7 +140,20 @@ impl ManagedSpillBudget {
             .ok_or(ManagedSpillError::ArithmeticOverflow(
                 "bounded artifact bytes",
             ))?;
-        Self::new(maximum_artifact_bytes, maximum_frame_payload_bytes)
+        let mut budget = Self::new(maximum_artifact_bytes, maximum_frame_payload_bytes)?;
+        budget.maximum_serialization_bytes = (FILE_HEADER_BYTES as u64)
+            .checked_add(frame_headers)
+            .and_then(|bytes| bytes.checked_add(FOOTER_BYTES as u64))
+            .ok_or(ManagedSpillError::ArithmeticOverflow(
+                "artifact serialization bytes",
+            ))?;
+        budget.maximum_serialization_operations =
+            maximum_frame_count
+                .checked_add(2)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "artifact serialization operations",
+                ))?;
+        Ok(budget)
     }
 
     pub(crate) fn new(
@@ -181,6 +196,9 @@ impl ManagedSpillBudget {
             maximum_artifact_bytes,
             maximum_frame_payload_bytes,
             io_buffer_bytes,
+            maximum_serialization_bytes: maximum_artifact_bytes,
+            maximum_serialization_operations: maximum_artifact_bytes
+                .div_ceil(FRAME_HEADER_BYTES as u64),
         })
     }
 
@@ -194,6 +212,18 @@ impl ManagedSpillBudget {
 
     pub(crate) const fn io_buffer_bytes(self) -> u64 {
         self.io_buffer_bytes
+    }
+
+    pub(crate) const fn serialization_buffer_bytes(self) -> u64 {
+        FOOTER_BYTES as u64
+    }
+
+    pub(crate) const fn maximum_serialization_bytes(self) -> u64 {
+        self.maximum_serialization_bytes
+    }
+
+    pub(crate) const fn maximum_serialization_operations(self) -> u64 {
+        self.maximum_serialization_operations
     }
 
     pub(crate) fn source_slot_bytes(self, maximum_frames: usize) -> Result<u64, ManagedSpillError> {
@@ -476,6 +506,9 @@ fn validate_storage_directory(
         .ok_or(ManagedSpillError::StorageBindingMismatch)?;
     if &domain.read_rate != storage.read_rate()
         || &domain.write_rate != storage.write_rate()
+        || storage
+            .operations_rate()
+            .is_some_and(|operations| domain.operations_rate.as_ref() != Some(operations))
         || &domain.queue != storage.queue()
     {
         return Err(ManagedSpillError::StorageBindingMismatch);
@@ -1758,6 +1791,18 @@ mod tests {
         ManagedSpillBudget::new(capacity, TEST_FRAME_PAYLOAD_BYTES).expect("valid artifact budget")
     }
 
+    #[test]
+    fn bounded_budget_accounts_for_serialized_metadata_and_one_reused_buffer() {
+        let budget = ManagedSpillBudget::for_bounded_stream(1_000, 400, 3)
+            .expect("bounded managed spill budget");
+
+        assert_eq!(budget.maximum_artifact_bytes(), 16 + 3 * 72 + 1_000 + 80);
+        assert_eq!(budget.io_buffer_bytes(), 72 + 400);
+        assert_eq!(budget.serialization_buffer_bytes(), 80);
+        assert_eq!(budget.maximum_serialization_bytes(), 16 + 3 * 72 + 80);
+        assert_eq!(budget.maximum_serialization_operations(), 5);
+    }
+
     fn sealed_two_frame_artifact() -> (tempfile::TempDir, ManagedSpillArtifact) {
         let root = tempfile::tempdir().expect("artifact root");
         let (_authority, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
@@ -2312,6 +2357,14 @@ mod tests {
             QueueResourceId::new("foreign-queue"),
         );
         assert!(ManagedSpillStorage::bind(&authority, wrong_binding, root.path()).is_err());
+        let wrong_operations = StorageIoResourceBinding::new_with_operations_rate(
+            storage.resources().domain().clone(),
+            storage.resources().read_rate().clone(),
+            storage.resources().write_rate().clone(),
+            RateResourceId::new("foreign-operations-rate"),
+            storage.resources().queue().clone(),
+        );
+        assert!(ManagedSpillStorage::bind(&authority, wrong_operations, root.path()).is_err());
 
         let mut writer = ManagedSpillWriter::create(&storage, budget(TEST_CAPACITY_BYTES))
             .expect("artifact writer");

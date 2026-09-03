@@ -194,11 +194,10 @@ fn serial_storage_io() -> StorageIoResourceBinding {
 }
 
 fn artifact_storage_io() -> StorageIoResourceBinding {
-    StorageIoResourceBinding::new_with_operations_rate(
+    StorageIoResourceBinding::new(
         StorageDomainId::new("atomic-output"),
         RateResourceId::new("io-rate"),
         RateResourceId::new("io-rate"),
-        RateResourceId::new("io-operations-rate"),
         QueueResourceId::new("io-queue"),
     )
 }
@@ -2574,7 +2573,7 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
     ))
     .expect("logical continuum compilation");
-    let registry = test_registry(&problem, 3, 6, None);
+    let implementation_registry = test_registry(&problem, 3, 6, None);
     let policy = SpectralCycleExecutionPolicy::new(
         implementation(6),
         WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
@@ -2589,7 +2588,7 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
         ResourcePolicy::Balanced,
     )
     .with_gridded_normal_storage(artifact_storage());
-    let plan = SpectralCyclePlan::initial(&problem, &registry, policy)
+    let plan = SpectralCyclePlan::initial(&problem, &implementation_registry, policy)
         .expect("production initial-major plan");
     let minor = plan.minor_cycle_node().expect("initial plan owns T21");
     let node = &plan.physical_work().execution_dag().nodes()[minor];
@@ -2614,9 +2613,239 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
     assert!(demand.storage.iter().any(|storage| {
         storage.demand_id.starts_with("managed-spill-storage")
             && storage.write_rate.hard() > 0
-            && storage.operations_rate.hard() > 0
+            && storage.operations_rate.hard() == 0
             && storage.queue_slots.hard() > 0
     }));
+    assert!(demand.io_buffers.serialization_bytes > 0);
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .headroom
+            .cache_bytes
+            > 0,
+        "one bounded spill window is reserved as page-cache pressure"
+    );
+}
+
+#[test]
+fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve() {
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
+    ))
+    .expect("logical continuum compilation");
+    let implementation_registry = test_registry(&problem, 3, 6, None);
+    let plan_with =
+        |authority: &ResourceAuthority, storage_io: StorageIoResourceBinding, directory: &Path| {
+            let storage = ManagedSpillStorage::bind(authority, storage_io.clone(), directory)
+                .expect("bind managed spill storage");
+            SpectralCyclePlan::initial(
+                &problem,
+                &implementation_registry,
+                SpectralCycleExecutionPolicy::new(
+                    implementation(6),
+                    WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+                    selected_content_residency(&problem),
+                    storage_io,
+                    SpectralCyclePlanningLimits::new(
+                        1_000,
+                        8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                        900_000,
+                    ),
+                    authority.clone(),
+                    ResourcePolicy::Balanced,
+                )
+                .with_gridded_normal_storage(storage),
+            )
+        };
+
+    let baseline = SpectralCyclePlan::initial(
+        &problem,
+        &implementation_registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+            selected_content_residency(&problem),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(
+                1_000,
+                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                900_000,
+            ),
+            authority().clone(),
+            ResourcePolicy::Balanced,
+        )
+        .with_gridded_normal_storage(artifact_storage()),
+    )
+    .expect("baseline spill plan");
+    let required_storage_bytes = baseline
+        .physical_work()
+        .execution_dag()
+        .resource_alternative()
+        .demand
+        .storage
+        .iter()
+        .filter(|demand| demand.domain == StorageDomainId::new("atomic-output"))
+        .map(|demand| {
+            demand.temporary_bytes
+                + demand.staged_output_bytes
+                + demand.final_output_bytes
+                + demand.persistent_cache_bytes
+        })
+        .sum::<u64>();
+    assert!(
+        baseline.physical_work().artifacts().is_empty(),
+        "runtime-private spill must not enter the persisted artifact identity surface"
+    );
+    assert!(required_storage_bytes > 1);
+    let capacity_with_balanced_reserve = required_storage_bytes
+        .checked_mul(4)
+        .expect("test capacity fits")
+        .div_ceil(3);
+
+    let root = tempfile::tempdir().expect("profiled storage root");
+    let feasible_profile = ProductionStorageProfile::new(
+        root.path(),
+        capacity_with_balanced_reserve,
+        capacity_with_balanced_reserve,
+        16,
+        16,
+        8,
+        4,
+    )
+    .expect("feasible storage profile");
+    let feasible_authority = ResourceAuthority::detected_with_storage_profile(&feasible_profile)
+        .expect("feasible authority");
+    let feasible = plan_with(
+        &feasible_authority,
+        feasible_profile.io_resources(),
+        root.path(),
+    )
+    .expect("feasible spill candidate");
+    let feasible_receipts = ExecutionReceiptStore::new(
+        root.path().join("feasible-receipts"),
+        ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("feasible receipt store");
+    let execution_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &feasible_authority,
+        &implementation_registry,
+        &feasible_receipts,
+        move |_, _| Ok::<_, io::Error>(vec![feasible.into_parts().physical]),
+    )
+    .expect("verified spill bytes fit inside Balanced's storage reserve");
+    assert_eq!(execution_plan.problem_id(), problem.problem_id());
+    assert_eq!(
+        execution_plan.product_graph_id(),
+        problem.product_graph().graph_id()
+    );
+
+    let insufficient_profile = ProductionStorageProfile::new(
+        root.path(),
+        capacity_with_balanced_reserve - 1,
+        capacity_with_balanced_reserve - 1,
+        16,
+        16,
+        8,
+        4,
+    )
+    .expect("insufficient storage profile");
+    let insufficient_authority =
+        ResourceAuthority::detected_with_storage_profile(&insufficient_profile)
+            .expect("insufficient authority");
+    let insufficient = plan_with(
+        &insufficient_authority,
+        insufficient_profile.io_resources(),
+        root.path(),
+    )
+    .expect("capacity admission remains the canonical whole-plan seam");
+    let insufficient_receipts = ExecutionReceiptStore::new(
+        root.path().join("insufficient-receipts"),
+        ReceiptRetention::new(1, 1_048_576).expect("retention"),
+    )
+    .expect("insufficient receipt store");
+    let result = runtime_plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        &insufficient_authority,
+        &implementation_registry,
+        &insufficient_receipts,
+        move |_, _| Ok::<_, io::Error>(vec![insufficient.into_parts().physical]),
+    );
+    assert!(matches!(
+        result,
+        Err(PlanError::Resource(ResourceError::NoFeasibleAlternative(certificate)))
+            if !certificate.rejections().is_empty()
+                && certificate.rejections().iter().all(|rejection| matches!(
+                    rejection.reason(),
+                    AlternativeRejectionReason::Infeasible {
+                        resource,
+                        required,
+                        available,
+                    } if resource.starts_with("storage-domain:")
+                        && *required == required_storage_bytes
+                        && *available < *required
+                ))
+    ));
+}
+
+#[test]
+fn managed_spill_uses_profiled_iops_without_requiring_it_for_eligibility() {
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
+    ))
+    .expect("logical continuum compilation");
+    let implementation_registry = test_registry(&problem, 3, 6, None);
+    fs::create_dir_all("/tmp/casa-rs-imaging-runtime-tests")
+        .expect("create managed spill artifact directory");
+    let profiled_storage = ManagedSpillStorage::bind(
+        authority(),
+        StorageIoResourceBinding::new_with_operations_rate(
+            StorageDomainId::new("atomic-output"),
+            RateResourceId::new("io-rate"),
+            RateResourceId::new("io-rate"),
+            RateResourceId::new("io-operations-rate"),
+            QueueResourceId::new("io-queue"),
+        ),
+        Path::new("/tmp/casa-rs-imaging-runtime-tests"),
+    )
+    .expect("profiled managed spill storage");
+    let plan = SpectralCyclePlan::initial(
+        &problem,
+        &implementation_registry,
+        SpectralCycleExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(2, 3).expect("weighting limits"),
+            selected_content_residency(&problem),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(
+                1_000,
+                8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3,
+                900_000,
+            ),
+            authority().clone(),
+            ResourcePolicy::Balanced,
+        )
+        .with_gridded_normal_storage(profiled_storage),
+    )
+    .expect("profiled spill plan");
+
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .resource_alternative()
+            .demand
+            .storage
+            .iter()
+            .any(
+                |storage| storage.demand_id.starts_with("managed-spill-storage")
+                    && storage.operations_rate.hard() == 1
+            )
+    );
 }
 
 #[test]

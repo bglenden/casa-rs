@@ -1374,12 +1374,14 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         }
     );
     let storage_id = format!("{MANAGED_SPILL_STORAGE_DEMAND}-{suffix}");
-    storage
-        .resources()
-        .operations_rate()
-        .ok_or(SpectralCyclePlanError::MissingManagedSpillOperationsRate)?;
+    let operations_profiled = storage.resources().operations_rate().is_some();
     let allocation = AllocationId::new(format!("managed-spill-buffer-{suffix}"));
     let slot = PhysicalSlotId::new(format!("{}-slot", allocation.as_str()));
+    let serialization_allocation =
+        AllocationId::new(format!("managed-spill-serialization-{suffix}"));
+    let serialization_slot =
+        PhysicalSlotId::new(format!("{}-slot", serialization_allocation.as_str()));
+    let serialization_bytes = budget.serialization_buffer_bytes();
     let io_kind = match mode {
         ManagedSpillMode::Read(_) => IoBufferKind::SpillRead,
         ManagedSpillMode::Write => IoBufferKind::SpillWrite,
@@ -1446,13 +1448,6 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             lifetime: lifetime.clone(),
         },
         ResourceClaim {
-            resource: LeaseResource::StorageOperationsRate {
-                demand_id: storage_id.clone(),
-            },
-            amount: 1,
-            lifetime: lifetime.clone(),
-        },
-        ResourceClaim {
             resource: LeaseResource::StorageQueue {
                 demand_id: storage_id.clone(),
             },
@@ -1460,9 +1455,23 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             lifetime: lifetime.clone(),
         },
     ]);
+    if operations_profiled {
+        owner.claims.push(ResourceClaim {
+            resource: LeaseResource::StorageOperationsRate {
+                demand_id: storage_id.clone(),
+            },
+            amount: 1,
+            lifetime: lifetime.clone(),
+        });
+    }
     owner.claims.push(ResourceClaim {
         resource: LeaseResource::IoBuffer(io_kind),
         amount: buffer_bytes,
+        lifetime: lifetime.clone(),
+    });
+    owner.claims.push(ResourceClaim {
+        resource: LeaseResource::IoBuffer(IoBufferKind::Serialization),
+        amount: serialization_bytes,
         lifetime: lifetime.clone(),
     });
     if matches!(mode, ManagedSpillMode::Write) {
@@ -1484,6 +1493,10 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         allocation: allocation.clone(),
         lifetime: lifetime.clone(),
     });
+    owner.allocations.push(AllocationUse {
+        allocation: serialization_allocation.clone(),
+        lifetime: lifetime.clone(),
+    });
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
@@ -1499,6 +1512,12 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         allocation_id: allocation.as_str().to_string(),
         hard_bytes: buffer_bytes,
         preferred_bytes: buffer_bytes,
+        views: vec![CapacityViewId::new("host-memory")],
+    });
+    alternative.demand.memory.push(MemoryDemand {
+        allocation_id: serialization_allocation.as_str().to_string(),
+        hard_bytes: serialization_bytes,
+        preferred_bytes: serialization_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
     alternative.demand.storage.push(StorageDemand {
@@ -1522,7 +1541,11 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         } else {
             CountDemand::zero()
         },
-        operations_rate: CountDemand::new(1, 1),
+        operations_rate: if operations_profiled {
+            CountDemand::new(1, 1)
+        } else {
+            CountDemand::zero()
+        },
         queue_slots: CountDemand::new(1, 1),
     });
     alternative.demand.file_descriptors = CountDemand::new(
@@ -1547,6 +1570,17 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             alternative.demand.io_buffers.spill_write_bytes = buffer_bytes;
         }
     }
+    alternative.demand.io_buffers.serialization_bytes = alternative
+        .demand
+        .io_buffers
+        .serialization_bytes
+        .checked_add(serialization_bytes)
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+    alternative.headroom.cache_bytes = alternative
+        .headroom
+        .cache_bytes
+        .checked_add(buffer_bytes)
+        .ok_or(SpectralCyclePlanError::Overflow)?;
     let dag = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: base
             .execution_dag()
@@ -1559,34 +1593,71 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             .logical_allocations()
             .values()
             .cloned()
-            .chain([LogicalAllocation {
-                id: allocation.clone(),
-                bytes: buffer_bytes,
-                purpose: AllocationPurpose::IoBuffer(io_kind),
-                compatibility: compatibility.clone(),
-                physical_slot: slot.clone(),
-                lifetime: AllocationLifetime {
-                    acquire_at: node.clone(),
-                    release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
-                        node.clone(),
-                        FenceKind::Io,
-                    ))]),
+            .chain([
+                LogicalAllocation {
+                    id: allocation.clone(),
+                    bytes: buffer_bytes,
+                    purpose: AllocationPurpose::IoBuffer(io_kind),
+                    compatibility: compatibility.clone(),
+                    physical_slot: slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: node.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            node.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
                 },
-            }])
+                LogicalAllocation {
+                    id: serialization_allocation.clone(),
+                    bytes: serialization_bytes,
+                    purpose: AllocationPurpose::IoBuffer(IoBufferKind::Serialization),
+                    compatibility: SlotCompatibility {
+                        layout: AllocationLayout::new("managed-spill-serialization"),
+                        ..compatibility.clone()
+                    },
+                    physical_slot: serialization_slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: node.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            node.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
+                },
+            ])
             .collect(),
         physical_slots: base
             .execution_dag()
             .physical_slots()
             .values()
             .cloned()
-            .chain([PhysicalSlot {
-                id: slot,
-                lease_resource: LeaseResource::Memory {
-                    allocation_id: allocation.as_str().to_string(),
+            .chain([
+                PhysicalSlot {
+                    id: slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: allocation.as_str().to_string(),
+                    },
+                    capacity_bytes: buffer_bytes,
+                    compatibility,
                 },
-                capacity_bytes: buffer_bytes,
-                compatibility,
-            }])
+                PhysicalSlot {
+                    id: serialization_slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: serialization_allocation.as_str().to_string(),
+                    },
+                    capacity_bytes: serialization_bytes,
+                    compatibility: SlotCompatibility {
+                        memory_domain: CapacityDomainId::new("host-memory"),
+                        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+                        alignment_bytes: 64,
+                        storage_mode: StorageMode::Host,
+                        layout: AllocationLayout::new("managed-spill-serialization"),
+                        initialization: InitializationPolicy::OverwriteBeforeRead,
+                        access: AllocationAccess::ReadWrite,
+                    },
+                },
+            ])
             .collect(),
         initial_knobs: base.execution_dag().initial_knobs().clone(),
         adaptations: base
@@ -1610,6 +1681,11 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     budget
                         .maximum_artifact_bytes()
                         .div_ceil(budget.io_buffer_bytes().max(1)),
+                ));
+                io.push(IoPrediction::new(
+                    IoBufferKind::Serialization,
+                    budget.maximum_serialization_bytes(),
+                    budget.maximum_serialization_operations(),
                 ));
                 stage.with_io(io)
             } else {
@@ -2067,8 +2143,6 @@ pub enum SpectralCyclePlanError {
     CubeCleanRequiresAllPlanes,
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
-    /// Managed spill requires a calibrated operations-per-second resource.
-    MissingManagedSpillOperationsRate,
     /// A later-major plan received replay state outside its retained storage authority.
     InvalidGriddedNormalReplay,
     /// Visibility-write bounds were supplied without a logical destination.
