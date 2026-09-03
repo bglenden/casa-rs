@@ -6,20 +6,22 @@
       "validity": true,
       "wcs": true
     },
-    "maximum_normalized_rms": 0.0007981002064008772,
+    "maximum_normalized_rms": 0.0007730070559896741,
     "normalized_rms": {
-      ".image": 0.0002638849258418512,
+      ".image": 0.0001762554412268899,
       ".mask": 0.0,
       ".model": 7.889863415027368e-7,
-      ".psf": 0.0007981002064008772,
-      ".residual": 0.00026991315477266017,
-      ".sumwt": 0.0001984661274702831
+      ".pb": 0.0,
+      ".psf": 0.0007730070559896741,
+      ".residual": 0.00018027508706644295,
+      ".sumwt": 0.0
     },
     "product_inventory": {
       "observed": [
         ".image",
         ".mask",
         ".model",
+        ".pb",
         ".psf",
         ".residual",
         ".sumwt"
@@ -28,10 +30,94 @@
         ".image",
         ".mask",
         ".model",
+        ".pb",
         ".psf",
         ".residual",
         ".sumwt"
       ]
+    },
+    "dirty_products": {
+      "exact": {
+        "topology": true,
+        "validity": true,
+        "wcs": true
+      },
+      "maximum_normalized_rms": 0.0007730070559896741,
+      "metadata_policy": "Direction coordinates, shapes, and validity masks match exactly. CASA omits the PSF unit and residual unit/beam; restoring-beam rounding remains within the frozen product tolerances.",
+      "normalized_rms": {
+        ".image": 0.00018910133705326567,
+        ".model": 0.0,
+        ".pb": 0.0,
+        ".psf": 0.0007730070559896741,
+        ".residual": 0.00018910133705326567,
+        ".sumwt": 0.0
+      },
+      "product_inventory": {
+        "observed": [
+          ".image",
+          ".model",
+          ".pb",
+          ".psf",
+          ".residual",
+          ".sumwt"
+        ],
+        "required": [
+          ".image",
+          ".model",
+          ".pb",
+          ".psf",
+          ".residual",
+          ".sumwt"
+        ]
+      }
+    },
+    "final_products": {
+      "exact": {
+        "topology": true,
+        "validity": true,
+        "wcs": true
+      },
+      "maximum_normalized_rms": 0.0007730070559896741,
+      "metadata_policy": "Direction coordinates, shapes, and validity masks match exactly. CASA omits the PSF unit and residual unit/beam; restoring-beam rounding remains within the frozen product tolerances.",
+      "normalized_rms": {
+        ".image": 0.0001762554412268899,
+        ".mask": 0.0,
+        ".model": 7.889863415027368e-7,
+        ".pb": 0.0,
+        ".psf": 0.0007730070559896741,
+        ".residual": 0.00018027508706644295,
+        ".sumwt": 0.0
+      },
+      "product_inventory": {
+        "observed": [
+          ".image",
+          ".mask",
+          ".model",
+          ".pb",
+          ".psf",
+          ".residual",
+          ".sumwt"
+        ],
+        "required": [
+          ".image",
+          ".mask",
+          ".model",
+          ".pb",
+          ".psf",
+          ".residual",
+          ".sumwt"
+        ]
+      }
+    },
+    "model_data": {
+      "all_values_finite": true,
+      "flags_unchanged": true,
+      "normalized_rms": 8.423820327059562e-7,
+      "reopen_verified": true,
+      "samples_compared": 6284304,
+      "sigma_unchanged": true,
+      "status": "pass",
+      "weights_unchanged": true
     }
   },
   "contract_digest": "7def9d840af21a5264e49405e24fc1fdc14be3cd99c742de58e2e64e19ab9922",
@@ -57,33 +143,52 @@
     "exact_validity"
   ],
   "execution": {
-    "artifact_bytes": 66122456,
-    "encoded_records": 1650296,
-    "grid_records": 1650296,
+    "artifact_bytes": 65972896,
+    "encoded_records": 1646557,
+    "final_prediction_peak_process_rss_bytes": 8332722176,
+    "grid_records": 1646557,
     "maximum_frames_per_window": 5,
-    "peak_process_rss_bytes": 216940544,
-    "planned_working_set_bytes": 909364,
-    "prediction_groups": 1650296,
-    "replay_blocks": 364,
+    "planned_working_set_bytes": 907604,
+    "prediction_groups": 1646557,
+    "replay_blocks": 462,
+    "replay_peak_process_rss_bytes": 217153536,
     "sector_rescans": 0
   },
   "external_receipts": [
     {
-      "locator": "/private/tmp/t49-clean-evidence/20260903T080257Z-issue535-wprojection-mfs-representative-00362267.json",
-      "role": "CASA oracle and frozen-tolerance comparison",
-      "sha256": "199598052be492dd37649018dac05007b726706f3a93f6412c59991dd415eaec"
+      "locator": "/private/tmp/t49-final-clean-evidence-retry/20260903T085200Z-issue535-wprojection-mfs-representative-a5eb53d5.json",
+      "role": "clean CASA oracle and representative run receipt",
+      "sha256": "b0d0cd91c97ffc53df7ef6fcf085f16e871142662be2ae986101e57b02ec93a3"
     },
     {
-      "locator": "/private/tmp/t49-clean-evidence/20260903T080257Z-issue535-wprojection-mfs-representative-00362267.comparison.json",
-      "role": "full scientific product comparison",
-      "sha256": "fefbf40c75a6ecd65a53675de5d10635f6605cb201cdd96f9bc3cdc31e1cd18a"
+      "locator": "/private/tmp/t49-final-clean-evidence-retry/20260903T085200Z-issue535-wprojection-mfs-representative-a5eb53d5.comparison.json",
+      "role": "clean full scientific product comparison",
+      "sha256": "bbc729cbfb6daa6f4daef7ecf68d60c391bb7b614c94467cebe839895b5b7da3"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/products/20260903T085200Z-issue535-wprojection-mfs-representative-a5eb53d5/model-data-comparison.json",
+      "role": "persisted MODEL_DATA CASA comparison after reopen",
+      "sha256": "68ed991f356a03da0002487df83872ac77cbc4748bf8e316e2a358a19d671ff3"
+    },
+    {
+      "locator": "/private/tmp/t49-final-dirty-evidence-retry/20260903T085504Z-issue535-wprojection-mfs-dirty-representative-acf09404.json",
+      "role": "dirty CASA oracle and representative run receipt",
+      "sha256": "294e979a4faeef39e4582a939f1379708edeebd4399c641877d05c6ce0e6a909"
+    },
+    {
+      "locator": "/private/tmp/t49-final-dirty-evidence-retry/20260903T085504Z-issue535-wprojection-mfs-dirty-representative-acf09404.comparison.json",
+      "role": "dirty full scientific product comparison",
+      "sha256": "143631c0f834109c1fc8faa234fe303c8272e5cb4ffc8d4d324ec83e4cdc15d0"
     }
   ],
   "mode": {
     "casa_wprojplanes": -1,
     "deconvolver": "hogbom",
+    "dirty_products_compared": true,
+    "final_prediction_model_data_compared": true,
     "gridder": "wproject",
     "niter": 25,
+    "parallel": true,
     "rust_w_projection_planes": "automatic",
     "specmode": "mfs",
     "weighting": "briggs"
@@ -91,21 +196,71 @@
   "production_path": true,
   "reference": {
     "casa_python": "3.12",
+    "casa_source_oracle": {
+      "convolution_function_generation_inspected": true,
+      "gridding_and_degridding_inspected": true,
+      "sources": [
+        {
+          "path": "synthesis/TransformMachines/WPConvFunc.cc",
+          "sha256": "bab8b898a1e3b499882f78945a491ef2cfd5beed98b8b7ca2b7b43c7deacf0eb"
+        },
+        {
+          "path": "synthesis/TransformMachines/WProjectFT.cc",
+          "sha256": "336c0fab42cdc80d4934ae149fa206e779b469b630dcc1fee0100c51adc00193"
+        },
+        {
+          "path": "synthesis/TransformMachines/wprojgrid.f",
+          "sha256": "28b1c91f9f709765dbbd7c7a358de396927cbd4503a478289948e8d61a128d18"
+        }
+      ],
+      "tested_revision": "61020062cee290f5466cffed5ec5032e0c7a3434"
+    },
     "casa_version": "6.7.6.14",
-    "identity_sha256": "fefbf40c75a6ecd65a53675de5d10635f6605cb201cdd96f9bc3cdc31e1cd18a",
+    "identity_sha256": "bbc729cbfb6daa6f4daef7ecf68d60c391bb7b614c94467cebe839895b5b7da3",
     "kind": "casa"
   },
   "repository_evidence": [
     "tools/perf/imager/workloads/issue535-wprojection-mfs-representative.json",
+    "tools/perf/imager/workloads/issue535-wprojection-mfs-dirty-representative.json",
     "scripts/bench-imager-vs-casa.sh",
     "crates/casa-imaging-model/tests/measurement_equation_contract.rs",
     "crates/casa-imaging-reconstruction/src/spectral_operator.rs",
     "crates/casa-imaging-reconstruction/src/gridded_normal_operator.rs",
-    "crates/casa-imaging-application/tests/continuum_application.rs"
+    "crates/casa-imaging-application/tests/continuum_application.rs",
+    "crates/casa-imaging-application/src/availability.rs"
   ],
   "scenario_id": "w-projection-vla",
   "schema": "casa-rs-representative-science-evidence-v1",
   "status": "pass",
-  "tested_commit": "fb3bfb04ad483c5f013f425ac5fdacb5896de630",
-  "validity_rule": null
+  "tested_commit": "b5c56e976222d011c2afd0bed125e8c84fbee31c",
+  "validity_rule": null,
+  "w_projection_diagnostics": {
+    "casa_source_oracle": {
+      "conjugate_positive_w": true,
+      "per_sample_real_tap_normalization": true,
+      "quadratic_plane_mapping": true,
+      "sources": [
+        {
+          "locator": "synthesis/TransformMachines/WPConvFunc.cc",
+          "sha256": "bab8b898a1e3b499882f78945a491ef2cfd5beed98b8b7ca2b7b43c7deacf0eb"
+        },
+        {
+          "locator": "synthesis/TransformMachines/WProjectFT.cc",
+          "sha256": "336c0fab42cdc80d4934ae149fa206e779b469b630dcc1fee0100c51adc00193"
+        },
+        {
+          "locator": "synthesis/TransformMachines/wprojgrid.f",
+          "sha256": "28b1c91f9f709765dbbd7c7a358de396927cbd4503a478289948e8d61a128d18"
+        }
+      ],
+      "tested_revision": "61020062cee290f5466cffed5ec5032e0c7a3434"
+    },
+    "rust": {
+      "kernel_identity_sha256": "e65a1611727cfb9313330fb194da2fe86f3034f5606812cc0f41fcf92b2e5def",
+      "maximum_support": 4,
+      "plane_count": 129,
+      "plane_zero_normalization": 5.344145229070894,
+      "sampling": 4
+    }
+  }
 }
