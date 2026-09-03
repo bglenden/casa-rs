@@ -127,6 +127,24 @@ impl WorkKind {
             Self::Preparation | Self::Cache | Self::Spill | Self::Prefetch
         )
     }
+
+    const fn is_science_execution_work(self) -> bool {
+        matches!(
+            self,
+            Self::DataCensus
+                | Self::ConvolutionFunction
+                | Self::FftPlanning
+                | Self::Jit
+                | Self::Compute
+                | Self::Transfer
+                | Self::Io
+                | Self::ObservationRead
+                | Self::ObservationReadWriteback
+                | Self::Serialization
+                | Self::Writeback
+                | Self::Publication
+        )
+    }
 }
 
 /// Runtime domain in which one work node executes.
@@ -4332,6 +4350,7 @@ fn validate_active_projection(
             )));
         }
     }
+    validate_active_preparation_obligations(projection, nodes, inactive)?;
     for allocation in allocations.values() {
         let acquisition_inactive = inactive.contains(&allocation.lifetime.acquire_at);
         if acquisition_inactive
@@ -4380,6 +4399,84 @@ fn validate_active_projection(
         }
     }
     Ok(())
+}
+
+fn validate_active_preparation_obligations(
+    projection: &str,
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    inactive: &BTreeSet<WorkNodeId>,
+) -> Result<(), ExecutionError> {
+    for obligation in nodes.values().filter(|node| {
+        inactive.contains(&node.id) && matches!(node.kind, WorkKind::Preparation | WorkKind::Cache)
+    }) {
+        let downstream_science = nodes
+            .values()
+            .filter(|node| {
+                !inactive.contains(&node.id)
+                    && node.kind.is_science_execution_work()
+                    && event_precedes(
+                        nodes,
+                        &WorkDependency::Work(obligation.id.clone()),
+                        &WorkDependency::Work(node.id.clone()),
+                    )
+            })
+            .collect::<Vec<_>>();
+        if downstream_science.is_empty() {
+            continue;
+        }
+        // Work dependencies are conjunctive: an active transitive predecessor is
+        // therefore a mandatory obligation for the downstream science work.
+        let has_dominating_replacement = nodes.values().any(|replacement| {
+            !inactive.contains(&replacement.id)
+                && matches!(replacement.kind, WorkKind::Preparation | WorkKind::Cache)
+                && downstream_science.iter().all(|science| {
+                    active_dependency_precedes(nodes, inactive, &replacement.id, &science.id)
+                })
+        });
+        if !has_dominating_replacement {
+            let science = downstream_science
+                .iter()
+                .map(|node| node.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ExecutionError::invalid_plan(format!(
+                "{projection} deactivates {:?} obligation {} without one active Preparation or Cache replacement dominating every downstream science node ({science}); Synchronization work cannot satisfy the missing prerequisite",
+                obligation.kind,
+                obligation.id.as_str()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn active_dependency_precedes(
+    nodes: &BTreeMap<WorkNodeId, WorkNode>,
+    inactive: &BTreeSet<WorkNodeId>,
+    before: &WorkNodeId,
+    after: &WorkNodeId,
+) -> bool {
+    if inactive.contains(before) || inactive.contains(after) {
+        return false;
+    }
+    let mut visited = BTreeSet::from([before.clone()]);
+    let mut frontier = vec![before.clone()];
+    while let Some(predecessor) = frontier.pop() {
+        for successor in nodes.values().filter(|node| {
+            !inactive.contains(&node.id)
+                && node
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.predecessor() == &predecessor)
+        }) {
+            if &successor.id == after {
+                return true;
+            }
+            if visited.insert(successor.id.clone()) {
+                frontier.push(successor.id.clone());
+            }
+        }
+    }
+    false
 }
 
 fn validate_enabled_adaptation_work<'node>(

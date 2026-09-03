@@ -17,8 +17,8 @@ use casa_imaging_application::{
     execute_continuum,
 };
 use casa_imaging_runtime::{
-    ArtifactDisposition, CapacityDomainId, ClaimLifetime, FenceKind, IoBufferKind, LeaseResource,
-    ReceiptStatus, ResourceOverride, ResourcePolicy, WorkNodeId,
+    CapacityDomainId, ClaimLifetime, FenceKind, IoBufferKind, LeaseResource, ReceiptStatus,
+    ResourceOverride, ResourcePolicy, WorkNodeId,
 };
 use casa_test_support::{CasaTestDataTier, casatestdata_path_for_tier};
 
@@ -232,13 +232,7 @@ fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn E
         1_336_320,
         "representative MT-MFS selected sample count changed",
     );
-    assert_low_memory_receipt(
-        &result.outcome.output.initial_receipt,
-        IoBufferKind::SpillWrite,
-        true,
-        false,
-        true,
-    );
+    assert_initial_spill_receipt(&result.outcome.output.initial_receipt);
     assert_low_memory_receipt(
         result
             .outcome
@@ -246,22 +240,29 @@ fn issue607_representative_mtmfs_matches_casa_products() -> Result<(), Box<dyn E
             .final_major_receipt
             .as_ref()
             .ok_or("representative low-memory run omitted its final-major receipt")?,
-        IoBufferKind::SpillRead,
-        false,
-        true,
-        false,
     );
     assert_representative_products_match_casa(&output, &casa_prefix)?;
     Ok(())
 }
 
-fn assert_low_memory_receipt(
-    receipt: &casa_imaging_runtime::ExecutionReceipt,
-    io_kind: IoBufferKind,
-    spill: bool,
-    prefetch: bool,
-    expect_smaller_batch: bool,
-) {
+fn assert_initial_spill_receipt(receipt: &casa_imaging_runtime::ExecutionReceipt) {
+    assert!(receipt.adaptation_identities().is_empty());
+    let spill = receipt
+        .plan_node_identities()
+        .into_iter()
+        .find(|node| {
+            receipt
+                .stage_predicted_io(node, IoBufferKind::SpillWrite)
+                .is_some()
+        })
+        .expect("initial plan lacks its fixed managed spill");
+    let (bytes, operations) = receipt
+        .stage_actual_io(&spill, IoBufferKind::SpillWrite)
+        .expect("initial managed spill lacks actual I/O evidence");
+    assert!(bytes > 0 && operations > 0);
+}
+
+fn assert_low_memory_receipt(receipt: &casa_imaging_runtime::ExecutionReceipt) {
     let adaptation = receipt
         .adaptation_identities()
         .into_iter()
@@ -269,28 +270,17 @@ fn assert_low_memory_receipt(
         .and_then(|id| receipt.adaptation_projection(&id))
         .expect("production low-memory adaptation receipt");
     assert!(adaptation.was_applied());
-    let batch = (
+    assert!(
+        adaptation.transition().to.batch_size < adaptation.transition().from.batch_size,
+        "low-memory run did not execute its plan-sealed smaller batch: from={}, to={}",
         adaptation.transition().from.batch_size,
         adaptation.transition().to.batch_size,
     );
-    if expect_smaller_batch {
-        assert!(
-            batch.1 < batch.0,
-            "low-memory run did not execute its plan-sealed smaller batch: from={}, to={}",
-            batch.0,
-            batch.1,
-        );
-    } else {
-        assert_eq!(
-            batch,
-            (1, 1),
-            "single-frame replay must preserve its authority-sealed batch while adapting prefetch",
-        );
-    }
     assert!(adaptation.transition().to.recomputation);
-    assert_eq!(adaptation.transition().to.spill, spill);
-    assert_eq!(adaptation.transition().to.prefetch, prefetch);
+    assert!(!adaptation.transition().to.spill);
+    assert!(adaptation.transition().to.prefetch);
 
+    let io_kind = IoBufferKind::SpillRead;
     let io_node = receipt
         .plan_node_identities()
         .into_iter()
@@ -313,14 +303,6 @@ fn assert_low_memory_receipt(
         .find(|node| node.as_str().contains("fft-plan"))
         .expect("low-memory plan lacks recomputation work");
     assert!(receipt.stage_actual_elapsed_nanos(&preparation).is_some());
-    if prefetch {
-        assert!(
-            receipt.artifact_identities().into_iter().any(|artifact| {
-                receipt.artifact_disposition(artifact) == Some(ArtifactDisposition::Loaded)
-            }),
-            "low-memory prefetch did not receipt reuse of its sealed spill artifact",
-        );
-    }
 }
 
 fn representative_mtmfs_request(

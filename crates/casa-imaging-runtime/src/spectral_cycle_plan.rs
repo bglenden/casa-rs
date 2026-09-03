@@ -34,6 +34,10 @@ const IO_QUEUE_DEMAND: &str = "spectral-cycle-storage-queue";
 const OUTPUT_STORAGE_DEMAND: &str = "spectral-cycle-private-commit";
 const GRIDDED_REPLAY_NODE: &str = "gridded-normal-replay";
 const MANAGED_SPILL_STORAGE_DEMAND: &str = "managed-spill-storage";
+const RETAINED_ROUTE_NODE: &str = "spectral-retained-route";
+const RECOMPUTE_ROUTE_NODE: &str = "spectral-recompute-route";
+const LOW_MEMORY_IO_ROUTE_NODE: &str = "spectral-low-memory-io-route";
+const ADAPTATION_ROUTE_JOIN_NODE: &str = "spectral-adaptation-route-join";
 
 fn imaging_plan_diagnostics_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -621,8 +625,21 @@ impl SpectralCyclePlan {
         if let Some(minor) = &minor_cycle_node {
             physical = append_minor(registry, physical, &policy, minor)?;
         }
-        if policy.resource_policy.has_explicit_memory_ceiling() {
-            physical = append_low_memory_adaptation(registry, physical, &policy, pass, strategy)?;
+        if policy.resource_policy.has_explicit_memory_ceiling()
+            && pass.phase() == SpectralPassPhase::FinalMajor
+        {
+            physical = append_low_memory_adaptation(
+                physical,
+                &policy,
+                pass,
+                strategy,
+                complete_data.preparation_node(),
+                complete_data.replay_node(),
+                retained_artifact_bytes.ok_or(SpectralCyclePlanError::Overflow)?,
+                gridded_window_plan
+                    .as_ref()
+                    .ok_or(SpectralCyclePlanError::Overflow)?,
+            )?;
         }
         let gridded_normal = match (strategy, gridded_normal_storage, gridded_replay) {
             (GriddedNormalStrategy::ReuseManagedSpill, Some(storage), Some(replay)) => {
@@ -670,35 +687,357 @@ impl SpectralCyclePlan {
     }
 }
 
-fn append_low_memory_adaptation<R: ImplementationRegistry>(
-    registry: &R,
+pub(crate) fn retained_route_node(pass: SpectralPassIdentity) -> WorkNodeId {
+    pass_node(RETAINED_ROUTE_NODE, pass)
+}
+
+pub(crate) fn recompute_route_node(pass: SpectralPassIdentity) -> WorkNodeId {
+    pass_node(RECOMPUTE_ROUTE_NODE, pass)
+}
+
+pub(crate) fn low_memory_io_route_node(pass: SpectralPassIdentity) -> WorkNodeId {
+    pass_node(LOW_MEMORY_IO_ROUTE_NODE, pass)
+}
+
+pub(crate) fn adaptation_route_join_node(pass: SpectralPassIdentity) -> WorkNodeId {
+    pass_node(ADAPTATION_ROUTE_JOIN_NODE, pass)
+}
+
+fn append_low_memory_adaptation(
     base: PhysicalWorkBinding,
     policy: &SpectralCycleExecutionPolicy,
     pass: SpectralPassIdentity,
     strategy: GriddedNormalStrategy,
+    preparation: &WorkNodeId,
+    science_node: &WorkNodeId,
+    retained_cache_bytes: u64,
+    window_plan: &crate::complete_data_operator::GriddedNormalReplayWindowPlan,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let dag = base.execution_dag();
     let mut initial = dag.initial_knobs().clone();
-    initial.batch_size = dag.resource_alternative().scaling.maximum_batch_size;
+    initial.batch_size = dag
+        .resource_alternative()
+        .scaling
+        .maximum_batch_size
+        .min(
+            u64::try_from(window_plan.maximum_frames())
+                .map_err(|_| SpectralCyclePlanError::Overflow)?,
+        )
+        .min(2)
+        .max(1);
+    initial.cache_retention_bytes = retained_cache_bytes.max(1);
+    initial.spill = false;
     let mut target = initial.clone();
     target.batch_size = target.batch_size.div_ceil(2).max(1);
+    target.cache_retention_bytes = 0;
     target.recomputation = true;
-    target.spill = strategy == GriddedNormalStrategy::CreateManagedSpill;
+    target.spill = false;
     target.prefetch = strategy == GriddedNormalStrategy::ReuseManagedSpill;
+    let retained = retained_route_node(pass);
+    let recompute = recompute_route_node(pass);
+    let low_memory_io = low_memory_io_route_node(pass);
+    let join = adaptation_route_join_node(pass);
+    let preparation_work = dag
+        .nodes()
+        .get(preparation)
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+    let science_work = dag
+        .nodes()
+        .get(science_node)
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+
+    let io_kind = match strategy {
+        GriddedNormalStrategy::CreateManagedSpill => Some(WorkKind::Spill),
+        GriddedNormalStrategy::ReuseManagedSpill => Some(WorkKind::Prefetch),
+        GriddedNormalStrategy::Omit => None,
+    };
+    let io_claims = |include_buffers: bool| {
+        let mut route_claims = Vec::<ResourceClaim>::new();
+        for claim in science_work.claims.iter().filter(|claim| {
+            matches!(
+                claim.resource,
+                LeaseResource::StorageReadRate { .. }
+                    | LeaseResource::StorageWriteRate { .. }
+                    | LeaseResource::StorageOperationsRate { .. }
+                    | LeaseResource::StorageQueue { .. }
+                    | LeaseResource::FileDescriptors
+            ) || (include_buffers
+                && matches!(
+                    claim.resource,
+                    LeaseResource::IoBuffer(IoBufferKind::SpillRead)
+                ))
+        }) {
+            if let Some(existing) = route_claims
+                .iter_mut()
+                .find(|existing| existing.resource == claim.resource)
+            {
+                existing.amount = existing.amount.max(claim.amount);
+            } else {
+                route_claims.push(ResourceClaim {
+                    resource: claim.resource.clone(),
+                    amount: claim.amount,
+                    lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+                });
+            }
+        }
+        route_claims
+    };
+    let cache_allocation =
+        AllocationId::new(format!("gridded-normal-retained-cache-{}", pass.ordinal()));
+    let cache_slot = PhysicalSlotId::new(format!("{}-slot", cache_allocation.as_str()));
+    let cache_read_allocation = AllocationId::new(format!(
+        "gridded-normal-retained-cache-read-{}",
+        pass.ordinal()
+    ));
+    let cache_read_slot = PhysicalSlotId::new(format!("{}-slot", cache_read_allocation.as_str()));
+    let prefetch_allocation =
+        AllocationId::new(format!("gridded-normal-prefetch-read-{}", pass.ordinal()));
+    let prefetch_slot = PhysicalSlotId::new(format!("{}-slot", prefetch_allocation.as_str()));
+    let cache_read_bytes = window_plan.source_slot_bytes();
+    let prefetch_bytes = science_work
+        .claims
+        .iter()
+        .find_map(|claim| {
+            (claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead))
+                .then_some(claim.amount)
+        })
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+    let cache_compatibility = SlotCompatibility {
+        memory_domain: CapacityDomainId::new("host-memory"),
+        views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+        alignment_bytes: 64,
+        storage_mode: StorageMode::Host,
+        layout: AllocationLayout::new("gridded-normal-retained-cache"),
+        initialization: InitializationPolicy::OverwriteBeforeRead,
+        access: AllocationAccess::ReadWrite,
+    };
+    let cache_read_compatibility = SlotCompatibility {
+        layout: AllocationLayout::new("gridded-normal-retained-cache-read"),
+        ..cache_compatibility.clone()
+    };
+    let prefetch_compatibility = SlotCompatibility {
+        layout: AllocationLayout::new("gridded-normal-prefetch-read"),
+        ..cache_compatibility.clone()
+    };
+    let io_lifetime = ClaimLifetime::through_fence(FenceKind::Io);
+    let mut retained_claims = io_claims(false);
+    retained_claims.extend([
+        ResourceClaim {
+            resource: LeaseResource::ResidentCache,
+            amount: retained_cache_bytes,
+            lifetime: io_lifetime.clone(),
+        },
+        ResourceClaim {
+            resource: LeaseResource::IoBuffer(IoBufferKind::SourceReadAhead),
+            amount: cache_read_bytes,
+            lifetime: io_lifetime.clone(),
+        },
+    ]);
+    let retained_work = WorkNode {
+        id: retained.clone(),
+        kind: WorkKind::Cache,
+        domain: WorkDomain::Io,
+        implementation: policy.implementation.clone(),
+        dependencies: BTreeSet::from([WorkDependency::Work(preparation.clone())]),
+        claims: retained_claims,
+        allocations: vec![
+            AllocationUse {
+                allocation: cache_allocation.clone(),
+                lifetime: io_lifetime.clone(),
+            },
+            AllocationUse {
+                allocation: cache_read_allocation.clone(),
+                lifetime: io_lifetime.clone(),
+            },
+        ],
+        fences: BTreeSet::from([FenceKind::Io]),
+        quiescence_after: BTreeSet::new(),
+    };
+    let recompute_work = WorkNode {
+        id: recompute.clone(),
+        kind: WorkKind::Preparation,
+        domain: WorkDomain::Cpu,
+        implementation: policy.implementation.clone(),
+        dependencies: BTreeSet::from([WorkDependency::Work(preparation.clone())]),
+        claims: preparation_work.claims.clone(),
+        allocations: preparation_work.allocations.clone(),
+        fences: BTreeSet::new(),
+        quiescence_after: BTreeSet::new(),
+    };
+    let low_memory_io_work = io_kind.map(|kind| WorkNode {
+        id: low_memory_io.clone(),
+        kind,
+        domain: WorkDomain::Io,
+        implementation: policy.implementation.clone(),
+        dependencies: BTreeSet::from([WorkDependency::Work(recompute.clone())]),
+        claims: io_claims(true),
+        allocations: vec![AllocationUse {
+            allocation: prefetch_allocation.clone(),
+            lifetime: io_lifetime.clone(),
+        }],
+        fences: BTreeSet::from([FenceKind::Io]),
+        quiescence_after: BTreeSet::new(),
+    });
+    let low_terminal = low_memory_io_work.as_ref().map_or_else(
+        || WorkDependency::Work(recompute.clone()),
+        |_| WorkDependency::Fence(FenceId::new(low_memory_io.clone(), FenceKind::Io)),
+    );
+    let join_work = WorkNode {
+        id: join.clone(),
+        kind: WorkKind::Synchronization,
+        domain: WorkDomain::Control,
+        implementation: policy.implementation.clone(),
+        dependencies: BTreeSet::from([
+            WorkDependency::Fence(FenceId::new(retained.clone(), FenceKind::Io)),
+            low_terminal,
+        ]),
+        claims: vec![],
+        allocations: vec![],
+        fences: BTreeSet::new(),
+        quiescence_after: BTreeSet::new(),
+    };
+    let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
+    nodes
+        .iter_mut()
+        .find(|node| node.id == *science_node)
+        .ok_or(SpectralCyclePlanError::Overflow)?
+        .dependencies
+        .insert(WorkDependency::Work(join.clone()));
+    nodes.extend([retained_work, recompute_work, join_work]);
+    nodes.extend(low_memory_io_work);
+
+    let mut alternative = dag.resource_alternative().clone();
+    alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: alternative
+            .demand
+            .caches
+            .hard_resident_bytes
+            .max(retained_cache_bytes.max(1)),
+        preferred_resident_bytes: alternative
+            .demand
+            .caches
+            .preferred_resident_bytes
+            .max(retained_cache_bytes.max(1)),
+    };
+    alternative.demand.memory.extend([
+        MemoryDemand {
+            allocation_id: cache_allocation.as_str().to_string(),
+            hard_bytes: retained_cache_bytes,
+            preferred_bytes: retained_cache_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        },
+        MemoryDemand {
+            allocation_id: cache_read_allocation.as_str().to_string(),
+            hard_bytes: cache_read_bytes,
+            preferred_bytes: cache_read_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        },
+        MemoryDemand {
+            allocation_id: prefetch_allocation.as_str().to_string(),
+            hard_bytes: prefetch_bytes,
+            preferred_bytes: prefetch_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        },
+    ]);
+    alternative.demand.io_buffers.source_read_ahead_bytes = alternative
+        .demand
+        .io_buffers
+        .source_read_ahead_bytes
+        .max(cache_read_bytes);
+    let mut activate_nodes = BTreeSet::from([recompute]);
+    let deactivate_nodes = BTreeSet::from([retained.clone()]);
+    if io_kind.is_some() {
+        activate_nodes.insert(low_memory_io.clone());
+    }
     let transition = AdaptationTransition {
         id: AdaptationId::new(format!("spectral-low-memory-{}", pass.ordinal())),
         from: initial.clone(),
         to: target,
         at: QuiescencePoint::RunBoundary,
-        activate_nodes: BTreeSet::new(),
-        deactivate_nodes: BTreeSet::new(),
+        activate_nodes,
+        deactivate_nodes,
     };
     let resealed = ExecutionDag::new(ExecutionDagSpecification {
         required_resource_capabilities: dag.required_resource_capabilities().clone(),
-        resource_alternative: dag.resource_alternative().clone(),
-        nodes: dag.nodes().values().cloned().collect(),
-        logical_allocations: dag.logical_allocations().values().cloned().collect(),
-        physical_slots: dag.physical_slots().values().cloned().collect(),
+        resource_alternative: alternative,
+        nodes,
+        logical_allocations: dag
+            .logical_allocations()
+            .values()
+            .cloned()
+            .chain([
+                LogicalAllocation {
+                    id: cache_allocation.clone(),
+                    bytes: retained_cache_bytes,
+                    purpose: AllocationPurpose::Data,
+                    compatibility: cache_compatibility.clone(),
+                    physical_slot: cache_slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: retained.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Work(science_node.clone())]),
+                    },
+                },
+                LogicalAllocation {
+                    id: cache_read_allocation.clone(),
+                    bytes: cache_read_bytes,
+                    purpose: AllocationPurpose::IoBuffer(IoBufferKind::SourceReadAhead),
+                    compatibility: cache_read_compatibility.clone(),
+                    physical_slot: cache_read_slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: retained.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            retained.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
+                },
+                LogicalAllocation {
+                    id: prefetch_allocation.clone(),
+                    bytes: prefetch_bytes,
+                    purpose: AllocationPurpose::IoBuffer(IoBufferKind::SpillRead),
+                    compatibility: prefetch_compatibility.clone(),
+                    physical_slot: prefetch_slot.clone(),
+                    lifetime: AllocationLifetime {
+                        acquire_at: low_memory_io.clone(),
+                        release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                            science_node.clone(),
+                            FenceKind::Io,
+                        ))]),
+                    },
+                },
+            ])
+            .collect(),
+        physical_slots: dag
+            .physical_slots()
+            .values()
+            .cloned()
+            .chain([
+                PhysicalSlot {
+                    id: cache_slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: cache_allocation.as_str().to_string(),
+                    },
+                    capacity_bytes: retained_cache_bytes,
+                    compatibility: cache_compatibility,
+                },
+                PhysicalSlot {
+                    id: cache_read_slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: cache_read_allocation.as_str().to_string(),
+                    },
+                    capacity_bytes: cache_read_bytes,
+                    compatibility: cache_read_compatibility,
+                },
+                PhysicalSlot {
+                    id: prefetch_slot,
+                    lease_resource: LeaseResource::Memory {
+                        allocation_id: prefetch_allocation.as_str().to_string(),
+                    },
+                    capacity_bytes: prefetch_bytes,
+                    compatibility: prefetch_compatibility,
+                },
+            ])
+            .collect(),
         initial_knobs: initial,
         adaptations: dag
             .adaptations()
@@ -707,9 +1046,70 @@ fn append_low_memory_adaptation<R: ImplementationRegistry>(
             .chain([transition])
             .collect(),
     })?;
-    let catalog =
-        ImplementationContractCatalog::from_registry(registry, [policy.implementation.clone()])?;
-    Ok(base.reseal_execution_dag(catalog, resealed)?)
+    let replay_io = base
+        .prediction()
+        .stages()
+        .get(science_node)
+        .ok_or(SpectralCyclePlanError::Overflow)?
+        .io()
+        .to_vec();
+    let route_predictions = resealed
+        .nodes()
+        .keys()
+        .filter(|node| !base.prediction().stages().contains_key(*node))
+        .cloned()
+        .map(|node| {
+            let prediction = StagePrediction::new(node.clone(), policy.limits.stage_nanos);
+            if node == retained {
+                prediction.with_io(vec![IoPrediction::new(
+                    IoBufferKind::SourceReadAhead,
+                    retained_cache_bytes,
+                    retained_cache_bytes.saturating_mul(4),
+                )])
+            } else if node == low_memory_io {
+                prediction.with_io(
+                    replay_io
+                        .iter()
+                        .copied()
+                        .filter(|io| io.kind() == IoBufferKind::SpillRead)
+                        .collect(),
+                )
+            } else {
+                prediction
+            }
+        })
+        .collect::<Vec<_>>();
+    let route_elapsed = policy
+        .limits
+        .stage_nanos
+        .checked_mul(
+            u64::try_from(route_predictions.len()).map_err(|_| SpectralCyclePlanError::Overflow)?,
+        )
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+    let prediction = PlanPrediction::new(
+        base.prediction()
+            .elapsed_nanos()
+            .checked_add(route_elapsed)
+            .ok_or(SpectralCyclePlanError::Overflow)?,
+        base.prediction().confidence(),
+        base.prediction().uncertainty().to_vec(),
+        base.prediction()
+            .stages()
+            .values()
+            .cloned()
+            .chain(route_predictions)
+            .collect(),
+    )?;
+    Ok(PhysicalWorkBinding::with_implementation_contract(
+        base.implementation_contract()
+            .for_execution_dag(&resealed)?,
+        resealed,
+        prediction,
+        base.artifacts().to_vec(),
+        base.observation_transaction().clone(),
+        base.publication_layouts().clone(),
+        base.product_publication_authority(),
+    )?)
 }
 
 fn base_physical<R: ImplementationRegistry>(

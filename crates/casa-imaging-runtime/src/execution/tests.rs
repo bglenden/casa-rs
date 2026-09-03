@@ -3714,6 +3714,168 @@ fn adaptation_cannot_bypass_an_inactive_observation_dependency() {
 }
 
 #[test]
+fn adaptation_cannot_bypass_a_sole_preparation_obligation_through_synchronization() {
+    let preparation_id = WorkNodeId::new("sole-preparation");
+    let join_id = WorkNodeId::new("preparation-join");
+    let mut preparation = cpu_node(preparation_id.as_str(), BTreeSet::new());
+    preparation.kind = WorkKind::Preparation;
+    let join = synchronization_node(
+        join_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(preparation_id.clone())]),
+    );
+    let science = cpu_node(
+        "science-after-preparation",
+        BTreeSet::from([WorkDependency::Work(join_id)]),
+    );
+    let mut specification = plan_spec(vec![preparation, join, science]);
+    let mut adapted = specification.initial_knobs.clone();
+    adapted.batch_size = 2;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("drop-sole-preparation"),
+        from: specification.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::from([preparation_id]),
+    }];
+
+    let error = ExecutionDag::new(specification)
+        .expect_err("synchronization cannot replace a sole preparation obligation");
+
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("sole-preparation") && message.contains("active Preparation or Cache replacement") && message.contains("science-after-preparation"))
+    );
+}
+
+#[test]
+fn adaptation_cannot_bypass_a_sole_cache_obligation_through_synchronization() {
+    let cache_id = WorkNodeId::new("sole-cache");
+    let join_id = WorkNodeId::new("cache-join");
+    let mut cache = cpu_node(cache_id.as_str(), BTreeSet::new());
+    cache.kind = WorkKind::Cache;
+    cache.claims.push(ResourceClaim {
+        resource: LeaseResource::ResidentCache,
+        amount: 64,
+        lifetime: ClaimLifetime::Work,
+    });
+    let join = synchronization_node(
+        join_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(cache_id.clone())]),
+    );
+    let science = cpu_node(
+        "science-after-cache",
+        BTreeSet::from([WorkDependency::Work(join_id)]),
+    );
+    let mut specification = plan_spec(vec![cache, join, science]);
+    specification.resource_alternative.demand.caches = CacheDemand {
+        hard_resident_bytes: 64,
+        preferred_resident_bytes: 64,
+    };
+    specification.initial_knobs.cache_retention_bytes = 64;
+    let mut adapted = specification.initial_knobs.clone();
+    adapted.batch_size = 2;
+    adapted.cache_retention_bytes = 0;
+    specification.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("drop-sole-cache"),
+        from: specification.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::new(),
+        deactivate_nodes: BTreeSet::from([cache_id]),
+    }];
+
+    let error = ExecutionDag::new(specification)
+        .expect_err("synchronization cannot replace a sole cache obligation");
+
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("sole-cache") && message.contains("active Preparation or Cache replacement") && message.contains("science-after-cache"))
+    );
+}
+
+#[test]
+fn adaptation_replacement_must_dominate_every_downstream_science_node() {
+    let resident_id = WorkNodeId::new("resident-preparation");
+    let recompute_id = WorkNodeId::new("recomputed-preparation");
+    let first_join_id = WorkNodeId::new("first-route-join");
+    let second_join_id = WorkNodeId::new("second-route-join");
+
+    let mut resident = cpu_node(resident_id.as_str(), BTreeSet::new());
+    resident.kind = WorkKind::Preparation;
+    let mut recompute = cpu_node(recompute_id.as_str(), BTreeSet::new());
+    recompute.kind = WorkKind::Preparation;
+    let first_join = synchronization_node(
+        first_join_id.as_str(),
+        BTreeSet::from([
+            WorkDependency::Work(resident_id.clone()),
+            WorkDependency::Work(recompute_id.clone()),
+        ]),
+    );
+    let incomplete_second_join = synchronization_node(
+        second_join_id.as_str(),
+        BTreeSet::from([WorkDependency::Work(resident_id.clone())]),
+    );
+    let first_science = cpu_node(
+        "first-science-consumer",
+        BTreeSet::from([WorkDependency::Work(first_join_id)]),
+    );
+    let second_science = cpu_node(
+        "second-science-consumer",
+        BTreeSet::from([WorkDependency::Work(second_join_id.clone())]),
+    );
+    let mut incomplete = plan_spec(vec![
+        resident.clone(),
+        recompute.clone(),
+        first_join.clone(),
+        incomplete_second_join,
+        first_science.clone(),
+        second_science.clone(),
+    ]);
+    let mut adapted = incomplete.initial_knobs.clone();
+    adapted.batch_size = 2;
+    incomplete.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("select-recomputation"),
+        from: incomplete.initial_knobs.clone(),
+        to: adapted.clone(),
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::from([recompute_id.clone()]),
+        deactivate_nodes: BTreeSet::from([resident_id.clone()]),
+    }];
+
+    let error = ExecutionDag::new(incomplete)
+        .expect_err("one replacement branch cannot leave a science consumer uncovered");
+    assert!(
+        matches!(error, ExecutionError::InvalidPlan(message) if message.contains("resident-preparation") && message.contains("second-science-consumer"))
+    );
+
+    let complete_second_join = synchronization_node(
+        second_join_id.as_str(),
+        BTreeSet::from([
+            WorkDependency::Work(resident_id),
+            WorkDependency::Work(recompute_id.clone()),
+        ]),
+    );
+    let mut complete = plan_spec(vec![
+        resident,
+        recompute,
+        first_join,
+        complete_second_join,
+        first_science,
+        second_science,
+    ]);
+    complete.adaptations = vec![AdaptationTransition {
+        id: AdaptationId::new("select-recomputation"),
+        from: complete.initial_knobs.clone(),
+        to: adapted,
+        at: QuiescencePoint::RunBoundary,
+        activate_nodes: BTreeSet::from([recompute_id]),
+        deactivate_nodes: BTreeSet::from([WorkNodeId::new("resident-preparation")]),
+    }];
+
+    ExecutionDag::new(complete)
+        .expect("the selected preparation replacement dominates both science consumers");
+}
+
+#[test]
 fn adaptation_projection_cannot_strand_a_logical_allocation_terminal_fence() {
     let acquire_id = WorkNodeId::new("acquire-state");
     let boundary_id = WorkNodeId::new("adaptation-boundary");

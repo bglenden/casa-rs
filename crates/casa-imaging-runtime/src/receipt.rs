@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 21;
+const RECEIPT_SCHEMA_VERSION: u32 = 22;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 11;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -925,6 +925,13 @@ impl ExecutionReceipt {
         Some((item.actual_bytes?, item.actual_operations?))
     }
 
+    /// Return the installed batch ceiling and largest batch consumed by one stage.
+    #[must_use]
+    pub fn stage_actual_batch(&self, node: &WorkNodeId) -> Option<(u64, u64)> {
+        let batch = self.node(node)?.actual_batch.as_ref()?;
+        Some((batch.maximum, batch.peak))
+    }
+
     /// Return the plan-declared hard amount for one node resource/lifetime pair.
     #[must_use]
     pub fn planned_resource_amount(
@@ -1539,6 +1546,10 @@ impl ReceiptBody {
         for node in &mut body.plan.nodes {
             node.status = ReceiptStatus::NotStarted;
             node.actual_elapsed_nanos = Some(u64::MAX);
+            node.actual_batch = Some(BatchProjection {
+                maximum: u64::MAX,
+                peak: u64::MAX,
+            });
             for claim in &mut node.claims {
                 claim.actual_peak = Some(claim.amount);
             }
@@ -3361,6 +3372,7 @@ struct NodeProjection {
     quiescence_after: Vec<String>,
     predicted_elapsed_nanos: u64,
     actual_elapsed_nanos: Option<u64>,
+    actual_batch: Option<BatchProjection>,
     io: Vec<IoProjection>,
     status: ReceiptStatus,
 }
@@ -3407,6 +3419,7 @@ impl NodeProjection {
                 .collect(),
             predicted_elapsed_nanos: prediction.elapsed_nanos(),
             actual_elapsed_nanos: None,
+            actual_batch: None,
             io: prediction
                 .io()
                 .iter()
@@ -3440,6 +3453,12 @@ struct IoProjection {
     predicted_operations: u64,
     actual_bytes: Option<u64>,
     actual_operations: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct BatchProjection {
+    maximum: u64,
+    peak: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -4193,6 +4212,17 @@ impl<'store> ReceiptRecorder<'store> {
                     io.actual_operations = Some(operations);
                 }
             }
+            for measurement in measurements.batch_measurements() {
+                if item.actual_batch.is_some() {
+                    return Err(ReceiptError::UnlistedPlanEvidence {
+                        kind: "batch measurement",
+                    });
+                }
+                item.actual_batch = Some(BatchProjection {
+                    maximum: measurement.maximum(),
+                    peak: measurement.peak(),
+                });
+            }
         }
         for measurement in measurements.artifacts() {
             self.record_artifact(*measurement)?;
@@ -4478,6 +4508,7 @@ fn validate_body(body: &ReceiptBody) -> Result<(), ReceiptError> {
         !inactive_nodes.contains(&node.node_id)
             || (node.status == ReceiptStatus::NotStarted
                 && node.actual_elapsed_nanos.is_none()
+                && node.actual_batch.is_none()
                 && node.claims.iter().all(|claim| claim.actual_peak.is_none())
                 && node
                     .io
@@ -4841,6 +4872,14 @@ fn validate_plan_projection(
                 && node.io.iter().all(|io| {
                     io_buffer_is_valid(&io.kind)
                         && io.actual_bytes.is_some() == io.actual_operations.is_some()
+                })
+                && node.actual_batch.as_ref().is_none_or(|batch| {
+                    batch.maximum > 0
+                        && batch.peak <= batch.maximum
+                        && matches!(
+                            node.status,
+                            ReceiptStatus::Completed | ReceiptStatus::Failed
+                        )
                 }),
         )?;
     }
