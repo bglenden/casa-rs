@@ -110,11 +110,12 @@ fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
-fn four_spw_measurement_set(root: &Path) -> PathBuf {
+fn four_spw_aca_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
         "four-spw-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false),
+        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false)
+            .with_aca_observation_metadata(),
     )
 }
 
@@ -129,6 +130,8 @@ struct MeasurementSetFixtureOptions {
     undefined_weight_spectrum: bool,
     linear_correlations: bool,
     parallel_hand_weights: Option<[f32; 2]>,
+    telescope_name: Option<&'static str>,
+    dish_diameter_m: f64,
 }
 
 impl MeasurementSetFixtureOptions {
@@ -151,6 +154,8 @@ impl MeasurementSetFixtureOptions {
             undefined_weight_spectrum,
             linear_correlations: false,
             parallel_hand_weights: None,
+            telescope_name: None,
+            dish_diameter_m: 25.0,
         }
     }
 
@@ -161,6 +166,12 @@ impl MeasurementSetFixtureOptions {
 
     const fn with_parallel_hand_weights(mut self, weights: [f32; 2]) -> Self {
         self.parallel_hand_weights = Some(weights);
+        self
+    }
+
+    const fn with_aca_observation_metadata(mut self) -> Self {
+        self.telescope_name = Some("ALMA");
+        self.dish_diameter_m = 7.0;
         self
     }
 }
@@ -218,6 +229,8 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
         main_row_count,
         linear_correlations,
         parallel_hand_weights,
+        telescope_name,
+        dish_diameter_m,
         ..
     } = options;
     {
@@ -237,10 +250,36 @@ fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSe
                         3_554_875.9,
                     ],
                     [0.0; 3],
-                    25.0,
+                    dish_diameter_m,
                 )
                 .expect("add fixture antenna");
         }
+    }
+
+    if let Some(telescope_name) = telescope_name {
+        measurement_set
+            .subtable_mut(SubtableId::Observation)
+            .expect("OBSERVATION")
+            .add_row(required_row(
+                schema::observation::REQUIRED_COLUMNS,
+                &[
+                    ("TELESCOPE_NAME", string(telescope_name)),
+                    (
+                        "TIME_RANGE",
+                        Value::Array(ArrayValue::Float64(
+                            ArrayD::from_shape_vec(
+                                vec![2],
+                                vec![59_000.0 * 86_400.0, 59_000.0 * 86_400.0 + 10.0],
+                            )
+                            .expect("observation time-range shape"),
+                        )),
+                    ),
+                    ("OBSERVER", string("casa-rs-test")),
+                    ("PROJECT", string("synthetic-aca-mvc")),
+                    ("RELEASE_DATE", float(59_000.0 * 86_400.0)),
+                ],
+            ))
+            .expect("add OBSERVATION row");
     }
 
     let direction = ArrayValue::Float64(
@@ -1286,7 +1325,7 @@ fn mtmfs_via_cube_executes_one_bounded_sixteen_channel_axis_from_four_spectral_w
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
-    let measurement_set = four_spw_measurement_set(root.path());
+    let measurement_set = four_spw_aca_measurement_set(root.path());
     let image_name = root.path().join("four-spw-mvc");
     let mut imaging = request(
         measurement_set,
