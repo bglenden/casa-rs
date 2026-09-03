@@ -810,6 +810,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#representative-scientific-evidence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Representative scientific evidence
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -895,7 +906,7 @@
 
 <h1 id="imaging-architecture-lessons-and-next-tranche-contract">Imaging architecture lessons and next-tranche contract<a class="headerlink" href="#imaging-architecture-lessons-and-next-tranche-contract" title="Permanent link">&para;</a></h1>
 <p>Truth class: normative programme delivery
-Last reality check: 2026-08-25
+Last reality check: 2026-09-02
 Verification: <code>just docs-check</code>; <code>just arch-check</code></p>
 <p>This document records the delivery consequences learned while implementing and
 merging T01-T12 and T14, together with the subsequently archived multi-ticket
@@ -1032,6 +1043,39 @@ programme gate remains unchanged.</p>
 <p>The 45-minute clock pauses while a named gate is visibly running; record its
 command and start once, then its result. The post-repair closure check is not a
 second review and may not reopen design or inspect untouched work.</p>
+<h3 id="representative-scientific-evidence">Representative scientific evidence<a class="headerlink" href="#representative-scientific-evidence" title="Permanent link">&para;</a></h3>
+<p>Programme correctness is not inferred from toy fixtures, performance runs, or
+persistence checks. Those evidence tiers remain valuable but cannot substitute
+for a representative scientific row. The normative dataset-shape and
+comparison contract is in <code>TESTING.md</code>; the closed-ticket audit and reusable
+scenario portfolio are owned by
+<code>resources/imaging-architecture/representative-science-matrix.json</code> and checked
+by <code>scripts/check-representative-science-matrix.py</code>.</p>
+<p>The matrix binds each closed science-bearing or science-executing ticket to its
+defining capability, prior evidence classification, one representative
+production scenario, relevant comparators, and current result. A scenario may
+cover several tickets only when it genuinely exercises each defining
+dimension. It records frozen CASA provenance once; unchanged workloads are not
+rerun merely to refresh a date. The imaging refactor is limited to
+CASA-equivalent scientific capability and performance work. Joint
+continuum-plus-line reconstruction has no CASA equivalent and is therefore
+optional future work outside programme #486, not a required matrix row or
+closure dependency. The landed experimental internals may remain for future
+investigation, but the installed application must reject that capability
+before physical planning or execution until separately scoped work establishes
+and accepts its scientific contract.</p>
+<p>T67/#553 consumes the completed matrix as required programme evidence. Its
+full-wave gate fails while any required row is missing, toy-only, stale,
+blocked, or failed, and it must run the matrix validator before the broader
+scientific and resource sweep. Future mosaic and W/AW owners add or update
+their own representative rows when those capabilities land; #607 does not
+predeclare or duplicate their still-open acceptance contracts.</p>
+<p>Heterogeneous mosaic imaging, including CLEAN and deconvolution-normalization
+parity, is optional future work outside the remaining T-ticket imaging refactor
+scope. The landed T48 heterogeneous dirty-response implementation may remain as
+non-harmful early work, but T48 is not retroactively added to the #607 or T67
+matrix and neither dirty nor clean heterogeneous-mosaic acceptance can block an
+otherwise complete T-ticket closure.</p>
 <h2 id="corrected-next-tranche">Corrected next tranche<a class="headerlink" href="#corrected-next-tranche" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

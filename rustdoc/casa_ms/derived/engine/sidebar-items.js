@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["resolve_field_phase_direction_j2000"],"struct":["MsCalEngine"]};
+window.SIDEBAR_ITEMS = {"fn":["raw_field_phase_direction","resolve_field_phase_direction_j2000"],"struct":["MsCalEngine"]};
