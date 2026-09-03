@@ -9,7 +9,8 @@ startup settings. A profile can be loaded by the CLI, edited in the TUI or
 native GUI, or manipulated from Python without changing the parameter names or
 their meaning.
 
-This guide describes the implemented interface from ADR-0006. Provider JSON
+This guide describes the implemented interface from ADR-0006, with current-only
+surface evolution defined by ADR-0012. Provider JSON
 requests, results, progress, and session events remain machine transports; TOML
 is the sole human-authored parameter-profile format.
 

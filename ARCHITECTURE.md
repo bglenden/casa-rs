@@ -175,8 +175,8 @@ Additional constraints:
   concepts so the boundary remains self-contained. Task and session
   `SurfaceDefinition` bindings supply defaults, conditional activation,
   narrowing refinements, optional ordered migrations, presentation, and
-  projection metadata; an empty migration set declares the surface
-  current-only. Bindings cannot redefine concept meaning, normalization,
+  projection metadata; under ADR-0012, an empty migration set declares the
+  surface current-only. Bindings cannot redefine concept meaning, normalization,
   units, role, or persistence. Frontends may not redefine those semantics
   locally.
 - `casa-task-runtime` owns profile mechanics, managed state, and application

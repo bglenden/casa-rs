@@ -126,6 +126,12 @@ unavailable during architectural migration and must be restored before the
 programme completes.
 _Avoid_: Ignored test, temporary fallback
 
+**Current-Only Profile Contract**:
+A sparse human parameter contract that accepts exactly the current version and
+canonical names, adopting current defaults for omitted optional values without
+aliases, migrations, or fallback interpretation.
+_Avoid_: Compatibility profile, historical run replay
+
 ## Imaging execution
 
 **Resource Policy**:

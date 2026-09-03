@@ -187,7 +187,8 @@ packaging scripts, and suite inventory all project from this catalog.
 
 ## Parameter Catalog and Surface Definitions
 
-ADR-0006 defines the common parameter model.
+ADR-0006 defines the common parameter model. ADR-0012 defines the optional
+current-only profile contract used by imager.
 
 `ParameterCatalog` entries describe reusable concepts:
 
