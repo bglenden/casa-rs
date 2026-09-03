@@ -208,6 +208,7 @@ pub struct MinorCycleProgram {
     cycle_threshold: Option<CycleThresholdControls>,
     fixed_cycle_threshold: Option<f64>,
     component_sequence_limit: Option<usize>,
+    maximum_condition_number: Option<f64>,
 }
 
 /// Validity of the reconstruction-owned normal-state view used by one solve.
@@ -292,11 +293,16 @@ impl MinorCycleProgram {
     /// Derive an identity-bound program from the authoritative Compiled Problem.
     pub fn for_problem(problem: &CompiledProblem) -> Result<Self, MinorCycleError> {
         let mut algorithm = problem.reconstruction().algorithm().clone();
-        Self::for_contract(
+        let mut program = Self::for_contract(
             Some(problem.problem_id()),
             &mut algorithm,
             problem.reconstruction().controls(),
-        )
+        )?;
+        program.maximum_condition_number = problem
+            .reconstruction()
+            .joint_continuum_line()
+            .map(|contract| contract.maximum_condition_number());
+        Ok(program)
     }
 
     fn for_contract(
@@ -432,6 +438,7 @@ impl MinorCycleProgram {
             cycle_threshold: None,
             fixed_cycle_threshold: None,
             component_sequence_limit: None,
+            maximum_condition_number: None,
         })
     }
 
@@ -1687,8 +1694,16 @@ fn run_joint_block_minor_cycle(
     let psf_peak_pixel = plane_pixel(psf_peak_index, shape);
     let psf_support = taylor_psf_support(shape, effective_scales.last().copied().unwrap_or(0.0));
     let kernels = build_scale_kernels(&effective_scales, *small_scale_bias);
-    let systems =
-        build_joint_scale_systems(view, shape, psf_peak_pixel, &kernels, continuum_terms)?;
+    let systems = build_joint_scale_systems(
+        view,
+        shape,
+        psf_peak_pixel,
+        &kernels,
+        continuum_terms,
+        controls
+            .maximum_condition_number
+            .ok_or(MinorCycleError::CompiledProblemRequired)?,
+    )?;
     let mut residuals = (0..terms_count)
         .map(|term| {
             view.coefficient_term(term)
@@ -3025,6 +3040,7 @@ fn build_joint_scale_systems(
     psf_peak: [usize; 2],
     kernels: &[ScaleKernel],
     continuum_terms: usize,
+    maximum_condition_number: f64,
 ) -> Result<Vec<JointScaleSystems>, MinorCycleError> {
     let terms = view.coefficient_term_count();
     let continuum = (0..continuum_terms).collect::<Vec<_>>();
@@ -3034,9 +3050,30 @@ fn build_joint_scale_systems(
         .iter()
         .map(|kernel| {
             Ok(JointScaleSystems {
-                continuum: build_active_block_system(view, shape, psf_peak, kernel, &continuum)?,
-                line: build_active_block_system(view, shape, psf_peak, kernel, &line)?,
-                full: build_active_block_system(view, shape, psf_peak, kernel, &full)?,
+                continuum: build_active_block_system(
+                    view,
+                    shape,
+                    psf_peak,
+                    kernel,
+                    &continuum,
+                    maximum_condition_number,
+                )?,
+                line: build_active_block_system(
+                    view,
+                    shape,
+                    psf_peak,
+                    kernel,
+                    &line,
+                    maximum_condition_number,
+                )?,
+                full: build_active_block_system(
+                    view,
+                    shape,
+                    psf_peak,
+                    kernel,
+                    &full,
+                    maximum_condition_number,
+                )?,
             })
         })
         .collect()
@@ -3048,6 +3085,7 @@ fn build_active_block_system(
     psf_peak: [usize; 2],
     kernel: &ScaleKernel,
     coefficients: &[usize],
+    maximum_condition_number: f64,
 ) -> Result<ActiveBlockSystem, MinorCycleError> {
     let count = coefficients.len();
     let mut normal = vec![0.0; count * count];
@@ -3073,6 +3111,21 @@ fn build_active_block_system(
         for row in 0..count {
             inverse[row * count + column] = solution[row];
         }
+    }
+    let normal_norm = normal
+        .chunks_exact(count)
+        .map(|row| row.iter().map(|value| value.abs()).sum::<f64>())
+        .fold(0.0_f64, f64::max);
+    let inverse_norm = (0..count)
+        .map(|row| {
+            (0..count)
+                .map(|column| inverse[row * count + column].abs())
+                .sum::<f64>()
+        })
+        .fold(0.0_f64, f64::max);
+    let condition = normal_norm * inverse_norm;
+    if !condition.is_finite() || condition > maximum_condition_number {
+        return Err(MinorCycleError::SingularJointNormalBlock);
     }
     Ok(ActiveBlockSystem {
         coefficients: coefficients.into(),
@@ -3920,6 +3973,13 @@ fn minor_cycle_evidence_id(
             encoder.u8(1);
             encoder.usize(limit);
         }
+    }
+    match controls.maximum_condition_number {
+        Some(limit) => {
+            encoder.u8(1);
+            encoder.u64(crate::canonical_f64_bits(limit));
+        }
+        None => encoder.u8(0),
     }
     encoder.usize(iterations);
     encoder.usize(controller_iterations);

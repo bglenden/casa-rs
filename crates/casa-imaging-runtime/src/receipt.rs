@@ -5737,6 +5737,17 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         ReconstructionBasis::ChannelLocal { channels } => {
             evidence_field(fields, "reconstruction.basis.channels", channels);
         }
+        ReconstructionBasis::JointContinuumLine {
+            continuum_terms,
+            line_terms,
+        } => {
+            evidence_field(
+                fields,
+                "reconstruction.basis.continuum_terms",
+                continuum_terms,
+            );
+            evidence_field(fields, "reconstruction.basis.line_terms", line_terms);
+        }
         ReconstructionBasis::Constant => {}
     }
     let algorithm = reconstruction.algorithm();
@@ -5750,6 +5761,10 @@ fn project_reconstruction(fields: &mut BTreeMap<String, String>, problem: &Compi
         small_scale_bias,
     }
     | ReconstructionAlgorithm::Mtmfs {
+        scales_px,
+        small_scale_bias,
+    }
+    | ReconstructionAlgorithm::JointContinuumLine {
         scales_px,
         small_scale_bias,
     } = algorithm
@@ -7226,6 +7241,7 @@ fn reconstruction_basis(value: ReconstructionBasis) -> &'static str {
         ReconstructionBasis::Taylor { .. } => "taylor",
         ReconstructionBasis::TaylorViaChannelMajor { .. } => "taylor_via_channel_major",
         ReconstructionBasis::ChannelLocal { .. } => "channel_local",
+        ReconstructionBasis::JointContinuumLine { .. } => "joint_continuum_line",
     }
 }
 
@@ -7236,6 +7252,7 @@ fn reconstruction_algorithm(value: &ReconstructionAlgorithm) -> &'static str {
         ReconstructionAlgorithm::Clark => "clark",
         ReconstructionAlgorithm::Multiscale { .. } => "multiscale",
         ReconstructionAlgorithm::Mtmfs { .. } => "mtmfs",
+        ReconstructionAlgorithm::JointContinuumLine { .. } => "joint_continuum_line",
     }
 }
 
@@ -7303,6 +7320,8 @@ fn product_role(value: ProductRole) -> String {
         }
         ProductRole::SumWeights(term) => format!("sum_weights:{}", product_term(term)),
         ProductRole::CleanMask => "clean_mask".to_string(),
+        ProductRole::ContinuumCleanMask => "continuum_clean_mask".to_string(),
+        ProductRole::LineCleanMask => "line_clean_mask".to_string(),
         ProductRole::Weight(term) => format!("weight:{}", product_term(term)),
         ProductRole::PrimaryBeam(term) => format!("primary_beam:{}", product_term(term)),
         ProductRole::PrimaryBeamSpectralIndex => "primary_beam_spectral_index".to_string(),
@@ -7322,6 +7341,10 @@ fn product_term(value: ProductTerm) -> String {
     match value {
         ProductTerm::Single => "single".to_string(),
         ProductTerm::Taylor(term) => format!("taylor_{term}"),
+        ProductTerm::Continuum(term) => format!("continuum_{term}"),
+        ProductTerm::Line => "line".to_string(),
+        ProductTerm::Total => "total".to_string(),
+        ProductTerm::JointNormal { row, column } => format!("joint_normal_{row}_{column}"),
     }
 }
 
@@ -7330,6 +7353,8 @@ fn product_axis_kind(value: ProductAxisKind) -> &'static str {
         ProductAxisKind::SkyImage => "sky_image",
         ProductAxisKind::PlaneState => "plane_state",
         ProductAxisKind::Metadata => "metadata",
+        ProductAxisKind::CoefficientImage => "coefficient_image",
+        ProductAxisKind::CoefficientPlaneState => "coefficient_plane_state",
     }
 }
 
@@ -7495,6 +7520,9 @@ fn required_capability(value: RequiredCapability) -> String {
         RequiredCapability::ClarkReconstruction => "clark_reconstruction".to_string(),
         RequiredCapability::MultiscaleReconstruction => "multiscale_reconstruction".to_string(),
         RequiredCapability::MtmfsReconstruction => "mtmfs_reconstruction".to_string(),
+        RequiredCapability::JointContinuumLineReconstruction => {
+            "joint_continuum_line_reconstruction".to_string()
+        }
         RequiredCapability::NaturalWeighting => "natural_weighting".to_string(),
         RequiredCapability::UniformWeighting => "uniform_weighting".to_string(),
         RequiredCapability::BriggsWeighting => "briggs_weighting".to_string(),
