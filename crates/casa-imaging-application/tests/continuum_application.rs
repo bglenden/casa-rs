@@ -2246,15 +2246,40 @@ fn application_replaces_every_selected_model_cell_when_flags_and_correlations_di
     let ArrayValue::Complex32(model) = model_column.get(0).expect("MODEL_DATA row") else {
         panic!("MODEL_DATA row is complex")
     };
+    let flag_column = reopened
+        .main_table()
+        .column_accessor("FLAG")
+        .expect("FLAG column");
+    let Value::Array(ArrayValue::Bool(flags)) = flag_column
+        .get(0)
+        .expect("read FLAG row")
+        .cloned()
+        .expect("defined FLAG row")
+    else {
+        panic!("FLAG row is boolean")
+    };
     assert!(
         model.iter().all(|value| *value != Complex32::new(9.0, 9.0)),
         "no selected destination retains its stale pre-run value"
     );
-    for channel in 0..2 {
-        assert_ne!(model[[0, channel]], Complex32::new(0.0, 0.0));
-        assert_ne!(model[[3, channel]], Complex32::new(0.0, 0.0));
-        assert_eq!(model[[1, channel]], Complex32::new(0.0, 0.0));
-        assert_eq!(model[[2, channel]], Complex32::new(0.0, 0.0));
+    for correlation in 0..4 {
+        for channel in 0..2 {
+            let model_value = model[[correlation, channel]];
+            let parallel_hand = matches!(correlation, 0 | 3);
+            if flags[[correlation, channel]] || !parallel_hand {
+                assert_eq!(
+                    model_value,
+                    Complex32::new(0.0, 0.0),
+                    "flagged and unsupported cross-hand predictions persist as CASA zeros"
+                );
+            } else {
+                assert_ne!(
+                    model_value,
+                    Complex32::new(0.0, 0.0),
+                    "unflagged parallel-hand predictions retain the solved Stokes-I model"
+                );
+            }
+        }
     }
 }
 
