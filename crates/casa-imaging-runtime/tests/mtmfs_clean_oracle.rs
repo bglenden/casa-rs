@@ -834,10 +834,11 @@ fn storage_io() -> StorageIoResourceBinding {
 }
 
 fn artifact_storage_io() -> StorageIoResourceBinding {
-    StorageIoResourceBinding::new(
+    StorageIoResourceBinding::new_with_operations_rate(
         StorageDomainId::new("atomic-output"),
         RateResourceId::new("io-rate"),
         RateResourceId::new("io-rate"),
+        RateResourceId::new("io-operations-rate"),
         QueueResourceId::new("io-queue"),
     )
 }

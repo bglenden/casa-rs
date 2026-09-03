@@ -2789,7 +2789,7 @@ fn spectral_cycle_initial_plan_bounds_selected_payload_traversals_by_weighting_s
 }
 
 #[test]
-fn spectral_cycle_executes_initial_major_and_shared_reconstruction_cycle() {
+fn managed_spill_executes_initial_and_restore_cycles_with_receipted_resources() {
     for weighting in [
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
         WeightingContract::new(
@@ -3189,6 +3189,13 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
                     .expect("bounded source queue reports its actual high-water");
                 assert!(peak <= claim.amount.saturating_sub(2));
             }
+            if matches!(claim.resource, LeaseResource::StorageOperationsRate { .. }) {
+                assert_eq!(
+                    receipt.actual_resource_peak(node_id, &claim.resource, &claim.lifetime),
+                    Some(1),
+                    "managed spill IOPS must be present in the canonical receipt"
+                );
+            }
         }
     }
     assert_eq!(
@@ -3349,7 +3356,15 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract) {
         .collect::<Vec<_>>();
     assert_eq!(replay_nodes.len(), 1, "one bounded artifact reader");
     let replay_node_id = replay_nodes[0].id.clone();
-    assert_eq!(replay_nodes[0].kind, WorkKind::Prefetch);
+    assert_eq!(replay_nodes[0].kind, WorkKind::Spill);
+    assert!(
+        final_physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .all(|node| node.kind != WorkKind::Prefetch),
+        "managed restore is not T59 prefetch scheduling"
+    );
     assert_eq!(final_physical.execution_dag().initial_knobs().batch_size, 1);
     assert_eq!(
         final_physical
