@@ -8332,7 +8332,7 @@ impl WProjectionConvolution {
         let mut fft = PreparedFft::new([conv_size, conv_size], usize::MAX)?;
         let mut kernels = Vec::with_capacity(plane_count);
         let mut plane_zero_peak = None;
-        let offset_radius = (sampling + 1) / 2;
+        let offset_radius = sampling.div_ceil(2);
         for plane in 0..plane_count {
             let w_lambda = if plane_count > 1 {
                 (plane * plane) as f64 / w_scale
