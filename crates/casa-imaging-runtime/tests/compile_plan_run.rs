@@ -1886,7 +1886,7 @@ impl WorkImplementation for RecordingExecutor {
         &self.id
     }
 
-    fn abort_observation_read(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+    fn abort_node_io(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
         self.aborted_nodes
             .lock()
             .expect("recording executor abort lock")
@@ -3423,7 +3423,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
             .expect("initial gridded spill node");
         runtime_registry
             .implementation()
-            .abort_observation_read(&spill_node.id)
+            .abort_node_io(&spill_node.id)
             .expect("abort revokes retained managed spill");
         assert!(
             runtime_registry
@@ -3846,7 +3846,7 @@ fn execute_spectral_cycle_with_weighting(weighting: WeightingContract, abort_aft
     assert_ne!(minor_evidence_id.as_bytes(), [0; 32]);
     final_registry
         .implementation()
-        .abort_observation_read(&replay_node_id)
+        .abort_node_io(&replay_node_id)
         .expect("abort revokes retained managed spill");
     assert!(
         final_registry

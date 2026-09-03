@@ -3452,7 +3452,7 @@ pub trait WorkImplementation {
     /// The runner invokes this for every launched node while draining an error
     /// or cancellation, including nodes that completed before a downstream
     /// failure. Implementations without escaping I/O state retain the default.
-    fn abort_observation_read(&self, _owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+    fn abort_node_io(&self, _owner_node: &WorkNodeId) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -4018,12 +4018,18 @@ fn abort_launched_work<I: WorkImplementation>(
     launched: &BTreeMap<WorkNodeId, LaunchedWork>,
     implementations: &BTreeMap<WorkImplementationId, &I>,
 ) -> Result<(), (WorkNodeId, I::Error)> {
+    let mut first_failure = None;
     for (node, work) in launched {
-        implementations[&work.node().implementation]
-            .abort_observation_read(node)
-            .map_err(|source| (node.clone(), source))?;
+        if let Err(source) = implementations[&work.node().implementation].abort_node_io(node)
+            && first_failure.is_none()
+        {
+            first_failure = Some((node.clone(), source));
+        }
     }
-    Ok(())
+    match first_failure {
+        Some(failure) => Err(failure),
+        None => Ok(()),
+    }
 }
 
 fn publication_execution_context<'a>(
@@ -4384,7 +4390,7 @@ where
                                 if !receipt_transition_succeeded
                                     && work.node().kind.reads_observation()
                                 {
-                                    let _ = implementation.abort_observation_read(&node_id);
+                                    let _ = implementation.abort_node_io(&node_id);
                                 }
                                 let synchronous_observation_read =
                                     work.node().kind.reads_observation()
@@ -4435,7 +4441,7 @@ where
                                             controller_stopped = true;
                                         }
                                         if !receipt_transition_succeeded || duplicate {
-                                            let _ = implementation.abort_observation_read(&node_id);
+                                            let _ = implementation.abort_node_io(&node_id);
                                         } else {
                                             match implementation
                                                 .complete_observation_read(completion)
@@ -4460,8 +4466,7 @@ where
                                                     }
                                                 }
                                                 Err(source) => {
-                                                    let _ = implementation
-                                                        .abort_observation_read(&node_id);
+                                                    let _ = implementation.abort_node_io(&node_id);
                                                     if pending.is_none() {
                                                         pending =
                                                             Some(PendingRunError::Execution {
@@ -4499,7 +4504,7 @@ where
                                     }
                                     Err(error) => {
                                         if synchronous_observation_read {
-                                            let _ = implementation.abort_observation_read(&node_id);
+                                            let _ = implementation.abort_node_io(&node_id);
                                             let _ = scheduler
                                                 .take_observation_completion_permits(&node_id)
                                                 .release();
@@ -4542,7 +4547,7 @@ where
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                 }
                                 if observation_read {
-                                    let _ = implementation.abort_observation_read(&node_id);
+                                    let _ = implementation.abort_node_io(&node_id);
                                 }
                                 launched.insert(
                                     node_id.clone(),
@@ -4581,7 +4586,7 @@ where
                     Err(source) => {
                         let diagnostic = source.to_string();
                         if work.node().kind.reads_observation() {
-                            let _ = implementation.abort_observation_read(&node_id);
+                            let _ = implementation.abort_node_io(&node_id);
                         }
                         match implementation
                             .failure_measurements(&source)
@@ -4725,7 +4730,7 @@ where
                         let _ = receipt.fence_failed(&fence);
                         controller_stopped = true;
                         if work.node().kind.reads_observation() {
-                            let _ = implementation.abort_observation_read(fence.node());
+                            let _ = implementation.abort_node_io(fence.node());
                         }
                         if work.node().kind == WorkKind::Release {
                             if scheduler.fail_release_fence(fence).is_err() {
@@ -4780,7 +4785,7 @@ where
                     let _ = receipt.fence_failed(&fence);
                     controller_stopped = true;
                     if work.node().kind.reads_observation() {
-                        let _ = implementation.abort_observation_read(fence.node());
+                        let _ = implementation.abort_node_io(fence.node());
                     }
                     if scheduler
                         .fail_fence(fence.clone(), "asynchronous evidence failed".to_string())
@@ -4857,7 +4862,7 @@ where
                         || pending.is_some()
                         || controller_stopped
                     {
-                        let _ = implementation.abort_observation_read(&node);
+                        let _ = implementation.abort_node_io(&node);
                     } else {
                         match implementation.complete_observation_read(completion) {
                             Ok(completion) => {
@@ -4878,7 +4883,7 @@ where
                                 }
                             }
                             Err(source) => {
-                                let _ = implementation.abort_observation_read(&node);
+                                let _ = implementation.abort_node_io(&node);
                                 if pending.is_none() {
                                     pending = Some(PendingRunError::Execution {
                                         node: node.clone(),

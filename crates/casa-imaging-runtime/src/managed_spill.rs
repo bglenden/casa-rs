@@ -1657,7 +1657,13 @@ fn read_exact_at(
             Err(source) => return Err(ManagedSpillError::Io { operation, source }),
         }
     }
-    release_page_cache(file, offset, buffer.len(), false)
+    release_page_cache(
+        file,
+        offset,
+        buffer.len(),
+        false,
+        &mut measurements.operations,
+    )
 }
 
 fn write_bytes(
@@ -1701,7 +1707,7 @@ fn write_bytes(
             Err(source) => return Err(ManagedSpillError::Io { operation, source }),
         }
     }
-    release_page_cache(file, start, bytes.len(), true)
+    release_page_cache(file, start, bytes.len(), true, operations)
 }
 
 fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
@@ -1719,10 +1725,10 @@ fn configure_bounded_page_cache(file: &File) -> Result<(), ManagedSpillError> {
     #[cfg(target_os = "linux")]
     {
         let result =
-            unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
+            unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_RANDOM) };
         if result != 0 {
             return Err(ManagedSpillError::Io {
-                operation: "configure managed spill sequential page-cache policy",
+                operation: "disable managed spill read-ahead",
                 source: io::Error::from_raw_os_error(result),
             });
         }
@@ -1735,12 +1741,19 @@ fn release_page_cache(
     offset: u64,
     bytes: usize,
     flush_dirty: bool,
+    operations: &mut u64,
 ) -> Result<(), ManagedSpillError> {
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsRawFd;
 
         if flush_dirty {
+            *operations =
+                operations
+                    .checked_add(1)
+                    .ok_or(ManagedSpillError::ArithmeticOverflow(
+                        "managed spill operation count",
+                    ))?;
             file.sync_data().map_err(|source| ManagedSpillError::Io {
                 operation: "flush managed spill window before page-cache release",
                 source,
@@ -1763,6 +1776,11 @@ fn release_page_cache(
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache release bytes"))?;
         let aligned_offset = i64::try_from(aligned_offset)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("page-cache release offset"))?;
+        *operations = operations
+            .checked_add(1)
+            .ok_or(ManagedSpillError::ArithmeticOverflow(
+                "managed spill operation count",
+            ))?;
         let result = unsafe {
             libc::posix_fadvise(
                 file.as_raw_fd(),
@@ -1779,7 +1797,7 @@ fn release_page_cache(
         }
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = (file, offset, bytes, flush_dirty);
+    let _ = (file, offset, bytes, flush_dirty, operations);
     Ok(())
 }
 

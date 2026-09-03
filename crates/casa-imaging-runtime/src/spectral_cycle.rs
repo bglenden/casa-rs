@@ -2615,7 +2615,7 @@ impl WorkImplementation for SpectralCycleExecutor {
         Ok(true)
     }
 
-    fn abort_observation_read(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+    fn abort_node_io(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
         let owns_streaming_read = self
             .fragment()
             .as_ref()

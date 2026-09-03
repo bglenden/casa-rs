@@ -1383,37 +1383,35 @@ enum ManagedSpillMode<'a> {
     Write,
 }
 
+struct ManagedSpillModeSpec {
+    suffix: &'static str,
+    io_kind: IoBufferKind,
+    source_slots: u64,
+    bytes_per_slot: u64,
+    is_read: bool,
+}
+
 impl ManagedSpillMode<'_> {
-    const fn suffix(self) -> &'static str {
+    const fn specification(
+        self,
+        budget: crate::managed_spill::ManagedSpillBudget,
+    ) -> ManagedSpillModeSpec {
         match self {
-            Self::Read(_) => "read",
-            Self::Write => "write",
+            Self::Read(window) => ManagedSpillModeSpec {
+                suffix: "read",
+                io_kind: IoBufferKind::SpillRead,
+                source_slots: 2,
+                bytes_per_slot: window.source_slot_bytes(),
+                is_read: true,
+            },
+            Self::Write => ManagedSpillModeSpec {
+                suffix: "write",
+                io_kind: IoBufferKind::SpillWrite,
+                source_slots: 1,
+                bytes_per_slot: budget.io_buffer_bytes(),
+                is_read: false,
+            },
         }
-    }
-
-    const fn io_kind(self) -> IoBufferKind {
-        match self {
-            Self::Read(_) => IoBufferKind::SpillRead,
-            Self::Write => IoBufferKind::SpillWrite,
-        }
-    }
-
-    const fn source_slots(self) -> u64 {
-        match self {
-            Self::Read(_) => 2,
-            Self::Write => 1,
-        }
-    }
-
-    const fn bytes_per_slot(self, budget: crate::managed_spill::ManagedSpillBudget) -> u64 {
-        match self {
-            Self::Read(window) => window.source_slot_bytes(),
-            Self::Write => budget.io_buffer_bytes(),
-        }
-    }
-
-    const fn is_read(self) -> bool {
-        matches!(self, Self::Read(_))
     }
 }
 
@@ -1462,15 +1460,16 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .gridded_normal_storage
         .as_ref()
         .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
-    let suffix = format!("{}-{}", pass.ordinal(), mode.suffix());
+    let mode = mode.specification(budget);
+    let suffix = format!("{}-{}", pass.ordinal(), mode.suffix);
     let storage_id = format!("{MANAGED_SPILL_STORAGE_DEMAND}-{suffix}");
     let allocation = AllocationId::new(format!("managed-spill-buffer-{suffix}"));
     let serialization_allocation =
         AllocationId::new(format!("managed-spill-serialization-{suffix}"));
     let serialization_bytes = budget.serialization_buffer_bytes();
-    let io_kind = mode.io_kind();
-    let source_slots = mode.source_slots();
-    let bytes_per_slot = mode.bytes_per_slot(budget);
+    let io_kind = mode.io_kind;
+    let source_slots = mode.source_slots;
+    let bytes_per_slot = mode.bytes_per_slot;
     let buffer_bytes = bytes_per_slot
         .checked_mul(source_slots)
         .ok_or(SpectralCyclePlanError::Overflow)?;
@@ -1508,7 +1507,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .values()
         .cloned()
         .collect::<Vec<_>>();
-    if mode.is_read() {
+    if mode.is_read {
         let owner = nodes
             .iter_mut()
             .find(|candidate| candidate.id == *node)
@@ -1540,13 +1539,14 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .ok_or(SpectralCyclePlanError::Overflow)?;
     owner.claims.extend([
         ResourceClaim {
-            resource: match mode {
-                ManagedSpillMode::Read(_) => LeaseResource::StorageReadRate {
+            resource: if mode.is_read {
+                LeaseResource::StorageReadRate {
                     demand_id: storage_id.clone(),
-                },
-                ManagedSpillMode::Write => LeaseResource::StorageWriteRate {
+                }
+            } else {
+                LeaseResource::StorageWriteRate {
                     demand_id: storage_id.clone(),
-                },
+                }
             },
             amount: 1,
             lifetime: lifetime.clone(),
@@ -1569,7 +1569,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         amount: serialization_bytes,
         lifetime: lifetime.clone(),
     });
-    if !mode.is_read() {
+    if !mode.is_read {
         owner.claims.push(ResourceClaim {
             resource: LeaseResource::Storage {
                 demand_id: storage_id.clone(),
@@ -1613,7 +1613,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     alternative.demand.storage.push(StorageDemand {
         demand_id: storage_id,
         domain: storage.resources().domain().clone(),
-        temporary_bytes: if !mode.is_read() {
+        temporary_bytes: if !mode.is_read {
             budget.maximum_artifact_bytes()
         } else {
             0
@@ -1621,12 +1621,12 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         staged_output_bytes: 0,
         final_output_bytes: 0,
         persistent_cache_bytes: 0,
-        read_rate: if mode.is_read() {
+        read_rate: if mode.is_read {
             CountDemand::new(1, 1)
         } else {
             CountDemand::zero()
         },
-        write_rate: if !mode.is_read() {
+        write_rate: if !mode.is_read {
             CountDemand::new(1, 1)
         } else {
             CountDemand::zero()
@@ -1648,7 +1648,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             .checked_add(1)
             .ok_or(SpectralCyclePlanError::Overflow)?,
     );
-    if mode.is_read() {
+    if mode.is_read {
         alternative.demand.io_buffers.spill_read_bytes = buffer_bytes;
     } else {
         alternative.demand.io_buffers.spill_write_bytes = buffer_bytes;
@@ -1745,6 +1745,10 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             .cloned()
             .collect(),
     })?;
+    let predicted_spill_operations = budget
+        .maximum_serialization_operations()
+        .checked_mul(if mode.is_read { 4 } else { 3 })
+        .ok_or(SpectralCyclePlanError::Overflow)?;
     let stages = base
         .prediction()
         .stages()
@@ -1756,9 +1760,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                 io.push(IoPrediction::new(
                     io_kind,
                     budget.maximum_artifact_bytes(),
-                    budget
-                        .maximum_artifact_bytes()
-                        .div_ceil(budget.io_buffer_bytes().max(1)),
+                    predicted_spill_operations,
                 ));
                 io.push(IoPrediction::new(
                     IoBufferKind::Serialization,
