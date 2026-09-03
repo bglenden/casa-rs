@@ -68,8 +68,8 @@ fn compare_products(
     let mut failures = Vec::new();
     assert_matching_wcs(rust_prefix, casa_prefix, ".image")?;
     for product in PRODUCTS {
-        let rust = read_product(&rust_prefix, product)?;
-        let casa = read_product(&casa_prefix, product)?;
+        let rust = read_product(rust_prefix, product)?;
+        let casa = read_product(casa_prefix, product)?;
         assert_eq!(rust.shape, casa.shape, "{product} shape");
         let expected_units = match product {
             ".psf" | ".residual" | ".image" => "Jy/beam",
