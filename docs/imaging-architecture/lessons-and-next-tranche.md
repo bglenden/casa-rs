@@ -195,6 +195,12 @@ scientific and resource sweep. Future mosaic and W/AW owners add or update
 their own representative rows when those capabilities land; #607 does not
 predeclare or duplicate their still-open acceptance contracts.
 
+Heterogeneous mosaic CLEAN and deconvolution-normalization parity are optional
+future work outside the remaining T-ticket imaging refactor scope. The landed
+T48 heterogeneous dirty-response support may remain, but extending that support
+to clean imaging is not a #607 or T67 matrix requirement and cannot block an
+otherwise complete T-ticket closure.
+
 ## Corrected next tranche
 
 | Order | Ticket | Sole outcome in this tranche | Explicit exclusion |
