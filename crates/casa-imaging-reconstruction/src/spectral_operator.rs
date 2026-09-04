@@ -3985,6 +3985,37 @@ pub struct CompleteDataOwnerState {
 #[derive(Debug, Default)]
 struct SpectralScienceProbe {
     sample: Option<SpectralScienceSample>,
+    polynomial_aw: BTreeMap<(u32, usize), PolynomialAwScienceAggregate>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+struct PolynomialAwScienceAggregate {
+    accepted_count: u64,
+    post_briggs_imaging_weight_sum: f64,
+    published_polarization_weight_sum: f64,
+    taylor_x_moment_sum: f64,
+    pre_cf_imaging_moment_sum: f64,
+    pre_cf_published_moment_sum: f64,
+    selected_imaging_cf_normalization_sum: f64,
+    accumulated_normal_sumwt: f64,
+    normal_sumwt_compensation: f64,
+    accumulated_published_sumwt: f64,
+    published_sumwt_compensation: f64,
+}
+
+impl PolynomialAwScienceAggregate {
+    fn accumulate_sumwt(&mut self, normal: f64, published: f64) {
+        let corrected = normal - self.normal_sumwt_compensation;
+        let updated = self.accumulated_normal_sumwt + corrected;
+        self.normal_sumwt_compensation = (updated - self.accumulated_normal_sumwt) - corrected;
+        self.accumulated_normal_sumwt = updated;
+
+        let corrected = published - self.published_sumwt_compensation;
+        let updated = self.accumulated_published_sumwt + corrected;
+        self.published_sumwt_compensation =
+            (updated - self.accumulated_published_sumwt) - corrected;
+        self.accumulated_published_sumwt = updated;
+    }
 }
 
 #[derive(Debug)]
@@ -3999,7 +4030,61 @@ struct SpectralScienceSample {
 }
 
 impl SpectralScienceProbe {
+    fn observe_polynomial_aw(
+        &mut self,
+        spectral_window: u32,
+        plan: BlockNormalPlan,
+        sample: SpectralOperatorSample,
+        imaging_cf_normalization: f64,
+    ) -> Result<(), SpectralOperatorError> {
+        let x = plan
+            .normalized_frequency(sample.frequency_hz)
+            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        let spectral_factor_squared = sample.spectral_factor * sample.spectral_factor;
+        for moment in 0..plan.normal_moment_count() {
+            let taylor_x_moment =
+                x.powi(i32::try_from(moment).map_err(|_| SpectralOperatorError::InvalidSample)?);
+            let pre_cf_imaging_moment =
+                sample.imaging_weight * spectral_factor_squared * taylor_x_moment;
+            let pre_cf_published_moment =
+                sample.published_weight * spectral_factor_squared * taylor_x_moment;
+            let aggregate = self
+                .polynomial_aw
+                .entry((spectral_window, moment))
+                .or_default();
+            aggregate.accepted_count = aggregate
+                .accepted_count
+                .checked_add(1)
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            aggregate.post_briggs_imaging_weight_sum += sample.imaging_weight;
+            aggregate.published_polarization_weight_sum += sample.published_weight;
+            aggregate.taylor_x_moment_sum += taylor_x_moment;
+            aggregate.pre_cf_imaging_moment_sum += pre_cf_imaging_moment;
+            aggregate.pre_cf_published_moment_sum += pre_cf_published_moment;
+            aggregate.selected_imaging_cf_normalization_sum += imaging_cf_normalization;
+            aggregate.accumulate_sumwt(
+                pre_cf_imaging_moment * imaging_cf_normalization,
+                pre_cf_published_moment * imaging_cf_normalization,
+            );
+        }
+        Ok(())
+    }
+
     fn emit(self) {
+        for ((spw, moment), aggregate) in self.polynomial_aw {
+            eprintln!(
+                "imaging_science_probe_v1 boundary=polynomial_aw_summary spw={spw} normal_moment={moment} accepted_count={} post_briggs_imaging_weight_sum={:.17e} published_polarization_weight_sum={:.17e} taylor_x_moment_sum={:.17e} pre_cf_imaging_moment_sum={:.17e} pre_cf_published_moment_sum={:.17e} selected_imaging_cf_normalization_sum={:.17e} accumulated_normal_sumwt={:.17e} accumulated_published_sumwt={:.17e}",
+                aggregate.accepted_count,
+                aggregate.post_briggs_imaging_weight_sum,
+                aggregate.published_polarization_weight_sum,
+                aggregate.taylor_x_moment_sum,
+                aggregate.pre_cf_imaging_moment_sum,
+                aggregate.pre_cf_published_moment_sum,
+                aggregate.selected_imaging_cf_normalization_sum,
+                aggregate.accumulated_normal_sumwt,
+                aggregate.accumulated_published_sumwt,
+            );
+        }
         let Some(sample) = self.sample else { return };
         let aw = sample.aw;
         eprintln!(
@@ -4694,41 +4779,65 @@ impl CompleteDataOwnerState {
                     .with_mosaic_response(mosaic_response)
                     .with_published_weight(weight)?
                     .with_aw_coordinates(pa, pointing, mueller)?;
-                    if OBSERVE
-                        && active
-                        && weight > 0.0
-                        && self.science_probe.as_ref().is_some_and(|probe| {
+                    if OBSERVE && active && weight > 0.0 {
+                        let sample_candidate = self.science_probe.as_ref().is_some_and(|probe| {
                             probe.sample.as_ref().is_none_or(|current| {
                                 selected_address_key(selected.address())
                                     < selected_address_key(current.address)
                             })
-                        })
-                    {
-                        let aw = self.operators[chart_ordinal].observe_aw_grid(sample)?;
-                        let taylor_factors = match self.specification.basis {
-                            SpectralBasisPlan::TaylorViaChannelMajor(plan) => {
-                                let x = plan
-                                    .normalized_frequency(contribution.evaluation_frequency_hz())
-                                    .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                                (0..plan.normal_moment_count())
-                                    .map(|term| x.powi(term as i32))
-                                    .collect::<Vec<_>>()
-                                    .into_boxed_slice()
-                            }
-                            _ => vec![1.0].into_boxed_slice(),
-                        };
-                        self.science_probe
-                            .as_mut()
-                            .expect("observed path has probe")
-                            .sample = Some(SpectralScienceSample {
-                            address: selected.address(),
-                            frequency_hz: contribution.evaluation_frequency_hz(),
-                            uvw_m,
-                            post_briggs_weight: weight,
-                            spectral_factor: contribution.factor(),
-                            taylor_factors,
-                            aw,
                         });
+                        let polynomial = match self.specification.basis {
+                            SpectralBasisPlan::Polynomial(plan)
+                                if chart_ordinal == 0
+                                    && self.operators[chart_ordinal]
+                                        .slab
+                                        .owns(sample.output_channel) =>
+                            {
+                                Some(plan)
+                            }
+                            _ => None,
+                        };
+                        if sample_candidate || polynomial.is_some() {
+                            let aw = self.operators[chart_ordinal].observe_aw_grid(sample)?;
+                            let probe = self
+                                .science_probe
+                                .as_mut()
+                                .expect("observed path has probe");
+                            if let Some(plan) = polynomial {
+                                probe.observe_polynomial_aw(
+                                    selected.address().spectral_window_id,
+                                    plan,
+                                    sample,
+                                    aw.raw_tap_sum.norm(),
+                                )?;
+                            }
+                            if sample_candidate {
+                                let taylor_factors = match self.specification.basis {
+                                    SpectralBasisPlan::Polynomial(plan)
+                                    | SpectralBasisPlan::TaylorViaChannelMajor(plan) => {
+                                        let x = plan
+                                            .normalized_frequency(
+                                                contribution.evaluation_frequency_hz(),
+                                            )
+                                            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+                                        (0..plan.normal_moment_count())
+                                            .map(|term| x.powi(term as i32))
+                                            .collect::<Vec<_>>()
+                                            .into_boxed_slice()
+                                    }
+                                    _ => vec![1.0].into_boxed_slice(),
+                                };
+                                probe.sample = Some(SpectralScienceSample {
+                                    address: selected.address(),
+                                    frequency_hz: contribution.evaluation_frequency_hz(),
+                                    uvw_m,
+                                    post_briggs_weight: weight,
+                                    spectral_factor: contribution.factor(),
+                                    taylor_factors,
+                                    aw,
+                                });
+                            }
+                        }
                     }
                     if predicts_residual {
                         self.operators[chart_ordinal]
@@ -10304,13 +10413,13 @@ mod tests {
         ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
         SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
         SpectralOperatorMeasurements, SpectralOperatorPass, SpectralOperatorPrimitives,
-        SpectralOperatorSample, SpectralOperatorWorkload, SpectralSlabOperator, SpectralSlabPlan,
-        StandardConvolution, TapSpan, apply_finite_value_policy, apply_input_policy,
-        aw_sensitivity_magnitude, aw_stokes_i_mueller, casa_persistent_complex,
-        casa_useful_mosaic_channels, checked_cells, collect_image_planes,
-        compile_operator_geometry, convolution_sinc, normalize_direction_dependent_psf,
-        polarization_diagonal, polarization_effective_flags, polarization_published_weights,
-        reconstruction_model_binding, scatter_chart_planes,
+        SpectralOperatorSample, SpectralOperatorWorkload, SpectralScienceProbe,
+        SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
+        apply_finite_value_policy, apply_input_policy, aw_sensitivity_magnitude,
+        aw_stokes_i_mueller, casa_persistent_complex, casa_useful_mosaic_channels, checked_cells,
+        collect_image_planes, compile_operator_geometry, convolution_sinc,
+        normalize_direction_dependent_psf, polarization_diagonal, polarization_effective_flags,
+        polarization_published_weights, reconstruction_model_binding, scatter_chart_planes,
     };
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
@@ -11811,6 +11920,101 @@ mod tests {
         assert_eq!(one.psf(), split.psf());
         assert_eq!(one.sensitivity(), split.sensitivity());
         assert_eq!(one.sum_weight(), split.sum_weight());
+    }
+
+    #[test]
+    fn t51_polynomial_aw_observation_preserves_normal_state_bits() {
+        let plan = BlockNormalPlan::taylor(1.0e9, 2).expect("two-term Taylor plan");
+        let sample_values = samples(&[[0.4, -0.7], [-1.2, 0.3], [0.8, 1.1]])
+            .into_iter()
+            .enumerate()
+            .map(|(index, sample)| {
+                sample
+                    .with_published_weight(0.25 + index as f64)
+                    .expect("finite published weight")
+            })
+            .collect::<Vec<_>>();
+        let run = |observe: bool| {
+            let mut operator = operator();
+            let mut probe = SpectralScienceProbe::default();
+            for (index, sample) in sample_values.iter().copied().enumerate() {
+                if observe {
+                    probe
+                        .observe_polynomial_aw(3, plan, sample, 1.5 + index as f64)
+                        .expect("finite observer aggregate");
+                }
+                operator.push(sample).expect("accepted sample");
+            }
+            (operator.finish().expect("finite primitives"), probe)
+        };
+
+        let (unobserved, _) = run(false);
+        let (observed, probe) = run(true);
+        let complex_bits = |values: &[Complex64]| {
+            values
+                .iter()
+                .map(|value| [value.re.to_bits(), value.im.to_bits()])
+                .collect::<Vec<_>>()
+        };
+        let real_bits = |values: &[f64]| {
+            values
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            complex_bits(unobserved.dirty()),
+            complex_bits(observed.dirty())
+        );
+        assert_eq!(complex_bits(unobserved.psf()), complex_bits(observed.psf()));
+        assert_eq!(
+            real_bits(unobserved.sensitivity()),
+            real_bits(observed.sensitivity())
+        );
+        assert_eq!(
+            real_bits(unobserved.sum_weights()),
+            real_bits(observed.sum_weights())
+        );
+        assert_eq!(
+            real_bits(unobserved.published_sum_weights()),
+            real_bits(observed.published_sum_weights())
+        );
+        assert_eq!(
+            unobserved.normal_state_content_identity(),
+            observed.normal_state_content_identity()
+        );
+
+        assert_eq!(probe.polynomial_aw.len(), plan.normal_moment_count());
+        assert!(
+            probe
+                .polynomial_aw
+                .values()
+                .all(|value| value.accepted_count == 3)
+        );
+        for moment in 0..plan.normal_moment_count() {
+            let mut expected = super::PolynomialAwScienceAggregate::default();
+            for (index, sample) in sample_values.iter().copied().enumerate() {
+                let normalization = 1.5 + index as f64;
+                let x = plan.normalized_frequency(sample.frequency_hz).unwrap();
+                let taylor = x.powi(moment as i32);
+                let factor_squared = sample.spectral_factor * sample.spectral_factor;
+                let imaging = sample.imaging_weight * factor_squared * taylor;
+                let published = sample.published_weight * factor_squared * taylor;
+                expected.accepted_count += 1;
+                expected.post_briggs_imaging_weight_sum += sample.imaging_weight;
+                expected.published_polarization_weight_sum += sample.published_weight;
+                expected.taylor_x_moment_sum += taylor;
+                expected.pre_cf_imaging_moment_sum += imaging;
+                expected.pre_cf_published_moment_sum += published;
+                expected.selected_imaging_cf_normalization_sum += normalization;
+                expected.accumulate_sumwt(imaging * normalization, published * normalization);
+            }
+            let actual = probe
+                .polynomial_aw
+                .get(&(3, moment))
+                .expect("normal moment aggregate");
+            assert_eq!(actual, &expected);
+        }
     }
 
     #[test]
