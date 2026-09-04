@@ -45,7 +45,6 @@
     "max_psf_fraction": 0.8,
     "facets": 1,
     "psfphasecenter": "",
-    "chanchunks": 1,
     "vptable": "",
     "mosweight": false,
     "aterm": true,
