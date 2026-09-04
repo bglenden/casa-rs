@@ -11,7 +11,9 @@ use std::{
 
 use casa_coordinates::CoordinateSystem;
 use casa_images::{GaussianBeam, ImageBeamSet, ImageInfo, ImageType, PagedImage};
-use casa_imaging_model::{ImageDomainRole, ProductRole, ProductUnit, ProductValidityRule};
+use casa_imaging_model::{
+    ImageDomainRole, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
+};
 use casa_imaging_products::{
     ContinuumGenerationDemand, PlannedContinuumGeneration, RestoringBeam, SealedMember,
 };
@@ -162,9 +164,7 @@ impl SerialProductPublicationSink for CasaImageProductSink {
         image
             .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 0])
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        if member.contract().validity() != ProductValidityRule::All
-            && member.validity().iter().any(|valid| !valid)
-        {
+        if persist_mask(member) {
             let validity = ArrayD::from_shape_vec(
                 IxDyn(&member.contract().axes().shape()),
                 member.validity().to_vec(),
@@ -176,10 +176,13 @@ impl SerialProductPublicationSink for CasaImageProductSink {
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
         }
         image
-            .set_units(unit_label(member.contract().unit()))
+            .set_units(persisted_unit_label(
+                member.contract().role(),
+                member.contract().unit(),
+            ))
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let role = role_label(member.contract().role());
-        let beam_set = persisted_beam_set(member.resolved_beams());
+        let beam_set = persisted_beam_set(member.contract().role(), member.resolved_beams());
         image
             .set_image_info(&ImageInfo {
                 beam_set,
@@ -261,7 +264,10 @@ impl SerialProductPublicationSink for CasaImageProductSink {
     }
 }
 
-fn persisted_beam_set(beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
+fn persisted_beam_set(role: ProductRole, beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
+    if matches!(role, ProductRole::Residual(ProductTerm::Taylor(_))) {
+        return ImageBeamSet::default();
+    }
     if beams.is_empty() {
         return ImageBeamSet::default();
     }
@@ -293,6 +299,35 @@ fn persisted_beam_set(beams: &[Option<RestoringBeam>]) -> ImageBeamSet {
     )
 }
 
+fn persist_mask(member: &SealedMember) -> bool {
+    let validity = member.contract().validity();
+    persist_explicit_taylor_mask(member.contract().role(), validity)
+        || (validity != ProductValidityRule::All && member.validity().iter().any(|valid| !valid))
+}
+
+const fn persist_explicit_taylor_mask(role: ProductRole, validity: ProductValidityRule) -> bool {
+    matches!(
+        (role, validity),
+        (
+            ProductRole::RestoredImage(ProductTerm::Taylor(_))
+                | ProductRole::Residual(ProductTerm::Taylor(_))
+                | ProductRole::PrimaryBeam(ProductTerm::Taylor(_)),
+            ProductValidityRule::PrimaryBeam(_),
+        ) | (
+            ProductRole::SpectralIndex | ProductRole::SpectralIndexError,
+            ProductValidityRule::Taylor(_),
+        )
+    )
+}
+
+const fn persisted_unit_label(role: ProductRole, unit: ProductUnit) -> &'static str {
+    match role {
+        ProductRole::Psf(ProductTerm::Taylor(_))
+        | ProductRole::Residual(ProductTerm::Taylor(_)) => "",
+        _ => unit_label(unit),
+    }
+}
+
 fn gaussian_beam(beam: RestoringBeam) -> GaussianBeam {
     GaussianBeam::new(
         beam.major_fwhm_rad(),
@@ -307,9 +342,15 @@ fn beam_area(beam: RestoringBeam) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CasaImageDomainOutput, CasaImageProductSink, persisted_beam_set};
+    use super::{
+        CasaImageDomainOutput, CasaImageProductSink, persist_explicit_taylor_mask,
+        persisted_beam_set, persisted_unit_label,
+    };
     use casa_coordinates::CoordinateSystem;
-    use casa_imaging_model::ImageDomainRole;
+    use casa_imaging_model::{
+        ImageDomainRole, PrimaryBeamValidityPolicy, ProductBlankingPolicy, ProductRole,
+        ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule,
+    };
     use casa_imaging_products::RestoringBeam;
 
     #[test]
@@ -342,7 +383,10 @@ mod tests {
     fn blank_beam_slots_use_the_largest_valid_casa_persistence_filler() {
         let small = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("small beam");
         let large = RestoringBeam::new(4.0e-6, 3.0e-6, -0.2).expect("large beam");
-        let persisted = persisted_beam_set(&[Some(small), None, Some(large)]);
+        let persisted = persisted_beam_set(
+            ProductRole::Psf(ProductTerm::Single),
+            &[Some(small), None, Some(large)],
+        );
 
         assert_eq!(persisted.shape(), (3, 1));
         assert_eq!(persisted.beam(0, 0).major, small.major_fwhm_rad());
@@ -352,12 +396,93 @@ mod tests {
 
     #[test]
     fn all_blank_beam_slots_use_only_the_casa_imageinfo_placeholder() {
-        let persisted = persisted_beam_set(&[None, None]);
+        let persisted = persisted_beam_set(ProductRole::Psf(ProductTerm::Single), &[None, None]);
         let filler = persisted.beam(0, 0);
         assert_eq!(persisted.shape(), (2, 1));
         assert!(filler.major > 0.0);
         assert_eq!(filler.major, filler.minor);
         assert_eq!(persisted.beam(1, 0), filler);
+    }
+
+    #[test]
+    fn t51_persistence_overrides_only_taylor_units_and_residual_beam() {
+        let beam = RestoringBeam::new(2.0e-6, 1.0e-6, 0.1).expect("beam");
+        assert_eq!(
+            persisted_unit_label(
+                ProductRole::Psf(ProductTerm::Taylor(0)),
+                ProductUnit::JyPerBeam,
+            ),
+            ""
+        );
+        assert_eq!(
+            persisted_unit_label(
+                ProductRole::Residual(ProductTerm::Taylor(0)),
+                ProductUnit::JyPerBeam,
+            ),
+            ""
+        );
+        assert_eq!(
+            persisted_unit_label(
+                ProductRole::Psf(ProductTerm::Single),
+                ProductUnit::JyPerBeam
+            ),
+            "Jy/beam"
+        );
+        assert_eq!(
+            persisted_beam_set(ProductRole::Residual(ProductTerm::Taylor(0)), &[Some(beam)],),
+            casa_images::ImageBeamSet::default()
+        );
+        assert_eq!(
+            persisted_beam_set(ProductRole::Residual(ProductTerm::Single), &[Some(beam)])
+                .beam(0, 0),
+            &casa_images::GaussianBeam::new(
+                beam.major_fwhm_rad(),
+                beam.minor_fwhm_rad(),
+                beam.position_angle_rad(),
+            )
+        );
+    }
+
+    #[test]
+    fn t51_explicit_mask_rule_does_not_change_single_term_or_all_valid_taylor_psf() {
+        let primary_beam = PrimaryBeamValidityPolicy::new(
+            0.2,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid primary-beam policy");
+        assert!(persist_explicit_taylor_mask(
+            ProductRole::RestoredImage(ProductTerm::Taylor(0)),
+            ProductValidityRule::PrimaryBeam(primary_beam),
+        ));
+        assert!(persist_explicit_taylor_mask(
+            ProductRole::Residual(ProductTerm::Taylor(1)),
+            ProductValidityRule::PrimaryBeam(primary_beam),
+        ));
+        assert!(persist_explicit_taylor_mask(
+            ProductRole::PrimaryBeam(ProductTerm::Taylor(0)),
+            ProductValidityRule::PrimaryBeam(primary_beam),
+        ));
+        assert!(persist_explicit_taylor_mask(
+            ProductRole::SpectralIndex,
+            ProductValidityRule::Taylor(
+                casa_imaging_model::TaylorValidityPolicy::new(
+                    casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+                    0.1,
+                    ProductSupportComparison::StrictlyGreater,
+                    ProductBlankingPolicy::ZeroAndFalseMask,
+                )
+                .expect("valid Taylor policy"),
+            ),
+        ));
+        assert!(!persist_explicit_taylor_mask(
+            ProductRole::RestoredImage(ProductTerm::Single),
+            ProductValidityRule::PrimaryBeam(primary_beam),
+        ));
+        assert!(!persist_explicit_taylor_mask(
+            ProductRole::Psf(ProductTerm::Taylor(0)),
+            ProductValidityRule::All,
+        ));
     }
 }
 

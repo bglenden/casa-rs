@@ -16,7 +16,9 @@ use casa_imaging_application::{
     ContinuumWeighting, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
     execute_continuum,
 };
-use casa_imaging_model::ImageDomainRole;
+use casa_imaging_model::{
+    ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
+};
 use casa_imaging_runtime::{
     ArtifactDisposition, ArtifactRole, ClaimLifetime, FenceId, FenceKind, IoBufferKind,
     LeaseResource, ReceiptStatus, StorageUseKind,
@@ -200,6 +202,15 @@ fn four_spw_aca_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+fn alma_primary_beam_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "alma-primary-beam-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 2, 2, 2, 8, false)
+            .with_alma_observation_metadata(),
+    )
+}
+
 #[derive(Clone, Copy)]
 struct MeasurementSetFixtureOptions {
     polarized: bool,
@@ -255,6 +266,12 @@ impl MeasurementSetFixtureOptions {
     const fn with_aca_observation_metadata(mut self) -> Self {
         self.telescope_name = Some("ALMA");
         self.dish_diameter_m = 7.0;
+        self
+    }
+
+    const fn with_alma_observation_metadata(mut self) -> Self {
+        self.telescope_name = Some("ALMA");
+        self.dish_diameter_m = 12.0;
         self
     }
 
@@ -1002,7 +1019,22 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
             PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
                 .expect("reopen validity-bearing product");
         assert_eq!(product.default_mask_name(), None);
+        assert_eq!(product.units(), "Jy/beam", "ordinary {suffix} units");
     }
+    assert_eq!(
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", image_name.display())))
+            .expect("reopen ordinary PSF")
+            .units(),
+        "Jy/beam",
+        "ordinary PSF units remain unchanged"
+    );
+    assert_eq!(
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.model", image_name.display())))
+            .expect("reopen ordinary model")
+            .units(),
+        "Jy/pixel",
+        "ordinary model units remain unchanged"
+    );
     assert!(!PathBuf::from(format!("{}.mask", image_name.display())).exists());
 }
 
@@ -1381,6 +1413,192 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
             "missing published MT-MFS product {suffix}"
         );
     }
+}
+
+#[test]
+fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contract() {
+    std::thread::Builder::new()
+        .name("t51-taylor-metadata".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(t51_taylor_publication_persists_casa_metadata_without_changing_logical_contract_impl)
+        .expect("spawn Taylor metadata test")
+        .join()
+        .expect("Taylor metadata test thread");
+}
+
+fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contract_impl() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = alma_primary_beam_measurement_set(root.path());
+    let image_name = root.path().join("taylor-metadata");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.image_size = 8;
+    imaging.channel_count = Some(1);
+    imaging.iterations = 0;
+    imaging.write_primary_beam = true;
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+
+    let result = execute_continuum(imaging).expect("native Taylor metadata execution");
+    let planned = &result.outcome.output.planned_products;
+    let published = &result.outcome.output.products;
+    assert_eq!(planned.graph_id(), published.graph_id());
+    assert_eq!(planned.members().len(), published.members().len());
+    for (planned, published) in planned.members().iter().zip(published.members()) {
+        assert_eq!(
+            planned.artifact_id(),
+            published.artifact_id(),
+            "{} identity",
+            planned.name()
+        );
+        assert_eq!(
+            planned.role(),
+            published.contract().role(),
+            "{} role",
+            planned.name()
+        );
+        assert_eq!(
+            planned.unit(),
+            published.contract().unit(),
+            "{} unit",
+            planned.name()
+        );
+        assert_eq!(
+            planned.beam_rule(),
+            published.contract().beam_rule(),
+            "{} beam rule",
+            planned.name()
+        );
+        assert_eq!(
+            planned.validity(),
+            published.contract().validity(),
+            "{} validity",
+            planned.name()
+        );
+        assert_eq!(
+            planned.axes(),
+            published.contract().axes(),
+            "{} axes",
+            planned.name()
+        );
+    }
+
+    let open = |suffix: &str| {
+        PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
+            .expect("reopen Taylor publication")
+    };
+    for suffix in [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".pb.tt0",
+        ".pb.tt1",
+        ".alpha",
+        ".alpha.error",
+    ] {
+        assert_eq!(open(suffix).units(), "", "{suffix} CASA unit");
+    }
+    for suffix in [".model.tt0", ".model.tt1"] {
+        assert_eq!(open(suffix).units(), "Jy/pixel", "{suffix} CASA unit");
+    }
+    for suffix in [".image.tt0", ".image.tt1"] {
+        assert_eq!(open(suffix).units(), "Jy/beam", "{suffix} CASA unit");
+    }
+    for suffix in [
+        ".image.tt0",
+        ".image.tt1",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".pb.tt0",
+        ".alpha",
+        ".alpha.error",
+    ] {
+        assert_eq!(
+            open(suffix).default_mask_name().as_deref(),
+            Some("mask0"),
+            "{suffix} explicit CASA mask"
+        );
+    }
+    for suffix in [".pb.tt0"] {
+        let product = open(suffix);
+        let shape = product.shape().to_vec();
+        let valid = product
+            .get_mask_slice(&vec![0; shape.len()], &shape, &vec![1; shape.len()])
+            .expect("primary-beam mask")
+            .expect("explicit primary-beam mask");
+        assert!(
+            valid.iter().all(|valid| *valid),
+            "{suffix} all-valid primary-beam mask remains explicit"
+        );
+    }
+    for suffix in [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".model.tt0",
+        ".model.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+    ] {
+        assert_eq!(
+            open(suffix).default_mask_name(),
+            None,
+            "{suffix} remains implicitly all-valid"
+        );
+    }
+    for suffix in [".residual.tt0", ".residual.tt1"] {
+        assert!(
+            open(suffix)
+                .image_info()
+                .expect("residual ImageInfo")
+                .beam_set
+                .is_empty(),
+            "{suffix} Taylor residual does not persist a beam"
+        );
+    }
+
+    let psf = planned
+        .members()
+        .iter()
+        .find(|member| member.role() == ProductRole::Psf(ProductTerm::Taylor(0)))
+        .expect("Taylor PSF contract");
+    assert_eq!(psf.unit(), ProductUnit::JyPerBeam);
+    assert_eq!(psf.beam_rule(), ProductBeamRule::Fitted);
+    assert_eq!(psf.validity(), ProductValidityRule::All);
+    let residual = planned
+        .members()
+        .iter()
+        .find(|member| member.role() == ProductRole::Residual(ProductTerm::Taylor(0)))
+        .expect("Taylor residual contract");
+    assert_eq!(residual.unit(), ProductUnit::JyPerBeam);
+    assert_eq!(residual.beam_rule(), ProductBeamRule::Fitted);
+    assert!(matches!(
+        residual.validity(),
+        ProductValidityRule::PrimaryBeam(_)
+    ));
+    let primary_beam = planned
+        .members()
+        .iter()
+        .find(|member| member.role() == ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+        .expect("Taylor primary-beam contract");
+    assert_eq!(primary_beam.unit(), ProductUnit::Dimensionless);
+    assert_eq!(primary_beam.beam_rule(), ProductBeamRule::None);
+    assert!(matches!(
+        primary_beam.validity(),
+        ProductValidityRule::PrimaryBeam(_)
+    ));
 }
 
 #[test]
