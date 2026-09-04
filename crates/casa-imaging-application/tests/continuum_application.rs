@@ -1052,6 +1052,14 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
     imaging.write_primary_beam = true;
 
     let result = execute_continuum(imaging).expect("native AW dirty execution");
+    let normal = result.outcome.output.scientific.normal_state();
+    assert_eq!(normal.sum_weights().len(), 1);
+    assert_eq!(normal.published_sum_weights().len(), 1);
+    assert!(
+        (normal.sum_weights()[0] - 2.0 * normal.published_sum_weights()[0]).abs()
+            <= f64::EPSILON * normal.sum_weights()[0].abs() * 8.0,
+        "paired RR/LL measurements both contribute to the normal operator, while CASA publishes their minimum correlation-plane sumweight"
+    );
     assert_products(
         &image_name,
         &result.product_names,

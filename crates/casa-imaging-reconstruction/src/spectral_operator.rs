@@ -6164,6 +6164,7 @@ pub(crate) struct SpectralSlabOperator {
     sum_weight_compensations: Vec<f64>,
     published_sum_weights: Vec<f64>,
     published_sum_weight_compensations: Vec<f64>,
+    aw_published_sum_weights: Option<AwPublishedSumWeights>,
     channel_sum_weights: Vec<f64>,
     channel_sum_weight_compensations: Vec<f64>,
     channel_major_sum_weights: Vec<f64>,
@@ -6177,6 +6178,24 @@ pub(crate) struct SpectralSlabOperator {
     aw_weight_oversampling: Option<usize>,
     #[cfg(test)]
     measurements: SpectralOperatorMeasurements,
+}
+
+struct AwPublishedSumWeights {
+    normal: [Vec<f64>; 2],
+    normal_compensations: [Vec<f64>; 2],
+    channel_major: [Vec<f64>; 2],
+    channel_major_compensations: [Vec<f64>; 2],
+}
+
+impl AwPublishedSumWeights {
+    fn new(normal_moments: usize, channel_major_planes: usize) -> Self {
+        Self {
+            normal: std::array::from_fn(|_| vec![0.0; normal_moments]),
+            normal_compensations: std::array::from_fn(|_| vec![0.0; normal_moments]),
+            channel_major: std::array::from_fn(|_| vec![0.0; channel_major_planes]),
+            channel_major_compensations: std::array::from_fn(|_| vec![0.0; channel_major_planes]),
+        }
+    }
 }
 
 struct SpectralSlabDefinition {
@@ -6428,6 +6447,8 @@ impl SpectralSlabOperator {
             sum_weight_compensations: vec![0.0; normal_moments],
             published_sum_weights: vec![0.0; normal_moments],
             published_sum_weight_compensations: vec![0.0; normal_moments],
+            aw_published_sum_weights: has_aw_projection
+                .then(|| AwPublishedSumWeights::new(normal_moments, channel_major_planes)),
             channel_sum_weights: vec![0.0; joint_channels],
             channel_sum_weight_compensations: vec![0.0; joint_channels],
             channel_major_sum_weights: vec![0.0; channel_major_planes],
@@ -6536,6 +6557,7 @@ impl SpectralSlabOperator {
         };
         let taps = self.prepare_grid_taps(taps, true)?;
         let normalization = taps.normalization(&self.gridder)?;
+        let aw_publication_lane = self.aw_publication_lane(sample)?;
         let factor = sample.spectral_factor;
         match self.basis {
             SpectralBasisPlan::ChannelLocal => {
@@ -6555,6 +6577,7 @@ impl SpectralSlabOperator {
                     plane,
                     sample.published_weight * factor * factor,
                     normalization,
+                    aw_publication_lane,
                 )?;
             }
             SpectralBasisPlan::TaylorViaChannelMajor(_) => {
@@ -6573,6 +6596,7 @@ impl SpectralSlabOperator {
                     sample.imaging_weight * factor * factor,
                     sample.published_weight * factor * factor,
                     normalization,
+                    aw_publication_lane,
                 )?;
             }
             SpectralBasisPlan::Polynomial(plan) => {
@@ -6609,7 +6633,12 @@ impl SpectralSlabOperator {
                 for moment in 0..self.normal_moment_weights.len() {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
-                    self.accumulate_published_sum_weight(moment, weight, normalization)?;
+                    self.accumulate_published_sum_weight(
+                        moment,
+                        weight,
+                        normalization,
+                        aw_publication_lane,
+                    )?;
                 }
             }
             SpectralBasisPlan::Joint { .. } => {
@@ -6652,7 +6681,12 @@ impl SpectralSlabOperator {
                 for moment in 0..self.normal_moment_weights.len() {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
-                    self.accumulate_published_sum_weight(moment, weight, normalization)?;
+                    self.accumulate_published_sum_weight(
+                        moment,
+                        weight,
+                        normalization,
+                        aw_publication_lane,
+                    )?;
                 }
             }
         }
@@ -6968,6 +7002,7 @@ impl SpectralSlabOperator {
         imaging_weight: f64,
         published_weight: f64,
         normalization: f64,
+        aw_publication_lane: Option<usize>,
     ) -> Result<(), SpectralOperatorError> {
         grid_operator_compensated(
             &self.gridder,
@@ -6997,12 +7032,29 @@ impl SpectralSlabOperator {
             plane,
             imaging_weight * normalization,
         )?;
-        accumulate_compensated(
-            &mut self.channel_major_published_sum_weights,
-            &mut self.channel_major_published_sum_weight_compensations,
-            plane,
-            published_weight * normalization,
-        )
+        if let Some(lane) = aw_publication_lane {
+            let aw = self
+                .aw_published_sum_weights
+                .as_mut()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?;
+            accumulate_compensated(
+                aw.channel_major
+                    .get_mut(lane)
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
+                aw.channel_major_compensations
+                    .get_mut(lane)
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
+                plane,
+                published_weight * normalization,
+            )
+        } else {
+            accumulate_compensated(
+                &mut self.channel_major_published_sum_weights,
+                &mut self.channel_major_published_sum_weight_compensations,
+                plane,
+                published_weight * normalization,
+            )
+        }
     }
 
     fn grid_aw_sensitivity(
@@ -7051,9 +7103,26 @@ impl SpectralSlabOperator {
         moment: usize,
         weight: f64,
         normalization: f64,
+        aw_publication_lane: Option<usize>,
     ) -> Result<(), SpectralOperatorError> {
         if normalization == 0.0 {
             return Ok(());
+        }
+        if let Some(lane) = aw_publication_lane {
+            let aw = self
+                .aw_published_sum_weights
+                .as_mut()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?;
+            return accumulate_compensated(
+                aw.normal
+                    .get_mut(lane)
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
+                aw.normal_compensations
+                    .get_mut(lane)
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
+                moment,
+                weight * normalization,
+            );
         }
         let sum = self
             .published_sum_weights
@@ -7067,6 +7136,57 @@ impl SpectralSlabOperator {
         let updated = *sum + corrected;
         *compensation = (updated - *sum) - corrected;
         *sum = updated;
+        Ok(())
+    }
+
+    fn aw_publication_lane(
+        &self,
+        sample: SpectralOperatorSample,
+    ) -> Result<Option<usize>, SpectralOperatorError> {
+        if self.aw_projection.is_none() {
+            return Ok(None);
+        }
+        match sample.mueller_element {
+            0 => Ok(Some(0)),
+            15 => Ok(Some(1)),
+            _ => Err(SpectralOperatorError::InvalidSample),
+        }
+    }
+
+    fn collapse_aw_published_sum_weights(&mut self) -> Result<(), SpectralOperatorError> {
+        let Some(aw) = self.aw_published_sum_weights.take() else {
+            return Ok(());
+        };
+        if aw.normal[0].len() != self.published_sum_weights.len()
+            || aw.normal[1].len() != self.published_sum_weights.len()
+            || aw.channel_major[0].len() != self.channel_major_published_sum_weights.len()
+            || aw.channel_major[1].len() != self.channel_major_published_sum_weights.len()
+        {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        for (moment, (destination, (first, last))) in self
+            .published_sum_weights
+            .iter_mut()
+            .zip(aw.normal[0].iter().zip(&aw.normal[1]))
+            .enumerate()
+        {
+            *destination = first.min(*last);
+            if imaging_science_trace_enabled() {
+                eprintln!(
+                    "imaging_science_probe_v1 boundary=aw_published_sumwt term={moment} rr={first:.17e} ll={last:.17e} stokes_i={destination:.17e}"
+                );
+            }
+        }
+        self.published_sum_weight_compensations.fill(0.0);
+        for (destination, (first, last)) in self
+            .channel_major_published_sum_weights
+            .iter_mut()
+            .zip(aw.channel_major[0].iter().zip(&aw.channel_major[1]))
+        {
+            *destination = first.min(*last);
+        }
+        self.channel_major_published_sum_weight_compensations
+            .fill(0.0);
         Ok(())
     }
 
@@ -7552,6 +7672,7 @@ impl SpectralSlabOperator {
         };
         let taps = self.prepare_grid_taps(taps, self.psf_grids.is_some())?;
         let normalization = taps.normalization(&self.gridder)?;
+        let aw_publication_lane = self.aw_publication_lane(sample)?;
         let factor = sample.spectral_factor;
         let observed_scale = sample.visibility * sample.phase() * (sample.imaging_weight * factor);
         let residual_scale =
@@ -7577,6 +7698,7 @@ impl SpectralSlabOperator {
                         plane,
                         sample.published_weight * factor * factor,
                         normalization,
+                        aw_publication_lane,
                     )?;
                 }
             }
@@ -7596,6 +7718,7 @@ impl SpectralSlabOperator {
                         sample.imaging_weight * factor * factor,
                         sample.published_weight * factor * factor,
                         normalization,
+                        aw_publication_lane,
                     )?;
                 }
             }
@@ -7641,7 +7764,12 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.accumulate_published_sum_weight(moment, weight, normalization)?;
+                        self.accumulate_published_sum_weight(
+                            moment,
+                            weight,
+                            normalization,
+                            aw_publication_lane,
+                        )?;
                     }
                 }
             }
@@ -7688,7 +7816,12 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.accumulate_published_sum_weight(moment, weight, normalization)?;
+                        self.accumulate_published_sum_weight(
+                            moment,
+                            weight,
+                            normalization,
+                            aw_publication_lane,
+                        )?;
                     }
                 }
             }
@@ -9037,6 +9170,7 @@ impl SpectralSlabOperator {
             let fft = self.fft;
             return Ok((primitives, fft));
         }
+        self.collapse_aw_published_sum_weights()?;
         let dirty_grids = self
             .dirty_grids
             .as_ref()
@@ -10409,8 +10543,8 @@ mod tests {
     use smallvec::SmallVec;
 
     use super::{
-        ConvolutionOperator, MosaicResponsePlan, MosaicResponseSelection, PreparedFft,
-        ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
+        AwPublishedSumWeights, ConvolutionOperator, MosaicResponsePlan, MosaicResponseSelection,
+        PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
         SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
         SpectralOperatorMeasurements, SpectralOperatorPass, SpectralOperatorPrimitives,
         SpectralOperatorSample, SpectralOperatorWorkload, SpectralScienceProbe,
@@ -11902,6 +12036,28 @@ mod tests {
             &[9.0, 9.0, 8.0, 8.0],
             "the scientific adjoint retains each lane's unequal raw weight",
         );
+    }
+
+    #[test]
+    fn aw_publication_collapses_parallel_hand_totals_with_casa_minimum() {
+        let mut operator = operator();
+        let moments = operator.published_sum_weights.len();
+        let mut aw = AwPublishedSumWeights::new(moments, 0);
+        for moment in 0..moments {
+            aw.normal[0][moment] = 7.0 + moment as f64;
+            aw.normal[1][moment] = 5.0 + 2.0 * moment as f64;
+        }
+        operator.aw_published_sum_weights = Some(aw);
+
+        operator
+            .collapse_aw_published_sum_weights()
+            .expect("collapse AW correlation-plane totals");
+
+        let expected = (0..moments)
+            .map(|moment| (7.0 + moment as f64).min(5.0 + 2.0 * moment as f64))
+            .collect::<Vec<_>>();
+        assert_eq!(operator.published_sum_weights, expected);
+        assert!(operator.aw_published_sum_weights.is_none());
     }
 
     #[test]
