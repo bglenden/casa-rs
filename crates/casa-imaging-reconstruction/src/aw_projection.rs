@@ -1731,6 +1731,66 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires an actual native POINTING phase trace"]
+    fn t51_native_pointing_phase_matches_production_taps() {
+        let native = std::fs::read_to_string(
+            std::env::var_os("CASA_RS_T51_NATIVE_POINTING").unwrap(),
+        )
+        .unwrap();
+        let mut gradient = None;
+        let mut expected = Vec::new();
+        for line in native.lines() {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let number = |i: usize| fields[i].parse::<f64>().unwrap();
+            match fields[0] {
+                "gradient_per_cf_pixel" => gradient = Some([number(1), number(2)]),
+                "phase_tap" => expected.push((
+                    [number(1), number(2)],
+                    Complex64::new(number(3), number(4)),
+                )),
+                _ => {}
+            }
+        }
+        assert_eq!(expected.len(), 25);
+        let sampling = expected[1].0[0] - expected[0].0[0];
+        assert_eq!(sampling, 20.0);
+        let layout = AwKernelLayout::new([2, 2], 20, [160, 160], [80, 80]).unwrap();
+        let kernel = AwConvolutionKernel::new(
+            layout,
+            vec![Complex64::new(1.0, 0.0); 160 * 160],
+        )
+        .unwrap();
+        let gradient = gradient.unwrap().map(|value| value * sampling);
+        let sample = AwVisibilitySample::new(
+            10.0,
+            10.0,
+            -1.0,
+            0,
+            0.0,
+            expected[12].0.map(|offset| 256.0 - offset / sampling),
+            gradient,
+        )
+        .unwrap();
+        let (actual, observed) = fused_taps_inner::<true>(&kernel, [512, 512], sample, true)
+            .unwrap();
+        let mut maximum_error = 0.0_f64;
+        for ((tap, address), (coordinate, expected)) in actual
+            .values
+            .iter()
+            .zip(observed.unwrap().4)
+            .zip(expected)
+        {
+            assert_eq!(
+                address.cf_coordinate.map(|value| value as f64 - 80.0),
+                coordinate,
+            );
+            maximum_error = maximum_error.max((tap.coefficient - expected).norm());
+        }
+        assert!(maximum_error < 1.0e-7, "native f32 phase error={maximum_error}");
+        eprintln!("native_pointing_phase taps=25 maximum_complex_error={maximum_error:.17e}");
+    }
+
+    #[test]
     fn t51_grid_and_prediction_use_distinct_casa_selection_laws() {
         let mut entries = Vec::new();
         for m in [3, 12] {

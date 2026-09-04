@@ -2989,6 +2989,138 @@ mod aw_pointing_tests {
     use super::*;
 
     #[test]
+    #[ignore = "requires local MeasurementSet and native source-group pointing trace"]
+    fn t51_native_source_group_pointing_matches_selected_catalog() {
+        use casa_imaging_model::{ObservationPointingLaw, PointingDirectionSemantic};
+        use casa_types::measures::MeasuresProvider;
+        let ms =
+            MeasurementSet::open(std::env::var_os("CASA_RS_T51_POINTING_MS").unwrap()).unwrap();
+        let native =
+            std::fs::read_to_string(std::env::var_os("CASA_RS_T51_NATIVE_POINTING").unwrap())
+                .unwrap();
+        let centre = std::env::var("CASA_RS_T51_POINTING_CENTRE")
+            .unwrap()
+            .split(',')
+            .map(|v| v.parse::<f64>().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(centre.len(), 2);
+        let records = native
+            .lines()
+            .map(|line| line.split('\t').collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let group = records.iter().find(|r| r[0] == "source_group").unwrap();
+        let time = group[3].parse::<f64>().unwrap();
+        let expected = records
+            .iter()
+            .filter(|r| r[0] == "antenna_pixel")
+            .map(|r| {
+                (
+                    r[1].parse::<i32>().unwrap(),
+                    [r[2].parse::<f64>().unwrap(), r[3].parse::<f64>().unwrap()],
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert!(!expected.is_empty());
+        let mut domain = crate::selected_pointing::SelectedPointingQueryDomainBuilder::default();
+        for &antenna in expected.keys() {
+            domain.observe_row(antenna, antenna, time, time).unwrap();
+        }
+        let domain = domain.finish().unwrap().unwrap();
+        let catalog = ms
+            .prepare_selected_pointing_catalog(
+                StoredPointingDirectionColumn::Direction,
+                &domain,
+                PointingTimeSampling::VisibilityTime,
+                PointingReadPlan::new(1024, 16, 16 * 1024 * 1024).unwrap(),
+            )
+            .unwrap();
+        let measures_root = records
+            .iter()
+            .find(|r| r[0] == "native_measures_root")
+            .unwrap()[1];
+        let runtime =
+            casa_measures_data::MeasuresRuntime::open(measures_root, Default::default()).unwrap();
+        eprintln!("rust_measures_root\t{}", runtime.root().display());
+        let measures: std::sync::Arc<dyn MeasuresProvider> = std::sync::Arc::new(runtime);
+        let state = measures.prepare_bounded_state().unwrap().unwrap();
+        eprintln!("rust_measures_identity\t{:?}", state.identity_sha256());
+        eprintln!(
+            "rust_eop\t{:?}\ttai_minus_utc={}",
+            measures.eop_values(time / 86_400.0).unwrap(),
+            measures.tai_minus_utc_seconds(time / 86_400.0).unwrap()
+        );
+        let engine = MsCalEngine::new_selected_observation(&ms, measures, state, None).unwrap();
+        let queries = expected
+            .keys()
+            .map(|&antenna| PointingDirectionQuery::new(antenna, time).unwrap())
+            .collect::<Vec<_>>();
+        let brackets = catalog.direction_brackets(&engine, &queries).unwrap();
+        let law = ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTime,
+            PointingInterpolation::Nearest,
+            PointingExtrapolation::HoldNearest,
+            MissingPointingPolicy::UsePhaseTrackingCentre,
+        );
+        let field_direction = engine
+            .field_direction_j2000(group[4].parse().unwrap())
+            .unwrap();
+        let fallback = SkyDirection::new(
+            DirectionFrame::J2000,
+            field_direction.longitude_rad(),
+            field_direction.latitude_rad(),
+        );
+        let cell = (0.6_f64 / 3600.0).to_radians();
+        let coordinate = DirectionCoordinate::new(
+            DirectionRef::J2000,
+            CoordinateProjection::new(ProjectionType::SIN),
+            [centre[0], centre[1]],
+            [-cell, cell],
+            [256.0, 256.0],
+        )
+        .with_longpole(std::f64::consts::PI)
+        .with_latpole(centre[1]);
+        let mut pixels = BTreeMap::new();
+        let mut maximum_error = 0.0_f64;
+        for ((&antenna, query), bracket) in expected.keys().zip(queries).zip(brackets) {
+            let direction = resolve_pointing_direction(bracket, query, law, fallback).unwrap();
+            let pixel = coordinate
+                .to_pixel(&[direction.longitude_rad(), direction.latitude_rad()])
+                .unwrap();
+            for axis in 0..2 {
+                maximum_error = maximum_error.max((pixel[axis] - expected[&antenna][axis]).abs());
+            }
+            pixels.insert(antenna, [pixel[0], pixel[1]]);
+        }
+        eprintln!(
+            "pointing_pixel_comparison antennas={} maximum_error_pixels={maximum_error:.17e}",
+            pixels.len()
+        );
+        assert!(maximum_error < 1.0e-5, "native POINTING projection differs");
+        let grouped = casa_aw_grouped_pixels(&pixels, 600.0, [-cell, cell]).unwrap();
+        let baseline = records
+            .iter()
+            .find(|r| r[0] == "selected_baseline")
+            .unwrap();
+        let midpoint = records
+            .iter()
+            .find(|r| r[0] == "grouped_midpoint")
+            .unwrap();
+        let native_midpoint = [
+            midpoint[1].parse::<f64>().unwrap(),
+            midpoint[2].parse::<f64>().unwrap(),
+        ];
+        let left = grouped[&baseline[1].parse::<i32>().unwrap()];
+        let right = grouped[&baseline[2].parse::<i32>().unwrap()];
+        assert_eq!(
+            [(left[0] + right[0]) / 2.0, (left[1] + right[1]) / 2.0],
+            native_midpoint,
+            "native grouped POINTING midpoint differs"
+        );
+    }
+
+    #[test]
     fn casa_default_pointing_group_collapses_compact_array_to_f32_mean() {
         let pixels = BTreeMap::from([
             (0, [256.125_000_01, 255.875_000_01]),
