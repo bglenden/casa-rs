@@ -31,7 +31,7 @@ use crate::{
     AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelGeneration,
     ModelGenerationId, ModelGenerationOrigin, ModelSupport, PreparedAwProjection,
     ScienceTraceDigest,
-    aw_projection::{AwGridPlan, AwScienceProbe},
+    aw_projection::{AwGridPlan, AwGridPlanDescriptor, AwGridWindowArena, AwScienceProbe},
     block_normal::BlockNormalPlan,
     canonical_f64_bits, imaging_science_trace_enabled,
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
@@ -1705,6 +1705,79 @@ impl SpectralOperatorWorkload {
     pub const fn max_replay_block_samples(self) -> usize {
         self.max_replay_block_samples
     }
+
+    /// Return the checked retained backing capacity for every chart's selected-AW block window,
+    /// including prepared taps, request samples, and source-order pending work.
+    #[doc(hidden)]
+    pub fn aw_grid_window_capacity_bytes(
+        self,
+        specification: &SpectralOperatorSpecification,
+        projection: &PreparedAwProjection,
+    ) -> Result<usize, SpectralOperatorError> {
+        if self
+            != spectral_operator_workload(specification, self.max_replay_block_samples, self.pass)?
+        {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let request_capacity = aw_grid_window_request_capacity(
+            self.max_replay_block_samples,
+            specification.basis,
+            specification.spectral_kernel,
+            specification.aw_projection.is_some(),
+        )?;
+        if request_capacity == 0 {
+            return Ok(0);
+        }
+        let arena_bytes = projection.tap_window_capacity_bytes(
+            request_capacity,
+            matches!(self.pass, SpectralOperatorPass::InitialMajor),
+        )?;
+        let request_sample_bytes = request_capacity
+            .checked_mul(size_of::<AwVisibilitySample>())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let pending_bytes = request_capacity
+            .checked_mul(size_of::<PendingAwAccumulation>())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        arena_bytes
+            .checked_add(request_sample_bytes)
+            .and_then(|bytes| bytes.checked_add(pending_bytes))
+            .and_then(|per_chart| per_chart.checked_mul(specification.chart_count()))
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
+    }
+}
+
+fn maximum_spectral_contributions_per_weighted_sample(
+    basis: SpectralBasisPlan,
+    spectral_kernel: SpectralKernel,
+) -> usize {
+    match basis {
+        SpectralBasisPlan::Polynomial(_) => 1,
+        SpectralBasisPlan::ChannelLocal
+        | SpectralBasisPlan::TaylorViaChannelMajor(_)
+        | SpectralBasisPlan::Joint { .. } => match spectral_kernel {
+            SpectralKernel::Identity | SpectralKernel::Nearest => 1,
+            SpectralKernel::Linear => 2,
+            SpectralKernel::Cubic => 4,
+            SpectralKernel::ChannelIntegration { maximum_terms } => maximum_terms,
+        },
+    }
+}
+
+fn aw_grid_window_request_capacity(
+    max_replay_block_samples: usize,
+    basis: SpectralBasisPlan,
+    spectral_kernel: SpectralKernel,
+    has_aw_projection: bool,
+) -> Result<usize, SpectralOperatorError> {
+    if !has_aw_projection {
+        return Ok(0);
+    }
+    max_replay_block_samples
+        .checked_mul(maximum_spectral_contributions_per_weighted_sample(
+            basis,
+            spectral_kernel,
+        ))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)
 }
 
 /// Return implementation dimensions for the runtime's physical projection.
@@ -4588,10 +4661,22 @@ impl CompleteDataOwnerState {
         if block.sequence() != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
         }
+        if self.specification.aw_projection.is_some() {
+            if block.samples().len() > self.operators[0].workload.max_replay_block_samples {
+                return Err(SpectralOperatorError::IncompleteCoverage);
+            }
+            self.clear_aw_grid_windows();
+        }
         self.coverage.adopt(block.coverage_checkpoint());
         self.predicted_selected.clear();
         for group in block.correlation_groups() {
             self.consume_correlation_group::<OBSERVE>(group)?;
+        }
+        if self.specification.aw_projection.is_some() {
+            let predicts_residual = self
+                .model_binding
+                .is_some_and(ReconstructionModelBinding::is_evaluated);
+            self.replay_aw_grid_windows(predicts_residual)?;
         }
         self.sample_count = self
             .sample_count
@@ -4605,6 +4690,22 @@ impl CompleteDataOwnerState {
             .checked_add(1)
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
         Ok(&self.predicted_selected)
+    }
+
+    fn clear_aw_grid_windows(&mut self) {
+        for operator in &mut self.operators {
+            operator.clear_aw_grid_window();
+        }
+    }
+
+    fn replay_aw_grid_windows(
+        &mut self,
+        predicts_residual: bool,
+    ) -> Result<(), SpectralOperatorError> {
+        for operator in &mut self.operators {
+            operator.replay_aw_grid_window(predicts_residual)?;
+        }
+        Ok(())
     }
 
     fn finish_casa_linear_rows(&mut self) -> Result<(), SpectralOperatorError> {
@@ -4839,12 +4940,7 @@ impl CompleteDataOwnerState {
                             }
                         }
                     }
-                    if predicts_residual {
-                        self.operators[chart_ordinal]
-                            .push_with_residual_polarization(sample, predicted, 0)?;
-                    } else {
-                        self.operators[chart_ordinal].push_polarization(sample, 0)?;
-                    }
+                    self.operators[chart_ordinal].stage_aw_polarization(sample, predicted, 0)?;
                 }
             }
         }
@@ -4883,6 +4979,12 @@ impl CompleteDataOwnerState {
         group: &[crate::weighting::WeightingSampleValue],
     ) -> Result<(), SpectralOperatorError> {
         if self.uses_casa_linear_resampling(group)? {
+            if self.specification.aw_projection.is_some() {
+                let predicts_residual = self
+                    .model_binding
+                    .is_some_and(ReconstructionModelBinding::is_evaluated);
+                self.replay_aw_grid_windows(predicts_residual)?;
+            }
             return self.consume_casa_linear_group(group);
         }
         if self.specification.aw_projection.is_some() {
@@ -6140,6 +6242,7 @@ pub(crate) struct SpectralSlabOperator {
     workload: SpectralOperatorWorkload,
     gridder: ConvolutionOperator,
     aw_projection: Option<Mutex<AwProjectionOperator<Box<dyn AwPreparedCellProvider + Send>>>>,
+    aw_grid_window: Option<AwSpectralGridWindow>,
     maximum_convolution_support: usize,
     fft: PreparedFft,
     dirty_grids: Option<Vec<Array2<Complex64>>>,
@@ -6178,6 +6281,58 @@ pub(crate) struct SpectralSlabOperator {
     aw_weight_oversampling: Option<usize>,
     #[cfg(test)]
     measurements: SpectralOperatorMeasurements,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PendingAwAccumulation {
+    sample: SpectralOperatorSample,
+    predicted: Complex64,
+}
+
+#[derive(Debug)]
+struct AwSpectralGridWindow {
+    request_capacity: usize,
+    request_samples: Vec<AwVisibilitySample>,
+    pending: Vec<PendingAwAccumulation>,
+    arena: AwGridWindowArena,
+}
+
+impl AwSpectralGridWindow {
+    fn new(
+        projection: &PreparedAwProjection,
+        request_capacity: usize,
+        with_sensitivity: bool,
+    ) -> Result<Self, SpectralOperatorError> {
+        let arena = AwGridWindowArena::new(
+            projection.grid_window_capacity(request_capacity, with_sensitivity)?,
+        );
+        Ok(Self {
+            request_capacity,
+            request_samples: Vec::with_capacity(request_capacity),
+            pending: Vec::with_capacity(request_capacity),
+            arena,
+        })
+    }
+
+    fn clear(&mut self) {
+        self.request_samples.clear();
+        self.pending.clear();
+    }
+
+    fn push(
+        &mut self,
+        request: AwVisibilitySample,
+        pending: PendingAwAccumulation,
+    ) -> Result<(), SpectralOperatorError> {
+        if self.request_samples.len() != self.pending.len()
+            || self.pending.len() >= self.request_capacity
+        {
+            return Err(SpectralOperatorError::ResidencyOverflow);
+        }
+        self.request_samples.push(request);
+        self.pending.push(pending);
+        Ok(())
+    }
 }
 
 struct AwPublishedSumWeights {
@@ -6342,6 +6497,20 @@ impl SpectralSlabOperator {
             .as_ref()
             .map(PreparedAwProjection::weight_oversampling);
         let has_aw_projection = aw_projection.is_some();
+        let aw_grid_window = match (aw_projection.as_ref(), specification.as_deref()) {
+            (Some(projection), Some(specification)) => Some(AwSpectralGridWindow::new(
+                projection,
+                aw_grid_window_request_capacity(
+                    workload.max_replay_block_samples,
+                    specification.basis,
+                    specification.spectral_kernel,
+                    true,
+                )?,
+                matches!(workload.pass, SpectralOperatorPass::InitialMajor),
+            )?),
+            (Some(_), None) => return Err(SpectralOperatorError::ProblemMismatch),
+            (None, _) => None,
+        };
         let normal_moments = basis.normal_moments(slab) * polarization_count;
         let major_coefficient_planes = basis.major_coefficient_planes(slab) * polarization_count;
         let major_normal_planes = basis.major_normal_planes(slab) * polarization_count;
@@ -6382,6 +6551,7 @@ impl SpectralSlabOperator {
                 .map(|projection| projection.instantiate())
                 .transpose()?
                 .map(Mutex::new),
+            aw_grid_window,
             maximum_convolution_support,
             fft,
             dirty_grids: initial.then(|| plane_grids(major_coefficient_planes)),
@@ -6510,6 +6680,21 @@ impl SpectralSlabOperator {
         sample: SpectralOperatorSample,
         polarization: usize,
     ) -> Result<(), SpectralOperatorError> {
+        if !self.register_mapped_sample(sample, polarization)? || sample.imaging_weight == 0.0 {
+            return Ok(());
+        }
+        let Some(taps) = self.operator_taps(sample)? else {
+            return Ok(());
+        };
+        let taps = self.prepare_grid_taps(taps, true)?;
+        self.accumulate_polarization(sample, polarization, &taps.as_view())
+    }
+
+    fn register_mapped_sample(
+        &mut self,
+        sample: SpectralOperatorSample,
+        polarization: usize,
+    ) -> Result<bool, SpectralOperatorError> {
         if polarization >= self.polarization_count {
             return Err(SpectralOperatorError::InvalidSample);
         }
@@ -6517,7 +6702,7 @@ impl SpectralSlabOperator {
         match self.basis {
             SpectralBasisPlan::ChannelLocal => {
                 let Some(plane) = channel_plane else {
-                    return Ok(());
+                    return Ok(false);
                 };
                 let plane = self.polarization_plane(plane, polarization);
                 self.mapped_samples[plane] = self.mapped_samples[plane]
@@ -6526,7 +6711,7 @@ impl SpectralSlabOperator {
             }
             SpectralBasisPlan::Polynomial(_) | SpectralBasisPlan::TaylorViaChannelMajor(_) => {
                 if channel_plane.is_none() {
-                    return Ok(());
+                    return Ok(false);
                 }
                 for mapped in self
                     .mapped_samples
@@ -6549,13 +6734,16 @@ impl SpectralSlabOperator {
                 }
             }
         }
-        if sample.imaging_weight == 0.0 {
-            return Ok(());
-        }
-        let Some(taps) = self.operator_taps(sample)? else {
-            return Ok(());
-        };
-        let taps = self.prepare_grid_taps(taps, true)?;
+        Ok(true)
+    }
+
+    fn accumulate_polarization(
+        &mut self,
+        sample: SpectralOperatorSample,
+        polarization: usize,
+        taps: &GridOperatorTapView<'_>,
+    ) -> Result<(), SpectralOperatorError> {
+        let channel_plane = self.slab.core_index(sample.output_channel);
         let normalization = taps.normalization(&self.gridder)?;
         let aw_publication_lane = self.aw_publication_lane(sample)?;
         let factor = sample.spectral_factor;
@@ -6567,12 +6755,12 @@ impl SpectralSlabOperator {
                 );
                 self.grid_dirty_term(
                     plane,
-                    &taps,
+                    taps,
                     sample.visibility * sample.phase() * (sample.imaging_weight * factor),
                 )?;
                 let normal_weight = sample.imaging_weight * factor * factor;
-                self.accumulate_mosaic_normal(plane, sample, &taps, normal_weight)?;
-                self.grid_normal_moment(plane, &taps, normal_weight, normalization)?;
+                self.accumulate_mosaic_normal(plane, sample, taps, normal_weight)?;
+                self.grid_normal_moment(plane, taps, normal_weight, normalization)?;
                 self.accumulate_published_sum_weight(
                     plane,
                     sample.published_weight * factor * factor,
@@ -6587,12 +6775,12 @@ impl SpectralSlabOperator {
                 );
                 self.grid_dirty_term(
                     plane,
-                    &taps,
+                    taps,
                     sample.visibility * sample.phase() * (sample.imaging_weight * factor),
                 )?;
                 self.grid_channel_major_normal(
                     plane,
-                    &taps,
+                    taps,
                     sample.imaging_weight * factor * factor,
                     sample.published_weight * factor * factor,
                     normalization,
@@ -6616,13 +6804,13 @@ impl SpectralSlabOperator {
                 for term in 0..self.coefficient_basis.len() {
                     let coefficient = self.coefficient_basis[term];
                     let plane = self.polarization_plane(term, polarization);
-                    self.grid_dirty_term(plane, &taps, visibility_scale * coefficient)?;
+                    self.grid_dirty_term(plane, taps, visibility_scale * coefficient)?;
                 }
                 for moment in 0..self.normal_moment_weights.len() {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
-                    self.accumulate_mosaic_normal(moment, sample, &taps, weight)?;
-                    self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                    self.accumulate_mosaic_normal(moment, sample, taps, weight)?;
+                    self.grid_normal_moment(moment, taps, weight, normalization)?;
                 }
                 plan.fill_normal_moment_weights(
                     sample.frequency_hz,
@@ -6666,16 +6854,16 @@ impl SpectralSlabOperator {
                     let plane = self.polarization_plane(term, polarization);
                     self.grid_dirty_term(
                         plane,
-                        &taps,
+                        taps,
                         visibility_scale * self.coefficient_basis[term],
                     )?;
                 }
-                self.grid_common_residual_term(channel, &taps, visibility_scale)?;
+                self.grid_common_residual_term(channel, taps, visibility_scale)?;
                 self.fill_joint_normal_weights(sample.imaging_weight * factor * factor)?;
                 for moment in 0..self.normal_moment_weights.len() {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
-                    self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                    self.grid_normal_moment(moment, taps, weight, normalization)?;
                 }
                 self.fill_joint_normal_weights(sample.published_weight * factor * factor)?;
                 for moment in 0..self.normal_moment_weights.len() {
@@ -6815,6 +7003,107 @@ impl SpectralSlabOperator {
         }
     }
 
+    fn clear_aw_grid_window(&mut self) {
+        if let Some(window) = self.aw_grid_window.as_mut() {
+            window.clear();
+        }
+    }
+
+    fn stage_aw_polarization(
+        &mut self,
+        sample: SpectralOperatorSample,
+        predicted: Complex64,
+        polarization: usize,
+    ) -> Result<(), SpectralOperatorError> {
+        if !self.register_mapped_sample(sample, polarization)? || sample.imaging_weight == 0.0 {
+            return Ok(());
+        }
+        let Some(OperatorTaps::Aw(request)) = self.operator_taps(sample)? else {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        };
+        self.aw_grid_window
+            .as_mut()
+            .ok_or(SpectralOperatorError::ProblemMismatch)?
+            .push(request, PendingAwAccumulation { sample, predicted })
+    }
+
+    fn replay_aw_grid_window(
+        &mut self,
+        predicts_residual: bool,
+    ) -> Result<(), SpectralOperatorError> {
+        let Some(mut window) = self.aw_grid_window.take() else {
+            return Ok(());
+        };
+        let result = self.replay_aw_grid_window_inner(&mut window, predicts_residual);
+        window.clear();
+        self.aw_grid_window = Some(window);
+        result
+    }
+
+    fn replay_aw_grid_window_inner(
+        &mut self,
+        window: &mut AwSpectralGridWindow,
+        predicts_residual: bool,
+    ) -> Result<(), SpectralOperatorError> {
+        if window.pending.is_empty() {
+            return Ok(());
+        }
+        if window.request_samples.len() != window.pending.len() {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let with_sensitivity = self.psf_grids.is_some();
+        {
+            let aw = self
+                .aw_projection
+                .as_ref()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?;
+            let mut aw = aw
+                .lock()
+                .map_err(|_| SpectralOperatorError::ProblemMismatch)?;
+            aw.prepare_grid_window(
+                self.geometry.grid_shape,
+                &window.request_samples,
+                with_sensitivity,
+                &mut window.arena,
+            )?;
+        }
+        if window.arena.requests().len() != window.pending.len() {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        for (pending, prepared) in window.pending.iter().copied().zip(window.arena.requests()) {
+            let imaging = prepared
+                .imaging
+                .as_ref()
+                .ok_or(SpectralOperatorError::ProblemMismatch)?;
+            let taps = GridOperatorTapView::Aw {
+                imaging: AwGridPlanView::Windowed {
+                    descriptor: imaging,
+                    arena: &window.arena,
+                },
+                sensitivity: prepared.sensitivity.as_ref().map(|descriptor| {
+                    AwGridPlanView::Windowed {
+                        descriptor,
+                        arena: &window.arena,
+                    }
+                }),
+            };
+            if with_sensitivity && prepared.sensitivity.is_none() {
+                return Err(SpectralOperatorError::ProblemMismatch);
+            }
+            if predicts_residual {
+                self.accumulate_with_residual_polarization(
+                    pending.sample,
+                    pending.predicted,
+                    0,
+                    &taps,
+                )?;
+            } else {
+                self.accumulate_polarization(pending.sample, 0, &taps)?;
+            }
+        }
+        Ok(())
+    }
+
     fn observe_aw_grid(
         &mut self,
         sample: SpectralOperatorSample,
@@ -6841,7 +7130,7 @@ impl SpectralSlabOperator {
         &mut self,
         plane: usize,
         sample: SpectralOperatorSample,
-        taps: &GridOperatorTaps,
+        taps: &GridOperatorTapView<'_>,
         weight: f64,
     ) -> Result<(), SpectralOperatorError> {
         let Some(accumulators) = self.mosaic_normal.as_mut() else {
@@ -6854,7 +7143,7 @@ impl SpectralSlabOperator {
             .mosaic_response
             .ok_or(SpectralOperatorError::InvalidSample)?;
         let pointings = mosaic_response.canonical_pointings(pointings);
-        let GridOperatorTaps::Mosaic { plan, .. } = taps else {
+        let GridOperatorTapView::Mosaic { plan, .. } = taps else {
             return Err(SpectralOperatorError::ProblemMismatch);
         };
         accumulators
@@ -6925,7 +7214,7 @@ impl SpectralSlabOperator {
     fn grid_dirty_term(
         &mut self,
         plane: usize,
-        taps: &GridOperatorTaps,
+        taps: &GridOperatorTapView<'_>,
         value: Complex64,
     ) -> Result<(), SpectralOperatorError> {
         let grid = &mut self
@@ -6957,7 +7246,7 @@ impl SpectralSlabOperator {
     fn grid_normal_moment(
         &mut self,
         moment: usize,
-        taps: &GridOperatorTaps,
+        taps: &GridOperatorTapView<'_>,
         weight: f64,
         normalization: f64,
     ) -> Result<(), SpectralOperatorError> {
@@ -6998,7 +7287,7 @@ impl SpectralSlabOperator {
     fn grid_channel_major_normal(
         &mut self,
         plane: usize,
-        taps: &GridOperatorTaps,
+        taps: &GridOperatorTapView<'_>,
         imaging_weight: f64,
         published_weight: f64,
         normalization: f64,
@@ -7060,18 +7349,18 @@ impl SpectralSlabOperator {
     fn grid_aw_sensitivity(
         &mut self,
         moment: usize,
-        taps: &GridOperatorTaps,
+        taps: &GridOperatorTapView<'_>,
         weight: f64,
     ) -> Result<(), SpectralOperatorError> {
         let plan = match taps {
-            GridOperatorTaps::Aw {
+            GridOperatorTapView::Aw {
                 sensitivity: Some(plan),
                 ..
             } => plan,
-            GridOperatorTaps::Aw {
+            GridOperatorTapView::Aw {
                 sensitivity: None, ..
             } => return Err(SpectralOperatorError::ProblemMismatch),
-            GridOperatorTaps::Standard(_) | GridOperatorTaps::Mosaic { .. } => return Ok(()),
+            GridOperatorTapView::Standard(_) | GridOperatorTapView::Mosaic { .. } => return Ok(()),
         };
         let grids = self
             .aw_sensitivity_grids
@@ -7087,7 +7376,7 @@ impl SpectralSlabOperator {
         let compensation = compensations
             .get_mut(moment)
             .ok_or(SpectralOperatorError::ProblemMismatch)?;
-        plan.grid_compensated(
+        (*plan).grid_compensated(
             grid.as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?,
             compensation
@@ -7095,7 +7384,6 @@ impl SpectralSlabOperator {
                 .ok_or(SpectralOperatorError::ProblemMismatch)?,
             Complex64::new(weight, 0.0),
         )
-        .map_err(Into::into)
     }
 
     fn accumulate_published_sum_weight(
@@ -7625,52 +7913,24 @@ impl SpectralSlabOperator {
         predicted: Complex64,
         polarization: usize,
     ) -> Result<(), SpectralOperatorError> {
-        if polarization >= self.polarization_count {
-            return Err(SpectralOperatorError::InvalidSample);
-        }
-        let channel_plane = self.slab.core_index(sample.output_channel);
-        match self.basis {
-            SpectralBasisPlan::ChannelLocal => {
-                let Some(plane) = channel_plane else {
-                    return Ok(());
-                };
-                let plane = self.polarization_plane(plane, polarization);
-                self.mapped_samples[plane] = self.mapped_samples[plane]
-                    .checked_add(1)
-                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
-            }
-            SpectralBasisPlan::Polynomial(_) | SpectralBasisPlan::TaylorViaChannelMajor(_) => {
-                if channel_plane.is_none() {
-                    return Ok(());
-                }
-                for mapped in self
-                    .mapped_samples
-                    .iter_mut()
-                    .skip(polarization)
-                    .step_by(self.polarization_count)
-                {
-                    *mapped = mapped
-                        .checked_add(1)
-                        .ok_or(SpectralOperatorError::CoverageOverflow)?;
-                }
-            }
-            SpectralBasisPlan::Joint { .. } => {
-                if self
-                    .mapped_samples
-                    .get(self.polarization_plane(sample.output_channel, polarization))
-                    .is_none()
-                {
-                    return Err(SpectralOperatorError::InvalidSample);
-                }
-            }
-        }
-        if sample.imaging_weight == 0.0 {
+        if !self.register_mapped_sample(sample, polarization)? || sample.imaging_weight == 0.0 {
             return Ok(());
         }
         let Some(taps) = self.operator_taps(sample)? else {
             return Ok(());
         };
         let taps = self.prepare_grid_taps(taps, self.psf_grids.is_some())?;
+        self.accumulate_with_residual_polarization(sample, predicted, polarization, &taps.as_view())
+    }
+
+    fn accumulate_with_residual_polarization(
+        &mut self,
+        sample: SpectralOperatorSample,
+        predicted: Complex64,
+        polarization: usize,
+        taps: &GridOperatorTapView<'_>,
+    ) -> Result<(), SpectralOperatorError> {
+        let channel_plane = self.slab.core_index(sample.output_channel);
         let normalization = taps.normalization(&self.gridder)?;
         let aw_publication_lane = self.aw_publication_lane(sample)?;
         let factor = sample.spectral_factor;
@@ -7684,13 +7944,13 @@ impl SpectralSlabOperator {
                     polarization,
                 );
                 if self.dirty_grids.is_some() {
-                    self.grid_dirty_term(plane, &taps, observed_scale)?;
+                    self.grid_dirty_term(plane, taps, observed_scale)?;
                 }
-                self.grid_residual_term(plane, &taps, residual_scale)?;
+                self.grid_residual_term(plane, taps, residual_scale)?;
                 if self.psf_grids.is_some() {
                     self.grid_normal_moment(
                         plane,
-                        &taps,
+                        taps,
                         sample.imaging_weight * factor * factor,
                         normalization,
                     )?;
@@ -7708,13 +7968,13 @@ impl SpectralSlabOperator {
                     polarization,
                 );
                 if self.dirty_grids.is_some() {
-                    self.grid_dirty_term(plane, &taps, observed_scale)?;
+                    self.grid_dirty_term(plane, taps, observed_scale)?;
                 }
-                self.grid_residual_term(plane, &taps, residual_scale)?;
+                self.grid_residual_term(plane, taps, residual_scale)?;
                 if self.psf_grids.is_some() {
                     self.grid_channel_major_normal(
                         plane,
-                        &taps,
+                        taps,
                         sample.imaging_weight * factor * factor,
                         sample.published_weight * factor * factor,
                         normalization,
@@ -7735,13 +7995,9 @@ impl SpectralSlabOperator {
                     let coefficient = self.coefficient_basis[term];
                     let plane = self.polarization_plane(term, polarization);
                     if self.dirty_grids.is_some() {
-                        self.grid_dirty_term(
-                            plane,
-                            &taps,
-                            polynomial_observed_scale * coefficient,
-                        )?;
+                        self.grid_dirty_term(plane, taps, polynomial_observed_scale * coefficient)?;
                     }
-                    self.grid_residual_term(plane, &taps, polynomial_residual_scale * coefficient)?;
+                    self.grid_residual_term(plane, taps, polynomial_residual_scale * coefficient)?;
                 }
                 if self.psf_grids.is_some() {
                     plan.fill_normal_moment_weights(
@@ -7753,7 +8009,7 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                        self.grid_normal_moment(moment, taps, weight, normalization)?;
                     }
                     plan.fill_normal_moment_weights(
                         sample.frequency_hz,
@@ -7796,13 +8052,13 @@ impl SpectralSlabOperator {
                     let coefficient = self.coefficient_basis[term];
                     let plane = self.polarization_plane(term, polarization);
                     if self.dirty_grids.is_some() {
-                        self.grid_dirty_term(plane, &taps, observed_scale * coefficient)?;
+                        self.grid_dirty_term(plane, taps, observed_scale * coefficient)?;
                     }
-                    self.grid_residual_term(plane, &taps, residual_scale * coefficient)?;
+                    self.grid_residual_term(plane, taps, residual_scale * coefficient)?;
                 }
                 self.grid_common_residual_term(
                     self.polarization_plane(sample.output_channel, polarization),
-                    &taps,
+                    taps,
                     residual_scale,
                 )?;
                 if self.psf_grids.is_some() {
@@ -7810,7 +8066,7 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                        self.grid_normal_moment(moment, taps, weight, normalization)?;
                     }
                     self.fill_joint_normal_weights(sample.published_weight * factor * factor)?;
                     for moment in 0..self.normal_moment_weights.len() {
@@ -7832,7 +8088,7 @@ impl SpectralSlabOperator {
     fn grid_residual_term(
         &mut self,
         plane: usize,
-        taps: &GridOperatorTaps,
+        taps: &GridOperatorTapView<'_>,
         value: Complex64,
     ) -> Result<(), SpectralOperatorError> {
         let grid = &mut self
@@ -7864,7 +8120,7 @@ impl SpectralSlabOperator {
     fn grid_common_residual_term(
         &mut self,
         output_channel: usize,
-        taps: &GridOperatorTaps,
+        taps: &GridOperatorTapView<'_>,
         value: Complex64,
     ) -> Result<(), SpectralOperatorError> {
         let grid = &mut self
@@ -9488,12 +9744,77 @@ enum GridOperatorTaps {
     },
 }
 
+#[derive(Clone, Copy, Debug)]
+enum AwGridPlanView<'a> {
+    Prepared(&'a AwGridPlan),
+    Windowed {
+        descriptor: &'a AwGridPlanDescriptor,
+        arena: &'a AwGridWindowArena,
+    },
+}
+
+impl AwGridPlanView<'_> {
+    fn normalization(self) -> f64 {
+        match self {
+            Self::Prepared(plan) => plan.normalization(),
+            Self::Windowed { descriptor, .. } => descriptor.normalization(),
+        }
+    }
+
+    fn grid_compensated(
+        self,
+        grid: &mut [Complex64],
+        compensation: &mut [Complex64],
+        value: Complex64,
+    ) -> Result<(), SpectralOperatorError> {
+        match self {
+            Self::Prepared(plan) => plan.grid_compensated(grid, compensation, value)?,
+            Self::Windowed { descriptor, arena } => {
+                descriptor.grid_compensated(arena, grid, compensation, value)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+enum GridOperatorTapView<'a> {
+    Standard(SampleTaps),
+    Aw {
+        imaging: AwGridPlanView<'a>,
+        sensitivity: Option<AwGridPlanView<'a>>,
+    },
+    Mosaic {
+        response_key: MosaicProjectorKey,
+        plan: MosaicSamplePlan,
+    },
+}
+
 struct CompensatedGrid<'a> {
     values: &'a mut Array2<Complex64>,
     errors: &'a mut Array2<Complex64>,
 }
 
 impl GridOperatorTaps {
+    fn as_view(&self) -> GridOperatorTapView<'_> {
+        match self {
+            Self::Standard(taps) => GridOperatorTapView::Standard(*taps),
+            Self::Aw {
+                imaging,
+                sensitivity,
+            } => GridOperatorTapView::Aw {
+                imaging: AwGridPlanView::Prepared(imaging),
+                sensitivity: sensitivity.as_ref().map(AwGridPlanView::Prepared),
+            },
+            Self::Mosaic { response_key, plan } => GridOperatorTapView::Mosaic {
+                response_key: *response_key,
+                plan: *plan,
+            },
+        }
+    }
+}
+
+impl GridOperatorTapView<'_> {
     fn normalization(&self, standard: &ConvolutionOperator) -> Result<f64, SpectralOperatorError> {
         match self {
             Self::Standard(taps) => standard.normalization(*taps),
@@ -9513,24 +9834,24 @@ fn grid_operator_compensated(
     standard: &ConvolutionOperator,
     mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
     grid: CompensatedGrid<'_>,
-    taps: &GridOperatorTaps,
+    taps: &GridOperatorTapView<'_>,
     value: Complex64,
 ) -> Result<(), SpectralOperatorError> {
     let CompensatedGrid { values, errors } = grid;
     match taps {
-        GridOperatorTaps::Standard(taps) => standard.grid_compensated(values, errors, *taps, value),
-        GridOperatorTaps::Aw { imaging, .. } => {
+        GridOperatorTapView::Standard(taps) => {
+            standard.grid_compensated(values, errors, *taps, value)
+        }
+        GridOperatorTapView::Aw { imaging, .. } => {
             let grid = values
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
             let compensation = errors
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
-            imaging
-                .grid_compensated(grid, compensation, value)
-                .map_err(Into::into)
+            imaging.grid_compensated(grid, compensation, value)
         }
-        GridOperatorTaps::Mosaic { response_key, plan } => {
+        GridOperatorTapView::Mosaic { response_key, plan } => {
             mosaic
                 .get(response_key)
                 .ok_or(SpectralOperatorError::ProblemMismatch)?
@@ -10528,12 +10849,15 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs::File;
     use std::io::{BufReader, Read};
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
     use casa_imaging_model::{
         CorrelationType, FiniteValuePolicy, FrequencyFrame, LogicalIdentity,
-        MeasurementSetIdentity, PolarizationCoordinate, SelectedAntennaResponses,
-        SelectedSampleAddress, SpectralKernel, SpectralWindowCoordinateCatalog,
+        MeasurementSetIdentity, PolarizationCoordinate, PreparedArtifactAwInterpretation,
+        PreparedArtifactCellSemantics, PreparedArtifactScientificIdentity,
+        SelectedAntennaResponses, SelectedSampleAddress, SpectralKernel,
+        SpectralWindowCoordinateCatalog,
     };
     #[cfg(feature = "cpp-interop-tests")]
     use casa_test_support::gridder_interop::GridderOracle;
@@ -10543,23 +10867,28 @@ mod tests {
     use smallvec::SmallVec;
 
     use super::{
-        AwPublishedSumWeights, ConvolutionOperator, MosaicResponsePlan, MosaicResponseSelection,
-        PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
-        SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
-        SpectralOperatorMeasurements, SpectralOperatorPass, SpectralOperatorPrimitives,
-        SpectralOperatorSample, SpectralOperatorWorkload, SpectralScienceProbe,
-        SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
-        apply_finite_value_policy, apply_input_policy, aw_sensitivity_magnitude,
-        aw_stokes_i_mueller, casa_persistent_complex, casa_useful_mosaic_channels, checked_cells,
-        collect_image_planes, compile_operator_geometry, convolution_sinc,
-        normalize_direction_dependent_psf, polarization_diagonal, polarization_effective_flags,
-        polarization_published_weights, reconstruction_model_binding, scatter_chart_planes,
+        AwPublishedSumWeights, AwSpectralGridWindow, ConvolutionOperator, MosaicResponsePlan,
+        MosaicResponseSelection, PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps,
+        SpectralBasisPlan, SpectralChannelValidity, SpectralOperatorError,
+        SpectralOperatorGeometry, SpectralOperatorMeasurements, SpectralOperatorPass,
+        SpectralOperatorPrimitives, SpectralOperatorSample, SpectralOperatorWorkload,
+        SpectralScienceProbe, SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
+        apply_finite_value_policy, apply_input_policy, aw_grid_window_request_capacity,
+        aw_sensitivity_magnitude, aw_stokes_i_mueller, casa_persistent_complex,
+        casa_useful_mosaic_channels, checked_cells, collect_image_planes,
+        compile_operator_geometry, convolution_sinc,
+        maximum_spectral_contributions_per_weighted_sample, normalize_direction_dependent_psf,
+        polarization_diagonal, polarization_effective_flags, polarization_published_weights,
+        reconstruction_model_binding, scatter_chart_planes,
     };
     #[cfg(feature = "cpp-interop-tests")]
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
     use crate::block_normal::BlockNormalPlan;
     use crate::{
-        ModelDeltaId, ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
+        AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorError, AwPreparedCatalog,
+        AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,
+        AwPreparedCellProvider, ModelDeltaId, ModelGenerationId, ModelGenerationOrigin,
+        MuellerMatrix, PolarizationOperator, PreparedAwProjection,
     };
 
     fn geometry() -> SpectralOperatorGeometry {
@@ -10582,6 +10911,115 @@ mod tests {
                 [180.0, 0.0],
             ),
         }
+    }
+
+    fn aw_test_identity(
+        frequency_hz: f64,
+        w_lambda: f64,
+        mueller_element: u32,
+    ) -> PreparedArtifactScientificIdentity {
+        PreparedArtifactScientificIdentity::convolution_function(
+            PreparedArtifactCellSemantics::new(
+                frequency_hz,
+                w_lambda,
+                mueller_element,
+                mueller_element,
+                0.0,
+                frequency_hz,
+                15 - mueller_element,
+                "EVLA",
+                "L",
+                25.0,
+                1.0,
+                PreparedArtifactAwInterpretation::Wavelength,
+                false,
+                "discrete-complex-sum",
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[derive(Clone)]
+    struct SpectralAwProvider {
+        cells: Arc<BTreeMap<[u8; 32], Arc<AwConvolutionCell>>>,
+        resident: Option<[u8; 32]>,
+    }
+
+    impl AwPreparedCellProvider for SpectralAwProvider {
+        fn load(
+            &mut self,
+            metadata: &AwPreparedCellMetadata,
+            resident_byte_ceiling: usize,
+        ) -> Result<AwPreparedCellLease, AwOperatorError> {
+            let identity = metadata.identity().as_bytes();
+            let cell = self
+                .cells
+                .get(&identity)
+                .cloned()
+                .ok_or(AwOperatorError::PreparedCellUnavailable)?;
+            if cell.resident_bytes() > resident_byte_ceiling {
+                return Err(AwOperatorError::ResidencyCeilingExceeded);
+            }
+            let disposition = if self.resident == Some(identity) {
+                AwPreparedCellDisposition::Resident
+            } else {
+                self.resident = Some(identity);
+                AwPreparedCellDisposition::Loaded
+            };
+            Ok(AwPreparedCellLease::new(cell, disposition, 0, 0))
+        }
+    }
+
+    fn prepared_aw_projection() -> PreparedAwProjection {
+        let frequency_hz = 1.0e9;
+        let layout = AwKernelLayout::new([1, 1], 2, [7, 7], [3, 3]).unwrap();
+        let mut metadata = Vec::new();
+        let mut cells = BTreeMap::new();
+        for (ordinal, (mueller, w_lambda)) in [(0, 0.0), (0, 1.0), (15, 0.0), (15, 1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            let identity = aw_test_identity(frequency_hz, w_lambda, mueller);
+            let entry = AwPreparedCellMetadata::new(
+                identity,
+                frequency_hz,
+                w_lambda,
+                1.0,
+                mueller,
+                0.0,
+                layout,
+                layout,
+            )
+            .unwrap();
+            let scale = (ordinal + 1) as f64;
+            let kernel = |scale: f64| {
+                AwConvolutionKernel::new(
+                    layout,
+                    (0..49)
+                        .map(|tap| {
+                            Complex64::new(scale * (tap + 1) as f64, scale * (tap % 5) as f64 / 7.0)
+                        })
+                        .collect(),
+                )
+                .unwrap()
+            };
+            let cell = Arc::new(
+                AwConvolutionCell::new(identity, kernel(scale), kernel(scale * 0.5)).unwrap(),
+            );
+            metadata.push(entry);
+            cells.insert(identity.as_bytes(), cell);
+        }
+        PreparedAwProjection::new(
+            AwPreparedCatalog::new(metadata).unwrap(),
+            SpectralAwProvider {
+                cells: Arc::new(cells),
+                resident: None,
+            },
+            false,
+            64 * 1024,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -10998,6 +11436,244 @@ mod tests {
         let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)
             .expect("reserved FFT workspace");
         SpectralSlabOperator::new_with_geometry(geometry(), workload.slab, workload, fft)
+    }
+
+    fn aw_operator(projection: &PreparedAwProjection) -> SpectralSlabOperator {
+        let mut operator = operator();
+        let shape = (
+            operator.geometry.grid_shape[0],
+            operator.geometry.grid_shape[1],
+        );
+        operator.aw_projection = Some(Mutex::new(projection.instantiate().unwrap()));
+        operator.aw_grid_window = Some(
+            AwSpectralGridWindow::new(projection, operator.workload.max_replay_block_samples, true)
+                .unwrap(),
+        );
+        operator.aw_sensitivity_grids = Some(vec![Array2::zeros(shape)]);
+        operator.aw_sensitivity_compensations = Some(vec![Array2::zeros(shape)]);
+        operator.residual_grids = Some(vec![Array2::zeros(shape)]);
+        operator.residual_compensations = Some(vec![Array2::zeros(shape)]);
+        operator.aw_published_sum_weights = Some(AwPublishedSumWeights::new(1, 0));
+        operator.image_correction_oversampling = Some(projection.imaging_oversampling());
+        operator.aw_weight_oversampling = Some(projection.weight_oversampling());
+        operator
+    }
+
+    fn aw_sample(
+        output_channel: usize,
+        w_lambda: f64,
+        mueller_element: u32,
+        visibility: [f64; 2],
+        weight: f64,
+        published_weight: f64,
+        phase_shift_m: f64,
+    ) -> SpectralOperatorSample {
+        let frequency_hz = 1.0e9;
+        SpectralOperatorSample::new(
+            output_channel,
+            [0.0, 0.0, w_lambda * 299_792_458.0 / frequency_hz],
+            frequency_hz,
+            phase_shift_m,
+            visibility,
+            weight,
+            1.0,
+        )
+        .unwrap()
+        .with_published_weight(published_weight)
+        .unwrap()
+        .with_aw_coordinates([0.0, 0.0], [0.0, 0.0], mueller_element)
+        .unwrap()
+    }
+
+    fn assert_same_aw_accumulation(expected: &SpectralSlabOperator, actual: &SpectralSlabOperator) {
+        assert_eq!(actual.dirty_grids, expected.dirty_grids);
+        assert_eq!(actual.dirty_compensations, expected.dirty_compensations);
+        assert_eq!(actual.psf_grids, expected.psf_grids);
+        assert_eq!(actual.psf_compensations, expected.psf_compensations);
+        assert_eq!(actual.aw_sensitivity_grids, expected.aw_sensitivity_grids);
+        assert_eq!(
+            actual.aw_sensitivity_compensations,
+            expected.aw_sensitivity_compensations
+        );
+        assert_eq!(actual.residual_grids, expected.residual_grids);
+        assert_eq!(
+            actual.residual_compensations,
+            expected.residual_compensations
+        );
+        assert_eq!(actual.sum_weights, expected.sum_weights);
+        assert_eq!(
+            actual.sum_weight_compensations,
+            expected.sum_weight_compensations
+        );
+        assert_eq!(actual.mapped_samples, expected.mapped_samples);
+        assert_eq!(actual.measurements, expected.measurements);
+        let expected = expected.aw_published_sum_weights.as_ref().unwrap();
+        let actual = actual.aw_published_sum_weights.as_ref().unwrap();
+        assert_eq!(actual.normal, expected.normal);
+        assert_eq!(actual.normal_compensations, expected.normal_compensations);
+        assert_eq!(actual.channel_major, expected.channel_major);
+        assert_eq!(
+            actual.channel_major_compensations,
+            expected.channel_major_compensations
+        );
+    }
+
+    #[test]
+    fn t51_windowed_aw_accumulation_preserves_source_order_and_all_science_state() {
+        let projection = prepared_aw_projection();
+        let mut expected = aw_operator(&projection);
+        let mut actual = aw_operator(&projection);
+        let samples = [
+            (
+                aw_sample(0, 1.0, 0, [1.0e16, -3.0], 1.0, 1.5, 0.017),
+                Complex64::new(-0.25, 0.5),
+            ),
+            (
+                aw_sample(0, 1.0, 15, [-1.0e16, 2.0], 0.75, 1.25, -0.013),
+                Complex64::new(0.75, -0.125),
+            ),
+            (
+                aw_sample(0, 1.0, 0, [1.0, 0.25], 2.0, 2.5, 0.009),
+                Complex64::new(-0.5, 0.375),
+            ),
+            (
+                aw_sample(0, 1.0, 15, [9.0, -4.0], 0.0, 7.0, 0.0),
+                Complex64::new(3.0, 1.0),
+            ),
+            (
+                aw_sample(1, 1.0, 0, [8.0, 6.0], 1.0, 9.0, 0.0),
+                Complex64::new(2.0, -2.0),
+            ),
+        ];
+
+        for &(sample, predicted) in &samples {
+            expected.push_with_residual(sample, predicted).unwrap();
+            actual.stage_aw_polarization(sample, predicted, 0).unwrap();
+        }
+        let window = actual.aw_grid_window.as_ref().unwrap();
+        assert_eq!(
+            window.pending.len(),
+            3,
+            "only nonzero in-slab taps are staged"
+        );
+        assert_eq!(window.request_samples.len(), 3);
+        assert_eq!(window.pending.capacity(), 3);
+        assert_eq!(window.request_samples.capacity(), 3);
+        assert_eq!(actual.mapped_samples, [4]);
+        assert!(
+            actual
+                .dirty_grids
+                .as_ref()
+                .unwrap()
+                .iter()
+                .flat_map(|grid| grid.iter())
+                .all(|value| *value == Complex64::default()),
+            "AW grid work remains deferred until the window replay"
+        );
+
+        actual.replay_aw_grid_window(true).unwrap();
+        assert_same_aw_accumulation(&expected, &actual);
+        let window = actual.aw_grid_window.as_ref().unwrap();
+        assert!(window.pending.is_empty());
+        assert!(window.request_samples.is_empty());
+        assert_eq!(window.pending.capacity(), 3);
+        assert_eq!(window.request_samples.capacity(), 3);
+
+        let expected_diagnostics = expected
+            .aw_projection
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .diagnostics();
+        let actual_diagnostics = actual
+            .aw_projection
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .diagnostics();
+        assert_eq!(expected_diagnostics.provider_loads, 6);
+        assert_eq!(actual_diagnostics.provider_loads, 4);
+        assert_eq!(actual_diagnostics.selections, 6);
+        assert_eq!(actual_diagnostics.grid_passes, 6);
+    }
+
+    #[test]
+    fn t51_aw_window_flush_preserves_mixed_direct_and_casa_linear_order() {
+        let projection = prepared_aw_projection();
+        let mut expected = aw_operator(&projection);
+        let mut actual = aw_operator(&projection);
+        let direct = aw_sample(0, 1.0, 0, [1.0e16, 0.0], 1.0, 1.0, 0.0);
+        let casa_linear = aw_sample(0, 1.0, 0, [-1.0e16, 0.0], 1.0, 1.0, 0.0);
+        let predicted = Complex64::new(0.25, -0.5);
+
+        expected.push_with_residual(direct, predicted).unwrap();
+        expected.push_with_residual(casa_linear, predicted).unwrap();
+
+        actual.stage_aw_polarization(direct, predicted, 0).unwrap();
+        actual.replay_aw_grid_window(true).unwrap();
+        actual.push_with_residual(casa_linear, predicted).unwrap();
+
+        assert_same_aw_accumulation(&expected, &actual);
+    }
+
+    #[test]
+    fn t51_aw_window_request_bound_is_the_exact_spectral_kernel_fanout() {
+        let polynomial = SpectralBasisPlan::Polynomial(BlockNormalPlan::constant(1.0).unwrap());
+        assert_eq!(
+            maximum_spectral_contributions_per_weighted_sample(polynomial, SpectralKernel::Cubic),
+            1
+        );
+        assert_eq!(
+            maximum_spectral_contributions_per_weighted_sample(
+                SpectralBasisPlan::Joint {
+                    continuum: BlockNormalPlan::constant(1.0).unwrap(),
+                    line_terms: 1,
+                },
+                SpectralKernel::ChannelIntegration { maximum_terms: 9 }
+            ),
+            9
+        );
+        for (kernel, expected) in [
+            (SpectralKernel::Identity, 1),
+            (SpectralKernel::Nearest, 1),
+            (SpectralKernel::Linear, 2),
+            (SpectralKernel::Cubic, 4),
+            (SpectralKernel::ChannelIntegration { maximum_terms: 7 }, 7),
+        ] {
+            assert_eq!(
+                maximum_spectral_contributions_per_weighted_sample(
+                    SpectralBasisPlan::ChannelLocal,
+                    kernel
+                ),
+                expected
+            );
+            assert_eq!(
+                aw_grid_window_request_capacity(11, SpectralBasisPlan::ChannelLocal, kernel, true)
+                    .unwrap(),
+                11 * expected
+            );
+        }
+        assert_eq!(
+            aw_grid_window_request_capacity(
+                usize::MAX,
+                SpectralBasisPlan::ChannelLocal,
+                SpectralKernel::Linear,
+                true
+            ),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        );
+        assert_eq!(
+            aw_grid_window_request_capacity(
+                usize::MAX,
+                SpectralBasisPlan::ChannelLocal,
+                SpectralKernel::Linear,
+                false
+            )
+            .unwrap(),
+            0
+        );
     }
 
     fn samples(visibilities: &[[f64; 2]]) -> Vec<SpectralOperatorSample> {
