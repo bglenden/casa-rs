@@ -563,6 +563,12 @@ class ImageComparisonProtocolTests(unittest.TestCase):
             (root / "left.image.tt0").mkdir()
             (root / "left.extra").mkdir()
             (root / "right.image.tt0").mkdir()
+            cache = root / "right.cf"
+            cache.mkdir()
+            for name in ("CFS_one.im", "WTCFS_one.im"):
+                cell = cache / name
+                cell.mkdir()
+                (cell / "table.info").write_text("Type = Image\nSubType = \n")
 
             inventory = comparator.compare_product_inventory(
                 str(left_prefix),
@@ -575,6 +581,15 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertEqual([".residual.tt0"], inventory["left_missing"])
         self.assertEqual([".extra"], inventory["left_extra"])
         self.assertEqual([".residual.tt0"], inventory["right_missing"])
+        self.assertEqual([], inventory["right_extra"])
+
+    def test_cf_name_does_not_hide_an_image_product(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            image = root / "result.cf"
+            image.mkdir()
+            (image / "table.info").write_text("Type = Image\nSubType = \n")
+            self.assertEqual([".cf"], comparator.discover_product_inventory(root / "result"))
 
     def test_full_reducer_visits_every_element_within_chunk_budget(self) -> None:
         shape = (5, 4, 3)

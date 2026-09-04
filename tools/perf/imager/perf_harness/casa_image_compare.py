@@ -438,7 +438,28 @@ def discover_product_inventory(prefix):
         if path.name.startswith(stem)
         and path.name != stem
         and path.name[len(stem) :].startswith(".")
+        and not is_paired_cf_cache(path)
     )
+
+
+def is_paired_cf_cache(path):
+    """A paired convolution cache is input infrastructure, not an image product."""
+    if not path.is_dir() or (path / "table.info").exists():
+        return False
+    roles = set()
+    for child in path.iterdir():
+        if child.name.startswith("WTCFS"):
+            role = "weight"
+        elif child.name.startswith("CFS"):
+            role = "imaging"
+        else:
+            continue
+        info = child / "table.info"
+        if info.is_file() and "Type = Image" in info.read_text().splitlines():
+            roles.add(role)
+        if len(roles) == 2:
+            return True
+    return False
 
 
 def compare_product_inventory(left_prefix, right_prefix, expected, required):
