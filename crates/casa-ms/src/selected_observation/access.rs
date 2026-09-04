@@ -238,45 +238,46 @@ impl BoundObservationSource {
             content_budget,
             None,
         )?;
-        let pointing_catalog =
-            if let PointingCentreLaw::Observation(law) = problem.geometry().centres().pointing() {
-                let domain = pointing_query_domain
-                    .ok_or(BoundObservationSourceError::MissingPointingQueryDomain)?;
-                let column = match law.direction_column() {
-                    PointingDirectionColumn::Direction => StoredPointingDirectionColumn::Direction,
-                    PointingDirectionColumn::Target => StoredPointingDirectionColumn::Target,
-                };
-                let catalog_budget = selected_pointing_catalog_budget(
-                    &measurement_set,
-                    problem,
-                    source,
-                    shared_bytes,
-                    content_budget,
-                )?;
-                let catalog = measurement_set.prepare_selected_pointing_catalog(
-                    column,
-                    domain,
-                    law.time_sampling(),
-                    PointingReadPlan::new(
-                        preliminary_content_plan.rows_per_block(),
-                        preliminary_content_plan.maximum_pointing_polynomial_terms(),
-                        catalog_budget,
-                    )?,
-                )?;
-                let catalog_measurements = catalog.measurements();
-                tracing::info!(
-                    target: "casa_ms::selected_pointing",
-                    source_rows_scanned = catalog_measurements.source_rows_scanned(),
-                    retained_rows = catalog_measurements.retained_rows(),
-                    retained_bytes = catalog_measurements.retained_bytes(),
-                    construction_peak_bytes = catalog_measurements.construction_peak_bytes(),
-                    build_nanos = catalog_measurements.build_nanos(),
-                    "prepared selected POINTING catalog"
-                );
-                Some(catalog)
-            } else {
-                None
+        let pointing_catalog = if let PointingCentreLaw::Observation(law) =
+            problem.geometry().centres().pointing()
+        {
+            let domain = pointing_query_domain
+                .ok_or(BoundObservationSourceError::MissingPointingQueryDomain)?;
+            let column = match law.direction_column() {
+                PointingDirectionColumn::Direction => StoredPointingDirectionColumn::Direction,
+                PointingDirectionColumn::Target => StoredPointingDirectionColumn::Target,
             };
+            let catalog_budget = selected_pointing_catalog_budget(
+                &measurement_set,
+                problem,
+                source,
+                shared_bytes,
+                content_budget,
+            )?;
+            let catalog = measurement_set.prepare_selected_pointing_catalog(
+                column,
+                domain,
+                law.time_sampling(),
+                PointingReadPlan::new(
+                    preliminary_content_plan.rows_per_block(),
+                    preliminary_content_plan.maximum_pointing_polynomial_terms(),
+                    catalog_budget,
+                )?,
+            )?;
+            let catalog_measurements = catalog.measurements();
+            tracing::info!(
+                target: "casa_ms::selected_pointing",
+                "prepared selected POINTING catalog source_rows_scanned={} retained_rows={} retained_bytes={} construction_peak_bytes={} build_nanos={}",
+                catalog_measurements.source_rows_scanned(),
+                catalog_measurements.retained_rows(),
+                catalog_measurements.retained_bytes(),
+                catalog_measurements.construction_peak_bytes(),
+                catalog_measurements.build_nanos(),
+            );
+            Some(catalog)
+        } else {
+            None
+        };
         let content_plan = selected_content_plan_with_pointing_catalog(
             &measurement_set,
             problem,
