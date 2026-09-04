@@ -53,13 +53,14 @@ pub struct SelectedObservationRow {
     antenna2: i32,
     observation_id: i32,
     time_mjd_seconds: f64,
+    time_centroid_mjd_seconds: f64,
     flag_row: bool,
     uvw_m: [f64; 3],
 }
 
 impl SelectedObservationRow {
     /// Exact stored bytes read per MAIN row while evaluating the canonical predicate.
-    pub const STORAGE_BYTES_PER_ROW: usize = 65;
+    pub const STORAGE_BYTES_PER_ROW: usize = 73;
 
     /// Return the physical MAIN row index.
     #[must_use]
@@ -101,6 +102,12 @@ impl SelectedObservationRow {
     #[must_use]
     pub const fn time_mjd_seconds(self) -> f64 {
         self.time_mjd_seconds
+    }
+
+    /// Return the stored `TIME_CENTROID` in MJD seconds.
+    #[must_use]
+    pub const fn time_centroid_mjd_seconds(self) -> f64 {
+        self.time_centroid_mjd_seconds
     }
 
     /// Return the stored row-level flag.
@@ -258,6 +265,7 @@ impl MeasurementSet {
                         antenna2: fact.antenna2(),
                         observation_id: fact.observation_id(),
                         time_mjd_seconds: fact.time_mjd_seconds(),
+                        time_centroid_mjd_seconds: fact.time_centroid_mjd_seconds(),
                         flag_row: fact.flag_row(),
                         uvw_m: fact.uvw_m(),
                     });

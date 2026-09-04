@@ -2389,6 +2389,7 @@ fn post_compile_selected_row_change_is_rejected_before_streaming() {
 
 #[test]
 fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
+    assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 73);
     let directory = tempfile::tempdir().expect("temporary row-projection fixture");
     let path = directory.path().join("row-projection.ms");
     generate_fixture(&path);
@@ -2410,6 +2411,22 @@ fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
             |row| rows.push(row),
         )
         .expect("visit canonical selected rows");
+    let expected_time_centroids = (0..2)
+        .map(|row| {
+            match measurement_set
+                .main_table()
+                .cell_accessor(row, "TIME_CENTROID")
+                .and_then(|cell| cell.scalar())
+                .expect("stored MAIN.TIME_CENTROID")
+            {
+                ScalarValue::Float64(value) => *value,
+                other => panic!(
+                    "MAIN.TIME_CENTROID must be Float64, found {:?}",
+                    other.primitive_type()
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
 
     assert_eq!(rows.len(), 2);
     assert_eq!(
@@ -2420,6 +2437,12 @@ fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
     );
     assert!(rows.iter().all(|row| !row.flag_row()));
     assert!(rows.iter().all(|row| row.observation_id() == 0));
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.time_centroid_mjd_seconds())
+            .collect::<Vec<_>>(),
+        expected_time_centroids
+    );
 }
 
 #[test]
