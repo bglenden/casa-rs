@@ -3288,7 +3288,7 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
             sample.coordinates.transformed_uvw_m,
             sample.coordinates.raw_uvw_m
         );
-        assert_ne!(
+        assert_eq!(
             sample.coordinates.density_uvw_m,
             sample.coordinates.raw_uvw_m
         );

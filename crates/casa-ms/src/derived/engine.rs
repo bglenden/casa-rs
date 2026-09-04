@@ -1090,20 +1090,6 @@ impl MsCalEngine {
         )
     }
 
-    pub(crate) fn reproject_raw_uvw_for_density_between_j2000_directions(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_direction_rad: [f64; 2],
-        target_direction_rad: [f64; 2],
-    ) -> MsResult<[f64; 3]> {
-        self.reproject_raw_uvw_for_gridft_between_j2000_directions(
-            raw_uvw_m,
-            source_direction_rad,
-            target_direction_rad,
-        )
-        .map(|(uvw_m, _)| uvw_m)
-    }
-
     /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
     /// using the CASA mosaic `girarUVW()` convention.
     pub fn reproject_raw_uvw_for_mosaic_to_direction(

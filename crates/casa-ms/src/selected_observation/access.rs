@@ -1944,13 +1944,10 @@ fn evaluate_row_geometry(
                 observation_direction.longitude_rad(),
                 observation_direction.latitude_rad(),
             ];
-            let density_uvw_m = source
-                .geometry_engine
-                .reproject_raw_uvw_for_density_between_j2000_directions(
-                    stored.uvw_m(),
-                    observation,
-                    target,
-                )?;
+            // CASA's ordinary MFS VisImagingWeight density grid bins the
+            // MeasurementSet UVW.  Phase-centre reprojection belongs to the
+            // GridFT coordinate and phase correction below, not weighting.
+            let density_uvw_m = stored.uvw_m();
             let (transformed_uvw_m, phase_shift_m) = source
                 .geometry_engine
                 .reproject_raw_uvw_for_gridft_between_j2000_directions(
