@@ -490,7 +490,11 @@ impl PreparedArtifactStore {
         &self,
         entries: &[super::reader::ReaderEntry],
     ) -> Result<
-        (ReaderStoreLock, PreparedArtifactSessionMeasurements),
+        (
+            ReaderStoreLock,
+            Arc<super::reader::ReaderManifestSnapshot>,
+            PreparedArtifactSessionMeasurements,
+        ),
         PreparedArtifactSessionFailure,
     > {
         if entries.is_empty() {
@@ -500,18 +504,24 @@ impl PreparedArtifactStore {
                 0,
             ));
         }
+        let snapshot_resident_bytes =
+            super::reader::reader_manifest_snapshot_resident_bytes(entries)
+                .map_err(|error| session_failure(error, None, 0))?;
         let resident_limit = entries
             .iter()
             .try_fold(0_u64, |maximum, entry| {
                 self.reservation(&entry.descriptor, PreparedArtifactOperation::Consume)
                     .map(|reservation| maximum.max(reservation.resident_buffer_bytes))
             })
-            .map_err(|error| session_failure(error, None, 0))?;
+            .map_err(|error| session_failure(error, None, 0))?
+            .checked_add(snapshot_resident_bytes)
+            .ok_or_else(|| session_failure(PreparedArtifactError::ArtifactTooLarge, None, 0))?;
         let mut evidence = ValidationEvidence::for_reader(
             self.budget,
             resident_limit,
             ReaderObservationPhase::Activation,
         );
+        evidence.acquire_resident(snapshot_resident_bytes);
         evidence.expect_reader_entries(entries.len());
         evidence
             .ensure_resident_budget()
@@ -523,8 +533,8 @@ impl PreparedArtifactStore {
         let metadata_started = std::time::Instant::now();
         let validated = self.validate_reader_catalog(entries, &mut evidence);
         evidence.observe_metadata_validation(metadata_started.elapsed());
-        let cache_bytes = match validated {
-            Ok(cache_bytes) => cache_bytes,
+        let (cache_bytes, manifest_snapshot) = match validated {
+            Ok(validated) => validated,
             Err(error) => {
                 let source = match lock.release(&mut evidence) {
                     Ok(()) => error,
@@ -535,7 +545,7 @@ impl PreparedArtifactStore {
         };
         let measurements = session_measurements(&evidence, cache_bytes)
             .map_err(|error| session_failure(error, None, cache_bytes))?;
-        Ok((lock, measurements))
+        Ok((lock, Arc::new(manifest_snapshot), measurements))
     }
 
     /// Stream and checksum one cell while the session holds the validated store lock.
@@ -543,6 +553,8 @@ impl PreparedArtifactStore {
         &self,
         descriptor: &PreparedArtifactDescriptor,
         artifact: &PreparedArtifact,
+        expected_segment_digests: &[[u8; 32]],
+        snapshot_resident_bytes: u64,
         consumer: &mut dyn PreparedArtifactConsumer,
     ) -> Result<PreparedArtifactSessionRead, PreparedArtifactSessionFailure> {
         let reservation = self
@@ -557,17 +569,25 @@ impl PreparedArtifactStore {
                 0,
             ));
         }
+        let resident_limit = reservation
+            .resident_buffer_bytes
+            .checked_add(snapshot_resident_bytes)
+            .ok_or_else(|| session_failure(PreparedArtifactError::ArtifactTooLarge, None, 0))?;
         let mut evidence = ValidationEvidence::for_reader(
             self.budget,
-            reservation.resident_buffer_bytes,
+            resident_limit,
             ReaderObservationPhase::Consume,
         );
+        evidence.acquire_resident(snapshot_resident_bytes);
         let payload_started = std::time::Instant::now();
         let consumed = (|| -> Result<(ArtifactIdentity, u64), PreparedArtifactError> {
             evidence.ensure_resident_budget()?;
             evidence.observe_locks(1);
             evidence.observe_file_descriptors(1);
             let declared_bytes = descriptor.payload_bytes()?;
+            if expected_segment_digests.len() != descriptor.segments.len() {
+                return Err(PreparedArtifactError::IdentityMismatch);
+            }
             evidence.payload_declared(declared_bytes);
             let payload_path = self.entry_path(descriptor.identity).join(PAYLOAD_FILE);
             evidence.store_read_operation();
@@ -579,11 +599,14 @@ impl PreparedArtifactStore {
             let mut payload_hasher = Sha256::new();
             let mut payload_bytes = 0_u64;
             evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
-                for segment in &descriptor.segments {
+                for (segment, expected_segment_digest) in
+                    descriptor.segments.iter().zip(expected_segment_digests)
+                {
                     let mut remaining = segment.byte_len()?;
                     let scalar_bytes = segment.precision.scalar_bytes();
                     let mut byte_offset = 0_u64;
                     let mut scalar = 0_u64;
+                    let mut segment_hasher = Sha256::new();
                     while remaining > 0 {
                         let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
                             .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
@@ -601,6 +624,7 @@ impl PreparedArtifactStore {
                             scalar,
                         )?;
                         payload_hasher.update(&buffer[..limit]);
+                        segment_hasher.update(&buffer[..limit]);
                         evidence.record_payload_hashed(limit as u64);
                         evidence.store_validation();
                         consumer.consume_segment(segment, byte_offset, &buffer[..limit])?;
@@ -611,6 +635,10 @@ impl PreparedArtifactStore {
                             .checked_add(limit as u64)
                             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
                     }
+                    if <[u8; 32]>::from(segment_hasher.finalize()) != *expected_segment_digest {
+                        return Err(PreparedArtifactError::CorruptArtifact);
+                    }
+                    evidence.store_validation();
                 }
                 let mut extra = [0_u8; 1];
                 if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
@@ -1196,7 +1224,7 @@ impl PreparedArtifactStore {
         &self,
         entries: &[super::reader::ReaderEntry],
         evidence: &mut ValidationEvidence,
-    ) -> Result<u64, PreparedArtifactError> {
+    ) -> Result<(u64, super::reader::ReaderManifestSnapshot), PreparedArtifactError> {
         for pair in entries.windows(2) {
             let left = pair[0].descriptor.identity;
             let right = pair[1].descriptor.identity;
@@ -1208,7 +1236,7 @@ impl PreparedArtifactStore {
                 return Err(PreparedArtifactError::InvalidDescriptor);
             }
         }
-        let (cache_bytes, discovered) = with_directory_paths_counted(
+        let (cache_bytes, discovered, segment_digests) = with_directory_paths_counted(
             &self.cache,
             evidence,
             root_inventory_limit(self.budget)?,
@@ -1246,6 +1274,7 @@ impl PreparedArtifactStore {
                 }
 
                 let mut cache_bytes = 0_u64;
+                let mut segment_digests = Vec::with_capacity(entries.len());
                 for entry in entries {
                     let identity = entry.descriptor.identity;
                     let validated = match self.validate_entry_manifest_with_evidence(
@@ -1267,12 +1296,23 @@ impl PreparedArtifactStore {
                         evidence.record_reader_failure(identity, &error);
                         return Err(error);
                     }
+                    segment_digests.push(
+                        validated
+                            .segment_integrity
+                            .iter()
+                            .map(|segment| {
+                                decode_digest(&segment.sha256)
+                                    .ok_or(PreparedArtifactError::InvalidManifest)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_boxed_slice(),
+                    );
                     evidence.accept_reader_entry();
                     cache_bytes = cache_bytes
                         .checked_add(validated.disk_bytes)
                         .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
                 }
-                Ok((cache_bytes, paths.len()))
+                Ok((cache_bytes, paths.len(), segment_digests))
             },
         )?;
         evidence.observe_cache_bytes(cache_bytes);
@@ -1288,7 +1328,16 @@ impl PreparedArtifactStore {
                 budget: self.budget.entries,
             });
         }
-        Ok(cache_bytes)
+        let snapshot_resident_bytes =
+            super::reader::reader_manifest_snapshot_resident_bytes(entries)?;
+        Ok((
+            cache_bytes,
+            super::reader::ReaderManifestSnapshot::new(
+                entries,
+                segment_digests,
+                snapshot_resident_bytes,
+            )?,
+        ))
     }
 
     pub(super) fn validate_raw_budget(

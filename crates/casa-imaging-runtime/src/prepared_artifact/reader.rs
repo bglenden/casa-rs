@@ -18,6 +18,66 @@ pub(super) struct ReaderEntry {
     pub(super) payload_bytes: u64,
 }
 
+pub(super) struct ReaderManifestSnapshot {
+    segment_digests: Box<[Box<[[u8; 32]]>]>,
+    resident_bytes: u64,
+}
+
+impl ReaderManifestSnapshot {
+    pub(super) fn new(
+        entries: &[ReaderEntry],
+        segment_digests: Vec<Box<[[u8; 32]]>>,
+        resident_bytes: u64,
+    ) -> Result<Self, PreparedArtifactError> {
+        if entries.len() != segment_digests.len()
+            || entries
+                .iter()
+                .zip(&segment_digests)
+                .any(|(entry, digests)| entry.descriptor.segments.len() != digests.len())
+        {
+            return Err(PreparedArtifactError::IdentityMismatch);
+        }
+        Ok(Self {
+            segment_digests: segment_digests.into_boxed_slice(),
+            resident_bytes,
+        })
+    }
+
+    pub(super) fn segment_digests(&self, entry: usize) -> &[[u8; 32]] {
+        &self.segment_digests[entry]
+    }
+
+    pub(super) const fn resident_bytes(&self) -> u64 {
+        self.resident_bytes
+    }
+}
+
+pub(super) fn reader_manifest_snapshot_resident_bytes(
+    entries: &[ReaderEntry],
+) -> Result<u64, PreparedArtifactError> {
+    let fixed = size_of::<ReaderManifestSnapshot>()
+        .checked_add(size_of::<Arc<ReaderManifestSnapshot>>())
+        .and_then(|bytes| {
+            bytes.checked_add(entries.len().checked_mul(size_of::<Box<[[u8; 32]]>>())?)
+        })
+        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    entries
+        .iter()
+        .try_fold(fixed, |bytes, entry| {
+            bytes
+                .checked_add(
+                    entry
+                        .descriptor
+                        .segments
+                        .len()
+                        .checked_mul(size_of::<[u8; 32]>())
+                        .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
+                )
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)
+        })
+        .and_then(|bytes| u64::try_from(bytes).map_err(|_| PreparedArtifactError::ArtifactTooLarge))
+}
+
 /// Cloneable, payload-free plan declaration for one lazy prepared catalog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedArtifactReaderPlan {
@@ -189,6 +249,9 @@ impl PreparedArtifactReaderFactory {
                 payload_bytes,
             });
         }
+        store_resident_bytes = store_resident_bytes
+            .checked_add(reader_manifest_snapshot_resident_bytes(&entries)?)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         let cache_identity = cache_identity.ok_or(PreparedArtifactError::InvalidDescriptor)?;
         let storage_demand_id =
             storage_demand_id.ok_or(PreparedArtifactError::InvalidDescriptor)?;
@@ -254,6 +317,7 @@ struct ReaderBinding {
 struct ReaderState {
     binding: Option<ReaderBinding>,
     store_lock: Option<ReaderStoreLock>,
+    manifest_snapshot: Option<Arc<ReaderManifestSnapshot>>,
     session_validation_count: u64,
     active_reads: usize,
     read_bytes: u64,
@@ -384,7 +448,7 @@ impl PreparedArtifactReader {
             .state
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
-        let (store_lock, measurements) = match session {
+        let (store_lock, manifest_snapshot, measurements) = match session {
             Ok(session) => session,
             Err(failure) => {
                 if let Some(measurements) = &failure.measurements {
@@ -408,6 +472,7 @@ impl PreparedArtifactReader {
             return Err(error);
         }
         state.store_lock = Some(store_lock);
+        state.manifest_snapshot = Some(manifest_snapshot);
         state.session_validation_count = 1;
         let worker = context
             .resources()
@@ -433,12 +498,13 @@ impl PreparedArtifactReader {
         identity: ArtifactIdentity,
         consumer: &mut dyn PreparedArtifactConsumer,
     ) -> Result<(), PreparedArtifactError> {
-        let entry = self
+        let (entry_index, entry) = self
             .entries
             .binary_search_by_key(&identity, |entry| entry.descriptor.identity())
             .ok()
-            .map(|index| self.entries[index].clone())
+            .map(|index| (index, self.entries[index].clone()))
             .ok_or(PreparedArtifactError::ReaderArtifactMissing)?;
+        let manifest_snapshot;
         {
             let mut state = self
                 .state
@@ -448,6 +514,7 @@ impl PreparedArtifactReader {
                 return Err(PreparedArtifactError::ReaderInactive);
             }
             if state.store_lock.is_none()
+                || state.manifest_snapshot.is_none()
                 || state.session_validation_count != 1
                 || state.closed
                 || state.aborted
@@ -455,6 +522,12 @@ impl PreparedArtifactReader {
             {
                 return Err(PreparedArtifactError::ReaderClosed);
             }
+            manifest_snapshot = Arc::clone(
+                state
+                    .manifest_snapshot
+                    .as_ref()
+                    .expect("validated reader snapshot was checked"),
+            );
             state.record_cell_requested();
             state.active_reads = state
                 .active_reads
@@ -466,9 +539,13 @@ impl PreparedArtifactReader {
             integrity_identity: entry.integrity_identity,
             cache_identity: entry.descriptor.cache_identity(),
         };
-        let read = self
-            .store
-            .read_for_reader(&entry.descriptor, &artifact, consumer);
+        let read = self.store.read_for_reader(
+            &entry.descriptor,
+            &artifact,
+            manifest_snapshot.segment_digests(entry_index),
+            manifest_snapshot.resident_bytes(),
+            consumer,
+        );
         let mut state = self
             .state
             .lock()
@@ -570,6 +647,7 @@ impl PreparedArtifactReader {
             let measurements = super::transaction::session_measurements(&evidence, 0)?;
             state.observe(&measurements)?;
         }
+        state.manifest_snapshot.take();
         state.observe_residency(residency);
         if state.reader_failed {
             return Err(PreparedArtifactError::ReaderClosed);
@@ -706,6 +784,7 @@ impl PreparedArtifactReader {
         }
         state.released = true;
         state.store_lock.take();
+        state.manifest_snapshot.take();
         state.observe_residency(residency);
         let combined_resident = residency
             .peak_resident_bytes
@@ -779,7 +858,7 @@ impl PreparedArtifactReader {
             .session_started
             .map_or(std::time::Duration::ZERO, |started| started.elapsed());
         eprintln!(
-            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} decoder_workspace_ceiling_bytes={} total_ceiling_bytes={} session_validations={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} decoder_workspace_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={} observations={:?}",
+            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} decoder_workspace_ceiling_bytes={} total_ceiling_bytes={} session_validations={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} decoder_workspace_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={} {}",
             self.plan.catalog_identity,
             self.plan.logical_bytes,
             self.plan.decoded_resident_bytes,
@@ -812,6 +891,7 @@ impl PreparedArtifactReader {
                 state = next;
             }
             state.store_lock.take();
+            state.manifest_snapshot.take();
             self.settled.notify_all();
         }
     }
@@ -1629,6 +1709,71 @@ mod tests {
         with_reader_context(fixture, reader, false, |context| reader.activate(context))
     }
 
+    fn rewrite_manifest(fixture: &ReaderFixture, rewrite: impl FnOnce(&mut ArtifactManifest)) {
+        let path = fixture
+            .factory
+            .store
+            .entry_path(fixture.artifact_identity)
+            .join(MANIFEST_FILE);
+        let mut manifest: ArtifactManifest =
+            serde_json::from_slice(&fs::read(&path).expect("read test manifest"))
+                .expect("decode test manifest");
+        rewrite(&mut manifest);
+        let mut encoded = serde_json::to_vec(&manifest).expect("encode test manifest");
+        encoded.push(b'\n');
+        fs::write(path, encoded).expect("rewrite test manifest");
+    }
+
+    fn assert_metadata_only_activation(reader: &PreparedArtifactReader) {
+        let state = reader.state.lock().expect("reader state");
+        assert_eq!(state.observations.activation_payload.opens, 0);
+        assert_eq!(state.observations.activation_payload.read_bytes, 0);
+        assert_eq!(state.observations.activation_payload.hashed_bytes, 0);
+    }
+
+    fn assert_failed_reader_unpublished(
+        fixture: &ReaderFixture,
+        reader: &PreparedArtifactReader,
+        read_bytes: u64,
+        hashed_bytes: u64,
+        digest_failures: u64,
+        eof_failures: u64,
+    ) {
+        let state = reader.state.lock().expect("reader state");
+        assert!(state.aborted);
+        assert!(state.reader_failed);
+        assert_eq!(state.read_count, 0);
+        assert_eq!(state.observations.consume_payload.opens, 1);
+        assert_eq!(state.observations.consume_payload.read_bytes, read_bytes);
+        assert_eq!(
+            state.observations.consume_payload.hashed_bytes,
+            hashed_bytes
+        );
+        assert_eq!(state.observations.cells_requested, 1);
+        assert_eq!(state.observations.cells_verified, 0);
+        assert_eq!(state.observations.cells_committed, 0);
+        assert_eq!(state.observations.cells_rejected, 1);
+        assert_eq!(state.observations.digest_failures, digest_failures);
+        assert_eq!(state.observations.eof_failures, eof_failures);
+        assert_eq!(
+            state.observations.first_failure_identity,
+            Some(fixture.artifact_identity)
+        );
+        drop(state);
+
+        assert!(matches!(
+            with_reader_context(fixture, reader, false, |context| reader
+                .close(context, PreparedArtifactResidencyMeasurements::default())),
+            Err(PreparedArtifactError::ReaderClosed)
+        ));
+        let released = with_reader_context(fixture, reader, true, |context| {
+            reader.release(context, PreparedArtifactResidencyMeasurements::default())
+        })
+        .expect("release failed reader");
+        assert!(released.artifacts().is_empty());
+        assert!(reader.state.lock().expect("reader state").observer_emitted);
+    }
+
     #[test]
     fn reader_session_does_not_repeat_store_inventory_or_payload_validation_per_load() {
         let fixture = ReaderFixture::new();
@@ -1679,7 +1824,9 @@ mod tests {
 
         let mut prior_bytes = reader.state.lock().expect("reader state").read_bytes;
         let mut prior_operations = reader.state.lock().expect("reader state").read_operations;
-        let expected_operations = (PAYLOAD.len() as u64).div_ceil(STREAMING_BUFFER_BYTES) * 2 + 3;
+        let expected_operations = (PAYLOAD.len() as u64).div_ceil(STREAMING_BUFFER_BYTES) * 2
+            + fixture.factory.entries[0].descriptor.segments.len() as u64
+            + 3;
         for read in 1..=2 {
             reader
                 .read(fixture.artifact_identity, &mut DiscardingConsumer)
@@ -1875,40 +2022,156 @@ mod tests {
             reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
             Err(PreparedArtifactError::CorruptArtifact)
         ));
-        let state = reader.state.lock().expect("reader state");
-        assert!(state.aborted);
-        assert_eq!(state.read_count, 0, "failed cells are never completed");
-        assert_eq!(state.observations.consume_payload.opens, 1);
-        assert_eq!(
-            state.observations.consume_payload.read_bytes,
-            PAYLOAD.len() as u64
+        assert_failed_reader_unpublished(
+            &fixture,
+            &reader,
+            PAYLOAD.len() as u64,
+            PAYLOAD.len() as u64,
+            1,
+            0,
         );
-        assert_eq!(
-            state.observations.consume_payload.hashed_bytes,
-            PAYLOAD.len() as u64
-        );
-        assert_eq!(state.observations.cells_requested, 1);
-        assert_eq!(state.observations.cells_verified, 0);
-        assert_eq!(state.observations.cells_committed, 0);
-        assert_eq!(state.observations.cells_rejected, 1);
-        assert_eq!(state.observations.digest_failures, 1);
-        assert_eq!(
-            state.observations.first_failure_identity,
-            Some(fixture.artifact_identity)
-        );
-        drop(state);
+    }
+
+    #[test]
+    fn valid_hex_segment_digest_corruption_fails_on_first_consume_without_publication() {
+        let fixture = ReaderFixture::new();
+        rewrite_manifest(&fixture, |manifest| {
+            manifest.segments[0].sha256 = "00".repeat(32);
+        });
+        let reader = fixture.factory.session();
+        activate_reader(&fixture, &reader).expect("metadata-only activation");
+        assert_metadata_only_activation(&reader);
 
         assert!(matches!(
-            with_reader_context(&fixture, &reader, false, |context| reader
-                .close(context, PreparedArtifactResidencyMeasurements::default())),
-            Err(PreparedArtifactError::ReaderClosed)
+            reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
+            Err(PreparedArtifactError::CorruptArtifact)
         ));
-        let released = with_reader_context(&fixture, &reader, true, |context| {
-            reader.release(context, PreparedArtifactResidencyMeasurements::default())
-        })
-        .expect("cleanup releases failed reader without publication");
-        assert!(released.artifacts().is_empty());
-        assert!(reader.state.lock().expect("reader state").observer_emitted);
+        assert_failed_reader_unpublished(
+            &fixture,
+            &reader,
+            PAYLOAD.len() as u64,
+            PAYLOAD.len() as u64,
+            1,
+            0,
+        );
+    }
+
+    #[test]
+    fn post_activation_short_payload_fails_once_without_publication() {
+        let fixture = ReaderFixture::new();
+        let reader = fixture.factory.session();
+        activate_reader(&fixture, &reader).expect("metadata-only activation");
+        assert_metadata_only_activation(&reader);
+        let payload = fixture
+            .factory
+            .store
+            .entry_path(fixture.artifact_identity)
+            .join(PAYLOAD_FILE);
+        fs::write(payload, &PAYLOAD[..PAYLOAD.len() - 1])
+            .expect("truncate payload after activation");
+
+        assert!(matches!(
+            reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
+            Err(PreparedArtifactError::IncompleteArtifact)
+        ));
+        let completely_hashed_chunks =
+            (PAYLOAD.len() / STREAMING_BUFFER_BYTES as usize) * STREAMING_BUFFER_BYTES as usize;
+        assert_failed_reader_unpublished(
+            &fixture,
+            &reader,
+            (PAYLOAD.len() - 1) as u64,
+            completely_hashed_chunks as u64,
+            0,
+            1,
+        );
+    }
+
+    #[test]
+    fn post_activation_extra_payload_byte_fails_once_without_publication() {
+        let fixture = ReaderFixture::new();
+        let reader = fixture.factory.session();
+        activate_reader(&fixture, &reader).expect("metadata-only activation");
+        assert_metadata_only_activation(&reader);
+        let payload = fixture
+            .factory
+            .store
+            .entry_path(fixture.artifact_identity)
+            .join(PAYLOAD_FILE);
+        let mut oversized = PAYLOAD.to_vec();
+        oversized.push(0);
+        fs::write(payload, oversized).expect("append payload byte after activation");
+
+        assert!(matches!(
+            reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
+            Err(PreparedArtifactError::OversizedArtifact)
+        ));
+        assert_failed_reader_unpublished(
+            &fixture,
+            &reader,
+            (PAYLOAD.len() + 1) as u64,
+            PAYLOAD.len() as u64,
+            0,
+            1,
+        );
+    }
+
+    #[test]
+    fn reader_observations_are_flat_parser_compatible_key_values() {
+        let observed = ReaderSessionObservations {
+            lock_wait: std::time::Duration::from_nanos(2),
+            metadata_validation: std::time::Duration::from_nanos(3),
+            payload_consumption: std::time::Duration::from_nanos(5),
+            session_wall: std::time::Duration::from_nanos(7),
+            ..ReaderSessionObservations::default()
+        };
+
+        let rendered = observed.to_string();
+        let keys = rendered
+            .split_whitespace()
+            .map(|field| field.split_once('=').expect("flat key=value field").0)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            [
+                "lock_wait_nanos",
+                "metadata_validation_nanos",
+                "payload_consumption_nanos",
+                "session_wall_nanos",
+                "expected_entries",
+                "discovered_entries",
+                "accepted_entries",
+                "directory_enumerations",
+                "directory_entries",
+                "manifest_opens",
+                "manifest_bytes",
+                "activation_payload_metadata_checks",
+                "activation_payload_opens",
+                "activation_payload_declared_bytes",
+                "activation_payload_read_bytes",
+                "activation_payload_hashed_bytes",
+                "consume_payload_metadata_checks",
+                "consume_payload_opens",
+                "consume_payload_declared_bytes",
+                "consume_payload_read_bytes",
+                "consume_payload_hashed_bytes",
+                "cells_requested",
+                "cells_verified",
+                "cells_committed",
+                "cells_rejected",
+                "duplicates",
+                "digest_failures",
+                "eof_failures",
+                "finite_failures",
+                "peak_decoded_bytes",
+                "peak_buffer_bytes",
+                "first_failure_identity",
+            ]
+        );
+        assert!(rendered.contains("lock_wait_nanos=2"));
+        assert!(rendered.contains("metadata_validation_nanos=3"));
+        assert!(rendered.contains("payload_consumption_nanos=5"));
+        assert!(rendered.contains("session_wall_nanos=7"));
+        assert!(rendered.ends_with("first_failure_identity=none"));
     }
 
     #[test]

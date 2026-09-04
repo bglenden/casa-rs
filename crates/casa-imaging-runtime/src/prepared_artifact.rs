@@ -2772,6 +2772,51 @@ impl ReaderSessionObservations {
     }
 }
 
+impl fmt::Display for ReaderSessionObservations {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let nanos = |duration: Duration| u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
+        write!(
+            formatter,
+            "lock_wait_nanos={} metadata_validation_nanos={} payload_consumption_nanos={} session_wall_nanos={} expected_entries={} discovered_entries={} accepted_entries={} directory_enumerations={} directory_entries={} manifest_opens={} manifest_bytes={} activation_payload_metadata_checks={} activation_payload_opens={} activation_payload_declared_bytes={} activation_payload_read_bytes={} activation_payload_hashed_bytes={} consume_payload_metadata_checks={} consume_payload_opens={} consume_payload_declared_bytes={} consume_payload_read_bytes={} consume_payload_hashed_bytes={} cells_requested={} cells_verified={} cells_committed={} cells_rejected={} duplicates={} digest_failures={} eof_failures={} finite_failures={} peak_decoded_bytes={} peak_buffer_bytes={} first_failure_identity=",
+            nanos(self.lock_wait),
+            nanos(self.metadata_validation),
+            nanos(self.payload_consumption),
+            nanos(self.session_wall),
+            self.expected_entries,
+            self.discovered_entries,
+            self.accepted_entries,
+            self.directory_enumerations,
+            self.directory_entries,
+            self.manifest_opens,
+            self.manifest_bytes,
+            self.activation_payload.metadata_checks,
+            self.activation_payload.opens,
+            self.activation_payload.declared_bytes,
+            self.activation_payload.read_bytes,
+            self.activation_payload.hashed_bytes,
+            self.consume_payload.metadata_checks,
+            self.consume_payload.opens,
+            self.consume_payload.declared_bytes,
+            self.consume_payload.read_bytes,
+            self.consume_payload.hashed_bytes,
+            self.cells_requested,
+            self.cells_verified,
+            self.cells_committed,
+            self.cells_rejected,
+            self.duplicate_entries,
+            self.digest_failures,
+            self.eof_failures,
+            self.finite_failures,
+            self.peak_decoded_bytes,
+            self.peak_buffer_bytes,
+        )?;
+        match self.first_failure_identity {
+            Some(identity) => write!(formatter, "{identity}"),
+            None => formatter.write_str("none"),
+        }
+    }
+}
+
 fn merge_payload_observations(
     total: &mut ReaderPayloadObservations,
     other: &ReaderPayloadObservations,

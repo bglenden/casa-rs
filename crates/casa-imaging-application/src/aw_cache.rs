@@ -316,6 +316,30 @@ struct ResidentPreparedCell {
 }
 
 impl PreparedPoolState {
+    fn ensure_available(&self) -> Result<(), AwOperatorError> {
+        if self.closed || self.aborted {
+            Err(AwOperatorError::PreparedCellUnavailable)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn finish_decoded(
+        &mut self,
+        decoded: Result<Arc<AwConvolutionCell>, PreparedArtifactError>,
+    ) -> Result<Arc<AwConvolutionCell>, AwOperatorError> {
+        match decoded {
+            Ok(cell) => {
+                self.ensure_available()?;
+                Ok(cell)
+            }
+            Err(_) => {
+                self.invalidate();
+                Err(AwOperatorError::PreparedCellUnavailable)
+            }
+        }
+    }
+
     fn invalidate(&mut self) {
         self.closed = true;
         self.aborted = true;
@@ -645,9 +669,7 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 .state
                 .lock()
                 .map_err(|_| AwOperatorError::PreparedCellUnavailable)?;
-            if state.closed || state.aborted {
-                return Err(AwOperatorError::PreparedCellUnavailable);
-            }
+            state.ensure_available()?;
             if state.cells.contains_key(&identity) {
                 state.clock = state
                     .clock
@@ -783,16 +805,11 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 .reserved_workspace
                 .checked_sub(workspace)
                 .ok_or(AwOperatorError::MeasurementOverflow)?;
-            let cell = match decoded {
-                Ok(cell) if !state.closed && !state.aborted => cell,
-                Ok(_) => {
+            let cell = match state.finish_decoded(decoded) {
+                Ok(cell) => cell,
+                Err(error) => {
                     self.pool.available.notify_all();
-                    return Err(AwOperatorError::PreparedCellUnavailable);
-                }
-                Err(_) => {
-                    state.invalidate();
-                    self.pool.available.notify_all();
-                    return Err(AwOperatorError::PreparedCellUnavailable);
+                    return Err(error);
                 }
             };
             state.resident = state
@@ -1641,22 +1658,28 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn failed_reader_load_invalidates_all_provider_residency_before_reuse() {
+    fn decoded_reader_error_invalidates_residency_and_blocks_later_reuse() {
         let root = TempDir::new().unwrap();
-        write_test_cache(root.path());
+        write_two_cell_test_cache(root.path());
         let cache = CasaAwCache::open(root.path()).unwrap();
-        let identity = prepared_metadata(cache.entries.values().next().unwrap())
-            .unwrap()
-            .identity();
+        let identities = cache
+            .entries
+            .values()
+            .map(|entry| prepared_metadata(entry).unwrap().identity())
+            .collect::<Vec<_>>();
+        let resident_identity = identities[0];
+        let failed_identity = identities[1];
         let layout = AwKernelLayout::new([0, 0], 1, [3, 3], [1, 1]).unwrap();
         let kernel = AwConvolutionKernel::new(layout, vec![Complex64::new(1.0, 0.0); 9]).unwrap();
-        let cell = Arc::new(AwConvolutionCell::new(identity, kernel.clone(), kernel).unwrap());
+        let cell =
+            Arc::new(AwConvolutionCell::new(resident_identity, kernel.clone(), kernel).unwrap());
         let bytes = cell.resident_bytes();
-        let key = identity.as_bytes();
+        let resident_key = resident_identity.as_bytes();
         let mut state = PreparedPoolState {
+            ceiling: bytes * 2,
             resident: bytes,
             cells: BTreeMap::from([(
-                key,
+                resident_key,
                 ResidentPreparedCell {
                     cell,
                     bytes,
@@ -1666,12 +1689,21 @@ pub(crate) mod tests {
             ..PreparedPoolState::default()
         };
 
-        state.invalidate();
+        assert!(matches!(
+            state.finish_decoded(Err(PreparedArtifactError::CorruptArtifact)),
+            Err(AwOperatorError::PreparedCellUnavailable)
+        ));
 
         assert!(state.closed);
         assert!(state.aborted);
         assert_eq!(state.resident, 0);
         assert!(state.cells.is_empty());
+        assert!(matches!(
+            state.ensure_available(),
+            Err(AwOperatorError::PreparedCellUnavailable)
+        ));
+        assert!(!state.cells.contains_key(&resident_key));
+        assert!(!state.cells.contains_key(&failed_identity.as_bytes()));
     }
 
     #[test]
