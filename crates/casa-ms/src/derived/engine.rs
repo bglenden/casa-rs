@@ -1170,8 +1170,7 @@ fn casa_alma_aca_response_classes(
     let supported_observation = ms.observation().is_ok_and(|observation| {
         observation.row_count() > 0
             && (0..observation.row_count()).all(|row| {
-                observation
-                    .string(row, "TELESCOPE_NAME")
+                selected_string_value(observation.table(), row, "TELESCOPE_NAME")
                     .is_ok_and(|name| matches!(name.trim(), "ALMA" | "ACA"))
             })
     });
@@ -1180,7 +1179,7 @@ fn casa_alma_aca_response_classes(
     }
     (0..antenna.row_count())
         .map(|row| {
-            antenna.dish_diameter(row).map(|diameter| {
+            selected_f64_value(antenna.table(), row, "DISH_DIAMETER").map(|diameter| {
                 if (diameter - 12.0).abs() < 0.5 {
                     Some(AntennaResponseClass::CasaAlma12m)
                 } else if (diameter - 7.0).abs() < 1.0 {

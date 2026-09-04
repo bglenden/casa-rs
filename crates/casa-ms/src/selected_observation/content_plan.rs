@@ -279,7 +279,7 @@ pub(crate) fn selected_pointing_catalog_budget(
     shared_bytes: SelectedObservationSharedBytes,
     budget: SelectedObservationContentBudget,
 ) -> Result<usize, SelectedObservationContentPlanError> {
-    let (retained_bytes, _, _) = retained_metadata_bytes(
+    let (retained_bytes, _, pointing_reference_scratch_bytes) = retained_metadata_bytes(
         measurement_set,
         problem,
         source,
@@ -287,12 +287,18 @@ pub(crate) fn selected_pointing_catalog_budget(
         shared_bytes.shared_reference_data_retained_bytes,
         shared_bytes.shared_source_slots_retained_bytes,
     )?;
-    budget.available_bytes.checked_sub(retained_bytes).ok_or(
-        SelectedObservationContentPlanError::InsufficientRetainedBudget {
-            required_bytes: retained_bytes,
-            available_bytes: budget.available_bytes,
-        },
-    )
+    budget
+        .available_bytes
+        .checked_sub(retained_bytes)
+        .and_then(|bytes| bytes.checked_sub(pointing_reference_scratch_bytes))
+        .ok_or(
+            SelectedObservationContentPlanError::InsufficientRetainedBudget {
+                required_bytes: retained_bytes
+                    .checked_add(pointing_reference_scratch_bytes)
+                    .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
+                available_bytes: budget.available_bytes,
+            },
+        )
 }
 
 pub(crate) fn selected_content_plan_with_pointing_catalog(

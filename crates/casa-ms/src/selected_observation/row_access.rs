@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
 use casa_imaging_model::{
     AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSelection,
@@ -319,16 +320,40 @@ fn selected_wavelengths(
     data_descriptions: &[DataDescriptionSelection],
 ) -> MsResult<Vec<(u32, f64)>> {
     let spectral_windows = measurement_set.spectral_window()?;
-    data_descriptions
+    let rows = data_descriptions
         .iter()
         .map(|description| {
-            let reference_frequency_hz = spectral_windows.ref_frequency(
-                usize::try_from(description.spectral_window_id()).map_err(|_| {
-                    MsError::InvalidInput(
-                        "SPECTRAL_WINDOW_ID exceeds host index domain".to_string(),
-                    )
-                })?,
-            )?;
+            usize::try_from(description.spectral_window_id()).map_err(|_| {
+                MsError::InvalidInput("SPECTRAL_WINDOW_ID exceeds host index domain".to_string())
+            })
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    let reference_frequencies = spectral_windows
+        .table()
+        .column_accessor("REF_FREQUENCY")?
+        .scalar_cells_owned_for_rows(&rows)?;
+    data_descriptions
+        .iter()
+        .zip(rows)
+        .zip(reference_frequencies)
+        .map(|((description, row), frequency)| {
+            let reference_frequency_hz = match frequency {
+                Some(casa_types::ScalarValue::Float64(value)) => value,
+                Some(other) => {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: "REF_FREQUENCY".to_string(),
+                        table: "SPECTRAL_WINDOW".to_string(),
+                        expected: "Float64".to_string(),
+                        found: format!("{:?}", other.primitive_type()),
+                    });
+                }
+                None => {
+                    return Err(MsError::MissingColumn {
+                        column: format!("REF_FREQUENCY[row={row}]"),
+                        table: "SPECTRAL_WINDOW".to_string(),
+                    });
+                }
+            };
             Ok((
                 description.data_description_id(),
                 SPEED_OF_LIGHT_M_PER_S / reference_frequency_hz,

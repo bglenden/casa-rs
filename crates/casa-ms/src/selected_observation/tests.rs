@@ -152,6 +152,14 @@ impl MeasuresProvider for AccountedTestMeasures {
             is_predicted: false,
         }))
     }
+
+    fn tai_minus_utc_seconds(&self, _utc_mjd: f64) -> Result<f64, String> {
+        Ok(32.0)
+    }
+
+    fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
+        Ok(tai_mjd - 32.0 / 86_400.0)
+    }
 }
 
 #[derive(Debug)]
@@ -2096,11 +2104,13 @@ fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
         expected_scratch,
         "one-at-a-time string scratch must not be multiplied by block rows"
     );
-    assert_eq!(
-        two_rows.content_plan().preparation_bytes_per_block(),
-        2 * one_row.content_plan().preparation_bytes_per_block(),
-        "the separately charged reference scratch must not leak into per-row payload"
-    );
+    for plan in [one_row.content_plan(), two_rows.content_plan()] {
+        assert_eq!(
+            plan.preparation_bytes_per_block(),
+            plan.rows_per_block() * plan.preparation_bytes_per_row(),
+            "the separately charged reference scratch must not leak into per-row payload"
+        );
+    }
     assert!(matches!(
         BoundObservationSource::open(
             &problem,
@@ -4208,7 +4218,7 @@ fn content_budget_for_rows(
         selected_observation_shared_bytes(
             &measures,
             BoundObservationSource::retained_source_slot_bytes(),
-            0,
+            single_binding_graph_initialization_bytes(source),
         ),
         target_rows_per_block,
         maximum_live_blocks,
@@ -4297,15 +4307,68 @@ fn content_budget_for_rows_with_shared_bytes(
     let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
         .expect("open retained fixture while deriving its exact content budget");
     let admitted = |available_bytes| {
-        super::content_plan::selected_content_plan(
-            &measurement_set,
-            problem,
-            source,
-            shared_bytes,
-            SelectedObservationContentBudget::new(available_bytes, maximum_live_blocks, 4),
-        )
-        .ok()
-        .is_some_and(|plan| plan.rows_per_block() >= target_rows_per_block)
+        let budget = SelectedObservationContentBudget::new(available_bytes, maximum_live_blocks, 4);
+        let planned = (|| {
+            let preliminary = super::content_plan::selected_content_plan_with_pointing_catalog(
+                &measurement_set,
+                problem,
+                source,
+                shared_bytes,
+                budget,
+                None,
+            )
+            .ok()?;
+            let catalog_measurements = if let PointingCentreLaw::Observation(law) =
+                problem.geometry().centres().pointing()
+            {
+                let domain = crate::observation_owner::validate_test_physical_selection(
+                    &measurement_set,
+                    source.selection(),
+                    budget,
+                )
+                .ok()?;
+                let column = match law.direction_column() {
+                    PointingDirectionColumn::Direction => crate::PointingDirectionColumn::Direction,
+                    PointingDirectionColumn::Target => crate::PointingDirectionColumn::Target,
+                };
+                let catalog_budget = super::content_plan::selected_pointing_catalog_budget(
+                    &measurement_set,
+                    problem,
+                    source,
+                    shared_bytes,
+                    budget,
+                )
+                .ok()?;
+                Some(
+                    measurement_set
+                        .prepare_selected_pointing_catalog(
+                            column,
+                            &domain,
+                            law.time_sampling(),
+                            crate::PointingReadPlan::new(
+                                preliminary.rows_per_block(),
+                                preliminary.maximum_pointing_polynomial_terms(),
+                                catalog_budget,
+                            )
+                            .ok()?,
+                        )
+                        .ok()?
+                        .measurements(),
+                )
+            } else {
+                None
+            };
+            super::content_plan::selected_content_plan_with_pointing_catalog(
+                &measurement_set,
+                problem,
+                source,
+                shared_bytes,
+                budget,
+                catalog_measurements,
+            )
+            .ok()
+        })();
+        planned.is_some_and(|plan| plan.rows_per_block() >= target_rows_per_block)
     };
     let mut upper = 1_usize;
     while !admitted(upper) {
