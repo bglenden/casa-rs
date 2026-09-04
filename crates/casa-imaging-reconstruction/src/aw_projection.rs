@@ -6,7 +6,7 @@
 //! provider so cold CASA import and warm private reuse converge on the same
 //! typed cell without materializing the complete CF cache here.
 
-use std::{collections::BTreeSet, fmt, mem::size_of, sync::Arc};
+use std::{collections::BTreeSet, fmt, mem::size_of, ops::Range, sync::Arc};
 
 use casa_imaging_model::{PreparedArtifactScientificIdentity, PreparedArtifactScientificKind};
 use num_complex::Complex64;
@@ -299,6 +299,22 @@ impl AwPreparedCatalog {
         self.cells[0].weight_layout.oversampling
     }
 
+    pub(crate) fn maximum_imaging_integral_taps(&self) -> usize {
+        self.cells
+            .iter()
+            .map(|cell| cell.imaging_layout.integral_tap_count())
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn maximum_weight_integral_taps(&self) -> usize {
+        self.cells
+            .iter()
+            .map(|cell| cell.weight_layout.integral_tap_count())
+            .max()
+            .unwrap_or(0)
+    }
+
     fn grid_cell(
         &self,
         sample: AwVisibilitySample,
@@ -555,6 +571,45 @@ impl PreparedAwProjection {
         self.catalog.weight_oversampling()
     }
 
+    pub(crate) fn maximum_imaging_integral_taps(&self) -> usize {
+        self.catalog.maximum_imaging_integral_taps()
+    }
+
+    pub(crate) fn maximum_weight_integral_taps(&self) -> usize {
+        self.catalog.maximum_weight_integral_taps()
+    }
+
+    pub(crate) fn grid_window_capacity(
+        &self,
+        request_capacity: usize,
+        with_sensitivity: bool,
+    ) -> Result<AwGridWindowCapacity, AwOperatorError> {
+        let taps_per_request = self
+            .maximum_imaging_integral_taps()
+            .checked_add(if with_sensitivity {
+                self.maximum_weight_integral_taps()
+            } else {
+                0
+            })
+            .ok_or(AwOperatorError::ResidencyCeilingExceeded)?;
+        let tap_capacity = request_capacity
+            .checked_mul(taps_per_request)
+            .ok_or(AwOperatorError::ResidencyCeilingExceeded)?;
+        AwGridWindowCapacity::new(request_capacity, tap_capacity, with_sensitivity)
+    }
+
+    /// Return the checked retained byte ceiling for a reconstruction tap window.
+    #[doc(hidden)]
+    pub fn tap_window_capacity_bytes(
+        &self,
+        request_count: usize,
+        with_sensitivity: bool,
+    ) -> Result<usize, AwOperatorError> {
+        Ok(self
+            .grid_window_capacity(request_count, with_sensitivity)?
+            .retained_bytes)
+    }
+
     pub(crate) fn instantiate(
         &self,
     ) -> Result<AwProjectionOperator<Box<dyn AwPreparedCellProvider + Send>>, AwOperatorError> {
@@ -781,11 +836,7 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         shape: [usize; 2],
         sample: AwVisibilitySample,
     ) -> Result<AwGridPlan, AwOperatorError> {
-        let centered = AwVisibilitySample {
-            w_lambda: 0.0,
-            grid_position: [shape[0] as f64 / 2.0, shape[1] as f64 / 2.0],
-            ..sample
-        };
+        let centered = centered_sensitivity_sample(shape, sample);
         let metadata = self.catalog.grid_cell(centered, self.conjugate_beams)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
         let taps = fused_taps(&cell.cell().weight, shape, centered, true)?;
@@ -793,6 +844,283 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         add_measurement(&mut self.diagnostics.grid_passes, 1)?;
         add_measurement(&mut self.diagnostics.weight_taps, taps.values.len() as u64)?;
         Ok(AwGridPlan::new(shape, taps))
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn prepare_grid_window(
+        &mut self,
+        shape: [usize; 2],
+        samples: &[AwVisibilitySample],
+        with_sensitivity: bool,
+        arena: &mut AwGridWindowArena,
+    ) -> Result<(), AwOperatorError> {
+        arena.clear();
+        if samples.len() > arena.request_capacity {
+            return Err(AwOperatorError::ResidencyCeilingExceeded);
+        }
+
+        let mut required_taps = 0usize;
+        for (source_ordinal, &sample) in samples.iter().enumerate() {
+            let imaging = self
+                .catalog
+                .grid_cell(sample, self.conjugate_beams)?
+                .clone();
+            required_taps = required_taps
+                .checked_add(imaging.imaging_layout.integral_tap_count())
+                .ok_or(AwOperatorError::ResidencyCeilingExceeded)?;
+            arena.work.push(AwGridWindowWork {
+                route: AwGridCellRoute {
+                    identity: imaging.identity,
+                    role: AwGridCellRole::Imaging,
+                },
+                source_ordinal,
+                sample,
+                metadata: imaging,
+            });
+            if with_sensitivity {
+                let centered = centered_sensitivity_sample(shape, sample);
+                let sensitivity = self
+                    .catalog
+                    .grid_cell(centered, self.conjugate_beams)?
+                    .clone();
+                required_taps = required_taps
+                    .checked_add(sensitivity.weight_layout.integral_tap_count())
+                    .ok_or(AwOperatorError::ResidencyCeilingExceeded)?;
+                arena.work.push(AwGridWindowWork {
+                    route: AwGridCellRoute {
+                        identity: sensitivity.identity,
+                        role: AwGridCellRole::Sensitivity,
+                    },
+                    source_ordinal,
+                    sample: centered,
+                    metadata: sensitivity,
+                });
+            }
+        }
+        if required_taps > arena.tap_capacity {
+            return Err(AwOperatorError::ResidencyCeilingExceeded);
+        }
+
+        arena.requests.resize_with(samples.len(), Default::default);
+        arena.work.sort_by(|left, right| {
+            left.route
+                .sort_key()
+                .cmp(&right.route.sort_key())
+                .then_with(|| left.source_ordinal.cmp(&right.source_ordinal))
+        });
+        let mut group_start = 0usize;
+        while group_start < arena.work.len() {
+            let identity = arena.work[group_start].route.identity;
+            let group_end = arena.work[group_start..]
+                .iter()
+                .position(|item| item.route.identity != identity)
+                .map_or(arena.work.len(), |offset| group_start + offset);
+            let lease = load_cell(
+                &mut self.provider,
+                &arena.work[group_start].metadata,
+                &mut self.diagnostics,
+            )?;
+            for item in &arena.work[group_start..group_end] {
+                let kernel = match item.route.role {
+                    AwGridCellRole::Imaging => &lease.cell().imaging,
+                    AwGridCellRole::Sensitivity => &lease.cell().weight,
+                };
+                let taps = fused_taps(kernel, shape, item.sample, true)?;
+                let start = arena.taps.len();
+                arena.taps.extend(taps.values);
+                let descriptor = AwGridPlanDescriptor {
+                    route: item.route,
+                    shape,
+                    taps: start..arena.taps.len(),
+                    normalization: taps.normalization,
+                };
+                let request = &mut arena.requests[item.source_ordinal];
+                match item.route.role {
+                    AwGridCellRole::Imaging => request.imaging = Some(descriptor),
+                    AwGridCellRole::Sensitivity => request.sensitivity = Some(descriptor),
+                }
+                add_measurement(&mut self.diagnostics.selections, 1)?;
+                add_measurement(&mut self.diagnostics.grid_passes, 1)?;
+                match item.route.role {
+                    AwGridCellRole::Imaging => add_measurement(
+                        &mut self.diagnostics.imaging_taps,
+                        (arena.taps.len() - start) as u64,
+                    )?,
+                    AwGridCellRole::Sensitivity => add_measurement(
+                        &mut self.diagnostics.weight_taps,
+                        (arena.taps.len() - start) as u64,
+                    )?,
+                }
+            }
+            drop(lease);
+            group_start = group_end;
+        }
+        if arena.requests.iter().any(|request| {
+            request.imaging.is_none() || (with_sensitivity && request.sensitivity.is_none())
+        }) {
+            return Err(AwOperatorError::PreparedCellMismatch);
+        }
+        Ok(())
+    }
+}
+
+fn centered_sensitivity_sample(
+    shape: [usize; 2],
+    sample: AwVisibilitySample,
+) -> AwVisibilitySample {
+    AwVisibilitySample {
+        w_lambda: 0.0,
+        grid_position: [shape[0] as f64 / 2.0, shape[1] as f64 / 2.0],
+        ..sample
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AwGridCellRole {
+    Imaging,
+    Sensitivity,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AwGridCellRoute {
+    pub(crate) identity: PreparedArtifactScientificIdentity,
+    pub(crate) role: AwGridCellRole,
+}
+
+#[allow(dead_code)]
+impl AwGridCellRoute {
+    fn sort_key(self) -> ([u8; 32], u8) {
+        (
+            self.identity.as_bytes(),
+            match self.role {
+                AwGridCellRole::Imaging => 0,
+                AwGridCellRole::Sensitivity => 1,
+            },
+        )
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+struct AwGridWindowWork {
+    route: AwGridCellRoute,
+    source_ordinal: usize,
+    sample: AwVisibilitySample,
+    metadata: AwPreparedCellMetadata,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AwGridPlanDescriptor {
+    pub(crate) route: AwGridCellRoute,
+    shape: [usize; 2],
+    taps: Range<usize>,
+    normalization: Complex64,
+}
+
+#[allow(dead_code)]
+impl AwGridPlanDescriptor {
+    pub(crate) fn normalization(&self) -> f64 {
+        self.normalization.norm()
+    }
+
+    pub(crate) fn grid_compensated(
+        &self,
+        arena: &AwGridWindowArena,
+        grid: &mut [Complex64],
+        compensation: &mut [Complex64],
+        value: Complex64,
+    ) -> Result<(), AwOperatorError> {
+        if !finite(value) {
+            return Err(AwOperatorError::NonFiniteValue);
+        }
+        validate_grid(grid, self.shape)?;
+        validate_grid(compensation, self.shape)?;
+        let taps = arena
+            .taps
+            .get(self.taps.clone())
+            .ok_or(AwOperatorError::PreparedCellMismatch)?;
+        compensated_taps(grid, compensation, taps, value);
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct AwGridWindowRequest {
+    pub(crate) imaging: Option<AwGridPlanDescriptor>,
+    pub(crate) sensitivity: Option<AwGridPlanDescriptor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AwGridWindowCapacity {
+    pub(crate) request_capacity: usize,
+    pub(crate) tap_capacity: usize,
+    work_capacity: usize,
+    pub(crate) retained_bytes: usize,
+}
+
+impl AwGridWindowCapacity {
+    pub(crate) fn new(
+        request_capacity: usize,
+        tap_capacity: usize,
+        with_sensitivity: bool,
+    ) -> Result<Self, AwOperatorError> {
+        let work_capacity = request_capacity
+            .checked_mul(usize::from(with_sensitivity) + 1)
+            .ok_or(AwOperatorError::ResidencyCeilingExceeded)?;
+        let retained_bytes = request_capacity
+            .checked_mul(size_of::<AwGridWindowRequest>())
+            .and_then(|bytes| {
+                tap_capacity
+                    .checked_mul(size_of::<FusedTap>())
+                    .and_then(|tap_bytes| bytes.checked_add(tap_bytes))
+            })
+            .and_then(|bytes| {
+                work_capacity
+                    .checked_mul(size_of::<AwGridWindowWork>())
+                    .and_then(|work_bytes| bytes.checked_add(work_bytes))
+            })
+            .ok_or(AwOperatorError::ResidencyCeilingExceeded)?;
+        Ok(Self {
+            request_capacity,
+            tap_capacity,
+            work_capacity,
+            retained_bytes,
+        })
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
+pub(crate) struct AwGridWindowArena {
+    request_capacity: usize,
+    tap_capacity: usize,
+    taps: Vec<FusedTap>,
+    requests: Vec<AwGridWindowRequest>,
+    work: Vec<AwGridWindowWork>,
+}
+
+#[allow(dead_code)]
+impl AwGridWindowArena {
+    pub(crate) fn new(capacity: AwGridWindowCapacity) -> Self {
+        Self {
+            request_capacity: capacity.request_capacity,
+            tap_capacity: capacity.tap_capacity,
+            taps: Vec::with_capacity(capacity.tap_capacity),
+            requests: Vec::with_capacity(capacity.request_capacity),
+            work: Vec::with_capacity(capacity.work_capacity),
+        }
+    }
+
+    pub(crate) fn requests(&self) -> &[AwGridWindowRequest] {
+        &self.requests
+    }
+
+    fn clear(&mut self) {
+        self.taps.clear();
+        self.requests.clear();
+        self.work.clear();
     }
 }
 
@@ -1819,6 +2147,173 @@ mod tests {
         assert_eq!(
             AwPreparedCatalog::new(cells.clone()).unwrap(),
             AwPreparedCatalog::new(cells.into_iter().rev().collect()).unwrap()
+        );
+    }
+
+    #[test]
+    fn t51_grid_window_matches_source_order_per_sample_preparation() {
+        let entries = vec![
+            metadata(10.0, 1.0, 3, 0.0),
+            metadata(10.0, 1.0, 12, 0.0),
+            metadata(10.0, 0.0, 12, 0.0),
+        ];
+        let samples = [
+            sample(10.0, 1.0, 3, 0.0),
+            sample(10.0, -1.0, 3, 0.0),
+            sample(10.0, 0.0, 3, 0.0),
+            sample(10.0, 1.0, 3, 0.0),
+            sample(10.0, -1.0, 3, 0.0),
+        ];
+        let mut reference = operator(entries.clone());
+        let mut expected = Vec::new();
+        for &sample in &samples {
+            let imaging = reference.prepare_imaging_grid([10, 10], sample).unwrap();
+            let sensitivity = reference
+                .prepare_sensitivity_grid([10, 10], sample)
+                .unwrap();
+            let mut imaging_grid = vec![Complex64::default(); 100];
+            let mut imaging_compensation = vec![Complex64::default(); 100];
+            imaging
+                .grid_compensated(
+                    &mut imaging_grid,
+                    &mut imaging_compensation,
+                    Complex64::new(1.25, -0.5),
+                )
+                .unwrap();
+            let mut sensitivity_grid = vec![Complex64::default(); 100];
+            let mut sensitivity_compensation = vec![Complex64::default(); 100];
+            sensitivity
+                .grid_compensated(
+                    &mut sensitivity_grid,
+                    &mut sensitivity_compensation,
+                    Complex64::new(-0.75, 0.25),
+                )
+                .unwrap();
+            expected.push((
+                imaging.normalization(),
+                imaging_grid,
+                sensitivity.normalization(),
+                sensitivity_grid,
+            ));
+        }
+
+        let catalog = AwPreparedCatalog::new(entries.clone()).unwrap();
+        let cells = entries
+            .iter()
+            .map(|entry| (entry.identity.as_bytes(), resident(entry)))
+            .collect();
+        let mut windowed = AwProjectionOperator::new(
+            catalog.clone(),
+            Provider {
+                cells,
+                seen: BTreeSet::new(),
+            },
+            true,
+            64 * 1024,
+        )
+        .unwrap();
+        let tap_capacity = samples.len()
+            * (catalog.maximum_imaging_integral_taps() + catalog.maximum_weight_integral_taps());
+        let mut arena = AwGridWindowArena::new(
+            AwGridWindowCapacity::new(samples.len(), tap_capacity, true).unwrap(),
+        );
+        windowed
+            .prepare_grid_window([10, 10], &samples, true, &mut arena)
+            .unwrap();
+
+        assert_eq!(arena.requests().len(), samples.len());
+        for (request, expected) in arena.requests().iter().zip(expected) {
+            let imaging = request.imaging.as_ref().unwrap();
+            let sensitivity = request.sensitivity.as_ref().unwrap();
+            let mut imaging_grid = vec![Complex64::default(); 100];
+            let mut imaging_compensation = vec![Complex64::default(); 100];
+            imaging
+                .grid_compensated(
+                    &arena,
+                    &mut imaging_grid,
+                    &mut imaging_compensation,
+                    Complex64::new(1.25, -0.5),
+                )
+                .unwrap();
+            let mut sensitivity_grid = vec![Complex64::default(); 100];
+            let mut sensitivity_compensation = vec![Complex64::default(); 100];
+            sensitivity
+                .grid_compensated(
+                    &arena,
+                    &mut sensitivity_grid,
+                    &mut sensitivity_compensation,
+                    Complex64::new(-0.75, 0.25),
+                )
+                .unwrap();
+            assert_eq!(imaging.normalization(), expected.0);
+            assert_eq!(imaging_grid, expected.1);
+            assert_eq!(sensitivity.normalization(), expected.2);
+            assert_eq!(sensitivity_grid, expected.3);
+        }
+
+        let routes = arena
+            .requests()
+            .iter()
+            .flat_map(|request| {
+                [
+                    request.imaging.as_ref().unwrap().route,
+                    request.sensitivity.as_ref().unwrap().route,
+                ]
+            })
+            .map(AwGridCellRoute::sort_key)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(routes.len(), 4);
+        let identities = routes
+            .iter()
+            .map(|(identity, _role)| *identity)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(identities.len(), 3);
+        let diagnostics = windowed.diagnostics();
+        assert_eq!(diagnostics.provider_loads, identities.len() as u64);
+        assert_eq!(diagnostics.provider_hits, 0);
+        assert_eq!(diagnostics.selections, (samples.len() * 2) as u64);
+        assert_eq!(diagnostics.grid_passes, (samples.len() * 2) as u64);
+    }
+
+    #[test]
+    fn t51_grid_window_capacity_is_checked_and_oversized_cells_fail() {
+        let entry = metadata(10.0, 1.0, 3, 0.0);
+        let paired_bytes = resident(&entry).resident_bytes();
+        let prepared = PreparedAwProjection::new(
+            AwPreparedCatalog::new(vec![entry.clone()]).unwrap(),
+            Provider {
+                cells: BTreeMap::from([(entry.identity.as_bytes(), resident(&entry))]),
+                seen: BTreeSet::new(),
+            },
+            false,
+            paired_bytes - 1,
+        )
+        .unwrap();
+        let projected = prepared.tap_window_capacity_bytes(3, false).unwrap();
+        let expected = 3 * size_of::<AwGridWindowRequest>()
+            + 3 * prepared.maximum_imaging_integral_taps() * size_of::<FusedTap>()
+            + 3 * size_of::<AwGridWindowWork>();
+        assert_eq!(projected, expected);
+
+        let capacity = prepared.grid_window_capacity(1, false).unwrap();
+        let mut arena = AwGridWindowArena::new(capacity);
+        let mut operator = prepared.instantiate().unwrap();
+        assert_eq!(
+            operator
+                .prepare_grid_window([10, 10], &[sample(10.0, 1.0, 3, 0.0)], false, &mut arena,),
+            Err(AwOperatorError::ResidencyCeilingExceeded)
+        );
+
+        let mut undersized =
+            AwGridWindowArena::new(AwGridWindowCapacity::new(0, 0, false).unwrap());
+        assert_eq!(
+            operator.prepare_grid_window(
+                [10, 10],
+                &[sample(10.0, 1.0, 3, 0.0)],
+                false,
+                &mut undersized,
+            ),
+            Err(AwOperatorError::ResidencyCeilingExceeded)
         );
     }
 
