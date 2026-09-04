@@ -32,6 +32,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::selected_observation::validate_selected_coordinates;
+use crate::selected_pointing::SelectedPointingQueryDomain;
 use crate::subtables::SubTable;
 use crate::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
@@ -795,7 +796,8 @@ pub fn resolve_selected_observation(
         &request.selection,
         request.content_budget,
     )?);
-    validate_physical_selection(&measurement_set, &selection, request.content_budget)?;
+    let pointing_query_domain =
+        validate_physical_selection(&measurement_set, &selection, request.content_budget)?;
     let visibility_storage = SelectedVisibilityStoragePlanner {
         locator: request.locator.clone(),
         selection: Arc::clone(&selection),
@@ -823,7 +825,8 @@ pub fn resolve_selected_observation(
     }
     let snapshot_input = ObservationSnapshotInput::new(vec![source], reference_data, request.model);
     let binding = ObservationSourceBinding::new(state, request.content_budget)
-        .with_ephemeris(request.ephemeris);
+        .with_ephemeris(request.ephemeris)
+        .with_pointing_query_domain(pointing_query_domain);
     Ok(ResolvedSelectedObservation {
         snapshot_input,
         access: ResolvedSelectedObservationAccess {
@@ -911,8 +914,8 @@ fn bind_physical_spectral_coordinates(
     ))
 }
 
-/// Rederive one compiled source's selected read state while its newly opened
-/// retained read locks are held.
+/// Rederive one compiled source's selected read state and POINTING query domain
+/// while its newly opened retained read locks are held.
 ///
 /// This is deliberately crate-private: cross-plan replay must pass through the
 /// selected-observation owner, which combines this physical validation with an
@@ -922,10 +925,11 @@ pub(crate) fn validate_reopened_selected_observation_source(
     measurement_set: &MeasurementSet,
     source: &casa_imaging_model::ObservationSource,
     content_budget: SelectedObservationContentBudget,
-) -> Result<ObservationSourceState, ObservationOwnerError> {
+) -> Result<(ObservationSourceState, SelectedPointingQueryDomain), ObservationOwnerError> {
     let manifest = OwnerManifest::read(measurement_set.main_table().keywords())?;
     manifest.validate_physical_state(measurement_set)?;
-    validate_physical_selection(measurement_set, source.selection(), content_budget)?;
+    let pointing_query_domain =
+        validate_physical_selection(measurement_set, source.selection(), content_budget)?;
     let selected_columns = source.generations().columns();
     let generations = manifest.source_generations(
         measurement_set,
@@ -936,10 +940,9 @@ pub(crate) fn validate_reopened_selected_observation_source(
         &manifest.measurement_set_identity,
         "MeasurementSet identity",
     )?);
-    Ok(ObservationSourceState::new(
-        identity,
-        source.selection().rows().clone(),
-        generations,
+    Ok((
+        ObservationSourceState::new(identity, source.selection().rows().clone(), generations),
+        pointing_query_domain,
     ))
 }
 
@@ -1299,7 +1302,7 @@ fn validate_physical_selection(
     measurement_set: &MeasurementSet,
     selection: &ObservationSelection,
     content_budget: SelectedObservationContentBudget,
-) -> Result<(), ObservationOwnerError> {
+) -> Result<SelectedPointingQueryDomain, ObservationOwnerError> {
     validate_selected_coordinates(measurement_set, selection)?;
     let row_selection = SelectedObservationRowSelection::from_compiled(selection);
     let mut actual = SelectedRowsBuilder::with_data_description_capacity(
@@ -1307,6 +1310,8 @@ fn validate_physical_selection(
             .map_err(|_| ObservationOwnerError::PhysicalSelectionMismatch)?,
         selection.data_descriptions().len(),
     );
+    let mut pointing_query_domain = SelectedPointingQueryDomain::builder();
+    let mut pointing_domain_error = None;
     let mut invalid = false;
     measurement_set.visit_selected_observation_rows(
         &row_selection,
@@ -1319,13 +1324,37 @@ fn validate_physical_selection(
                         u32::try_from(row.data_description_id()).unwrap_or(u32::MAX),
                     ))
                     .is_err();
+                if !invalid && pointing_domain_error.is_none() {
+                    pointing_domain_error = pointing_query_domain
+                        .observe_row(
+                            row.antenna1(),
+                            row.antenna2(),
+                            row.time_mjd_seconds(),
+                            row.time_centroid_mjd_seconds(),
+                        )
+                        .err();
+                }
             }
         },
     )?;
     if invalid || &actual.finish() != selection.rows() {
         return Err(ObservationOwnerError::PhysicalSelectionMismatch);
     }
-    Ok(())
+    if let Some(error) = pointing_domain_error {
+        return Err(error.into());
+    }
+    pointing_query_domain
+        .finish()?
+        .ok_or(ObservationOwnerError::PhysicalSelectionMismatch)
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn validate_test_physical_selection(
+    measurement_set: &MeasurementSet,
+    selection: &ObservationSelection,
+    content_budget: SelectedObservationContentBudget,
+) -> Result<SelectedPointingQueryDomain, ObservationOwnerError> {
+    validate_physical_selection(measurement_set, selection, content_budget)
 }
 
 fn physical_selection_io_budget(
@@ -1607,8 +1636,9 @@ mod tests {
     };
     use casa_imaging_model::{
         AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
-        DataDescriptionSelection, IdSelection, IntentSelection, RowSelection, SelectedMainRow,
-        SelectedRows, SpectralWindowSelection, TimeSelection, UvSelection, compile_observation,
+        DataDescriptionSelection, IdSelection, IntentSelection, PointingTimeSampling, RowSelection,
+        SelectedMainRow, SelectedRows, SpectralWindowSelection, TimeSelection, UvSelection,
+        compile_observation,
     };
     use casa_tables::{LockMode, LockOptions, TableOptions};
     use casa_types::{ArrayValue, Complex32, RecordField};
@@ -1756,6 +1786,86 @@ mod tests {
         let plan = crate::MsReadPlan::new(42_320, io_budget).expect("budget admits the scan");
         assert_eq!(plan.rows_per_block, 42_320);
         assert_eq!(plan.row_count, 42_320);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn physical_selection_binds_per_antenna_time_and_centroid_domains() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("pointing-query-domain.ms");
+        create_ms_columns_with_spectral_coordinates_and_rows(
+            &path,
+            false,
+            false,
+            &[1.0e9],
+            &[1.0e6],
+            3,
+        );
+        let mut measurement_set = MeasurementSet::open(&path).expect("open test MS");
+        for (row, antenna1, antenna2, time, centroid) in [
+            (0, 0, 1, 10.0, 11.0),
+            (1, 1, 2, 20.0, 22.0),
+            (2, 0, 2, 30.0, 33.0),
+        ] {
+            crate::subtables::set_scalar(
+                measurement_set.main_table_mut(),
+                row,
+                "ANTENNA1",
+                ScalarValue::Int32(antenna1),
+            )
+            .expect("set ANTENNA1");
+            crate::subtables::set_scalar(
+                measurement_set.main_table_mut(),
+                row,
+                "ANTENNA2",
+                ScalarValue::Int32(antenna2),
+            )
+            .expect("set ANTENNA2");
+            crate::subtables::set_scalar(
+                measurement_set.main_table_mut(),
+                row,
+                "TIME",
+                ScalarValue::Float64(time),
+            )
+            .expect("set TIME");
+            crate::subtables::set_scalar(
+                measurement_set.main_table_mut(),
+                row,
+                "TIME_CENTROID",
+                ScalarValue::Float64(centroid),
+            )
+            .expect("set TIME_CENTROID");
+        }
+        measurement_set.save().expect("save selected MAIN facts");
+        drop(measurement_set);
+        let measurement_set =
+            MeasurementSet::open_retained_read(&path).expect("reopen lazy selected MAIN facts");
+
+        let selection = one_row_selection_with_total_rows(vec![0], 3);
+        let domain = validate_physical_selection(
+            &measurement_set,
+            &selection,
+            SelectedObservationContentBudget::new(1 << 20, 1, 4),
+        )
+        .expect("bind selected pointing query domain");
+
+        assert_eq!(domain.antenna_ids().collect::<Vec<_>>(), vec![0, 1, 2]);
+        assert_eq!(
+            domain.time_bounds_mjd_seconds(0, PointingTimeSampling::VisibilityTime),
+            Some([10.0, 30.0])
+        );
+        assert_eq!(
+            domain.time_bounds_mjd_seconds(1, PointingTimeSampling::VisibilityTime),
+            Some([10.0, 20.0])
+        );
+        assert_eq!(
+            domain.time_bounds_mjd_seconds(2, PointingTimeSampling::VisibilityTimeCentroid),
+            Some([22.0, 33.0])
+        );
+        assert_eq!(
+            domain.time_bounds_mjd_seconds(3, PointingTimeSampling::VisibilityTimeCentroid),
+            None
+        );
     }
 
     fn create_ms(path: &Path, model_data: bool) {

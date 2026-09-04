@@ -166,6 +166,8 @@ pub(crate) use selected_observation_buffer::{
 };
 pub(crate) use selected_pointing::{
     PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
+    PreparedSelectedPointingCatalog, SelectedPointingCatalogMeasurements,
+    SelectedPointingQueryDomain,
 };
 pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,

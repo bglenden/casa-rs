@@ -3,7 +3,8 @@
 use super::{
     BoundObservationSource, BoundSelectedObservation, ObservationSourceBinding,
     SelectedObservationContentBudget, SelectedObservationRow, SelectedObservationTraversalError,
-    access::validate_input_weight_group, bound_observation::consume_validated_stream,
+    access::{BoundObservationReferenceData, validate_input_weight_group},
+    bound_observation::consume_validated_stream,
 };
 use crate::derived::engine::MsCalEngine;
 use crate::subtables::SubTable;
@@ -1294,7 +1295,7 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
         &expected_measures,
         expected_shared_bytes,
         expected_budget,
-        None,
+        BoundObservationReferenceData::new(None, None),
     )
     .expect("open independent frame-conversion oracle");
     let expected_output_frame = MeasFrame::new()
@@ -1497,7 +1498,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &baseline_measures,
         baseline_shared_bytes,
         baseline_budget,
-        None,
+        BoundObservationReferenceData::new(None, None),
     )
     .expect("bind baseline provider residency");
 
@@ -1518,7 +1519,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
             &large_measures,
             large_shared_bytes,
             baseline_budget,
-            None,
+            BoundObservationReferenceData::new(None, None),
         ),
         Err(super::BoundObservationSourceError::ContentPlan(
             super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
@@ -1535,7 +1536,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &large_measures,
         large_shared_bytes,
         large_budget,
-        None,
+        BoundObservationReferenceData::new(None, None),
     )
     .expect("bind admitted large provider residency");
     assert_eq!(

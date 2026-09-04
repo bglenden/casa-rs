@@ -8,8 +8,9 @@ use crate::{
     MainRowSelectionCursor, MeasurementSet, MsError, MsReadPlan, MsSelectionIoBudget,
     ObservationOwnerError, PointingDirectionBracket,
     PointingDirectionColumn as StoredPointingDirectionColumn, PointingDirectionQuery,
-    PointingReadPlan, SelectedObservationBuffer, SelectedObservationBufferRequest,
-    SelectedStoredSample, SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
+    PointingReadPlan, PreparedSelectedPointingCatalog, SelectedObservationBuffer,
+    SelectedObservationBufferRequest, SelectedPointingQueryDomain, SelectedStoredSample,
+    SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
     VisibilityChannelReadRange,
 };
 use casa_imaging_model::{
@@ -33,11 +34,31 @@ use super::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,
     SelectedObservationContentPlanError, SelectedObservationMeasures,
     SelectedObservationMeasuresError,
-    content_plan::{SelectedObservationSharedBytes, selected_content_plan},
+    content_plan::{
+        SelectedObservationSharedBytes, selected_content_plan_with_pointing_catalog,
+        selected_pointing_catalog_budget,
+    },
     row_selection::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow},
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+
+pub(crate) struct BoundObservationReferenceData<'a> {
+    ephemeris: Option<&'a Arc<crate::SelectedObservationEphemeris>>,
+    pointing_query_domain: Option<&'a SelectedPointingQueryDomain>,
+}
+
+impl<'a> BoundObservationReferenceData<'a> {
+    pub(crate) const fn new(
+        ephemeris: Option<&'a Arc<crate::SelectedObservationEphemeris>>,
+        pointing_query_domain: Option<&'a SelectedPointingQueryDomain>,
+    ) -> Self {
+        Self {
+            ephemeris,
+            pointing_query_domain,
+        }
+    }
+}
 
 /// A retained, read-locked MeasurementSet bound to one compiled source selection.
 ///
@@ -51,6 +72,7 @@ pub(crate) struct BoundObservationSource {
     geometry_engine: Arc<MsCalEngine>,
     row_predicate: CompiledRowPredicate,
     coordinates: Arc<[SelectedCoordinates]>,
+    pointing_catalog: Option<PreparedSelectedPointingCatalog>,
     content_plan: SelectedObservationContentPlan,
     source_row_count_matches: bool,
 }
@@ -95,7 +117,7 @@ impl BoundObservationSource {
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
-        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
+        reference_data: BoundObservationReferenceData<'_>,
     ) -> Result<Self, BoundObservationSourceError> {
         measures.validate_problem(problem)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
@@ -108,7 +130,8 @@ impl BoundObservationSource {
             shared_bytes,
             content_budget,
             measurement_set,
-            ephemeris,
+            reference_data.ephemeris,
+            reference_data.pointing_query_domain,
         )
     }
 
@@ -122,34 +145,35 @@ impl BoundObservationSource {
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
-        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
+        reference_data: BoundObservationReferenceData<'_>,
     ) -> Result<Self, BoundObservationSourceError> {
         let (current_state, prior_state) = states;
         measures.validate_problem(problem)?;
         validate_current_state(source, current_state)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
-        let content_plan = selected_content_plan(
-            &measurement_set,
-            problem,
-            source,
-            shared_bytes,
-            content_budget,
-        )?;
-        let fresh_state = crate::observation_owner::validate_reopened_selected_observation_source(
-            &measurement_set,
-            source,
-            content_budget,
-        )
-        .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
+        let (fresh_state, fresh_pointing_query_domain) =
+            crate::observation_owner::validate_reopened_selected_observation_source(
+                &measurement_set,
+                source,
+                content_budget,
+            )
+            .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
         validate_current_state(source, &fresh_state)?;
         validate_rebound_state(prior_state, &fresh_state)?;
-        Self::from_planned_locked_measurement_set(
+        validate_pointing_query_domain(
+            reference_data.pointing_query_domain,
+            &fresh_pointing_query_domain,
+        )?;
+        Self::from_locked_measurement_set(
+            problem,
             source,
             fresh_state,
             measures,
-            content_plan,
+            shared_bytes,
+            content_budget,
             measurement_set,
-            ephemeris,
+            reference_data.ephemeris,
+            Some(&fresh_pointing_query_domain),
         )
     }
 
@@ -163,33 +187,34 @@ impl BoundObservationSource {
         measures: &SelectedObservationMeasures,
         shared_bytes: SelectedObservationSharedBytes,
         content_budget: SelectedObservationContentBudget,
-        ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
+        reference_data: BoundObservationReferenceData<'_>,
     ) -> Result<Self, BoundObservationSourceError> {
         measures.validate_problem(problem)?;
         validate_current_state(source, current_state)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
-        let content_plan = selected_content_plan(
-            &measurement_set,
-            problem,
-            source,
-            shared_bytes,
-            content_budget,
-        )?;
-        let fresh_state = crate::observation_owner::validate_reopened_selected_observation_source(
-            &measurement_set,
-            source,
-            content_budget,
-        )
-        .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
+        let (fresh_state, fresh_pointing_query_domain) =
+            crate::observation_owner::validate_reopened_selected_observation_source(
+                &measurement_set,
+                source,
+                content_budget,
+            )
+            .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
         validate_current_state(source, &fresh_state)?;
         validate_rebound_state(current_state, &fresh_state)?;
-        Self::from_planned_locked_measurement_set(
+        validate_pointing_query_domain(
+            reference_data.pointing_query_domain,
+            &fresh_pointing_query_domain,
+        )?;
+        Self::from_locked_measurement_set(
+            problem,
             source,
             fresh_state,
             measures,
-            content_plan,
+            shared_bytes,
+            content_budget,
             measurement_set,
-            ephemeris,
+            reference_data.ephemeris,
+            Some(&fresh_pointing_query_domain),
         )
     }
 
@@ -203,13 +228,64 @@ impl BoundObservationSource {
         content_budget: SelectedObservationContentBudget,
         measurement_set: MeasurementSet,
         ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
+        pointing_query_domain: Option<&SelectedPointingQueryDomain>,
     ) -> Result<Self, BoundObservationSourceError> {
-        let content_plan = selected_content_plan(
+        let preliminary_content_plan = selected_content_plan_with_pointing_catalog(
             &measurement_set,
             problem,
             source,
             shared_bytes,
             content_budget,
+            None,
+        )?;
+        let pointing_catalog =
+            if let PointingCentreLaw::Observation(law) = problem.geometry().centres().pointing() {
+                let domain = pointing_query_domain
+                    .ok_or(BoundObservationSourceError::MissingPointingQueryDomain)?;
+                let column = match law.direction_column() {
+                    PointingDirectionColumn::Direction => StoredPointingDirectionColumn::Direction,
+                    PointingDirectionColumn::Target => StoredPointingDirectionColumn::Target,
+                };
+                let catalog_budget = selected_pointing_catalog_budget(
+                    &measurement_set,
+                    problem,
+                    source,
+                    shared_bytes,
+                    content_budget,
+                )?;
+                let catalog = measurement_set.prepare_selected_pointing_catalog(
+                    column,
+                    domain,
+                    law.time_sampling(),
+                    PointingReadPlan::new(
+                        preliminary_content_plan.rows_per_block(),
+                        preliminary_content_plan.maximum_pointing_polynomial_terms(),
+                        catalog_budget,
+                    )?,
+                )?;
+                let catalog_measurements = catalog.measurements();
+                tracing::info!(
+                    target: "casa_ms::selected_pointing",
+                    source_rows_scanned = catalog_measurements.source_rows_scanned(),
+                    retained_rows = catalog_measurements.retained_rows(),
+                    retained_bytes = catalog_measurements.retained_bytes(),
+                    construction_peak_bytes = catalog_measurements.construction_peak_bytes(),
+                    build_nanos = catalog_measurements.build_nanos(),
+                    "prepared selected POINTING catalog"
+                );
+                Some(catalog)
+            } else {
+                None
+            };
+        let content_plan = selected_content_plan_with_pointing_catalog(
+            &measurement_set,
+            problem,
+            source,
+            shared_bytes,
+            content_budget,
+            pointing_catalog
+                .as_ref()
+                .map(|catalog| catalog.measurements()),
         )?;
         Self::from_planned_locked_measurement_set(
             source,
@@ -218,6 +294,7 @@ impl BoundObservationSource {
             content_plan,
             measurement_set,
             ephemeris,
+            pointing_catalog,
         )
     }
 
@@ -228,6 +305,7 @@ impl BoundObservationSource {
         content_plan: SelectedObservationContentPlan,
         measurement_set: MeasurementSet,
         ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
+        pointing_catalog: Option<PreparedSelectedPointingCatalog>,
     ) -> Result<Self, BoundObservationSourceError> {
         let row_predicate = selected_row_predicate(&measurement_set, source)?;
         let coordinates = Arc::from(selected_coordinates(&measurement_set, source.selection())?);
@@ -256,6 +334,7 @@ impl BoundObservationSource {
             geometry_engine,
             row_predicate,
             coordinates,
+            pointing_catalog,
             content_plan,
         })
     }
@@ -268,6 +347,22 @@ impl BoundObservationSource {
         content_budget: SelectedObservationContentBudget,
     ) -> Result<Self, BoundObservationSourceError> {
         let measures = super::measures::test_selected_observation_measures(problem)?;
+        let pointing_query_domain = if matches!(
+            problem.geometry().centres().pointing(),
+            PointingCentreLaw::Observation(_)
+        ) {
+            let measurement_set =
+                MeasurementSet::open_retained_read(source.provenance().locator())?;
+            let domain = crate::observation_owner::validate_test_physical_selection(
+                &measurement_set,
+                source.selection(),
+                content_budget,
+            )
+            .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
+            Some(domain)
+        } else {
+            None
+        };
         let current_state_heap_bytes = current_state
             .additional_retained_heap_bytes([source.selection().rows()])
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
@@ -283,7 +378,7 @@ impl BoundObservationSource {
                 current_state_heap_bytes,
             ),
             content_budget,
-            None,
+            BoundObservationReferenceData::new(None, pointing_query_domain.as_ref()),
         )
     }
 
@@ -403,13 +498,7 @@ impl BoundObservationSource {
                 });
             }
         }
-        let observation_pointings = evaluate_observation_pointings(
-            self,
-            problem,
-            &block.buffer,
-            self.content_plan.rows_per_block(),
-            self.content_plan.maximum_pointing_polynomial_terms(),
-        )?;
+        let observation_pointings = evaluate_observation_pointings(self, problem, &block.buffer)?;
         block.row_geometry.clear();
         for row in 0..block.buffer.row_count() {
             let stored = block
@@ -898,13 +987,8 @@ impl BoundObservationSamples<'_> {
                 });
             }
         }
-        let observation_pointings = evaluate_observation_pointings(
-            self.source,
-            self.problem,
-            &block.buffer,
-            self.source.content_plan.rows_per_block(),
-            self.source.content_plan.maximum_pointing_polynomial_terms(),
-        )?;
+        let observation_pointings =
+            evaluate_observation_pointings(self.source, self.problem, &block.buffer)?;
         block.row_geometry.clear();
         for row in 0..block.buffer.row_count() {
             let stored = block
@@ -1416,6 +1500,12 @@ pub enum BoundObservationSourceError {
     /// The explicit selected-content memory budget could not realize this source.
     #[error(transparent)]
     ContentPlan(#[from] SelectedObservationContentPlanError),
+    /// Observation-pointing evaluation lacks its owner-derived selected-time domain.
+    #[error("observation-pointing evaluation requires an owner-derived selected-time domain")]
+    MissingPointingQueryDomain,
+    /// Fresh selected rows produced a different observation-pointing query domain.
+    #[error("fresh selected rows differ from the bound observation-pointing query domain")]
+    StalePointingQueryDomain,
     /// The retained source is not one exact member of the supplied compiled problem.
     #[error("retained observation source does not match the compiled selected observation")]
     ProblemSourceMismatch,
@@ -2049,8 +2139,6 @@ fn evaluate_observation_pointings(
     source: &BoundObservationSource,
     problem: &CompiledProblem,
     buffer: &SelectedObservationBuffer,
-    scan_rows_per_block: usize,
-    maximum_polynomial_terms: usize,
 ) -> Result<Option<Vec<SelectedPointingDirections>>, BoundObservationSourceError> {
     let PointingCentreLaw::Observation(law) = problem.geometry().centres().pointing() else {
         return Ok(None);
@@ -2075,16 +2163,11 @@ fn evaluate_observation_pointings(
         )?);
         phase_directions.push(evaluate_phase_direction(source, problem, stored)?);
     }
-    let column = match law.direction_column() {
-        PointingDirectionColumn::Direction => StoredPointingDirectionColumn::Direction,
-        PointingDirectionColumn::Target => StoredPointingDirectionColumn::Target,
-    };
-    let brackets = source.measurement_set.pointing_direction_brackets(
-        &source.geometry_engine,
-        column,
-        &queries,
-        PointingReadPlan::new(scan_rows_per_block, maximum_polynomial_terms)?,
-    )?;
+    let brackets = source
+        .pointing_catalog
+        .as_ref()
+        .ok_or(BoundObservationSourceError::MissingPointingQueryDomain)?
+        .direction_brackets(&source.geometry_engine, &queries)?;
     let mut pointings = Vec::with_capacity(buffer.row_count());
     for ((row, antenna_brackets), fallback) in
         brackets.chunks_exact(2).enumerate().zip(phase_directions)
@@ -2349,6 +2432,17 @@ fn validate_rebound_state(
         expected.generations(),
         current,
     )
+}
+
+fn validate_pointing_query_domain(
+    expected: Option<&SelectedPointingQueryDomain>,
+    current: &SelectedPointingQueryDomain,
+) -> Result<(), BoundObservationSourceError> {
+    match expected {
+        Some(expected) if expected == current => Ok(()),
+        Some(_) => Err(BoundObservationSourceError::StalePointingQueryDomain),
+        None => Err(BoundObservationSourceError::MissingPointingQueryDomain),
+    }
 }
 
 fn validate_selected_read_state(

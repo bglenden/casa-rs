@@ -23,8 +23,12 @@ use std::{
 use thiserror::Error;
 
 use crate::selected_observation_buffer::SelectedObservationBufferFillReport;
+use crate::selected_pointing::SelectedPointingQueryDomain;
 
-use super::access::{BlockVisitError, ProjectedSelectedObservationSample, SelectedRowReplay};
+use super::access::{
+    BlockVisitError, BoundObservationReferenceData, ProjectedSelectedObservationSample,
+    SelectedRowReplay,
+};
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
     SelectedObservationBlock, SelectedObservationContentBudget, SelectedObservationMeasures,
@@ -47,6 +51,7 @@ pub struct ObservationSourceBinding {
     current_state: ObservationSourceState,
     content_budget: SelectedObservationContentBudget,
     ephemeris: Option<Arc<crate::SelectedObservationEphemeris>>,
+    pointing_query_domain: Option<SelectedPointingQueryDomain>,
 }
 
 /// Opaque storage-owner certificate for one complete selected-observation residency contract.
@@ -354,6 +359,7 @@ impl ObservationSourceBinding {
             current_state,
             content_budget,
             ephemeris: None,
+            pointing_query_domain: None,
         }
     }
 
@@ -364,6 +370,14 @@ impl ObservationSourceBinding {
         ephemeris: Option<crate::SelectedObservationEphemeris>,
     ) -> Self {
         self.ephemeris = ephemeris.map(Arc::new);
+        self
+    }
+
+    pub(crate) fn with_pointing_query_domain(
+        mut self,
+        pointing_query_domain: SelectedPointingQueryDomain,
+    ) -> Self {
+        self.pointing_query_domain = Some(pointing_query_domain);
         self
     }
 
@@ -389,6 +403,23 @@ impl ObservationSourceBinding {
         self.ephemeris
             .as_deref()
             .map(crate::SelectedObservationEphemeris::identity)
+    }
+
+    pub(crate) fn pointing_query_domain(&self) -> Option<&SelectedPointingQueryDomain> {
+        self.pointing_query_domain.as_ref()
+    }
+
+    fn additional_retained_heap_bytes<'a>(
+        &self,
+        already_accounted_rows: impl IntoIterator<Item = &'a casa_imaging_model::SelectedRows>,
+    ) -> Option<usize> {
+        self.current_state
+            .additional_retained_heap_bytes(already_accounted_rows)?
+            .checked_add(
+                self.pointing_query_domain
+                    .as_ref()
+                    .map_or(0, SelectedPointingQueryDomain::retained_bytes),
+            )
     }
 
     /// Return the exact ephemeris allocation retained by this source binding.
@@ -490,7 +521,6 @@ impl BoundSelectedObservation {
                             .map(|prior| prior.current_state.selected_rows()),
                     );
                 binding
-                    .current_state
                     .additional_retained_heap_bytes(already_accounted_rows)
                     .and_then(|additional| bytes.checked_add(additional))
                     .ok_or(BoundSelectedObservationError::BindingGraphByteOverflow)
@@ -590,7 +620,10 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
-                    binding.ephemeris.as_ref(),
+                    BoundObservationReferenceData::new(
+                        binding.ephemeris.as_ref(),
+                        binding.pointing_query_domain(),
+                    ),
                 )
             } else {
                 BoundObservationSource::open_with_measures(
@@ -600,7 +633,10 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
-                    binding.ephemeris.as_ref(),
+                    BoundObservationReferenceData::new(
+                        binding.ephemeris.as_ref(),
+                        binding.pointing_query_domain(),
+                    ),
                 )
             };
             sources.push(
@@ -699,7 +735,10 @@ impl BoundSelectedObservation {
                     &measures,
                     shared_bytes,
                     binding.content_budget,
-                    binding.ephemeris.as_ref(),
+                    BoundObservationReferenceData::new(
+                        binding.ephemeris.as_ref(),
+                        binding.pointing_query_domain(),
+                    ),
                 )
                 .map_err(|error| BoundSelectedObservationError::Source {
                     measurement_set: identity,

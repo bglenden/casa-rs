@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use crate::{
-    MeasurementSet, MsError,
+    MeasurementSet, MsError, PointingDirectionBracket, PointingDirectionQuery,
+    SelectedPointingCatalogMeasurements,
     derived::engine::{MsCalEngine, selected_direction_reference_column},
 };
 use crate::{
@@ -11,7 +12,7 @@ use crate::{
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, ObservationSource, PointingCentreLaw,
     SelectedImageDomainProjections, SelectedObservationRunCorrelation, SelectedPointingDirections,
-    SelectedSpectralEvaluation, VisibilityColumn, WeightColumn,
+    SelectedSpectralEvaluation, SkyDirection, VisibilityColumn, WeightColumn,
 };
 use thiserror::Error;
 
@@ -253,6 +254,7 @@ pub enum SelectedObservationContentPlanError {
     InvalidCoordinateShape,
 }
 
+#[cfg(test)]
 pub(crate) fn selected_content_plan(
     measurement_set: &MeasurementSet,
     problem: &CompiledProblem,
@@ -260,24 +262,83 @@ pub(crate) fn selected_content_plan(
     shared_bytes: SelectedObservationSharedBytes,
     budget: SelectedObservationContentBudget,
 ) -> Result<SelectedObservationContentPlan, SelectedObservationContentPlanError> {
+    selected_content_plan_with_pointing_catalog(
+        measurement_set,
+        problem,
+        source,
+        shared_bytes,
+        budget,
+        None,
+    )
+}
+
+pub(crate) fn selected_pointing_catalog_budget(
+    measurement_set: &MeasurementSet,
+    problem: &CompiledProblem,
+    source: &ObservationSource,
+    shared_bytes: SelectedObservationSharedBytes,
+    budget: SelectedObservationContentBudget,
+) -> Result<usize, SelectedObservationContentPlanError> {
+    let (retained_bytes, _, _) = retained_metadata_bytes(
+        measurement_set,
+        problem,
+        source,
+        shared_bytes.shared_measures_retained_bytes,
+        shared_bytes.shared_reference_data_retained_bytes,
+        shared_bytes.shared_source_slots_retained_bytes,
+    )?;
+    budget.available_bytes.checked_sub(retained_bytes).ok_or(
+        SelectedObservationContentPlanError::InsufficientRetainedBudget {
+            required_bytes: retained_bytes,
+            available_bytes: budget.available_bytes,
+        },
+    )
+}
+
+pub(crate) fn selected_content_plan_with_pointing_catalog(
+    measurement_set: &MeasurementSet,
+    problem: &CompiledProblem,
+    source: &ObservationSource,
+    shared_bytes: SelectedObservationSharedBytes,
+    budget: SelectedObservationContentBudget,
+    pointing_catalog: Option<SelectedPointingCatalogMeasurements>,
+) -> Result<SelectedObservationContentPlan, SelectedObservationContentPlanError> {
     if budget.available_bytes == 0
         || budget.maximum_live_blocks == 0
         || budget.maximum_pointing_polynomial_terms == 0
     {
         return Err(SelectedObservationContentPlanError::InvalidBudget);
     }
-    let (retained_bytes, coordinate_construction_scratch_bytes, pointing_reference_scratch_bytes) =
-        retained_metadata_bytes(
-            measurement_set,
-            problem,
-            source,
-            shared_bytes.shared_measures_retained_bytes,
-            shared_bytes.shared_reference_data_retained_bytes,
-            shared_bytes.shared_source_slots_retained_bytes,
-        )?;
-    let initialization_scratch_bytes = coordinate_construction_scratch_bytes
+    let (
+        noncatalog_retained_bytes,
+        coordinate_construction_scratch_bytes,
+        pointing_reference_scratch_bytes,
+    ) = retained_metadata_bytes(
+        measurement_set,
+        problem,
+        source,
+        shared_bytes.shared_measures_retained_bytes,
+        shared_bytes.shared_reference_data_retained_bytes,
+        shared_bytes.shared_source_slots_retained_bytes,
+    )?;
+    let retained_bytes = noncatalog_retained_bytes
+        .checked_add(pointing_catalog.map_or(0, |catalog| catalog.retained_bytes()))
+        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let noncatalog_initialization_scratch_bytes = coordinate_construction_scratch_bytes
         .checked_add(shared_bytes.shared_binding_graph_initialization_bytes)
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+    let catalog_initialization_scratch_bytes = pointing_catalog
+        .map(|catalog| {
+            catalog
+                .construction_peak_bytes()
+                .checked_sub(catalog.retained_bytes())
+                .and_then(|bytes| bytes.checked_add(pointing_reference_scratch_bytes))
+                .ok_or(SelectedObservationContentPlanError::ByteOverflow)
+        })
+        .transpose()?
+        .unwrap_or(0);
+    let initialization_scratch_bytes =
+        noncatalog_initialization_scratch_bytes.max(catalog_initialization_scratch_bytes);
     let initialization_peak_bytes = retained_bytes
         .checked_add(initialization_scratch_bytes)
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
@@ -432,13 +493,20 @@ pub(crate) fn selected_content_plan(
             })
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let pointing = if let Some(direction_column) = pointing_direction_column {
-            let pointing_scratch = selected_pointing_preparation_peak_bytes(
-                1,
-                1,
-                budget.maximum_pointing_polynomial_terms,
-                direction_column,
-            )
-            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
+            let pointing_scratch = if pointing_catalog.is_some() {
+                2 * size_of::<PointingDirectionQuery>()
+                    + size_of::<SkyDirection>()
+                    + 2 * size_of::<PointingDirectionBracket>()
+                    + size_of::<SelectedPointingDirections>()
+            } else {
+                selected_pointing_preparation_peak_bytes(
+                    1,
+                    1,
+                    budget.maximum_pointing_polynomial_terms,
+                    direction_column,
+                )
+                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
+            };
             buffer
                 .resident_bytes
                 .checked_add(retained_geometry)
@@ -475,8 +543,13 @@ pub(crate) fn selected_content_plan(
     let rows_by_fill = traversal_bytes
         .checked_sub(fill_fixed_bytes)
         .map_or(0, |bytes| bytes / fill_denominator);
+    let traversal_pointing_reference_scratch_bytes = if pointing_catalog.is_some() {
+        0
+    } else {
+        pointing_reference_scratch_bytes
+    };
     let rows_by_preparation = traversal_bytes
-        .checked_sub(pointing_reference_scratch_bytes)
+        .checked_sub(traversal_pointing_reference_scratch_bytes)
         .map_or(0, |bytes| bytes / preparation_denominator);
     let rows_per_block = rows_by_fill.min(rows_by_preparation).min(selected_rows);
     if rows_per_block == 0 {
@@ -484,7 +557,7 @@ pub(crate) fn selected_content_plan(
             required_bytes: fill_fixed_bytes
                 .checked_add(fill_denominator)
                 .and_then(|fill| {
-                    pointing_reference_scratch_bytes
+                    traversal_pointing_reference_scratch_bytes
                         .checked_add(preparation_denominator)
                         .map(|preparation| fill.max(preparation))
                 })
@@ -512,7 +585,7 @@ pub(crate) fn selected_content_plan(
     let preparation_peak = traversal_base_bytes
         .checked_add(prior_blocks)
         .and_then(|bytes| bytes.checked_add(preparation_bytes_per_block))
-        .and_then(|bytes| bytes.checked_add(pointing_reference_scratch_bytes))
+        .and_then(|bytes| bytes.checked_add(traversal_pointing_reference_scratch_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let traversal_peak_bytes = fill_peak.max(preparation_peak);
     Ok(SelectedObservationContentPlan {
