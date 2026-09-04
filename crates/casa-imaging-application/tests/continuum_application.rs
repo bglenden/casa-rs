@@ -1055,10 +1055,23 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.sum_weights().len(), 1);
     assert_eq!(normal.published_sum_weights().len(), 1);
+    // The fixture's prepared imaging cells hold 3x3 taps of (3 - i) and the
+    // paired weight cells hold 5x5 taps of (7 + 2i); every accepted sample has
+    // unit post-Briggs weight, so each hand's statistic is the tap-sum norm.
+    let imaging_hand = 9.0 * 3.0_f64.hypot(1.0);
+    let weight_hand = 25.0 * 7.0_f64.hypot(2.0);
     assert!(
-        (normal.sum_weights()[0] - 2.0 * normal.published_sum_weights()[0]).abs()
+        (normal.published_sum_weights()[0] - imaging_hand).abs()
+            <= f64::EPSILON * normal.published_sum_weights()[0].abs() * 8.0,
+        "single-term CASA publication keeps the minimum correlation-plane imaging-CF sumweight: published={} expected={imaging_hand}",
+        normal.published_sum_weights()[0]
+    );
+    assert!(
+        (normal.sum_weights()[0] - 2.0 * weight_hand).abs()
             <= f64::EPSILON * normal.sum_weights()[0].abs() * 8.0,
-        "paired RR/LL measurements both contribute to the normal operator, while CASA publishes their minimum correlation-plane sumweight"
+        "paired RR/LL measurements both contribute to the WTCF normal operator sum: normal={} expected={}",
+        normal.sum_weights()[0],
+        2.0 * weight_hand
     );
     assert_products(
         &image_name,
@@ -1297,10 +1310,20 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
-    assert_eq!(
+    assert_ne!(
         (normal.sum_weights()[0] as f32).to_bits(),
         (normal.published_sum_weights()[0] as f32).to_bits(),
-        "direct AW Taylor completion must expose CASA's CFS statistic for coefficient terms"
+        "direct AW Taylor completion keeps the WTCF normal sum distinct from CASA's published CFS statistic for coefficient terms"
+    );
+    assert_ne!(
+        (normal.sum_weights()[1] as f32).to_bits(),
+        (normal.published_sum_weights()[1] as f32).to_bits(),
+        "the AW fixture must distinguish the WTCF normal moment from the published CFS first-order Taylor statistic"
+    );
+    assert_eq!(
+        (normal.sum_weights()[2] as f32).to_bits(),
+        (normal.published_sum_weights()[2] as f32).to_bits(),
+        "direct AW Taylor completion retains the WTCF normal sum for the highest Taylor moment"
     );
     for moment in 0..3 {
         let product = PagedImage::<f32>::open(PathBuf::from(format!(
@@ -1317,8 +1340,8 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
                 .next()
                 .expect("Taylor sumweight scalar")
                 .to_bits(),
-            (normal.sum_weights()[moment] as f32).to_bits(),
-            "direct MT-MFS sumweight term {moment} must persist CASA's combined Stokes-I normal moment"
+            (normal.published_sum_weights()[moment] as f32).to_bits(),
+            "direct MT-MFS sumweight term {moment} must persist CASA's published hybrid statistic"
         );
     }
 

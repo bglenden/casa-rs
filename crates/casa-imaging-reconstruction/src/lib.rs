@@ -2417,7 +2417,10 @@ pub(crate) fn canonical_f64_bits(value: f64) -> u64 {
 
 pub(crate) fn imaging_science_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some())
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some()
+            || std::env::var_os("CASA_RS_IMAGING_SCIENCE_PROBE").is_some()
+    })
 }
 
 pub(crate) struct ScienceTraceDigest {

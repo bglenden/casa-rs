@@ -174,6 +174,19 @@ impl TaylorProducts {
         if channel_major_publication && published_sum_weights.len() != moments {
             return Err(ProductsError::SourceLineageMismatch);
         }
+        // Direct CASA AW Taylor completion keeps two principal sums: the
+        // WTCF normal sum scales PSF/sensitivity products, while the CFS
+        // publication sum scales dirty/residual image products. They are
+        // equal for non-AW direct Taylor reconstruction.
+        let residual_sum_weight = if channel_major_publication {
+            principal_sum_weight
+        } else {
+            published_sum_weights
+                .first()
+                .copied()
+                .filter(|value| value.is_finite() && *value > 0.0)
+                .ok_or(ProductsError::SourceLineageMismatch)?
+        };
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
@@ -213,7 +226,7 @@ impl TaylorProducts {
                     principal_sum_weight,
                 )?
             } else {
-                source.sum_weight()
+                published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?
             };
             if !sum_weight.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);
@@ -232,7 +245,7 @@ impl TaylorProducts {
                         .map(|value| value.re as f32)
                         .collect::<Vec<_>>(),
                     normalization,
-                    principal_sum_weight,
+                    residual_sum_weight,
                     mosaic_sensitivity,
                 )
             })

@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 22;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 23;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -471,6 +471,8 @@ pub struct AwProjectionContract {
     wideband: bool,
     conjugate_beams: bool,
     use_pointing: bool,
+    pointing_group_threshold_arcsec_bits: u64,
+    pointing_refresh_threshold_arcsec_bits: u64,
     compute_pa_step_deg_bits: u64,
     rotate_pa_step_deg_bits: u64,
 }
@@ -486,6 +488,7 @@ impl AwProjectionContract {
         wideband: bool,
         conjugate_beams: bool,
         use_pointing: bool,
+        pointing_offset_sigdev_arcsec: [f64; 2],
         compute_pa_step_deg: f64,
         rotate_pa_step_deg: f64,
     ) -> Result<Self, AwProjectionContractError> {
@@ -498,6 +501,16 @@ impl AwProjectionContract {
         if !rotate_pa_step_deg.is_finite() || rotate_pa_step_deg <= 0.0 {
             return Err(AwProjectionContractError::InvalidRotatePaStep);
         }
+        if pointing_offset_sigdev_arcsec
+            .into_iter()
+            .any(|threshold| !threshold.is_finite() || threshold < 0.0)
+        {
+            return Err(AwProjectionContractError::InvalidPointingOffsetSigdev);
+        }
+        let [
+            pointing_group_threshold_arcsec,
+            pointing_refresh_threshold_arcsec,
+        ] = pointing_offset_sigdev_arcsec;
         Ok(Self {
             maximum_abs_w_lambda_bits: maximum_abs_w_lambda.to_bits(),
             planes,
@@ -506,6 +519,8 @@ impl AwProjectionContract {
             wideband,
             conjugate_beams,
             use_pointing,
+            pointing_group_threshold_arcsec_bits: pointing_group_threshold_arcsec.to_bits(),
+            pointing_refresh_threshold_arcsec_bits: pointing_refresh_threshold_arcsec.to_bits(),
             compute_pa_step_deg_bits: compute_pa_step_deg.to_bits(),
             rotate_pa_step_deg_bits: rotate_pa_step_deg.to_bits(),
         })
@@ -553,6 +568,31 @@ impl AwProjectionContract {
         self.use_pointing
     }
 
+    /// Return CASA's two effective pointing thresholds in arcseconds.
+    ///
+    /// The first threshold groups antenna pointing offsets that may share a
+    /// correction. The second is the time-dependent mean-shift threshold after
+    /// which those antenna groups must be refreshed.
+    #[must_use]
+    pub fn pointing_offset_sigdev_arcsec(self) -> [f64; 2] {
+        [
+            f64::from_bits(self.pointing_group_threshold_arcsec_bits),
+            f64::from_bits(self.pointing_refresh_threshold_arcsec_bits),
+        ]
+    }
+
+    /// Return the antenna pointing-offset grouping threshold in arcseconds.
+    #[must_use]
+    pub fn pointing_group_threshold_arcsec(self) -> f64 {
+        f64::from_bits(self.pointing_group_threshold_arcsec_bits)
+    }
+
+    /// Return the time-dependent antenna-group refresh threshold in arcseconds.
+    #[must_use]
+    pub fn pointing_refresh_threshold_arcsec(self) -> f64 {
+        f64::from_bits(self.pointing_refresh_threshold_arcsec_bits)
+    }
+
     /// Return the CF computation parallactic-angle step in degrees.
     #[must_use]
     pub fn compute_pa_step_deg(self) -> f64 {
@@ -578,6 +618,9 @@ pub enum AwProjectionContractError {
     /// The CF rotation PA step must be finite and positive.
     #[error("AW rotation parallactic-angle step must be finite and positive")]
     InvalidRotatePaStep,
+    /// Both pointing grouping and refresh thresholds must be finite and non-negative.
+    #[error("AW pointing-offset thresholds must be finite and non-negative")]
+    InvalidPointingOffsetSigdev,
 }
 
 /// Science-owned W-projection envelope compiled into the paired measurement operator.
@@ -3608,6 +3651,8 @@ fn encode_aw_projection_contract(encoder: &mut CanonicalEncoder, contract: AwPro
     encoder.u8(u8::from(contract.wideband));
     encoder.u8(u8::from(contract.conjugate_beams));
     encoder.u8(u8::from(contract.use_pointing));
+    encoder.u64(contract.pointing_group_threshold_arcsec_bits);
+    encoder.u64(contract.pointing_refresh_threshold_arcsec_bits);
     encoder.u64(contract.compute_pa_step_deg_bits);
     encoder.u64(contract.rotate_pa_step_deg_bits);
 }

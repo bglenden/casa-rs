@@ -914,7 +914,7 @@ impl SpectralOperatorSpecification {
         let mosaic = matches!(
             problem.geometry().uvw(),
             UvwCoordinateLaw::MosaicPhaseTrackingCentre
-        );
+        ) && aw_projection.is_none();
         if mosaic
             && !matches!(
                 problem.geometry().centres().pointing(),
@@ -5827,38 +5827,28 @@ pub(crate) fn aw_row_coordinates(
     if !use_pointing {
         return Ok((parallactic, [0.0; 2]));
     }
-    let pointings = selected.pointing_directions();
-    let reference = geometry.direction.reference_direction();
-    if pointings.antenna1.frame() != reference.frame()
-        || pointings.antenna2.frame() != reference.frame()
-    {
-        return Err(SpectralOperatorError::UnsupportedGeometry);
-    }
-    let pixel = |direction: casa_imaging_model::SkyDirection| {
-        crate::mask::direction_world_to_pixel(
-            geometry.direction,
-            [direction.longitude_rad(), direction.latitude_rad()],
-        )
-        .map_err(|_| SpectralOperatorError::UnsupportedGeometry)
-    };
-    let antenna1 = pixel(pointings.antenna1)?;
-    let antenna2 = pixel(pointings.antenna2)?;
-    let pointing = [
-        0.5 * (antenna1[0] + antenna2[0]),
-        0.5 * (antenna1[1] + antenna2[1]),
-    ];
+    let phase_gradient =
+        aw_pointing_phase_gradient(selected.aw_pointing_pixel(), geometry.image_shape)?;
+    Ok((parallactic, phase_gradient))
+}
+
+fn aw_pointing_phase_gradient(
+    pointing: Option<[f64; 2]>,
+    image_shape: [usize; 2],
+) -> Result<[f64; 2], SpectralOperatorError> {
+    let pointing = pointing.ok_or(SpectralOperatorError::InvalidSample)?;
     let pixel_offset = [
-        pointing[0] - geometry.image_shape[0] as f64 / 2.0,
-        pointing[1] - geometry.image_shape[1] as f64 / 2.0,
+        pointing[0] - (image_shape[0] / 2) as f64,
+        pointing[1] - (image_shape[1] / 2) as f64,
     ];
     let phase_gradient = [
-        -pixel_offset[0] * std::f64::consts::TAU / geometry.image_shape[0] as f64,
-        -pixel_offset[1] * std::f64::consts::TAU / geometry.image_shape[1] as f64,
+        -pixel_offset[0] * std::f64::consts::TAU / image_shape[0] as f64,
+        -pixel_offset[1] * std::f64::consts::TAU / image_shape[1] as f64,
     ];
     if phase_gradient.iter().any(|value| !value.is_finite()) {
         return Err(SpectralOperatorError::InvalidSample);
     }
-    Ok((parallactic, phase_gradient))
+    Ok(phase_gradient)
 }
 
 /// CASA's diagonal circular-feed Mueller row represented by the frozen EVLA
@@ -6276,6 +6266,14 @@ impl fmt::Debug for SpectralSlabOperator {
     }
 }
 
+struct ChannelMajorNormalContribution {
+    imaging_weight: f64,
+    normal_normalization: f64,
+    published_weight: f64,
+    published_normalization: f64,
+    aw_publication_lane: Option<usize>,
+}
+
 impl SpectralSlabOperator {
     pub(crate) fn convolution_maximum_support(&self) -> usize {
         self.maximum_convolution_support
@@ -6612,11 +6610,13 @@ impl SpectralSlabOperator {
                 self.grid_channel_major_normal(
                     plane,
                     &taps,
-                    sample.imaging_weight * factor * factor,
-                    sample.published_weight * factor * factor,
-                    normal_normalization,
-                    published_normalization,
-                    aw_publication_lane,
+                    &ChannelMajorNormalContribution {
+                        imaging_weight: sample.imaging_weight * factor * factor,
+                        normal_normalization,
+                        published_weight: sample.published_weight * factor * factor,
+                        published_normalization,
+                        aw_publication_lane,
+                    },
                 )?;
             }
             SpectralBasisPlan::Polynomial(plan) => {
@@ -7033,11 +7033,7 @@ impl SpectralSlabOperator {
         &mut self,
         plane: usize,
         taps: &GridOperatorTaps,
-        imaging_weight: f64,
-        published_weight: f64,
-        normal_normalization: f64,
-        published_normalization: f64,
-        aw_publication_lane: Option<usize>,
+        contribution: &ChannelMajorNormalContribution,
     ) -> Result<(), SpectralOperatorError> {
         grid_operator_compensated(
             &self.gridder,
@@ -7054,21 +7050,21 @@ impl SpectralSlabOperator {
             },
             taps,
             GridAccumulationRole::Normal,
-            Complex64::new(imaging_weight, 0.0),
+            Complex64::new(contribution.imaging_weight, 0.0),
         )?;
         #[cfg(test)]
         record_measurement(
             &mut self.measurements.psf_grid_tap_visits,
             TAP_VISITS_PER_SAMPLE,
         );
-        self.grid_aw_sensitivity(plane, taps, imaging_weight)?;
+        self.grid_aw_sensitivity(plane, taps, contribution.imaging_weight)?;
         accumulate_compensated(
             &mut self.channel_major_sum_weights,
             &mut self.channel_major_sum_weight_compensations,
             plane,
-            imaging_weight * normal_normalization,
+            contribution.imaging_weight * contribution.normal_normalization,
         )?;
-        if let Some(lane) = aw_publication_lane {
+        if let Some(lane) = contribution.aw_publication_lane {
             let aw = self
                 .aw_published_sum_weights
                 .as_mut()
@@ -7081,14 +7077,14 @@ impl SpectralSlabOperator {
                     .get_mut(lane)
                     .ok_or(SpectralOperatorError::InvalidSample)?,
                 plane,
-                published_weight * published_normalization,
+                contribution.published_weight * contribution.published_normalization,
             )
         } else {
             accumulate_compensated(
                 &mut self.channel_major_published_sum_weights,
                 &mut self.channel_major_published_sum_weight_compensations,
                 plane,
-                published_weight * published_normalization,
+                contribution.published_weight * contribution.published_normalization,
             )
         }
     }
@@ -7244,14 +7240,11 @@ impl SpectralSlabOperator {
             for moment in 0..plan.normal_moment_count() {
                 for polarization in 0..self.polarization_count {
                     let plane = self.polarization_plane(moment, polarization);
-                    if moment < coefficient_terms {
-                        self.sum_weights[plane] = self.published_sum_weights[plane];
-                    } else {
+                    if moment >= coefficient_terms {
                         self.published_sum_weights[plane] = self.sum_weights[plane];
                     }
                 }
             }
-            self.sum_weight_compensations.fill(0.0);
             self.published_sum_weight_compensations.fill(0.0);
         }
         Ok(())
@@ -7783,11 +7776,13 @@ impl SpectralSlabOperator {
                     self.grid_channel_major_normal(
                         plane,
                         &taps,
-                        sample.imaging_weight * factor * factor,
-                        sample.published_weight * factor * factor,
-                        normal_normalization,
-                        published_normalization,
-                        aw_publication_lane,
+                        &ChannelMajorNormalContribution {
+                            imaging_weight: sample.imaging_weight * factor * factor,
+                            normal_normalization,
+                            published_weight: sample.published_weight * factor * factor,
+                            published_normalization,
+                            aw_publication_lane,
+                        },
                     )?;
                 }
             }
@@ -10665,6 +10660,20 @@ mod tests {
         ModelDeltaId, ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
     };
 
+    #[test]
+    fn aw_pointing_phase_requires_exact_pixel_and_uses_the_integer_image_centre() {
+        assert_eq!(
+            super::aw_pointing_phase_gradient(None, [9, 7]),
+            Err(SpectralOperatorError::InvalidSample)
+        );
+        let gradient = super::aw_pointing_phase_gradient(Some([5.0, 2.0]), [9, 7])
+            .expect("finite exact pointing pixel");
+        assert_eq!(
+            gradient,
+            [-std::f64::consts::TAU / 9.0, std::f64::consts::TAU / 7.0]
+        );
+    }
+
     fn geometry() -> SpectralOperatorGeometry {
         SpectralOperatorGeometry {
             image_shape: [8, 8],
@@ -12170,9 +12179,9 @@ mod tests {
             .finalize_aw_sum_weights()
             .expect("finalize direct AW Taylor sumweights");
 
-        assert_eq!(operator.sum_weights, [10.0, -4.0, 103.0]);
+        assert_eq!(operator.sum_weights, [101.0, -102.0, 103.0]);
         assert_eq!(operator.published_sum_weights, [10.0, -4.0, 103.0]);
-        assert_eq!(operator.sum_weight_compensations, [0.0; 3]);
+        assert_eq!(operator.sum_weight_compensations, [1.0; 3]);
         assert_eq!(operator.published_sum_weight_compensations, [0.0; 3]);
         assert!(operator.aw_published_sum_weights.is_none());
     }

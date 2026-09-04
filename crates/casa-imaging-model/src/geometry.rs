@@ -675,7 +675,7 @@ pub enum UvwCoordinateLaw {
     /// MeasurementSet MAIN UVW in metres: `u` east, `v` north, and `w` toward
     /// the phase-tracking centre, with prediction phase `exp(-i 2πν delay)`.
     PhaseTrackingCentre,
-    /// CASA MosaicFT `girarUVW` projection from each observation field to the
+    /// CASA MosaicFT/AWProjectFT `girarUVW` projection from each observation field to the
     /// compiled image centre, paired with the reconstruction phase convention.
     MosaicPhaseTrackingCentre,
 }

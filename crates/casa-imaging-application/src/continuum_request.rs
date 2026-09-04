@@ -214,7 +214,12 @@ pub struct ContinuumAwProjection {
     pub conjugate_beams: bool,
     /// Use row-local POINTING-table offsets.
     pub use_pointing: bool,
-    /// Pointing-offset standard deviations in arcseconds.
+    /// CASA pointing grouping and time-refresh thresholds in arcseconds.
+    ///
+    /// With `use_pointing`, CASA treats any cardinality other than exactly two
+    /// values as `[600, 600]`. The first effective value groups antenna
+    /// pointing offsets; the second controls when time-dependent mean drift
+    /// refreshes those groups.
     pub pointing_offset_sigdev: Vec<f64>,
     /// Enable mosaic weight-density behavior.
     pub mosaic_weighting: bool,
@@ -1535,11 +1540,10 @@ fn prepare(
     let mosaic = request
         .task_requirements
         .contains(&TaskRequirement::MosaicGridder);
-    let observation_pointing = mosaic
-        || request
-            .aw_projection
-            .as_ref()
-            .is_some_and(|controls| controls.use_pointing);
+    let aw_use_pointing = request
+        .aw_projection
+        .as_ref()
+        .is_some_and(|controls| controls.use_pointing);
     let geometry = casa_imaging_model::GeometryInput::new(
         prepared_domains
             .iter()
@@ -1568,20 +1572,9 @@ fn prepare(
         CentreLaws::new(
             phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
-            if observation_pointing {
-                PointingCentreLaw::Observation(ObservationPointingLaw::new(
-                    PointingDirectionColumn::Direction,
-                    PointingDirectionSemantic::AntennaBoresight,
-                    PointingTimeSampling::VisibilityTimeCentroid,
-                    PointingInterpolation::GreatCircleShortestArc,
-                    PointingExtrapolation::Reject,
-                    MissingPointingPolicy::Reject,
-                ))
-            } else {
-                PointingCentreLaw::PhaseTrackingCentre
-            },
+            continuum_pointing_centre_law(mosaic, aw_use_pointing),
         ),
-        if mosaic {
+        if mosaic || request.aw_projection.is_some() {
             UvwCoordinateLaw::MosaicPhaseTrackingCentre
         } else {
             UvwCoordinateLaw::PhaseTrackingCentre
@@ -1720,15 +1713,6 @@ fn prepare(
                     "AW projection does not support a separate voltage-pattern table",
                 ));
             }
-            if controls
-                .pointing_offset_sigdev
-                .iter()
-                .any(|value| !value.is_finite() || *value != 0.0)
-            {
-                return Err(boxed(
-                    "AW projection does not support nonzero synthetic pointing-offset deviations",
-                ));
-            }
             if controls.mosaic_weighting {
                 return Err(boxed(
                     "AW projection does not support mosaic weight-density mode",
@@ -1767,6 +1751,10 @@ fn prepare(
                 controls.wideband,
                 controls.conjugate_beams,
                 controls.use_pointing,
+                effective_aw_pointing_offset_sigdev_arcsec(
+                    controls.use_pointing,
+                    &controls.pointing_offset_sigdev,
+                )?,
                 controls.compute_pa_step_deg,
                 controls.rotate_pa_step_deg,
             )
@@ -1839,6 +1827,51 @@ fn prepare(
         task_requirements: request.task_requirements,
         native,
     })
+}
+
+const CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC: [f64; 2] = [600.0, 600.0];
+
+fn effective_aw_pointing_offset_sigdev_arcsec(
+    use_pointing: bool,
+    requested: &[f64],
+) -> Result<[f64; 2], crate::ApplicationError> {
+    if requested
+        .iter()
+        .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        return Err(boxed(
+            "AW pointing-offset thresholds must be finite and non-negative",
+        ));
+    }
+    Ok(match requested {
+        [group_threshold, refresh_threshold] => [*group_threshold, *refresh_threshold],
+        _ if use_pointing => CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC,
+        _ => [0.0, 0.0],
+    })
+}
+
+fn continuum_pointing_centre_law(mosaic: bool, aw_use_pointing: bool) -> PointingCentreLaw {
+    if aw_use_pointing {
+        PointingCentreLaw::Observation(ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTime,
+            PointingInterpolation::Nearest,
+            PointingExtrapolation::HoldNearest,
+            MissingPointingPolicy::UsePhaseTrackingCentre,
+        ))
+    } else if mosaic {
+        PointingCentreLaw::Observation(ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTimeCentroid,
+            PointingInterpolation::GreatCircleShortestArc,
+            PointingExtrapolation::Reject,
+            MissingPointingPolicy::Reject,
+        ))
+    } else {
+        PointingCentreLaw::PhaseTrackingCentre
+    }
 }
 
 fn canonicalize_polarizations(polarizations: &mut Vec<PolarizationCoordinate>) {
@@ -3301,18 +3334,78 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 #[cfg(test)]
 mod tests {
     use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
-    use casa_imaging_model::PolarizationCoordinate;
+    use casa_imaging_model::{
+        MissingPointingPolicy, PointingCentreLaw, PointingExtrapolation, PointingInterpolation,
+        PointingTimeSampling, PolarizationCoordinate,
+    };
     use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
     use casa_types::measures::frequency::FrequencyRef;
 
     use super::{
         ContinuumAlgorithm, SourceSpectralWindow, TaskRequirement,
         analytic_primary_beam_model_for_telescopes, canonicalize_polarizations,
-        cube_rest_frequency_hz, image_coordinates, image_reference_pixel,
+        continuum_pointing_centre_law, cube_rest_frequency_hz,
+        effective_aw_pointing_offset_sigdev_arcsec, image_coordinates, image_reference_pixel,
         instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
         planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
         supports_projected_w_planes,
     };
+
+    #[test]
+    fn aw_pointing_compiles_casa_visibility_sampling_law() {
+        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(false, true) else {
+            panic!("AW usepointing must compile an observation pointing law");
+        };
+
+        assert_eq!(law.time_sampling(), PointingTimeSampling::VisibilityTime);
+        assert_eq!(law.interpolation(), PointingInterpolation::Nearest);
+        assert_eq!(law.extrapolation(), PointingExtrapolation::HoldNearest);
+        assert_eq!(law.missing(), MissingPointingPolicy::UsePhaseTrackingCentre);
+    }
+
+    #[test]
+    fn mosaic_only_retains_interpolated_pointing_law() {
+        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(true, false) else {
+            panic!("mosaic imaging must compile an observation pointing law");
+        };
+
+        assert_eq!(
+            law.time_sampling(),
+            PointingTimeSampling::VisibilityTimeCentroid
+        );
+        assert_eq!(
+            law.interpolation(),
+            PointingInterpolation::GreatCircleShortestArc
+        );
+        assert_eq!(law.extrapolation(), PointingExtrapolation::Reject);
+        assert_eq!(law.missing(), MissingPointingPolicy::Reject);
+    }
+
+    #[test]
+    fn aw_pointing_thresholds_follow_casa_cardinality_default() {
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[]).unwrap(),
+            [600.0, 600.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[30.0]).unwrap(),
+            [600.0, 600.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[300.0, 30.0, 10.0]).unwrap(),
+            [600.0, 600.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[300.0, 30.0]).unwrap(),
+            [300.0, 30.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(false, &[]).unwrap(),
+            [0.0, 0.0]
+        );
+        assert!(effective_aw_pointing_offset_sigdev_arcsec(true, &[f64::NAN]).is_err());
+        assert!(effective_aw_pointing_offset_sigdev_arcsec(true, &[-1.0]).is_err());
+    }
 
     #[test]
     fn projected_w_planes_belong_to_w_and_aw_projection() {

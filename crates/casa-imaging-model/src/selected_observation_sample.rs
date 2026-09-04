@@ -16,7 +16,7 @@ use crate::{
 };
 
 const SELECTED_OBSERVATION_GENERATION_DOMAIN: &[u8] = b"casa-rs-selected-observation-generation";
-const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 8;
+const SELECTED_OBSERVATION_GENERATION_VERSION: u32 = 9;
 const GENERATION_ROW_RUN_MARKER: u8 = 0xa1;
 const GENERATION_ROW_RUN_TERMINAL: u8 = 0xaf;
 const GENERATION_CHANNEL_RUN_MARKER: u8 = 0xb1;
@@ -145,6 +145,7 @@ pub struct SelectedImageDomainProjection {
     facet_ordinal: u32,
     model: SelectedPhaseCentreProjection,
     psf: SelectedPsfPhaseCentreProjection,
+    aw_pointing_pixel: Option<[f64; 2]>,
 }
 
 impl SelectedImageDomainProjection {
@@ -171,6 +172,7 @@ impl SelectedImageDomainProjection {
             facet_ordinal,
             model,
             psf: SelectedPsfPhaseCentreProjection::Distinct(psf),
+            aw_pointing_pixel: None,
         }
     }
 
@@ -195,7 +197,22 @@ impl SelectedImageDomainProjection {
             facet_ordinal,
             model,
             psf: SelectedPsfPhaseCentreProjection::SharedWithModel,
+            aw_pointing_pixel: None,
         }
+    }
+
+    /// Attach the exact CASA chart-local baseline pointing pixel used by AW projection.
+    ///
+    /// The coordinate is the already averaged two-antenna pointing pixel in
+    /// this chart. Raw pointing directions remain available separately for
+    /// primary-beam and mosaic evaluation.
+    #[must_use]
+    pub fn with_aw_pointing_pixel(mut self, pixel: [f64; 2]) -> Option<Self> {
+        if pixel.iter().any(|value| !value.is_finite()) {
+            return None;
+        }
+        self.aw_pointing_pixel = Some(pixel);
+        Some(self)
     }
 
     /// Return the index into canonical compiled image domains.
@@ -229,6 +246,12 @@ impl SelectedImageDomainProjection {
     #[must_use]
     pub const fn psf_shares_model(self) -> bool {
         matches!(self.psf, SelectedPsfPhaseCentreProjection::SharedWithModel)
+    }
+
+    /// Return the exact CASA chart-local baseline pointing pixel, when evaluated.
+    #[must_use]
+    pub const fn aw_pointing_pixel(self) -> Option<[f64; 2]> {
+        self.aw_pointing_pixel
     }
 }
 
@@ -1430,6 +1453,14 @@ fn encode_generation_row_content(encoder: &mut CanonicalEncoder, content: &Gener
         encode_phase_centre_projection(encoder, projection.model());
         encoder.u8(u8::from(projection.psf_shares_model()));
         encode_phase_centre_projection(encoder, projection.psf());
+        match projection.aw_pointing_pixel() {
+            None => encoder.u8(0),
+            Some(pixel) => {
+                encoder.u8(1);
+                encoder.f64(pixel[0]);
+                encoder.f64(pixel[1]);
+            }
+        }
     }
     encoder.u8(match coordinates.uvw_law {
         UvwCoordinateLaw::PhaseTrackingCentre => 0,
@@ -1540,10 +1571,10 @@ mod tests {
 
     const GENERATION_FIXTURE: &str = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v8.txt"
+        "/../../resources/imaging-architecture/baselines/selected-observation-generation-v9.txt"
     ));
 
-    const ENCODED_FIELDS: [&str; 51] = [
+    const ENCODED_FIELDS: [&str; 54] = [
         "row.data_description_id:i32",
         "row.spectral_window_id:u32",
         "row.polarization_id:u32",
@@ -1559,6 +1590,9 @@ mod tests {
         "row.domain_projection.psf_shares_model:u8",
         "row.domain_projection.psf_uvw_m:f64-x-y-z",
         "row.domain_projection.psf_phase_shift_m:f64",
+        "row.domain_projection.aw_pointing_pixel:option-tag-u8",
+        "row.domain_projection.aw_pointing_pixel_x:f64-if-present",
+        "row.domain_projection.aw_pointing_pixel_y:f64-if-present",
         "row.uvw_law:tag-u8",
         "row.time:mjd-days-f64-then-scale-tag-u8",
         "row.time_centroid:mjd-days-f64-then-scale-tag-u8",
@@ -1620,6 +1654,13 @@ mod tests {
         assert_eq!(main.psf(), main.model());
         assert!(!outlier.psf_shares_model());
         assert_eq!(outlier.psf(), psf);
+        assert_eq!(main.aw_pointing_pixel(), None);
+        let exact = main
+            .with_aw_pointing_pixel([256.25, 255.75])
+            .expect("finite AW pointing pixel");
+        assert_eq!(exact.aw_pointing_pixel(), Some([256.25, 255.75]));
+        assert!(main.with_aw_pointing_pixel([f64::NAN, 0.0]).is_none());
+        assert!(main.with_aw_pointing_pixel([0.0, f64::INFINITY]).is_none());
         assert!(SelectedImageDomainProjections::new([outlier, main]).is_none());
         assert!(SelectedImageDomainProjections::new([main, outlier, main_second]).is_none());
         assert!(SelectedImageDomainProjections::new([main, outlier]).is_some());
@@ -1683,7 +1724,7 @@ mod tests {
             generation(&[&[second.clone(), first.clone()]]),
             "logical sample order participates in content identity"
         );
-        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 8);
+        assert_eq!(SelectedObservationGenerationId::SCHEMA_VERSION, 9);
 
         let mutations: &[SampleMutation] = &[
             ("data description", |s| s.address.data_description_id += 1),
@@ -1719,6 +1760,16 @@ mod tests {
                 s.coordinates.transformed_uvw_m[2] += 1.0
             }),
             ("phase shift", |s| s.coordinates.phase_shift_m += 1.0),
+            ("AW pointing pixel", |s| {
+                let projection = s
+                    .domain_projections
+                    .get(0)
+                    .expect("primary domain projection")
+                    .with_aw_pointing_pixel([256.25, 255.75])
+                    .expect("finite AW pointing pixel");
+                s.domain_projections = SelectedImageDomainProjections::new([projection])
+                    .expect("canonical primary projection");
+            }),
             ("time", |s| {
                 s.coordinates.time = Epoch::new(59_001.0, TimeScale::Utc)
             }),
@@ -1838,10 +1889,10 @@ mod tests {
         assert_eq!(
             one_block.as_bytes(),
             [
-                77, 197, 204, 165, 208, 30, 160, 65, 207, 107, 26, 113, 112, 39, 221, 124, 87, 241,
-                59, 16, 59, 57, 137, 41, 5, 209, 82, 40, 81, 243, 230, 9,
+                208, 185, 128, 230, 73, 170, 22, 87, 177, 39, 200, 199, 95, 200, 118, 231, 38, 37,
+                127, 140, 27, 181, 133, 44, 30, 17, 183, 73, 204, 146, 212, 144,
             ],
-            "schema-8 golden ratchet"
+            "schema-9 golden ratchet"
         );
     }
 
@@ -1924,7 +1975,7 @@ mod tests {
             fixture_value("identity_domain"),
             "casa-rs-selected-observation-generation"
         );
-        assert_eq!(fixture_value("generation_schema_version"), "8");
+        assert_eq!(fixture_value("generation_schema_version"), "9");
         assert_eq!(fixture_value("row_run_marker"), "0xa1");
         assert_eq!(fixture_value("row_run_terminal"), "0xaf");
         assert_eq!(fixture_value("channel_run_marker"), "0xb1");
@@ -1968,7 +2019,7 @@ mod tests {
 
         assert_eq!(
             (encoder.proof_bytes(), encoder.proof_hash_calls()),
-            (524, 97),
+            (525, 98),
         );
     }
 

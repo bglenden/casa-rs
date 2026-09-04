@@ -1195,6 +1195,7 @@ pub struct WeightingSelectedSample {
     output_frame_frequency_hz: f64,
     field_id: i32,
     pointing_directions: SelectedPointingDirections,
+    aw_pointing_pixel: Option<[f64; 2]>,
     antenna_responses: Option<SelectedAntennaResponses>,
     domain_projections: SelectedImageDomainProjections,
 }
@@ -1206,6 +1207,7 @@ impl WeightingSelectedSample {
     ) -> Self {
         let coordinates = sample.coordinates();
         let input_weight_group = sample.input_weight_group();
+        let domain_projections = sample.domain_projections().clone();
         Self {
             address: sample.address(),
             visibility: sample.visibility(),
@@ -1223,8 +1225,9 @@ impl WeightingSelectedSample {
             output_frame_frequency_hz,
             field_id: sample.metadata().field_id,
             pointing_directions: coordinates.pointing_directions,
+            aw_pointing_pixel: primary_aw_pointing_pixel(&domain_projections),
             antenna_responses: sample.metadata().antenna_responses,
-            domain_projections: sample.domain_projections().clone(),
+            domain_projections,
         }
     }
 
@@ -1282,6 +1285,12 @@ impl WeightingSelectedSample {
         self.pointing_directions
     }
 
+    /// Return the exact CASA chart-local baseline pointing pixel used by AW projection.
+    #[must_use]
+    pub const fn aw_pointing_pixel(&self) -> Option<[f64; 2]> {
+        self.aw_pointing_pixel
+    }
+
     /// Return the owner-derived paired aperture classes, when required.
     #[must_use]
     pub const fn antenna_responses(&self) -> Option<SelectedAntennaResponses> {
@@ -1329,6 +1338,41 @@ impl WeightingSelectedSample {
             .get(0)
             .expect("validated selected samples always contain the primary domain")
             .model()
+    }
+}
+
+fn primary_aw_pointing_pixel(projections: &SelectedImageDomainProjections) -> Option<[f64; 2]> {
+    projections
+        .get(0)
+        .and_then(|projection| projection.aw_pointing_pixel())
+}
+
+#[cfg(test)]
+mod selected_sample_tests {
+    use casa_imaging_model::{
+        SelectedImageDomainProjection, SelectedImageDomainProjections,
+        SelectedPhaseCentreProjection,
+    };
+
+    use super::primary_aw_pointing_pixel;
+
+    #[test]
+    fn weighting_selects_the_main_chart_exact_aw_pointing_pixel() {
+        let phase = SelectedPhaseCentreProjection::new([0.0; 3], 0.0)
+            .expect("finite phase-centre projection");
+        let main = SelectedImageDomainProjection::with_shared_psf(0, phase)
+            .with_aw_pointing_pixel([256.25, 255.75])
+            .expect("finite main pointing pixel");
+        let outlier = SelectedImageDomainProjection::with_shared_psf(1, phase)
+            .with_aw_pointing_pixel([17.0, 19.0])
+            .expect("finite outlier pointing pixel");
+        let projections = SelectedImageDomainProjections::new([main, outlier])
+            .expect("canonical domain projections");
+
+        assert_eq!(
+            primary_aw_pointing_pixel(&projections),
+            Some([256.25, 255.75])
+        );
     }
 }
 
@@ -2007,7 +2051,7 @@ fn robust_factors(
         } else {
             0.0
         };
-        if std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some() {
+        if crate::imaging_science_trace_enabled() {
             let density_nonzero = density[start..end]
                 .iter()
                 .filter(|value| **value > 0.0)

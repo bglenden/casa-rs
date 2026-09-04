@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-use std::{cell::RefCell, collections::VecDeque, mem::size_of, rc::Rc, sync::Arc, time::Instant};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    mem::size_of,
+    rc::Rc,
+    sync::Arc,
+    time::Instant,
+};
 
 use crate::derived::engine::{MsCalEngine, polarization_operator_angle};
 use crate::subtables::SubTable;
@@ -13,20 +20,25 @@ use crate::{
     SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
     VisibilityChannelReadRange,
 };
+use casa_coordinates::{
+    Coordinate, DirectionCoordinate, Projection as CoordinateProjection, ProjectionType,
+};
 use casa_imaging_model::{
     CompiledProblem, CorrelationProduct, CorrelationType, DataDescriptionSelection, DelayCentreLaw,
     DirectionFrame, Epoch, FrequencyFrame, InstrumentModel, MeasurementSetReadAccess,
     MissingPointingPolicy, ObservationSelection, ObservationSource, ObservationSourceState,
     PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingExtrapolation,
-    PointingInterpolation, PointingTimeSampling, SelectedAntennaResponses,
-    SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedInputWeightGroup,
-    SelectedMainRow, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
-    SelectedObservationRunRow, SelectedObservationSample, SelectedObservationSampleView,
-    SelectedPhaseCentreProjection, SelectedPointingDirections, SelectedPredictionTarget,
-    SelectedRowsBuilder, SelectedSampleCoordinates, SelectedSampleMetadata,
-    SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn, WeightColumn,
+    PointingInterpolation, PointingTimeSampling, Projection as ModelProjection,
+    SelectedAntennaResponses, SelectedImageDomainProjection, SelectedImageDomainProjections,
+    SelectedInputWeightGroup, SelectedMainRow, SelectedObservationRunChannel,
+    SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSample,
+    SelectedObservationSampleView, SelectedPhaseCentreProjection, SelectedPointingDirections,
+    SelectedPredictionTarget, SelectedRowsBuilder, SelectedSampleCoordinates,
+    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, TimeScale, VisibilityColumn,
+    WeightColumn,
 };
 use casa_types::measures::direction::{DirectionRef, MDirection};
+use ndarray::arr2;
 use thiserror::Error;
 
 use super::bound_observation::SelectedObservationTraversalMeasurementsBuilder;
@@ -42,6 +54,26 @@ use super::{
 };
 
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
+const AW_POINTING_PLAN_BYTES_PER_SELECTED_ROW: usize = 384;
+
+fn aw_pointing_plan_retained_byte_ceiling(
+    problem: &CompiledProblem,
+    source: &ObservationSource,
+) -> Result<usize, BoundObservationSourceError> {
+    let enabled = problem
+        .science()
+        .measurement_equation()
+        .aw_projection()
+        .is_some_and(|contract| contract.use_pointing());
+    if !enabled {
+        return Ok(0);
+    }
+    usize::try_from(source.selection().rows().selected_row_count())
+        .ok()
+        .and_then(|rows| rows.checked_mul(AW_POINTING_PLAN_BYTES_PER_SELECTED_ROW))
+        .and_then(|bytes| bytes.checked_add(size_of::<AwPointingEpochPlan>()))
+        .ok_or(BoundObservationSourceError::MeasurementOverflow)
+}
 
 pub(crate) struct BoundObservationReferenceData<'a> {
     ephemeris: Option<&'a Arc<crate::SelectedObservationEphemeris>>,
@@ -73,8 +105,32 @@ pub(crate) struct BoundObservationSource {
     row_predicate: CompiledRowPredicate,
     coordinates: Arc<[SelectedCoordinates]>,
     pointing_catalog: Option<PreparedSelectedPointingCatalog>,
+    aw_pointing_plan: Option<AwPointingEpochPlan>,
     content_plan: SelectedObservationContentPlan,
     source_row_count_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct AwPointingEpochKey {
+    data_description_id: i32,
+    field_id: i32,
+    time_bits: u64,
+}
+
+#[derive(Debug)]
+struct AwPointingEpochInput {
+    key: AwPointingEpochKey,
+    row_count: usize,
+    antennas: BTreeSet<i32>,
+}
+
+/// Antenna pointing-centre pixels by field for one grouped pointing epoch.
+type AwPointingChartPixels = Arc<[BTreeMap<i32, [f64; 2]>]>;
+
+#[derive(Debug)]
+struct AwPointingEpochPlan {
+    chart_pixels_by_epoch: BTreeMap<AwPointingEpochKey, AwPointingChartPixels>,
+    retained_byte_ceiling: usize,
 }
 
 impl BoundObservationSource {
@@ -230,6 +286,8 @@ impl BoundObservationSource {
         ephemeris: Option<&Arc<crate::SelectedObservationEphemeris>>,
         pointing_query_domain: Option<&SelectedPointingQueryDomain>,
     ) -> Result<Self, BoundObservationSourceError> {
+        let aw_pointing_plan_ceiling = aw_pointing_plan_retained_byte_ceiling(problem, source)?;
+        let shared_bytes = shared_bytes.with_source_plan_retained_bytes(aw_pointing_plan_ceiling);
         let preliminary_content_plan = selected_content_plan_with_pointing_catalog(
             &measurement_set,
             problem,
@@ -288,7 +346,7 @@ impl BoundObservationSource {
                 .as_ref()
                 .map(|catalog| catalog.measurements()),
         )?;
-        Self::from_planned_locked_measurement_set(
+        let mut bound = Self::from_planned_locked_measurement_set(
             source,
             selected_read_state,
             measures,
@@ -296,7 +354,21 @@ impl BoundObservationSource {
             measurement_set,
             ephemeris,
             pointing_catalog,
-        )
+        )?;
+        if aw_pointing_plan_ceiling != 0 {
+            let plan = build_aw_pointing_epoch_plan(problem, source, &bound)?;
+            if plan.retained_byte_ceiling > aw_pointing_plan_ceiling {
+                return Err(BoundObservationSourceError::MeasurementOverflow);
+            }
+            tracing::info!(
+                target: "casa_ms::selected_pointing",
+                "prepared CASA AW pointing epoch plan epochs={} retained_byte_ceiling={}",
+                plan.chart_pixels_by_epoch.len(),
+                plan.retained_byte_ceiling,
+            );
+            bound.aw_pointing_plan = Some(plan);
+        }
+        Ok(bound)
     }
 
     fn from_planned_locked_measurement_set(
@@ -336,6 +408,7 @@ impl BoundObservationSource {
             row_predicate,
             coordinates,
             pointing_catalog,
+            aw_pointing_plan: None,
             content_plan,
         })
     }
@@ -2036,6 +2109,33 @@ fn evaluate_row_geometry(
                     model,
                 ),
             };
+            let projection = if let Some(plan) = &source.aw_pointing_plan {
+                let epoch = AwPointingEpochKey {
+                    data_description_id: stored.data_description_id(),
+                    field_id: stored.field_id(),
+                    time_bits: stored.time_mjd_seconds().to_bits(),
+                };
+                let chart = domain_projections.len();
+                let pixels = plan
+                    .chart_pixels_by_epoch
+                    .get(&epoch)
+                    .and_then(|charts| charts.get(chart))
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
+                let antenna1 = pixels
+                    .get(&stored.antenna1())
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
+                let antenna2 = pixels
+                    .get(&stored.antenna2())
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
+                projection
+                    .with_aw_pointing_pixel([
+                        0.5 * (antenna1[0] + antenna2[0]),
+                        0.5 * (antenna1[1] + antenna2[1]),
+                    ])
+                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)?
+            } else {
+                projection
+            };
             domain_projections.push(projection);
         }
     }
@@ -2186,6 +2286,309 @@ fn evaluate_observation_pointings(
         });
     }
     Ok(Some(pointings))
+}
+
+fn build_aw_pointing_epoch_plan(
+    problem: &CompiledProblem,
+    observation: &ObservationSource,
+    source: &BoundObservationSource,
+) -> Result<AwPointingEpochPlan, BoundObservationSourceError> {
+    let contract = problem
+        .science()
+        .measurement_equation()
+        .aw_projection()
+        .filter(|contract| contract.use_pointing())
+        .ok_or(BoundObservationSourceError::UnsupportedCentreLaw)?;
+    let law = match problem.geometry().centres().pointing() {
+        PointingCentreLaw::Observation(law) => *law,
+        _ => return Err(BoundObservationSourceError::UnsupportedCentreLaw),
+    };
+    let catalog = source
+        .pointing_catalog
+        .as_ref()
+        .ok_or(BoundObservationSourceError::MissingPointingQueryDomain)?;
+    let available_bytes = source
+        .content_plan
+        .rows_per_block()
+        .checked_mul(crate::SelectedObservationRow::STORAGE_BYTES_PER_ROW)
+        .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+    let scan_plan = MsReadPlan::new(
+        source.measurement_set.row_count(),
+        MsSelectionIoBudget {
+            available_bytes,
+            maximum_live_blocks: 1,
+            requested_bytes_per_row: crate::SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+            storage_alignment_rows: Some(source.content_plan.rows_per_block()),
+        },
+    )
+    .map_err(|error| MsError::InvalidInput(error.to_string()))?;
+    let mut cursor = source
+        .measurement_set
+        .main_row_selection_cursor(scan_plan)?;
+    let mut epochs = Vec::<AwPointingEpochInput>::new();
+    while let Some(row) = cursor.next(&source.measurement_set)? {
+        if !source.row_predicate.matches(StoredMainRow::from(row)) {
+            continue;
+        }
+        let key = AwPointingEpochKey {
+            data_description_id: row.data_description_id(),
+            field_id: row.field_id(),
+            time_bits: row.time_mjd_seconds().to_bits(),
+        };
+        if epochs.last().is_none_or(|epoch| epoch.key != key) {
+            epochs.push(AwPointingEpochInput {
+                key,
+                row_count: 0,
+                antennas: BTreeSet::new(),
+            });
+        }
+        let epoch = epochs.last_mut().expect("AW pointing epoch was appended");
+        epoch.row_count = epoch
+            .row_count
+            .checked_add(1)
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        epoch.antennas.insert(row.antenna1());
+        epoch.antennas.insert(row.antenna2());
+    }
+    let selected_rows = epochs.iter().try_fold(0_u64, |count, epoch| {
+        count.checked_add(epoch.row_count as u64)
+    });
+    if selected_rows != Some(observation.selection().rows().selected_row_count()) {
+        return Err(BoundObservationSourceError::StaleSelectedRows);
+    }
+
+    let charts = problem
+        .geometry()
+        .domains()
+        .iter()
+        .flat_map(|domain| domain.facets().iter().map(|facet| facet.direction()))
+        .map(aw_direction_coordinate)
+        .collect::<Result<Vec<_>, _>>()?;
+    let [grouping_arcsec, refresh_arcsec] = contract.pointing_offset_sigdev_arcsec();
+    let grouping_arcsec = if grouping_arcsec > 0.0 {
+        grouping_arcsec
+    } else {
+        1.0e-3
+    };
+    let mut chart_pixels_by_epoch = BTreeMap::new();
+    let mut cached_field = None;
+    let mut cached_row_count = 0_usize;
+    let mut cached_antenna_pixels = BTreeMap::<i32, [f64; 2]>::new();
+    let mut cached_grouped = AwPointingChartPixels::from([]);
+    let primary_increment = problem
+        .geometry()
+        .domains()
+        .first()
+        .ok_or(BoundObservationSourceError::InvalidRowGeometry)?
+        .direction()
+        .increment_rad();
+    let primary_increment_norm = primary_increment[0].hypot(primary_increment[1]);
+    let refresh_threshold_rad = refresh_arcsec.to_radians() / 3600.0;
+
+    for epoch in epochs {
+        let time = f64::from_bits(epoch.key.time_bits);
+        let fallback = pointing_epoch_phase_direction(source, problem, epoch.key.field_id, time)?;
+        let queries = epoch
+            .antennas
+            .iter()
+            .copied()
+            .map(|antenna| PointingDirectionQuery::new(antenna, time))
+            .collect::<Result<Vec<_>, _>>()?;
+        let brackets = catalog.direction_brackets(&source.geometry_engine, &queries)?;
+        let directions = epoch
+            .antennas
+            .iter()
+            .copied()
+            .zip(brackets)
+            .zip(queries.iter().copied())
+            .map(|((antenna, bracket), query)| {
+                resolve_pointing_direction(bracket, query, law, fallback)
+                    .map(|direction| (antenna, direction))
+            })
+            .collect::<Result<BTreeMap<_, _>, _>>()?;
+        let pixels_by_chart = charts
+            .iter()
+            .map(|coordinate| {
+                directions
+                    .iter()
+                    .map(|(&antenna, direction)| {
+                        coordinate
+                            .to_pixel(&[direction.longitude_rad(), direction.latitude_rad()])
+                            .map_err(|_| BoundObservationSourceError::InvalidRowGeometry)
+                            .and_then(|pixel| {
+                                pixel
+                                    .get(0..2)
+                                    .filter(|pixel| pixel.iter().all(|value| value.is_finite()))
+                                    .map(|pixel| (antenna, [pixel[0], pixel[1]]))
+                                    .ok_or(BoundObservationSourceError::InvalidRowGeometry)
+                            })
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let current_primary = pixels_by_chart
+            .first()
+            .ok_or(BoundObservationSourceError::InvalidRowGeometry)?;
+        let same_antennas = cached_antenna_pixels.len() == current_primary.len()
+            && cached_antenna_pixels.keys().eq(current_primary.keys());
+        let refresh = if cached_field != Some(epoch.key.field_id)
+            || cached_row_count != epoch.row_count
+            || !same_antennas
+        {
+            true
+        } else {
+            let residual = cached_antenna_pixels.iter().zip(current_primary).fold(
+                [0.0, 0.0],
+                |[sum_x, sum_y], ((_, cached), (_, current))| {
+                    [
+                        sum_x + cached[0] - current[0],
+                        sum_y + cached[1] - current[1],
+                    ]
+                },
+            );
+            residual[0].hypot(residual[1]) / current_primary.len().max(1) as f64
+                * primary_increment_norm
+                >= refresh_threshold_rad
+        };
+        if refresh {
+            let grouped =
+                pixels_by_chart
+                    .iter()
+                    .zip(
+                        problem.geometry().domains().iter().flat_map(|domain| {
+                            domain.facets().iter().map(|facet| facet.direction())
+                        }),
+                    )
+                    .map(|(pixels, direction)| {
+                        casa_aw_grouped_pixels(pixels, grouping_arcsec, direction.increment_rad())
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+            cached_grouped = Arc::from(grouped);
+        }
+        cached_field = Some(epoch.key.field_id);
+        cached_row_count = epoch.row_count;
+        cached_antenna_pixels = current_primary.clone();
+        if chart_pixels_by_epoch
+            .insert(epoch.key, Arc::clone(&cached_grouped))
+            .is_some()
+        {
+            return Err(BoundObservationSourceError::InvalidRowGeometry);
+        }
+    }
+    let retained_byte_ceiling = size_of::<AwPointingEpochPlan>()
+        .checked_add(
+            chart_pixels_by_epoch
+                .values()
+                .try_fold(0_usize, |bytes, charts| {
+                    charts.iter().try_fold(bytes, |bytes, chart| {
+                        chart
+                            .len()
+                            .checked_mul(usize::BITS as usize)
+                            .and_then(|entries| bytes.checked_add(entries))
+                    })
+                })
+                .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
+        )
+        .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+    Ok(AwPointingEpochPlan {
+        chart_pixels_by_epoch,
+        retained_byte_ceiling,
+    })
+}
+
+fn aw_direction_coordinate(
+    spec: casa_imaging_model::DirectionCoordinateSpec,
+) -> Result<DirectionCoordinate, BoundObservationSourceError> {
+    if spec.projection() != ModelProjection::Sin {
+        return Err(BoundObservationSourceError::InvalidRowGeometry);
+    }
+    let reference = spec.reference_direction();
+    let pc = spec.pc();
+    Ok(DirectionCoordinate::new(
+        direction_ref(reference.frame()),
+        CoordinateProjection::new(ProjectionType::SIN),
+        [reference.longitude_rad(), reference.latitude_rad()],
+        spec.increment_rad(),
+        spec.reference_pixel(),
+    )
+    .with_pc_matrix(arr2(&pc))
+    .with_longpole(spec.pole_deg()[0].to_radians())
+    .with_latpole(spec.pole_deg()[1].to_radians()))
+}
+
+fn casa_aw_grouped_pixels(
+    pixels: &BTreeMap<i32, [f64; 2]>,
+    grouping_arcsec: f64,
+    increment_rad: [f64; 2],
+) -> Result<BTreeMap<i32, [f64; 2]>, BoundObservationSourceError> {
+    let bin_width =
+        grouping_arcsec.to_radians() / 3600.0 / increment_rad[0].hypot(increment_rad[1]);
+    if !(bin_width.is_finite() && bin_width > 0.0) || pixels.is_empty() {
+        return Err(BoundObservationSourceError::InvalidRowGeometry);
+    }
+    let min_x = pixels
+        .values()
+        .map(|pixel| pixel[0])
+        .fold(f64::INFINITY, f64::min);
+    let min_y = pixels
+        .values()
+        .map(|pixel| pixel[1])
+        .fold(f64::INFINITY, f64::min);
+    let mut bins = BTreeMap::<i32, (i64, i64)>::new();
+    let mut sums = BTreeMap::<(i64, i64), (f32, f32, usize)>::new();
+    for (&antenna, &pixel) in pixels {
+        let bin = (
+            ((pixel[0] - min_x) / bin_width).floor() as i64,
+            ((pixel[1] - min_y) / bin_width).floor() as i64,
+        );
+        bins.insert(antenna, bin);
+        let sum = sums.entry(bin).or_insert((0.0, 0.0, 0));
+        sum.0 = (f64::from(sum.0) + pixel[0]) as f32;
+        sum.1 = (f64::from(sum.1) + pixel[1]) as f32;
+        sum.2 = sum
+            .2
+            .checked_add(1)
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+    }
+    let means = sums
+        .into_iter()
+        .map(|(bin, (x, y, count))| (bin, [(x / count as f32) as f64, (y / count as f32) as f64]))
+        .collect::<BTreeMap<_, _>>();
+    Ok(bins
+        .into_iter()
+        .map(|(antenna, bin)| (antenna, means[&bin]))
+        .collect())
+}
+
+fn pointing_epoch_phase_direction(
+    source: &BoundObservationSource,
+    problem: &CompiledProblem,
+    field_id: i32,
+    time_mjd_seconds: f64,
+) -> Result<SkyDirection, BoundObservationSourceError> {
+    let field =
+        usize::try_from(field_id).map_err(|_| BoundObservationSourceError::InvalidRowGeometry)?;
+    let observation = source
+        .geometry_engine
+        .observation_direction_j2000(time_mjd_seconds, field)?;
+    let (longitude, latitude) = observation.as_angles();
+    let observation = SkyDirection::new(DirectionFrame::J2000, longitude, latitude);
+    match problem.geometry().centres().phase_tracking() {
+        PhaseCentreLaw::Observation => Ok(observation),
+        PhaseCentreLaw::Fixed(direction) => require_fixed_j2000(*direction),
+        PhaseCentreLaw::Ephemeris(target) => {
+            let direction =
+                source
+                    .geometry_engine
+                    .moving_direction_j2000(time_mjd_seconds, field, target)?;
+            let (longitude, latitude) = direction.as_angles();
+            Ok(SkyDirection::new(
+                DirectionFrame::J2000,
+                longitude,
+                latitude,
+            ))
+        }
+    }
 }
 
 fn evaluate_phase_direction(
@@ -2578,5 +2981,56 @@ fn selected_f64_scalar(
             "required selected metadata {column} row {row} is not Float64: {value:?}"
         ))
         .into()),
+    }
+}
+
+#[cfg(test)]
+mod aw_pointing_tests {
+    use super::*;
+
+    #[test]
+    fn casa_default_pointing_group_collapses_compact_array_to_f32_mean() {
+        let pixels = BTreeMap::from([
+            (0, [256.125_000_01, 255.875_000_01]),
+            (1, [257.250_000_02, 256.500_000_02]),
+            (2, [255.750_000_03, 257.125_000_03]),
+        ]);
+
+        let grouped = casa_aw_grouped_pixels(
+            &pixels,
+            600.0,
+            [0.6_f64.to_radians() / 3600.0, 0.6_f64.to_radians() / 3600.0],
+        )
+        .expect("CASA default pointing grouping");
+        let casa_mean = |values: [f64; 3]| {
+            let sum = values
+                .into_iter()
+                .fold(0.0_f32, |sum, value| (f64::from(sum) + value) as f32);
+            f64::from(sum / 3.0)
+        };
+        let expected_x = casa_mean([256.125_000_01, 257.250_000_02, 255.750_000_03]);
+        let expected_y = casa_mean([255.875_000_01, 256.500_000_02, 257.125_000_03]);
+
+        assert_eq!(grouped.len(), pixels.len());
+        assert!(
+            grouped
+                .values()
+                .all(|pixel| *pixel == [expected_x, expected_y])
+        );
+    }
+
+    #[test]
+    fn casa_pointing_group_keeps_separated_bins_independent() {
+        let pixels = BTreeMap::from([(0, [10.0, 20.0]), (1, [10.2, 20.2]), (2, [30.0, 40.0])]);
+
+        let grouped = casa_aw_grouped_pixels(&pixels, 1.0, [1.0_f64.to_radians() / 3600.0, 0.0])
+            .expect("separated CASA pointing groups");
+
+        assert_eq!(
+            grouped[&0],
+            [10.100_000_381_469_727, 20.100_000_381_469_727]
+        );
+        assert_eq!(grouped[&1], grouped[&0]);
+        assert_eq!(grouped[&2], [30.0, 40.0]);
     }
 }

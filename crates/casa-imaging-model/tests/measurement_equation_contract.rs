@@ -493,7 +493,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 fn problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSamplingLaw::LINEAR);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 22);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 23);
     assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 4);
     assert_eq!(
         (
@@ -505,7 +505,7 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "b67dcaa9197a1aaa96d158425d4faf581c8d5fe15352cb3105f5783f6686a604".to_string(),
+            "fe799a3ce91ccdc40c546921b84a639bcf603681365c3d9f461dd2e18744aa66".to_string(),
             "fb3f6fbe9f427fbdad7ce317690019841393c10a10d2c48cb163179be78db6e5".to_string(),
         )
     );
@@ -548,6 +548,7 @@ fn aw_projection_is_distinct_paired_and_identity_bound() {
         true,
         true,
         true,
+        [300.0, 30.0],
         5.0,
         5.0,
     )
@@ -575,5 +576,78 @@ fn aw_projection_is_distinct_paired_and_identity_bound() {
             .last(),
         Some(&PairedMeasurementTransform::AwProjection { contract })
     );
+    assert_eq!(contract.pointing_offset_sigdev_arcsec(), [300.0, 30.0]);
+    assert_eq!(contract.pointing_group_threshold_arcsec(), 300.0);
+    assert_eq!(contract.pointing_refresh_threshold_arcsec(), 30.0);
     assert_ne!(aw.problem_id(), standard.problem_id());
+
+    let changed_pointing_thresholds = AwProjectionContract::new(
+        12_500.0,
+        std::num::NonZeroUsize::new(32).unwrap(),
+        true,
+        false,
+        true,
+        true,
+        true,
+        [301.0, 30.0],
+        5.0,
+        5.0,
+    )
+    .unwrap();
+    let changed = compile_contract_with_reduction(
+        SpectralSamplingLaw::LINEAR,
+        ReductionPolicy::Compensated,
+        None,
+        Some(changed_pointing_thresholds),
+    );
+    assert_ne!(aw.problem_id(), changed.problem_id());
+}
+
+#[test]
+fn aw_projection_rejects_invalid_pointing_thresholds() {
+    let valid = || {
+        (
+            12_500.0,
+            std::num::NonZeroUsize::new(32).unwrap(),
+            true,
+            false,
+            true,
+            true,
+            true,
+            5.0,
+            5.0,
+        )
+    };
+    let (maximum_w, planes, a_term, ps_term, wideband, conjugate, pointing, compute_pa, rotate_pa) =
+        valid();
+    assert_eq!(
+        AwProjectionContract::new(
+            maximum_w,
+            planes,
+            a_term,
+            ps_term,
+            wideband,
+            conjugate,
+            pointing,
+            [f64::NAN, 30.0],
+            compute_pa,
+            rotate_pa,
+        ),
+        Err(casa_imaging_model::AwProjectionContractError::InvalidPointingOffsetSigdev)
+    );
+    assert_eq!(
+        AwProjectionContract::new(
+            maximum_w,
+            planes,
+            a_term,
+            ps_term,
+            wideband,
+            conjugate,
+            pointing,
+            [300.0, -1.0],
+            compute_pa,
+            rotate_pa,
+        ),
+        Err(casa_imaging_model::AwProjectionContractError::InvalidPointingOffsetSigdev)
+    );
 }

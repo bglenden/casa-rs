@@ -607,9 +607,11 @@ fn problem_with_shape_response_and_mosaic(
         ),
     );
     if primary_beam {
-        science = science.with_instrument_model(
-            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
-        );
+        science = science.with_instrument_model(if mosaic {
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+        } else {
+            InstrumentModel::CasaAca7mInterferometricDirectPbV1
+        });
     }
     compile(ImagingRequest::new(
         ProblemSpecification::new(
@@ -788,6 +790,11 @@ fn mosaic_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObs
     let mut selected = samples(problem);
     for sample in &mut selected {
         sample.coordinates.uvw_law = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+        sample.metadata.antenna_responses = Some(casa_imaging_model::SelectedAntennaResponses {
+            antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            family_envelope: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+        });
     }
     selected
 }
@@ -1313,6 +1320,9 @@ fn complete_frozen_taylor_operator(
 ) -> CompleteDataOwnerResult {
     let channels = match problem.reconstruction().basis() {
         ReconstructionBasis::TaylorViaChannelMajor { channels, .. } => channels,
+        ReconstructionBasis::JointContinuumLine { .. } => {
+            problem.geometry().spectral().output_channels()
+        }
         _ => 1,
     };
     complete_frozen_taylor_operator_slab(problem, frozen, preparation, pass, prior, 0, channels)
@@ -2534,7 +2544,7 @@ fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() 
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.schema_version(), 6);
+    assert_eq!(program.schema_version(), 7);
     assert_eq!(
         gridded_normal_operator_record_bytes(&problem).expect("Taylor record width"),
         32,
@@ -2677,7 +2687,7 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.record_bytes(), 32);
+    assert_eq!(program.record_bytes(), GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
     assert_eq!(program.prediction_width(), 1);
     let direct_prior = initial_normal_from_frozen(&problem, &frozen);
     let initial_content = direct_prior.content_identity();

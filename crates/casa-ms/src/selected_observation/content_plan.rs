@@ -30,6 +30,7 @@ pub(crate) struct SelectedObservationSharedBytes {
     shared_reference_data_retained_bytes: usize,
     shared_source_slots_retained_bytes: usize,
     shared_binding_graph_initialization_bytes: usize,
+    shared_source_plan_retained_bytes: usize,
 }
 
 impl SelectedObservationSharedBytes {
@@ -46,7 +47,13 @@ impl SelectedObservationSharedBytes {
             shared_reference_data_retained_bytes,
             shared_source_slots_retained_bytes,
             shared_binding_graph_initialization_bytes,
+            shared_source_plan_retained_bytes: 0,
         }
+    }
+
+    pub(crate) const fn with_source_plan_retained_bytes(mut self, bytes: usize) -> Self {
+        self.shared_source_plan_retained_bytes = bytes;
+        self
     }
 }
 
@@ -329,6 +336,7 @@ pub(crate) fn selected_content_plan_with_pointing_catalog(
     )?;
     let retained_bytes = noncatalog_retained_bytes
         .checked_add(pointing_catalog.map_or(0, |catalog| catalog.retained_bytes()))
+        .and_then(|bytes| bytes.checked_add(shared_bytes.shared_source_plan_retained_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let noncatalog_initialization_scratch_bytes = coordinate_construction_scratch_bytes
         .checked_add(shared_bytes.shared_binding_graph_initialization_bytes)
