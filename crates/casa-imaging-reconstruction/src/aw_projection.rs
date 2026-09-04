@@ -746,6 +746,31 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         Ok(AwGridPlan::new(shape, taps))
     }
 
+    pub(crate) fn prepare_imaging_and_normal_grid(
+        &mut self,
+        shape: [usize; 2],
+        sample: AwVisibilitySample,
+    ) -> Result<(AwGridPlan, AwGridPlan), AwOperatorError> {
+        let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        let imaging = fused_taps(&cell.cell().imaging, shape, sample, true)?;
+        let normal = fused_taps(&cell.cell().weight, shape, sample, true)?;
+        add_measurement(&mut self.diagnostics.selections, 1)?;
+        add_measurement(&mut self.diagnostics.grid_passes, 2)?;
+        add_measurement(
+            &mut self.diagnostics.imaging_taps,
+            imaging.values.len() as u64,
+        )?;
+        add_measurement(
+            &mut self.diagnostics.weight_taps,
+            normal.values.len() as u64,
+        )?;
+        Ok((
+            AwGridPlan::new(shape, imaging),
+            AwGridPlan::new(shape, normal),
+        ))
+    }
+
     pub(crate) fn prepare_imaging_grid_observed(
         &mut self,
         shape: [usize; 2],
@@ -1633,7 +1658,7 @@ mod tests {
     }
 
     #[test]
-    fn t51_imaging_and_centered_sensitivity_plans_are_distinct_and_reused_without_reselection() {
+    fn t51_imaging_normal_and_centered_sensitivity_use_their_distinct_cf_roles() {
         let layout = layout([0, 0], 1);
         let kernel = |value| {
             let mut taps = vec![Complex64::default(); layout.shape[0] * layout.shape[1]];
@@ -1700,14 +1725,17 @@ mod tests {
             AwVisibilitySample::new(10.0, 10.0, 1.0, 0, 0.0, [6.2, 5.8], [0.0, 0.0]).unwrap();
         let mut psf = vec![Complex64::default(); 100];
         let mut psf_error = vec![Complex64::default(); 100];
-        let imaging = operator.prepare_imaging_grid([10, 10], sample).unwrap();
-        let normalization = imaging.normalization();
+        let (imaging, normal) = operator
+            .prepare_imaging_and_normal_grid([10, 10], sample)
+            .unwrap();
+        let imaging_normalization = imaging.normalization();
+        let normal_normalization = normal.normalization();
         let mut dirty = vec![Complex64::default(); 100];
         let mut dirty_error = vec![Complex64::default(); 100];
         imaging
             .grid_compensated(&mut dirty, &mut dirty_error, Complex64::new(-1.0, 0.5))
             .unwrap();
-        imaging
+        normal
             .grid_compensated(&mut psf, &mut psf_error, Complex64::new(2.0, 0.0))
             .unwrap();
         let mut sensitivity = vec![Complex64::default(); 100];
@@ -1721,8 +1749,10 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(normalization, 5.0);
-        assert_eq!(psf[66], Complex64::new(6.0, -8.0));
+        assert_eq!(imaging_normalization, 5.0);
+        assert_eq!(normal_normalization, 53.0_f64.sqrt());
+        assert_eq!(dirty[66], Complex64::new(-1.0, 5.5));
+        assert_eq!(psf[66], Complex64::new(14.0, -4.0));
         assert_eq!(sensitivity[55], Complex64::new(22.0, -6.0));
         assert_eq!(psf.iter().filter(|value| value.norm_sqr() > 0.0).count(), 1);
         assert_eq!(
@@ -1733,7 +1763,7 @@ mod tests {
             1
         );
         let before_reuse = operator.diagnostics();
-        imaging
+        normal
             .grid_compensated(&mut psf, &mut psf_error, Complex64::new(-0.5, 0.0))
             .unwrap();
         sensitivity_plan
@@ -1750,7 +1780,7 @@ mod tests {
                 before_reuse.imaging_taps,
                 before_reuse.weight_taps,
             ),
-            (2, 1, 1)
+            (2, 1, 2)
         );
     }
 

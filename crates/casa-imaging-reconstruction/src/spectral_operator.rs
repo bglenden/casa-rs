@@ -6574,7 +6574,8 @@ impl SpectralSlabOperator {
             return Ok(());
         };
         let taps = self.prepare_grid_taps(taps, true)?;
-        let normalization = taps.normalization(&self.gridder)?;
+        let normal_normalization = taps.normal_normalization(&self.gridder)?;
+        let published_normalization = taps.imaging_normalization(&self.gridder)?;
         let aw_publication_lane = self.aw_publication_lane(sample)?;
         let factor = sample.spectral_factor;
         match self.basis {
@@ -6590,11 +6591,11 @@ impl SpectralSlabOperator {
                 )?;
                 let normal_weight = sample.imaging_weight * factor * factor;
                 self.accumulate_mosaic_normal(plane, sample, &taps, normal_weight)?;
-                self.grid_normal_moment(plane, &taps, normal_weight, normalization)?;
+                self.grid_normal_moment(plane, &taps, normal_weight, normal_normalization)?;
                 self.accumulate_published_sum_weight(
                     plane,
                     sample.published_weight * factor * factor,
-                    normalization,
+                    published_normalization,
                     aw_publication_lane,
                 )?;
             }
@@ -6613,7 +6614,8 @@ impl SpectralSlabOperator {
                     &taps,
                     sample.imaging_weight * factor * factor,
                     sample.published_weight * factor * factor,
-                    normalization,
+                    normal_normalization,
+                    published_normalization,
                     aw_publication_lane,
                 )?;
             }
@@ -6640,7 +6642,7 @@ impl SpectralSlabOperator {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
                     self.accumulate_mosaic_normal(moment, sample, &taps, weight)?;
-                    self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                    self.grid_normal_moment(moment, &taps, weight, normal_normalization)?;
                 }
                 plan.fill_normal_moment_weights(
                     sample.frequency_hz,
@@ -6654,7 +6656,7 @@ impl SpectralSlabOperator {
                     self.accumulate_published_sum_weight(
                         moment,
                         weight,
-                        normalization,
+                        published_normalization,
                         aw_publication_lane,
                     )?;
                 }
@@ -6669,8 +6671,8 @@ impl SpectralSlabOperator {
                     .checked_add(1)
                     .ok_or(SpectralOperatorError::CoverageOverflow)?;
                 let channel = self.polarization_plane(sample.output_channel, polarization);
-                if normalization > 0.0 {
-                    let corrected = sample.imaging_weight * normalization
+                if normal_normalization > 0.0 {
+                    let corrected = sample.imaging_weight * normal_normalization
                         - self.channel_sum_weight_compensations[channel];
                     let updated = self.channel_sum_weights[channel] + corrected;
                     self.channel_sum_weight_compensations[channel] =
@@ -6693,7 +6695,7 @@ impl SpectralSlabOperator {
                 for moment in 0..self.normal_moment_weights.len() {
                     let weight = self.normal_moment_weights[moment];
                     let moment = self.polarization_plane(moment, polarization);
-                    self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                    self.grid_normal_moment(moment, &taps, weight, normal_normalization)?;
                 }
                 self.fill_joint_normal_weights(sample.published_weight * factor * factor)?;
                 for moment in 0..self.normal_moment_weights.len() {
@@ -6702,7 +6704,7 @@ impl SpectralSlabOperator {
                     self.accumulate_published_sum_weight(
                         moment,
                         weight,
-                        normalization,
+                        published_normalization,
                         aw_publication_lane,
                     )?;
                 }
@@ -6821,12 +6823,24 @@ impl SpectralSlabOperator {
                 let mut aw = aw
                     .lock()
                     .map_err(|_| SpectralOperatorError::ProblemMismatch)?;
-                let imaging = aw.prepare_imaging_grid(self.geometry.grid_shape, sample)?;
-                let sensitivity = with_sensitivity
-                    .then(|| aw.prepare_sensitivity_grid(self.geometry.grid_shape, sample))
-                    .transpose()?;
+                let (imaging, normal, sensitivity) = if with_sensitivity {
+                    let (imaging, normal) =
+                        aw.prepare_imaging_and_normal_grid(self.geometry.grid_shape, sample)?;
+                    (
+                        imaging,
+                        Some(normal),
+                        Some(aw.prepare_sensitivity_grid(self.geometry.grid_shape, sample)?),
+                    )
+                } else {
+                    (
+                        aw.prepare_imaging_grid(self.geometry.grid_shape, sample)?,
+                        None,
+                        None,
+                    )
+                };
                 Ok(GridOperatorTaps::Aw {
                     imaging,
+                    normal,
                     sensitivity,
                 })
             }
@@ -6962,6 +6976,7 @@ impl SpectralSlabOperator {
                 errors: compensation,
             },
             taps,
+            GridAccumulationRole::Imaging,
             value,
         )?;
         #[cfg(test)]
@@ -6995,6 +7010,7 @@ impl SpectralSlabOperator {
                 errors: compensation,
             },
             taps,
+            GridAccumulationRole::Normal,
             Complex64::new(weight, 0.0),
         )?;
         #[cfg(test)]
@@ -7019,7 +7035,8 @@ impl SpectralSlabOperator {
         taps: &GridOperatorTaps,
         imaging_weight: f64,
         published_weight: f64,
-        normalization: f64,
+        normal_normalization: f64,
+        published_normalization: f64,
         aw_publication_lane: Option<usize>,
     ) -> Result<(), SpectralOperatorError> {
         grid_operator_compensated(
@@ -7036,6 +7053,7 @@ impl SpectralSlabOperator {
                     .ok_or(SpectralOperatorError::ProblemMismatch)?[plane],
             },
             taps,
+            GridAccumulationRole::Normal,
             Complex64::new(imaging_weight, 0.0),
         )?;
         #[cfg(test)]
@@ -7048,7 +7066,7 @@ impl SpectralSlabOperator {
             &mut self.channel_major_sum_weights,
             &mut self.channel_major_sum_weight_compensations,
             plane,
-            imaging_weight * normalization,
+            imaging_weight * normal_normalization,
         )?;
         if let Some(lane) = aw_publication_lane {
             let aw = self
@@ -7063,14 +7081,14 @@ impl SpectralSlabOperator {
                     .get_mut(lane)
                     .ok_or(SpectralOperatorError::InvalidSample)?,
                 plane,
-                published_weight * normalization,
+                published_weight * published_normalization,
             )
         } else {
             accumulate_compensated(
                 &mut self.channel_major_published_sum_weights,
                 &mut self.channel_major_published_sum_weight_compensations,
                 plane,
-                published_weight * normalization,
+                published_weight * published_normalization,
             )
         }
     }
@@ -7689,7 +7707,8 @@ impl SpectralSlabOperator {
             return Ok(());
         };
         let taps = self.prepare_grid_taps(taps, self.psf_grids.is_some())?;
-        let normalization = taps.normalization(&self.gridder)?;
+        let normal_normalization = taps.normal_normalization(&self.gridder)?;
+        let published_normalization = taps.imaging_normalization(&self.gridder)?;
         let aw_publication_lane = self.aw_publication_lane(sample)?;
         let factor = sample.spectral_factor;
         let observed_scale = sample.visibility * sample.phase() * (sample.imaging_weight * factor);
@@ -7710,12 +7729,12 @@ impl SpectralSlabOperator {
                         plane,
                         &taps,
                         sample.imaging_weight * factor * factor,
-                        normalization,
+                        normal_normalization,
                     )?;
                     self.accumulate_published_sum_weight(
                         plane,
                         sample.published_weight * factor * factor,
-                        normalization,
+                        published_normalization,
                         aw_publication_lane,
                     )?;
                 }
@@ -7735,7 +7754,8 @@ impl SpectralSlabOperator {
                         &taps,
                         sample.imaging_weight * factor * factor,
                         sample.published_weight * factor * factor,
-                        normalization,
+                        normal_normalization,
+                        published_normalization,
                         aw_publication_lane,
                     )?;
                 }
@@ -7771,7 +7791,7 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                        self.grid_normal_moment(moment, &taps, weight, normal_normalization)?;
                     }
                     plan.fill_normal_moment_weights(
                         sample.frequency_hz,
@@ -7785,7 +7805,7 @@ impl SpectralSlabOperator {
                         self.accumulate_published_sum_weight(
                             moment,
                             weight,
-                            normalization,
+                            published_normalization,
                             aw_publication_lane,
                         )?;
                     }
@@ -7800,9 +7820,9 @@ impl SpectralSlabOperator {
                 *mapped = mapped
                     .checked_add(1)
                     .ok_or(SpectralOperatorError::CoverageOverflow)?;
-                if self.psf_grids.is_some() && normalization > 0.0 {
+                if self.psf_grids.is_some() && normal_normalization > 0.0 {
                     let channel = self.polarization_plane(sample.output_channel, polarization);
-                    let corrected = sample.imaging_weight * normalization
+                    let corrected = sample.imaging_weight * normal_normalization
                         - self.channel_sum_weight_compensations[channel];
                     let updated = self.channel_sum_weights[channel] + corrected;
                     self.channel_sum_weight_compensations[channel] =
@@ -7828,7 +7848,7 @@ impl SpectralSlabOperator {
                     for moment in 0..self.normal_moment_weights.len() {
                         let weight = self.normal_moment_weights[moment];
                         let moment = self.polarization_plane(moment, polarization);
-                        self.grid_normal_moment(moment, &taps, weight, normalization)?;
+                        self.grid_normal_moment(moment, &taps, weight, normal_normalization)?;
                     }
                     self.fill_joint_normal_weights(sample.published_weight * factor * factor)?;
                     for moment in 0..self.normal_moment_weights.len() {
@@ -7837,7 +7857,7 @@ impl SpectralSlabOperator {
                         self.accumulate_published_sum_weight(
                             moment,
                             weight,
-                            normalization,
+                            published_normalization,
                             aw_publication_lane,
                         )?;
                     }
@@ -7869,6 +7889,7 @@ impl SpectralSlabOperator {
                 errors: compensation,
             },
             taps,
+            GridAccumulationRole::Imaging,
             value,
         )?;
         #[cfg(test)]
@@ -7901,6 +7922,7 @@ impl SpectralSlabOperator {
                 errors: compensation,
             },
             taps,
+            GridAccumulationRole::Imaging,
             value,
         )?;
         Ok(())
@@ -9498,6 +9520,7 @@ enum GridOperatorTaps {
     Standard(SampleTaps),
     Aw {
         imaging: AwGridPlan,
+        normal: Option<AwGridPlan>,
         sensitivity: Option<AwGridPlan>,
     },
     Mosaic {
@@ -9512,7 +9535,10 @@ struct CompensatedGrid<'a> {
 }
 
 impl GridOperatorTaps {
-    fn normalization(&self, standard: &ConvolutionOperator) -> Result<f64, SpectralOperatorError> {
+    fn imaging_normalization(
+        &self,
+        standard: &ConvolutionOperator,
+    ) -> Result<f64, SpectralOperatorError> {
         match self {
             Self::Standard(taps) => standard.normalization(*taps),
             Self::Aw { imaging, .. } => Ok(imaging.normalization()),
@@ -9525,6 +9551,26 @@ impl GridOperatorTaps {
             }
         }
     }
+
+    fn normal_normalization(
+        &self,
+        standard: &ConvolutionOperator,
+    ) -> Result<f64, SpectralOperatorError> {
+        match self {
+            Self::Aw {
+                normal: Some(normal),
+                ..
+            } => Ok(normal.normalization()),
+            Self::Aw { normal: None, .. } => Ok(0.0),
+            Self::Standard(_) | Self::Mosaic { .. } => self.imaging_normalization(standard),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum GridAccumulationRole {
+    Imaging,
+    Normal,
 }
 
 fn grid_operator_compensated(
@@ -9532,20 +9578,28 @@ fn grid_operator_compensated(
     mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
     grid: CompensatedGrid<'_>,
     taps: &GridOperatorTaps,
+    role: GridAccumulationRole,
     value: Complex64,
 ) -> Result<(), SpectralOperatorError> {
     let CompensatedGrid { values, errors } = grid;
     match taps {
         GridOperatorTaps::Standard(taps) => standard.grid_compensated(values, errors, *taps, value),
-        GridOperatorTaps::Aw { imaging, .. } => {
+        GridOperatorTaps::Aw {
+            imaging, normal, ..
+        } => {
             let grid = values
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
             let compensation = errors
                 .as_slice_mut()
                 .ok_or(SpectralOperatorError::ProblemMismatch)?;
-            imaging
-                .grid_compensated(grid, compensation, value)
+            let plan = match role {
+                GridAccumulationRole::Imaging => imaging,
+                GridAccumulationRole::Normal => normal
+                    .as_ref()
+                    .ok_or(SpectralOperatorError::ProblemMismatch)?,
+            };
+            plan.grid_compensated(grid, compensation, value)
                 .map_err(Into::into)
         }
         GridOperatorTaps::Mosaic { response_key, plan } => {
