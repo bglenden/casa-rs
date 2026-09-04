@@ -2007,6 +2007,21 @@ fn robust_factors(
         } else {
             0.0
         };
+        if std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some() {
+            let density_nonzero = density[start..end]
+                .iter()
+                .filter(|value| **value > 0.0)
+                .count();
+            let density_max = density[start..end].iter().copied().fold(0.0_f64, f64::max);
+            eprintln!(
+                "imaging_science_probe_v1 boundary=weighting_density plane={plane} width={} height={} increment_u_rad={:.17e} increment_v_rad={:.17e} density_sum={density_sum:.17e} density_sum_sq={density_square_sum:.17e} density_max={density_max:.17e} density_nonzero={density_nonzero} robust_f2={:.17e}",
+                grid.width,
+                grid.height,
+                grid.increments()[0],
+                grid.increments()[1],
+                *factor,
+            );
+        }
     }
     factors.into_boxed_slice()
 }
