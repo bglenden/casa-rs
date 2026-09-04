@@ -771,34 +771,48 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         ))
     }
 
-    pub(crate) fn prepare_imaging_grid_observed(
+    pub(crate) fn prepare_imaging_and_normal_grid_observed(
         &mut self,
         shape: [usize; 2],
         sample: AwVisibilitySample,
-    ) -> Result<(AwGridPlan, AwScienceProbe), AwOperatorError> {
+    ) -> Result<(AwGridPlan, AwGridPlan, AwScienceProbePair), AwOperatorError> {
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
-        let (taps, observed) = fused_taps_inner::<true>(&cell.cell().imaging, shape, sample, true)?;
-        let (base_x, base_y, frac_x, frac_y, observed) =
-            observed.expect("observed tap construction returns coordinates");
-        add_measurement(&mut self.diagnostics.selections, 1)?;
-        add_measurement(&mut self.diagnostics.grid_passes, 1)?;
-        add_measurement(&mut self.diagnostics.imaging_taps, taps.values.len() as u64)?;
-        let probe = AwScienceProbe {
-            identity: metadata.identity,
-            selected_frequency_hz: metadata.frequency_hz,
-            selected_w_lambda: metadata.w_value_lambda,
-            mueller_element: metadata.mueller_element,
-            parallactic_angle_deg: metadata.parallactic_angle_deg,
-            support: metadata.imaging_layout.support,
-            oversampling: metadata.imaging_layout.oversampling,
-            grid_position: sample.grid_position,
-            grid_location: [base_x, base_y],
-            fractional_offset: [frac_x, frac_y],
-            taps: observed.into_boxed_slice(),
-            raw_tap_sum: taps.normalization,
+        let (imaging, imaging_observed) =
+            fused_taps_inner::<true>(&cell.cell().imaging, shape, sample, true)?;
+        let (normal, normal_observed) =
+            fused_taps_inner::<true>(&cell.cell().weight, shape, sample, true)?;
+        let probes = AwScienceProbePair {
+            imaging: observed_science_probe(
+                metadata,
+                metadata.imaging_layout,
+                sample,
+                &imaging,
+                imaging_observed,
+            ),
+            normal: observed_science_probe(
+                metadata,
+                metadata.weight_layout,
+                sample,
+                &normal,
+                normal_observed,
+            ),
         };
-        Ok((AwGridPlan::new(shape, taps), probe))
+        add_measurement(&mut self.diagnostics.selections, 1)?;
+        add_measurement(&mut self.diagnostics.grid_passes, 2)?;
+        add_measurement(
+            &mut self.diagnostics.imaging_taps,
+            imaging.values.len() as u64,
+        )?;
+        add_measurement(
+            &mut self.diagnostics.weight_taps,
+            normal.values.len() as u64,
+        )?;
+        Ok((
+            AwGridPlan::new(shape, imaging),
+            AwGridPlan::new(shape, normal),
+            probes,
+        ))
     }
 
     pub(crate) fn prepare_sensitivity_grid(
@@ -842,6 +856,12 @@ pub(crate) struct AwScienceProbe {
     pub(crate) fractional_offset: [isize; 2],
     pub(crate) taps: Box<[AwScienceProbeTap]>,
     pub(crate) raw_tap_sum: Complex64,
+}
+
+#[derive(Debug)]
+pub(crate) struct AwScienceProbePair {
+    pub(crate) imaging: AwScienceProbe,
+    pub(crate) normal: AwScienceProbe,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -936,6 +956,31 @@ struct FusedTaps {
 }
 type ObservedFusedTaps = (isize, isize, isize, isize, Vec<AwScienceProbeTap>);
 type FusedTapBuild = (FusedTaps, Option<ObservedFusedTaps>);
+
+fn observed_science_probe(
+    metadata: &AwPreparedCellMetadata,
+    layout: AwKernelLayout,
+    sample: AwVisibilitySample,
+    taps: &FusedTaps,
+    observed: Option<ObservedFusedTaps>,
+) -> AwScienceProbe {
+    let (base_x, base_y, frac_x, frac_y, observed) =
+        observed.expect("observed tap construction returns coordinates");
+    AwScienceProbe {
+        identity: metadata.identity,
+        selected_frequency_hz: metadata.frequency_hz,
+        selected_w_lambda: metadata.w_value_lambda,
+        mueller_element: metadata.mueller_element,
+        parallactic_angle_deg: metadata.parallactic_angle_deg,
+        support: layout.support,
+        oversampling: layout.oversampling,
+        grid_position: sample.grid_position,
+        grid_location: [base_x, base_y],
+        fractional_offset: [frac_x, frac_y],
+        taps: observed.into_boxed_slice(),
+        raw_tap_sum: taps.normalization,
+    }
+}
 
 fn fused_taps(
     kernel: &AwConvolutionKernel,
@@ -1271,6 +1316,201 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires exported local CF pixels, native stencil trace, and explicit sample"]
+    fn t51_native_unpointed_stencil_matches_production_preparation() {
+        let root =
+            std::path::PathBuf::from(std::env::var_os("CASA_RS_T51_STENCIL_FIXTURE").unwrap());
+        let native =
+            std::fs::read_to_string(std::env::var_os("CASA_RS_T51_NATIVE_STENCIL").unwrap())
+                .unwrap();
+        let sample = std::env::var("CASA_RS_T51_STENCIL_SAMPLE")
+            .unwrap()
+            .split(',')
+            .map(|v| v.parse::<f64>().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            sample.len(),
+            6,
+            "frequency,reference,abs_w_lambda,PA,grid_x,grid_y"
+        );
+        let mut entries = Vec::new();
+        let mut cells = BTreeMap::new();
+        let mut names = BTreeMap::new();
+        for line in std::fs::read_to_string(root.join("catalog.tsv"))
+            .unwrap()
+            .lines()
+        {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let number = |i: usize| fields[i].parse::<f64>().unwrap();
+            let layout = |start: usize| {
+                AwKernelLayout::new(
+                    [number(start) as usize, number(start + 1) as usize],
+                    number(start + 2) as usize,
+                    [number(start + 3) as usize, number(start + 4) as usize],
+                    [number(start + 5) as usize, number(start + 6) as usize],
+                )
+                .unwrap()
+            };
+            let metadata = AwPreparedCellMetadata::new(
+                PreparedArtifactScientificIdentity::convolution_function(
+                    PreparedArtifactCellSemantics::new(
+                        number(1),
+                        number(2),
+                        number(4) as u32,
+                        number(6) as u32,
+                        number(5),
+                        number(7),
+                        number(8) as u32,
+                        fields[9],
+                        fields[10],
+                        number(11),
+                        number(3),
+                        PreparedArtifactAwInterpretation::Wavelength,
+                        fields[12].parse().unwrap(),
+                        "discrete-complex-sum",
+                    )
+                    .unwrap(),
+                )
+                .unwrap(),
+                number(1),
+                number(2),
+                number(3),
+                number(4) as u32,
+                number(5),
+                layout(13),
+                layout(20),
+            )
+            .unwrap();
+            let id = metadata.identity.as_bytes();
+            assert_eq!(
+                id.iter().map(|v| format!("{v:02x}")).collect::<String>(),
+                fields[27]
+            );
+            names.insert(id, format!("{}.im", fields[0]));
+            if root.join(format!("{}.imaging.bin", fields[0])).exists() {
+                let kernel = |role: &str, layout| {
+                    let bytes =
+                        std::fs::read(root.join(format!("{}.{role}.bin", fields[0]))).unwrap();
+                    assert_eq!(bytes.len() % 8, 0);
+                    AwConvolutionKernel::new(
+                        layout,
+                        bytes
+                            .chunks_exact(8)
+                            .map(|v| {
+                                Complex64::new(
+                                    f64::from(f32::from_le_bytes(v[..4].try_into().unwrap())),
+                                    f64::from(f32::from_le_bytes(v[4..].try_into().unwrap())),
+                                )
+                            })
+                            .collect(),
+                    )
+                    .unwrap()
+                };
+                cells.insert(
+                    id,
+                    Arc::new(
+                        AwConvolutionCell::new(
+                            metadata.identity,
+                            kernel("imaging", metadata.imaging_layout),
+                            kernel("weight", metadata.weight_layout),
+                        )
+                        .unwrap(),
+                    ),
+                );
+            }
+            entries.push(metadata);
+        }
+        let mut operator = AwProjectionOperator::new(
+            AwPreparedCatalog::new(entries).unwrap(),
+            Provider {
+                cells,
+                seen: BTreeSet::new(),
+            },
+            true,
+            16 * 1024 * 1024,
+        )
+        .unwrap();
+        let mut current = None;
+        let mut cases = 0;
+        let mut compared = 0;
+        for line in native.lines() {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            match fields[0] {
+                "case" => {
+                    let sign = fields[2].parse::<f64>().unwrap();
+                    let mueller = match fields[3] {
+                        "0" => 0,
+                        "3" => 15,
+                        _ => panic!("unexpected hand"),
+                    };
+                    let input = AwVisibilitySample::new(
+                        sample[0],
+                        sample[1],
+                        sign * sample[2],
+                        mueller,
+                        sample[3],
+                        [sample[4], sample[5]],
+                        [0.0; 2],
+                    )
+                    .unwrap();
+                    let selected = operator.catalog.grid_cell(input, true).unwrap();
+                    let name = &names[&selected.identity.as_bytes()];
+                    let native_name = match fields[1] {
+                        "CFS" => name.clone(),
+                        "WTCF" => format!("WT{name}"),
+                        _ => panic!("unexpected CF role"),
+                    };
+                    assert_eq!(native_name, fields[4], "independent CF selection");
+                    let (imaging, normal, probes) = operator
+                        .prepare_imaging_and_normal_grid_observed([512, 512], input)
+                        .unwrap();
+                    current = Some(if fields[1] == "CFS" {
+                        (imaging, probes.imaging, 0)
+                    } else {
+                        (normal, probes.normal, 0)
+                    });
+                    cases += 1;
+                }
+                "tap" => {
+                    let (plan, probe, index) = current.as_mut().unwrap();
+                    let coordinate = [
+                        fields[6].parse::<usize>().unwrap(),
+                        fields[7].parse::<usize>().unwrap(),
+                    ];
+                    assert_eq!(
+                        probe.taps[*index].cf_coordinate, coordinate,
+                        "native CF address"
+                    );
+                    let expected =
+                        Complex64::new(fields[8].parse().unwrap(), fields[9].parse().unwrap());
+                    assert_eq!(
+                        plan.taps[*index].coefficient, expected,
+                        "native unpointed coefficient"
+                    );
+                    *index += 1;
+                    compared += 1;
+                }
+                "norm" => {
+                    let (plan, _, count) = current.take().unwrap();
+                    assert_eq!(count, plan.taps.len());
+                    assert_eq!(
+                        plan.normalization,
+                        Complex64::new(fields[4].parse().unwrap(), fields[5].parse().unwrap()),
+                        "native unpointed sum"
+                    );
+                }
+                _ => panic!("unknown native trace record"),
+            }
+        }
+        assert!(current.is_none());
+        assert_eq!(cases, 8);
+        assert!(compared > 0);
+        eprintln!(
+            "native_stencil_comparison cases={cases} taps={compared} selection_addresses_coefficients_norms=exact"
+        );
+    }
+
+    #[test]
     fn t51_casa_placement_rounds_grid_location_and_retains_signed_fractional_offset() {
         // CASA's nint is floor(value + 0.5): loc=nint(pos),
         // off=nint((loc-pos)*sampling). The two
@@ -1390,7 +1630,7 @@ mod tests {
     }
 
     #[test]
-    fn t51_science_probe_is_bit_identical_and_reports_selected_tap_geometry() {
+    fn t51_science_probe_pair_is_bit_identical_and_reports_selected_tap_geometry() {
         let imaging = nonuniform_kernel();
         let weight_layout = layout([2, 1], 1);
         let metadata = AwPreparedCellMetadata::new(
@@ -1413,10 +1653,13 @@ mod tests {
         let mut observed = operator_with_kernels(metadata.clone(), imaging, weight);
         let sample =
             AwVisibilitySample::new(10.0, 10.0, 1.0, 0, 0.0, [4.70, 4.0], [0.0, 0.0]).unwrap();
-        let ordinary = ordinary.prepare_imaging_grid([10, 10], sample).unwrap();
-        let (observed, probe) = observed
-            .prepare_imaging_grid_observed([10, 10], sample)
+        let (ordinary, ordinary_normal) = ordinary
+            .prepare_imaging_and_normal_grid([10, 10], sample)
             .unwrap();
+        let (observed, observed_normal, probes) = observed
+            .prepare_imaging_and_normal_grid_observed([10, 10], sample)
+            .unwrap();
+        let probe = probes.imaging;
 
         assert_eq!(
             ordinary.normalization.re.to_bits(),
@@ -1449,6 +1692,14 @@ mod tests {
         assert_eq!(
             probe.raw_tap_sum.norm().to_bits(),
             ordinary.normalization().to_bits()
+        );
+        assert_eq!(
+            ordinary_normal.normalization().to_bits(),
+            observed_normal.normalization().to_bits()
+        );
+        assert_eq!(
+            probes.normal.raw_tap_sum.norm().to_bits(),
+            observed_normal.normalization().to_bits()
         );
     }
 

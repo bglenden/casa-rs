@@ -1793,6 +1793,94 @@ pub(crate) mod tests {
             .expect("compile metadata-only catalog");
     }
 
+    #[test]
+    #[ignore = "requires an explicitly selected local cache and diagnostic output directory"]
+    fn t51_export_local_stencil_fixture() {
+        use std::io::Write;
+
+        let root = std::env::var_os("CASA_RS_VLASS_CF_CACHE")
+            .map(PathBuf::from)
+            .expect("CASA_RS_VLASS_CF_CACHE");
+        let output = std::env::var_os("CASA_RS_T51_STENCIL_FIXTURE")
+            .map(PathBuf::from)
+            .expect("CASA_RS_T51_STENCIL_FIXTURE");
+        let payloads =
+            std::env::var("CASA_RS_T51_STENCIL_PAYLOADS").expect("CASA_RS_T51_STENCIL_PAYLOADS");
+        let selected = payloads.split(',').collect::<BTreeSet<_>>();
+        let cache = CasaAwCache::open(root).unwrap();
+        cache.prepared_catalog().unwrap();
+        fs::create_dir_all(&output).unwrap();
+        let mut catalog =
+            std::io::BufWriter::new(fs::File::create(output.join("catalog.tsv")).unwrap());
+        let mut exported = 0;
+        for entry in cache.entries.values() {
+            let name = entry.imaging.path.file_stem().unwrap().to_str().unwrap();
+            let mut fields = vec![
+                name.to_owned(),
+                entry.key.frequency_hz.to_string(),
+                entry.key.w_value_lambda.to_string(),
+                entry.imaging.w_increment.to_string(),
+                entry.key.mueller_element.to_string(),
+                entry.key.parallactic_angle_deg.to_string(),
+                entry.imaging.polarization.to_string(),
+                entry.imaging.conjugate_frequency_hz.to_string(),
+                entry.imaging.conjugate_polarization.to_string(),
+                entry.imaging.telescope.clone(),
+                entry.imaging.band.clone(),
+                entry.imaging.diameter_m.to_string(),
+                entry.imaging.rotationally_symmetric.to_string(),
+            ];
+            for (role, metadata) in [("imaging", &entry.imaging), ("weight", &entry.weight)] {
+                fields.extend([
+                    metadata.support[0].to_string(),
+                    metadata.support[1].to_string(),
+                    metadata.sampling.to_string(),
+                    metadata.shape[0].to_string(),
+                    metadata.shape[1].to_string(),
+                    f64::from_bits(metadata.uv.reference_pixel[0]).to_string(),
+                    f64::from_bits(metadata.uv.reference_pixel[1]).to_string(),
+                ]);
+                if selected.contains(name) {
+                    let mut loaded = LoadedCasaPlane {
+                        name: role,
+                        image: PagedImage::<Complex32>::open(&metadata.path).unwrap(),
+                        last: None,
+                    };
+                    let mut bytes = vec![0_u8; metadata.shape[0] * metadata.shape[1] * 8];
+                    for (index, chunk) in bytes.chunks_mut(16 * 1024).enumerate() {
+                        encode_complex32_range(
+                            &mut loaded,
+                            metadata.shape,
+                            (index * 16 * 1024) as u64,
+                            chunk,
+                        )
+                        .unwrap();
+                    }
+                    let decoded = decode_complex32_plane(bytes.clone(), metadata).unwrap();
+                    adapt_kernel_from_plane(metadata, decoded).unwrap();
+                    fs::write(output.join(format!("{name}.{role}.bin")), bytes).unwrap();
+                    exported += 1;
+                }
+            }
+            fields.push(
+                entry
+                    .identity
+                    .as_bytes()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect(),
+            );
+            writeln!(catalog, "{}", fields.join("\t")).unwrap();
+        }
+        catalog.flush().unwrap();
+        assert_eq!(exported, selected.len() * 2);
+        eprintln!(
+            "exported {} catalog cells and {exported} paired-role payloads to {}",
+            cache.entries.len(),
+            output.display()
+        );
+    }
+
     fn stream_cold_kernel(
         metadata: &KernelMetadata,
     ) -> Result<AwConvolutionKernel, CasaAwCacheError> {

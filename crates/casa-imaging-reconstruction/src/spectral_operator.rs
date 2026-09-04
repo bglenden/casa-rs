@@ -31,7 +31,7 @@ use crate::{
     AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelGeneration,
     ModelGenerationId, ModelGenerationOrigin, ModelSupport, PreparedAwProjection,
     ScienceTraceDigest,
-    aw_projection::{AwGridPlan, AwScienceProbe},
+    aw_projection::{AwGridPlan, AwScienceProbePair},
     block_normal::BlockNormalPlan,
     canonical_f64_bits, imaging_science_trace_enabled,
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
@@ -4015,24 +4015,25 @@ struct PolynomialAwScienceAggregate {
     pre_cf_imaging_moment_sum: f64,
     pre_cf_published_moment_sum: f64,
     selected_imaging_cf_normalization_sum: f64,
+    selected_normal_cf_normalization_sum: f64,
     accumulated_normal_sumwt: f64,
     normal_sumwt_compensation: f64,
-    accumulated_published_sumwt: f64,
-    published_sumwt_compensation: f64,
+    accumulated_published_cfs_sumwt: f64,
+    published_cfs_sumwt_compensation: f64,
 }
 
 impl PolynomialAwScienceAggregate {
-    fn accumulate_sumwt(&mut self, normal: f64, published: f64) {
+    fn accumulate_sumwt(&mut self, normal: f64, published_cfs: f64) {
         let corrected = normal - self.normal_sumwt_compensation;
         let updated = self.accumulated_normal_sumwt + corrected;
         self.normal_sumwt_compensation = (updated - self.accumulated_normal_sumwt) - corrected;
         self.accumulated_normal_sumwt = updated;
 
-        let corrected = published - self.published_sumwt_compensation;
-        let updated = self.accumulated_published_sumwt + corrected;
-        self.published_sumwt_compensation =
-            (updated - self.accumulated_published_sumwt) - corrected;
-        self.accumulated_published_sumwt = updated;
+        let corrected = published_cfs - self.published_cfs_sumwt_compensation;
+        let updated = self.accumulated_published_cfs_sumwt + corrected;
+        self.published_cfs_sumwt_compensation =
+            (updated - self.accumulated_published_cfs_sumwt) - corrected;
+        self.accumulated_published_cfs_sumwt = updated;
     }
 }
 
@@ -4044,7 +4045,7 @@ struct SpectralScienceSample {
     post_briggs_weight: f64,
     spectral_factor: f64,
     taylor_factors: Box<[f64]>,
-    aw: AwScienceProbe,
+    aw: AwScienceProbePair,
 }
 
 impl SpectralScienceProbe {
@@ -4054,6 +4055,7 @@ impl SpectralScienceProbe {
         plan: BlockNormalPlan,
         sample: SpectralOperatorSample,
         imaging_cf_normalization: f64,
+        normal_cf_normalization: f64,
     ) -> Result<(), SpectralOperatorError> {
         let x = plan
             .normalized_frequency(sample.frequency_hz)
@@ -4080,8 +4082,9 @@ impl SpectralScienceProbe {
             aggregate.pre_cf_imaging_moment_sum += pre_cf_imaging_moment;
             aggregate.pre_cf_published_moment_sum += pre_cf_published_moment;
             aggregate.selected_imaging_cf_normalization_sum += imaging_cf_normalization;
+            aggregate.selected_normal_cf_normalization_sum += normal_cf_normalization;
             aggregate.accumulate_sumwt(
-                pre_cf_imaging_moment * imaging_cf_normalization,
+                pre_cf_imaging_moment * normal_cf_normalization,
                 pre_cf_published_moment * imaging_cf_normalization,
             );
         }
@@ -4091,7 +4094,7 @@ impl SpectralScienceProbe {
     fn emit(self) {
         for ((spw, moment), aggregate) in self.polynomial_aw {
             eprintln!(
-                "imaging_science_probe_v1 boundary=polynomial_aw_summary spw={spw} normal_moment={moment} accepted_count={} post_briggs_imaging_weight_sum={:.17e} published_polarization_weight_sum={:.17e} taylor_x_moment_sum={:.17e} pre_cf_imaging_moment_sum={:.17e} pre_cf_published_moment_sum={:.17e} selected_imaging_cf_normalization_sum={:.17e} accumulated_normal_sumwt={:.17e} accumulated_published_sumwt={:.17e}",
+                "imaging_science_probe_v1 boundary=polynomial_aw_summary spw={spw} normal_moment={moment} accepted_count={} post_briggs_imaging_weight_sum={:.17e} published_polarization_weight_sum={:.17e} taylor_x_moment_sum={:.17e} pre_cf_imaging_moment_sum={:.17e} pre_cf_published_moment_sum={:.17e} selected_imaging_cf_normalization_sum={:.17e} selected_normal_cf_normalization_sum={:.17e} accumulated_normal_sumwt={:.17e} accumulated_published_cfs_sumwt={:.17e}",
                 aggregate.accepted_count,
                 aggregate.post_briggs_imaging_weight_sum,
                 aggregate.published_polarization_weight_sum,
@@ -4099,74 +4102,77 @@ impl SpectralScienceProbe {
                 aggregate.pre_cf_imaging_moment_sum,
                 aggregate.pre_cf_published_moment_sum,
                 aggregate.selected_imaging_cf_normalization_sum,
+                aggregate.selected_normal_cf_normalization_sum,
                 aggregate.accumulated_normal_sumwt,
-                aggregate.accumulated_published_sumwt,
+                aggregate.accumulated_published_cfs_sumwt,
             );
         }
         let Some(sample) = self.sample else { return };
-        let aw = sample.aw;
-        eprintln!(
-            "imaging_science_probe_v1 boundary=sample_aw ms={:?} row={} ddid={} spw={} channel={} polarization={} correlation={} frequency_hz={:.17e} w_m={:.17e} w_lambda={:.17e} cf_identity={:?} cf_frequency_hz={:.17e} cf_w_lambda={:.17e} cf_mueller={} cf_pa_deg={:.17e} support_x={} support_y={} sampling={} grid_x={:.17e} grid_y={:.17e} location_x={} location_y={} offset_x={} offset_y={} tap_sum_re={:.17e} tap_sum_im={:.17e} abs_normalization={:.17e} channel_sumwt_increment={:.17e}",
-            sample.address.measurement_set,
-            sample.address.physical_row,
-            sample.address.data_description_id,
-            sample.address.spectral_window_id,
-            sample.address.channel_index,
-            sample.address.polarization_id,
-            sample.address.correlation_index,
-            sample.frequency_hz,
-            sample.uvw_m[2],
-            sample.uvw_m[2] * sample.frequency_hz / SPEED_OF_LIGHT_M_PER_S,
-            aw.identity,
-            aw.selected_frequency_hz,
-            aw.selected_w_lambda,
-            aw.mueller_element,
-            aw.parallactic_angle_deg,
-            aw.support[0],
-            aw.support[1],
-            aw.oversampling,
-            aw.grid_position[0],
-            aw.grid_position[1],
-            aw.grid_location[0],
-            aw.grid_location[1],
-            aw.fractional_offset[0],
-            aw.fractional_offset[1],
-            aw.raw_tap_sum.re,
-            aw.raw_tap_sum.im,
-            aw.raw_tap_sum.norm(),
-            sample.post_briggs_weight
-                * sample.spectral_factor
-                * sample.spectral_factor
-                * aw.raw_tap_sum.norm(),
-        );
-        for tap in aw.taps {
+        let AwScienceProbePair { imaging, normal } = sample.aw;
+        for (cf_role, aw) in [("imaging", imaging), ("normal", normal)] {
             eprintln!(
-                "imaging_science_probe_v1 boundary=sample_tap row={} spw={} channel={} ox={} oy={} grid_x={} grid_y={} cf_x={} cf_y={}",
+                "imaging_science_probe_v1 boundary=sample_aw cf_role={cf_role} ms={:?} row={} ddid={} spw={} channel={} polarization={} correlation={} frequency_hz={:.17e} w_m={:.17e} w_lambda={:.17e} cf_identity={:?} cf_frequency_hz={:.17e} cf_w_lambda={:.17e} cf_mueller={} cf_pa_deg={:.17e} support_x={} support_y={} sampling={} grid_x={:.17e} grid_y={:.17e} location_x={} location_y={} offset_x={} offset_y={} tap_sum_re={:.17e} tap_sum_im={:.17e} abs_normalization={:.17e} channel_sumwt_increment={:.17e}",
+                sample.address.measurement_set,
                 sample.address.physical_row,
+                sample.address.data_description_id,
                 sample.address.spectral_window_id,
                 sample.address.channel_index,
-                tap.support_offset[0],
-                tap.support_offset[1],
-                tap.grid_coordinate[0],
-                tap.grid_coordinate[1],
-                tap.cf_coordinate[0],
-                tap.cf_coordinate[1],
-            );
-        }
-        for (term, taylor_factor) in sample.taylor_factors.iter().copied().enumerate() {
-            eprintln!(
-                "imaging_science_probe_v1 boundary=sample_sumwt row={} spw={} channel={} term={} taylor_factor={:.17e} sumwt_increment={:.17e}",
-                sample.address.physical_row,
-                sample.address.spectral_window_id,
-                sample.address.channel_index,
-                term,
-                taylor_factor,
+                sample.address.polarization_id,
+                sample.address.correlation_index,
+                sample.frequency_hz,
+                sample.uvw_m[2],
+                sample.uvw_m[2] * sample.frequency_hz / SPEED_OF_LIGHT_M_PER_S,
+                aw.identity,
+                aw.selected_frequency_hz,
+                aw.selected_w_lambda,
+                aw.mueller_element,
+                aw.parallactic_angle_deg,
+                aw.support[0],
+                aw.support[1],
+                aw.oversampling,
+                aw.grid_position[0],
+                aw.grid_position[1],
+                aw.grid_location[0],
+                aw.grid_location[1],
+                aw.fractional_offset[0],
+                aw.fractional_offset[1],
+                aw.raw_tap_sum.re,
+                aw.raw_tap_sum.im,
+                aw.raw_tap_sum.norm(),
                 sample.post_briggs_weight
                     * sample.spectral_factor
                     * sample.spectral_factor
-                    * taylor_factor
                     * aw.raw_tap_sum.norm(),
             );
+            for tap in aw.taps {
+                eprintln!(
+                    "imaging_science_probe_v1 boundary=sample_tap cf_role={cf_role} row={} spw={} channel={} ox={} oy={} grid_x={} grid_y={} cf_x={} cf_y={}",
+                    sample.address.physical_row,
+                    sample.address.spectral_window_id,
+                    sample.address.channel_index,
+                    tap.support_offset[0],
+                    tap.support_offset[1],
+                    tap.grid_coordinate[0],
+                    tap.grid_coordinate[1],
+                    tap.cf_coordinate[0],
+                    tap.cf_coordinate[1],
+                );
+            }
+            for (term, taylor_factor) in sample.taylor_factors.iter().copied().enumerate() {
+                eprintln!(
+                    "imaging_science_probe_v1 boundary=sample_sumwt cf_role={cf_role} row={} spw={} channel={} term={} taylor_factor={:.17e} sumwt_increment={:.17e}",
+                    sample.address.physical_row,
+                    sample.address.spectral_window_id,
+                    sample.address.channel_index,
+                    term,
+                    taylor_factor,
+                    sample.post_briggs_weight
+                        * sample.spectral_factor
+                        * sample.spectral_factor
+                        * taylor_factor
+                        * aw.raw_tap_sum.norm(),
+                );
+            }
         }
     }
 }
@@ -4826,7 +4832,8 @@ impl CompleteDataOwnerState {
                                     selected.address().spectral_window_id,
                                     plan,
                                     sample,
-                                    aw.raw_tap_sum.norm(),
+                                    aw.imaging.raw_tap_sum.norm(),
+                                    aw.normal.raw_tap_sum.norm(),
                                 )?;
                             }
                             if sample_candidate {
@@ -6850,7 +6857,7 @@ impl SpectralSlabOperator {
     fn observe_aw_grid(
         &mut self,
         sample: SpectralOperatorSample,
-    ) -> Result<AwScienceProbe, SpectralOperatorError> {
+    ) -> Result<AwScienceProbePair, SpectralOperatorError> {
         let OperatorTaps::Aw(sample) = self
             .operator_taps(sample)?
             .ok_or(SpectralOperatorError::InvalidSample)?
@@ -6864,8 +6871,8 @@ impl SpectralSlabOperator {
         let mut aw = aw
             .lock()
             .map_err(|_| SpectralOperatorError::ProblemMismatch)?;
-        aw.prepare_imaging_grid_observed(self.geometry.grid_shape, sample)
-            .map(|(_, probe)| probe)
+        aw.prepare_imaging_and_normal_grid_observed(self.geometry.grid_shape, sample)
+            .map(|(_, _, probes)| probes)
             .map_err(Into::into)
     }
 
@@ -10623,15 +10630,17 @@ pub enum SpectralOperatorError {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
     use std::fs::File;
     use std::io::{BufReader, Read};
     use std::time::Instant;
+    use std::{collections::BTreeMap, sync::Arc};
 
     use casa_imaging_model::{
         CorrelationType, FiniteValuePolicy, FrequencyFrame, LogicalIdentity,
-        MeasurementSetIdentity, PolarizationCoordinate, SelectedAntennaResponses,
-        SelectedSampleAddress, SpectralKernel, SpectralWindowCoordinateCatalog,
+        MeasurementSetIdentity, PolarizationCoordinate, PreparedArtifactAwInterpretation,
+        PreparedArtifactCellSemantics, PreparedArtifactScientificIdentity,
+        SelectedAntennaResponses, SelectedSampleAddress, SpectralKernel,
+        SpectralWindowCoordinateCatalog,
     };
     #[cfg(feature = "cpp-interop-tests")]
     use casa_test_support::gridder_interop::GridderOracle;
@@ -10642,11 +10651,12 @@ mod tests {
 
     use super::{
         AwPublishedSumWeights, ConvolutionOperator, MosaicResponsePlan, MosaicResponseSelection,
-        OperatorGridGeometry, PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps,
-        SpectralBasisPlan, SpectralChannelValidity, SpectralOperatorError,
-        SpectralOperatorGeometry, SpectralOperatorMeasurements, SpectralOperatorPass,
-        SpectralOperatorPrimitives, SpectralOperatorSample, SpectralOperatorWorkload,
-        SpectralScienceProbe, SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
+        OperatorGridGeometry, PolynomialAwScienceAggregate, PreparedFft,
+        ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
+        SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
+        SpectralOperatorMeasurements, SpectralOperatorPass, SpectralOperatorPrimitives,
+        SpectralOperatorSample, SpectralOperatorWorkload, SpectralScienceProbe,
+        SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
         apply_finite_value_policy, apply_input_policy, aw_sensitivity_magnitude,
         aw_stokes_i_mueller, casa_persistent_complex, casa_useful_mosaic_channels, checked_cells,
         collect_image_planes, compile_operator_geometry, convolution_sinc,
@@ -10657,7 +10667,10 @@ mod tests {
     use super::{OVERSAMPLING, SPEED_OF_LIGHT_M_PER_S};
     use crate::block_normal::BlockNormalPlan;
     use crate::{
-        ModelDeltaId, ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
+        AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorError, AwPreparedCatalog,
+        AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,
+        AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelDeltaId,
+        ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
     };
 
     #[test]
@@ -11141,6 +11154,85 @@ mod tests {
                 .expect("valid sample")
             })
             .collect()
+    }
+
+    #[derive(Clone)]
+    struct ObserverAwProvider {
+        cell: Arc<AwConvolutionCell>,
+    }
+
+    impl AwPreparedCellProvider for ObserverAwProvider {
+        fn load(
+            &mut self,
+            _metadata: &AwPreparedCellMetadata,
+            resident_byte_ceiling: usize,
+        ) -> Result<AwPreparedCellLease, AwOperatorError> {
+            if self.cell.resident_bytes() > resident_byte_ceiling {
+                return Err(AwOperatorError::ResidencyCeilingExceeded);
+            }
+            Ok(AwPreparedCellLease::new(
+                self.cell.clone(),
+                AwPreparedCellDisposition::Loaded,
+                0,
+                0,
+            ))
+        }
+    }
+
+    fn observed_aw_operators() -> (
+        AwProjectionOperator<ObserverAwProvider>,
+        AwProjectionOperator<ObserverAwProvider>,
+        AwVisibilitySample,
+    ) {
+        let layout = AwKernelLayout::new([0, 0], 1, [3, 3], [1, 1]).unwrap();
+        let identity = PreparedArtifactScientificIdentity::convolution_function(
+            PreparedArtifactCellSemantics::new(
+                1.0e9,
+                1.0,
+                0,
+                0,
+                0.0,
+                1.0e9,
+                15,
+                "EVLA",
+                "L",
+                25.0,
+                1.0,
+                PreparedArtifactAwInterpretation::Wavelength,
+                false,
+                "discrete-complex-sum",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let metadata =
+            AwPreparedCellMetadata::new(identity, 1.0e9, 1.0, 1.0, 0, 0.0, layout, layout).unwrap();
+        let mut imaging_values = vec![Complex64::default(); 9];
+        imaging_values[4] = Complex64::new(3.0, 4.0);
+        let mut normal_values = vec![Complex64::default(); 9];
+        normal_values[4] = Complex64::new(7.0, 2.0);
+        let cell = Arc::new(
+            AwConvolutionCell::new(
+                identity,
+                AwConvolutionKernel::new(layout, imaging_values).unwrap(),
+                AwConvolutionKernel::new(layout, normal_values).unwrap(),
+            )
+            .unwrap(),
+        );
+        let make_operator = || {
+            AwProjectionOperator::new(
+                AwPreparedCatalog::new(vec![metadata.clone()]).unwrap(),
+                ObserverAwProvider { cell: cell.clone() },
+                false,
+                64 * 1024,
+            )
+            .unwrap()
+        };
+        (
+            make_operator(),
+            make_operator(),
+            AwVisibilitySample::new(1.0e9, 1.0e9, 1.0, 0, 0.0, [5.2, 5.8], [0.0, 0.0]).unwrap(),
+        )
     }
 
     fn inner(left: &[Complex64], right: &[Complex64]) -> Complex64 {
@@ -12249,7 +12341,13 @@ mod tests {
             for (index, sample) in sample_values.iter().copied().enumerate() {
                 if observe {
                     probe
-                        .observe_polynomial_aw(3, plan, sample, 1.5 + index as f64)
+                        .observe_polynomial_aw(
+                            3,
+                            plan,
+                            sample,
+                            1.5 + index as f64,
+                            1.5 + index as f64,
+                        )
                         .expect("finite observer aggregate");
                 }
                 operator.push(sample).expect("accepted sample");
@@ -12316,8 +12414,77 @@ mod tests {
                 expected.pre_cf_imaging_moment_sum += imaging;
                 expected.pre_cf_published_moment_sum += published;
                 expected.selected_imaging_cf_normalization_sum += normalization;
+                expected.selected_normal_cf_normalization_sum += normalization;
                 expected.accumulate_sumwt(imaging * normalization, published * normalization);
             }
+            let actual = probe
+                .polynomial_aw
+                .get(&(3, moment))
+                .expect("normal moment aggregate");
+            assert_eq!(actual, &expected);
+        }
+    }
+
+    #[test]
+    fn t51_polynomial_aw_observation_uses_measured_wtcf_normalization() {
+        let (mut ordinary, mut observed, aw_sample) = observed_aw_operators();
+        let (imaging_plan, normal_plan) = ordinary
+            .prepare_imaging_and_normal_grid([10, 10], aw_sample)
+            .expect("ordinary paired AW plans");
+        let (_, observed_normal_plan, probes) = observed
+            .prepare_imaging_and_normal_grid_observed([10, 10], aw_sample)
+            .expect("observed paired AW plans");
+        let imaging_normalization = probes.imaging.raw_tap_sum.norm();
+        let normal_normalization = probes.normal.raw_tap_sum.norm();
+        assert_eq!(
+            imaging_normalization.to_bits(),
+            imaging_plan.normalization().to_bits()
+        );
+        assert_eq!(
+            normal_normalization.to_bits(),
+            normal_plan.normalization().to_bits()
+        );
+        assert_eq!(
+            normal_normalization.to_bits(),
+            observed_normal_plan.normalization().to_bits()
+        );
+        assert_ne!(
+            imaging_normalization.to_bits(),
+            normal_normalization.to_bits()
+        );
+
+        let plan = BlockNormalPlan::taylor(1.0e9, 2).expect("two-term Taylor plan");
+        let sample =
+            SpectralOperatorSample::new(0, [0.0, 0.0, 0.0], 1.1e9, 0.0, [0.5, -0.25], 2.0, 1.25)
+                .expect("valid polynomial sample")
+                .with_published_weight(3.0)
+                .expect("finite published weight");
+        let mut probe = SpectralScienceProbe::default();
+        probe
+            .observe_polynomial_aw(3, plan, sample, imaging_normalization, normal_normalization)
+            .expect("finite observer aggregate");
+
+        for moment in 0..plan.normal_moment_count() {
+            let x = plan.normalized_frequency(sample.frequency_hz).unwrap();
+            let taylor = x.powi(moment as i32);
+            let factor_squared = sample.spectral_factor * sample.spectral_factor;
+            let imaging = sample.imaging_weight * factor_squared * taylor;
+            let published = sample.published_weight * factor_squared * taylor;
+            let mut expected = PolynomialAwScienceAggregate {
+                accepted_count: 1,
+                post_briggs_imaging_weight_sum: sample.imaging_weight,
+                published_polarization_weight_sum: sample.published_weight,
+                taylor_x_moment_sum: taylor,
+                pre_cf_imaging_moment_sum: imaging,
+                pre_cf_published_moment_sum: published,
+                selected_imaging_cf_normalization_sum: imaging_normalization,
+                selected_normal_cf_normalization_sum: normal_normalization,
+                ..PolynomialAwScienceAggregate::default()
+            };
+            expected.accumulate_sumwt(
+                imaging * normal_normalization,
+                published * imaging_normalization,
+            );
             let actual = probe
                 .polynomial_aw
                 .get(&(3, moment))
