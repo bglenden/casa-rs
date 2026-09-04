@@ -171,14 +171,17 @@ impl TaylorProducts {
             ReconstructionBasis::TaylorViaChannelMajor { .. }
         );
         let published_sum_weights = state.published_sum_weights();
-        if channel_major_publication && published_sum_weights.len() != moments {
+        if published_sum_weights.len() != moments {
             return Err(ProductsError::SourceLineageMismatch);
         }
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
         for moment in 0..moments {
-            let published_sum_weight = published_sum_weights.get(moment).copied();
+            let published_sum_weight = published_sum_weights
+                .get(moment)
+                .copied()
+                .ok_or(ProductsError::SourceLineageMismatch)?;
             let source = state
                 .normal_moment(moment)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
@@ -208,12 +211,9 @@ impl TaylorProducts {
                     .collect(),
             );
             let sum_weight = if channel_major_publication {
-                normalize_channel_major_sum_weight(
-                    published_sum_weight.ok_or(ProductsError::SourceLineageMismatch)?,
-                    principal_sum_weight,
-                )?
+                normalize_channel_major_sum_weight(published_sum_weight, principal_sum_weight)?
             } else {
-                source.sum_weight()
+                published_sum_weight
             };
             if !sum_weight.is_finite() {
                 return Err(ProductsError::GeneratedNonfinite);

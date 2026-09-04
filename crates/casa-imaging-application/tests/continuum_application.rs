@@ -1270,6 +1270,8 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = four_spw_vla_measurement_set(root.path());
+    let cache = root.path().join("aw-cache");
+    write_aw_test_cache(&cache);
     let image_name = root.path().join("dirty-mtmfs");
     let mut imaging = request(
         measurement_set,
@@ -1283,6 +1285,8 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     imaging.data_description = None;
     imaging.channel_count = Some(8);
     imaging.iterations = 0;
+    imaging.aw_projection = Some(aw_projection(cache, false));
+    imaging.task_requirements = vec![TaskRequirement::AwProjection];
 
     let result = execute_continuum(imaging).expect("native zero-iteration MT-MFS execution");
     assert_eq!(result.minor_iterations, 0);
@@ -1293,6 +1297,30 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
+    assert_ne!(
+        (normal.sum_weights()[0] as f32).to_bits(),
+        (normal.published_sum_weights()[0] as f32).to_bits(),
+        "the AW fixture must distinguish the two-polarization normal sum from CASA's published correlation-plane sumweight"
+    );
+    for moment in 0..3 {
+        let product = PagedImage::<f32>::open(PathBuf::from(format!(
+            "{}.sumwt.tt{moment}",
+            image_name.display()
+        )))
+        .expect("open Taylor sumweight product");
+        let value = product
+            .get_slice(&[0, 0, 0, 0], &[1, 1, 1, 1])
+            .expect("read Taylor sumweight scalar");
+        assert_eq!(
+            value
+                .iter()
+                .next()
+                .expect("Taylor sumweight scalar")
+                .to_bits(),
+            (normal.published_sum_weights()[moment] as f32).to_bits(),
+            "Taylor sumweight term {moment} must persist the CASA publication statistic"
+        );
+    }
 
     let expected = [
         ".alpha",
@@ -1309,6 +1337,9 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
         ".sumwt.tt0",
         ".sumwt.tt1",
         ".sumwt.tt2",
+        ".weight.tt0",
+        ".weight.tt1",
+        ".weight.tt2",
     ]
     .into_iter()
     .map(str::to_string)
