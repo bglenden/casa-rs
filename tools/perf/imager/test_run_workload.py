@@ -1316,63 +1316,6 @@ real 1.145408
         self.assertNotIn("status", cache_geometry["dataset"])
         self.assertNotIn("path", plan["command"]["casa"]["cache_plan"]["dataset"])
 
-    def test_t51_diagnostic_binds_exact_casa_selection_and_aw_controls(self) -> None:
-        manifest_path = (
-            run_workload.WORKLOAD_DIR
-            / "vlass-fragment-nine-fields-dirty-512-four-spw-diagnostic.json"
-        )
-        manifest = run_workload.load_manifest(manifest_path)
-        with mock.patch.dict(
-            os.environ,
-            {
-                "CASA_RS_VLASS_DATA_ROOT": "/Volumes/GLENDENNING/test-data",
-                "CASA_RS_CASA_PYTHON": sys.executable,
-                "CASA_RS_BENCH_PREPARED_AW_CASA_CACHE": "/validated/native-cfs",
-            },
-            clear=False,
-        ):
-            plan = run_workload.build_plan(
-                manifest_path=manifest_path,
-                manifest=manifest,
-                repeats_override=None,
-                run_label_override=None,
-                storage_label_override=None,
-                dry_run=True,
-            )
-        run_workload.attach_output_paths(
-            plan,
-            Path("/tmp/t51-diagnostic-results"),
-            Path("/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-diagnostic"),
-            cf_cache_root=Path(
-                "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t51-diagnostic-cache"
-            ),
-            dry_run=True,
-        )
-
-        self.assertEqual("casa_tclean_protocol", plan["command"]["kind"])
-        effective = plan["command"]["casa"]["effective_plan"]["effective_kwargs"]
-        self.assertEqual("<12km", effective["uvrange"])
-        self.assertEqual("OBSERVE_TARGET#UNSPECIFIED", effective["intent"])
-        self.assertFalse(effective["mosweight"])
-        self.assertTrue(effective["conjbeams"])
-        casa = plan["command"]["casa"]
-        cache = casa["effective_plan"]["cache"]
-        self.assertEqual(cache["working_path"], effective["cfcache"])
-        self.assertEqual(casa["cache_path"], cache["path"])
-        self.assertEqual(casa["cache_plan_sha256"], cache["plan_sha256"])
-        self.assertEqual(
-            run_workload.casa_tclean_workflow.canonical_sha256(cache["plan"]),
-            cache["plan_sha256"],
-        )
-        self.assertEqual(cache["plan_sha256"], Path(cache["path"]).name)
-        working_path = Path(cache["working_path"])
-        stable_path = Path(cache["path"])
-        self.assertEqual("cold", cache["role"])
-        self.assertNotEqual(stable_path, working_path)
-        self.assertEqual(stable_path.parent, working_path.parent)
-        self.assertEqual(".partial", working_path.suffix)
-        self.assertNotEqual("/validated/native-cfs", effective["cfcache"])
-
     def test_vlass_recipe_rejects_unimplemented_aw_contract_variant(self) -> None:
         manifest_path = run_workload.WORKLOAD_DIR / "vlass-fragment-smoke-cold.json"
         manifest = run_workload.load_manifest(manifest_path)

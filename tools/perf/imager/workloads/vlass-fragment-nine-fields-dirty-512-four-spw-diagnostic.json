@@ -3,12 +3,6 @@
   "id": "vlass-fragment-nine-fields-dirty-512-four-spw-diagnostic",
   "mode_id": "vlass-awproject-mtmfs-nine-field-dirty-diagnostic",
   "description": "Non-fiducial T51 diagnosis rung around the bright VLASS source: nine connected fields, four band-spanning SPWs, 512-square geometry, and the production AWProject path.",
-  "casa": {
-    "recipe_path": "tools/perf/imager/recipes/vlass-fragment-tclean.last",
-    "recipe_sha256": "a64e6213d66436fee6d602eb5bbda3ac8667b8df2491ea7310557748bbbf15b5",
-    "runtime_identity_path": "tools/perf/imager/recipes/vlass-casa-runtime-identity.json",
-    "runtime_identity_sha256": "7f1d97745f17c770b615b9fbd0ebfe9915b0333e4e9ce6bfb7099de7de721a0b"
-  },
   "dataset": {
     "key": "vlass-fragment-b80d5e87487a",
     "relative_path": "VLASS1.2.sb36484946.eb36542800.58574.4235612037_ptgfix_split_bright_source.ms",
