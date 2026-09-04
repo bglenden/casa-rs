@@ -363,7 +363,7 @@ struct AwRecordCoordinates {
     frequency_hz: u64,
     uvw_m: [u64; 3],
     parallactic_angle_deg: u64,
-    pointing_offset_lm: [u64; 2],
+    pointing_phase_gradient_rad_per_grid_cell: [u64; 2],
     mueller_element: u32,
 }
 
@@ -373,7 +373,9 @@ impl From<AwReplayCoordinates> for AwRecordCoordinates {
             frequency_hz: canonical_zero_bits(value.frequency_hz),
             uvw_m: value.uvw_m.map(canonical_zero_bits),
             parallactic_angle_deg: canonical_zero_bits(value.parallactic_angle_deg),
-            pointing_offset_lm: value.pointing_offset_lm.map(canonical_zero_bits),
+            pointing_phase_gradient_rad_per_grid_cell: value
+                .pointing_phase_gradient_rad_per_grid_cell
+                .map(canonical_zero_bits),
             mueller_element: value.mueller_element,
         }
     }
@@ -385,7 +387,9 @@ impl From<AwRecordCoordinates> for AwReplayCoordinates {
             frequency_hz: f64::from_bits(value.frequency_hz),
             uvw_m: value.uvw_m.map(f64::from_bits),
             parallactic_angle_deg: f64::from_bits(value.parallactic_angle_deg),
-            pointing_offset_lm: value.pointing_offset_lm.map(f64::from_bits),
+            pointing_phase_gradient_rad_per_grid_cell: value
+                .pointing_phase_gradient_rad_per_grid_cell
+                .map(f64::from_bits),
             mueller_element: value.mueller_element,
         }
     }
@@ -2927,8 +2931,8 @@ fn encode_and_checksum_mode(
                     coordinates.uvw_m[1],
                     coordinates.uvw_m[2],
                     coordinates.parallactic_angle_deg,
-                    coordinates.pointing_offset_lm[0],
-                    coordinates.pointing_offset_lm[1],
+                    coordinates.pointing_phase_gradient_rad_per_grid_cell[0],
+                    coordinates.pointing_phase_gradient_rad_per_grid_cell[1],
                     forward_real,
                     forward_imaginary,
                     imaging_weight,
@@ -2981,7 +2985,10 @@ fn valid_aw_coordinates(value: AwReplayCoordinates) -> bool {
         && value.frequency_hz > 0.0
         && value.uvw_m.into_iter().all(f64::is_finite)
         && value.parallactic_angle_deg.is_finite()
-        && value.pointing_offset_lm.into_iter().all(f64::is_finite)
+        && value
+            .pointing_phase_gradient_rad_per_grid_cell
+            .into_iter()
+            .all(f64::is_finite)
         && value.mueller_element < 16
 }
 
@@ -3137,7 +3144,7 @@ fn decode_aw_record(
         frequency_hz: value(0)?,
         uvw_m: [value(1)?, value(2)?, value(3)?],
         parallactic_angle_deg: value(4)?,
-        pointing_offset_lm: [value(5)?, value(6)?],
+        pointing_phase_gradient_rad_per_grid_cell: [value(5)?, value(6)?],
         mueller_element: u32::try_from((key >> AW_MUELLER_SHIFT) & 0x0f)
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
     };
@@ -3408,14 +3415,14 @@ mod tests {
                 frequency_hz: 1.25e9,
                 uvw_m: [125.0, -72.5, 911.25],
                 parallactic_angle_deg: 37.5,
-                pointing_offset_lm: [1.25e-4, -2.5e-4],
+                pointing_phase_gradient_rad_per_grid_cell: [1.25e-4, -2.5e-4],
                 mueller_element: 0,
             },
             AwReplayCoordinates {
                 frequency_hz: 1.75e9,
                 uvw_m: [-14.0, 88.0, -413.5],
                 parallactic_angle_deg: 312.0,
-                pointing_offset_lm: [-3.0e-4, 4.5e-4],
+                pointing_phase_gradient_rad_per_grid_cell: [-3.0e-4, 4.5e-4],
                 mueller_element: 15,
             },
         ];

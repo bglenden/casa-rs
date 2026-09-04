@@ -172,10 +172,8 @@ impl CasaAwPreparedCell {
     /// Exact decoded complex-pixel residency required by this paired cell.
     #[must_use]
     pub fn decoded_resident_bytes(&self) -> Option<usize> {
-        canonical_count(&self.imaging)
-            .and_then(|left| {
-                canonical_count(&self.weight).and_then(|right| left.checked_add(right))
-            })
+        decoded_count(&self.imaging)
+            .and_then(|left| decoded_count(&self.weight).and_then(|right| left.checked_add(right)))
             .and_then(|count| count.checked_mul(std::mem::size_of::<Complex64>()))
     }
 
@@ -1120,10 +1118,8 @@ fn decode_complex32_plane(
 }
 
 fn prepared_metadata(entry: &Entry) -> Result<AwPreparedCellMetadata, CasaAwCacheError> {
-    let imaging = AwKernelLayout::new(entry.imaging.support, entry.imaging.sampling)
-        .map_err(|error| fail(&entry.imaging.path, error.to_string()))?;
-    let weight = AwKernelLayout::new(entry.weight.support, entry.weight.sampling)
-        .map_err(|error| fail(&entry.weight.path, error.to_string()))?;
+    let imaging = kernel_layout(&entry.imaging)?;
+    let weight = kernel_layout(&entry.weight)?;
     AwPreparedCellMetadata::new(
         entry.identity,
         entry.key.frequency_hz,
@@ -1141,87 +1137,34 @@ fn adapt_kernel_from_plane(
     metadata: &KernelMetadata,
     plane: Array2<Complex32>,
 ) -> Result<AwConvolutionKernel, CasaAwCacheError> {
-    let mut taps = Vec::with_capacity(
-        canonical_count(metadata)
-            .ok_or_else(|| fail(&metadata.path, "logical tap-count overflow"))?,
-    );
+    let layout = kernel_layout(metadata)?;
+    let taps = plane
+        .iter()
+        .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+        .collect();
+    AwConvolutionKernel::new(layout, taps).map_err(|error| fail(&metadata.path, error.to_string()))
+}
+
+fn kernel_layout(metadata: &KernelMetadata) -> Result<AwKernelLayout, CasaAwCacheError> {
     let reference = metadata.uv.reference_pixel.map(f64::from_bits);
-    let center = reference.map(|value| value.round() as isize);
+    let rounded = reference.map(|value| value.round());
     if reference
         .into_iter()
-        .zip(center)
-        .any(|(value, rounded)| value.to_bits() != (rounded as f64).to_bits())
+        .zip(rounded)
+        .any(|(value, rounded)| value.to_bits() != rounded.to_bits())
     {
         return Err(fail(
             &metadata.path,
             "UU/VV reference pixels must be integral",
         ));
     }
-    for fractional_y in 0..metadata.sampling {
-        for fractional_x in 0..metadata.sampling {
-            for offset_y in 0..=metadata.support[1] * 2 {
-                for offset_x in 0..=metadata.support[0] * 2 {
-                    let x = source_index(
-                        center[0],
-                        offset_x,
-                        metadata.support[0],
-                        metadata.sampling,
-                        fractional_x,
-                        metadata.shape[0],
-                        &metadata.path,
-                    )?;
-                    let y = source_index(
-                        center[1],
-                        offset_y,
-                        metadata.support[1],
-                        metadata.sampling,
-                        fractional_y,
-                        metadata.shape[1],
-                        &metadata.path,
-                    )?;
-                    let value = plane[[x, y]];
-                    taps.push(Complex64::new(f64::from(value.re), f64::from(value.im)));
-                }
-            }
-        }
-    }
-    let central_count = (metadata.support[0] * 2 + 1) * (metadata.support[1] * 2 + 1);
-    let normalization: Complex64 = taps[..central_count].iter().copied().sum();
-    let layout = AwKernelLayout::new(metadata.support, metadata.sampling)
-        .map_err(|error| fail(&metadata.path, error.to_string()))?;
-    AwConvolutionKernel::new(layout, normalization, taps)
+    let center = rounded.map(|value| value as usize);
+    AwKernelLayout::new(metadata.support, metadata.sampling, metadata.shape, center)
         .map_err(|error| fail(&metadata.path, error.to_string()))
 }
 
-fn source_index(
-    center: isize,
-    offset: usize,
-    support: usize,
-    sampling: usize,
-    fractional: usize,
-    bound: usize,
-    path: &Path,
-) -> Result<usize, CasaAwCacheError> {
-    center
-        .checked_add((offset as isize - support as isize) * sampling as isize)
-        .and_then(|value| value.checked_add(fractional as isize))
-        .and_then(|value| usize::try_from(value).ok())
-        .filter(|value| *value < bound)
-        .ok_or_else(|| {
-            fail(
-                path,
-                "support/oversampling footprint lies outside stored plane",
-            )
-        })
-}
-
-fn canonical_count(metadata: &KernelMetadata) -> Option<usize> {
-    metadata.support[0]
-        .checked_mul(2)?
-        .checked_add(1)?
-        .checked_mul(metadata.support[1].checked_mul(2)?.checked_add(1)?)?
-        .checked_mul(metadata.sampling)?
-        .checked_mul(metadata.sampling)
+fn decoded_count(metadata: &KernelMetadata) -> Option<usize> {
+    metadata.shape[0].checked_mul(metadata.shape[1])
 }
 
 fn read_metadata(path: &Path) -> Result<(CasaAwCellKey, KernelMetadata), CasaAwCacheError> {
@@ -1369,41 +1312,7 @@ fn validate_kernel(metadata: &KernelMetadata) -> Result<(), CasaAwCacheError> {
             "diameter, conjugate frequency, and WIncr must be finite and positive",
         ));
     }
-    if canonical_count(metadata).is_none() {
-        return Err(fail(&metadata.path, "logical tap-count overflow"));
-    }
-    let reference = metadata.uv.reference_pixel.map(f64::from_bits);
-    let center = reference.map(|value| value.round() as isize);
-    if reference
-        .into_iter()
-        .zip(center)
-        .any(|(value, rounded)| value.to_bits() != (rounded as f64).to_bits())
-    {
-        return Err(fail(
-            &metadata.path,
-            "UU/VV reference pixels must be integral",
-        ));
-    }
-    for (axis, center) in center.into_iter().enumerate() {
-        source_index(
-            center,
-            0,
-            metadata.support[axis],
-            metadata.sampling,
-            0,
-            metadata.shape[axis],
-            &metadata.path,
-        )?;
-        source_index(
-            center,
-            metadata.support[axis] * 2,
-            metadata.support[axis],
-            metadata.sampling,
-            metadata.sampling - 1,
-            metadata.shape[axis],
-            &metadata.path,
-        )?;
-    }
+    kernel_layout(metadata)?;
     Ok(())
 }
 
@@ -1718,6 +1627,19 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(metadata.identity(), expected_identity);
         drop(catalog);
+    }
+
+    #[test]
+    fn t51_asymmetric_stored_plane_iteration_is_x_major_then_y() {
+        let plane =
+            Array2::from_shape_fn((3, 5), |(x, y)| Complex32::new((100 * x + y) as f32, 0.0));
+        let stored = plane.iter().copied().collect::<Vec<_>>();
+
+        for x in 0..plane.nrows() {
+            for y in 0..plane.ncols() {
+                assert_eq!(stored[x * plane.ncols() + y], plane[[x, y]]);
+            }
+        }
     }
 
     #[test]

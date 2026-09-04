@@ -50,9 +50,6 @@ pub enum AwOperatorError {
     /// A visibility footprint crosses the supplied grid or its shape is invalid.
     #[error("AW convolution footprint does not fit the supplied grid")]
     InvalidGridLayout,
-    /// A data weight is negative.
-    #[error("AW data weight must be non-negative")]
-    InvalidWeight,
     /// Exact operator or provider accounting overflowed.
     #[error("AW operator measurement accounting overflowed")]
     MeasurementOverflow,
@@ -63,17 +60,46 @@ pub enum AwOperatorError {
 pub struct AwKernelLayout {
     support: [usize; 2],
     oversampling: usize,
+    shape: [usize; 2],
+    center: [usize; 2],
 }
 
 impl AwKernelLayout {
-    /// Validate an integral support radius and oversampling factor.
-    pub fn new(support: [usize; 2], oversampling: usize) -> Result<Self, AwOperatorError> {
-        if oversampling == 0 || logical_tap_count(support, oversampling).is_none() {
+    /// Validate the stored plane geometry used by CASA's signed CF offsets.
+    pub fn new(
+        support: [usize; 2],
+        oversampling: usize,
+        shape: [usize; 2],
+        center: [usize; 2],
+    ) -> Result<Self, AwOperatorError> {
+        if oversampling == 0
+            || shape.contains(&0)
+            || shape[0].checked_mul(shape[1]).is_none()
+            || center
+                .into_iter()
+                .zip(shape)
+                .any(|(center, bound)| center >= bound)
+        {
             return Err(AwOperatorError::InvalidKernelLayout);
+        }
+        for axis in 0..2 {
+            let radius = support[axis]
+                .checked_mul(oversampling)
+                .and_then(|radius| radius.checked_add(oversampling.div_ceil(2)))
+                .ok_or(AwOperatorError::InvalidKernelLayout)?;
+            if center[axis] < radius
+                || center[axis]
+                    .checked_add(radius)
+                    .is_none_or(|x| x >= shape[axis])
+            {
+                return Err(AwOperatorError::InvalidKernelLayout);
+            }
         }
         Ok(Self {
             support,
             oversampling,
+            shape,
+            center,
         })
     }
 
@@ -82,47 +108,51 @@ impl AwKernelLayout {
     }
 }
 
-/// One dense oversampled convolution plane in canonical logical layout.
+/// One dense CASA convolution plane in its stored UV coordinate layout.
 ///
-/// Taps are ordered by fractional Y, fractional X, integral Y offset, then
-/// integral X offset. The supplied normalization is divided out once while
-/// fusing the selected fractional plane.
+/// Keeping the source plane preserves CASA's signed fractional offsets. A
+/// floor-based positive polyphase packing aliases opposite offsets and cannot
+/// reproduce `loc=nint(pos), off=nint((loc-pos)*sampling)`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AwConvolutionKernel {
     layout: AwKernelLayout,
-    normalization: Complex64,
     taps: Box<[Complex64]>,
 }
 
 impl AwConvolutionKernel {
-    /// Validate one canonical prepared convolution plane.
-    pub fn new(
-        layout: AwKernelLayout,
-        normalization: Complex64,
-        taps: Vec<Complex64>,
-    ) -> Result<Self, AwOperatorError> {
-        if logical_tap_count(layout.support, layout.oversampling) != Some(taps.len())
-            || !finite(normalization)
-            || normalization.norm_sqr() == 0.0
+    /// Validate one prepared convolution plane without pre-normalizing it.
+    pub fn new(layout: AwKernelLayout, taps: Vec<Complex64>) -> Result<Self, AwOperatorError> {
+        if layout.shape[0].checked_mul(layout.shape[1]) != Some(taps.len())
             || taps.iter().any(|tap| !finite(*tap))
         {
             return Err(AwOperatorError::InvalidKernelLayout);
         }
         Ok(Self {
             layout,
-            normalization,
             taps: taps.into_boxed_slice(),
         })
     }
 
-    fn tap(&self, fractional: [usize; 2], offset: [usize; 2]) -> Complex64 {
-        let width = self.layout.support[0] * 2 + 1;
-        let height = self.layout.support[1] * 2 + 1;
-        let index = (((fractional[1] * self.layout.oversampling + fractional[0]) * height
-            + offset[1])
-            * width)
-            + offset[0];
-        self.taps[index] / self.normalization
+    fn tap(
+        &self,
+        fractional_offset: [isize; 2],
+        integral_offset: [usize; 2],
+    ) -> Result<Complex64, AwOperatorError> {
+        let coordinate = [0, 1].map(|axis| {
+            self.layout.center[axis] as isize
+                + (integral_offset[axis] as isize - self.layout.support[axis] as isize)
+                    * self.layout.oversampling as isize
+                + fractional_offset[axis]
+        });
+        let x = usize::try_from(coordinate[0])
+            .ok()
+            .filter(|x| *x < self.layout.shape[0])
+            .ok_or(AwOperatorError::InvalidKernelLayout)?;
+        let y = usize::try_from(coordinate[1])
+            .ok()
+            .filter(|y| *y < self.layout.shape[1])
+            .ok_or(AwOperatorError::InvalidKernelLayout)?;
+        Ok(self.taps[x * self.layout.shape[1] + y])
     }
 
     fn resident_bytes(&self) -> usize {
@@ -234,10 +264,11 @@ impl AwPreparedCatalog {
     pub fn new(mut cells: Vec<AwPreparedCellMetadata>) -> Result<Self, AwOperatorError> {
         let first = cells.first().ok_or(AwOperatorError::InvalidCatalogLayout)?;
         let w_increment = first.w_increment;
-        if cells
-            .iter()
-            .any(|cell| cell.w_increment.to_bits() != w_increment.to_bits())
-        {
+        if cells.iter().any(|cell| {
+            cell.w_increment.to_bits() != w_increment.to_bits()
+                || cell.imaging_layout.oversampling != first.imaging_layout.oversampling
+                || cell.weight_layout.oversampling != first.weight_layout.oversampling
+        }) {
             return Err(AwOperatorError::InvalidCatalogLayout);
         }
         cells.sort_by(cell_order);
@@ -258,6 +289,14 @@ impl AwPreparedCatalog {
             .flat_map(|cell| cell.imaging_layout.support)
             .max()
             .unwrap_or(0)
+    }
+
+    fn imaging_oversampling(&self) -> usize {
+        self.cells[0].imaging_layout.oversampling
+    }
+
+    fn weight_oversampling(&self) -> usize {
+        self.cells[0].weight_layout.oversampling
     }
 
     fn grid_cell(
@@ -508,6 +547,14 @@ impl PreparedAwProjection {
         self.catalog.maximum_imaging_support()
     }
 
+    pub(crate) fn imaging_oversampling(&self) -> usize {
+        self.catalog.imaging_oversampling()
+    }
+
+    pub(crate) fn weight_oversampling(&self) -> usize {
+        self.catalog.weight_oversampling()
+    }
+
     pub(crate) fn instantiate(
         &self,
     ) -> Result<AwProjectionOperator<Box<dyn AwPreparedCellProvider + Send>>, AwOperatorError> {
@@ -529,8 +576,7 @@ pub struct AwVisibilitySample {
     mueller_element: u32,
     parallactic_angle_deg: f64,
     grid_position: [f64; 2],
-    uv_lambda: [f64; 2],
-    pointing_offset_lm: [f64; 2],
+    pointing_phase_gradient_rad_per_grid_cell: [f64; 2],
 }
 
 impl AwVisibilitySample {
@@ -543,8 +589,7 @@ impl AwVisibilitySample {
         mueller_element: u32,
         parallactic_angle_deg: f64,
         grid_position: [f64; 2],
-        uv_lambda: [f64; 2],
-        pointing_offset_lm: [f64; 2],
+        pointing_phase_gradient_rad_per_grid_cell: [f64; 2],
     ) -> Result<Self, AwOperatorError> {
         if !frequency_hz.is_finite()
             || frequency_hz <= 0.0
@@ -554,8 +599,7 @@ impl AwVisibilitySample {
             || !parallactic_angle_deg.is_finite()
             || grid_position
                 .into_iter()
-                .chain(uv_lambda)
-                .chain(pointing_offset_lm)
+                .chain(pointing_phase_gradient_rad_per_grid_cell)
                 .any(|value| !value.is_finite())
         {
             return Err(AwOperatorError::NonFiniteValue);
@@ -570,8 +614,7 @@ impl AwVisibilitySample {
             mueller_element,
             parallactic_angle_deg,
             grid_position,
-            uv_lambda,
-            pointing_offset_lm,
+            pointing_phase_gradient_rad_per_grid_cell,
         })
     }
 }
@@ -583,11 +626,11 @@ pub struct AwOperatorDiagnostics {
     pub selections: u64,
     /// Prediction/degridding passes.
     pub degrid_passes: u64,
-    /// Weighted-adjoint gridding passes.
+    /// Prepared DataToGrid kernel traversals.
     pub grid_passes: u64,
     /// Imaging tap coefficients evaluated.
     pub imaging_taps: u64,
-    /// Weight tap coefficients accumulated.
+    /// Weight tap coefficients evaluated.
     pub weight_taps: u64,
     /// Provider resident hits.
     pub provider_hits: u64,
@@ -681,93 +724,80 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         let taps = fused_taps(&cell.cell().imaging, shape, sample, true)?;
         add_measurement(&mut self.diagnostics.selections, 1)?;
         add_measurement(&mut self.diagnostics.degrid_passes, 1)?;
-        add_measurement(&mut self.diagnostics.imaging_taps, taps.len() as u64)?;
-        Ok(taps
+        add_measurement(&mut self.diagnostics.imaging_taps, taps.values.len() as u64)?;
+        let prediction = taps
+            .values
             .into_iter()
-            .map(|tap| tap.coefficient * grid[tap.index])
-            .sum())
+            .map(|tap| tap.coefficient.conj() * grid[tap.index])
+            .sum::<Complex64>();
+        Ok(prediction / taps.normalization.conj())
     }
-    /// Apply CASA's conjugate-frequency grid selection, exact adjoint, and paired weight CF.
-    pub fn grid(
+    pub(crate) fn prepare_imaging_grid(
         &mut self,
-        image_grid: &mut [Complex64],
-        weight_grid: &mut [Complex64],
         shape: [usize; 2],
         sample: AwVisibilitySample,
-        visibility: Complex64,
-        data_weight: f64,
-    ) -> Result<(), AwOperatorError> {
-        if !finite(visibility) || !data_weight.is_finite() {
-            return Err(AwOperatorError::NonFiniteValue);
-        }
-        if data_weight < 0.0 {
-            return Err(AwOperatorError::InvalidWeight);
-        }
-        validate_grid(image_grid, shape)?;
-        validate_grid(weight_grid, shape)?;
-        let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
-        let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
-        let imaging = fused_taps(&cell.cell().imaging, shape, sample, true)?;
-        let weight = fused_taps(&cell.cell().weight, shape, sample, false)?;
-        for tap in &imaging {
-            image_grid[tap.index] += tap.coefficient.conj() * visibility * data_weight;
-        }
-        for tap in &weight {
-            weight_grid[tap.index] += tap.coefficient * data_weight;
-        }
-        add_measurement(&mut self.diagnostics.selections, 1)?;
-        add_measurement(&mut self.diagnostics.grid_passes, 1)?;
-        add_measurement(&mut self.diagnostics.imaging_taps, imaging.len() as u64)?;
-        add_measurement(&mut self.diagnostics.weight_taps, weight.len() as u64)?;
-        Ok(())
-    }
-
-    pub(crate) fn grid_imaging_compensated(
-        &mut self,
-        image_grid: &mut [Complex64],
-        compensation: &mut [Complex64],
-        shape: [usize; 2],
-        sample: AwVisibilitySample,
-        value: Complex64,
-    ) -> Result<(), AwOperatorError> {
-        validate_grid(image_grid, shape)?;
-        validate_grid(compensation, shape)?;
+    ) -> Result<AwGridPlan, AwOperatorError> {
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
         let taps = fused_taps(&cell.cell().imaging, shape, sample, true)?;
-        compensated_taps(image_grid, compensation, &taps, value, true);
         add_measurement(&mut self.diagnostics.selections, 1)?;
         add_measurement(&mut self.diagnostics.grid_passes, 1)?;
-        add_measurement(&mut self.diagnostics.imaging_taps, taps.len() as u64)?;
-        Ok(())
+        add_measurement(&mut self.diagnostics.imaging_taps, taps.values.len() as u64)?;
+        Ok(AwGridPlan::new(shape, taps))
     }
 
-    pub(crate) fn grid_weight_compensated(
+    pub(crate) fn prepare_sensitivity_grid(
         &mut self,
-        weight_grid: &mut [Complex64],
-        compensation: &mut [Complex64],
         shape: [usize; 2],
         sample: AwVisibilitySample,
-        coefficient: f64,
-    ) -> Result<(), AwOperatorError> {
-        if !coefficient.is_finite() {
-            return Err(AwOperatorError::InvalidWeight);
-        }
-        validate_grid(weight_grid, shape)?;
-        validate_grid(compensation, shape)?;
-        let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+    ) -> Result<AwGridPlan, AwOperatorError> {
+        let centered = AwVisibilitySample {
+            w_lambda: 0.0,
+            grid_position: [shape[0] as f64 / 2.0, shape[1] as f64 / 2.0],
+            ..sample
+        };
+        let metadata = self.catalog.grid_cell(centered, self.conjugate_beams)?;
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
-        let taps = fused_taps(&cell.cell().weight, shape, sample, false)?;
-        compensated_taps(
-            weight_grid,
-            compensation,
-            &taps,
-            Complex64::new(coefficient, 0.0),
-            false,
-        );
+        let taps = fused_taps(&cell.cell().weight, shape, centered, true)?;
         add_measurement(&mut self.diagnostics.selections, 1)?;
         add_measurement(&mut self.diagnostics.grid_passes, 1)?;
-        add_measurement(&mut self.diagnostics.weight_taps, taps.len() as u64)?;
+        add_measurement(&mut self.diagnostics.weight_taps, taps.values.len() as u64)?;
+        Ok(AwGridPlan::new(shape, taps))
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct AwGridPlan {
+    shape: [usize; 2],
+    taps: Box<[FusedTap]>,
+    normalization: Complex64,
+}
+
+impl AwGridPlan {
+    fn new(shape: [usize; 2], taps: FusedTaps) -> Self {
+        Self {
+            shape,
+            taps: taps.values.into_boxed_slice(),
+            normalization: taps.normalization,
+        }
+    }
+
+    pub(crate) fn normalization(&self) -> f64 {
+        self.normalization.norm()
+    }
+
+    pub(crate) fn grid_compensated(
+        &self,
+        grid: &mut [Complex64],
+        compensation: &mut [Complex64],
+        value: Complex64,
+    ) -> Result<(), AwOperatorError> {
+        if !finite(value) {
+            return Err(AwOperatorError::NonFiniteValue);
+        }
+        validate_grid(grid, self.shape)?;
+        validate_grid(compensation, self.shape)?;
+        compensated_taps(grid, compensation, &self.taps, value);
         Ok(())
     }
 }
@@ -777,15 +807,9 @@ fn compensated_taps(
     compensation: &mut [Complex64],
     taps: &[FusedTap],
     value: Complex64,
-    adjoint: bool,
 ) {
     for tap in taps {
-        let coefficient = if adjoint {
-            tap.coefficient.conj()
-        } else {
-            tap.coefficient
-        };
-        let contribution = coefficient * value - compensation[tap.index];
+        let contribution = tap.coefficient * value - compensation[tap.index];
         let updated = grid[tap.index] + contribution;
         compensation[tap.index] = (updated - grid[tap.index]) - contribution;
         grid[tap.index] = updated;
@@ -823,45 +847,64 @@ fn add_measurement(counter: &mut u64, amount: u64) -> Result<(), AwOperatorError
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct FusedTap {
     index: usize,
     coefficient: Complex64,
+}
+struct FusedTaps {
+    values: Vec<FusedTap>,
+    normalization: Complex64,
 }
 fn fused_taps(
     kernel: &AwConvolutionKernel,
     shape: [usize; 2],
     sample: AwVisibilitySample,
     apply_pointing: bool,
-) -> Result<Vec<FusedTap>, AwOperatorError> {
+) -> Result<FusedTaps, AwOperatorError> {
     let (base_x, frac_x) = fractional_bin(sample.grid_position[0], kernel.layout.oversampling)?;
     let (base_y, frac_y) = fractional_bin(sample.grid_position[1], kernel.layout.oversampling)?;
-    let pointing = if apply_pointing {
-        Complex64::from_polar(
-            1.0,
-            -std::f64::consts::TAU
-                * (sample.uv_lambda[0] * sample.pointing_offset_lm[0]
-                    + sample.uv_lambda[1] * sample.pointing_offset_lm[1]),
-        )
-    } else {
-        Complex64::new(1.0, 0.0)
-    };
     let mut taps = Vec::with_capacity(kernel.layout.integral_tap_count());
+    let mut normalization = Complex64::default();
     for oy in 0..=kernel.layout.support[1] * 2 {
         let y = placed(base_y, oy, kernel.layout.support[1], shape[1])?;
         for ox in 0..=kernel.layout.support[0] * 2 {
             let x = placed(base_x, ox, kernel.layout.support[0], shape[0])?;
-            let mut coefficient = kernel.tap([frac_x, frac_y], [ox, oy]);
+            let mut coefficient = kernel.tap([frac_x, frac_y], [ox, oy])?;
             if sample.w_lambda > 0.0 {
                 coefficient = coefficient.conj();
             }
+            normalization += coefficient;
+            let pointing = if apply_pointing {
+                let sampled = [
+                    (ox as isize - kernel.layout.support[0] as isize)
+                        * kernel.layout.oversampling as isize
+                        + frac_x,
+                    (oy as isize - kernel.layout.support[1] as isize)
+                        * kernel.layout.oversampling as isize
+                        + frac_y,
+                ];
+                let phase = sampled[0] as f64 * sample.pointing_phase_gradient_rad_per_grid_cell[0]
+                    / kernel.layout.oversampling as f64
+                    + sampled[1] as f64 * sample.pointing_phase_gradient_rad_per_grid_cell[1]
+                        / kernel.layout.oversampling as f64;
+                Complex64::from_polar(1.0, phase)
+            } else {
+                Complex64::new(1.0, 0.0)
+            };
             taps.push(FusedTap {
                 index: x * shape[1] + y,
                 coefficient: coefficient * pointing,
             });
         }
     }
-    Ok(taps)
+    if !finite(normalization) || normalization.norm_sqr() == 0.0 {
+        return Err(AwOperatorError::InvalidKernelLayout);
+    }
+    Ok(FusedTaps {
+        values: taps,
+        normalization,
+    })
 }
 fn conjugate_frequency(frequency: f64, reference: f64) -> Result<f64, AwOperatorError> {
     let radicand = 2.0 * reference * reference - frequency * frequency;
@@ -876,26 +919,20 @@ fn conjugate_mueller(mueller: u32) -> Result<u32, AwOperatorError> {
         .checked_sub(mueller)
         .ok_or(AwOperatorError::UnsupportedMueller)
 }
-fn logical_tap_count(support: [usize; 2], oversampling: usize) -> Option<usize> {
-    support[0]
-        .checked_mul(2)?
-        .checked_add(1)?
-        .checked_mul(support[1].checked_mul(2)?.checked_add(1)?)?
-        .checked_mul(oversampling)?
-        .checked_mul(oversampling)
-}
-fn fractional_bin(position: f64, oversampling: usize) -> Result<(isize, usize), AwOperatorError> {
-    let mut base = position.floor();
-    let mut fraction = ((position - base) * oversampling as f64).round() as usize;
-    if fraction == oversampling {
-        base += 1.0;
-        fraction = 0;
-    }
-    if base < isize::MIN as f64 || base > isize::MAX as f64 {
+fn fractional_bin(position: f64, oversampling: usize) -> Result<(isize, isize), AwOperatorError> {
+    let base = casa_nint(position);
+    if !position.is_finite() || base < isize::MIN as f64 || base > isize::MAX as f64 {
         Err(AwOperatorError::InvalidGridLayout)
     } else {
-        Ok((base as isize, fraction))
+        let base = base as isize;
+        Ok((
+            base,
+            casa_nint((base as f64 - position) * oversampling as f64) as isize,
+        ))
     }
+}
+fn casa_nint(value: f64) -> f64 {
+    (value + 0.5).floor()
 }
 fn placed(
     base: isize,
@@ -993,7 +1030,9 @@ mod tests {
         .unwrap()
     }
     fn layout(support: [usize; 2], os: usize) -> AwKernelLayout {
-        AwKernelLayout::new(support, os).unwrap()
+        let shape = support.map(|support| support * 2 * os + 3);
+        let center = support.map(|support| support * os + 1);
+        AwKernelLayout::new(support, os, shape, center).unwrap()
     }
     fn metadata(f: f64, w: f64, m: u32, pa: f64) -> AwPreparedCellMetadata {
         AwPreparedCellMetadata::new(
@@ -1012,8 +1051,7 @@ mod tests {
         let make = |layout: AwKernelLayout, scale: f64| {
             AwConvolutionKernel::new(
                 layout,
-                Complex64::new(2.0, 0.5),
-                (0..logical_tap_count(layout.support, layout.oversampling).unwrap())
+                (0..layout.shape[0] * layout.shape[1])
                     .map(|i| Complex64::new(scale * (i + 1) as f64, scale * 0.25))
                     .collect(),
             )
@@ -1076,9 +1114,190 @@ mod tests {
         )
         .unwrap()
     }
+    fn operator_with_kernels(
+        metadata: AwPreparedCellMetadata,
+        imaging: AwConvolutionKernel,
+        weight: AwConvolutionKernel,
+    ) -> AwProjectionOperator<Provider> {
+        let cell = Arc::new(AwConvolutionCell::new(metadata.identity, imaging, weight).unwrap());
+        AwProjectionOperator::new(
+            AwPreparedCatalog::new(vec![metadata.clone()]).unwrap(),
+            Provider {
+                cells: BTreeMap::from([(metadata.identity.as_bytes(), cell)]),
+                seen: BTreeSet::new(),
+            },
+            false,
+            64 * 1024,
+        )
+        .unwrap()
+    }
     fn sample(f: f64, w: f64, m: u32, pa: f64) -> AwVisibilitySample {
-        AwVisibilitySample::new(f, 10.0, w, m, pa, [4.25, 4.75], [17.0, -5.0], [2e-4, -3e-4])
-            .unwrap()
+        AwVisibilitySample::new(f, 10.0, w, m, pa, [4.25, 4.75], [2e-4, -3e-4]).unwrap()
+    }
+
+    fn nonuniform_kernel() -> AwConvolutionKernel {
+        let layout = layout([1, 0], 2);
+        let mut taps = vec![Complex64::new(-90.0, 30.0); layout.shape[0] * layout.shape[1]];
+        // The selected fractional plane is intentionally nonuniform and has a
+        // complex sum. That makes normalization, conjugation, and pointing
+        // phase independently observable instead of cancelling by symmetry.
+        for (x, value) in [
+            Complex64::new(2.0, 1.0),
+            Complex64::new(-1.0, 3.0),
+            Complex64::new(4.0, -2.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            taps[(2 * x + 2) * layout.shape[1] + layout.center[1]] = value;
+        }
+        AwConvolutionKernel::new(layout, taps).unwrap()
+    }
+
+    #[test]
+    fn t51_casa_placement_rounds_grid_location_and_retains_signed_fractional_offset() {
+        // CASA's nint is floor(value + 0.5): loc=nint(pos),
+        // off=nint((loc-pos)*sampling). The two
+        // coordinates therefore select opposite signed CF offsets and distinct
+        // grid footprints even though floor-based positive bins alias them.
+        let lower = fractional_bin(4.30, 2).unwrap();
+        let upper = fractional_bin(4.70, 2).unwrap();
+        assert_eq!((lower.0, lower.1 as isize), (4, -1));
+        assert_eq!((upper.0, upper.1 as isize), (5, 1));
+        assert_eq!(casa_nint(-0.5), 0.0);
+        assert_eq!(casa_nint(0.5), 1.0);
+    }
+
+    #[test]
+    fn t51_kernel_layout_covers_the_full_reachable_signed_fractional_footprint() {
+        assert_eq!(
+            AwKernelLayout::new([1, 0], 3, [9, 5], [4, 2]),
+            Err(AwOperatorError::InvalidKernelLayout)
+        );
+
+        let layout = AwKernelLayout::new([1, 0], 3, [11, 5], [5, 2]).unwrap();
+        let kernel = AwConvolutionKernel::new(
+            layout,
+            vec![Complex64::new(1.0, 0.0); layout.shape[0] * layout.shape[1]],
+        )
+        .unwrap();
+        assert_eq!(fractional_bin(6.50, 3).unwrap().1, 2);
+        assert_eq!(fractional_bin(6.49, 3).unwrap().1, -1);
+        assert_eq!(
+            kernel.tap([2, 2], [2, 0]).unwrap(),
+            Complex64::new(1.0, 0.0)
+        );
+        assert_eq!(
+            kernel.tap([-1, -1], [0, 0]).unwrap(),
+            Complex64::new(1.0, 0.0)
+        );
+        for position in [[6.50, 6.50], [6.49, 6.49]] {
+            let sample =
+                AwVisibilitySample::new(10.0, 10.0, 0.0, 0, 0.0, position, [0.0, 0.0]).unwrap();
+            assert_eq!(
+                fused_taps(&kernel, [16, 16], sample, false)
+                    .unwrap()
+                    .values
+                    .len(),
+                3
+            );
+        }
+    }
+
+    #[test]
+    fn t51_asymmetric_dense_kernel_storage_uses_x_major_then_y_order() {
+        let layout = AwKernelLayout::new([0, 0], 1, [3, 5], [1, 2]).unwrap();
+        let taps = (0..layout.shape[0])
+            .flat_map(|x| {
+                (0..layout.shape[1]).map(move |y| Complex64::new((100 * x + y) as f64, 0.0))
+            })
+            .collect();
+        let kernel = AwConvolutionKernel::new(layout, taps).unwrap();
+
+        assert_eq!(kernel.tap([-1, 1], [0, 0]).unwrap().re, 3.0);
+        assert_eq!(kernel.tap([1, -1], [0, 0]).unwrap().re, 201.0);
+    }
+
+    #[test]
+    fn t51_data_to_grid_uses_raw_post_w_sign_imaging_taps_and_selected_complex_sum() {
+        let kernel = nonuniform_kernel();
+        let sample =
+            AwVisibilitySample::new(10.0, 10.0, 1.0, 0, 0.0, [4.70, 4.0], [0.0, 0.0]).unwrap();
+        let taps = fused_taps(&kernel, [10, 10], sample, true).unwrap();
+        let raw = [
+            Complex64::new(2.0, -1.0),
+            Complex64::new(-1.0, -3.0),
+            Complex64::new(4.0, 2.0),
+        ];
+
+        assert_eq!(
+            taps.values.iter().map(|tap| tap.index).collect::<Vec<_>>(),
+            [44, 54, 64]
+        );
+        assert_eq!(
+            taps.values
+                .iter()
+                .map(|tap| tap.coefficient)
+                .collect::<Vec<_>>(),
+            raw
+        );
+        assert_eq!(
+            taps.values
+                .iter()
+                .map(|tap| tap.coefficient)
+                .sum::<Complex64>(),
+            raw.into_iter().sum::<Complex64>()
+        );
+        assert_eq!(taps.normalization, raw.into_iter().sum::<Complex64>());
+
+        let metadata = AwPreparedCellMetadata::new(
+            identity(10.0, 0.0, 0, 0.0),
+            10.0,
+            0.0,
+            1.0,
+            0,
+            0.0,
+            kernel.layout,
+            kernel.layout,
+        )
+        .unwrap();
+        let mut operator = operator_with_kernels(metadata, kernel.clone(), kernel);
+        let mut image = vec![Complex64::default(); 100];
+        let mut compensation = vec![Complex64::default(); 100];
+        let visibility = Complex64::new(0.5, -1.5);
+        let plan = operator.prepare_imaging_grid([10, 10], sample).unwrap();
+        plan.grid_compensated(&mut image, &mut compensation, visibility * 2.0)
+            .unwrap();
+        for (index, coefficient) in [44, 54, 64].into_iter().zip(raw) {
+            assert_eq!(image[index], coefficient * visibility * 2.0);
+        }
+    }
+
+    #[test]
+    fn t51_pointing_phase_is_evaluated_at_each_sampled_cf_coordinate() {
+        let kernel = nonuniform_kernel();
+        let sample = AwVisibilitySample::new(
+            10.0,
+            10.0,
+            -1.0,
+            0,
+            0.0,
+            [4.70, 4.0],
+            [std::f64::consts::FRAC_PI_2, 0.0],
+        )
+        .unwrap();
+        let taps = fused_taps(&kernel, [10, 10], sample, true).unwrap();
+        let raw = [
+            Complex64::new(2.0, 1.0),
+            Complex64::new(-1.0, 3.0),
+            Complex64::new(4.0, -2.0),
+        ];
+        let phases = [-0.5_f64, 0.5, 1.5]
+            .map(|coordinate| Complex64::from_polar(1.0, coordinate * std::f64::consts::FRAC_PI_2));
+
+        for ((tap, raw), phase) in taps.values.iter().zip(raw).zip(phases) {
+            assert!((tap.coefficient - raw * phase).norm() < 1.0e-12);
+        }
     }
 
     #[test]
@@ -1141,7 +1360,6 @@ mod tests {
             3,
             0.0,
             [4.25, 4.75],
-            [17.0, -5.0],
             [2e-4, -3e-4],
         )
         .unwrap();
@@ -1157,7 +1375,6 @@ mod tests {
             3,
             0.0,
             [4.25, 4.75],
-            [17.0, -5.0],
             [2e-4, -3e-4],
         )
         .unwrap();
@@ -1191,22 +1408,30 @@ mod tests {
 
     #[test]
     fn t51_asymmetric_pair_is_bounded_and_applied_with_separate_footprints() {
-        let entries = vec![metadata(10.0, 0.0, 12, 0.0)];
+        let entries = vec![metadata(10.0, 0.0, 12, 0.0), metadata(10.0, 1.0, 12, 0.0)];
         let mut op = operator(entries);
-        let s = sample(10.0, -0.1, 3, 0.0);
+        let s = sample(10.0, -1.0, 3, 0.0);
         let mut image = vec![Complex64::default(); 100];
-        let mut weight = vec![Complex64::default(); 100];
-        op.grid(
-            &mut image,
-            &mut weight,
-            [10, 10],
-            s,
-            Complex64::new(1.0, 0.0),
-            1.0,
-        )
-        .unwrap();
+        let mut image_error = vec![Complex64::default(); 100];
+        let imaging = op.prepare_imaging_grid([10, 10], s).unwrap();
+        imaging
+            .grid_compensated(&mut image, &mut image_error, Complex64::new(1.0, 0.0))
+            .unwrap();
+        let mut sensitivity = vec![Complex64::default(); 100];
+        let mut sensitivity_error = vec![Complex64::default(); 100];
+        let weight = op.prepare_sensitivity_grid([10, 10], s).unwrap();
+        weight
+            .grid_compensated(
+                &mut sensitivity,
+                &mut sensitivity_error,
+                Complex64::new(1.0, 0.0),
+            )
+            .unwrap();
         assert_eq!(image.iter().filter(|v| v.norm_sqr() > 0.0).count(), 9);
-        assert_eq!(weight.iter().filter(|v| v.norm_sqr() > 0.0).count(), 15);
+        assert_eq!(
+            sensitivity.iter().filter(|v| v.norm_sqr() > 0.0).count(),
+            15
+        );
         let d = op.diagnostics();
         assert_eq!(
             (
@@ -1215,44 +1440,168 @@ mod tests {
                 d.weight_taps,
                 d.copied_bytes
             ),
-            (1, 9, 15, 0)
+            (2, 9, 15, 0)
         );
     }
 
     #[test]
     fn t51_weight_kernel_accepts_signed_taylor_moment_coefficients() {
-        let entries = vec![metadata(10.0, 0.0, 3, 0.0)];
+        let entries = vec![metadata(10.0, 0.0, 3, 0.0), metadata(10.0, 0.0, 12, 0.0)];
         let mut op = operator(entries);
         let s = sample(10.0, 0.1, 3, 0.0);
         let mut positive = vec![Complex64::default(); 100];
         let mut positive_error = vec![Complex64::default(); 100];
-        op.grid_weight_compensated(&mut positive, &mut positive_error, [10, 10], s, 2.0)
+        let plan = op.prepare_sensitivity_grid([10, 10], s).unwrap();
+        plan.grid_compensated(&mut positive, &mut positive_error, Complex64::new(2.0, 0.0))
             .unwrap();
         let mut negative = vec![Complex64::default(); 100];
         let mut negative_error = vec![Complex64::default(); 100];
-        op.grid_weight_compensated(&mut negative, &mut negative_error, [10, 10], s, -2.0)
-            .unwrap();
+        plan.grid_compensated(
+            &mut negative,
+            &mut negative_error,
+            Complex64::new(-2.0, 0.0),
+        )
+        .unwrap();
 
         for (positive, negative) in positive.iter().zip(negative) {
             assert!((*positive + negative).norm() < 1.0e-12);
         }
-        let mut image = vec![Complex64::default(); 100];
-        let mut weight = vec![Complex64::default(); 100];
+        let mut invalid = vec![Complex64::default(); 100];
+        let mut invalid_error = vec![Complex64::default(); 100];
         assert_eq!(
-            op.grid(
-                &mut image,
-                &mut weight,
-                [10, 10],
-                s,
-                Complex64::new(1.0, 0.0),
-                -1.0,
+            plan.grid_compensated(
+                &mut invalid,
+                &mut invalid_error,
+                Complex64::new(f64::NAN, 0.0),
             ),
-            Err(AwOperatorError::InvalidWeight)
+            Err(AwOperatorError::NonFiniteValue)
         );
     }
 
     #[test]
-    fn t51_forward_and_weighted_adjoint_obey_inner_product_law() {
+    fn t51_imaging_and_centered_sensitivity_plans_are_distinct_and_reused_without_reselection() {
+        let layout = layout([0, 0], 1);
+        let kernel = |value| {
+            let mut taps = vec![Complex64::default(); layout.shape[0] * layout.shape[1]];
+            taps[layout.center[0] * layout.shape[1] + layout.center[1]] = value;
+            AwConvolutionKernel::new(layout, taps).unwrap()
+        };
+        let actual = AwPreparedCellMetadata::new(
+            identity(10.0, 1.0, 0, 0.0),
+            10.0,
+            1.0,
+            1.0,
+            0,
+            0.0,
+            layout,
+            layout,
+        )
+        .unwrap();
+        let centered = AwPreparedCellMetadata::new(
+            identity(10.0, 0.0, 15, 0.0),
+            10.0,
+            0.0,
+            1.0,
+            15,
+            0.0,
+            layout,
+            layout,
+        )
+        .unwrap();
+        let cells = BTreeMap::from([
+            (
+                actual.identity.as_bytes(),
+                Arc::new(
+                    AwConvolutionCell::new(
+                        actual.identity,
+                        kernel(Complex64::new(3.0, 4.0)),
+                        kernel(Complex64::new(7.0, 2.0)),
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                centered.identity.as_bytes(),
+                Arc::new(
+                    AwConvolutionCell::new(
+                        centered.identity,
+                        kernel(Complex64::new(1.0, 0.0)),
+                        kernel(Complex64::new(11.0, -3.0)),
+                    )
+                    .unwrap(),
+                ),
+            ),
+        ]);
+        let mut operator = AwProjectionOperator::new(
+            AwPreparedCatalog::new(vec![actual, centered]).unwrap(),
+            Provider {
+                cells,
+                seen: BTreeSet::new(),
+            },
+            false,
+            64 * 1024,
+        )
+        .unwrap();
+        let sample =
+            AwVisibilitySample::new(10.0, 10.0, 1.0, 0, 0.0, [6.2, 5.8], [0.0, 0.0]).unwrap();
+        let mut psf = vec![Complex64::default(); 100];
+        let mut psf_error = vec![Complex64::default(); 100];
+        let imaging = operator.prepare_imaging_grid([10, 10], sample).unwrap();
+        let normalization = imaging.normalization();
+        let mut dirty = vec![Complex64::default(); 100];
+        let mut dirty_error = vec![Complex64::default(); 100];
+        imaging
+            .grid_compensated(&mut dirty, &mut dirty_error, Complex64::new(-1.0, 0.5))
+            .unwrap();
+        imaging
+            .grid_compensated(&mut psf, &mut psf_error, Complex64::new(2.0, 0.0))
+            .unwrap();
+        let mut sensitivity = vec![Complex64::default(); 100];
+        let mut sensitivity_error = vec![Complex64::default(); 100];
+        let sensitivity_plan = operator.prepare_sensitivity_grid([10, 10], sample).unwrap();
+        sensitivity_plan
+            .grid_compensated(
+                &mut sensitivity,
+                &mut sensitivity_error,
+                Complex64::new(2.0, 0.0),
+            )
+            .unwrap();
+
+        assert_eq!(normalization, 5.0);
+        assert_eq!(psf[66], Complex64::new(6.0, -8.0));
+        assert_eq!(sensitivity[55], Complex64::new(22.0, -6.0));
+        assert_eq!(psf.iter().filter(|value| value.norm_sqr() > 0.0).count(), 1);
+        assert_eq!(
+            sensitivity
+                .iter()
+                .filter(|value| value.norm_sqr() > 0.0)
+                .count(),
+            1
+        );
+        let before_reuse = operator.diagnostics();
+        imaging
+            .grid_compensated(&mut psf, &mut psf_error, Complex64::new(-0.5, 0.0))
+            .unwrap();
+        sensitivity_plan
+            .grid_compensated(
+                &mut sensitivity,
+                &mut sensitivity_error,
+                Complex64::new(-0.5, 0.0),
+            )
+            .unwrap();
+        assert_eq!(operator.diagnostics(), before_reuse);
+        assert_eq!(
+            (
+                before_reuse.selections,
+                before_reuse.imaging_taps,
+                before_reuse.weight_taps,
+            ),
+            (2, 1, 1)
+        );
+    }
+
+    #[test]
+    fn t51_grid_to_data_is_selected_complex_normalized_only_on_prediction() {
         let entries = vec![metadata(10.0, 0.0, 3, 0.0), metadata(10.0, 0.0, 12, 0.0)];
         let mut op = operator(entries);
         let s = sample(10.0, 0.1, 3, 0.0);
@@ -1260,13 +1609,22 @@ mod tests {
             .map(|i| Complex64::new(i as f64 * 0.03 - 0.7, i as f64 * -0.02 + 0.1))
             .collect::<Vec<_>>();
         let y = Complex64::new(-0.7, 1.2);
+        let metadata = op.catalog.degrid_cell(s).unwrap();
+        let kernel = &op.provider.cells[&metadata.identity.as_bytes()].imaging;
+        let normalization = fused_taps(kernel, [10, 10], s, true).unwrap().normalization;
         let predicted = op.degrid(&model, [10, 10], s).unwrap();
         let mut adj = vec![Complex64::default(); 100];
-        let mut wg = vec![Complex64::default(); 100];
-        op.grid(&mut adj, &mut wg, [10, 10], s, y, 1.0).unwrap();
+        let mut adj_error = vec![Complex64::default(); 100];
+        op.prepare_imaging_grid([10, 10], s)
+            .unwrap()
+            .grid_compensated(&mut adj, &mut adj_error, y)
+            .unwrap();
         let left = predicted.conj() * y;
         let right: Complex64 = model.iter().zip(adj).map(|(x, a)| x.conj() * a).sum();
-        assert!((left - right).norm() < 1e-12, "{left:?} {right:?}");
+        assert!(
+            (left * normalization - right).norm() < 1e-12,
+            "normalized={left:?} normalization={normalization:?} raw={right:?}"
+        );
     }
     #[test]
     fn t51_reports_missing_nonfinite_layout_and_residency_separately() {
@@ -1284,16 +1642,7 @@ mod tests {
             Err(AwOperatorError::UnsupportedFrequency)
         );
         assert_eq!(
-            AwVisibilitySample::new(
-                f64::NAN,
-                10.0,
-                0.0,
-                3,
-                0.0,
-                [1.0, 1.0],
-                [0.0, 0.0],
-                [0.0, 0.0]
-            ),
+            AwVisibilitySample::new(f64::NAN, 10.0, 0.0, 3, 0.0, [1.0, 1.0], [0.0, 0.0]),
             Err(AwOperatorError::NonFiniteValue)
         );
         assert_eq!(

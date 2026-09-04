@@ -987,13 +987,40 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
         rotate_pa_step_deg: 360.0,
     });
     imaging.task_requirements = vec![TaskRequirement::AwProjection];
+    imaging.write_primary_beam = true;
 
     let result = execute_continuum(imaging).expect("native AW dirty execution");
     assert_products(
         &image_name,
         &result.product_names,
-        &[".psf", ".residual", ".model", ".image", ".sumwt", ".weight"],
+        &[
+            ".psf",
+            ".residual",
+            ".model",
+            ".image",
+            ".sumwt",
+            ".weight",
+            ".pb",
+        ],
     );
+    let weight = product_plane(&image_name, ".weight");
+    let primary_beam = product_plane(&image_name, ".pb");
+    let peak_weight = weight.iter().copied().fold(0.0_f32, f32::max);
+    assert!(peak_weight.is_finite() && peak_weight > 0.0);
+    assert!(
+        weight
+            .iter()
+            .any(|value| (*value - peak_weight).abs() > 1.0e-6),
+        "AW weight must retain the spatial WTCF sensitivity instead of repeating sumwt"
+    );
+    for (weight, primary_beam) in weight.iter().zip(primary_beam.iter()) {
+        let expected = (weight.max(0.0) / peak_weight).sqrt();
+        let expected = if expected >= 0.2 { expected } else { 0.0 };
+        assert!(
+            (*primary_beam - expected).abs() <= 1.0e-6,
+            "AW PB must derive from the same WTCF sensitivity: weight={weight} pb={primary_beam} expected={expected}"
+        );
+    }
     let receipt = &result.outcome.output.initial_receipt;
     assert_eq!(receipt.initial_execution_knobs().io_depth, 2);
     let nodes = receipt.plan_node_identities();

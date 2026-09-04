@@ -1590,7 +1590,7 @@ fn prepare(
             prepared_spectral.doppler,
         ),
     );
-    let primary_beam_model = if mosaic {
+    let primary_beam_model = if mosaic || request.aw_projection.is_some() {
         Some(casa_imaging_products::AnalyticPrimaryBeamModel::MosaicSensitivity)
     } else if request.write_primary_beam || request.pbcor {
         Some(standard_primary_beam_model(&ms)?)
