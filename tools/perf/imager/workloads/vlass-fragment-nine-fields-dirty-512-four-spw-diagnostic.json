@@ -69,12 +69,8 @@
     "calcpsf": true,
     "parallel": false,
     "standard_mfs_acceleration": "cpu",
-    "standard_mfs_grid_threads": 2,
-    "imaging_prepare_workers": 1,
-    "imaging_read_ahead_blocks": 1,
     "imaging_fft_precision": "auto",
-    "imaging_fft_backend": "rustfft",
-    "imaging_memory_target_mb": 4096
+    "imaging_fft_backend": "rustfft"
   },
   "run": {
     "repeats": 1,
