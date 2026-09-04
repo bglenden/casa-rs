@@ -2735,6 +2735,9 @@ fn specification(
         .task_requirements
         .contains(&TaskRequirement::MosaicGridder);
     let algorithm = reconstruction_algorithm(&request.algorithm);
+    let minor_cycle_requested =
+        algorithm != ReconstructionAlgorithm::Dirty && request.iterations > 0;
+    let weight_image = mosaic || aw_projection.is_some();
     let basis = match (&request.spectral_mode, &request.algorithm) {
         (SpectralImagingMode::MtmfsViaCube { .. }, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
             ReconstructionBasis::TaylorViaChannelMajor {
@@ -2852,8 +2855,10 @@ fn specification(
         ProductRequirements::new(
             requested_products(
                 &request.algorithm,
+                minor_cycle_requested,
                 request.normalization,
                 mosaic,
+                weight_image,
                 request.write_primary_beam,
                 request.pbcor,
             ),
@@ -2903,8 +2908,10 @@ fn specification(
 
 fn requested_products(
     algorithm: &ContinuumAlgorithm,
+    minor_cycle_requested: bool,
     normalization: ProductNormalization,
     mosaic: bool,
+    weight_image: bool,
     write_primary_beam: bool,
     pbcor: bool,
 ) -> Vec<ProductKind> {
@@ -2915,7 +2922,7 @@ fn requested_products(
         ProductKind::RestoredImage,
         ProductKind::SumWeights,
     ];
-    if !matches!(algorithm, ContinuumAlgorithm::Dirty) {
+    if minor_cycle_requested {
         products.push(ProductKind::Mask);
     }
     products.push(ProductKind::Beam);
@@ -2926,7 +2933,7 @@ fn requested_products(
             ProductKind::SpectralIndexError,
         ]);
     }
-    if mosaic {
+    if weight_image {
         products.push(ProductKind::Weight);
     }
     if !matches!(normalization, ProductNormalization::UnitResponse) {
@@ -3474,7 +3481,9 @@ mod tests {
     fn dirty_execution_does_not_request_a_clean_mask() {
         let dirty = requested_products(
             &ContinuumAlgorithm::Dirty,
+            false,
             casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
             false,
             true,
             false,
@@ -3484,12 +3493,50 @@ mod tests {
 
         let clean = requested_products(
             &ContinuumAlgorithm::Hogbom,
+            true,
             casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
             false,
             true,
             false,
         );
         assert!(clean.contains(&casa_imaging_model::ProductKind::Mask));
+    }
+
+    #[test]
+    fn zero_iteration_aw_mtmfs_requests_taylor_weight_without_clean_only_products() {
+        let products = requested_products(
+            &ContinuumAlgorithm::Mtmfs {
+                terms: 2,
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            false,
+            casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
+            true,
+            true,
+            false,
+        )
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(
+            products,
+            std::collections::BTreeSet::from([
+                casa_imaging_model::ProductKind::Psf,
+                casa_imaging_model::ProductKind::Residual,
+                casa_imaging_model::ProductKind::Model,
+                casa_imaging_model::ProductKind::RestoredImage,
+                casa_imaging_model::ProductKind::SumWeights,
+                casa_imaging_model::ProductKind::Beam,
+                casa_imaging_model::ProductKind::TaylorTerms,
+                casa_imaging_model::ProductKind::SpectralIndex,
+                casa_imaging_model::ProductKind::SpectralIndexError,
+                casa_imaging_model::ProductKind::Weight,
+                casa_imaging_model::ProductKind::PrimaryBeam,
+            ])
+        );
     }
 
     #[test]
@@ -3500,7 +3547,9 @@ mod tests {
                 scales_px: vec![0.0],
                 small_scale_bias: 0.0,
             },
+            true,
             casa_imaging_model::ProductNormalization::FlatNoise,
+            true,
             true,
             true,
             true,

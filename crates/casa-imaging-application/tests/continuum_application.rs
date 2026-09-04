@@ -71,6 +71,15 @@ fn vla_aw_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+fn four_spw_vla_measurement_set(root: &Path) -> PathBuf {
+    measurement_set_fixture(
+        root,
+        "four-spw-vla-aw-input.ms",
+        MeasurementSetFixtureOptions::new(true, false, 8, 4, 4, 24, false)
+            .with_vla_observation_metadata(),
+    )
+}
+
 fn full_stokes_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -980,7 +989,11 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
     imaging.task_requirements = vec![TaskRequirement::AwProjection];
 
     let result = execute_continuum(imaging).expect("native AW dirty execution");
-    assert_dirty_products(&image_name, &result.product_names);
+    assert_products(
+        &image_name,
+        &result.product_names,
+        &[".psf", ".residual", ".model", ".image", ".sumwt", ".weight"],
+    );
     let receipt = &result.outcome.output.initial_receipt;
     assert_eq!(receipt.initial_execution_knobs().io_depth, 2);
     let nodes = receipt.plan_node_identities();
@@ -1110,6 +1123,71 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
         receipt.artifact_observed_identity(artifact),
         Some(artifact.as_bytes())
     );
+}
+
+#[test]
+fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = four_spw_vla_measurement_set(root.path());
+    let image_name = root.path().join("dirty-mtmfs");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.channel_count = Some(8);
+    imaging.iterations = 0;
+
+    let result = execute_continuum(imaging).expect("native zero-iteration MT-MFS execution");
+    assert_eq!(result.minor_iterations, 0);
+    assert_eq!(result.actual_minor_iterations, 0);
+    assert!(result.minor_cycles.is_empty());
+    assert_eq!(result.outcome.output.major_cycle_count, 1);
+    assert!(result.outcome.output.final_major_receipt.is_none());
+    let normal = result.outcome.output.scientific.normal_state();
+    assert_eq!(normal.coefficient_term_count(), 2);
+    assert_eq!(normal.normal_moment_count(), 3);
+
+    let expected = [
+        ".alpha",
+        ".alpha.error",
+        ".image.tt0",
+        ".image.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        result
+            .product_names
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+    for suffix in result.product_names {
+        assert!(
+            PathBuf::from(format!("{}{suffix}", image_name.display())).is_dir(),
+            "missing published MT-MFS product {suffix}"
+        );
+    }
 }
 
 #[test]

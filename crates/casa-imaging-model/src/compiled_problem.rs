@@ -2531,13 +2531,6 @@ fn validate_reconstruction(
             reason: "dirty reconstruction requires canonical inactive controls: gain 1 and threshold 0",
         });
     }
-    if !matches!(contract.algorithm, ReconstructionAlgorithm::Dirty)
-        && contract.controls.max_minor_iterations == 0
-    {
-        return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "a minor-cycle algorithm requires a positive iteration budget",
-        });
-    }
     if !matches!(contract.algorithm, ReconstructionAlgorithm::Hogbom)
         && contract.controls.hogbom_iteration_accounting != HogbomIterationAccounting::Strict
     {

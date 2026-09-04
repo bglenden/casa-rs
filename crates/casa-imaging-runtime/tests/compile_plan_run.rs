@@ -2900,7 +2900,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
 }
 
 #[test]
-fn spectral_cycle_dirty_plan_omits_minor_cycle_work() {
+fn spectral_cycle_dirty_plan_omits_minor_cycle_and_gridded_normal_work() {
     let problem = compile(request_with_geometry(
         1,
         geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
@@ -2934,6 +2934,14 @@ fn spectral_cycle_dirty_plan_omits_minor_cycle_work() {
             .keys()
             .all(|node| node.as_str() != "spectral-cycle-minor-cycle")
     );
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .logical_allocations()
+            .keys()
+            .all(|allocation| !allocation.as_str().starts_with("managed-spill-"))
+    );
+    assert!(plan.into_parts().gridded_normal.is_none());
 }
 
 #[test]

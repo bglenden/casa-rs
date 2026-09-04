@@ -40,7 +40,7 @@ use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
 use casa_imaging_model::{
     CompileProblemError, CompiledProblem, GeometryInput, ImagingRequest,
     ModelLifecycleRequirements, ObservationSelection, ProblemInputIdentities, ProblemSpecification,
-    ReconstructionAlgorithm, SpectralWindowSelection, compile, compile_observation,
+    SpectralWindowSelection, compile, compile_observation,
 };
 use casa_imaging_products::{
     ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
@@ -366,7 +366,7 @@ where
         publication,
         aw_preparation,
     } = input.native?;
-    let algorithm = problem.reconstruction().algorithm().clone();
+    let minor_cycle_requested = problem.reconstruction().controls().max_minor_iterations() > 0;
     let prepared_aw = aw_preparation
         .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
         .transpose()?;
@@ -379,8 +379,7 @@ where
     let write_targets =
         SelectedVisibilityWriteTargets::new(input.write_model_column, input.write_corrected_data);
     let visibility_write_requested = write_targets.model_data() || write_targets.corrected_data();
-    let initial_write =
-        matches!(algorithm, ReconstructionAlgorithm::Dirty) && visibility_write_requested;
+    let initial_write = !minor_cycle_requested && visibility_write_requested;
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
     let mut policy = execution_policy(&runtime, residency.clone(), initial_aw.as_ref());
@@ -388,17 +387,10 @@ where
         policy = policy
             .with_visibility_write(initial_access.selected_visibility_storage_plan(write_targets)?);
     }
-    let planned = match algorithm {
-        ReconstructionAlgorithm::Dirty => {
-            SpectralCyclePlan::dirty(problem, &planning_registry, policy)?
-        }
-        ReconstructionAlgorithm::Hogbom
-        | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. }
-        | ReconstructionAlgorithm::Mtmfs { .. }
-        | ReconstructionAlgorithm::JointContinuumLine { .. } => {
-            SpectralCyclePlan::initial(problem, &planning_registry, policy)?
-        }
+    let planned = if minor_cycle_requested {
+        SpectralCyclePlan::initial(problem, &planning_registry, policy)?
+    } else {
+        SpectralCyclePlan::dirty(problem, &planning_registry, policy)?
     };
     let minor_node = planned.minor_cycle_node().cloned();
     let SpectralCyclePlanParts {
@@ -411,7 +403,7 @@ where
         ..
     } = planned.into_parts();
     let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
-    let frozen_reservation = (!matches!(algorithm, ReconstructionAlgorithm::Dirty))
+    let frozen_reservation = minor_cycle_requested
         .then(|| {
             FrozenWeightingReservation::acquire(
                 &runtime.authority,
@@ -437,14 +429,14 @@ where
     if let Some(binding) = initial_aw {
         executor = executor.with_prepared_artifact_reader(binding.execution)?;
     }
-    if !matches!(algorithm, ReconstructionAlgorithm::Dirty) {
+    if minor_cycle_requested {
         executor = executor.with_frozen_weighting_reservation(
-            frozen_reservation.expect("non-dirty execution reserves frozen weighting"),
+            frozen_reservation.expect("minor-cycle execution reserves frozen weighting"),
         );
-        executor = executor.with_planned_gridded_normal_binding(
-            planned_gridded_normal
-                .ok_or_else(|| boxed("clean initial plan omitted gridded replay binding"))?,
-        )?;
+        executor = executor
+            .with_planned_gridded_normal_binding(planned_gridded_normal.ok_or_else(|| {
+                boxed("minor-cycle initial plan omitted gridded replay binding")
+            })?)?;
         let program = MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
         executor = executor.with_reconstruction_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
@@ -501,12 +493,12 @@ where
         visibility_products,
         visibility_replay,
         visibility_output_receipt,
-    ) = match algorithm {
-        ReconstructionAlgorithm::Dirty => {
+    ) = match minor_cycle_requested {
+        false => {
             let result = registry
                 .implementation()
                 .take_completion()
-                .ok_or_else(|| boxed("dirty execution omitted final major-cycle evidence"))?;
+                .ok_or_else(|| boxed("no-minor execution omitted final major-cycle evidence"))?;
             let visibility_products = initial_terminal_replay
                 .as_ref()
                 .map(FinalVisibilityReplay::completion)
@@ -524,11 +516,7 @@ where
                 None,
             )
         }
-        ReconstructionAlgorithm::Hogbom
-        | ReconstructionAlgorithm::Clark
-        | ReconstructionAlgorithm::Multiscale { .. }
-        | ReconstructionAlgorithm::Mtmfs { .. }
-        | ReconstructionAlgorithm::JointContinuumLine { .. } => {
+        true => {
             let mut frozen_weighting = registry
                 .implementation()
                 .take_frozen_weighting()

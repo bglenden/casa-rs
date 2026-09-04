@@ -748,9 +748,9 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         compensation: &mut [Complex64],
         shape: [usize; 2],
         sample: AwVisibilitySample,
-        weight: f64,
+        coefficient: f64,
     ) -> Result<(), AwOperatorError> {
-        if !weight.is_finite() || weight < 0.0 {
+        if !coefficient.is_finite() {
             return Err(AwOperatorError::InvalidWeight);
         }
         validate_grid(weight_grid, shape)?;
@@ -762,7 +762,7 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
             weight_grid,
             compensation,
             &taps,
-            Complex64::new(weight, 0.0),
+            Complex64::new(coefficient, 0.0),
             false,
         );
         add_measurement(&mut self.diagnostics.selections, 1)?;
@@ -1218,6 +1218,39 @@ mod tests {
             (1, 9, 15, 0)
         );
     }
+
+    #[test]
+    fn t51_weight_kernel_accepts_signed_taylor_moment_coefficients() {
+        let entries = vec![metadata(10.0, 0.0, 3, 0.0)];
+        let mut op = operator(entries);
+        let s = sample(10.0, 0.1, 3, 0.0);
+        let mut positive = vec![Complex64::default(); 100];
+        let mut positive_error = vec![Complex64::default(); 100];
+        op.grid_weight_compensated(&mut positive, &mut positive_error, [10, 10], s, 2.0)
+            .unwrap();
+        let mut negative = vec![Complex64::default(); 100];
+        let mut negative_error = vec![Complex64::default(); 100];
+        op.grid_weight_compensated(&mut negative, &mut negative_error, [10, 10], s, -2.0)
+            .unwrap();
+
+        for (positive, negative) in positive.iter().zip(negative) {
+            assert!((*positive + negative).norm() < 1.0e-12);
+        }
+        let mut image = vec![Complex64::default(); 100];
+        let mut weight = vec![Complex64::default(); 100];
+        assert_eq!(
+            op.grid(
+                &mut image,
+                &mut weight,
+                [10, 10],
+                s,
+                Complex64::new(1.0, 0.0),
+                -1.0,
+            ),
+            Err(AwOperatorError::InvalidWeight)
+        );
+    }
+
     #[test]
     fn t51_forward_and_weighted_adjoint_obey_inner_product_law() {
         let entries = vec![metadata(10.0, 0.0, 3, 0.0), metadata(10.0, 0.0, 12, 0.0)];

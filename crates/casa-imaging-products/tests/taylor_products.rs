@@ -1197,6 +1197,55 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
 }
 
 #[test]
+fn t51_weight_derived_mtmfs_plan_matches_casa_eighteen_member_inventory() {
+    let products = [
+        ProductKind::Psf,
+        ProductKind::Residual,
+        ProductKind::Model,
+        ProductKind::RestoredImage,
+        ProductKind::SumWeights,
+        ProductKind::Weight,
+        ProductKind::PrimaryBeam,
+        ProductKind::TaylorTerms,
+        ProductKind::SpectralIndex,
+        ProductKind::SpectralIndexError,
+        ProductKind::Beam,
+    ];
+    let problem = taylor_problem(213, &products, InstrumentResponse::Scalar);
+    let names = problem
+        .product_graph()
+        .nodes()
+        .iter()
+        .filter(|node| node.schema() == ProductSchema::ImageF32V1)
+        .filter_map(|node| node.name())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(
+        names,
+        std::collections::BTreeSet::from([
+            ".alpha",
+            ".alpha.error",
+            ".image.tt0",
+            ".image.tt1",
+            ".model.tt0",
+            ".model.tt1",
+            ".pb.tt0",
+            ".psf.tt0",
+            ".psf.tt1",
+            ".psf.tt2",
+            ".residual.tt0",
+            ".residual.tt1",
+            ".sumwt.tt0",
+            ".sumwt.tt1",
+            ".sumwt.tt2",
+            ".weight.tt0",
+            ".weight.tt1",
+            ".weight.tt2",
+        ])
+    );
+}
+
+#[test]
 fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
     let problem = taylor_problem(209, &TAYLOR_PRODUCTS, InstrumentResponse::Scalar);
     let join = run_round(&problem, 210);

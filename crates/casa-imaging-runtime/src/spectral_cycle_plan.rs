@@ -486,11 +486,17 @@ impl SpectralCyclePlan {
         } else {
             None
         };
-        let artifact_budget = crate::complete_data_operator::project_managed_spill_budget(
-            problem,
-            weighting.limits().max_block_samples(),
-        )
-        .map_err(|_| SpectralCyclePlanError::Overflow)?;
+        let artifact_budget = if strategy == GriddedNormalStrategy::Omit {
+            None
+        } else {
+            Some(
+                crate::complete_data_operator::project_managed_spill_budget(
+                    problem,
+                    weighting.limits().max_block_samples(),
+                )
+                .map_err(|_| SpectralCyclePlanError::Overflow)?,
+            )
+        };
         let gridded_replay_descriptor = gridded_replay
             .as_ref()
             .map(crate::FrozenGriddedNormalReplay::descriptor);
@@ -549,7 +555,7 @@ impl SpectralCyclePlan {
                         &policy,
                         &replay,
                         pass,
-                        artifact_budget,
+                        artifact_budget.ok_or(SpectralCyclePlanError::Overflow)?,
                         ManagedSpillMode::Write,
                     )?;
                 }
@@ -582,7 +588,7 @@ impl SpectralCyclePlan {
                     &policy,
                     &replay,
                     pass,
-                    artifact_budget,
+                    artifact_budget.ok_or(SpectralCyclePlanError::Overflow)?,
                     ManagedSpillMode::Read(
                         gridded_window_plan
                             .as_ref()
@@ -718,7 +724,11 @@ impl SpectralCyclePlan {
             (GriddedNormalStrategy::CreateManagedSpill, Some(storage), None) => {
                 Some(PlannedGriddedNormalBinding::compilation(
                     storage,
-                    retained_artifact_bytes.unwrap_or(artifact_budget.maximum_artifact_bytes()),
+                    retained_artifact_bytes.unwrap_or(
+                        artifact_budget
+                            .ok_or(SpectralCyclePlanError::Overflow)?
+                            .maximum_artifact_bytes(),
+                    ),
                 ))
             }
             (GriddedNormalStrategy::Omit, None, None) => None,

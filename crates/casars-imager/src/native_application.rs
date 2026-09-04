@@ -104,36 +104,33 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
             }
         }
     };
-    let algorithm = if config.dirty_only || config.niter == 0 {
-        ContinuumAlgorithm::Dirty
-    } else {
-        match config.deconvolver {
-            Deconvolver::Hogbom => ContinuumAlgorithm::Hogbom,
-            Deconvolver::Clark => ContinuumAlgorithm::Clark,
-            Deconvolver::Multiscale => ContinuumAlgorithm::Multiscale {
-                scales_px: config
+    let algorithm = match config.deconvolver {
+        Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
+            terms: config.nterms,
+            scales_px: if config.multiscale_scales.is_empty() {
+                vec![0.0]
+            } else {
+                config
                     .multiscale_scales
                     .iter()
                     .copied()
                     .map(f64::from)
-                    .collect(),
-                small_scale_bias: f64::from(config.small_scale_bias),
+                    .collect()
             },
-            Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
-                terms: config.nterms,
-                scales_px: if config.multiscale_scales.is_empty() {
-                    vec![0.0]
-                } else {
-                    config
-                        .multiscale_scales
-                        .iter()
-                        .copied()
-                        .map(f64::from)
-                        .collect()
-                },
-                small_scale_bias: f64::from(config.small_scale_bias),
-            },
-        }
+            small_scale_bias: f64::from(config.small_scale_bias),
+        },
+        _ if config.dirty_only || config.niter == 0 => ContinuumAlgorithm::Dirty,
+        Deconvolver::Hogbom => ContinuumAlgorithm::Hogbom,
+        Deconvolver::Clark => ContinuumAlgorithm::Clark,
+        Deconvolver::Multiscale => ContinuumAlgorithm::Multiscale {
+            scales_px: config
+                .multiscale_scales
+                .iter()
+                .copied()
+                .map(f64::from)
+                .collect(),
+            small_scale_bias: f64::from(config.small_scale_bias),
+        },
     };
     let hogbom_iteration_accounting = if matches!(&algorithm, ContinuumAlgorithm::Hogbom) {
         match config.hogbom_iteration_mode {
@@ -143,7 +140,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
     } else {
         HogbomIterationAccounting::Strict
     };
-    let iterations = config.niter;
+    let iterations = if config.dirty_only { 0 } else { config.niter };
     let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
     let task_requirements = task_requirements(config);
     let mosaic = task_requirements.contains(&TaskRequirement::MosaicGridder);
@@ -463,8 +460,8 @@ mod tests {
     use std::ffi::OsString;
 
     use casa_imaging_application::{
-        ImagingCapabilityRequirement, PolarizationCoordinate, ProductNormalization, ResourcePolicy,
-        installed_imaging_capability_catalog,
+        ContinuumAlgorithm, ImagingCapabilityRequirement, PolarizationCoordinate,
+        ProductNormalization, ResourcePolicy, installed_imaging_capability_catalog,
     };
 
     use super::{
@@ -514,6 +511,45 @@ mod tests {
                 .polarizations,
             [PolarizationCoordinate::StokesQ]
         );
+    }
+
+    #[test]
+    fn zero_iteration_mtmfs_preserves_the_requested_taylor_family() {
+        let request = application_request(&config(&[
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--niter",
+            "0",
+            "--dirty-only",
+        ]))
+        .expect("zero-iteration MT-MFS request");
+
+        assert_eq!(
+            request.algorithm,
+            ContinuumAlgorithm::Mtmfs {
+                terms: 2,
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            }
+        );
+        assert_eq!(request.iterations, 0);
+    }
+
+    #[test]
+    fn dirty_only_hogbom_retains_the_scalar_dirty_contract() {
+        let request = application_request(&config(&[
+            "--deconvolver",
+            "hogbom",
+            "--niter",
+            "100",
+            "--dirty-only",
+        ]))
+        .expect("scalar dirty request");
+
+        assert_eq!(request.algorithm, ContinuumAlgorithm::Dirty);
+        assert_eq!(request.iterations, 0);
     }
 
     #[test]
