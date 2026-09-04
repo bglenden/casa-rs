@@ -1300,7 +1300,7 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     assert_ne!(
         (normal.sum_weights()[0] as f32).to_bits(),
         (normal.published_sum_weights()[0] as f32).to_bits(),
-        "the AW fixture must distinguish the two-polarization normal sum from CASA's published correlation-plane sumweight"
+        "the AW fixture must distinguish the combined Stokes-I normal sum from the observer-only correlation statistic"
     );
     for moment in 0..3 {
         let product = PagedImage::<f32>::open(PathBuf::from(format!(
@@ -1317,8 +1317,8 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
                 .next()
                 .expect("Taylor sumweight scalar")
                 .to_bits(),
-            (normal.published_sum_weights()[moment] as f32).to_bits(),
-            "Taylor sumweight term {moment} must persist the CASA publication statistic"
+            (normal.sum_weights()[moment] as f32).to_bits(),
+            "direct MT-MFS sumweight term {moment} must persist CASA's combined Stokes-I normal moment"
         );
     }
 

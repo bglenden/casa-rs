@@ -1002,12 +1002,19 @@ impl SpectralOperatorSpecification {
                         .direction()
                         .with_reference_pixel([local_centre[0] as f64, local_centre[1] as f64])
                 };
+                let grid_geometry = if aw_projection.is_some() {
+                    OperatorGridGeometry::AwProjection
+                } else if mosaic {
+                    OperatorGridGeometry::Mosaic
+                } else {
+                    OperatorGridGeometry::Standard
+                };
                 charts.push(SpectralOperatorChartSpecification {
                     ordinal: charts.len(),
                     domain_ordinal: ordinal,
                     facet_ordinal,
                     window,
-                    geometry: compile_operator_geometry(image_shape, direction, mosaic)?,
+                    geometry: compile_operator_geometry(image_shape, direction, grid_geometry)?,
                 });
             }
             domains.push(SpectralOperatorDomainSpecification {
@@ -1315,12 +1322,23 @@ impl SpectralOperatorSpecification {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OperatorGridGeometry {
+    Standard,
+    Mosaic,
+    AwProjection,
+}
+
 fn compile_operator_geometry(
     image_shape: [usize; 2],
     direction: casa_imaging_model::DirectionCoordinateSpec,
-    mosaic: bool,
+    operator: OperatorGridGeometry,
 ) -> Result<SpectralOperatorGeometry, SpectralOperatorError> {
-    let grid_shape = if mosaic {
+    let unpadded = matches!(
+        operator,
+        OperatorGridGeometry::Mosaic | OperatorGridGeometry::AwProjection
+    );
+    let grid_shape = if unpadded {
         image_shape
     } else {
         [
@@ -1339,7 +1357,7 @@ fn compile_operator_geometry(
         return Err(SpectralOperatorError::UnsupportedGeometry);
     }
     let reference_pixel = [reference_pixel[0] as usize, reference_pixel[1] as usize];
-    let image_blc = if mosaic {
+    let image_blc = if unpadded {
         [0, 0]
     } else {
         [
@@ -10544,11 +10562,11 @@ mod tests {
 
     use super::{
         AwPublishedSumWeights, ConvolutionOperator, MosaicResponsePlan, MosaicResponseSelection,
-        PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps, SpectralBasisPlan,
-        SpectralChannelValidity, SpectralOperatorError, SpectralOperatorGeometry,
-        SpectralOperatorMeasurements, SpectralOperatorPass, SpectralOperatorPrimitives,
-        SpectralOperatorSample, SpectralOperatorWorkload, SpectralScienceProbe,
-        SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
+        OperatorGridGeometry, PreparedFft, ReconstructionModelBinding, SUPPORT, SampleTaps,
+        SpectralBasisPlan, SpectralChannelValidity, SpectralOperatorError,
+        SpectralOperatorGeometry, SpectralOperatorMeasurements, SpectralOperatorPass,
+        SpectralOperatorPrimitives, SpectralOperatorSample, SpectralOperatorWorkload,
+        SpectralScienceProbe, SpectralSlabOperator, SpectralSlabPlan, StandardConvolution, TapSpan,
         apply_finite_value_policy, apply_input_policy, aw_sensitivity_magnitude,
         aw_stokes_i_mueller, casa_persistent_complex, casa_useful_mosaic_channels, checked_cells,
         collect_image_planes, compile_operator_geometry, convolution_sinc,
@@ -10631,15 +10649,25 @@ mod tests {
     }
 
     #[test]
-    fn mosaic_geometry_uses_the_unpadded_image_grid() {
+    fn direction_dependent_geometry_uses_the_unpadded_image_grid() {
         let direction = geometry().direction;
-        let standard = compile_operator_geometry([8, 8], direction, false).unwrap();
-        let mosaic = compile_operator_geometry([8, 8], direction, true).unwrap();
+        let standard =
+            compile_operator_geometry([8, 8], direction, OperatorGridGeometry::Standard).unwrap();
+        let mosaic =
+            compile_operator_geometry([8, 8], direction, OperatorGridGeometry::Mosaic).unwrap();
+        let aw = compile_operator_geometry(
+            [512, 512],
+            direction.with_reference_pixel([256.0, 256.0]),
+            OperatorGridGeometry::AwProjection,
+        )
+        .unwrap();
 
         assert_eq!(standard.grid_shape, [10, 10]);
         assert_eq!(standard.image_blc, [1, 1]);
         assert_eq!(mosaic.grid_shape, [8, 8]);
         assert_eq!(mosaic.image_blc, [0, 0]);
+        assert_eq!(aw.grid_shape, [512, 512]);
+        assert_eq!(aw.image_blc, [0, 0]);
     }
 
     #[test]
