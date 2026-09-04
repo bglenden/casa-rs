@@ -1535,6 +1535,11 @@ fn prepare(
     let mosaic = request
         .task_requirements
         .contains(&TaskRequirement::MosaicGridder);
+    let observation_pointing = mosaic
+        || request
+            .aw_projection
+            .as_ref()
+            .is_some_and(|controls| controls.use_pointing);
     let geometry = casa_imaging_model::GeometryInput::new(
         prepared_domains
             .iter()
@@ -1563,7 +1568,7 @@ fn prepare(
         CentreLaws::new(
             phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
-            if mosaic {
+            if observation_pointing {
                 PointingCentreLaw::Observation(ObservationPointingLaw::new(
                     PointingDirectionColumn::Direction,
                     PointingDirectionSemantic::AntennaBoresight,

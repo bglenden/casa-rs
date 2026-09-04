@@ -71,6 +71,55 @@ fn vla_aw_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+fn two_pointing_vla_aw_measurement_set(root: &Path) -> PathBuf {
+    let path = measurement_set_fixture(
+        root,
+        "two-pointing-vla-aw-input.ms",
+        MeasurementSetFixtureOptions::new(true, false, 1, 1, 2, 2, false)
+            .with_vla_observation_metadata()
+            .with_two_fields(),
+    );
+    let mut measurement_set = MeasurementSet::open(&path).expect("open two-pointing fixture");
+    for field in 0..2 {
+        let sign = if field == 0 { 1.0 } else { -1.0 };
+        let field_direction = [1.0 + field as f64 * 1.0e-4, 0.5];
+        let time = 59_000.0 * 86_400.0 + field as f64 * 10.0;
+        for antenna in 0..2 {
+            let antenna_delta = if antenna == 0 { -2.0e-6 } else { 2.0e-6 };
+            let direction = Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(
+                    vec![2, 1],
+                    vec![
+                        field_direction[0] + sign * 3.0e-5 + antenna_delta,
+                        field_direction[1] + sign * 2.0e-5 + antenna_delta,
+                    ],
+                )
+                .expect("POINTING direction shape"),
+            ));
+            measurement_set
+                .subtable_mut(SubtableId::Pointing)
+                .expect("POINTING")
+                .add_row(required_row(
+                    schema::pointing::REQUIRED_COLUMNS,
+                    &[
+                        ("ANTENNA_ID", int(antenna)),
+                        ("DIRECTION", direction.clone()),
+                        ("INTERVAL", float(10.0)),
+                        ("NAME", string(&format!("FIELD_{field}_ANTENNA_{antenna}"))),
+                        ("NUM_POLY", int(0)),
+                        ("TARGET", direction),
+                        ("TIME", float(time)),
+                        ("TIME_ORIGIN", float(time)),
+                        ("TRACKING", boolean(true)),
+                    ],
+                ))
+                .expect("add POINTING row");
+        }
+    }
+    measurement_set.save().expect("save two-pointing fixture");
+    path
+}
+
 fn four_spw_vla_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -712,6 +761,25 @@ fn write_aw_test_cache(root: &Path) {
     }
 }
 
+fn aw_projection(casa_cache: PathBuf, use_pointing: bool) -> ContinuumAwProjection {
+    ContinuumAwProjection {
+        casa_cache,
+        resident_bytes: 1 << 20,
+        w_plane_count: Some(32),
+        psf_phase_center_direction_rad: None,
+        vp_table: None,
+        a_term: true,
+        ps_term: false,
+        wideband: true,
+        conjugate_beams: true,
+        use_pointing,
+        pointing_offset_sigdev: Vec::new(),
+        mosaic_weighting: false,
+        compute_pa_step_deg: 360.0,
+        rotate_pa_step_deg: 360.0,
+    }
+}
+
 fn write_aw_test_cell(
     root: &Path,
     name: &str,
@@ -884,6 +952,15 @@ fn product_plane_with_size(image_name: &Path, suffix: &str, image_size: usize) -
         .expect("read application product plane")
 }
 
+fn peak_pixel(plane: &ArrayD<f32>) -> [usize; 2] {
+    let (index, _) = plane
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .expect("nonempty image plane");
+    [index / plane.shape()[1], index % plane.shape()[1]]
+}
+
 fn assert_model_residual_respect_mask(image_name: &Path, expected_mask_pixels: usize) {
     let mask = product_plane(image_name, ".mask");
     let model = product_plane(image_name, ".model");
@@ -970,22 +1047,7 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
         image_name.clone(),
         ContinuumAlgorithm::Dirty,
     );
-    imaging.aw_projection = Some(ContinuumAwProjection {
-        casa_cache: cache,
-        resident_bytes: 1 << 20,
-        w_plane_count: Some(32),
-        psf_phase_center_direction_rad: None,
-        vp_table: None,
-        a_term: true,
-        ps_term: false,
-        wideband: true,
-        conjugate_beams: true,
-        use_pointing: false,
-        pointing_offset_sigdev: Vec::new(),
-        mosaic_weighting: false,
-        compute_pa_step_deg: 360.0,
-        rotate_pa_step_deg: 360.0,
-    });
+    imaging.aw_projection = Some(aw_projection(cache, false));
     imaging.task_requirements = vec![TaskRequirement::AwProjection];
     imaging.write_primary_beam = true;
 
@@ -1150,6 +1212,48 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
         receipt.artifact_observed_identity(artifact),
         Some(artifact.as_bytes())
     );
+}
+
+#[test]
+fn t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+
+    let peak = |field: i32, use_pointing: bool| {
+        let run_root = root.path().join(format!(
+            "field-{field}-{}",
+            if use_pointing {
+                "pointing"
+            } else {
+                "phase-centre"
+            }
+        ));
+        std::fs::create_dir(&run_root).expect("create isolated AW run root");
+        let measurement_set = two_pointing_vla_aw_measurement_set(&run_root);
+        let cache = run_root.join("aw-pointing-cache");
+        write_aw_test_cache(&cache);
+        let image_name = run_root.join("image");
+        let mut imaging = request(
+            measurement_set,
+            image_name.clone(),
+            ContinuumAlgorithm::Dirty,
+        );
+        imaging.field_ids = Some(vec![field]);
+        imaging.aw_projection = Some(aw_projection(cache, use_pointing));
+        imaging.task_requirements = vec![TaskRequirement::AwProjection];
+        imaging.write_primary_beam = true;
+
+        execute_continuum(imaging).expect("native AW pointing execution");
+        peak_pixel(&product_plane(&image_name, ".weight"))
+    };
+
+    let phase_centre_peak = peak(0, false);
+    let first_pointing_peak = peak(0, true);
+    let second_pointing_peak = peak(1, true);
+    assert_ne!(first_pointing_peak, phase_centre_peak);
+    assert_ne!(second_pointing_peak, phase_centre_peak);
+    assert_ne!(first_pointing_peak, second_pointing_peak);
 }
 
 #[test]
