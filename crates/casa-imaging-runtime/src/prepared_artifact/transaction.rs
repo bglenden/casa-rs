@@ -212,6 +212,34 @@ impl PreparedArtifactStore {
         })
     }
 
+    pub(super) fn catalog_reuse_reservation(
+        &self,
+        descriptors: &[PreparedArtifactDescriptor],
+    ) -> Result<PreparedArtifactReservation, PreparedArtifactError> {
+        validate_catalog_descriptors(self, descriptors)?;
+        let mut reservation = self.reservation(
+            descriptors
+                .first()
+                .ok_or(PreparedArtifactError::InvalidDescriptor)?,
+            PreparedArtifactOperation::Reuse,
+        )?;
+        for descriptor in &descriptors[1..] {
+            let entry = self.reservation(descriptor, PreparedArtifactOperation::Reuse)?;
+            reservation.entry_bytes = reservation.entry_bytes.max(entry.entry_bytes);
+            reservation.streaming_buffer_bytes = reservation
+                .streaming_buffer_bytes
+                .max(entry.streaming_buffer_bytes);
+            reservation.resident_buffer_bytes = reservation
+                .resident_buffer_bytes
+                .max(entry.resident_buffer_bytes);
+        }
+        reservation.resident_buffer_bytes = reservation
+            .resident_buffer_bytes
+            .checked_add(catalog_outcome_resident_bytes(descriptors.len())?)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        Ok(reservation)
+    }
+
     /// Generate, validate, and atomically publish exact cold bytes.
     ///
     /// The returned identity exposes no payload access. The measurements cover
@@ -375,6 +403,76 @@ impl PreparedArtifactStore {
                 ))
             }
         }
+    }
+
+    /// Validate and reuse an ordered catalog under one plan-bound cache transaction.
+    ///
+    /// The cache root is enumerated once, payload validation reuses one bounded
+    /// streaming buffer at a time, and no result is returned until every listed
+    /// descriptor has reached a deterministic `Reused` or `Rejected` outcome.
+    pub fn reuse_catalog(
+        &self,
+        context: &WorkExecutionContext<'_>,
+        descriptors: &[PreparedArtifactDescriptor],
+    ) -> Result<(PreparedArtifactCatalogReuseOutcome, WorkMeasurements), PreparedArtifactError>
+    {
+        let reservation = self.catalog_reuse_reservation(descriptors)?;
+        validate_catalog_plan_binding(*context, self, descriptors, reservation)?;
+        let mut evidence =
+            ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
+        let outcomes_resident = catalog_outcome_resident_bytes(descriptors.len())?;
+        evidence.acquire_resident(outcomes_resident);
+        if let Err(error) = evidence.ensure_resident_budget() {
+            let measurements = failed_catalog_measurements(*context, self, descriptors, &evidence);
+            return Err(error.with_measurements(measurements));
+        }
+        let mut lock = match self.lock(&mut evidence) {
+            Ok(lock) => lock,
+            Err(error) => {
+                let measurements =
+                    failed_catalog_measurements(*context, self, descriptors, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let evaluation = self.reuse_catalog_locked(descriptors, &mut evidence);
+        let unlock = lock.release(&mut evidence);
+        let (outcomes, cache_bytes) = match (evaluation, unlock) {
+            (Ok(evaluation), Ok(())) => evaluation,
+            (Err(error), _) | (Ok(_), Err(error)) => {
+                let measurements =
+                    failed_catalog_measurements(*context, self, descriptors, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let measurements = catalog_measurements(
+            *context,
+            self,
+            descriptors,
+            &outcomes,
+            cache_bytes,
+            &evidence,
+        );
+        let entries = descriptors
+            .iter()
+            .zip(outcomes)
+            .map(
+                |(descriptor, evaluation)| PreparedArtifactCatalogEntryOutcome {
+                    identity: descriptor.identity,
+                    outcome: match evaluation {
+                        ReuseEvaluation::Reused { validated, .. } => {
+                            PreparedArtifactReuseOutcome::Reused(validated.into_handle(descriptor))
+                        }
+                        ReuseEvaluation::Rejected { rejection, .. } => {
+                            PreparedArtifactReuseOutcome::Rejected(rejection)
+                        }
+                    },
+                },
+            )
+            .collect();
+        Ok((
+            PreparedArtifactCatalogReuseOutcome { entries },
+            measurements,
+        ))
     }
 
     /// Revalidate and stream one exact private artifact to a plan-bound consumer.
@@ -709,6 +807,155 @@ impl PreparedArtifactStore {
                 }
             },
         }
+    }
+
+    fn reuse_catalog_locked(
+        &self,
+        descriptors: &[PreparedArtifactDescriptor],
+        evidence: &mut ValidationEvidence,
+    ) -> Result<(Vec<ReuseEvaluation>, u64), PreparedArtifactError> {
+        let (cache_bytes, cache_entries) = with_directory_paths_counted(
+            &self.cache,
+            evidence,
+            root_inventory_limit(self.budget)?,
+            |evidence, paths| {
+                let mut total = 0_u64;
+                for path in paths {
+                    let name =
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .ok_or_else(|| {
+                                PreparedArtifactError::UnknownCacheEntry(path.to_path_buf())
+                            })?;
+                    if name.starts_with(STAGING_PREFIX) {
+                        return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
+                    }
+                    let digest = decode_digest(name)
+                        .filter(|digest| name == encode_hex(digest))
+                        .ok_or_else(|| {
+                            PreparedArtifactError::UnknownCacheEntry(path.to_path_buf())
+                        })?;
+                    let identity = ArtifactIdentity::from_owner_digest(digest);
+                    evidence.store_read_operation();
+                    if !path.symlink_metadata()?.file_type().is_dir() {
+                        return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
+                    }
+                    let requested = descriptors
+                        .binary_search_by_key(&identity, |descriptor| descriptor.identity)
+                        .is_ok();
+                    let entry_bytes = with_directory_paths_counted(
+                        path,
+                        evidence,
+                        MAX_ENTRY_FILES,
+                        |evidence, entry_paths| {
+                            let mut bytes = 0_u64;
+                            let mut manifest = false;
+                            let mut payload = false;
+                            for entry in entry_paths {
+                                evidence.store_read_operation();
+                                let metadata = entry.symlink_metadata()?;
+                                if !metadata.file_type().is_file() {
+                                    return Err(PreparedArtifactError::UnknownCacheEntry(
+                                        entry.to_path_buf(),
+                                    ));
+                                }
+                                let file_name = entry.file_name().ok_or_else(|| {
+                                    PreparedArtifactError::UnknownCacheEntry(entry.to_path_buf())
+                                })?;
+                                match file_name.to_str() {
+                                    Some(MANIFEST_FILE) => manifest = true,
+                                    Some(PAYLOAD_FILE) => {
+                                        payload = true;
+                                        evidence.payload_metadata_check();
+                                    }
+                                    _ => {
+                                        return Err(PreparedArtifactError::UnknownCacheEntry(
+                                            entry.to_path_buf(),
+                                        ));
+                                    }
+                                }
+                                bytes = bytes
+                                    .checked_add(metadata.len())
+                                    .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+                            }
+                            if !requested && (!manifest || !payload) {
+                                return Err(PreparedArtifactError::IncompleteArtifact);
+                            }
+                            Ok(bytes)
+                        },
+                    )?;
+                    total = total
+                        .checked_add(entry_bytes)
+                        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+                }
+                Ok((total, paths.len()))
+            },
+        )?;
+        evidence.observe_cache_bytes(cache_bytes);
+        if cache_bytes > self.budget.cache_bytes {
+            return Err(PreparedArtifactError::CacheBudgetExceeded {
+                required: cache_bytes,
+                budget: self.budget.cache_bytes,
+            });
+        }
+        if cache_entries > self.budget.entries {
+            return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
+                required: cache_entries,
+                budget: self.budget.entries,
+            });
+        }
+
+        let buffer_len = descriptors
+            .iter()
+            .try_fold(0_usize, |maximum, descriptor| {
+                streaming_buffer_len(self.budget, descriptor).map(|bytes| maximum.max(bytes))
+            })?;
+        let mut buffer = vec![0_u8; buffer_len];
+        let buffer_resident = observed_vec_resident_bytes(&buffer);
+        evidence.acquire_resident(buffer_resident);
+        let evaluated = (|| {
+            let mut outcomes = Vec::with_capacity(descriptors.len());
+            for descriptor in descriptors {
+                let path = self.entry_path(descriptor.identity);
+                evidence.store_read_operation();
+                let evaluation = match path.symlink_metadata() {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        ReuseEvaluation::Rejected {
+                            rejection: PreparedArtifactRejection::Missing,
+                            path,
+                            cache_bytes,
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                    Ok(_) => match self.validate_entry_with_buffer(
+                        descriptor.identity,
+                        descriptor,
+                        &mut buffer,
+                        evidence,
+                    ) {
+                        Ok(validated) => ReuseEvaluation::Reused {
+                            validated,
+                            cache_bytes,
+                        },
+                        Err(error) => {
+                            let Some(rejection) = rejection_for(&error) else {
+                                return Err(error);
+                            };
+                            ReuseEvaluation::Rejected {
+                                rejection,
+                                path,
+                                cache_bytes,
+                            }
+                        }
+                    },
+                };
+                outcomes.push(evaluation);
+            }
+            Ok(outcomes)
+        })();
+        evidence.release_resident(buffer_resident);
+        let outcomes = evaluated?;
+        Ok((outcomes, cache_bytes))
     }
 
     fn publish(
@@ -1527,6 +1774,46 @@ impl PreparedArtifactStore {
     ) -> Result<ValidatedArtifact, PreparedArtifactError> {
         let directory = self.entry_path(identity);
         self.validate_entry_at_path(directory, identity, expected, evidence)
+    }
+
+    fn validate_entry_with_buffer(
+        &self,
+        identity: ArtifactIdentity,
+        expected: &PreparedArtifactDescriptor,
+        buffer: &mut [u8],
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ValidatedArtifact, PreparedArtifactError> {
+        let directory = self.entry_path(identity);
+        let validated =
+            self.validate_manifest_at_path(directory, identity, Some(expected), evidence)?;
+        let required_buffer = streaming_buffer_len(self.budget, &validated.descriptor)?;
+        if buffer.len() < required_buffer {
+            return Err(PreparedArtifactError::ResidentBudgetExceeded {
+                required: required_buffer as u64,
+                budget: buffer.len() as u64,
+            });
+        }
+        let payload_path = validated.path.join(PAYLOAD_FILE);
+        evidence.store_read_operation();
+        let payload = File::open(&payload_path).map_err(map_incomplete)?;
+        evidence.observe_file_descriptors(2);
+        let (payload_sha256, payload_bytes) = validate_payload_buffered(
+            &payload,
+            &validated.descriptor.segments,
+            &validated.segment_integrity,
+            &mut buffer[..required_buffer],
+            evidence,
+        )?;
+        if payload_bytes != validated.payload_bytes || payload_sha256 != validated.payload_sha256 {
+            return Err(PreparedArtifactError::CorruptArtifact);
+        }
+        evidence.store_validation();
+        Ok(ValidatedArtifact {
+            payload_sha256,
+            payload_bytes,
+            disk_bytes: validated.disk_bytes,
+            path: validated.path,
+        })
     }
 
     fn validate_entry_manifest_with_evidence(

@@ -202,6 +202,74 @@ struct PreparedFailureAdapter {
     succeed: bool,
 }
 
+struct PreparedCatalogAdapter {
+    id: WorkImplementationId,
+    store: PreparedArtifactStore,
+    descriptors: Vec<PreparedArtifactDescriptor>,
+    observed: Mutex<Option<Vec<PreparedObserved>>>,
+}
+
+impl WorkImplementation for PreparedCatalogAdapter {
+    type Error = io::Error;
+
+    fn implementation_id(&self) -> &WorkImplementationId {
+        &self.id
+    }
+
+    fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
+        let (outcome, measurements) = self
+            .store
+            .reuse_catalog(&context, &self.descriptors)
+            .map_err(prepared_io_error)?;
+        let observed = outcome
+            .into_entries()
+            .into_iter()
+            .map(|entry| match entry.into_outcome() {
+                PreparedArtifactReuseOutcome::Reused(artifact) => PreparedObserved::Materialized {
+                    identity: artifact.identity(),
+                    integrity: artifact.integrity_identity(),
+                },
+                PreparedArtifactReuseOutcome::Rejected(rejection) => {
+                    PreparedObserved::Rejected(rejection)
+                }
+            })
+            .collect();
+        *self.observed.lock().expect("prepared catalog outcome lock") = Some(observed);
+        Ok(measurements)
+    }
+
+    fn failure_measurements<'error>(
+        &'error self,
+        error: &'error Self::Error,
+    ) -> Option<&'error WorkMeasurements> {
+        error
+            .get_ref()?
+            .downcast_ref::<casa_imaging_runtime::PreparedArtifactError>()?
+            .work_measurements()
+    }
+
+    fn wait_for_fence(
+        &self,
+        _context: WorkExecutionContext<'_>,
+        _fence: FenceKind,
+    ) -> Result<WorkMeasurements, Self::Error> {
+        Ok(WorkMeasurements::default())
+    }
+
+    fn complete_observation_read(
+        &self,
+        _completion: ObservationReadCompletionContext,
+    ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
+        Err(io::Error::other(
+            "prepared catalog adapter cannot own observation traversal",
+        ))
+    }
+
+    fn publish(&self, _context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
 impl WorkImplementation for PreparedFailureAdapter {
     type Error = io::Error;
 
@@ -360,6 +428,7 @@ impl WorkImplementation for PreparedOperationAdapter {
 enum PreparedSuiteImplementation {
     Base(Box<RecordingExecutor>),
     Prepared(Box<PreparedOperationAdapter>),
+    Catalog(Box<PreparedCatalogAdapter>),
     Failure(Box<PreparedFailureAdapter>),
 }
 
@@ -370,6 +439,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.implementation_id(),
             Self::Prepared(adapter) => adapter.implementation_id(),
+            Self::Catalog(adapter) => adapter.implementation_id(),
             Self::Failure(adapter) => adapter.implementation_id(),
         }
     }
@@ -378,6 +448,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.execute(context),
             Self::Prepared(adapter) => adapter.execute(context),
+            Self::Catalog(adapter) => adapter.execute(context),
             Self::Failure(adapter) => adapter.execute(context),
         }
     }
@@ -389,6 +460,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.failure_measurements(error),
             Self::Prepared(adapter) => adapter.failure_measurements(error),
+            Self::Catalog(adapter) => adapter.failure_measurements(error),
             Self::Failure(adapter) => adapter.failure_measurements(error),
         }
     }
@@ -401,6 +473,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.wait_for_fence(context, fence),
             Self::Prepared(adapter) => adapter.wait_for_fence(context, fence),
+            Self::Catalog(adapter) => adapter.wait_for_fence(context, fence),
             Self::Failure(adapter) => adapter.wait_for_fence(context, fence),
         }
     }
@@ -412,6 +485,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.complete_observation_read(completion),
             Self::Prepared(adapter) => adapter.complete_observation_read(completion),
+            Self::Catalog(adapter) => adapter.complete_observation_read(completion),
             Self::Failure(adapter) => adapter.complete_observation_read(completion),
         }
     }
@@ -423,6 +497,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.complete_product_generation(context),
             Self::Prepared(adapter) => adapter.complete_product_generation(context),
+            Self::Catalog(adapter) => adapter.complete_product_generation(context),
             Self::Failure(adapter) => adapter.complete_product_generation(context),
         }
     }
@@ -431,6 +506,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.publish(context),
             Self::Prepared(adapter) => adapter.publish(context),
+            Self::Catalog(adapter) => adapter.publish(context),
             Self::Failure(adapter) => adapter.publish(context),
         }
     }
@@ -443,6 +519,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
         match self {
             Self::Base(adapter) => adapter.publish_product_member(context, entry),
             Self::Prepared(adapter) => adapter.publish_product_member(context, entry),
+            Self::Catalog(adapter) => adapter.publish_product_member(context, entry),
             Self::Failure(adapter) => adapter.publish_product_member(context, entry),
         }
     }
@@ -954,6 +1031,440 @@ fn prepared_adapter_observed(
         .lock()
         .expect("prepared outcome lock")
         .expect("prepared adapter outcome")
+}
+
+fn missing_catalog_fixture(
+    problem: &casa_imaging_model::CompiledProblem,
+    store: &PreparedArtifactStore,
+) -> Vec<PreparedArtifactDescriptor> {
+    let mut descriptors = [1.0e9, 1.1e9, 1.2e9]
+        .into_iter()
+        .map(|frequency| {
+            prepared_descriptor_with_registration_and_cell(
+                store,
+                problem,
+                prepared_registration(),
+                prepared_cell(frequency),
+            )
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_unstable_by_key(PreparedArtifactDescriptor::identity);
+    descriptors
+}
+
+fn catalog_registry(
+    problem: &casa_imaging_model::CompiledProblem,
+    store: PreparedArtifactStore,
+    descriptors: Vec<PreparedArtifactDescriptor>,
+) -> (PreparedSuiteRegistry, WorkImplementationId) {
+    let id = PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)
+        .expect("catalog implementation identity");
+    let metadata = ImplementationContractMetadata::new(
+        problem.problem_id(),
+        problem.numerics_id(),
+        problem.required_capabilities().clone(),
+    );
+    (
+        PreparedSuiteRegistry {
+            id: registry(3),
+            metadata: Some(metadata),
+            implementations: BTreeMap::from([
+                (
+                    implementation(6),
+                    PreparedSuiteImplementation::Base(Box::new(recording_executor(6, None, None))),
+                ),
+                (
+                    id.clone(),
+                    PreparedSuiteImplementation::Catalog(Box::new(PreparedCatalogAdapter {
+                        id: id.clone(),
+                        store,
+                        descriptors,
+                        observed: Mutex::new(None),
+                    })),
+                ),
+            ]),
+            prepared: BTreeMap::from([(
+                prepared_registration().implementation().clone(),
+                prepared_registration(),
+            )]),
+        },
+        id,
+    )
+}
+
+fn catalog_physical_work(
+    problem: &casa_imaging_model::CompiledProblem,
+    registry: &PreparedSuiteRegistry,
+    store: &PreparedArtifactStore,
+    descriptors: &[PreparedArtifactDescriptor],
+) -> PhysicalWorkBinding {
+    let base = PreparedArtifactPlanFragment::standalone_base(
+        problem,
+        registry,
+        implementation(6),
+        &descriptors[0],
+        store,
+        1_000,
+        900_000,
+    )
+    .expect("catalog standalone base");
+    PreparedArtifactCatalogPlanFragment::new(
+        descriptors,
+        store,
+        WorkNodeId::new("prepared-phase-producer"),
+        WorkNodeId::new("prepared-phase-commit"),
+        implementation(6),
+    )
+    .expect("catalog fragment")
+    .compose(&base)
+    .expect("catalog physical work")
+}
+
+fn catalog_adapter_observed(
+    registry: &PreparedSuiteRegistry,
+    id: &WorkImplementationId,
+) -> Option<Vec<PreparedObserved>> {
+    let Some(PreparedSuiteImplementation::Catalog(adapter)) = registry.implementations.get(id)
+    else {
+        panic!("prepared catalog adapter missing")
+    };
+    adapter
+        .observed
+        .lock()
+        .expect("prepared catalog outcome lock")
+        .clone()
+}
+
+#[test]
+fn catalog_warm_reuse_returns_ordered_missing_outcomes_after_one_transaction() {
+    let problem = compile(request(1)).expect("missing catalog problem");
+    let cache = prepared_tempdir();
+    let budget = PreparedArtifactBudget::new(500_000, 4, 4_096).expect("missing catalog budget");
+    let planning_store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("missing catalog planning store");
+    let descriptors = missing_catalog_fixture(&problem, &planning_store);
+    let execution_store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("missing catalog execution store");
+    let (suite, catalog_id) = catalog_registry(&problem, execution_store, descriptors.clone());
+    let physical = catalog_physical_work(&problem, &suite, &planning_store, &descriptors);
+    assert_eq!(physical.execution_dag().nodes().len(), 6);
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("missing catalog plan");
+    let receipts = plan.receipt_store();
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([211; 32]);
+    let error = run_prepared(
+        &problem,
+        &plan,
+        &suite,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([212; 32]),
+        )),
+    )
+    .expect_err("missing entries reject the evidence contract");
+    assert!(matches!(
+        error,
+        RunError::Evidence(ExecutionEvidenceError::RejectedArtifact { .. })
+    ));
+    assert_eq!(
+        catalog_adapter_observed(&suite, &catalog_id),
+        Some(vec![
+            PreparedObserved::Rejected(
+                PreparedArtifactRejection::Missing
+            );
+            3
+        ])
+    );
+    let receipt = receipts.open(attempt).expect("missing catalog receipt");
+    assert_eq!(receipt.status(), ReceiptStatus::Failed);
+    let catalog_node =
+        PreparedArtifactCatalogPlanFragment::node_id(&descriptors).expect("catalog node identity");
+    assert!(receipt.stage_actual_elapsed_nanos(&catalog_node).is_some());
+    assert!(
+        receipt
+            .stage_actual_io(&catalog_node, IoBufferKind::StorageManager)
+            .is_some_and(|(_, operations)| operations > 0)
+    );
+}
+
+#[test]
+fn catalog_warm_reuse_validates_complete_payloads_and_returns_ordered_hits() {
+    let problem = compile(request(1)).expect("complete catalog problem");
+    let cache = prepared_tempdir();
+    let budget = PreparedArtifactBudget::new(500_000, 4, 4_096).expect("complete catalog budget");
+    let descriptor_store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("complete catalog descriptor store");
+    let descriptors = missing_catalog_fixture(&problem, &descriptor_store);
+    let receipts_directory = prepared_tempdir();
+    let setup_receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(8, 2_000_000).expect("complete catalog receipt retention"),
+    )
+    .expect("complete catalog receipt store");
+    for (index, descriptor) in descriptors.iter().cloned().enumerate() {
+        let store = PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("complete catalog generation store");
+        assert!(matches!(
+            execute_prepared_operation(
+                &problem,
+                &setup_receipts,
+                store,
+                descriptor,
+                PreparedArtifactOperation::Generate,
+                PreparedRunExpectation {
+                    attempt_byte: 220 + index as u8,
+                    build_byte: 224 + index as u8,
+                    expect_rejection: false,
+                },
+            ),
+            PreparedObserved::Materialized { .. }
+        ));
+    }
+
+    let planning_store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("complete catalog planning store");
+    let execution_store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("complete catalog execution store");
+    let (suite, catalog_id) = catalog_registry(&problem, execution_store, descriptors.clone());
+    let physical = catalog_physical_work(&problem, &suite, &planning_store, &descriptors);
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("complete catalog plan");
+    let receipts = plan.receipt_store();
+    let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([230; 32]);
+    run_prepared(
+        &problem,
+        &plan,
+        &suite,
+        receipts.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([231; 32]),
+        )),
+    )
+    .expect("complete catalog warm reuse");
+    let observed = catalog_adapter_observed(&suite, &catalog_id)
+        .expect("complete catalog outcomes publish atomically");
+    assert_eq!(observed.len(), descriptors.len());
+    for (entry, descriptor) in observed.iter().zip(&descriptors) {
+        assert!(matches!(
+            entry,
+            PreparedObserved::Materialized { identity, .. } if identity == &descriptor.identity()
+        ));
+    }
+    let receipt = receipts.open(attempt).expect("complete catalog receipt");
+    assert_eq!(receipt.status(), ReceiptStatus::Completed);
+    assert!(descriptors.iter().all(|descriptor| {
+        receipt.artifact_disposition(descriptor.identity()) == Some(ArtifactDisposition::Reused)
+            && receipt.artifact_actual_bytes(descriptor.identity()) == Some(PREPARED_PAYLOAD_BYTES)
+    }));
+}
+
+#[test]
+fn catalog_warm_reuse_rejects_staging_before_publishing_any_outcome() {
+    let problem = compile(request(1)).expect("staging catalog problem");
+    let cache = prepared_tempdir();
+    let budget = PreparedArtifactBudget::new(500_000, 4, 4_096).expect("staging catalog budget");
+    let planning_store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("staging catalog planning store");
+    let descriptors = missing_catalog_fixture(&problem, &planning_store);
+    fs::create_dir(
+        cache
+            .path()
+            .join("objects-v3")
+            .join(".staging-incomplete-catalog"),
+    )
+    .expect("staging catalog entry");
+    let execution_store =
+        PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+            .expect("staging catalog execution store");
+    let (suite, catalog_id) = catalog_registry(&problem, execution_store, descriptors.clone());
+    let physical = catalog_physical_work(&problem, &suite, &planning_store, &descriptors);
+    let plan = plan(
+        &problem,
+        PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+        |_, _| Ok::<_, ()>(physical),
+    )
+    .expect("staging catalog plan");
+    let error = run_prepared(
+        &problem,
+        &plan,
+        &suite,
+        plan.receipt_store().bind(execution_provenance(
+            casa_imaging_runtime::ExecutionAttemptId::from_sha256([213; 32]),
+            BuildIdentity::from_sha256([214; 32]),
+        )),
+    )
+    .expect_err("staging catalog must fail closed");
+    assert!(matches!(error, RunError::Execution { .. }));
+    assert_eq!(catalog_adapter_observed(&suite, &catalog_id), None);
+}
+
+#[test]
+fn catalog_warm_reuse_is_one_six_node_bounded_transaction_for_256_entries() {
+    let problem = compile(request(1)).expect("catalog topology problem");
+    let cache = prepared_tempdir();
+    let budget = PreparedArtifactBudget::new(64 * 1024 * 1024, 256, 8 * 1024 * 1024)
+        .expect("catalog topology budget");
+    let store = PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
+        .expect("catalog topology store");
+    let mut descriptors = (0..256)
+        .map(|index| {
+            prepared_descriptor_with_registration_and_cell(
+                &store,
+                &problem,
+                prepared_registration(),
+                prepared_cell(1.0e9 + index as f64),
+            )
+        })
+        .collect::<Vec<_>>();
+    descriptors.sort_unstable_by_key(PreparedArtifactDescriptor::identity);
+    let catalog_id = PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)
+        .expect("catalog implementation identity");
+    let metadata = ImplementationContractMetadata::new(
+        problem.problem_id(),
+        problem.numerics_id(),
+        problem.required_capabilities().clone(),
+    );
+    let base_executor = product_publication_recording_executor(
+        &problem,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
+    let registry = PreparedSuiteRegistry {
+        id: registry(3),
+        metadata: Some(metadata),
+        implementations: BTreeMap::from([
+            (
+                implementation(6),
+                PreparedSuiteImplementation::Base(Box::new(base_executor)),
+            ),
+            (
+                catalog_id,
+                PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
+                    id: PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)
+                        .expect("catalog adapter identity"),
+                    evidence: WorkMeasurements::default(),
+                    succeed: true,
+                })),
+            ),
+        ]),
+        prepared: BTreeMap::from([(
+            prepared_registration().implementation().clone(),
+            prepared_registration(),
+        )]),
+    };
+    let base = PreparedArtifactPlanFragment::standalone_base(
+        &problem,
+        &registry,
+        implementation(6),
+        &descriptors[0],
+        &store,
+        1_000,
+        900_000,
+    )
+    .expect("four-node catalog base");
+    assert_eq!(base.execution_dag().nodes().len(), 4);
+    let physical = PreparedArtifactCatalogPlanFragment::new(
+        &descriptors,
+        &store,
+        WorkNodeId::new("prepared-phase-producer"),
+        WorkNodeId::new("prepared-phase-commit"),
+        implementation(6),
+    )
+    .expect("catalog fragment")
+    .compose(&base)
+    .expect("catalog composition");
+
+    assert_eq!(physical.execution_dag().nodes().len(), 6);
+    assert_eq!(
+        physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .filter(|node| node.kind == WorkKind::Cache)
+            .count(),
+        1
+    );
+    assert_eq!(
+        physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .filter(|node| node.kind == WorkKind::Release)
+            .count(),
+        1
+    );
+    assert_eq!(physical.artifacts().len(), 512);
+    assert_eq!(
+        physical
+            .execution_dag()
+            .logical_allocations()
+            .keys()
+            .filter(|id| id.as_str().starts_with("prepared-catalog-resident-buffer-"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn catalog_warm_reuse_rejects_duplicate_and_out_of_order_descriptors() {
+    let problem = compile(request(1)).expect("catalog ordering problem");
+    let cache = prepared_tempdir();
+    let store = PreparedArtifactStore::open(
+        cache.path(),
+        prepared_storage_domain(),
+        PreparedArtifactBudget::new(1_000_000, 4, 4_096).expect("catalog ordering budget"),
+    )
+    .expect("catalog ordering store");
+    let first = prepared_descriptor_with_registration_and_cell(
+        &store,
+        &problem,
+        prepared_registration(),
+        prepared_cell(1.0e9),
+    );
+    let second = prepared_descriptor_with_registration_and_cell(
+        &store,
+        &problem,
+        prepared_registration(),
+        prepared_cell(1.1e9),
+    );
+    let mut ordered = vec![first, second];
+    ordered.sort_unstable_by_key(PreparedArtifactDescriptor::identity);
+    let duplicate = vec![ordered[0].clone(), ordered[0].clone()];
+    assert!(
+        PreparedArtifactCatalogPlanFragment::new(
+            &duplicate,
+            &store,
+            WorkNodeId::new("prepared-phase-producer"),
+            WorkNodeId::new("prepared-phase-commit"),
+            implementation(6),
+        )
+        .is_err()
+    );
+    ordered.reverse();
+    assert!(
+        PreparedArtifactCatalogPlanFragment::new(
+            &ordered,
+            &store,
+            WorkNodeId::new("prepared-phase-producer"),
+            WorkNodeId::new("prepared-phase-commit"),
+            implementation(6),
+        )
+        .is_err()
+    );
 }
 
 #[test]

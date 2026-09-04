@@ -12,7 +12,9 @@ mod transaction;
 use accounting::*;
 use codec::*;
 use filesystem::*;
-pub use planning::{PreparedArtifactPlanError, PreparedArtifactPlanFragment};
+pub use planning::{
+    PreparedArtifactCatalogPlanFragment, PreparedArtifactPlanError, PreparedArtifactPlanFragment,
+};
 pub use reader::{
     PreparedArtifactExecutionBinding, PreparedArtifactReader, PreparedArtifactReaderFactory,
     PreparedArtifactReaderPlan, PreparedArtifactReaderResidency,
@@ -57,6 +59,9 @@ const IMPORT_SOURCE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact
 const WORK_NODE_IDENTITY_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/work-node\0";
 const WORK_IMPLEMENTATION_ID_DOMAIN: &[u8] =
     b"casa-rs/private-prepared-artifact/work-implementation\0";
+const CATALOG_WORK_NODE_ID_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/catalog-work-node\0";
+const CATALOG_WORK_IMPLEMENTATION_ID_DOMAIN: &[u8] =
+    b"casa-rs/private-prepared-artifact/catalog-work-implementation\0";
 const REJECTION_EVIDENCE_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/rejection\0";
 const EVICTION_LEDGER_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/eviction-ledger\0";
 const EVICTION_OBSERVED_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/eviction-observed\0";
@@ -888,6 +893,113 @@ impl PreparedArtifactDescriptor {
     }
 }
 
+fn validate_catalog_descriptors(
+    store: &PreparedArtifactStore,
+    descriptors: &[PreparedArtifactDescriptor],
+) -> Result<(), PreparedArtifactError> {
+    let Some(first) = descriptors.first() else {
+        return Err(PreparedArtifactError::InvalidDescriptor);
+    };
+    if first.cache_scope != store.scope {
+        return Err(PreparedArtifactError::CachePolicyMismatch);
+    }
+    for descriptor in descriptors {
+        if descriptor.cache_scope != store.scope
+            || descriptor.owner != first.owner
+            || descriptor.kind != first.kind
+        {
+            return Err(PreparedArtifactError::InvalidDescriptor);
+        }
+    }
+    if descriptors
+        .windows(2)
+        .any(|pair| pair[0].identity >= pair[1].identity)
+    {
+        return Err(PreparedArtifactError::InvalidDescriptor);
+    }
+    Ok(())
+}
+
+fn catalog_work_node_id(
+    descriptors: &[PreparedArtifactDescriptor],
+) -> Result<WorkNodeId, PreparedArtifactError> {
+    validate_catalog_identity_input(descriptors)?;
+    let mut hasher = Sha256::new();
+    hasher.update(CATALOG_WORK_NODE_ID_DOMAIN);
+    hasher.update(IDENTITY_VERSION.to_le_bytes());
+    hash_len(&mut hasher, descriptors.len())?;
+    for descriptor in descriptors {
+        hasher.update(descriptor.identity.as_bytes());
+        hasher.update(descriptor.cache_identity.as_bytes());
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+    Ok(WorkNodeId::new(format!(
+        "prepared-artifact-catalog-warm-reuse-{}",
+        encode_hex(&digest)
+    )))
+}
+
+fn catalog_work_implementation_id(
+    descriptors: &[PreparedArtifactDescriptor],
+) -> Result<WorkImplementationId, PreparedArtifactError> {
+    validate_catalog_identity_input(descriptors)?;
+    let mut hasher = Sha256::new();
+    hasher.update(CATALOG_WORK_IMPLEMENTATION_ID_DOMAIN);
+    hasher.update(IDENTITY_VERSION.to_le_bytes());
+    hash_len(&mut hasher, descriptors.len())?;
+    for descriptor in descriptors {
+        hasher.update(descriptor.identity.as_bytes());
+        hasher.update(descriptor.cache_identity.as_bytes());
+    }
+    let digest: [u8; 32] = hasher.finalize().into();
+    Ok(WorkImplementationId::new(format!(
+        "prepared-artifact-catalog-warm-reuse-{}",
+        encode_hex(&digest)
+    )))
+}
+
+fn validate_catalog_identity_input(
+    descriptors: &[PreparedArtifactDescriptor],
+) -> Result<(), PreparedArtifactError> {
+    if descriptors.is_empty()
+        || descriptors
+            .windows(2)
+            .any(|pair| pair[0].identity >= pair[1].identity)
+    {
+        return Err(PreparedArtifactError::InvalidDescriptor);
+    }
+    Ok(())
+}
+
+fn catalog_outcome_resident_bytes(entries: usize) -> Result<u64, PreparedArtifactError> {
+    fixed_vec_resident_reservation::<PreparedArtifactCatalogEntryOutcome>(entries)
+}
+
+fn catalog_planned_artifacts(
+    descriptors: &[PreparedArtifactDescriptor],
+) -> Result<Vec<PlannedArtifact>, PreparedArtifactError> {
+    let node = catalog_work_node_id(descriptors)?;
+    Ok(descriptors
+        .iter()
+        .flat_map(|descriptor| {
+            [
+                PlannedArtifact::new(
+                    descriptor.identity,
+                    node.clone(),
+                    ArtifactRole::Cache,
+                    Some(descriptor.cache_identity),
+                ),
+                PlannedArtifact::new(
+                    derive_eviction_ledger_identity(descriptor, PreparedArtifactOperation::Reuse),
+                    node.clone(),
+                    ArtifactRole::Input,
+                    None,
+                ),
+            ]
+        })
+        .collect())
+}
+
 /// Exact explicit cache operation selected into a `WorkKind::Cache` node.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreparedArtifactOperation {
@@ -975,6 +1087,53 @@ pub enum PreparedArtifactReuseOutcome {
     Reused(PreparedArtifact),
     /// The candidate failed closed and was not exposed for use.
     Rejected(PreparedArtifactRejection),
+}
+
+/// Ordered result for one descriptor in a catalog-scoped warm-cache transaction.
+#[derive(Debug)]
+pub struct PreparedArtifactCatalogEntryOutcome {
+    identity: ArtifactIdentity,
+    outcome: PreparedArtifactReuseOutcome,
+}
+
+impl PreparedArtifactCatalogEntryOutcome {
+    /// Return the descriptor identity that selected this result.
+    #[must_use]
+    pub const fn identity(&self) -> ArtifactIdentity {
+        self.identity
+    }
+
+    /// Return the exact warm-cache result for this descriptor.
+    #[must_use]
+    pub const fn outcome(&self) -> &PreparedArtifactReuseOutcome {
+        &self.outcome
+    }
+
+    /// Consume this entry and return its exact warm-cache result.
+    #[must_use]
+    pub fn into_outcome(self) -> PreparedArtifactReuseOutcome {
+        self.outcome
+    }
+}
+
+/// Atomic ordered result of validating a complete prepared-artifact catalog.
+#[derive(Debug)]
+pub struct PreparedArtifactCatalogReuseOutcome {
+    entries: Vec<PreparedArtifactCatalogEntryOutcome>,
+}
+
+impl PreparedArtifactCatalogReuseOutcome {
+    /// Return results in the same canonical order as the planned descriptors.
+    #[must_use]
+    pub fn entries(&self) -> &[PreparedArtifactCatalogEntryOutcome] {
+        &self.entries
+    }
+
+    /// Consume the catalog result while preserving canonical descriptor order.
+    #[must_use]
+    pub fn into_entries(self) -> Vec<PreparedArtifactCatalogEntryOutcome> {
+        self.entries
+    }
 }
 
 /// Hard private-cache and streaming-buffer bounds.
@@ -2588,49 +2747,59 @@ fn validate_payload(
     buffer_len: usize,
     evidence: &mut ValidationEvidence,
 ) -> Result<([u8; 32], u64), PreparedArtifactError> {
+    let mut buffer = vec![0_u8; buffer_len];
+    evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
+        validate_payload_buffered(payload, segments, integrity, &mut buffer, evidence)
+    })
+}
+
+fn validate_payload_buffered(
+    payload: &File,
+    segments: &[PreparedArtifactSegmentDescriptor],
+    integrity: &[ManifestSegmentIntegrity],
+    buffer: &mut [u8],
+    evidence: &mut ValidationEvidence,
+) -> Result<([u8; 32], u64), PreparedArtifactError> {
     let mut payload = payload;
     let mut payload_hasher = Sha256::new();
     let mut total = 0_u64;
-    let mut buffer = vec![0_u8; buffer_len];
-    evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
-        for (segment, integrity) in segments.iter().zip(integrity) {
-            let expected_segment_digest =
-                decode_digest(&integrity.sha256).ok_or(PreparedArtifactError::InvalidManifest)?;
-            let mut segment_hasher = Sha256::new();
-            let mut remaining = integrity.bytes;
-            let scalar_bytes = segment.precision.scalar_bytes();
-            let mut scalar = 0_u64;
-            while remaining > 0 {
-                let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
-                    .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
-                limit -= limit % scalar_bytes;
-                read_exact_counted(
-                    &mut payload,
-                    &mut buffer[..limit],
-                    evidence,
-                    CacheIoClass::Read,
-                )?;
-                validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
-                evidence.store_validation();
-                payload_hasher.update(&buffer[..limit]);
-                segment_hasher.update(&buffer[..limit]);
-                remaining -= limit as u64;
-                scalar += (limit / scalar_bytes) as u64;
-            }
-            if <[u8; 32]>::from(segment_hasher.finalize()) != expected_segment_digest {
-                return Err(PreparedArtifactError::CorruptArtifact);
-            }
+    for (segment, integrity) in segments.iter().zip(integrity) {
+        let expected_segment_digest =
+            decode_digest(&integrity.sha256).ok_or(PreparedArtifactError::InvalidManifest)?;
+        let mut segment_hasher = Sha256::new();
+        let mut remaining = integrity.bytes;
+        let scalar_bytes = segment.precision.scalar_bytes();
+        let mut scalar = 0_u64;
+        while remaining > 0 {
+            let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
+                .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+            limit -= limit % scalar_bytes;
+            read_exact_counted(
+                &mut payload,
+                &mut buffer[..limit],
+                evidence,
+                CacheIoClass::Read,
+            )?;
+            validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
             evidence.store_validation();
-            total = total
-                .checked_add(integrity.bytes)
-                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+            payload_hasher.update(&buffer[..limit]);
+            segment_hasher.update(&buffer[..limit]);
+            remaining -= limit as u64;
+            scalar += (limit / scalar_bytes) as u64;
         }
-        let mut extra = [0_u8; 1];
-        if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
-            return Err(PreparedArtifactError::OversizedArtifact);
+        if <[u8; 32]>::from(segment_hasher.finalize()) != expected_segment_digest {
+            return Err(PreparedArtifactError::CorruptArtifact);
         }
-        Ok((payload_hasher.finalize().into(), total))
-    })
+        evidence.store_validation();
+        total = total
+            .checked_add(integrity.bytes)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    }
+    let mut extra = [0_u8; 1];
+    if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
+        return Err(PreparedArtifactError::OversizedArtifact);
+    }
+    Ok((payload_hasher.finalize().into(), total))
 }
 
 #[derive(Clone, Copy, Debug, Default)]

@@ -46,6 +46,131 @@ pub(super) fn validate_plan_binding(
     )
 }
 
+pub(super) fn validate_catalog_plan_binding(
+    context: WorkExecutionContext<'_>,
+    store: &PreparedArtifactStore,
+    descriptors: &[PreparedArtifactDescriptor],
+    reservation: PreparedArtifactReservation,
+) -> Result<(), PreparedArtifactError> {
+    validate_catalog_descriptors(store, descriptors)?;
+    for descriptor in descriptors {
+        if descriptor.owner.implementation_registry != context.implementation_registry_id() {
+            return Err(PreparedArtifactError::ImplementationRegistryMismatch);
+        }
+        if !descriptor.scientific.matches_context(context) {
+            return Err(PreparedArtifactError::ScientificBindingMismatch);
+        }
+    }
+    let node = context.node();
+    if node.kind != WorkKind::Cache
+        || node.id != catalog_work_node_id(descriptors)?
+        || node.implementation != catalog_work_implementation_id(descriptors)?
+    {
+        return Err(PreparedArtifactError::UnplannedOperation);
+    }
+    let planned = context.planned_artifacts().cloned().collect::<Vec<_>>();
+    let expected = catalog_planned_artifacts(descriptors)?;
+    if planned.len() != expected.len()
+        || expected.iter().any(|expected| {
+            !planned.iter().any(|actual| {
+                actual.identity() == expected.identity()
+                    && actual.node() == expected.node()
+                    && actual.role() == expected.role()
+                    && actual.cache_identity() == expected.cache_identity()
+            })
+        })
+        || planned
+            .iter()
+            .any(|artifact| artifact.role() == ArtifactRole::Output)
+    {
+        return Err(PreparedArtifactError::UnplannedOperation);
+    }
+    let first = descriptors
+        .first()
+        .ok_or(PreparedArtifactError::InvalidDescriptor)?;
+    let demand_id = store.storage_demand_id(first);
+    let matching = context
+        .resource_alternative()
+        .demand
+        .storage
+        .iter()
+        .filter(|demand| demand.demand_id == demand_id && demand.domain == *store.storage_domain())
+        .collect::<Vec<_>>();
+    if matching.len() != 1
+        || matching[0].persistent_cache_bytes < reservation.persistent_cache_bytes
+        || matching[0].temporary_bytes != 0
+        || matching[0].read_rate.hard() == 0
+        || matching[0].write_rate.hard() == 0
+        || matching[0].operations_rate.hard() == 0
+        || matching[0].queue_slots.hard() == 0
+    {
+        return Err(PreparedArtifactError::MissingReservation(
+            "catalog private-cache storage demand",
+        ));
+    }
+    for (resource, amount, label) in [
+        (LeaseResource::Workers, 1, "worker"),
+        (LeaseResource::Locks, 1, "private-cache lock"),
+        (
+            LeaseResource::FileDescriptors,
+            reservation.file_descriptors,
+            "file descriptors",
+        ),
+        (
+            LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+            reservation.resident_buffer_bytes,
+            "private-store buffer",
+        ),
+        (
+            LeaseResource::Storage {
+                demand_id: demand_id.clone(),
+                use_kind: StorageUseKind::PersistentCache,
+            },
+            reservation.persistent_cache_bytes,
+            "persistent-cache storage",
+        ),
+        (
+            LeaseResource::StorageReadRate {
+                demand_id: demand_id.clone(),
+            },
+            1,
+            "private-cache read rate",
+        ),
+        (
+            LeaseResource::StorageWriteRate {
+                demand_id: demand_id.clone(),
+            },
+            1,
+            "private-cache write rate",
+        ),
+        (
+            LeaseResource::StorageOperationsRate {
+                demand_id: demand_id.clone(),
+            },
+            1,
+            "private-cache operations rate",
+        ),
+        (
+            LeaseResource::StorageQueue { demand_id },
+            1,
+            "private-cache queue",
+        ),
+    ] {
+        require_claim(node, |claim| claim == &resource, amount, label)?;
+    }
+    let stage = context.stage_prediction();
+    if stage.io().len() != 1
+        || stage.io()[0].kind() != IoBufferKind::StorageManager
+        || stage.io()[0].bytes() < reservation.persistent_cache_bytes
+        || stage.io()[0].operations() == 0
+    {
+        return Err(PreparedArtifactError::MissingReservation(
+            "catalog cache I/O prediction",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_source_binding(
     context: WorkExecutionContext<'_>,
     descriptor: &PreparedArtifactDescriptor,
@@ -434,6 +559,100 @@ pub(super) fn measurements(
         ),
     ];
     WorkMeasurements::new(resources, io, artifacts)
+}
+
+pub(super) fn catalog_measurements(
+    context: WorkExecutionContext<'_>,
+    _store: &PreparedArtifactStore,
+    descriptors: &[PreparedArtifactDescriptor],
+    outcomes: &[ReuseEvaluation],
+    cache_bytes: u64,
+    evidence: &ValidationEvidence,
+) -> WorkMeasurements {
+    let first = descriptors
+        .first()
+        .expect("validated catalog has one descriptor");
+    let resources = resource_measurements(
+        context,
+        first,
+        PreparedArtifactOperation::Reuse,
+        cache_bytes,
+        0,
+        evidence,
+    );
+    let io = context
+        .stage_prediction()
+        .io()
+        .iter()
+        .map(|prediction| evidence.measurement(prediction.kind()))
+        .collect();
+    let evicted_bytes = evidence.evictions.iter().map(|(_, bytes)| *bytes).sum();
+    let mut artifacts = Vec::with_capacity(descriptors.len().saturating_mul(2));
+    for (descriptor, outcome) in descriptors.iter().zip(outcomes) {
+        match outcome {
+            ReuseEvaluation::Reused { validated, .. } => {
+                artifacts.push(ArtifactMeasurement::new_store_owned(
+                    descriptor.identity,
+                    Some(derive_content_identity(
+                        descriptor,
+                        validated.payload_sha256,
+                    )),
+                    ArtifactDisposition::Reused,
+                    validated.payload_bytes,
+                    Some(RedactedPath::from_path(&validated.path)),
+                ));
+            }
+            ReuseEvaluation::Rejected {
+                rejection, path, ..
+            } => {
+                artifacts.push(ArtifactMeasurement::new_store_owned(
+                    descriptor.identity,
+                    Some(rejection.evidence_identity(descriptor.identity)),
+                    ArtifactDisposition::RejectedStale,
+                    0,
+                    Some(RedactedPath::from_path(path)),
+                ));
+            }
+        }
+        let ledger = descriptor.eviction_artifact(PreparedArtifactOperation::Reuse);
+        artifacts.push(ArtifactMeasurement::new_store_owned(
+            ledger.identity(),
+            Some(derive_eviction_observed_identity(
+                ledger.identity(),
+                &evidence.evictions,
+            )),
+            ArtifactDisposition::Loaded,
+            evicted_bytes,
+            None,
+        ));
+    }
+    WorkMeasurements::new(resources, io, artifacts)
+}
+
+pub(super) fn failed_catalog_measurements(
+    context: WorkExecutionContext<'_>,
+    _store: &PreparedArtifactStore,
+    descriptors: &[PreparedArtifactDescriptor],
+    evidence: &ValidationEvidence,
+) -> WorkMeasurements {
+    let Some(first) = descriptors.first() else {
+        return WorkMeasurements::default();
+    };
+    let resources = resource_measurements(
+        context,
+        first,
+        PreparedArtifactOperation::Reuse,
+        evidence.cache_bytes_peak,
+        0,
+        evidence,
+    );
+    let io = context
+        .stage_prediction()
+        .io()
+        .iter()
+        .map(|prediction| evidence.measurement(prediction.kind()))
+        .collect();
+    WorkMeasurements::new(resources, io, Vec::new())
 }
 
 pub(super) fn rejected_measurements(

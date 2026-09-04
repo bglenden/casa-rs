@@ -15,6 +15,7 @@ use casa_imaging_runtime::{
     ExecutionAttemptId, ExecutionEvidenceError, ExecutionProvenance, ExecutionReceipt, FenceKind,
     ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId, IoBufferKind,
     IoMeasurement, ObservationReadCompletionContext, PlanningBindings, PreparedArtifact,
+    PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,
     PreparedArtifactExecutionBinding, PreparedArtifactImportSource, PreparedArtifactOperation,
     PreparedArtifactPlanFragment, PreparedArtifactReaderFactory, PreparedArtifactRegistration,
     PreparedArtifactReuseOutcome, PreparedArtifactStore, ResourceMeasurement, RunBindings,
@@ -78,11 +79,19 @@ struct OperationAdapter {
     result: Mutex<Option<OperationResult>>,
 }
 
+struct CatalogReuseAdapter {
+    id: WorkImplementationId,
+    store: Arc<PreparedArtifactStore>,
+    descriptors: Vec<casa_imaging_runtime::PreparedArtifactDescriptor>,
+    result: Mutex<Option<PreparedArtifactCatalogReuseOutcome>>,
+}
+
 enum PhaseImplementation {
     Base {
         id: WorkImplementationId,
         sources: Vec<PreparedArtifactImportSource>,
     },
+    CatalogReuse(Box<CatalogReuseAdapter>),
     Operation(Box<OperationAdapter>),
 }
 
@@ -101,6 +110,7 @@ impl WorkImplementation for PhaseImplementation {
     fn implementation_id(&self) -> &WorkImplementationId {
         match self {
             Self::Base { id, .. } => id,
+            Self::CatalogReuse(op) => &op.id,
             Self::Operation(op) => &op.id,
         }
     }
@@ -108,6 +118,17 @@ impl WorkImplementation for PhaseImplementation {
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
         let op = match self {
             Self::Base { sources, .. } => return base_measurements(context, sources),
+            Self::CatalogReuse(op) => {
+                let (outcome, measurements) = op
+                    .store
+                    .reuse_catalog(&context, &op.descriptors)
+                    .map_err(io::Error::other)?;
+                *op.result
+                    .lock()
+                    .map_err(|_| io::Error::other("AW catalog result state poisoned"))? =
+                    Some(outcome);
+                return Ok(measurements);
+            }
             Self::Operation(op) => op,
         };
         let result = match op.operation {
@@ -255,7 +276,7 @@ impl PhaseRegistry {
             .implementations
             .values()
             .find_map(|implementation| match implementation {
-                PhaseImplementation::Base { .. } => None,
+                PhaseImplementation::Base { .. } | PhaseImplementation::CatalogReuse(_) => None,
                 PhaseImplementation::Operation(op) => Some(op),
             })
             .ok_or_else(|| boxed("AW operation is absent"))?;
@@ -266,6 +287,23 @@ impl PhaseRegistry {
             .take()
             .ok_or_else(|| boxed("AW operation did not execute"))?;
         Ok((operation.prepared.clone(), result))
+    }
+
+    fn take_catalog_result(&self) -> Result<PreparedArtifactCatalogReuseOutcome, ApplicationError> {
+        let catalog = self
+            .implementations
+            .values()
+            .find_map(|implementation| match implementation {
+                PhaseImplementation::CatalogReuse(op) => Some(op),
+                PhaseImplementation::Base { .. } | PhaseImplementation::Operation(_) => None,
+            })
+            .ok_or_else(|| boxed("AW catalog reuse operation is absent"))?;
+        catalog
+            .result
+            .lock()
+            .map_err(|_| boxed("AW catalog result state poisoned"))?
+            .take()
+            .ok_or_else(|| boxed("AW catalog reuse operation did not execute"))
     }
 }
 
@@ -320,26 +358,29 @@ pub(crate) fn prepare_aw_projection(
         .ok_or_else(|| boxed("AW decoder workspace overflowed"))?;
     let mut receipts = Vec::new();
 
+    let mut ordered = prepared.to_vec();
+    ordered.sort_by_key(|cell| cell.descriptor().identity().as_bytes());
+    let descriptors = ordered
+        .iter()
+        .map(|cell| cell.descriptor().clone())
+        .collect::<Vec<_>>();
+    let (catalog_outcome, catalog_receipt) =
+        run_catalog_reuse(problem, runtime, Arc::clone(&store), descriptors)?;
+    receipts.push(catalog_receipt);
+
     let mut artifacts = Vec::new();
     let mut missing = Vec::new();
-    for (ordinal, cell) in prepared.iter().cloned().enumerate() {
-        let reuse = run_operation(
-            problem,
-            runtime,
-            OperationInput {
-                cache: Arc::clone(&cache),
-                store: Arc::clone(&store),
-                cell,
-                source_domain: &deployment.storage_domain,
-                operation: PreparedArtifactOperation::Reuse,
-                phase: ordinal as u64,
-            },
-        )?;
-        receipts.push(reuse.1);
-        let (cell, result) = reuse.0;
-        match result {
-            OperationResult::Artifact(artifact) => artifacts.push((cell, artifact)),
-            OperationResult::Rejected => missing.push(cell),
+    let outcomes = catalog_outcome.into_entries();
+    if outcomes.len() != ordered.len() {
+        return Err(boxed("AW catalog reuse omitted an entry"));
+    }
+    for (cell, outcome) in ordered.into_iter().zip(outcomes) {
+        if outcome.identity() != cell.descriptor().identity() {
+            return Err(boxed("AW catalog reuse changed descriptor order"));
+        }
+        match outcome.into_outcome() {
+            PreparedArtifactReuseOutcome::Reused(artifact) => artifacts.push((cell, artifact)),
+            PreparedArtifactReuseOutcome::Rejected(_) => missing.push(cell),
         }
     }
     for (ordinal, cell) in missing.into_iter().enumerate() {
@@ -385,6 +426,114 @@ pub(crate) fn prepare_aw_projection(
         resident_bytes: deployment.resident_bytes,
         receipts,
     })
+}
+
+fn run_catalog_reuse(
+    problem: &CompiledProblem,
+    runtime: &ApplicationRuntime,
+    store: Arc<PreparedArtifactStore>,
+    descriptors: Vec<casa_imaging_runtime::PreparedArtifactDescriptor>,
+) -> Result<(PreparedArtifactCatalogReuseOutcome, ExecutionReceipt), ApplicationError> {
+    let metadata = ImplementationContractMetadata::new(
+        problem.problem_id(),
+        problem.numerics_id(),
+        problem.required_capabilities().clone(),
+    );
+    let producer = casa_imaging_runtime::WorkNodeId::new("prepared-phase-producer");
+    let id = PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)?;
+    let mut implementations = BTreeMap::from([(
+        id.clone(),
+        PhaseImplementation::CatalogReuse(Box::new(CatalogReuseAdapter {
+            id,
+            store: Arc::clone(&store),
+            descriptors,
+            result: Mutex::new(None),
+        })),
+    )]);
+    implementations.insert(
+        runtime.implementation.clone(),
+        PhaseImplementation::Base {
+            id: runtime.implementation.clone(),
+            sources: vec![],
+        },
+    );
+    let registry = PhaseRegistry {
+        id: runtime.registry,
+        metadata,
+        implementations,
+        prepared_artifact: crate::prepared_aw_registration(runtime.implementation.clone()),
+    };
+    let descriptors = registry
+        .implementations
+        .values()
+        .find_map(|implementation| match implementation {
+            PhaseImplementation::CatalogReuse(op) => Some(op.descriptors.as_slice()),
+            PhaseImplementation::Base { .. } | PhaseImplementation::Operation(_) => None,
+        })
+        .ok_or_else(|| boxed("AW catalog reuse operation is absent"))?;
+    let first = descriptors
+        .first()
+        .ok_or_else(|| boxed("AW prepared catalog is empty"))?;
+    let base = PreparedArtifactPlanFragment::standalone_base(
+        problem,
+        &registry,
+        runtime.implementation.clone(),
+        first,
+        &store,
+        runtime.stage_nanos,
+        runtime.confidence_parts_per_million,
+    )?;
+    let physical = PreparedArtifactCatalogPlanFragment::new(
+        descriptors,
+        &store,
+        producer,
+        casa_imaging_runtime::WorkNodeId::new("prepared-phase-commit"),
+        runtime.implementation.clone(),
+    )?
+    .compose(&base)?;
+    let execution_plan = plan(
+        problem,
+        PlanningBindings::new(
+            runtime.registry,
+            runtime.resource_policy.clone(),
+            runtime.cost_model,
+        ),
+        &runtime.authority,
+        &registry,
+        &runtime.receipts,
+        move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
+    )?;
+    let executable =
+        casa_imaging_reconstruction::ExecutableModelProblem::from_compiled(problem.clone())?;
+    let current = RunBindings::new(
+        problem.inputs().clone(),
+        &runtime.resource_policy,
+        runtime.cost_model.profile_id(),
+    );
+    let attempt = aw_attempt(runtime.attempts[0], 0);
+    let execution = run(
+        &executable,
+        &execution_plan,
+        &current,
+        &registry,
+        &runtime.authority,
+        &mut RunToCompletion,
+        runtime
+            .receipts
+            .bind(ExecutionProvenance::new(attempt, runtime.build)),
+    );
+    if let Err(error) = execution
+        && !matches!(
+            error,
+            RunError::Evidence(ExecutionEvidenceError::RejectedArtifact { .. })
+        )
+    {
+        return Err(Box::new(error));
+    }
+    Ok((
+        registry.take_catalog_result()?,
+        runtime.receipts.open(attempt)?,
+    ))
 }
 
 fn run_operation(
@@ -441,7 +590,7 @@ fn run_operation(
         .implementations
         .values()
         .find_map(|implementation| match implementation {
-            PhaseImplementation::Base { .. } => None,
+            PhaseImplementation::Base { .. } | PhaseImplementation::CatalogReuse(_) => None,
             PhaseImplementation::Operation(op) => Some(op.prepared.descriptor()),
         })
         .ok_or_else(|| boxed("AW operation is absent"))?;
