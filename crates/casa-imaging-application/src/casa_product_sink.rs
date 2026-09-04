@@ -311,11 +311,15 @@ const fn persist_explicit_taylor_mask(role: ProductRole, validity: ProductValidi
         (
             ProductRole::RestoredImage(ProductTerm::Taylor(_))
                 | ProductRole::Residual(ProductTerm::Taylor(_))
-                | ProductRole::PrimaryBeam(ProductTerm::Taylor(_)),
+                | ProductRole::PrimaryBeam(ProductTerm::Taylor(_))
+                | ProductRole::PbCorrectedImage(ProductTerm::Taylor(_)),
             ProductValidityRule::PrimaryBeam(_),
         ) | (
             ProductRole::SpectralIndex | ProductRole::SpectralIndexError,
             ProductValidityRule::Taylor(_),
+        ) | (
+            ProductRole::PbCorrectedSpectralIndex,
+            ProductValidityRule::TaylorAndPrimaryBeam { .. },
         )
     )
 }
@@ -464,16 +468,26 @@ mod tests {
             ProductValidityRule::PrimaryBeam(primary_beam),
         ));
         assert!(persist_explicit_taylor_mask(
+            ProductRole::PbCorrectedImage(ProductTerm::Taylor(0)),
+            ProductValidityRule::PrimaryBeam(primary_beam),
+        ));
+        let taylor = casa_imaging_model::TaylorValidityPolicy::new(
+            casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+            0.1,
+            ProductSupportComparison::StrictlyGreater,
+            ProductBlankingPolicy::ZeroAndFalseMask,
+        )
+        .expect("valid Taylor policy");
+        assert!(persist_explicit_taylor_mask(
             ProductRole::SpectralIndex,
-            ProductValidityRule::Taylor(
-                casa_imaging_model::TaylorValidityPolicy::new(
-                    casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
-                    0.1,
-                    ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
-                )
-                .expect("valid Taylor policy"),
-            ),
+            ProductValidityRule::Taylor(taylor),
+        ));
+        assert!(persist_explicit_taylor_mask(
+            ProductRole::PbCorrectedSpectralIndex,
+            ProductValidityRule::TaylorAndPrimaryBeam {
+                taylor,
+                primary_beam,
+            },
         ));
         assert!(!persist_explicit_taylor_mask(
             ProductRole::RestoredImage(ProductTerm::Single),
