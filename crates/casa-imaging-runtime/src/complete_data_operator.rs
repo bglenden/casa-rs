@@ -1612,7 +1612,6 @@ pub struct CompleteDataResidency {
     gridded_route_bytes: usize,
     gridded_replay_schedule_bytes: usize,
     aw_prepared_pool_bytes: usize,
-    aw_tap_window_bytes: usize,
     primitive_output_bytes: usize,
     sequential_fold_accumulator_bytes: usize,
     major_cycle_model_bytes: usize,
@@ -1694,12 +1693,6 @@ impl CompleteDataResidency {
     #[must_use]
     pub const fn aw_prepared_pool_bytes(self) -> usize {
         self.aw_prepared_pool_bytes
-    }
-
-    /// Bytes reserved for one source-order bounded AW tap window.
-    #[must_use]
-    pub const fn aw_tap_window_bytes(self) -> usize {
-        self.aw_tap_window_bytes
     }
 
     /// Bytes covering retained prior state plus newly produced normal-state primitives.
@@ -2030,26 +2023,19 @@ impl CompleteDataPlanFragment {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
         let pool_bytes = projection.resident_byte_ceiling();
-        let (grid_bytes, aw_tap_window_bytes) = match self.execution_role {
-            CompleteDataExecutionRole::GriddedArtifact => {
-                let projected = gridded_normal_aw_domain_execution_residency(
-                    self.specification.chart_grid_shapes(),
-                    self.workload.coefficient_terms(),
-                    projection.maximum_imaging_support(),
-                )?;
-                let grid_bytes = projected
-                    .peak_complex_values()
-                    .checked_mul(size_of::<num_complex::Complex64>())
-                    .and_then(|bytes| bytes.checked_add(projected.metadata_bytes()))
-                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
-                (grid_bytes, 0)
-            }
-            CompleteDataExecutionRole::SelectedObservation => {
-                let window_bytes = self
-                    .workload
-                    .aw_grid_window_capacity_bytes(&self.specification, &projection)?;
-                (self.residency.grid_bytes, window_bytes)
-            }
+        let grid_bytes = if self.execution_role == CompleteDataExecutionRole::GriddedArtifact {
+            let projected = gridded_normal_aw_domain_execution_residency(
+                self.specification.chart_grid_shapes(),
+                self.workload.coefficient_terms(),
+                projection.maximum_imaging_support(),
+            )?;
+            projected
+                .peak_complex_values()
+                .checked_mul(size_of::<num_complex::Complex64>())
+                .and_then(|bytes| bytes.checked_add(projected.metadata_bytes()))
+                .ok_or(CompleteDataPlanError::ResidencyOverflow)?
+        } else {
+            self.residency.grid_bytes
         };
         self.residency.peak_bytes = self
             .residency
@@ -2057,11 +2043,9 @@ impl CompleteDataPlanFragment {
             .checked_sub(self.residency.grid_bytes)
             .and_then(|bytes| bytes.checked_add(grid_bytes))
             .and_then(|bytes| bytes.checked_add(pool_bytes))
-            .and_then(|bytes| bytes.checked_add(aw_tap_window_bytes))
             .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
         self.residency.grid_bytes = grid_bytes;
         self.residency.aw_prepared_pool_bytes = pool_bytes;
-        self.residency.aw_tap_window_bytes = aw_tap_window_bytes;
         self.aw_projection = Some(projection);
         Ok(self)
     }
@@ -2361,12 +2345,6 @@ impl CompleteDataPlanFragment {
             required.push((
                 format!("spectral-operator-gridded-replay-schedule-{suffix}"),
                 residency.gridded_replay_schedule_bytes,
-            ));
-        }
-        if residency.aw_tap_window_bytes() > 0 {
-            required.push((
-                format!("spectral-operator-aw-tap-window-{suffix}"),
-                residency.aw_tap_window_bytes(),
             ));
         }
         if residency.aw_prepared_pool_bytes() > 0 && self.aw_reader.is_none() {
@@ -2971,11 +2949,6 @@ impl CompleteDataPlanFragment {
             &suffix,
             &self.replay_node,
         )?);
-        if let Some(allocation) =
-            aw_tap_window_allocation_spec(residency, &suffix, &self.replay_node)?
-        {
-            allocations.push(allocation);
-        }
         if let Some(reader) = &self.aw_reader {
             allocations.push(CompleteDataAllocation::storage_manager(
                 format!("spectral-operator-aw-prepared-pool-{suffix}"),
@@ -3169,7 +3142,6 @@ fn project_residency(
         gridded_route_bytes,
         gridded_replay_schedule_bytes,
         aw_prepared_pool_bytes: 0,
-        aw_tap_window_bytes: 0,
         primitive_output_bytes,
         sequential_fold_accumulator_bytes: 0,
         major_cycle_model_bytes,
@@ -3231,28 +3203,6 @@ fn mosaic_allocation_specs(
         )?);
     }
     Ok(allocations)
-}
-
-fn aw_tap_window_allocation_spec(
-    residency: CompleteDataResidency,
-    suffix: &str,
-    replay_node: &WorkNodeId,
-) -> Result<Option<CompleteDataAllocation>, CompleteDataPlanError> {
-    if residency.aw_tap_window_bytes() == 0 {
-        return Ok(None);
-    }
-    CompleteDataAllocation::new(
-        format!("spectral-operator-aw-tap-window-{suffix}"),
-        residency.aw_tap_window_bytes(),
-        "spectral-operator-bounded-aw-tap-window",
-        InitializationPolicy::OverwriteBeforeRead,
-        replay_node.clone(),
-        BTreeSet::from([WorkDependency::Fence(FenceId::new(
-            replay_node.clone(),
-            FenceKind::Io,
-        ))]),
-    )
-    .map(Some)
 }
 
 struct CompleteDataAllocation {
@@ -4037,7 +3987,7 @@ impl From<SpectralOperatorError> for CompleteDataOperatorError {
 mod tests {
     use super::{
         CompleteDataPlanError, CompleteDataResidency, GriddedNormalReplayPlanningCapacity,
-        GriddedNormalReplayWindowPlan, GriddedNormalRouteResidency, aw_tap_window_allocation_spec,
+        GriddedNormalReplayWindowPlan, GriddedNormalRouteResidency,
         bind_gridded_replay_window_plan, gridded_buffer_claim_satisfies,
         gridded_normal_route_capacity_bytes, mosaic_allocation_specs,
     };
@@ -4066,7 +4016,6 @@ mod tests {
             gridded_route_bytes: 0,
             gridded_replay_schedule_bytes: 0,
             aw_prepared_pool_bytes: 0,
-            aw_tap_window_bytes: 0,
             primitive_output_bytes: 0,
             sequential_fold_accumulator_bytes: 0,
             major_cycle_model_bytes: 0,
@@ -4095,59 +4044,6 @@ mod tests {
                 )])
             );
         }
-    }
-
-    #[test]
-    fn t51_aw_tap_window_allocation_is_exact_and_replay_fence_bounded() {
-        let residency = CompleteDataResidency {
-            grid_bytes: 0,
-            convolution_cache_bytes: 0,
-            fft_resident_bytes: 0,
-            fft_planning_bytes: 0,
-            forward_workspace_bytes: 0,
-            response_workspace_bytes: 0,
-            mosaic_state_bytes: 0,
-            mosaic_workspace_bytes: 0,
-            gridded_route_bytes: 0,
-            gridded_replay_schedule_bytes: 0,
-            aw_prepared_pool_bytes: 0,
-            aw_tap_window_bytes: 37,
-            primitive_output_bytes: 0,
-            sequential_fold_accumulator_bytes: 0,
-            major_cycle_model_bytes: 0,
-            peak_bytes: 37,
-        };
-        let replay = crate::WorkNodeId::new("t51-aw-tap-window-replay");
-        assert_eq!(residency.aw_tap_window_bytes(), 37);
-        assert_eq!(residency.peak_bytes(), 37);
-        let allocation = aw_tap_window_allocation_spec(residency, "initial-128x128-ch0-1", &replay)
-            .unwrap()
-            .expect("selected AW execution has a tap allocation");
-
-        assert_eq!(allocation.bytes, 37);
-        assert_eq!(allocation.purpose, crate::AllocationPurpose::Data);
-        assert!(allocation.allocation.as_str().contains("aw-tap-window"));
-        assert_eq!(allocation.acquire_at, replay);
-        assert_eq!(
-            allocation.release_after,
-            std::collections::BTreeSet::from([crate::WorkDependency::Fence(crate::FenceId::new(
-                replay,
-                crate::FenceKind::Io
-            ))])
-        );
-
-        let mut no_window = residency;
-        no_window.aw_tap_window_bytes = 0;
-        no_window.peak_bytes = 0;
-        assert!(
-            aw_tap_window_allocation_spec(
-                no_window,
-                "gridded-128x128-ch0-1",
-                &crate::WorkNodeId::new("t51-gridded-replay"),
-            )
-            .unwrap()
-            .is_none()
-        );
     }
 
     #[test]
