@@ -29,6 +29,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak},
+    time::Duration,
 };
 
 use casa_imaging_model::{
@@ -2666,7 +2667,124 @@ struct ValidationEvidence {
     file_descriptors_peak: u64,
     evictions: Vec<(ArtifactIdentity, u64)>,
     materialized: Option<MaterializedArtifactEvidence>,
+    reader_phase: Option<ReaderObservationPhase>,
+    reader: ReaderSessionObservations,
     accounting_overflowed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReaderObservationPhase {
+    Activation,
+    Consume,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ReaderPayloadObservations {
+    metadata_checks: u64,
+    opens: u64,
+    declared_bytes: u64,
+    read_bytes: u64,
+    hashed_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ReaderSessionObservations {
+    lock_wait: Duration,
+    metadata_validation: Duration,
+    payload_consumption: Duration,
+    session_wall: Duration,
+    expected_entries: u64,
+    discovered_entries: u64,
+    accepted_entries: u64,
+    duplicate_entries: u64,
+    directory_enumerations: u64,
+    directory_entries: u64,
+    manifest_opens: u64,
+    manifest_bytes: u64,
+    activation_payload: ReaderPayloadObservations,
+    consume_payload: ReaderPayloadObservations,
+    cells_requested: u64,
+    cells_verified: u64,
+    cells_committed: u64,
+    cells_rejected: u64,
+    digest_failures: u64,
+    eof_failures: u64,
+    finite_failures: u64,
+    peak_decoded_bytes: u64,
+    peak_buffer_bytes: u64,
+    first_failure_identity: Option<ArtifactIdentity>,
+}
+
+impl ReaderSessionObservations {
+    fn merge(&mut self, other: &Self) {
+        self.lock_wait = self.lock_wait.saturating_add(other.lock_wait);
+        self.metadata_validation = self
+            .metadata_validation
+            .saturating_add(other.metadata_validation);
+        self.payload_consumption = self
+            .payload_consumption
+            .saturating_add(other.payload_consumption);
+        for (total, increment) in [
+            (&mut self.expected_entries, other.expected_entries),
+            (&mut self.discovered_entries, other.discovered_entries),
+            (&mut self.accepted_entries, other.accepted_entries),
+            (&mut self.duplicate_entries, other.duplicate_entries),
+            (
+                &mut self.directory_enumerations,
+                other.directory_enumerations,
+            ),
+            (&mut self.directory_entries, other.directory_entries),
+            (&mut self.manifest_opens, other.manifest_opens),
+            (&mut self.manifest_bytes, other.manifest_bytes),
+            (&mut self.cells_requested, other.cells_requested),
+            (&mut self.cells_verified, other.cells_verified),
+            (&mut self.cells_committed, other.cells_committed),
+            (&mut self.cells_rejected, other.cells_rejected),
+            (&mut self.digest_failures, other.digest_failures),
+            (&mut self.eof_failures, other.eof_failures),
+            (&mut self.finite_failures, other.finite_failures),
+        ] {
+            *total = total.saturating_add(increment);
+        }
+        merge_payload_observations(&mut self.activation_payload, &other.activation_payload);
+        merge_payload_observations(&mut self.consume_payload, &other.consume_payload);
+        self.peak_decoded_bytes = self.peak_decoded_bytes.max(other.peak_decoded_bytes);
+        self.peak_buffer_bytes = self.peak_buffer_bytes.max(other.peak_buffer_bytes);
+        if self.first_failure_identity.is_none() {
+            self.first_failure_identity = other.first_failure_identity;
+        }
+    }
+
+    fn record_failure(&mut self, identity: ArtifactIdentity, error: &PreparedArtifactError) {
+        if self.first_failure_identity.is_none() {
+            self.first_failure_identity = Some(identity);
+        }
+        let counter = match error {
+            PreparedArtifactError::CorruptArtifact | PreparedArtifactError::IdentityMismatch => {
+                &mut self.digest_failures
+            }
+            PreparedArtifactError::IncompleteArtifact
+            | PreparedArtifactError::OversizedArtifact => &mut self.eof_failures,
+            PreparedArtifactError::NonFiniteValue { .. } => &mut self.finite_failures,
+            _ => return,
+        };
+        *counter = counter.saturating_add(1);
+    }
+}
+
+fn merge_payload_observations(
+    total: &mut ReaderPayloadObservations,
+    other: &ReaderPayloadObservations,
+) {
+    for (total, increment) in [
+        (&mut total.metadata_checks, other.metadata_checks),
+        (&mut total.opens, other.opens),
+        (&mut total.declared_bytes, other.declared_bytes),
+        (&mut total.read_bytes, other.read_bytes),
+        (&mut total.hashed_bytes, other.hashed_bytes),
+    ] {
+        *total = total.saturating_add(increment);
+    }
 }
 
 impl ValidationEvidence {
@@ -2694,6 +2812,16 @@ impl ValidationEvidence {
         evidence
     }
 
+    fn for_reader(
+        budget: PreparedArtifactBudget,
+        resident_limit: u64,
+        phase: ReaderObservationPhase,
+    ) -> Self {
+        let mut evidence = Self::for_operation(budget, resident_limit);
+        evidence.reader_phase = Some(phase);
+        evidence
+    }
+
     fn source_read_operation(&mut self, demand_id: &str) {
         self.record_source_operations(demand_id, 1);
     }
@@ -2712,6 +2840,109 @@ impl ValidationEvidence {
 
     fn store_validation(&mut self) {
         self.record(CacheIoClass::Read, 0);
+    }
+
+    fn expect_reader_entries(&mut self, entries: usize) {
+        self.reader.expected_entries = u64::try_from(entries).unwrap_or(u64::MAX);
+    }
+
+    fn record_payload_read(&mut self, bytes: u64) {
+        if let Some(payload) = self.reader_payload() {
+            payload.read_bytes = payload.read_bytes.saturating_add(bytes);
+        }
+    }
+
+    fn record_payload_hashed(&mut self, bytes: u64) {
+        if let Some(payload) = self.reader_payload() {
+            payload.hashed_bytes = payload.hashed_bytes.saturating_add(bytes);
+        }
+    }
+
+    fn directory_enumeration(&mut self) {
+        if self.reader_phase == Some(ReaderObservationPhase::Activation) {
+            self.reader.directory_enumerations =
+                self.reader.directory_enumerations.saturating_add(1);
+        }
+    }
+
+    fn directory_entry(&mut self) {
+        if self.reader_phase == Some(ReaderObservationPhase::Activation) {
+            self.reader.directory_entries = self.reader.directory_entries.saturating_add(1);
+        }
+    }
+
+    fn manifest_open(&mut self) {
+        if self.reader_phase == Some(ReaderObservationPhase::Activation) {
+            self.reader.manifest_opens = self.reader.manifest_opens.saturating_add(1);
+        }
+    }
+
+    fn manifest_bytes(&mut self, bytes: u64) {
+        if self.reader_phase == Some(ReaderObservationPhase::Activation) {
+            self.reader.manifest_bytes = self.reader.manifest_bytes.saturating_add(bytes);
+        }
+    }
+
+    fn payload_metadata(&mut self, declared_bytes: u64) {
+        self.payload_metadata_check();
+        self.payload_declared(declared_bytes);
+    }
+
+    fn payload_metadata_check(&mut self) {
+        if let Some(payload) = self.reader_payload() {
+            payload.metadata_checks = payload.metadata_checks.saturating_add(1);
+        }
+    }
+
+    fn payload_declared(&mut self, declared_bytes: u64) {
+        if let Some(payload) = self.reader_payload() {
+            payload.declared_bytes = payload.declared_bytes.saturating_add(declared_bytes);
+        }
+    }
+
+    fn payload_open(&mut self) {
+        if let Some(payload) = self.reader_payload() {
+            payload.opens = payload.opens.saturating_add(1);
+        }
+    }
+
+    fn reader_payload(&mut self) -> Option<&mut ReaderPayloadObservations> {
+        match self.reader_phase {
+            Some(ReaderObservationPhase::Activation) => Some(&mut self.reader.activation_payload),
+            Some(ReaderObservationPhase::Consume) => Some(&mut self.reader.consume_payload),
+            None => None,
+        }
+    }
+
+    fn discover_reader_entries(&mut self, entries: usize) {
+        self.reader.discovered_entries = u64::try_from(entries).unwrap_or(u64::MAX);
+    }
+
+    fn accept_reader_entry(&mut self) {
+        self.reader.accepted_entries = self.reader.accepted_entries.saturating_add(1);
+    }
+
+    fn duplicate_reader_entry(&mut self, identity: ArtifactIdentity) {
+        self.reader.duplicate_entries = self.reader.duplicate_entries.saturating_add(1);
+        if self.reader.first_failure_identity.is_none() {
+            self.reader.first_failure_identity = Some(identity);
+        }
+    }
+
+    fn observe_lock_wait(&mut self, elapsed: Duration) {
+        self.reader.lock_wait = self.reader.lock_wait.saturating_add(elapsed);
+    }
+
+    fn observe_metadata_validation(&mut self, elapsed: Duration) {
+        self.reader.metadata_validation = self.reader.metadata_validation.saturating_add(elapsed);
+    }
+
+    fn observe_payload_consumption(&mut self, elapsed: Duration) {
+        self.reader.payload_consumption = self.reader.payload_consumption.saturating_add(elapsed);
+    }
+
+    fn record_reader_failure(&mut self, identity: ArtifactIdentity, error: &PreparedArtifactError) {
+        self.reader.record_failure(identity, error);
     }
 
     fn acquire_resident(&mut self, bytes: u64) {
@@ -3035,6 +3266,7 @@ impl Read for BoundedFileReader<'_> {
             let mut probe = [0_u8; 1];
             let bytes = self.file.read(&mut probe)?;
             self.evidence.record(CacheIoClass::Read, bytes as u64);
+            self.evidence.manifest_bytes(bytes as u64);
             if bytes != 0 {
                 self.exceeded = true;
                 return Err(io::Error::new(
@@ -3048,6 +3280,7 @@ impl Read for BoundedFileReader<'_> {
         let bytes = self.file.read(&mut output[..limit])?;
         self.remaining = self.remaining.saturating_sub(bytes as u64);
         self.evidence.record(CacheIoClass::Read, bytes as u64);
+        self.evidence.manifest_bytes(bytes as u64);
         Ok(bytes)
     }
 }

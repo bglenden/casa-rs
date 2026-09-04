@@ -288,6 +288,7 @@ struct PreparedPool {
     available: Condvar,
 }
 
+#[derive(Default)]
 struct PreparedPoolState {
     ceiling: usize,
     workspace_ceiling: usize,
@@ -312,6 +313,15 @@ struct ResidentPreparedCell {
     cell: Arc<AwConvolutionCell>,
     bytes: usize,
     last_use: u64,
+}
+
+impl PreparedPoolState {
+    fn invalidate(&mut self) {
+        self.closed = true;
+        self.aborted = true;
+        self.cells.clear();
+        self.resident = 0;
+    }
 }
 
 impl CasaAwCache {
@@ -572,21 +582,7 @@ impl PreparedAwCellProvider {
                 state: Mutex::new(PreparedPoolState {
                     ceiling: resident_byte_ceiling,
                     workspace_ceiling,
-                    resident: 0,
-                    reserved: 0,
-                    reserved_workspace: 0,
-                    clock: 0,
-                    cells: BTreeMap::new(),
-                    loading: BTreeSet::new(),
-                    peak_resident: 0,
-                    peak_workspace: 0,
-                    peak_pinned: 0,
-                    hits: 0,
-                    loads: 0,
-                    evicted_bytes: 0,
-                    copied_bytes: 0,
-                    closed: false,
-                    aborted: false,
+                    ..PreparedPoolState::default()
                 }),
                 available: Condvar::new(),
             }),
@@ -789,7 +785,12 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 .ok_or(AwOperatorError::MeasurementOverflow)?;
             let cell = match decoded {
                 Ok(cell) if !state.closed && !state.aborted => cell,
-                Ok(_) | Err(_) => {
+                Ok(_) => {
+                    self.pool.available.notify_all();
+                    return Err(AwOperatorError::PreparedCellUnavailable);
+                }
+                Err(_) => {
+                    state.invalidate();
                     self.pool.available.notify_all();
                     return Err(AwOperatorError::PreparedCellUnavailable);
                 }
@@ -915,10 +916,7 @@ impl PreparedArtifactReaderResidency for PreparedAwCellProvider {
 
     fn abort(&self) {
         if let Ok(mut state) = self.pool.state.lock() {
-            state.closed = true;
-            state.aborted = true;
-            state.cells.clear();
-            state.resident = 0;
+            state.invalidate();
             self.pool.available.notify_all();
         }
     }
@@ -1640,6 +1638,40 @@ pub(crate) mod tests {
                 assert_eq!(stored[x * plane.ncols() + y], plane[[x, y]]);
             }
         }
+    }
+
+    #[test]
+    fn failed_reader_load_invalidates_all_provider_residency_before_reuse() {
+        let root = TempDir::new().unwrap();
+        write_test_cache(root.path());
+        let cache = CasaAwCache::open(root.path()).unwrap();
+        let identity = prepared_metadata(cache.entries.values().next().unwrap())
+            .unwrap()
+            .identity();
+        let layout = AwKernelLayout::new([0, 0], 1, [3, 3], [1, 1]).unwrap();
+        let kernel = AwConvolutionKernel::new(layout, vec![Complex64::new(1.0, 0.0); 9]).unwrap();
+        let cell = Arc::new(AwConvolutionCell::new(identity, kernel.clone(), kernel).unwrap());
+        let bytes = cell.resident_bytes();
+        let key = identity.as_bytes();
+        let mut state = PreparedPoolState {
+            resident: bytes,
+            cells: BTreeMap::from([(
+                key,
+                ResidentPreparedCell {
+                    cell,
+                    bytes,
+                    last_use: 1,
+                },
+            )]),
+            ..PreparedPoolState::default()
+        };
+
+        state.invalidate();
+
+        assert!(state.closed);
+        assert!(state.aborted);
+        assert_eq!(state.resident, 0);
+        assert!(state.cells.is_empty());
     }
 
     #[test]

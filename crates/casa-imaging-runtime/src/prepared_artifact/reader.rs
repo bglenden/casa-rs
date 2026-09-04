@@ -266,11 +266,15 @@ struct ReaderState {
     write_rate_peak: u64,
     operations_rate_peak: u64,
     queue_slots_peak: u64,
+    observations: ReaderSessionObservations,
+    session_started: Option<std::time::Instant>,
     read_count: u64,
     closed: bool,
     aborted: bool,
+    reader_failed: bool,
     released: bool,
     fence_emitted: bool,
+    observer_emitted: bool,
 }
 
 impl ReaderState {
@@ -298,7 +302,35 @@ impl ReaderState {
         self.write_rate_peak = self.write_rate_peak.max(measurements.write_rate);
         self.operations_rate_peak = self.operations_rate_peak.max(measurements.operations_rate);
         self.queue_slots_peak = self.queue_slots_peak.max(measurements.queue_slots);
+        self.observations.peak_buffer_bytes = self
+            .observations
+            .peak_buffer_bytes
+            .max(measurements.resident_buffer_bytes);
+        self.observations.merge(&measurements.observations);
         Ok(())
+    }
+
+    fn record_cell_requested(&mut self) {
+        self.observations.cells_requested = self.observations.cells_requested.saturating_add(1);
+    }
+
+    fn record_cell_committed(&mut self) {
+        self.observations.cells_verified = self.observations.cells_verified.saturating_add(1);
+        self.observations.cells_committed = self.observations.cells_committed.saturating_add(1);
+    }
+
+    fn record_cell_rejected(&mut self, identity: ArtifactIdentity) {
+        self.observations.cells_rejected = self.observations.cells_rejected.saturating_add(1);
+        if self.observations.first_failure_identity.is_none() {
+            self.observations.first_failure_identity = Some(identity);
+        }
+    }
+
+    fn observe_residency(&mut self, residency: PreparedArtifactResidencyMeasurements) {
+        self.observations.peak_decoded_bytes = self
+            .observations
+            .peak_decoded_bytes
+            .max(residency.peak_resident_bytes);
     }
 }
 
@@ -345,6 +377,7 @@ impl PreparedArtifactReader {
             registry: context.implementation_registry_id(),
             lease_epoch: context.lease_epoch(),
         });
+        state.session_started = Some(std::time::Instant::now());
         drop(state);
         let session = self.store.begin_reader_session(&self.entries);
         let mut state = self
@@ -353,9 +386,17 @@ impl PreparedArtifactReader {
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
         let (store_lock, measurements) = match session {
             Ok(session) => session,
-            Err(error) => {
+            Err(failure) => {
+                if let Some(measurements) = &failure.measurements {
+                    if let Err(error) = state.observe(measurements) {
+                        state.aborted = true;
+                        state.reader_failed = true;
+                        return Err(error);
+                    }
+                }
                 state.aborted = true;
-                return Err(error);
+                state.reader_failed = true;
+                return Err(failure.source);
             }
         };
         if state.closed || state.released || state.aborted {
@@ -363,6 +404,7 @@ impl PreparedArtifactReader {
         }
         if let Err(error) = state.observe(&measurements) {
             state.aborted = true;
+            state.reader_failed = true;
             return Err(error);
         }
         state.store_lock = Some(store_lock);
@@ -413,6 +455,7 @@ impl PreparedArtifactReader {
             {
                 return Err(PreparedArtifactError::ReaderClosed);
             }
+            state.record_cell_requested();
             state.active_reads = state
                 .active_reads
                 .checked_add(1)
@@ -434,30 +477,63 @@ impl PreparedArtifactReader {
             .active_reads
             .checked_sub(1)
             .ok_or(PreparedArtifactError::InvalidDescriptor)?;
-        if let Ok(read) = &read {
-            if read.content_identity != entry.integrity_identity
-                || read.payload_bytes != entry.payload_bytes
-            {
-                state.aborted = true;
-                self.settled.notify_all();
-                return Err(PreparedArtifactError::IdentityMismatch);
+        let outcome = match read {
+            Ok(read) => {
+                if let Err(error) = state.observe(&read.measurements) {
+                    state.aborted = true;
+                    state.reader_failed = true;
+                    state.record_cell_rejected(identity);
+                    Err(error)
+                } else if state.aborted {
+                    let error = PreparedArtifactError::ReaderClosed;
+                    state.record_cell_rejected(identity);
+                    Err(error)
+                } else if read.content_identity != entry.integrity_identity
+                    || read.payload_bytes != entry.payload_bytes
+                {
+                    let error = PreparedArtifactError::IdentityMismatch;
+                    state.aborted = true;
+                    state.reader_failed = true;
+                    state.observations.record_failure(identity, &error);
+                    state.record_cell_rejected(identity);
+                    Err(error)
+                } else {
+                    match state.read_count.checked_add(1) {
+                        Some(read_count) => {
+                            state.record_cell_committed();
+                            state.read_count = read_count;
+                            Ok(())
+                        }
+                        None => {
+                            state.aborted = true;
+                            state.reader_failed = true;
+                            state.record_cell_rejected(identity);
+                            Err(PreparedArtifactError::ArtifactTooLarge)
+                        }
+                    }
+                }
             }
-            if let Err(error) = state.observe(&read.measurements) {
+            Err(failure) => {
+                if let Some(measurements) = &failure.measurements {
+                    if let Err(error) = state.observe(measurements) {
+                        state.aborted = true;
+                        state.reader_failed = true;
+                        state.record_cell_rejected(identity);
+                        self.settled.notify_all();
+                        return Err(error);
+                    }
+                }
                 state.aborted = true;
-                self.settled.notify_all();
-                return Err(error);
+                state.reader_failed = true;
+                if failure.measurements.is_none() {
+                    state.observations.record_failure(identity, &failure.source);
+                }
+                state.record_cell_rejected(identity);
+                Err(failure.source)
             }
-            let Some(read_count) = state.read_count.checked_add(1) else {
-                state.aborted = true;
-                self.settled.notify_all();
-                return Err(PreparedArtifactError::ArtifactTooLarge);
-            };
-            state.read_count = read_count;
-        } else {
-            state.aborted = true;
-        }
+        };
         self.settled.notify_all();
-        read.map(|_| ())
+        outcome
     }
 
     fn close(
@@ -493,6 +569,10 @@ impl PreparedArtifactReader {
             store_lock.release(&mut evidence)?;
             let measurements = super::transaction::session_measurements(&evidence, 0)?;
             state.observe(&measurements)?;
+        }
+        state.observe_residency(residency);
+        if state.reader_failed {
+            return Err(PreparedArtifactError::ReaderClosed);
         }
         if residency.peak_resident_bytes > self.plan.decoded_resident_bytes {
             return Err(PreparedArtifactError::ResidentBudgetExceeded {
@@ -571,27 +651,7 @@ impl PreparedArtifactReader {
             self.plan.logical_bytes,
             None,
         );
-        eprintln!(
-            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} decoder_workspace_ceiling_bytes={} total_ceiling_bytes={} session_validations={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} decoder_workspace_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={}",
-            self.plan.catalog_identity,
-            self.plan.logical_bytes,
-            self.plan.decoded_resident_bytes,
-            self.plan.decoder_workspace_bytes,
-            self.plan.total_resident_bytes,
-            state.session_validation_count,
-            state.read_count,
-            state.read_bytes,
-            state.read_operations,
-            residency.peak_resident_bytes,
-            residency.peak_decoder_workspace_bytes,
-            combined_resident,
-            residency.peak_pinned_bytes,
-            residency.hits,
-            residency.loads,
-            residency.evicted_bytes,
-            residency.copied_bytes,
-            state.aborted,
-        );
+        self.emit_observer(&mut state, residency, combined_resident);
         Ok(WorkMeasurements::new(
             resources,
             vec![IoMeasurement::new(
@@ -630,7 +690,7 @@ impl PreparedArtifactReader {
     fn release(
         &self,
         context: WorkExecutionContext<'_>,
-        released_bytes: u64,
+        residency: PreparedArtifactResidencyMeasurements,
     ) -> Result<WorkMeasurements, PreparedArtifactError> {
         self.validate_release_context(context)?;
         let mut state = self
@@ -646,6 +706,13 @@ impl PreparedArtifactReader {
         }
         state.released = true;
         state.store_lock.take();
+        state.observe_residency(residency);
+        let combined_resident = residency
+            .peak_resident_bytes
+            .checked_add(residency.peak_decoder_workspace_bytes)
+            .and_then(|bytes| bytes.checked_add(state.reader_resident_peak))
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        self.emit_observer(&mut state, residency, combined_resident);
         let resources = context
             .resources()
             .iter()
@@ -653,7 +720,7 @@ impl PreparedArtifactReader {
                 let peak = if capability.resource()
                     == &LeaseResource::IoBuffer(IoBufferKind::StorageManager)
                 {
-                    released_bytes
+                    residency.released_bytes
                 } else {
                     capability.amount()
                 };
@@ -696,6 +763,43 @@ impl PreparedArtifactReader {
             return Err(PreparedArtifactError::ReaderInactive);
         }
         Ok(())
+    }
+
+    fn emit_observer(
+        &self,
+        state: &mut ReaderState,
+        residency: PreparedArtifactResidencyMeasurements,
+        combined_resident: u64,
+    ) {
+        if state.observer_emitted {
+            return;
+        }
+        state.observer_emitted = true;
+        state.observations.session_wall = state
+            .session_started
+            .map_or(std::time::Duration::ZERO, |started| started.elapsed());
+        eprintln!(
+            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} decoder_workspace_ceiling_bytes={} total_ceiling_bytes={} session_validations={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} decoder_workspace_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={} observations={:?}",
+            self.plan.catalog_identity,
+            self.plan.logical_bytes,
+            self.plan.decoded_resident_bytes,
+            self.plan.decoder_workspace_bytes,
+            self.plan.total_resident_bytes,
+            state.session_validation_count,
+            state.read_count,
+            state.read_bytes,
+            state.read_operations,
+            residency.peak_resident_bytes,
+            residency.peak_decoder_workspace_bytes,
+            combined_resident,
+            residency.peak_pinned_bytes,
+            residency.hits,
+            residency.loads,
+            residency.evicted_bytes,
+            residency.copied_bytes,
+            state.aborted,
+            state.observations,
+        );
     }
 
     fn abort(&self) {
@@ -930,7 +1034,7 @@ impl PreparedArtifactExecutionBinding {
     ) -> Result<WorkMeasurements, PreparedArtifactError> {
         self.reader.validate_release_context(context)?;
         let residency = self.residency.release()?;
-        self.reader.release(context, residency.released_bytes)
+        self.reader.release(context, residency)
     }
 
     pub(crate) fn abort(&self) {
@@ -971,17 +1075,22 @@ mod tests {
 
     impl ReaderFixture {
         fn new() -> Self {
+            Self::with_entries(1)
+        }
+
+        fn with_entries(entry_count: usize) -> Self {
+            assert!(entry_count > 0);
             let directory = tempfile::tempdir().expect("reader private cache root");
             let storage = StorageDomain {
                 id: StorageDomainId::new("reader-test-storage"),
                 root: directory.path().to_path_buf(),
-                capacity_bytes: 1 << 20,
+                capacity_bytes: 4 << 20,
                 read_rate: crate::RateResourceId::new("reader-test-read-rate"),
                 write_rate: crate::RateResourceId::new("reader-test-write-rate"),
                 operations_rate: None,
                 queue: crate::QueueResourceId::new("reader-test-queue"),
             };
-            let budget = PreparedArtifactBudget::new(1 << 20, 4, STREAMING_BUFFER_BYTES)
+            let budget = PreparedArtifactBudget::new(4 << 20, entry_count, STREAMING_BUFFER_BYTES)
                 .expect("bounded reader cache budget");
             let store = Arc::new(
                 PreparedArtifactStore::open(directory.path().join("private"), &storage, budget)
@@ -998,65 +1107,69 @@ mod tests {
             )
             .expect("reader test registration");
             let owner = PreparedArtifactOwner::from_manifest(registry, registration);
-            let scientific_identity = PreparedArtifactScientificIdentity::kernel(
-                PreparedArtifactKernelSemantics::new(
-                    PreparedArtifactKernelAlgorithm::Gridding,
-                    vec![PAYLOAD.len() as u64],
-                    vec![PAYLOAD.len() as u64],
-                )
-                .expect("reader test kernel semantics"),
-            )
-            .expect("reader test scientific identity");
-            let scientific = ScientificCommitments::from_problem(&problem, scientific_identity);
-            let segment = PreparedArtifactSegmentDescriptor::new(
-                "science",
-                vec![PAYLOAD.len() as u64],
-                vec![0],
-                vec![1],
-                None,
-                PreparedArtifactPrecision::U8,
-                PreparedArtifactOrder::Axis0ContiguousLittleEndian,
-            )
-            .expect("reader test segment");
-            let descriptor = PreparedArtifactDescriptor::from_commitments(
-                owner,
-                PreparedArtifactKind::Kernel,
-                scientific,
-                store.scope.clone(),
-                vec![segment.clone()],
-            )
-            .expect("reader test descriptor");
             let payload_sha256: [u8; 32] = Sha256::digest(PAYLOAD).into();
-            let manifest = ArtifactManifest {
-                schema: CACHE_SCHEMA.to_string(),
-                schema_version: CACHE_SCHEMA_VERSION,
-                identity: descriptor.identity().to_string(),
-                cache_identity: descriptor.cache_identity().to_string(),
-                descriptor: ManifestDescriptor::from_descriptor(&descriptor),
-                payload_sha256: encode_hex(&payload_sha256),
-                payload_bytes: PAYLOAD.len() as u64,
-                segments: vec![ManifestSegment {
-                    descriptor: segment,
-                    offset: 0,
-                    bytes: PAYLOAD.len() as u64,
-                    sha256: encode_hex(&payload_sha256),
-                }],
-            };
-            let entry = store.entry_path(descriptor.identity());
-            fs::create_dir(&entry).expect("reader test cache entry");
-            fs::write(entry.join(PAYLOAD_FILE), PAYLOAD).expect("reader test payload");
-            let mut encoded = serde_json::to_vec(&manifest).expect("reader test manifest");
-            encoded.push(b'\n');
-            fs::write(entry.join(MANIFEST_FILE), encoded).expect("reader test manifest file");
-            let artifact = PreparedArtifact {
-                identity: descriptor.identity(),
-                integrity_identity: derive_content_identity(&descriptor, payload_sha256),
-                cache_identity: descriptor.cache_identity(),
-            };
-            let artifact_identity = descriptor.identity();
+            let mut artifacts = Vec::with_capacity(entry_count);
+            for ordinal in 0..entry_count {
+                let scientific_identity = PreparedArtifactScientificIdentity::kernel(
+                    PreparedArtifactKernelSemantics::new(
+                        PreparedArtifactKernelAlgorithm::Gridding,
+                        vec![PAYLOAD.len() as u64, ordinal as u64 + 1],
+                        vec![PAYLOAD.len() as u64, ordinal as u64 + 1],
+                    )
+                    .expect("reader test kernel semantics"),
+                )
+                .expect("reader test scientific identity");
+                let scientific = ScientificCommitments::from_problem(&problem, scientific_identity);
+                let segment = PreparedArtifactSegmentDescriptor::new(
+                    "science",
+                    vec![PAYLOAD.len() as u64],
+                    vec![0],
+                    vec![1],
+                    None,
+                    PreparedArtifactPrecision::U8,
+                    PreparedArtifactOrder::Axis0ContiguousLittleEndian,
+                )
+                .expect("reader test segment");
+                let descriptor = PreparedArtifactDescriptor::from_commitments(
+                    owner.clone(),
+                    PreparedArtifactKind::Kernel,
+                    scientific,
+                    store.scope.clone(),
+                    vec![segment.clone()],
+                )
+                .expect("reader test descriptor");
+                let manifest = ArtifactManifest {
+                    schema: CACHE_SCHEMA.to_string(),
+                    schema_version: CACHE_SCHEMA_VERSION,
+                    identity: descriptor.identity().to_string(),
+                    cache_identity: descriptor.cache_identity().to_string(),
+                    descriptor: ManifestDescriptor::from_descriptor(&descriptor),
+                    payload_sha256: encode_hex(&payload_sha256),
+                    payload_bytes: PAYLOAD.len() as u64,
+                    segments: vec![ManifestSegment {
+                        descriptor: segment,
+                        offset: 0,
+                        bytes: PAYLOAD.len() as u64,
+                        sha256: encode_hex(&payload_sha256),
+                    }],
+                };
+                let entry = store.entry_path(descriptor.identity());
+                fs::create_dir(&entry).expect("reader test cache entry");
+                fs::write(entry.join(PAYLOAD_FILE), PAYLOAD).expect("reader test payload");
+                let mut encoded = serde_json::to_vec(&manifest).expect("reader test manifest");
+                encoded.push(b'\n');
+                fs::write(entry.join(MANIFEST_FILE), encoded).expect("reader test manifest file");
+                let artifact = PreparedArtifact {
+                    identity: descriptor.identity(),
+                    integrity_identity: derive_content_identity(&descriptor, payload_sha256),
+                    cache_identity: descriptor.cache_identity(),
+                };
+                artifacts.push((descriptor, artifact));
+            }
+            let artifact_identity = artifacts[0].0.identity();
             let factory = PreparedArtifactReaderFactory::new(
                 Arc::clone(&store),
-                vec![(descriptor, artifact)],
+                artifacts,
                 implementation,
                 DECODED_CEILING,
                 DECODER_WORKSPACE_CEILING,
@@ -1477,6 +1590,45 @@ mod tests {
         }
     }
 
+    fn with_reader_context<T>(
+        fixture: &ReaderFixture,
+        reader: &PreparedArtifactReader,
+        release: bool,
+        use_context: impl FnOnce(WorkExecutionContext<'_>) -> T,
+    ) -> T {
+        let plan = reader.plan();
+        let node = if release {
+            scheduled(release_node(plan), plan, 7, true)
+        } else {
+            scheduled(cache_node(plan), plan, 7, false)
+        };
+        let planned = [plan.planned_artifact()];
+        let prediction =
+            StagePrediction::new(node.node().id.clone(), 1).with_io(vec![IoPrediction::new(
+                IoBufferKind::StorageManager,
+                if release { 0 } else { u64::MAX },
+                if release { 0 } else { u64::MAX },
+            )]);
+        let alternative = alternative(plan);
+        let completed = BTreeMap::new();
+        use_context(context(
+            fixture,
+            &node,
+            &planned,
+            &prediction,
+            &alternative,
+            &completed,
+            1,
+        ))
+    }
+
+    fn activate_reader(
+        fixture: &ReaderFixture,
+        reader: &PreparedArtifactReader,
+    ) -> Result<WorkMeasurements, PreparedArtifactError> {
+        with_reader_context(fixture, reader, false, |context| reader.activate(context))
+    }
+
     #[test]
     fn reader_session_does_not_repeat_store_inventory_or_payload_validation_per_load() {
         let fixture = ReaderFixture::new();
@@ -1590,6 +1742,219 @@ mod tests {
                 .active_readers,
             0,
             "aborting the reader must release store mutation exclusion"
+        );
+    }
+
+    #[test]
+    fn reader_activation_of_256_entries_reads_manifests_but_defers_payload_integrity() {
+        let fixture = ReaderFixture::with_entries(256);
+        let reader = fixture.factory.session();
+        activate_reader(&fixture, &reader).expect("activate 256-entry reader session");
+
+        let state = reader.state.lock().expect("reader state");
+        assert_eq!(state.session_validation_count, 1);
+        assert_eq!(state.observations.expected_entries, 256);
+        assert_eq!(state.observations.discovered_entries, 256);
+        assert_eq!(state.observations.accepted_entries, 256);
+        assert_eq!(state.observations.activation_payload.opens, 0);
+        assert_eq!(state.observations.activation_payload.read_bytes, 0);
+        assert_eq!(state.observations.activation_payload.hashed_bytes, 0);
+        assert!(state.observations.directory_enumerations > 0);
+        assert_eq!(state.read_bytes, state.observations.manifest_bytes);
+        assert!(state.reader_resident_peak <= reader.plan.store_resident_bytes);
+        drop(state);
+
+        reader.abort();
+    }
+
+    #[test]
+    fn valid_cell_is_opened_read_hashed_verified_and_committed_once() {
+        let fixture = ReaderFixture::new();
+        let reader = fixture.factory.session();
+        activate_reader(&fixture, &reader).expect("metadata-only activation");
+
+        let mut consumer = CollectingConsumer::default();
+        reader
+            .read(fixture.artifact_identity, &mut consumer)
+            .expect("validated first consume");
+
+        assert_eq!(consumer.bytes, PAYLOAD);
+        let state = reader.state.lock().expect("reader state");
+        let observed = &state.observations;
+        assert_eq!(observed.activation_payload.metadata_checks, 3);
+        assert_eq!(observed.activation_payload.opens, 0);
+        assert_eq!(
+            observed.activation_payload.declared_bytes,
+            PAYLOAD.len() as u64
+        );
+        assert_eq!(observed.activation_payload.read_bytes, 0);
+        assert_eq!(observed.activation_payload.hashed_bytes, 0);
+        assert_eq!(observed.consume_payload.metadata_checks, 0);
+        assert_eq!(observed.consume_payload.opens, 1);
+        assert_eq!(
+            observed.consume_payload.declared_bytes,
+            PAYLOAD.len() as u64
+        );
+        assert_eq!(observed.consume_payload.read_bytes, PAYLOAD.len() as u64);
+        assert_eq!(observed.consume_payload.hashed_bytes, PAYLOAD.len() as u64);
+        assert_eq!(observed.cells_requested, 1);
+        assert_eq!(observed.cells_verified, 1);
+        assert_eq!(observed.cells_committed, 1);
+        assert_eq!(observed.cells_rejected, 0);
+        assert_eq!(observed.digest_failures, 0);
+        assert_eq!(observed.eof_failures, 0);
+        assert_eq!(observed.finite_failures, 0);
+        drop(state);
+        reader.abort();
+    }
+
+    #[test]
+    fn reader_activation_rejects_staging_and_duplicate_catalog_entries() {
+        let fixture = ReaderFixture::new();
+        let staging = fixture
+            .factory
+            .store
+            .cache
+            .join(format!("{STAGING_PREFIX}reader-test"));
+        fs::create_dir(&staging).expect("staging directory");
+        let reader = fixture.factory.session();
+        assert!(matches!(
+            activate_reader(&fixture, &reader),
+            Err(PreparedArtifactError::UnknownCacheEntry(path)) if path == staging
+        ));
+        assert_eq!(
+            reader
+                .state
+                .lock()
+                .expect("reader state")
+                .observations
+                .activation_payload
+                .read_bytes,
+            0,
+            "failed metadata activation must not open a payload"
+        );
+
+        fs::remove_dir(staging).expect("remove test staging directory");
+        let unknown = fixture.factory.store.cache.join("unknown-entry");
+        fs::write(&unknown, b"unknown").expect("unknown cache entry");
+        let reader = fixture.factory.session();
+        assert!(matches!(
+            activate_reader(&fixture, &reader),
+            Err(PreparedArtifactError::UnknownCacheEntry(path)) if path == unknown
+        ));
+        fs::remove_file(unknown).expect("remove unknown cache entry");
+
+        let duplicate = fixture.factory.entries[0].clone();
+        let failure = fixture
+            .factory
+            .store
+            .begin_reader_session(&[duplicate.clone(), duplicate])
+            .err()
+            .expect("duplicate catalog must fail activation");
+        assert!(matches!(
+            failure.source,
+            PreparedArtifactError::InvalidDescriptor
+        ));
+    }
+
+    #[test]
+    fn late_payload_corruption_aborts_reader_without_catalog_publication() {
+        let fixture = ReaderFixture::new();
+        let reader = fixture.factory.session();
+        activate_reader(&fixture, &reader).expect("metadata-only activation");
+        let payload = fixture
+            .factory
+            .store
+            .entry_path(fixture.artifact_identity)
+            .join(PAYLOAD_FILE);
+        let mut corrupted = PAYLOAD.to_vec();
+        *corrupted.last_mut().expect("non-empty payload") ^= 1;
+        fs::write(payload, corrupted).expect("late same-length corruption");
+
+        assert!(matches!(
+            reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
+            Err(PreparedArtifactError::CorruptArtifact)
+        ));
+        let state = reader.state.lock().expect("reader state");
+        assert!(state.aborted);
+        assert_eq!(state.read_count, 0, "failed cells are never completed");
+        assert_eq!(state.observations.consume_payload.opens, 1);
+        assert_eq!(
+            state.observations.consume_payload.read_bytes,
+            PAYLOAD.len() as u64
+        );
+        assert_eq!(
+            state.observations.consume_payload.hashed_bytes,
+            PAYLOAD.len() as u64
+        );
+        assert_eq!(state.observations.cells_requested, 1);
+        assert_eq!(state.observations.cells_verified, 0);
+        assert_eq!(state.observations.cells_committed, 0);
+        assert_eq!(state.observations.cells_rejected, 1);
+        assert_eq!(state.observations.digest_failures, 1);
+        assert_eq!(
+            state.observations.first_failure_identity,
+            Some(fixture.artifact_identity)
+        );
+        drop(state);
+
+        assert!(matches!(
+            with_reader_context(&fixture, &reader, false, |context| reader
+                .close(context, PreparedArtifactResidencyMeasurements::default())),
+            Err(PreparedArtifactError::ReaderClosed)
+        ));
+        let released = with_reader_context(&fixture, &reader, true, |context| {
+            reader.release(context, PreparedArtifactResidencyMeasurements::default())
+        })
+        .expect("cleanup releases failed reader without publication");
+        assert!(released.artifacts().is_empty());
+        assert!(reader.state.lock().expect("reader state").observer_emitted);
+    }
+
+    #[test]
+    fn activation_rejects_manifest_corruption_and_wrong_payload_length_without_payload_reads() {
+        let fixture = ReaderFixture::new();
+        let entry = fixture.factory.store.entry_path(fixture.artifact_identity);
+        fs::write(entry.join(MANIFEST_FILE), b"not-json\n").expect("corrupt test manifest");
+        let reader = fixture.factory.session();
+        assert!(matches!(
+            activate_reader(&fixture, &reader),
+            Err(PreparedArtifactError::Json(_))
+        ));
+        assert_eq!(
+            reader
+                .state
+                .lock()
+                .expect("reader state")
+                .observations
+                .activation_payload
+                .read_bytes,
+            0
+        );
+
+        let fixture = ReaderFixture::new();
+        let payload = fixture
+            .factory
+            .store
+            .entry_path(fixture.artifact_identity)
+            .join(PAYLOAD_FILE);
+        let mut oversized = PAYLOAD.to_vec();
+        oversized.push(0);
+        fs::write(payload, oversized).expect("append one test payload byte");
+        let reader = fixture.factory.session();
+        assert!(matches!(
+            activate_reader(&fixture, &reader),
+            Err(PreparedArtifactError::IncompleteArtifact)
+        ));
+        assert_eq!(
+            reader
+                .state
+                .lock()
+                .expect("reader state")
+                .observations
+                .activation_payload
+                .read_bytes,
+            0
         );
     }
 
