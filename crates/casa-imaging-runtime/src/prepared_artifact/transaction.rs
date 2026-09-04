@@ -5,6 +5,10 @@ use super::*;
 pub(super) struct PreparedArtifactSessionRead {
     pub(super) content_identity: ArtifactIdentity,
     pub(super) payload_bytes: u64,
+    pub(super) measurements: PreparedArtifactSessionMeasurements,
+}
+
+pub(super) struct PreparedArtifactSessionMeasurements {
     pub(super) read_bytes: u64,
     pub(super) read_operations: u64,
     pub(super) resident_buffer_bytes: u64,
@@ -15,6 +19,25 @@ pub(super) struct PreparedArtifactSessionRead {
     pub(super) write_rate: u64,
     pub(super) operations_rate: u64,
     pub(super) queue_slots: u64,
+}
+
+pub(super) fn session_measurements(
+    evidence: &ValidationEvidence,
+    cache_bytes: u64,
+) -> Result<PreparedArtifactSessionMeasurements, PreparedArtifactError> {
+    let counter = evidence.exact_counter(IoBufferKind::StorageManager)?;
+    Ok(PreparedArtifactSessionMeasurements {
+        read_bytes: counter.bytes,
+        read_operations: counter.operations,
+        resident_buffer_bytes: evidence.resident_buffer_bytes,
+        cache_bytes,
+        locks: evidence.locks_peak,
+        file_descriptors: evidence.file_descriptors_peak,
+        read_rate: u64::from(evidence.cache_read.operations > 0),
+        write_rate: u64::from(evidence.cache_write.operations > 0),
+        operations_rate: u64::from(counter.operations > 0),
+        queue_slots: u64::from(counter.operations > 0),
+    })
 }
 
 impl PreparedArtifactStore {
@@ -430,13 +453,51 @@ impl PreparedArtifactStore {
         ))
     }
 
-    /// Revalidate and stream one opaque handle for an already activated
-    /// transaction-bound reader session.
-    ///
-    /// Plan binding is established once by the reader's Cache node. This
-    /// lower-level operation deliberately remains crate-private so callers
-    /// cannot turn an identity handle into an unplanned payload reader.
-    pub(super) fn consume_for_reader(
+    /// Lock and validate the complete immutable catalog once for one reader session.
+    pub(super) fn begin_reader_session(
+        &self,
+        entries: &[super::reader::ReaderEntry],
+    ) -> Result<(ReaderStoreLock, PreparedArtifactSessionMeasurements), PreparedArtifactError> {
+        let first = entries
+            .first()
+            .ok_or(PreparedArtifactError::InvalidDescriptor)?;
+        let resident_limit = entries.iter().try_fold(0_u64, |maximum, entry| {
+            self.reservation(&entry.descriptor, PreparedArtifactOperation::Consume)
+                .map(|reservation| maximum.max(reservation.resident_buffer_bytes))
+        })?;
+        let mut evidence = ValidationEvidence::for_operation(self.budget, resident_limit);
+        evidence.ensure_resident_budget()?;
+        let mut lock = self.lock_reader_session(&mut evidence)?;
+        let validated = (|| {
+            let cache_bytes = self.validate_raw_budget(first.descriptor.identity, &mut evidence)?;
+            for entry in entries {
+                let validated = self.validate_entry_with_evidence(
+                    entry.descriptor.identity,
+                    Some(&entry.descriptor),
+                    &mut evidence,
+                )?;
+                if validated.payload_bytes != entry.payload_bytes
+                    || derive_content_identity(&entry.descriptor, validated.payload_sha256)
+                        != entry.integrity_identity
+                {
+                    return Err(PreparedArtifactError::IdentityMismatch);
+                }
+            }
+            Ok(cache_bytes)
+        })();
+        let cache_bytes = match validated {
+            Ok(cache_bytes) => cache_bytes,
+            Err(error) => {
+                let _ = lock.release(&mut evidence);
+                return Err(error);
+            }
+        };
+        let measurements = session_measurements(&evidence, cache_bytes)?;
+        Ok((lock, measurements))
+    }
+
+    /// Stream and checksum one cell while the session holds the validated store lock.
+    pub(super) fn read_for_reader(
         &self,
         descriptor: &PreparedArtifactDescriptor,
         artifact: &PreparedArtifact,
@@ -451,72 +512,62 @@ impl PreparedArtifactStore {
         let mut evidence =
             ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
         evidence.ensure_resident_budget()?;
-        let mut lock = self.lock(&mut evidence)?;
-        let consumed = (|| {
-            let cache_bytes = self.validate_raw_budget(descriptor.identity, &mut evidence)?;
-            let validated = self.validate_entry_with_evidence(
-                descriptor.identity,
-                Some(descriptor),
-                &mut evidence,
-            )?;
-            if artifact.integrity_identity
-                != derive_content_identity(descriptor, validated.payload_sha256)
-            {
-                return Err(PreparedArtifactError::IdentityMismatch);
+        evidence.observe_locks(1);
+        evidence.observe_file_descriptors(1);
+        let payload_path = self.entry_path(descriptor.identity).join(PAYLOAD_FILE);
+        evidence.store_read_operation();
+        let mut payload = File::open(payload_path).map_err(map_incomplete)?;
+        evidence.observe_file_descriptors(2);
+        let buffer_len = streaming_buffer_len(self.budget, descriptor)?;
+        let mut buffer = vec![0_u8; buffer_len];
+        let mut payload_hasher = Sha256::new();
+        let mut payload_bytes = 0_u64;
+        evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
+            for segment in &descriptor.segments {
+                let mut remaining = segment.byte_len()?;
+                let scalar_bytes = segment.precision.scalar_bytes();
+                let mut byte_offset = 0_u64;
+                let mut scalar = 0_u64;
+                while remaining > 0 {
+                    let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
+                        .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+                    limit -= limit % scalar_bytes;
+                    read_exact_counted(
+                        &mut payload,
+                        &mut buffer[..limit],
+                        evidence,
+                        CacheIoClass::Read,
+                    )?;
+                    validate_finite(&buffer[..limit], segment.precision, &segment.name, scalar)?;
+                    payload_hasher.update(&buffer[..limit]);
+                    evidence.store_validation();
+                    consumer.consume_segment(segment, byte_offset, &buffer[..limit])?;
+                    remaining -= limit as u64;
+                    byte_offset += limit as u64;
+                    scalar += (limit / scalar_bytes) as u64;
+                    payload_bytes = payload_bytes
+                        .checked_add(limit as u64)
+                        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+                }
             }
-            let payload_path = validated.path.join(PAYLOAD_FILE);
-            evidence.store_read_operation();
-            let mut payload = File::open(payload_path).map_err(map_incomplete)?;
-            evidence.observe_file_descriptors(2);
-            let buffer_len = streaming_buffer_len(self.budget, descriptor)?;
-            let mut buffer = vec![0_u8; buffer_len];
-            evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
-                for segment in &descriptor.segments {
-                    let mut remaining = segment.byte_len()?;
-                    let scalar_bytes = segment.precision.scalar_bytes();
-                    let mut byte_offset = 0_u64;
-                    while remaining > 0 {
-                        let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
-                            .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
-                        limit -= limit % scalar_bytes;
-                        read_exact_counted(
-                            &mut payload,
-                            &mut buffer[..limit],
-                            evidence,
-                            CacheIoClass::Read,
-                        )?;
-                        consumer.consume_segment(segment, byte_offset, &buffer[..limit])?;
-                        remaining -= limit as u64;
-                        byte_offset += limit as u64;
-                    }
-                }
-                let mut extra = [0_u8; 1];
-                if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
-                    return Err(PreparedArtifactError::OversizedArtifact);
-                }
-                Ok(())
-            })?;
-            Ok((validated, cache_bytes))
-        })();
-        let unlock = lock.release(&mut evidence);
-        let (validated, cache_bytes) = match (consumed, unlock) {
-            (Ok(validated), Ok(())) => validated,
-            (Err(error), _) | (Ok(_), Err(error)) => return Err(error),
-        };
-        let counter = evidence.exact_counter(IoBufferKind::StorageManager)?;
+            let mut extra = [0_u8; 1];
+            if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
+                return Err(PreparedArtifactError::OversizedArtifact);
+            }
+            Ok(())
+        })?;
+        let content_identity =
+            derive_content_identity(descriptor, payload_hasher.finalize().into());
+        evidence.store_validation();
+        if payload_bytes != descriptor.payload_bytes()?
+            || content_identity != artifact.integrity_identity
+        {
+            return Err(PreparedArtifactError::CorruptArtifact);
+        }
         Ok(PreparedArtifactSessionRead {
-            content_identity: derive_content_identity(descriptor, validated.payload_sha256),
-            payload_bytes: validated.payload_bytes,
-            read_bytes: counter.bytes,
-            read_operations: counter.operations,
-            resident_buffer_bytes: evidence.resident_buffer_bytes,
-            cache_bytes,
-            locks: evidence.locks_peak,
-            file_descriptors: evidence.file_descriptors_peak,
-            read_rate: u64::from(evidence.cache_read.operations > 0),
-            write_rate: u64::from(evidence.cache_write.operations > 0),
-            operations_rate: u64::from(counter.operations > 0),
-            queue_slots: u64::from(counter.operations > 0),
+            content_identity,
+            payload_bytes,
+            measurements: session_measurements(&evidence, 0)?,
         })
     }
 
@@ -1389,11 +1440,18 @@ impl PreparedArtifactStore {
         &self,
         evidence: &mut ValidationEvidence,
     ) -> Result<StoreLock<'_>, PreparedArtifactError> {
-        let in_process = self
+        let mut in_process = self
             .state
-            .mutation
+            .access
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        while in_process.active_readers != 0 {
+            in_process = self
+                .state
+                .readers_released
+                .wait(in_process)
+                .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        }
         evidence.observe_locks(1);
         evidence.store_control_operation();
         let file = match OpenOptions::new()
@@ -1420,6 +1478,51 @@ impl PreparedArtifactStore {
         FileExt::lock_exclusive(&file)?;
         Ok(StoreLock {
             _in_process: in_process,
+            file,
+            locked: true,
+        })
+    }
+
+    fn lock_reader_session(
+        &self,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ReaderStoreLock, PreparedArtifactError> {
+        let mut access = self
+            .state
+            .access
+            .lock()
+            .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        evidence.observe_locks(1);
+        evidence.store_control_operation();
+        let file = match OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&self.lock_path)
+        {
+            Ok(file) => {
+                evidence.store_write_operation();
+                file
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                evidence.store_control_operation();
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&self.lock_path)?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        evidence.observe_file_descriptors(1);
+        evidence.store_control_operation();
+        FileExt::lock_shared(&file)?;
+        access.active_readers = access
+            .active_readers
+            .checked_add(1)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        drop(access);
+        Ok(ReaderStoreLock {
+            state: Arc::clone(&self.state),
             file,
             locked: true,
         })

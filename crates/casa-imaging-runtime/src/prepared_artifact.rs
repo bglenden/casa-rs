@@ -28,7 +28,7 @@ use std::{
     mem::{size_of, size_of_val},
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, OnceLock, Weak},
+    sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, Weak},
 };
 
 use casa_imaging_model::{
@@ -1587,13 +1587,25 @@ pub struct PreparedArtifactStore {
 
 #[derive(Debug)]
 struct RootState {
-    mutation: Mutex<()>,
+    access: Mutex<RootAccessState>,
+    readers_released: Condvar,
+}
+
+#[derive(Debug, Default)]
+struct RootAccessState {
+    active_readers: usize,
 }
 
 static ROOT_STATES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<RootState>>>> = OnceLock::new();
 
 struct StoreLock<'a> {
-    _in_process: MutexGuard<'a, ()>,
+    _in_process: MutexGuard<'a, RootAccessState>,
+    file: File,
+    locked: bool,
+}
+
+struct ReaderStoreLock {
+    state: Arc<RootState>,
     file: File,
     locked: bool,
 }
@@ -1612,6 +1624,46 @@ impl Drop for StoreLock<'_> {
         if self.locked {
             let _ = FileExt::unlock(&self.file);
         }
+    }
+}
+
+impl ReaderStoreLock {
+    fn release(&mut self, evidence: &mut ValidationEvidence) -> Result<(), PreparedArtifactError> {
+        if !self.locked {
+            return Ok(());
+        }
+        let mut access = self
+            .state
+            .access
+            .lock()
+            .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        evidence.store_control_operation();
+        FileExt::unlock(&self.file)?;
+        access.active_readers = access
+            .active_readers
+            .checked_sub(1)
+            .ok_or(PreparedArtifactError::PoisonedStore)?;
+        self.locked = false;
+        if access.active_readers == 0 {
+            self.state.readers_released.notify_all();
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ReaderStoreLock {
+    fn drop(&mut self) {
+        if !self.locked {
+            return;
+        }
+        let _ = FileExt::unlock(&self.file);
+        if let Ok(mut access) = self.state.access.lock() {
+            access.active_readers = access.active_readers.saturating_sub(1);
+            if access.active_readers == 0 {
+                self.state.readers_released.notify_all();
+            }
+        }
+        self.locked = false;
     }
 }
 
@@ -2060,7 +2112,8 @@ fn root_state(root: &Path) -> Result<Arc<RootState>, PreparedArtifactError> {
         return Ok(state);
     }
     let state = Arc::new(RootState {
-        mutation: Mutex::new(()),
+        access: Mutex::new(RootAccessState::default()),
+        readers_released: Condvar::new(),
     });
     states.insert(root.to_path_buf(), Arc::downgrade(&state));
     Ok(state)

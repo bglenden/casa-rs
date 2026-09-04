@@ -12,10 +12,10 @@ use crate::{
 const READER_CATALOG_DOMAIN: &[u8] = b"casa-rs:prepared-artifact-reader-catalog:v1";
 
 #[derive(Clone)]
-struct ReaderEntry {
-    descriptor: PreparedArtifactDescriptor,
-    integrity_identity: ArtifactIdentity,
-    payload_bytes: u64,
+pub(super) struct ReaderEntry {
+    pub(super) descriptor: PreparedArtifactDescriptor,
+    pub(super) integrity_identity: ArtifactIdentity,
+    pub(super) payload_bytes: u64,
 }
 
 /// Cloneable, payload-free plan declaration for one lazy prepared catalog.
@@ -253,6 +253,8 @@ struct ReaderBinding {
 #[derive(Default)]
 struct ReaderState {
     binding: Option<ReaderBinding>,
+    store_lock: Option<ReaderStoreLock>,
+    session_validation_count: u64,
     active_reads: usize,
     read_bytes: u64,
     read_operations: u64,
@@ -269,6 +271,35 @@ struct ReaderState {
     aborted: bool,
     released: bool,
     fence_emitted: bool,
+}
+
+impl ReaderState {
+    fn observe(
+        &mut self,
+        measurements: &super::transaction::PreparedArtifactSessionMeasurements,
+    ) -> Result<(), PreparedArtifactError> {
+        self.read_bytes = self
+            .read_bytes
+            .checked_add(measurements.read_bytes)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        self.read_operations = self
+            .read_operations
+            .checked_add(measurements.read_operations)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        self.reader_resident_peak = self
+            .reader_resident_peak
+            .max(measurements.resident_buffer_bytes);
+        self.cache_bytes_peak = self.cache_bytes_peak.max(measurements.cache_bytes);
+        self.locks_peak = self.locks_peak.max(measurements.locks);
+        self.file_descriptors_peak = self
+            .file_descriptors_peak
+            .max(measurements.file_descriptors);
+        self.read_rate_peak = self.read_rate_peak.max(measurements.read_rate);
+        self.write_rate_peak = self.write_rate_peak.max(measurements.write_rate);
+        self.operations_rate_peak = self.operations_rate_peak.max(measurements.operations_rate);
+        self.queue_slots_peak = self.queue_slots_peak.max(measurements.queue_slots);
+        Ok(())
+    }
 }
 
 /// One attempt-local lazy reader. Payload access is unavailable before its
@@ -314,6 +345,28 @@ impl PreparedArtifactReader {
             registry: context.implementation_registry_id(),
             lease_epoch: context.lease_epoch(),
         });
+        drop(state);
+        let session = self.store.begin_reader_session(&self.entries);
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        let (store_lock, measurements) = match session {
+            Ok(session) => session,
+            Err(error) => {
+                state.aborted = true;
+                return Err(error);
+            }
+        };
+        if state.closed || state.released || state.aborted {
+            return Err(PreparedArtifactError::ReaderClosed);
+        }
+        if let Err(error) = state.observe(&measurements) {
+            state.aborted = true;
+            return Err(error);
+        }
+        state.store_lock = Some(store_lock);
+        state.session_validation_count = 1;
         let worker = context
             .resources()
             .iter()
@@ -352,7 +405,12 @@ impl PreparedArtifactReader {
             if state.binding.is_none() {
                 return Err(PreparedArtifactError::ReaderInactive);
             }
-            if state.closed || state.aborted || state.released {
+            if state.store_lock.is_none()
+                || state.session_validation_count != 1
+                || state.closed
+                || state.aborted
+                || state.released
+            {
                 return Err(PreparedArtifactError::ReaderClosed);
             }
             state.active_reads = state
@@ -367,7 +425,7 @@ impl PreparedArtifactReader {
         };
         let read = self
             .store
-            .consume_for_reader(&entry.descriptor, &artifact, consumer);
+            .read_for_reader(&entry.descriptor, &artifact, consumer);
         let mut state = self
             .state
             .lock()
@@ -384,33 +442,19 @@ impl PreparedArtifactReader {
                 self.settled.notify_all();
                 return Err(PreparedArtifactError::IdentityMismatch);
             }
-            let Some(read_bytes) = state.read_bytes.checked_add(read.read_bytes) else {
+            if let Err(error) = state.observe(&read.measurements) {
                 state.aborted = true;
                 self.settled.notify_all();
-                return Err(PreparedArtifactError::ArtifactTooLarge);
-            };
-            let Some(read_operations) = state.read_operations.checked_add(read.read_operations)
-            else {
-                state.aborted = true;
-                self.settled.notify_all();
-                return Err(PreparedArtifactError::ArtifactTooLarge);
-            };
+                return Err(error);
+            }
             let Some(read_count) = state.read_count.checked_add(1) else {
                 state.aborted = true;
                 self.settled.notify_all();
                 return Err(PreparedArtifactError::ArtifactTooLarge);
             };
-            state.read_bytes = read_bytes;
-            state.read_operations = read_operations;
-            state.reader_resident_peak = state.reader_resident_peak.max(read.resident_buffer_bytes);
-            state.cache_bytes_peak = state.cache_bytes_peak.max(read.cache_bytes);
-            state.locks_peak = state.locks_peak.max(read.locks);
-            state.file_descriptors_peak = state.file_descriptors_peak.max(read.file_descriptors);
-            state.read_rate_peak = state.read_rate_peak.max(read.read_rate);
-            state.write_rate_peak = state.write_rate_peak.max(read.write_rate);
-            state.operations_rate_peak = state.operations_rate_peak.max(read.operations_rate);
-            state.queue_slots_peak = state.queue_slots_peak.max(read.queue_slots);
             state.read_count = read_count;
+        } else {
+            state.aborted = true;
         }
         self.settled.notify_all();
         read.map(|_| ())
@@ -433,6 +477,7 @@ impl PreparedArtifactReader {
         {
             return Err(PreparedArtifactError::ReaderBindingMismatch);
         }
+        state.closed = true;
         while state.active_reads != 0 {
             state = self
                 .settled
@@ -442,8 +487,13 @@ impl PreparedArtifactReader {
         if state.fence_emitted {
             return Err(PreparedArtifactError::ReaderClosed);
         }
-        state.closed = true;
         state.fence_emitted = true;
+        if let Some(mut store_lock) = state.store_lock.take() {
+            let mut evidence = ValidationEvidence::default();
+            store_lock.release(&mut evidence)?;
+            let measurements = super::transaction::session_measurements(&evidence, 0)?;
+            state.observe(&measurements)?;
+        }
         if residency.peak_resident_bytes > self.plan.decoded_resident_bytes {
             return Err(PreparedArtifactError::ResidentBudgetExceeded {
                 required: residency.peak_resident_bytes,
@@ -522,12 +572,13 @@ impl PreparedArtifactReader {
             None,
         );
         eprintln!(
-            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} decoder_workspace_ceiling_bytes={} total_ceiling_bytes={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} decoder_workspace_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={}",
+            "imaging_prepared_artifact_reader_summary catalog={} logical_bytes={} decoded_ceiling_bytes={} decoder_workspace_ceiling_bytes={} total_ceiling_bytes={} session_validations={} reads={} read_bytes={} read_operations={} resident_peak_bytes={} decoder_workspace_peak_bytes={} total_peak_resident_bytes={} pinned_peak_bytes={} hits={} loads={} evicted_bytes={} copied_bytes={} aborted={}",
             self.plan.catalog_identity,
             self.plan.logical_bytes,
             self.plan.decoded_resident_bytes,
             self.plan.decoder_workspace_bytes,
             self.plan.total_resident_bytes,
+            state.session_validation_count,
             state.read_count,
             state.read_bytes,
             state.read_operations,
@@ -587,7 +638,14 @@ impl PreparedArtifactReader {
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
         state.closed = true;
+        while state.active_reads != 0 {
+            state = self
+                .settled
+                .wait(state)
+                .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        }
         state.released = true;
+        state.store_lock.take();
         let resources = context
             .resources()
             .iter()
@@ -643,6 +701,13 @@ impl PreparedArtifactReader {
     fn abort(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.aborted = true;
+            while state.active_reads != 0 {
+                let Ok(next) = self.settled.wait(state) else {
+                    return;
+                };
+                state = next;
+            }
+            state.store_lock.take();
             self.settled.notify_all();
         }
     }
@@ -894,6 +959,7 @@ mod tests {
     const PAYLOAD: &[u8] = b"prepared-reader-dummy-science";
     const DECODED_CEILING: u64 = 64;
     const DECODER_WORKSPACE_CEILING: u64 = 32;
+    const STREAMING_BUFFER_BYTES: u64 = 8;
 
     struct ReaderFixture {
         _directory: tempfile::TempDir,
@@ -915,8 +981,8 @@ mod tests {
                 operations_rate: None,
                 queue: crate::QueueResourceId::new("reader-test-queue"),
             };
-            let budget =
-                PreparedArtifactBudget::new(1 << 20, 4, 8).expect("bounded reader cache budget");
+            let budget = PreparedArtifactBudget::new(1 << 20, 4, STREAMING_BUFFER_BYTES)
+                .expect("bounded reader cache budget");
             let store = Arc::new(
                 PreparedArtifactStore::open(directory.path().join("private"), &storage, budget)
                     .expect("reader private store"),
@@ -1409,6 +1475,122 @@ mod tests {
         ) -> Result<(), PreparedArtifactError> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn reader_session_does_not_repeat_store_inventory_or_payload_validation_per_load() {
+        let fixture = ReaderFixture::new();
+        let reader = fixture.factory.session();
+        let plan = reader.plan();
+        let cache = scheduled(cache_node(plan), plan, 7, false);
+        let planned = [plan.planned_artifact()];
+        let prediction =
+            StagePrediction::new(plan.node().clone(), 1).with_io(vec![IoPrediction::new(
+                IoBufferKind::StorageManager,
+                u64::MAX,
+                u64::MAX,
+            )]);
+        let alternative = alternative(plan);
+        let completed = BTreeMap::new();
+        reader
+            .activate(context(
+                &fixture,
+                &cache,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                1,
+            ))
+            .expect("activate reader session");
+        assert_eq!(
+            reader
+                .state
+                .lock()
+                .expect("reader state")
+                .session_validation_count,
+            1,
+            "the immutable catalog is validated exactly once per reader session"
+        );
+        assert_eq!(
+            fixture
+                .factory
+                .store
+                .state
+                .access
+                .lock()
+                .expect("store access")
+                .active_readers,
+            1,
+            "the validated catalog must exclude store mutation for the session"
+        );
+
+        let mut prior_bytes = reader.state.lock().expect("reader state").read_bytes;
+        let mut prior_operations = reader.state.lock().expect("reader state").read_operations;
+        let expected_operations = (PAYLOAD.len() as u64).div_ceil(STREAMING_BUFFER_BYTES) * 2 + 3;
+        for read in 1..=2 {
+            reader
+                .read(fixture.artifact_identity, &mut DiscardingConsumer)
+                .expect("stream validated cell");
+            let state = reader.state.lock().expect("reader state");
+            let read_bytes = state.read_bytes - prior_bytes;
+            let read_operations = state.read_operations - prior_operations;
+            assert_eq!(
+                read_bytes,
+                PAYLOAD.len() as u64,
+                "cell load {read} must stream the target payload exactly once"
+            );
+            assert_eq!(
+                read_operations, expected_operations,
+                "cell load {read} must do only bounded payload reads and checksum work"
+            );
+            prior_bytes = state.read_bytes;
+            prior_operations = state.read_operations;
+        }
+        assert!(
+            reader
+                .state
+                .lock()
+                .expect("reader state")
+                .reader_resident_peak
+                <= reader.plan.store_resident_bytes,
+            "session validation and target-cell reads must stay within the planned store residency"
+        );
+
+        let payload = fixture
+            .factory
+            .store
+            .entry_path(fixture.artifact_identity)
+            .join(PAYLOAD_FILE);
+        let mut corrupted = PAYLOAD.to_vec();
+        corrupted[0] ^= 1;
+        fs::write(payload, corrupted).expect("corrupt one cell behind the cooperative store lock");
+        assert!(matches!(
+            reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
+            Err(PreparedArtifactError::CorruptArtifact)
+        ));
+        assert_eq!(
+            reader
+                .state
+                .lock()
+                .expect("reader state")
+                .session_validation_count,
+            1,
+            "per-cell integrity checks must not repeat catalog validation"
+        );
+        reader.abort();
+        assert_eq!(
+            fixture
+                .factory
+                .store
+                .state
+                .access
+                .lock()
+                .expect("store access")
+                .active_readers,
+            0,
+            "aborting the reader must release store mutation exclusion"
+        );
     }
 
     #[test]
