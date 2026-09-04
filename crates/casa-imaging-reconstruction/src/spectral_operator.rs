@@ -7189,10 +7189,14 @@ impl SpectralSlabOperator {
         }
     }
 
-    fn collapse_aw_published_sum_weights(&mut self) -> Result<(), SpectralOperatorError> {
+    fn finalize_aw_sum_weights(&mut self) -> Result<(), SpectralOperatorError> {
         let Some(aw) = self.aw_published_sum_weights.take() else {
             return Ok(());
         };
+        let direct_aw_taylor = matches!(
+            self.basis,
+            SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() > 1
+        );
         if aw.normal[0].len() != self.published_sum_weights.len()
             || aw.normal[1].len() != self.published_sum_weights.len()
             || aw.channel_major[0].len() != self.channel_major_published_sum_weights.len()
@@ -7206,11 +7210,21 @@ impl SpectralSlabOperator {
             .zip(aw.normal[0].iter().zip(&aw.normal[1]))
             .enumerate()
         {
-            *destination = first.min(*last);
+            *destination = if direct_aw_taylor {
+                first + last
+            } else {
+                first.min(*last)
+            };
             if imaging_science_trace_enabled() {
-                eprintln!(
-                    "imaging_science_probe_v1 boundary=aw_published_sumwt term={moment} rr={first:.17e} ll={last:.17e} stokes_i={destination:.17e}"
-                );
+                if direct_aw_taylor {
+                    eprintln!(
+                        "imaging_science_probe_v1 boundary=aw_cfs_sumwt term={moment} rr={first:.17e} ll={last:.17e} cfs_stokes_i={destination:.17e}"
+                    );
+                } else {
+                    eprintln!(
+                        "imaging_science_probe_v1 boundary=aw_published_sumwt term={moment} rr={first:.17e} ll={last:.17e} stokes_i={destination:.17e}"
+                    );
+                }
             }
         }
         self.published_sum_weight_compensations.fill(0.0);
@@ -7223,6 +7237,23 @@ impl SpectralSlabOperator {
         }
         self.channel_major_published_sum_weight_compensations
             .fill(0.0);
+        if let SpectralBasisPlan::Polynomial(plan) = self.basis
+            && direct_aw_taylor
+        {
+            let coefficient_terms = plan.coefficient_term_count();
+            for moment in 0..plan.normal_moment_count() {
+                for polarization in 0..self.polarization_count {
+                    let plane = self.polarization_plane(moment, polarization);
+                    if moment < coefficient_terms {
+                        self.sum_weights[plane] = self.published_sum_weights[plane];
+                    } else {
+                        self.published_sum_weights[plane] = self.sum_weights[plane];
+                    }
+                }
+            }
+            self.sum_weight_compensations.fill(0.0);
+            self.published_sum_weight_compensations.fill(0.0);
+        }
         Ok(())
     }
 
@@ -9210,7 +9241,7 @@ impl SpectralSlabOperator {
             let fft = self.fft;
             return Ok((primitives, fft));
         }
-        self.collapse_aw_published_sum_weights()?;
+        self.finalize_aw_sum_weights()?;
         let dirty_grids = self
             .dirty_grids
             .as_ref()
@@ -12121,25 +12152,56 @@ mod tests {
     }
 
     #[test]
-    fn aw_publication_collapses_parallel_hand_totals_with_casa_minimum() {
+    fn direct_aw_taylor_publishes_cfs_coefficients_and_retains_higher_wtcf_moments() {
         let mut operator = operator();
-        let moments = operator.published_sum_weights.len();
-        let mut aw = AwPublishedSumWeights::new(moments, 0);
-        for moment in 0..moments {
-            aw.normal[0][moment] = 7.0 + moment as f64;
-            aw.normal[1][moment] = 5.0 + 2.0 * moment as f64;
-        }
+        operator.basis = SpectralBasisPlan::Polynomial(
+            BlockNormalPlan::taylor(1.0e9, 2).expect("two-term Taylor plan"),
+        );
+        operator.sum_weights = vec![101.0, -102.0, 103.0];
+        operator.sum_weight_compensations = vec![1.0; 3];
+        operator.published_sum_weights = vec![0.0; 3];
+        operator.published_sum_weight_compensations = vec![1.0; 3];
+        let mut aw = AwPublishedSumWeights::new(3, 0);
+        aw.normal[0] = vec![7.0, -5.0, 11.0];
+        aw.normal[1] = vec![3.0, 1.0, 13.0];
         operator.aw_published_sum_weights = Some(aw);
 
         operator
-            .collapse_aw_published_sum_weights()
-            .expect("collapse AW correlation-plane totals");
+            .finalize_aw_sum_weights()
+            .expect("finalize direct AW Taylor sumweights");
 
-        let expected = (0..moments)
-            .map(|moment| (7.0 + moment as f64).min(5.0 + 2.0 * moment as f64))
-            .collect::<Vec<_>>();
-        assert_eq!(operator.published_sum_weights, expected);
+        assert_eq!(operator.sum_weights, [10.0, -4.0, 103.0]);
+        assert_eq!(operator.published_sum_weights, [10.0, -4.0, 103.0]);
+        assert_eq!(operator.sum_weight_compensations, [0.0; 3]);
+        assert_eq!(operator.published_sum_weight_compensations, [0.0; 3]);
         assert!(operator.aw_published_sum_weights.is_none());
+    }
+
+    #[test]
+    fn channel_major_aw_publication_retains_casa_parallel_hand_minimum() {
+        let mut operator = operator();
+        operator.basis = SpectralBasisPlan::TaylorViaChannelMajor(
+            BlockNormalPlan::taylor(1.0e9, 2).expect("two-term Taylor plan"),
+        );
+        operator.channel_major_published_sum_weights = vec![0.0; 2];
+        operator.channel_major_published_sum_weight_compensations = vec![1.0; 2];
+        let mut aw = AwPublishedSumWeights::new(1, 2);
+        aw.normal[0][0] = 7.0;
+        aw.normal[1][0] = 5.0;
+        aw.channel_major[0] = vec![7.0, 3.0];
+        aw.channel_major[1] = vec![5.0, 11.0];
+        operator.aw_published_sum_weights = Some(aw);
+
+        operator
+            .finalize_aw_sum_weights()
+            .expect("finalize channel-major AW sumweights");
+
+        assert_eq!(operator.published_sum_weights, [5.0]);
+        assert_eq!(operator.channel_major_published_sum_weights, [5.0, 3.0]);
+        assert_eq!(
+            operator.channel_major_published_sum_weight_compensations,
+            [0.0; 2]
+        );
     }
 
     #[test]

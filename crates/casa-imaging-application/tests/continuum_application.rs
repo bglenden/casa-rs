@@ -1297,10 +1297,10 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
-    assert_ne!(
+    assert_eq!(
         (normal.sum_weights()[0] as f32).to_bits(),
         (normal.published_sum_weights()[0] as f32).to_bits(),
-        "the AW fixture must distinguish the combined Stokes-I normal sum from the observer-only correlation statistic"
+        "direct AW Taylor completion must expose CASA's CFS statistic for coefficient terms"
     );
     for moment in 0..3 {
         let product = PagedImage::<f32>::open(PathBuf::from(format!(
