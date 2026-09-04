@@ -746,6 +746,36 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         Ok(AwGridPlan::new(shape, taps))
     }
 
+    pub(crate) fn prepare_imaging_grid_observed(
+        &mut self,
+        shape: [usize; 2],
+        sample: AwVisibilitySample,
+    ) -> Result<(AwGridPlan, AwScienceProbe), AwOperatorError> {
+        let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        let (taps, observed) = fused_taps_inner::<true>(&cell.cell().imaging, shape, sample, true)?;
+        let (base_x, base_y, frac_x, frac_y, observed) =
+            observed.expect("observed tap construction returns coordinates");
+        add_measurement(&mut self.diagnostics.selections, 1)?;
+        add_measurement(&mut self.diagnostics.grid_passes, 1)?;
+        add_measurement(&mut self.diagnostics.imaging_taps, taps.values.len() as u64)?;
+        let probe = AwScienceProbe {
+            identity: metadata.identity,
+            selected_frequency_hz: metadata.frequency_hz,
+            selected_w_lambda: metadata.w_value_lambda,
+            mueller_element: metadata.mueller_element,
+            parallactic_angle_deg: metadata.parallactic_angle_deg,
+            support: metadata.imaging_layout.support,
+            oversampling: metadata.imaging_layout.oversampling,
+            grid_position: sample.grid_position,
+            grid_location: [base_x, base_y],
+            fractional_offset: [frac_x, frac_y],
+            taps: observed.into_boxed_slice(),
+            raw_tap_sum: taps.normalization,
+        };
+        Ok((AwGridPlan::new(shape, taps), probe))
+    }
+
     pub(crate) fn prepare_sensitivity_grid(
         &mut self,
         shape: [usize; 2],
@@ -771,6 +801,29 @@ pub(crate) struct AwGridPlan {
     shape: [usize; 2],
     taps: Box<[FusedTap]>,
     normalization: Complex64,
+}
+
+#[derive(Debug)]
+pub(crate) struct AwScienceProbe {
+    pub(crate) identity: PreparedArtifactScientificIdentity,
+    pub(crate) selected_frequency_hz: f64,
+    pub(crate) selected_w_lambda: f64,
+    pub(crate) mueller_element: u32,
+    pub(crate) parallactic_angle_deg: f64,
+    pub(crate) support: [usize; 2],
+    pub(crate) oversampling: usize,
+    pub(crate) grid_position: [f64; 2],
+    pub(crate) grid_location: [isize; 2],
+    pub(crate) fractional_offset: [isize; 2],
+    pub(crate) taps: Box<[AwScienceProbeTap]>,
+    pub(crate) raw_tap_sum: Complex64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AwScienceProbeTap {
+    pub(crate) support_offset: [usize; 2],
+    pub(crate) grid_coordinate: [usize; 2],
+    pub(crate) cf_coordinate: [usize; 2],
 }
 
 impl AwGridPlan {
@@ -856,20 +909,55 @@ struct FusedTaps {
     values: Vec<FusedTap>,
     normalization: Complex64,
 }
+type ObservedFusedTaps = (isize, isize, isize, isize, Vec<AwScienceProbeTap>);
+type FusedTapBuild = (FusedTaps, Option<ObservedFusedTaps>);
+
 fn fused_taps(
     kernel: &AwConvolutionKernel,
     shape: [usize; 2],
     sample: AwVisibilitySample,
     apply_pointing: bool,
 ) -> Result<FusedTaps, AwOperatorError> {
+    fused_taps_inner::<false>(kernel, shape, sample, apply_pointing).map(|(taps, _)| taps)
+}
+
+fn fused_taps_inner<const OBSERVE: bool>(
+    kernel: &AwConvolutionKernel,
+    shape: [usize; 2],
+    sample: AwVisibilitySample,
+    apply_pointing: bool,
+) -> Result<FusedTapBuild, AwOperatorError> {
     let (base_x, frac_x) = fractional_bin(sample.grid_position[0], kernel.layout.oversampling)?;
     let (base_y, frac_y) = fractional_bin(sample.grid_position[1], kernel.layout.oversampling)?;
     let mut taps = Vec::with_capacity(kernel.layout.integral_tap_count());
+    let mut observed = OBSERVE.then(|| Vec::with_capacity(kernel.layout.integral_tap_count()));
     let mut normalization = Complex64::default();
     for oy in 0..=kernel.layout.support[1] * 2 {
         let y = placed(base_y, oy, kernel.layout.support[1], shape[1])?;
         for ox in 0..=kernel.layout.support[0] * 2 {
             let x = placed(base_x, ox, kernel.layout.support[0], shape[0])?;
+            if let Some(observed) = observed.as_mut() {
+                observed.push(AwScienceProbeTap {
+                    support_offset: [ox, oy],
+                    grid_coordinate: [x, y],
+                    cf_coordinate: [
+                        usize::try_from(
+                            kernel.layout.center[0] as isize
+                                + (ox as isize - kernel.layout.support[0] as isize)
+                                    * kernel.layout.oversampling as isize
+                                + frac_x,
+                        )
+                        .map_err(|_| AwOperatorError::InvalidKernelLayout)?,
+                        usize::try_from(
+                            kernel.layout.center[1] as isize
+                                + (oy as isize - kernel.layout.support[1] as isize)
+                                    * kernel.layout.oversampling as isize
+                                + frac_y,
+                        )
+                        .map_err(|_| AwOperatorError::InvalidKernelLayout)?,
+                    ],
+                });
+            }
             let mut coefficient = kernel.tap([frac_x, frac_y], [ox, oy])?;
             if sample.w_lambda > 0.0 {
                 coefficient = coefficient.conj();
@@ -901,10 +989,13 @@ fn fused_taps(
     if !finite(normalization) || normalization.norm_sqr() == 0.0 {
         return Err(AwOperatorError::InvalidKernelLayout);
     }
-    Ok(FusedTaps {
-        values: taps,
-        normalization,
-    })
+    Ok((
+        FusedTaps {
+            values: taps,
+            normalization,
+        },
+        observed.map(|observed| (base_x, base_y, frac_x, frac_y, observed)),
+    ))
 }
 fn conjugate_frequency(frequency: f64, reference: f64) -> Result<f64, AwOperatorError> {
     let radicand = 2.0 * reference * reference - frequency * frequency;
@@ -1271,6 +1362,69 @@ mod tests {
         for (index, coefficient) in [44, 54, 64].into_iter().zip(raw) {
             assert_eq!(image[index], coefficient * visibility * 2.0);
         }
+    }
+
+    #[test]
+    fn t51_science_probe_is_bit_identical_and_reports_selected_tap_geometry() {
+        let imaging = nonuniform_kernel();
+        let weight_layout = layout([2, 1], 1);
+        let metadata = AwPreparedCellMetadata::new(
+            identity(10.0, 1.0, 0, 0.0),
+            10.0,
+            1.0,
+            1.0,
+            0,
+            0.0,
+            imaging.layout,
+            weight_layout,
+        )
+        .unwrap();
+        let weight = AwConvolutionKernel::new(
+            weight_layout,
+            vec![Complex64::new(1.0, 0.0); weight_layout.shape[0] * weight_layout.shape[1]],
+        )
+        .unwrap();
+        let mut ordinary = operator_with_kernels(metadata.clone(), imaging.clone(), weight.clone());
+        let mut observed = operator_with_kernels(metadata.clone(), imaging, weight);
+        let sample =
+            AwVisibilitySample::new(10.0, 10.0, 1.0, 0, 0.0, [4.70, 4.0], [0.0, 0.0]).unwrap();
+        let ordinary = ordinary.prepare_imaging_grid([10, 10], sample).unwrap();
+        let (observed, probe) = observed
+            .prepare_imaging_grid_observed([10, 10], sample)
+            .unwrap();
+
+        assert_eq!(
+            ordinary.normalization.re.to_bits(),
+            observed.normalization.re.to_bits()
+        );
+        assert_eq!(
+            ordinary.normalization.im.to_bits(),
+            observed.normalization.im.to_bits()
+        );
+        assert_eq!(ordinary.taps.len(), observed.taps.len());
+        for (ordinary, observed) in ordinary.taps.iter().zip(&observed.taps) {
+            assert_eq!(ordinary.index, observed.index);
+            assert_eq!(
+                ordinary.coefficient.re.to_bits(),
+                observed.coefficient.re.to_bits()
+            );
+            assert_eq!(
+                ordinary.coefficient.im.to_bits(),
+                observed.coefficient.im.to_bits()
+            );
+        }
+        assert_eq!(probe.identity, metadata.identity);
+        assert_eq!(probe.grid_location, [5, 4]);
+        assert_eq!(probe.fractional_offset, [1, 0]);
+        assert_eq!(probe.taps.len(), 3);
+        assert_eq!(probe.taps[0].support_offset, [0, 0]);
+        assert_eq!(probe.taps[0].grid_coordinate, [4, 4]);
+        assert_eq!(probe.taps[0].cf_coordinate, [2, 1]);
+        assert_eq!(probe.raw_tap_sum, Complex64::new(5.0, -2.0));
+        assert_eq!(
+            probe.raw_tap_sum.norm().to_bits(),
+            ordinary.normalization().to_bits()
+        );
     }
 
     #[test]

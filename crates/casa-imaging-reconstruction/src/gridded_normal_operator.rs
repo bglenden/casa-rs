@@ -562,6 +562,109 @@ pub struct GriddedNormalOperatorCompiler {
     descriptors: Vec<BlockDescriptor>,
     source_cardinality_observation: SourceCardinalityObservation,
     aw_projection: bool,
+    science_probe: Option<ImagingScienceProbe>,
+}
+
+#[derive(Default)]
+struct ImagingScienceProbe {
+    weighting: BTreeMap<(u32, usize), WeightingScienceAggregate>,
+    sample: Option<WeightingScienceSample>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct WeightingScienceAggregate {
+    accepted_count: u64,
+    base_weight_sum: f64,
+    raw_weight_sum: f64,
+    post_briggs_sum: f64,
+    taylor_factor_sum: f64,
+    final_weight_sum: f64,
+}
+
+#[derive(Clone, Copy)]
+struct WeightingScienceSample {
+    address: casa_imaging_model::SelectedSampleAddress,
+    output_channel: u32,
+    chart: usize,
+    mueller: u32,
+    base_weight: f64,
+    raw_weight: f64,
+    post_briggs_weight: f64,
+    frequency_hz: f64,
+    spectral_factor: f64,
+}
+
+fn sample_address_key(
+    address: casa_imaging_model::SelectedSampleAddress,
+) -> ([u8; 32], u64, i32, u32, u32, u32, u32) {
+    (
+        address.measurement_set.identity().as_bytes(),
+        address.physical_row,
+        address.data_description_id,
+        address.spectral_window_id,
+        address.channel_index,
+        address.polarization_id,
+        address.correlation_index,
+    )
+}
+
+impl ImagingScienceProbe {
+    fn emit(self, layout: GriddedNormalRecordLayout) {
+        for ((spw, term), aggregate) in self.weighting {
+            eprintln!(
+                "imaging_science_probe_v1 boundary=weighting_summary spw={spw} term={term} accepted_count={} base_weight_sum={:.17e} raw_weight_sum={:.17e} post_briggs_sum={:.17e} taylor_factor_sum={:.17e} final_pre_cf_sum={:.17e}",
+                aggregate.accepted_count,
+                aggregate.base_weight_sum,
+                aggregate.raw_weight_sum,
+                aggregate.post_briggs_sum,
+                aggregate.taylor_factor_sum,
+                aggregate.final_weight_sum,
+            );
+        }
+        let Some(sample) = self.sample else {
+            return;
+        };
+        let moments = match layout {
+            GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => {
+                plan.normal_moment_count()
+            }
+            _ => 1,
+        };
+        for term in 0..moments {
+            let taylor_factor = match layout {
+                GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => plan
+                    .normalized_frequency(sample.frequency_hz)
+                    .map(|x| x.powi(term as i32))
+                    .unwrap_or(f64::NAN),
+                _ => 1.0,
+            };
+            let final_weight = sample.post_briggs_weight
+                * sample.spectral_factor
+                * sample.spectral_factor
+                * taylor_factor;
+            eprintln!(
+                "imaging_science_probe_v1 boundary=sample_weight ms={:?} row={} ddid={} spw={} channel={} polarization={} correlation={} output_channel={} chart={} mueller={} term={} base_weight={:.17e} raw_weight={:.17e} post_briggs_weight={:.17e} frequency_hz={:.17e} spectral_factor={:.17e} taylor_factor={:.17e} final_pre_cf_weight={:.17e}",
+                sample.address.measurement_set,
+                sample.address.physical_row,
+                sample.address.data_description_id,
+                sample.address.spectral_window_id,
+                sample.address.channel_index,
+                sample.address.polarization_id,
+                sample.address.correlation_index,
+                sample.output_channel,
+                sample.chart,
+                sample.mueller,
+                term,
+                sample.base_weight,
+                sample.raw_weight,
+                sample.post_briggs_weight,
+                sample.frequency_hz,
+                sample.spectral_factor,
+                taylor_factor,
+                final_weight,
+            );
+        }
+    }
 }
 
 impl GriddedNormalOperatorCompiler {
@@ -601,6 +704,9 @@ impl GriddedNormalOperatorCompiler {
             descriptors: Vec::new(),
             source_cardinality_observation,
             aw_projection,
+            science_probe: (source_cardinality_observation
+                == SourceCardinalityObservation::Enabled)
+                .then(ImagingScienceProbe::default),
         })
     }
 
@@ -658,7 +764,8 @@ impl GriddedNormalOperatorCompiler {
             | GriddedNormalRecordLayout::Joint { .. } => {
                 let started = Instant::now();
                 self.begin_block(block)?;
-                let (source_groups, mut measurements) = self.construct_record_keys(block)?;
+                let (source_groups, mut measurements) =
+                    self.construct_record_keys_observed(block)?;
                 timings.record_key_construction = started.elapsed();
 
                 let started = Instant::now();
@@ -861,6 +968,119 @@ impl GriddedNormalOperatorCompiler {
             }
         }
         Ok((source_groups, measurements))
+    }
+
+    fn construct_record_keys_observed(
+        &mut self,
+        block: &WeightingReplayChunk,
+    ) -> Result<
+        (
+            Vec<Vec<ReducedRecordKey>>,
+            GriddedNormalOperatorBlockMeasurements,
+        ),
+        SpectralOperatorError,
+    > {
+        if !self.aw_projection {
+            return self.construct_record_keys(block);
+        }
+        self.observe_aw_weighting(block)?;
+        self.construct_aw_record_keys(block)
+    }
+
+    fn observe_aw_weighting(
+        &mut self,
+        block: &WeightingReplayChunk,
+    ) -> Result<(), SpectralOperatorError> {
+        let polarization_coordinates = self.specification.polarization_coordinates();
+        let finite_values = self.finite_values;
+        let Some(probe) = self.science_probe.as_mut() else {
+            return Ok(());
+        };
+        let taylor = match self.record_layout {
+            GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => Some(plan),
+            _ => None,
+        };
+        for correlations in block.correlation_groups() {
+            let first = correlations
+                .first()
+                .ok_or(SpectralOperatorError::InvalidSample)?;
+            let operator = PolarizationOperator::compile(
+                polarization_coordinates,
+                &correlations
+                    .iter()
+                    .map(|weighted| weighted.selected().address().correlation_type)
+                    .collect::<SmallVec<[_; 4]>>(),
+                first.selected().parallactic_angles_rad(),
+                MuellerMatrix::identity(),
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+            let flags = correlations
+                .iter()
+                .map(|weighted| {
+                    accept_polarization_input(weighted.selected(), finite_values).map(|ok| !ok)
+                })
+                .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+            let flags = polarization_effective_flags(&operator, flags);
+            for (ordinal, weighted) in correlations.iter().enumerate() {
+                if flags[ordinal] {
+                    continue;
+                }
+                let selected = weighted.selected();
+                for spectral in weighted.spectral_values() {
+                    let post_briggs = spectral.imaging_weight();
+                    if post_briggs == 0.0 {
+                        continue;
+                    }
+                    let contribution = spectral.contribution();
+                    let frequency_hz = contribution.evaluation_frequency_hz();
+                    let spectral_factor = contribution.factor();
+                    let moments =
+                        taylor.map_or(1, crate::block_normal::BlockNormalPlan::normal_moment_count);
+                    for moment in 0..moments {
+                        let taylor_factor = taylor
+                            .map(|plan| {
+                                plan.normalized_frequency(frequency_hz)
+                                    .map(|x| x.powi(moment as i32))
+                            })
+                            .transpose()
+                            .map_err(|_| SpectralOperatorError::InvalidSample)?
+                            .unwrap_or(1.0);
+                        let aggregate = probe
+                            .weighting
+                            .entry((selected.address().spectral_window_id, moment))
+                            .or_default();
+                        aggregate.accepted_count = aggregate
+                            .accepted_count
+                            .checked_add(1)
+                            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                        aggregate.base_weight_sum += f64::from(selected.input_weight);
+                        aggregate.raw_weight_sum += f64::from(selected.raw_input_weight());
+                        aggregate.post_briggs_sum += post_briggs;
+                        aggregate.taylor_factor_sum += taylor_factor;
+                        aggregate.final_weight_sum +=
+                            post_briggs * spectral_factor * spectral_factor * taylor_factor;
+                    }
+                    let candidate = WeightingScienceSample {
+                        address: selected.address(),
+                        output_channel: contribution.output_channel(),
+                        chart: 0,
+                        mueller: aw_stokes_i_mueller(selected.address().correlation_type)?
+                            .unwrap_or_default(),
+                        base_weight: f64::from(selected.input_weight),
+                        raw_weight: f64::from(selected.raw_input_weight()),
+                        post_briggs_weight: post_briggs,
+                        frequency_hz,
+                        spectral_factor,
+                    };
+                    if probe.sample.is_none_or(|current| {
+                        sample_address_key(candidate.address) < sample_address_key(current.address)
+                    }) {
+                        probe.sample = Some(candidate);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn construct_aw_record_keys(
@@ -1105,7 +1325,7 @@ impl GriddedNormalOperatorCompiler {
 
     /// Seal exhaustive coverage and exact per-block byte identities.
     pub fn complete(
-        self,
+        mut self,
         replay: &WeightingReplaySummary,
         selected_generation: SelectedObservationGenerationId,
         continuum_transform_generation: Option<ContinuumTransformGenerationId>,
@@ -1132,6 +1352,9 @@ impl GriddedNormalOperatorCompiler {
             self.record_count,
             &self.descriptors,
         );
+        if let Some(probe) = self.science_probe.take() {
+            probe.emit(self.record_layout);
+        }
         Ok(GriddedNormalOperatorProgram {
             manifest: Arc::new(GriddedNormalOperatorManifest {
                 identity,
