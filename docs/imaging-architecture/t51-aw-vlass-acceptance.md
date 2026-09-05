@@ -94,5 +94,15 @@ MeasurementSet and outputs to share one filesystem; do not make an unrecorded
 copy merely to bypass this constraint. `--cf-cache-root` is only the
 harness/CASA-oracle cache workspace and is never forwarded as native
 `--cfcache`.
-Append `--dry-run` to validate both production plans and all path bindings
-without executing imaging or the comparator.
+When a frozen CASA call names a different MeasurementSet path, reuse requires
+a read-only content-equivalence proof against both actual directories. Matching
+dataset names are insufficient. The proof must retain both provenance paths,
+compare the complete scientific file inventory and payloads, and verify MAIN
+metadata after excluding only the native owner annotation and normalizing
+root-bound table references. HISTORY differences must preserve its schema,
+keywords, and exact existing row prefix; appended provenance rows are reported.
+Unknown payload or metadata changes fail closed. This does not relax any CASA
+parameter, product, or numerical acceptance check or modify the frozen inputs.
+Append `--dry-run` to validate both production plans and CLI path bindings
+without executing imaging or the comparator. This planning check does not
+replace the reused-reference content validation required before execution.

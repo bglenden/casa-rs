@@ -70,6 +70,7 @@ from .host_telemetry import (
     HostTelemetryError,
     validate_host_telemetry,
 )
+from .measurement_set_equivalence import validate_measurement_set_equivalence
 from .schema import RUN_RESULT_SCHEMA_VERSION, validate_run_result
 from .subprocesses import run_command
 from .tree_identity import sha256_file, tree_identity
@@ -295,6 +296,22 @@ def validate_reused_casa_prefix(
     current_recipe, expected_effective = _current_reused_casa_contract(plan)
     expected_science = _reusable_effective_kwargs(expected_effective)
     historical_science = _reusable_effective_kwargs(result["effective_kwargs"])
+    if expected_science.get("vis") != historical_science.get("vis"):
+        current_vis = expected_science.get("vis")
+        historical_vis = historical_science.get("vis")
+        if not isinstance(current_vis, str) or not isinstance(historical_vis, str):
+            raise HarnessError(
+                "reused CASA relocation requires one explicit MeasurementSet path"
+            )
+        proof = validate_measurement_set_equivalence(
+            pathlib.Path(current_vis),
+            pathlib.Path(historical_vis),
+            casa_python=plan["command"]["casa"]["python"],
+        )
+        print(
+            "reused_casa_ms_equivalence " + json.dumps(proof, sort_keys=True), flush=True
+        )
+        historical_science["vis"] = current_vis
     if expected_science != historical_science:
         differences = []
         for name in sorted(set(expected_science) | set(historical_science)):
