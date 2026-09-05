@@ -573,7 +573,10 @@ fn aw_projection_is_distinct_paired_and_identity_bound() {
         !aw.required_capabilities()
             .contains(&casa_imaging_model::RequiredCapability::WProjection)
     );
-    assert_eq!(aw.products().normalization(), ProductNormalization::FlatNoise);
+    assert_eq!(
+        aw.products().normalization(),
+        ProductNormalization::FlatNoise
+    );
     assert!(aw.products().products().contains(&ProductKind::Weight));
     assert!(!aw.products().products().contains(&ProductKind::Sensitivity));
     assert!(

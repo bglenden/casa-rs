@@ -1315,24 +1315,9 @@ mod tests {
         AwConvolutionKernel::new(layout, taps).unwrap()
     }
 
-    #[test]
-    #[ignore = "requires exported local CF pixels, native stencil trace, and explicit sample"]
-    fn t51_native_unpointed_stencil_matches_production_preparation() {
-        let root =
-            std::path::PathBuf::from(std::env::var_os("CASA_RS_T51_STENCIL_FIXTURE").unwrap());
-        let native =
-            std::fs::read_to_string(std::env::var_os("CASA_RS_T51_NATIVE_STENCIL").unwrap())
-                .unwrap();
-        let sample = std::env::var("CASA_RS_T51_STENCIL_SAMPLE")
-            .unwrap()
-            .split(',')
-            .map(|v| v.parse::<f64>().unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            sample.len(),
-            6,
-            "frequency,reference,abs_w_lambda,PA,grid_x,grid_y"
-        );
+    fn local_stencil_fixture(
+        root: &std::path::Path,
+    ) -> (AwProjectionOperator<Provider>, BTreeMap<[u8; 32], String>) {
         let mut entries = Vec::new();
         let mut cells = BTreeMap::new();
         let mut names = BTreeMap::new();
@@ -1420,7 +1405,7 @@ mod tests {
             }
             entries.push(metadata);
         }
-        let mut operator = AwProjectionOperator::new(
+        let operator = AwProjectionOperator::new(
             AwPreparedCatalog::new(entries).unwrap(),
             Provider {
                 cells,
@@ -1430,6 +1415,24 @@ mod tests {
             16 * 1024 * 1024,
         )
         .unwrap();
+        (operator, names)
+    }
+
+    #[test]
+    #[ignore = "requires exported local CF pixels, native stencil trace, and explicit sample"]
+    fn t51_native_unpointed_stencil_matches_production_preparation() {
+        let root =
+            std::path::PathBuf::from(std::env::var_os("CASA_RS_T51_STENCIL_FIXTURE").unwrap());
+        let (mut operator, names) = local_stencil_fixture(&root);
+        let native =
+            std::fs::read_to_string(std::env::var_os("CASA_RS_T51_NATIVE_STENCIL").unwrap())
+                .unwrap();
+        let sample = std::env::var("CASA_RS_T51_STENCIL_SAMPLE")
+            .unwrap()
+            .split(',')
+            .map(|v| v.parse::<f64>().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(sample.len(), 6);
         let mut current = None;
         let mut cases = 0;
         let mut compared = 0;
@@ -1508,6 +1511,83 @@ mod tests {
         eprintln!(
             "native_stencil_comparison cases={cases} taps={compared} selection_addresses_coefficients_norms=exact"
         );
+    }
+
+    #[test]
+    #[ignore = "requires exported true CF cache and native prediction trace"]
+    fn t51_native_prediction_matches_original_w_selection() {
+        let root =
+            std::path::PathBuf::from(std::env::var_os("CASA_RS_T51_STENCIL_FIXTURE").unwrap());
+        let (mut operator, _) = local_stencil_fixture(&root);
+        let trace =
+            std::fs::read_to_string(std::env::var_os("CASA_RS_T51_NATIVE_PREDICTION").unwrap())
+                .unwrap();
+        let grid = (0..512)
+            .flat_map(|x| {
+                (0..512).map(move |y| {
+                    Complex64::new(
+                        f64::from(((17 * x + 13 * y) % 97) as f32 / 97.0 - 0.5),
+                        f64::from(((7 * x + 11 * y) % 89) as f32 / 89.0 - 0.5),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut errors = [0.0; 2];
+        let mut variant_error = 0.0;
+        let mut power = 0.0;
+        let mut count = 0;
+        for line in trace
+            .lines()
+            .filter(|line| line.starts_with("prediction\t"))
+        {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            assert_eq!(fields.len(), 21);
+            if fields[4] == "0" || fields[4] == "false" {
+                continue;
+            }
+            let value = |index: usize| fields[index].parse::<f64>().unwrap();
+            let mueller = match fields[3] {
+                "0" => 0,
+                "3" => 15,
+                _ => panic!("unexpected parallel hand"),
+            };
+            let expected = Complex64::new(value(17), value(18));
+            let phasor = Complex64::from_polar(
+                1.0,
+                std::f64::consts::TAU * value(14) * value(5) / 299_792_458.0,
+            );
+            for (variant, w_column) in [7, 8].into_iter().enumerate() {
+                let mut sample = AwVisibilitySample::new(
+                    value(5),
+                    value(6),
+                    value(w_column) * value(5) / 299_792_458.0,
+                    mueller,
+                    value(11),
+                    [value(9), value(10)],
+                    [0.0; 2],
+                )
+                .unwrap();
+                let metadata = operator.catalog.degrid_cell(sample).unwrap();
+                let sampling = metadata.imaging_layout.oversampling as f64;
+                sample.pointing_phase_gradient_rad_per_grid_cell =
+                    [value(12) * sampling, value(13) * sampling];
+                let actual = operator.degrid(&grid, [512, 512], sample).unwrap() * phasor;
+                errors[variant] += (actual - expected).norm_sqr();
+                if variant == 1 {
+                    variant_error += (actual - Complex64::new(value(19), value(20))).norm_sqr();
+                }
+            }
+            power += expected.norm_sqr();
+            count += 1;
+        }
+        assert!(count > 1000 && power > 0.0);
+        let nrms = errors.map(|error| (error / power).sqrt());
+        eprintln!(
+            "native_prediction count={count} original_w_nrms={} transformed_w_nrms={}",
+            nrms[0], nrms[1]
+        );
+        assert!(nrms[0] <= 1.0e-3, "native prediction NRMS={}", nrms[0]);
+        assert!((variant_error / power).sqrt() <= 1.0e-3);
     }
 
     #[test]
