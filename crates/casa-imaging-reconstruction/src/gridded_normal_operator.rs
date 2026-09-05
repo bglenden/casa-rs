@@ -75,6 +75,8 @@ pub(super) enum GriddedNormalRecordLayout {
         channels: usize,
     },
     Taylor(crate::block_normal::BlockNormalPlan),
+    // Frequency-dependent AW kernels cannot collapse samples into tap-key moments.
+    TaylorWithCoordinates(crate::block_normal::BlockNormalPlan),
     TaylorViaChannelMajor {
         plan: crate::block_normal::BlockNormalPlan,
         channels: usize,
@@ -100,7 +102,13 @@ impl GriddedNormalRecordLayout {
             };
         }
         match specification.block_normal_plan() {
-            Some(plan) if plan.coefficient_term_count() > 1 => Self::Taylor(plan),
+            Some(plan) if plan.coefficient_term_count() > 1 => {
+                if specification.aw_projection().is_some() {
+                    Self::TaylorWithCoordinates(plan)
+                } else {
+                    Self::Taylor(plan)
+                }
+            }
             Some(_) => Self::Scalar,
             None => Self::ChannelLocal {
                 channels: specification.coefficient_terms(),
@@ -112,7 +120,7 @@ impl GriddedNormalRecordLayout {
         match self {
             Self::Scalar => 1,
             Self::ChannelLocal { channels } => channels,
-            Self::Taylor(plan) => plan.coefficient_term_count(),
+            Self::Taylor(plan) | Self::TaylorWithCoordinates(plan) => plan.coefficient_term_count(),
             Self::TaylorViaChannelMajor { plan, .. } => plan.coefficient_term_count(),
             Self::Joint {
                 coefficient_terms, ..
@@ -124,7 +132,7 @@ impl GriddedNormalRecordLayout {
         match self {
             Self::Scalar => 1,
             Self::ChannelLocal { channels } => channels,
-            Self::Taylor(plan) => plan.normal_moment_count(),
+            Self::Taylor(plan) | Self::TaylorWithCoordinates(plan) => plan.normal_moment_count(),
             Self::TaylorViaChannelMajor { plan, .. } => plan.normal_moment_count(),
             Self::Joint { normal_moments, .. } => normal_moments,
         }
@@ -134,6 +142,7 @@ impl GriddedNormalRecordLayout {
         match self {
             Self::Scalar
             | Self::ChannelLocal { .. }
+            | Self::TaylorWithCoordinates(_)
             | Self::TaylorViaChannelMajor { .. }
             | Self::Joint { .. } => 1,
             Self::Taylor(plan) => plan.coefficient_term_count(),
@@ -148,7 +157,7 @@ impl GriddedNormalRecordLayout {
             Self::Scalar => 1,
             Self::ChannelLocal { channels } => channels,
             Self::TaylorViaChannelMajor { channels, .. } => channels,
-            Self::Taylor(plan) => plan.coefficient_term_count(),
+            Self::Taylor(plan) | Self::TaylorWithCoordinates(plan) => plan.coefficient_term_count(),
         }
     }
 
@@ -158,6 +167,7 @@ impl GriddedNormalRecordLayout {
                 Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
             }
             Self::Joint { .. } => Ok(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
+            Self::TaylorWithCoordinates(_) => Ok(AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
             Self::Taylor(plan) => plan
                 .normal_moment_count()
                 .checked_add(1)
@@ -172,10 +182,7 @@ fn record_bytes(
     aw_projection: bool,
 ) -> Result<usize, SpectralOperatorError> {
     if aw_projection {
-        if matches!(
-            layout,
-            GriddedNormalRecordLayout::Taylor(_) | GriddedNormalRecordLayout::Joint { .. }
-        ) {
+        if matches!(layout, GriddedNormalRecordLayout::Joint { .. }) {
             return Err(SpectralOperatorError::UnsupportedGriddedReplay);
         }
         Ok(AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
@@ -628,14 +635,16 @@ impl ImagingScienceProbe {
             return;
         };
         let moments = match layout {
-            GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => {
+            GriddedNormalRecordLayout::TaylorWithCoordinates(plan)
+            | GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => {
                 plan.normal_moment_count()
             }
             _ => 1,
         };
         for term in 0..moments {
             let taylor_factor = match layout {
-                GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => plan
+                GriddedNormalRecordLayout::TaylorWithCoordinates(plan)
+                | GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => plan
                     .normalized_frequency(sample.frequency_hz)
                     .map(|x| x.powi(term as i32))
                     .unwrap_or(f64::NAN),
@@ -722,6 +731,7 @@ impl GriddedNormalOperatorCompiler {
             (
                 GriddedNormalRecordLayout::Scalar
                 | GriddedNormalRecordLayout::ChannelLocal { .. }
+                | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                 | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                 | GriddedNormalRecordLayout::Joint { .. },
                 SourceCardinalityObservation::Disabled,
@@ -729,6 +739,7 @@ impl GriddedNormalOperatorCompiler {
             (
                 GriddedNormalRecordLayout::Scalar
                 | GriddedNormalRecordLayout::ChannelLocal { .. }
+                | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                 | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                 | GriddedNormalRecordLayout::Joint { .. },
                 SourceCardinalityObservation::Enabled,
@@ -763,6 +774,7 @@ impl GriddedNormalOperatorCompiler {
         let (encoded, digest, measurements) = match self.record_layout {
             GriddedNormalRecordLayout::Scalar
             | GriddedNormalRecordLayout::ChannelLocal { .. }
+            | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
             | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
             | GriddedNormalRecordLayout::Joint { .. } => {
                 let started = Instant::now();
@@ -1000,7 +1012,8 @@ impl GriddedNormalOperatorCompiler {
             return Ok(());
         };
         let taylor = match self.record_layout {
-            GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => Some(plan),
+            GriddedNormalRecordLayout::TaylorWithCoordinates(plan)
+            | GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, .. } => Some(plan),
             _ => None,
         };
         for correlations in block.correlation_groups() {
@@ -1554,6 +1567,7 @@ impl GriddedNormalOperatorProgram {
             || prior.catalog()
                 != match self.manifest.record_layout {
                     GriddedNormalRecordLayout::Taylor(_)
+                    | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                     | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
                         crate::NormalStateCatalog::UnnormalizedTaylorBlockV1
                     }
@@ -2611,6 +2625,7 @@ impl GriddedNormalOperatorApply {
         )?;
         let primitive_catalog = match program.manifest.record_layout {
             GriddedNormalRecordLayout::Taylor(_)
+            | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
             | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. } => {
                 SpectralPrimitiveCatalog::UnnormalizedTaylorBlockV1
             }
@@ -2843,8 +2858,15 @@ fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdent
                     .expect("validated channel-local record width"),
             );
         }
-        GriddedNormalRecordLayout::Taylor(plan) => {
-            encoder.u8(1);
+        GriddedNormalRecordLayout::Taylor(plan)
+        | GriddedNormalRecordLayout::TaylorWithCoordinates(plan) => {
+            encoder.u8(
+                if matches!(record_layout, GriddedNormalRecordLayout::Taylor(_)) {
+                    1
+                } else {
+                    5
+                },
+            );
             encoder.usize(plan.coefficient_term_count());
             encoder.usize(plan.normal_moment_count());
             encoder.u64(plan.reference_frequency_hz().to_bits());
@@ -3633,6 +3655,23 @@ mod tests {
             decode_taylor_record(&corrupt, [10, 10], 5),
             Err(SpectralOperatorError::InvalidGriddedRecord)
         ));
+    }
+
+    #[test]
+    fn t51_direct_taylor_aw_replay_uses_the_shared_coordinate_record() {
+        let plan = crate::block_normal::BlockNormalPlan::taylor(3.0e9, 2).unwrap();
+        let layout = GriddedNormalRecordLayout::Taylor(plan);
+        assert_eq!(
+            record_bytes(layout, true).expect("direct Taylor AW CLEAN must admit replay"),
+            AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES
+        );
+        let coordinates = GriddedNormalRecordLayout::TaylorWithCoordinates(plan);
+        assert_eq!(record_bytes(coordinates, true).unwrap(), 96);
+        assert_eq!(coordinates.prediction_width(), 1);
+        assert_eq!(coordinates.accumulation_width(1), 2);
+        assert_eq!(coordinates.coefficient_terms(), 2);
+        assert_eq!(coordinates.normal_moments(), 3);
+        assert_eq!(record_bytes(layout, false).unwrap(), 32);
     }
 
     #[test]

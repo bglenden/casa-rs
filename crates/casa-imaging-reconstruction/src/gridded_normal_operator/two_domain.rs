@@ -32,6 +32,7 @@ fn planned_prediction_lane(
     let (model_scratch, moment_scratch) = match record_layout {
         GriddedNormalRecordLayout::Scalar
         | GriddedNormalRecordLayout::ChannelLocal { .. }
+        | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
         | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
         | GriddedNormalRecordLayout::Joint { .. } => (planned_vec(0)?, planned_vec(0)?),
         GriddedNormalRecordLayout::Taylor(_) => {
@@ -829,6 +830,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                 match self.record_layout {
                     GriddedNormalRecordLayout::Scalar
                     | GriddedNormalRecordLayout::ChannelLocal { .. }
+                    | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                     | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                     | GriddedNormalRecordLayout::Joint { .. } => {
                         let mut group_start = 0usize;
@@ -1455,6 +1457,7 @@ impl GriddedNormalOperatorApply {
                 match prepared.record_layout {
                     GriddedNormalRecordLayout::Scalar
                     | GriddedNormalRecordLayout::ChannelLocal { .. }
+                    | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                     | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                     | GriddedNormalRecordLayout::Joint { .. } => {
                         for (local, group) in prepared.groups[group_range].iter().enumerate() {
@@ -1630,6 +1633,7 @@ impl GriddedNormalOperatorApply {
                             match prepared.record_layout {
                                 GriddedNormalRecordLayout::Scalar
                                 | GriddedNormalRecordLayout::ChannelLocal { .. }
+                                | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                                 | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                                 | GriddedNormalRecordLayout::Joint { .. } => {
                                     let record = decode_domain_record(
@@ -1655,7 +1659,8 @@ impl GriddedNormalOperatorApply {
                                                 record.output_channel / polarizations,
                                                 record.output_channel % polarizations,
                                                 predicted,
-                                                record.forward_scale.conj() * record.imaging_weight,
+                                                record.forward_scale.conj(),
+                                                record.imaging_weight,
                                                 aw,
                                             )?;
                                     } else {
