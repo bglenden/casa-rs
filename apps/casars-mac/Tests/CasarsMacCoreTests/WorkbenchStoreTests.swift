@@ -49,10 +49,9 @@ final class WorkbenchStoreTests: XCTestCase {
             label: "Fixture model",
             defaultEffort: "medium",
             supportedEfforts: ["medium"],
-            isDefault: true,
-            inputCapacityUnits: 1_000_000,
-            outputReserveUnits: 1_000
+            isDefault: true
         )]
+        discussion.contextWindowUnits = 1_000_000
         var state = EmptyWorkbench.makeState()
         state.tabs = [
             WorkbenchTab(id: "task-a", title: "First", kind: .task, taskID: "imager"),
@@ -134,10 +133,9 @@ final class WorkbenchStoreTests: XCTestCase {
             label: "Fixture model",
             defaultEffort: "medium",
             supportedEfforts: ["medium"],
-            isDefault: true,
-            inputCapacityUnits: 1_000_000,
-            outputReserveUnits: 1_000
+            isDefault: true
         )]
+        discussion.contextWindowUnits = 1_000_000
 
         var state = EmptyWorkbench.makeState()
         state.project.rootPath = project.path
@@ -1374,10 +1372,10 @@ final class WorkbenchStoreTests: XCTestCase {
         let blockedReadiness = blockedStore.taskLaunchReadiness(taskID: "imager", instanceID: "tab-imager")
         XCTAssertEqual(blockedReadiness.status, .infeasible)
         XCTAssertEqual(blockedReadiness.protocolName, "casa_imager_task")
-        XCTAssertEqual(blockedReadiness.protocolVersion, 6)
+        XCTAssertEqual(blockedReadiness.protocolVersion, 7)
         let blockedReasons = Set(blockedReadiness.unsupportedReasons.map(\.id))
         XCTAssertTrue(blockedReasons.contains("task.aw_projection"))
-        XCTAssertTrue(blockedReasons.contains("task.w_projection_planes"))
+        XCTAssertTrue(blockedReasons.contains("task.memory_target"))
 
         blockedStore.setGenericTaskConfirmation(
             taskID: "imager",
@@ -1740,7 +1738,10 @@ final class WorkbenchStoreTests: XCTestCase {
         """)
         store.saveScientificNotebook()
         let savedCell = try XCTUnwrap(store.state.scientificNotebooks?.activeNotebook?.cells.first)
-        XCTAssertFalse(savedCell.body.isEmpty, "saved source: \(store.state.scientificNotebooks?.activeNotebook?.source ?? "missing")")
+        XCTAssertFalse(
+            savedCell.bodySource(in: store.state.scientificNotebooks?.activeNotebook?.source ?? "")?.isEmpty ?? true,
+            "saved source: \(store.state.scientificNotebooks?.activeNotebook?.source ?? "missing")"
+        )
 
         store.runScientificPythonCell(cellID)
         waitFor("Python receipt", timeout: 10) {
@@ -3363,6 +3364,21 @@ final class WorkbenchStoreTests: XCTestCase {
 
         XCTAssertTrue(store.state.tabs.isEmpty)
         XCTAssertEqual(store.state.activeTabID, "")
+    }
+
+    func testTabPresentationSurvivesSwitchingAwayAndBack() {
+        let store = WorkbenchStore.fixture()
+        let datasetTabID = store.state.activeTabID
+
+        store.setMeasurementSetExplorerSection(.plots, tabID: datasetTabID)
+        store.activateTab("tab-ai")
+        store.activateTab(datasetTabID)
+
+        XCTAssertEqual(store.measurementSetExplorerSection(tabID: datasetTabID), .plots)
+
+        store.closeTab(datasetTabID)
+
+        XCTAssertNil(store.tabPresentationStates[datasetTabID])
     }
 
     func testClosingUnknownTabRecordsDebugError() {
@@ -5056,7 +5072,7 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(taskClient.requests.count, 1)
         let request = try XCTUnwrap(taskClient.requests.first)
         XCTAssertEqual(request.providerInvocation.protocolName, "casa_imager_task")
-        XCTAssertEqual(request.providerInvocation.protocolVersion, 6)
+        XCTAssertEqual(request.providerInvocation.protocolVersion, 7)
         XCTAssertEqual(request.providerInvocation.args, ["--managed-output", "true", "--json-run", "-"])
         XCTAssertNotNil(request.providerInvocation.stdin)
         waitFor("imager completion") {
@@ -5351,6 +5367,42 @@ final class WorkbenchStoreTests: XCTestCase {
         XCTAssertEqual(values["cell"], "1arcsec,1arcsec")
         XCTAssertEqual(values["specmode"], "mfs")
         XCTAssertEqual(values["weighting"], "natural")
+
+        let tutorialProfile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("casars-twhya-tutorial-\(UUID().uuidString).toml")
+        defer { try? FileManager.default.removeItem(at: tutorialProfile) }
+        try """
+        [casars]
+        format = 1
+        surface = "imager"
+        kind = "task"
+        contract = 15
+
+        [parameters]
+        vis = "twhya_calibrated.ms"
+        imagename = "products/phase-cal-dirty"
+        field = "3"
+        phasecenter = "3"
+        gridder = "standard"
+        write_pb = true
+        """.write(to: tutorialProfile, atomically: true, encoding: .utf8)
+
+        let taskTabID = store.state.activeTabID
+        store.loadActiveParameterProfile(from: tutorialProfile.path, discardEdits: true)
+        XCTAssertFalse(store.state.lastErrors.contains { $0.contains("Load Named File parameters") })
+        XCTAssertEqual(store.parameterText(surfaceID: "imager", instanceID: taskTabID, name: "field"), "3")
+        XCTAssertEqual(
+            store.parameterOrigin(surfaceID: "imager", instanceID: taskTabID, name: "field"),
+            "base_profile"
+        )
+
+        store.selectTask("imager", tabID: taskTabID)
+
+        XCTAssertEqual(store.parameterText(surfaceID: "imager", instanceID: taskTabID, name: "field"), "3")
+        XCTAssertEqual(
+            store.parameterOrigin(surfaceID: "imager", instanceID: taskTabID, name: "field"),
+            "base_profile"
+        )
     }
 
     func testRealMeasurementSetPlotRunUsesPlotClientAndDebugState() {
@@ -6054,6 +6106,133 @@ final class WorkbenchStoreTests: XCTestCase {
                 "Expected \(binary) to resolve from the app bundle"
             )
         }
+    }
+
+    func testSelectedDatasetUsesSharedTrashRemovalAndClosesItsTab() throws {
+        let root = "/tmp/casars-removal-project"
+        let dataset = DatasetSummary(
+            id: "large-ms",
+            name: "large.ms",
+            path: "\(root)/large.ms",
+            kind: .measurementSet,
+            size: "84 GB",
+            units: "bytes",
+            sizeBytes: 84_000_000_000,
+            notes: ""
+        )
+        var project = ProjectFixture(name: "Removal", rootPath: root, datasets: [dataset], source: .probed)
+        var state = EmptyWorkbench.makeState()
+        state.project = project
+        state.selectedDatasetID = dataset.id
+        state.dockMode = .datasets
+        state.tabs = [WorkbenchTab(
+            id: dataset.explorerTabID,
+            title: dataset.explorerTabTitle,
+            kind: .datasetExplorer,
+            datasetID: dataset.id
+        )]
+        state.activeTabID = dataset.explorerTabID
+        project.datasets = []
+        let removal = RecordingProjectItemRemovalClient()
+        let store = WorkbenchStore(
+            state: state,
+            probeClient: StubProjectProbeClient(result: ProjectFixtureProbe(
+                project: project,
+                diagnostics: []
+            ))
+        )
+        store.installProjectItemRemovalClientForTesting(removal)
+        let finished = expectation(description: "dataset moved to Trash")
+        removal.onRemove = {
+            DispatchQueue.main.async {
+                DispatchQueue.main.async { finished.fulfill() }
+            }
+        }
+
+        store.moveSelectedProjectItemToTrash()
+        wait(for: [finished], timeout: 1)
+
+        XCTAssertEqual(removal.requests.map(\.mode), [.trash])
+        XCTAssertEqual(removal.requests.first?.target.id, dataset.id)
+        XCTAssertEqual(removal.requests.first?.projectRoot, root)
+        XCTAssertTrue(store.state.tabs.isEmpty)
+        XCTAssertTrue(store.state.project.datasets.isEmpty)
+        XCTAssertEqual(store.state.history.last?.title, "Moved large.ms to Trash")
+    }
+
+    func testImmediateDeletionRequiresConfirmationAndBlocksManagedState() throws {
+        let root = "/tmp/casars-removal-project"
+        var state = EmptyWorkbench.makeState()
+        state.project = ProjectFixture(name: "Removal", rootPath: root, datasets: [], source: .probed)
+        let removal = RecordingProjectItemRemovalClient()
+        let store = WorkbenchStore(
+            state: state,
+            probeClient: StubProjectProbeClient(result: ProjectFixtureProbe(
+                project: state.project,
+                diagnostics: []
+            ))
+        )
+        store.installProjectItemRemovalClientForTesting(removal)
+        let file = try XCTUnwrap(store.fileRemovalTarget(
+            path: "\(root)/notes.txt",
+            name: "notes.txt",
+            isDirectory: false,
+            sizeBytes: 20
+        ))
+
+        store.requestImmediateProjectItemDeletion(file)
+        XCTAssertEqual(store.pendingProjectItemDeletion, file)
+        XCTAssertTrue(removal.requests.isEmpty)
+
+        let finished = expectation(description: "file deleted immediately")
+        removal.onRemove = {
+            DispatchQueue.main.async {
+                DispatchQueue.main.async { finished.fulfill() }
+            }
+        }
+        store.confirmImmediateProjectItemDeletion()
+        wait(for: [finished], timeout: 1)
+        XCTAssertEqual(removal.requests.map(\.mode), [.deleteImmediately])
+
+        let managed = try XCTUnwrap(store.fileRemovalTarget(
+            path: "\(root)/.casa-rs/notebook.lock",
+            name: "notebook.lock",
+            isDirectory: false,
+            sizeBytes: 20
+        ))
+        store.requestImmediateProjectItemDeletion(managed)
+        XCTAssertNil(store.pendingProjectItemDeletion)
+        XCTAssertEqual(removal.requests.count, 1)
+        XCTAssertTrue(store.state.lastErrors.last?.contains(".casa-rs") == true)
+    }
+}
+
+private final class RecordingProjectItemRemovalClient: ProjectItemRemovalClient {
+    struct Request {
+        let target: ProjectItemRemovalTarget
+        let projectRoot: String
+        let mode: ProjectItemRemovalMode
+    }
+
+    private let lock = NSLock()
+    private var storedRequests: [Request] = []
+    var onRemove: (() -> Void)?
+
+    var requests: [Request] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedRequests
+    }
+
+    func remove(
+        _ target: ProjectItemRemovalTarget,
+        fromProjectRoot projectRoot: String,
+        mode: ProjectItemRemovalMode
+    ) throws {
+        lock.lock()
+        storedRequests.append(Request(target: target, projectRoot: projectRoot, mode: mode))
+        lock.unlock()
+        onRemove?()
     }
 }
 
@@ -7091,7 +7270,7 @@ private final class RecordingNotebookPersistenceClient: NotebookPersistenceClien
     private(set) var finalizeRequests: [NotebookFinalizeRecordingRequest] = []
     var beginError: Error?
 
-    func projectCells(source: String) throws -> [NotebookCellState] {
+    func projectCells(source: String) throws -> [NotebookCellProjection] {
         try base.projectCells(source: source)
     }
 

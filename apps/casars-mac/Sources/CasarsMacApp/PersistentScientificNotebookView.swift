@@ -4,7 +4,8 @@ import SwiftUI
 struct PersistentScientificNotebookView: View {
     @Environment(\.workbenchFontSize) private var workbenchFontSize
     @ObservedObject var store: WorkbenchStore
-    @State private var richDocument = PrototypeNotebookRichDocument(markdown: "")
+    @State private var richDocument = NotebookRichDocument.empty
+    @State private var richProjectionError: String?
     @State private var expandedCellIDs: Set<String> = []
     @State private var expandedPythonHistory: Set<String> = []
     @State private var expandedPythonDetails: Set<String> = []
@@ -283,17 +284,27 @@ struct PersistentScientificNotebookView: View {
                 if let tutorial = store.state.activeTutorialProject {
                     tutorialProgress(tutorial)
                 }
-                ForEach(richDocument.elements) { element in
-                    if let cellID = element.taskID {
-                        taskCell(cellID: cellID, document: document, fallback: element.source)
-                    } else {
-                        RichMarkdownBlockEditor(
-                            source: richBinding(element.id),
-                            headingLevel: element.headingLevel,
-                            isInsertionSurface: element.isInsertionSurface,
-                            accessibilityID: "notebook.richElement.\(element.id)"
-                        )
-                    }
+                if let richProjectionError {
+                    NotebookRichStructuralErrorView(
+                        message: richProjectionError,
+                        onSwitchToRaw: { store.setScientificNotebookViewMode(.raw) }
+                    )
+                } else {
+                    NotebookRichDocumentView(
+                        document: $richDocument,
+                        onMarkdownChange: { store.setScientificNotebookDraft($0) },
+                        resolvedManagedCell: { cellID in
+                            guard let cell = document.cells.first(where: { $0.id == cellID }) else {
+                                return nil
+                            }
+                            guard cell.kind == "python"
+                                || document.visualizations.contains(where: { $0.cellId == cellID })
+                                || cell.taskIntent != nil
+                            else { return nil }
+                            return AnyView(taskCell(cellID: cellID, document: document))
+                        },
+                        afterBlock: { _ in nil }
+                    )
                 }
             }
         }
@@ -387,7 +398,7 @@ struct PersistentScientificNotebookView: View {
     private func tutorialDatasetActions(_ dataset: TutorialDatasetState) -> some View {
         switch dataset.phase {
         case .missing:
-            Button("Review") {
+            Button("Download dataset…") {
                 let source = tutorialSourceOverrides[dataset.id]
                 store.reviewTutorialAcquisition(
                     datasetID: dataset.id,
@@ -461,7 +472,7 @@ struct PersistentScientificNotebookView: View {
                     HStack {
                         Button("Cancel") { store.dismissTutorialAcquisitionApproval() }
                         Spacer()
-                        Button("Approve and Download") {
+                        Button("Download") {
                             store.approveTutorialAcquisition(
                                 skippedCheckIDs: Array(skippedTutorialChecks).sorted()
                             )
@@ -510,7 +521,7 @@ struct PersistentScientificNotebookView: View {
     }
 
     @ViewBuilder
-    private func taskCell(cellID: String, document: NotebookDocumentState, fallback: String) -> some View {
+    private func taskCell(cellID: String, document: NotebookDocumentState) -> some View {
         let receipts = document.receipts.filter { $0.cellId == cellID }.sorted { $0.revision > $1.revision }
         if let visualization = document.visualizations.first(where: { $0.cellId == cellID }) {
             visualizationCard(visualization, document: document)
@@ -589,10 +600,6 @@ struct PersistentScientificNotebookView: View {
                     }
                 }
             }
-        } else {
-            Text(fallback)
-                .font(.system(size: 12, design: .monospaced))
-                .textSelection(.enabled)
         }
     }
 
@@ -666,7 +673,7 @@ struct PersistentScientificNotebookView: View {
     }
 
     private func pythonCell(
-        _ cell: NotebookCellState,
+        _ cell: NotebookCellProjection,
         receipts: [NotebookExecutionReceipt],
         document: NotebookDocumentState
     ) -> some View {
@@ -688,7 +695,7 @@ struct PersistentScientificNotebookView: View {
                 .accessibilityIdentifier("notebook.python.run.\(cell.id)")
             }
             TextEditor(text: Binding(
-                get: { pythonSource(cell.body) },
+                get: { pythonSource(cell.bodySource(in: document.draftSource) ?? "") },
                 set: { store.setScientificPythonSource(cellID: cell.id, source: $0) }
             ))
             .font(.system(size: 12, design: .monospaced))
@@ -836,20 +843,31 @@ struct PersistentScientificNotebookView: View {
         return URL(fileURLWithPath: root).appendingPathComponent(relative).path
     }
 
-    private func richBinding(_ elementID: String) -> Binding<String> {
-        Binding(
-            get: { richDocument.elements.first(where: { $0.id == elementID })?.editableSource ?? "" },
-            set: { value in
-                var updated = richDocument
-                guard updated.replaceEditableSource(elementID: elementID, with: value) else { return }
-                richDocument = updated
-                store.setScientificNotebookDraft(updated.markdown)
-            }
-        )
-    }
-
     private func loadRichDocument(_ document: NotebookDocumentState) {
-        richDocument = PrototypeNotebookRichDocument(markdown: document.draftSource)
+        if let projectionError = document.projectionError {
+            richProjectionError = projectionError
+            return
+        }
+        do {
+            let projection = try NotebookRichSourceProjection(
+                source: document.draftSource,
+                cells: document.cells.map {
+                    NotebookManagedCellSpan(
+                        id: $0.id,
+                        kind: $0.kind,
+                        taskIntent: $0.taskIntent,
+                        fullStart: $0.fullStart,
+                        fullEnd: $0.fullEnd,
+                        bodyStart: $0.bodyStart,
+                        bodyEnd: $0.bodyEnd
+                    )
+                }
+            )
+            richDocument = NotebookRichDocument(projection: projection)
+            richProjectionError = nil
+        } catch {
+            richProjectionError = String(describing: error)
+        }
     }
 
     private func statusColor(_ status: String) -> Color {

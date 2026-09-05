@@ -4665,12 +4665,7 @@ private struct SelectionHelperOption: Identifiable, Equatable {
     var id: String { "\(label)=\(value)" }
 }
 
-enum MeasurementSetExplorerMode: String, CaseIterable, Identifiable {
-    case summary
-    case plots
-
-    var id: String { rawValue }
-
+extension MeasurementSetExplorerMode {
     var title: String {
         switch self {
         case .summary: "Summary"
@@ -4683,7 +4678,6 @@ struct MeasurementSetPlotPanel: View {
     @ObservedObject var store: WorkbenchStore
     let dataset: DatasetSummary
     @Environment(\.workbenchFontSize) private var workbenchFontSize
-    @State private var explorerMode: MeasurementSetExplorerMode = .summary
     @State private var summaryStatus: MeasurementSetPlotStatus = .idle
     @State private var summaryResult: MeasurementSetSummaryResultSummary?
     @State private var summaryError: String?
@@ -4731,7 +4725,23 @@ struct MeasurementSetPlotPanel: View {
             name: "format"
         )
         _summaryFormat = State(initialValue: resolvedFormat)
-        _explorerMode = State(initialValue: initialExplorerMode)
+        self.initialExplorerMode = initialExplorerMode
+    }
+
+    private let initialExplorerMode: MeasurementSetExplorerMode
+
+    private var explorerMode: Binding<MeasurementSetExplorerMode> {
+        Binding(
+            get: {
+                store.measurementSetExplorerSection(
+                    tabID: dataset.explorerTabID,
+                    default: initialExplorerMode
+                )
+            },
+            set: {
+                store.setMeasurementSetExplorerSection($0, tabID: dataset.explorerTabID)
+            }
+        )
     }
 
     var body: some View {
@@ -4746,7 +4756,7 @@ struct MeasurementSetPlotPanel: View {
             .padding(.vertical, 8)
             Divider()
             ZStack(alignment: .top) {
-                if explorerMode == .summary {
+                if explorerMode.wrappedValue == .summary {
                     summarySurface
                 } else {
                     plotSurface
@@ -4761,7 +4771,7 @@ struct MeasurementSetPlotPanel: View {
                 runMeasurementSetSummary()
             }
         }
-        .onChange(of: explorerMode) { mode in
+        .onChange(of: explorerMode.wrappedValue) { mode in
             if mode == .summary && summaryResult == nil && summaryStatus != .running {
                 runMeasurementSetSummary()
             }
@@ -4773,7 +4783,7 @@ struct MeasurementSetPlotPanel: View {
                 argumentID: "format",
                 value: summaryFormat
             )
-            if explorerMode == .summary {
+            if explorerMode.wrappedValue == .summary {
                 runMeasurementSetSummary()
             }
         }
@@ -4830,8 +4840,8 @@ struct MeasurementSetPlotPanel: View {
 
     private var explorerCommandBar: some View {
         HStack(spacing: 10) {
-            Picker("View", selection: $explorerMode) {
-                ForEach(MeasurementSetExplorerMode.allCases) { mode in
+            Picker("View", selection: explorerMode) {
+                ForEach(MeasurementSetExplorerMode.allCases, id: \.self) { mode in
                     Text(mode.title).tag(mode)
                 }
             }
@@ -4840,7 +4850,7 @@ struct MeasurementSetPlotPanel: View {
             .frame(width: 170)
             .accessibilityIdentifier("msExplore.mode.\(dataset.id)")
 
-            if explorerMode == .plots {
+            if explorerMode.wrappedValue == .plots {
                 Picker("Plot", selection: Binding(
                     get: { plotState.preset },
                     set: { store.setMeasurementSetPlotPreset($0, datasetID: dataset.id) }
@@ -4888,7 +4898,7 @@ struct MeasurementSetPlotPanel: View {
             }
             .accessibilityIdentifier("msPlot.selections.\(dataset.id)")
 
-            if explorerMode == .summary {
+            if explorerMode.wrappedValue == .summary {
                 Button {
                     runMeasurementSetSummary()
                 } label: {

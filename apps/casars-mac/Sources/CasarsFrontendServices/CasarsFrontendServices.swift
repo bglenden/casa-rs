@@ -8287,39 +8287,54 @@ public func FfiConverterTypeNotebookBeginRecordingResult_lower(_ value: Notebook
 }
 
 
-public struct NotebookCellState {
+public struct NotebookCellProjection {
     public var id: String
     public var kind: String
-    public var body: String
     public var taskIntent: NotebookTaskIntent?
+    public var fullStart: UInt64
+    public var fullEnd: UInt64
+    public var bodyStart: UInt64
+    public var bodyEnd: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, kind: String, body: String, taskIntent: NotebookTaskIntent?) {
+    public init(id: String, kind: String, taskIntent: NotebookTaskIntent?, fullStart: UInt64, fullEnd: UInt64, bodyStart: UInt64, bodyEnd: UInt64) {
         self.id = id
         self.kind = kind
-        self.body = body
         self.taskIntent = taskIntent
+        self.fullStart = fullStart
+        self.fullEnd = fullEnd
+        self.bodyStart = bodyStart
+        self.bodyEnd = bodyEnd
     }
 }
 
 #if compiler(>=6)
-extension NotebookCellState: Sendable {}
+extension NotebookCellProjection: Sendable {}
 #endif
 
 
-extension NotebookCellState: Equatable, Hashable {
-    public static func ==(lhs: NotebookCellState, rhs: NotebookCellState) -> Bool {
+extension NotebookCellProjection: Equatable, Hashable {
+    public static func ==(lhs: NotebookCellProjection, rhs: NotebookCellProjection) -> Bool {
         if lhs.id != rhs.id {
             return false
         }
         if lhs.kind != rhs.kind {
             return false
         }
-        if lhs.body != rhs.body {
+        if lhs.taskIntent != rhs.taskIntent {
             return false
         }
-        if lhs.taskIntent != rhs.taskIntent {
+        if lhs.fullStart != rhs.fullStart {
+            return false
+        }
+        if lhs.fullEnd != rhs.fullEnd {
+            return false
+        }
+        if lhs.bodyStart != rhs.bodyStart {
+            return false
+        }
+        if lhs.bodyEnd != rhs.bodyEnd {
             return false
         }
         return true
@@ -8328,34 +8343,43 @@ extension NotebookCellState: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(id)
         hasher.combine(kind)
-        hasher.combine(body)
         hasher.combine(taskIntent)
+        hasher.combine(fullStart)
+        hasher.combine(fullEnd)
+        hasher.combine(bodyStart)
+        hasher.combine(bodyEnd)
     }
 }
 
-extension NotebookCellState: Codable {}
+extension NotebookCellProjection: Codable {}
 
 
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeNotebookCellState: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookCellState {
+public struct FfiConverterTypeNotebookCellProjection: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotebookCellProjection {
         return
-            try NotebookCellState(
+            try NotebookCellProjection(
                 id: FfiConverterString.read(from: &buf),
                 kind: FfiConverterString.read(from: &buf),
-                body: FfiConverterString.read(from: &buf),
-                taskIntent: FfiConverterOptionTypeNotebookTaskIntent.read(from: &buf)
+                taskIntent: FfiConverterOptionTypeNotebookTaskIntent.read(from: &buf),
+                fullStart: FfiConverterUInt64.read(from: &buf),
+                fullEnd: FfiConverterUInt64.read(from: &buf),
+                bodyStart: FfiConverterUInt64.read(from: &buf),
+                bodyEnd: FfiConverterUInt64.read(from: &buf)
         )
     }
 
-    public static func write(_ value: NotebookCellState, into buf: inout [UInt8]) {
+    public static func write(_ value: NotebookCellProjection, into buf: inout [UInt8]) {
         FfiConverterString.write(value.id, into: &buf)
         FfiConverterString.write(value.kind, into: &buf)
-        FfiConverterString.write(value.body, into: &buf)
         FfiConverterOptionTypeNotebookTaskIntent.write(value.taskIntent, into: &buf)
+        FfiConverterUInt64.write(value.fullStart, into: &buf)
+        FfiConverterUInt64.write(value.fullEnd, into: &buf)
+        FfiConverterUInt64.write(value.bodyStart, into: &buf)
+        FfiConverterUInt64.write(value.bodyEnd, into: &buf)
     }
 }
 
@@ -8363,15 +8387,15 @@ public struct FfiConverterTypeNotebookCellState: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeNotebookCellState_lift(_ buf: RustBuffer) throws -> NotebookCellState {
-    return try FfiConverterTypeNotebookCellState.lift(buf)
+public func FfiConverterTypeNotebookCellProjection_lift(_ buf: RustBuffer) throws -> NotebookCellProjection {
+    return try FfiConverterTypeNotebookCellProjection.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeNotebookCellState_lower(_ value: NotebookCellState) -> RustBuffer {
-    return FfiConverterTypeNotebookCellState.lower(value)
+public func FfiConverterTypeNotebookCellProjection_lower(_ value: NotebookCellProjection) -> RustBuffer {
+    return FfiConverterTypeNotebookCellProjection.lower(value)
 }
 
 
@@ -8460,13 +8484,13 @@ public struct NotebookDocumentProjection {
     public var filename: String
     public var source: String
     public var contentHash: String
-    public var cells: [NotebookCellState]
+    public var cells: [NotebookCellProjection]
     public var receipts: [NotebookExecutionReceipt]
     public var visualizations: [NotebookVisualizationSnapshot]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, filename: String, source: String, contentHash: String, cells: [NotebookCellState], receipts: [NotebookExecutionReceipt], visualizations: [NotebookVisualizationSnapshot]) {
+    public init(id: String, filename: String, source: String, contentHash: String, cells: [NotebookCellProjection], receipts: [NotebookExecutionReceipt], visualizations: [NotebookVisualizationSnapshot]) {
         self.id = id
         self.filename = filename
         self.source = source
@@ -8534,7 +8558,7 @@ public struct FfiConverterTypeNotebookDocumentProjection: FfiConverterRustBuffer
                 filename: FfiConverterString.read(from: &buf),
                 source: FfiConverterString.read(from: &buf),
                 contentHash: FfiConverterString.read(from: &buf),
-                cells: FfiConverterSequenceTypeNotebookCellState.read(from: &buf),
+                cells: FfiConverterSequenceTypeNotebookCellProjection.read(from: &buf),
                 receipts: FfiConverterSequenceTypeNotebookExecutionReceipt.read(from: &buf),
                 visualizations: FfiConverterSequenceTypeNotebookVisualizationSnapshot.read(from: &buf)
         )
@@ -8545,7 +8569,7 @@ public struct FfiConverterTypeNotebookDocumentProjection: FfiConverterRustBuffer
         FfiConverterString.write(value.filename, into: &buf)
         FfiConverterString.write(value.source, into: &buf)
         FfiConverterString.write(value.contentHash, into: &buf)
-        FfiConverterSequenceTypeNotebookCellState.write(value.cells, into: &buf)
+        FfiConverterSequenceTypeNotebookCellProjection.write(value.cells, into: &buf)
         FfiConverterSequenceTypeNotebookExecutionReceipt.write(value.receipts, into: &buf)
         FfiConverterSequenceTypeNotebookVisualizationSnapshot.write(value.visualizations, into: &buf)
     }
@@ -23699,23 +23723,23 @@ fileprivate struct FfiConverterSequenceTypeNotebookApprovalRecord: FfiConverterR
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeNotebookCellState: FfiConverterRustBuffer {
-    typealias SwiftType = [NotebookCellState]
+fileprivate struct FfiConverterSequenceTypeNotebookCellProjection: FfiConverterRustBuffer {
+    typealias SwiftType = [NotebookCellProjection]
 
-    public static func write(_ value: [NotebookCellState], into buf: inout [UInt8]) {
+    public static func write(_ value: [NotebookCellProjection], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for item in value {
-            FfiConverterTypeNotebookCellState.write(item, into: &buf)
+            FfiConverterTypeNotebookCellProjection.write(item, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookCellState] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotebookCellProjection] {
         let len: Int32 = try readInt(&buf)
-        var seq = [NotebookCellState]()
+        var seq = [NotebookCellProjection]()
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeNotebookCellState.read(from: &buf))
+            seq.append(try FfiConverterTypeNotebookCellProjection.read(from: &buf))
         }
         return seq
     }
@@ -25169,8 +25193,8 @@ public func notebookBeginRecording(request: NotebookBeginRecordingRequest)throws
 /**
  * Parse one complete in-memory Markdown draft through the Rust-owned cell contract.
  */
-public func notebookCells(source: String)throws  -> [NotebookCellState]  {
-    return try  FfiConverterSequenceTypeNotebookCellState.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
+public func notebookCells(source: String)throws  -> [NotebookCellProjection]  {
+    return try  FfiConverterSequenceTypeNotebookCellProjection.lift(try rustCallWithError(FfiConverterTypeFrontendServiceError_lift) {
     uniffi_casars_frontend_services_fn_func_notebook_cells(
         FfiConverterString.lower(source),$0
     )
@@ -25579,7 +25603,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_casars_frontend_services_checksum_func_notebook_begin_recording() != 45172) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_casars_frontend_services_checksum_func_notebook_cells() != 39913) {
+    if (uniffi_casars_frontend_services_checksum_func_notebook_cells() != 30288) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_casars_frontend_services_checksum_func_notebook_create() != 1695) {

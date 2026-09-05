@@ -1148,14 +1148,19 @@ fn prepare(
     if rows.selected_row_count() == 0 {
         return Err(boxed("selection resolved to no rows"));
     }
-    let selected_field = request
-        .phase_center_field
-        .unwrap_or_else(|| *selected_fields.first().expect("nonempty selection"));
-    if !selected_fields.contains(&selected_field) {
-        return Err(boxed(format!(
-            "phase-center FIELD_ID {selected_field} is not part of selected fields {selected_fields:?}"
-        )));
-    }
+    let numeric_phase_center = request
+        .phase_center
+        .as_deref()
+        .and_then(|text| text.trim().parse::<i32>().ok());
+    let selected_field = *selected_fields.first().expect("nonempty selection");
+    let phase_center_field = numeric_phase_center
+        .or(request.phase_center_field)
+        .unwrap_or(selected_field);
+    let phase_center_field_id = usize::try_from(phase_center_field).map_err(|_| {
+        boxed(format!(
+            "phasecenter FIELD_ID {phase_center_field} must be non-negative"
+        ))
+    })?;
     let field_id =
         usize::try_from(selected_field).map_err(|_| boxed("selected FIELD_ID is negative"))?;
     let bindings = selected_ddids
@@ -1184,8 +1189,10 @@ fn prepare(
         }
         source_frequency_reference.get_or_insert(reference);
     }
-    let stored_phase = casa_ms::derived::engine::raw_field_phase_direction(&ms, field_id)?;
-    let phase = casa_ms::derived::engine::resolve_field_phase_direction_j2000(&ms, field_id)?;
+    let stored_phase =
+        casa_ms::derived::engine::raw_field_phase_direction(&ms, phase_center_field_id)?;
+    let phase =
+        casa_ms::derived::engine::resolve_field_phase_direction_j2000(&ms, phase_center_field_id)?;
     let default_main_direction = SkyDirection::new(
         DirectionFrame::J2000,
         phase.as_angles().0,
@@ -1198,6 +1205,11 @@ fn prepare(
         SelectedObservationMeasures::new(Arc::clone(&measures_provider))?.identity();
     let (phase_centre_law, ephemeris, main_direction) = match request.phase_center.as_deref() {
         None => (
+            PhaseCentreLaw::Fixed(default_main_direction),
+            None,
+            default_main_direction,
+        ),
+        Some(_) if numeric_phase_center.is_some() => (
             PhaseCentreLaw::Fixed(default_main_direction),
             None,
             default_main_direction,
@@ -1271,7 +1283,7 @@ fn prepare(
         let frame = frame_engine
             .spectral_frame_observatory_direction(anchor_time_mjd_seconds, phase.clone())?;
         phase.convert_to(DirectionRef::ICRS, &frame)?
-    } else if request.phase_center.is_none()
+    } else if (request.phase_center.is_none() || numeric_phase_center.is_some())
         && matches!(
             stored_phase.refer(),
             DirectionRef::J2000 | DirectionRef::ICRS | DirectionRef::B1950 | DirectionRef::GALACTIC

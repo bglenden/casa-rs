@@ -83,6 +83,18 @@ file is opened or written: prototype tests launch `--show-prototype notebook`,
 the production-boundary audit remains zero. Production notebook tests use only
 unique test-owned temporary projects and remove them after each test.
 
+Notebook rich-mode implementation keeps parsing ownership in Rust. The
+frontend projection carries each managed cell's identity, kind, task intent,
+and exact UTF-8 byte ranges; `CasarsMacCore` validates those ranges and builds
+the source-preserving `NotebookRichDocument`. A structural projection error is
+shown in Rich mode with an explicit Raw-mode action. Production has no marker
+scanner or raw fallback traversal: `PrototypeNotebookRichProjectionAdapter`
+is limited to deterministic fixture/prototype Markdown. The canonical
+`NotebookRichDocumentView` owns block traversal and managed-cell resolution;
+generic Markdown uses `WorkbenchMarkdownText`, with
+`NotebookVisibleMarkdown` suppressing only CASA control comments outside fenced
+code.
+
 Wave 5 adds a separate opt-in production acceptance path:
 
 ```bash

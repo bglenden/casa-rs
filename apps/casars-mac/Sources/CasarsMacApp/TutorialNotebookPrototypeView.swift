@@ -3,8 +3,10 @@ import SwiftUI
 
 struct TutorialNotebookPrototypeView: View {
     @ObservedObject var store: WorkbenchStore
+    @Environment(\.colorScheme) private var colorScheme
     @State private var expandedFailureDetails = false
-    @State private var learnerRichDocument = PrototypeNotebookRichDocument(markdown: "")
+    @State private var learnerRichDocument = NotebookRichDocument.empty
+    @State private var richProjectionError: String?
 
     private var tutorial: TutorialNotebookPrototypeProjection? {
         store.state.prototypeTutorial
@@ -169,12 +171,24 @@ struct TutorialNotebookPrototypeView: View {
                     acquisitionCard
                 }
 
-                ForEach(learnerRichDocument.elements) { element in
-                    richElement(element)
-
-                    if element.id == acquisitionAnchorElementID {
-                        acquisitionCard
-                    }
+                if let richProjectionError {
+                    NotebookRichStructuralErrorView(
+                        message: richProjectionError,
+                        onSwitchToRaw: { store.setTutorialPrototypeViewMode(.raw) }
+                    )
+                } else {
+                    NotebookRichDocumentView(
+                        document: $learnerRichDocument,
+                        onMarkdownChange: { store.setTutorialPrototypeDraft($0) },
+                        resolvedManagedCell: { cellID in
+                            guard cellID == tutorial?.fixtureTask.id else { return nil }
+                            return AnyView(taskParameterCard)
+                        },
+                        afterBlock: { block in
+                            guard block.id == acquisitionAnchorElementID else { return nil }
+                            return AnyView(acquisitionCard)
+                        }
+                    )
                 }
 
                 Text("End of learner notebook")
@@ -195,41 +209,17 @@ struct TutorialNotebookPrototypeView: View {
     /// content. Place it after the first section's prose when possible while
     /// keeping every Markdown element sourced from the learner draft.
     private var acquisitionAnchorElementID: String? {
-        let elements = learnerRichDocument.elements
-        guard let headingIndex = elements.firstIndex(where: { $0.headingLevel == 2 }) else {
+        let blocks = learnerRichDocument.blocks
+        guard let headingIndex = blocks.firstIndex(where: { $0.headingLevel == 2 }) else {
             return nil
         }
-        let followingIndex = elements.index(after: headingIndex)
-        if followingIndex < elements.endIndex,
-           elements[followingIndex].headingLevel == nil,
-           elements[followingIndex].taskID == nil {
-            return elements[followingIndex].id
+        let followingIndex = blocks.index(after: headingIndex)
+        if followingIndex < blocks.endIndex,
+           blocks[followingIndex].headingLevel == nil,
+           blocks[followingIndex].managedCellID == nil {
+            return blocks[followingIndex].id
         }
-        return elements[headingIndex].id
-    }
-
-    @ViewBuilder
-    private func richElement(_ element: PrototypeNotebookRichElement) -> some View {
-        if let taskID = element.taskID {
-            if taskID == tutorial?.fixtureTask.id {
-                taskParameterCard
-            } else {
-                Text(element.source)
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.065))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-            }
-        } else {
-            RichMarkdownBlockEditor(
-                source: richElementBinding(element.id),
-                headingLevel: element.headingLevel,
-                isInsertionSurface: element.isInsertionSurface,
-                accessibilityID: "notebook.richElement.\(element.id)"
-            )
-        }
+        return blocks[headingIndex].id
     }
 
     private var compactSectionProgress: some View {
@@ -257,28 +247,15 @@ struct TutorialNotebookPrototypeView: View {
         .padding(.vertical, 2)
     }
 
-    private func richElementBinding(_ elementID: String) -> Binding<String> {
-        Binding(
-            get: {
-                learnerRichDocument.elements
-                    .first(where: { $0.id == elementID })?
-                    .editableSource ?? ""
-            },
-            set: { value in
-                var updated = learnerRichDocument
-                guard updated.replaceEditableSource(elementID: elementID, with: value) else {
-                    return
-                }
-                learnerRichDocument = updated
-                store.setTutorialPrototypeDraft(updated.markdown)
-            }
-        )
-    }
-
     private func loadRichDocument() {
-        learnerRichDocument = PrototypeNotebookRichDocument(
-            markdown: learnerNotebook?.draftMarkdown ?? ""
-        )
+        do {
+            learnerRichDocument = try PrototypeNotebookRichProjectionAdapter.document(
+                markdown: learnerNotebook?.draftMarkdown ?? ""
+            )
+            richProjectionError = nil
+        } catch {
+            richProjectionError = String(describing: error)
+        }
     }
 
     @ViewBuilder
@@ -287,7 +264,7 @@ struct TutorialNotebookPrototypeView: View {
             VStack(alignment: .leading, spacing: 9) {
                 HStack(spacing: 9) {
                     Image(systemName: dataset.phase.icon)
-                        .foregroundStyle(dataset.phase.color)
+                        .foregroundStyle(dataset.phase.color(in: colorScheme))
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(dataset.name)
@@ -302,7 +279,19 @@ struct TutorialNotebookPrototypeView: View {
                     Spacer()
                     Text(dataset.phase.label)
                         .workbenchFont(.caption, weight: .semibold)
-                        .foregroundStyle(dataset.phase.color)
+                        .foregroundStyle(
+                            dataset.phase.usesNeutralBadge
+                                ? (colorScheme == .dark ? Color.black : Color.white)
+                                : dataset.phase.color(in: colorScheme)
+                        )
+                        .padding(.horizontal, dataset.phase.usesNeutralBadge ? 6 : 0)
+                        .padding(.vertical, dataset.phase.usesNeutralBadge ? 2 : 0)
+                        .background(
+                            dataset.phase.usesNeutralBadge
+                                ? (colorScheme == .dark ? Color.white : Color.black)
+                                : Color.clear,
+                            in: Capsule()
+                        )
                         .accessibilityIdentifier("tutorialPrototype.dataset.status.\(dataset.id)")
                         .accessibilityValue(dataset.phase.rawValue)
                 }
@@ -395,7 +384,7 @@ struct TutorialNotebookPrototypeView: View {
         HStack(spacing: 8) {
             switch dataset.phase {
             case .missing, .approvalRequired:
-                Button("Review acquisition") {
+                Button("Download dataset…") {
                     store.showTutorialPrototypeApproval()
                 }
                 .accessibilityIdentifier("tutorialPrototype.dataset.review.\(dataset.id)")
@@ -548,7 +537,7 @@ struct TutorialNotebookPrototypeView: View {
                 Button("Cancel") { store.dismissTutorialPrototypeApproval() }
                     .accessibilityIdentifier("tutorialPrototype.approval.cancel")
                 Spacer()
-                Button("Approve and download") {
+                Button("Download") {
                     store.approveTutorialPrototypeAcquisition()
                 }
                 .buttonStyle(.borderedProminent)
@@ -634,14 +623,19 @@ private extension TutorialNotebookAcquisitionPhase {
         }
     }
 
-    var color: Color {
+    func color(in colorScheme: ColorScheme) -> Color {
         switch self {
         case .ready: .green
         case .downloading, .verifying, .unpacking: .accentColor
         case .checksumFailed, .diskFailed, .offline, .unsafeArchive: .red
         case .cancelled: .orange
-        case .missing, .approvalRequired: .primary
+        case .missing, .approvalRequired:
+            colorScheme == .dark ? .white : .black
         }
+    }
+
+    var usesNeutralBadge: Bool {
+        self == .missing || self == .approvalRequired
     }
 
     var isFailure: Bool {

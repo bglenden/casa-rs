@@ -791,6 +791,10 @@ extension AssistantCorpusRefreshRequest: Equatable {}
 public final class WorkbenchStore: ObservableObject {
     @Published public private(set) var state: WorkbenchState
     @Published package private(set) var pythonNotebookRuntime = NotebookPythonRuntimeState()
+    @Published package private(set) var tabPresentationStates: [String: WorkbenchTabPresentationState] = [:]
+    @Published package private(set) var selectedProjectFileRemovalTarget: ProjectItemRemovalTarget?
+    @Published package private(set) var pendingProjectItemDeletion: ProjectItemRemovalTarget?
+    @Published package private(set) var projectItemRemovalInProgress: ProjectItemRemovalTarget?
     private let runtimeKind: WorkbenchRuntimeKind
     private let probeClient: ProjectProbeClient
     private let demoProjectClient: DemoProjectClient
@@ -805,11 +809,13 @@ public final class WorkbenchStore: ObservableObject {
     private var notebookPersistenceClient: NotebookPersistenceClient
     private var tutorialPersistenceClient: TutorialPersistenceClient
     private var assistantPersistenceClient: AssistantPersistenceClient
+    private var projectItemRemovalClient: ProjectItemRemovalClient
     private let assistantController = AssistantController()
     private let imagerProgressSource: ImagerProgressSource
     private let plotQueue = DispatchQueue(label: "casars.mac.ms-plot-job", qos: .userInitiated, attributes: .concurrent)
     private let tableBrowserQueue = DispatchQueue(label: "casars.mac.tablebrowser-cell-window", qos: .userInitiated)
     private let assistantCorpusQueue = DispatchQueue(label: "casars.mac.assistant-corpus", qos: .utility)
+    private let projectItemRemovalQueue = DispatchQueue(label: "casars.mac.project-item-removal", qos: .userInitiated)
     private var projectCorpusWatcher: ProjectCorpusWatcher?
     private var fullyRefreshedAssistantCorpusProject: String?
     private var activeTaskExecutions: [String: TaskExecution] = [:]
@@ -870,6 +876,7 @@ public final class WorkbenchStore: ObservableObject {
         notebookPersistenceClient = UniFFINotebookPersistenceClient()
         tutorialPersistenceClient = UniFFITutorialPersistenceClient()
         assistantPersistenceClient = UniFFIAssistantPersistenceClient()
+        projectItemRemovalClient = FileManagerProjectItemRemovalClient()
         self.imagerProgressSource = imagerProgressSource
     }
 
@@ -883,6 +890,10 @@ public final class WorkbenchStore: ObservableObject {
 
     package func installAssistantPersistenceClientForTesting(_ client: AssistantPersistenceClient) {
         assistantPersistenceClient = client
+    }
+
+    package func installProjectItemRemovalClientForTesting(_ client: ProjectItemRemovalClient) {
+        projectItemRemovalClient = client
     }
 
     package func installAgentSessionForTesting(
@@ -1201,6 +1212,7 @@ public final class WorkbenchStore: ObservableObject {
             temporaryDemoProjectRoot = probed.project.rootPath
             var project = probed.project
             project.datasets = orderedDemoDatasets(project.datasets)
+            tabPresentationStates.removeAll()
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.applicationCatalog = applicationCatalog
             state.project = project
@@ -1231,6 +1243,8 @@ public final class WorkbenchStore: ObservableObject {
 
     public func openProject(path: String) {
         guard !rejectPrototypeProductionAction("Project opening") else { return }
+        selectedProjectFileRemovalTarget = nil
+        pendingProjectItemDeletion = nil
         projectCorpusWatcher?.stop()
         projectCorpusWatcher = nil
         assistantController.corpusCoordinator.reset()
@@ -1240,6 +1254,7 @@ public final class WorkbenchStore: ObservableObject {
         cleanupTemporaryDemoProject()
         do {
             let probed = try probeClient.probeProject(path: path)
+            tabPresentationStates.removeAll()
             state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
             state.applicationCatalog = applicationCatalog
             state.project = probed.project
@@ -1300,6 +1315,7 @@ public final class WorkbenchStore: ObservableObject {
             )
             return
         }
+        tabPresentationStates.removeAll()
         state = EmptyWorkbench.makeState(interfaceFontSize: interfaceFontSize)
         state.applicationCatalog = applicationCatalog
         state.project = ProjectFixture(
@@ -1436,6 +1452,238 @@ public final class WorkbenchStore: ObservableObject {
         } catch {
             state.lastErrors.append("Refresh project \(state.project.rootPath): \(error)")
         }
+    }
+
+    package func datasetRemovalTarget(_ datasetID: String) -> ProjectItemRemovalTarget? {
+        guard state.project.source == .probed,
+              let dataset = state.project.datasets.first(where: { $0.id == datasetID })
+        else { return nil }
+        return ProjectItemRemovalTarget(
+            id: dataset.id,
+            name: dataset.name,
+            path: dataset.path,
+            kind: .dataset,
+            sizeBytes: dataset.sizeBytes
+        )
+    }
+
+    package func notebookRemovalTarget(_ notebookID: String) -> ProjectItemRemovalTarget? {
+        guard state.project.source == .probed,
+              let project = state.scientificNotebooks,
+              let notebook = project.notebooks.first(where: { $0.id == notebookID })
+        else { return nil }
+        return ProjectItemRemovalTarget(
+            id: notebook.id,
+            name: notebook.filename,
+            path: URL(fileURLWithPath: project.projectRoot, isDirectory: true)
+                .appendingPathComponent("notebooks", isDirectory: true)
+                .appendingPathComponent(notebook.filename)
+                .path,
+            kind: .notebook
+        )
+    }
+
+    package func fileRemovalTarget(
+        path: String,
+        name: String,
+        isDirectory: Bool,
+        sizeBytes: Int?
+    ) -> ProjectItemRemovalTarget? {
+        guard state.project.source == .probed else { return nil }
+        let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+        if let dataset = state.project.datasets.first(where: {
+            URL(fileURLWithPath: $0.path).standardizedFileURL.path == standardizedPath
+        }) {
+            return datasetRemovalTarget(dataset.id)
+        }
+        if let project = state.scientificNotebooks,
+           let notebook = project.notebooks.first(where: {
+               URL(fileURLWithPath: project.projectRoot, isDirectory: true)
+                   .appendingPathComponent("notebooks", isDirectory: true)
+                   .appendingPathComponent($0.filename)
+                   .standardizedFileURL.path == standardizedPath
+           }) {
+            return notebookRemovalTarget(notebook.id)
+        }
+        return ProjectItemRemovalTarget(
+            id: standardizedPath,
+            name: name,
+            path: standardizedPath,
+            kind: isDirectory ? .folder : .file,
+            sizeBytes: isDirectory ? nil : sizeBytes.map { UInt64(max($0, 0)) }
+        )
+    }
+
+    package func selectProjectFileForRemoval(_ target: ProjectItemRemovalTarget?) {
+        selectedProjectFileRemovalTarget = target
+    }
+
+    package var selectedProjectItemRemovalTarget: ProjectItemRemovalTarget? {
+        switch state.dockMode {
+        case .datasets:
+            state.selectedDatasetID.flatMap(datasetRemovalTarget)
+        case .notebooks:
+            state.scientificNotebooks?.activeNotebookID.flatMap(notebookRemovalTarget)
+        case .files:
+            selectedProjectFileRemovalTarget
+        case .history:
+            nil
+        }
+    }
+
+    package var canRemoveSelectedProjectItem: Bool {
+        selectedProjectItemRemovalTarget.map { removalBlockedReason(for: $0) == nil } ?? false
+    }
+
+    package func canRemoveProjectItem(_ target: ProjectItemRemovalTarget) -> Bool {
+        removalBlockedReason(for: target) == nil
+    }
+
+    package func moveSelectedProjectItemToTrash() {
+        guard let target = selectedProjectItemRemovalTarget else { return }
+        moveProjectItemToTrash(target)
+    }
+
+    package func moveProjectItemToTrash(_ target: ProjectItemRemovalTarget) {
+        removeProjectItem(target, mode: .trash)
+    }
+
+    package func requestImmediateProjectItemDeletion(_ target: ProjectItemRemovalTarget) {
+        if let reason = removalBlockedReason(for: target) {
+            state.lastErrors.append(reason)
+            return
+        }
+        pendingProjectItemDeletion = target
+    }
+
+    package func cancelImmediateProjectItemDeletion() {
+        pendingProjectItemDeletion = nil
+    }
+
+    package func confirmImmediateProjectItemDeletion() {
+        guard let target = pendingProjectItemDeletion else { return }
+        pendingProjectItemDeletion = nil
+        removeProjectItem(target, mode: .deleteImmediately)
+    }
+
+    private func removalBlockedReason(for target: ProjectItemRemovalTarget) -> String? {
+        guard runtimeKind == .production, state.project.source == .probed else {
+            return "Project items can only be removed from an open project directory."
+        }
+        guard projectItemRemovalInProgress == nil else {
+            return "Wait for the current project-item removal to finish."
+        }
+        let root = URL(fileURLWithPath: state.project.rootPath, isDirectory: true).standardizedFileURL.path
+        let path = URL(fileURLWithPath: target.path).standardizedFileURL.path
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        guard path != root, path.hasPrefix(prefix) else {
+            return "Only items inside the open project can be removed."
+        }
+        let relativePath = String(path.dropFirst(prefix.count))
+        guard relativePath.split(separator: "/").first != ".casa-rs" else {
+            return "Workbench-managed .casa-rs state cannot be removed directly."
+        }
+        if target.kind == .notebook,
+           state.scientificNotebooks?.notebooks.first(where: { $0.id == target.id })?.isDirty == true {
+            return "Save or discard changes before removing \(target.name)."
+        }
+        if target.kind == .notebook,
+           state.scientificNotebooks?.activeNotebookID == target.id,
+           pythonNotebookRuntime.runningCellID != nil {
+            return "Stop the running notebook cell before removing \(target.name)."
+        }
+        if target.kind != .notebook,
+           state.taskRun.state == .running
+            || state.jobs.values.contains(where: { $0.status == .pending || $0.status == .running }) {
+            return "Wait for running project work to finish before removing data."
+        }
+        return nil
+    }
+
+    private func removeProjectItem(
+        _ target: ProjectItemRemovalTarget,
+        mode: ProjectItemRemovalMode
+    ) {
+        if let reason = removalBlockedReason(for: target) {
+            state.lastErrors.append(reason)
+            return
+        }
+        let affectedDatasetIDs = state.project.datasets.filter {
+            Self.removalTarget(target.path, contains: $0.path)
+        }.map(\.id)
+        let affectedNotebookIDs = state.scientificNotebooks?.notebooks.filter { notebook in
+            let path = URL(fileURLWithPath: state.project.rootPath, isDirectory: true)
+                .appendingPathComponent("notebooks", isDirectory: true)
+                .appendingPathComponent(notebook.filename)
+                .path
+            return Self.removalTarget(target.path, contains: path)
+        }.map(\.id) ?? []
+        let projectRoot = state.project.rootPath
+        let client = projectItemRemovalClient
+        projectItemRemovalInProgress = target
+        projectItemRemovalQueue.async { [weak self] in
+            let result = Result {
+                try client.remove(target, fromProjectRoot: projectRoot, mode: mode)
+            }
+            DispatchQueue.main.async {
+                self?.finishProjectItemRemoval(
+                    target,
+                    mode: mode,
+                    affectedDatasetIDs: affectedDatasetIDs,
+                    affectedNotebookIDs: affectedNotebookIDs,
+                    result: result
+                )
+            }
+        }
+    }
+
+    private func finishProjectItemRemoval(
+        _ target: ProjectItemRemovalTarget,
+        mode: ProjectItemRemovalMode,
+        affectedDatasetIDs: [String],
+        affectedNotebookIDs: [String],
+        result: Result<Void, Error>
+    ) {
+        projectItemRemovalInProgress = nil
+        switch result {
+        case .success:
+            selectedProjectFileRemovalTarget = nil
+            for notebookID in affectedNotebookIDs {
+                pythonKernels.removeValue(forKey: notebookID)?.terminate()
+                pythonKernelStatuses.removeValue(forKey: notebookID)
+            }
+            let tabsToClose = state.tabs.filter { tab in
+                tab.datasetID.map(affectedDatasetIDs.contains) == true
+            }.map(\.id)
+            for tabID in tabsToClose {
+                closeTab(tabID)
+            }
+            loadScientificNotebooks()
+            if state.scientificNotebooks?.notebooks.isEmpty == true {
+                let notebookTabs = state.tabs.filter { $0.kind == .notebook }.map(\.id)
+                for tabID in notebookTabs { closeTab(tabID) }
+            }
+            refreshProjectFromDisk()
+            requestAssistantCorpusRefresh(.projectDocuments)
+            state.history.append(ProcessingHistoryEvent(
+                id: "hist-project-item-removal-\(state.history.count + 1)",
+                timestamp: mode == .trash ? "trashed" : "deleted",
+                title: mode == .trash ? "Moved \(target.name) to Trash" : "Deleted \(target.name)",
+                reason: mode == .trash
+                    ? "Moved the selected project item to the macOS Trash."
+                    : "Permanently deleted the selected project item after confirmation.",
+                affectedPaths: [target.path],
+                approval: "user"
+            ))
+        case let .failure(error):
+            state.lastErrors.append("Remove \(target.name): \(error.localizedDescription)")
+        }
+    }
+
+    private static func removalTarget(_ targetPath: String, contains candidatePath: String) -> Bool {
+        let target = URL(fileURLWithPath: targetPath).standardizedFileURL.path
+        let candidate = URL(fileURLWithPath: candidatePath).standardizedFileURL.path
+        return candidate == target || candidate.hasPrefix(target.hasSuffix("/") ? target : target + "/")
     }
 
     private func projectDatasetsWithLooseFiles(
@@ -2234,6 +2482,22 @@ public final class WorkbenchStore: ObservableObject {
         state.activeTabID = tabID
     }
 
+    package func measurementSetExplorerSection(
+        tabID: String,
+        default defaultMode: MeasurementSetExplorerMode = .summary
+    ) -> MeasurementSetExplorerMode {
+        tabPresentationStates[tabID]?.measurementSetExplorerMode ?? defaultMode
+    }
+
+    package func setMeasurementSetExplorerSection(
+        _ mode: MeasurementSetExplorerMode,
+        tabID: String
+    ) {
+        var presentation = tabPresentationStates[tabID] ?? WorkbenchTabPresentationState()
+        presentation.measurementSetExplorerMode = mode
+        tabPresentationStates[tabID] = presentation
+    }
+
     public func closeTab(_ tabID: String) {
         guard let index = state.tabs.firstIndex(where: { $0.id == tabID }) else {
             state.lastErrors.append("Unknown tab \(tabID)")
@@ -2265,6 +2529,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         let wasActive = state.activeTabID == tabID
         state.tabs.remove(at: index)
+        tabPresentationStates.removeValue(forKey: tabID)
 
         guard wasActive else {
             return
@@ -2952,7 +3217,11 @@ public final class WorkbenchStore: ObservableObject {
               let document = project.activeNotebook,
               let cell = document.cells.first(where: { $0.id == cellID && $0.kind == "python" })
         else { return }
-        let source = Self.pythonSource(from: cell.body)
+        guard let body = cell.bodySource(in: document.draftSource) else {
+            state.lastErrors.append("Python cell \(cellID) has invalid Rust-owned body offsets")
+            return
+        }
+        let source = Self.pythonSource(from: body)
         guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             state.lastErrors.append("Python cell \(cellID) has no executable source")
             completion?()
@@ -3228,10 +3497,22 @@ public final class WorkbenchStore: ObservableObject {
     }
 
     package func setScientificNotebookDraft(_ markdown: String) {
-        let projectedCells = try? notebookPersistenceClient.projectCells(source: markdown)
+        let projection: Result<[NotebookCellProjection], Error>
+        do {
+            projection = .success(try notebookPersistenceClient.projectCells(source: markdown))
+        } catch {
+            projection = .failure(error)
+        }
         updateActiveScientificNotebook { document in
             document.draftSource = markdown
-            document.cells = projectedCells ?? []
+            switch projection {
+            case let .success(cells):
+                document.cells = cells
+                document.projectionError = nil
+            case let .failure(error):
+                document.cells = []
+                document.projectionError = String(describing: error)
+            }
             document.conflict = nil
         }
     }
@@ -3241,7 +3522,10 @@ public final class WorkbenchStore: ObservableObject {
               let cell = document.cells.first(where: { $0.id == cellID && $0.kind == "python" })
         else { return }
         let replacement = "```python\n\(source)\(source.hasSuffix("\n") ? "" : "\n")```\n"
-        guard let bodyRange = document.draftSource.range(of: cell.body) else { return }
+        guard let bodyRange = cell.bodyStringRange(in: document.draftSource) else {
+            state.lastErrors.append("Python cell \(cellID) has invalid Rust-owned body offsets")
+            return
+        }
         var markdown = document.draftSource
         markdown.replaceSubrange(bodyRange, with: replacement)
         setScientificNotebookDraft(markdown)
@@ -3792,6 +4076,9 @@ public final class WorkbenchStore: ObservableObject {
                 conversation.profile.effort = model.defaultEffort
             }
         }
+        state.assistantDiscussion?.contextWindowUnits = nil
+        refreshAssistantContextItems()
+        writeAssistantContextProjection()
         persistActiveAssistantConversation()
     }
 
@@ -4227,6 +4514,9 @@ public final class WorkbenchStore: ObservableObject {
             assistantController.session?.refreshAccount()
         case .restartConversation:
             restartActiveAgentConversation()
+        case .refreshResourcePlan:
+            refreshAssistantContextItems()
+            writeAssistantContextProjection()
         case .scheduleStreamFlush:
             assistantController.scheduleStreamFlush { [weak self] in
                 guard let self, var discussion = self.state.assistantDiscussion else { return }
@@ -4364,14 +4654,9 @@ public final class WorkbenchStore: ObservableObject {
         guard let discussion = state.assistantDiscussion else {
             return .unavailable("Assistant state is unavailable; no context resources were allocated.")
         }
-        let selectedModelID = discussion.activeConversation?.profile.model
-        let model = discussion.models.first { $0.id == selectedModelID }
-            ?? discussion.models.first { $0.isDefault }
-        guard let inputUnits = model?.inputCapacityUnits,
-              let outputUnits = model?.outputReserveUnits
-        else {
+        guard let contextWindowUnits = discussion.contextWindowUnits else {
             return .unavailable(
-                "The active backend did not report input and output capacity; context and corpus retrieval are disabled."
+                "The active thread has not reported its context window; context and corpus retrieval are disabled."
             )
         }
         let encodedConversationUnits = UInt64(
@@ -4404,10 +4689,7 @@ public final class WorkbenchStore: ObservableObject {
         }
         do {
             return try AssistantResourcePlanner.plan(
-                capacity: AssistantModelCapacity(
-                    inputUnits: inputUnits,
-                    outputReserveUnits: outputUnits
-                ),
+                capacity: .fromReportedContextWindow(contextWindowUnits),
                 reservations: [
                     AssistantResourceReservation(
                         id: "runtime_instructions",
@@ -4423,7 +4705,7 @@ public final class WorkbenchStore: ObservableObject {
                     ),
                 ],
                 contexts: requests,
-                corpusDesiredUnits: inputUnits
+                corpusDesiredUnits: contextWindowUnits
             )
         } catch {
             return .unavailable("Assistant resource planning failed: \(error)")
@@ -8119,7 +8401,12 @@ public final class WorkbenchStore: ObservableObject {
         var editedParameters = Set<String>()
         for (name, text) in textValues {
             guard let concept = session.bundle.concept(for: name) else { continue }
-            if preserveOverrides, session.overridePatch.values[name] != nil { continue }
+            if preserveOverrides,
+               session.overridePatch.values[name] != nil
+                || session.snapshot.states[name]?.origin == "base_profile"
+            {
+                continue
+            }
             session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = concept.valueDomain.value(from: text)
             editedParameters.insert(name)
@@ -8130,7 +8417,12 @@ public final class WorkbenchStore: ObservableObject {
         }
         for (name, value) in boolValues {
             guard session.bundle.concept(for: name) != nil else { continue }
-            if preserveOverrides, session.overridePatch.values[name] != nil { continue }
+            if preserveOverrides,
+               session.overridePatch.values[name] != nil
+                || session.snapshot.states[name]?.origin == "base_profile"
+            {
+                continue
+            }
             session.contextPatch.removeUnset(name)
             session.contextPatch.values[name] = .bool(value)
             editedParameters.insert(name)

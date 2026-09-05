@@ -8,12 +8,16 @@ use std::{
     io::{Read, Seek, SeekFrom},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 use serde::{Deserialize, Serialize};
 use ureq::ResponseExt;
 
 use super::TutorialError;
+
+const HTTP_SOURCE_RESOLUTION_TIMEOUT: Duration = Duration::from_secs(30);
+const HTTP_CHUNK_READ_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// URI metadata shown before acquisition approval.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,10 +164,12 @@ impl HttpTutorialUriHandler {
     fn new(scheme: &'static str) -> Self {
         let resolving_agent: ureq::Agent = ureq::config::Config::builder()
             .save_redirect_history(true)
+            .timeout_global(Some(HTTP_SOURCE_RESOLUTION_TIMEOUT))
             .build()
             .into();
         let reading_agent: ureq::Agent = ureq::config::Config::builder()
             .max_redirects(0)
+            .timeout_global(Some(HTTP_CHUNK_READ_TIMEOUT))
             .build()
             .into();
         Self {

@@ -45,6 +45,73 @@ final class CasarsMacUITests: XCTestCase {
         }
     }
 
+    func testFirstRunOnboardingExplainsSafeStartingPaths() throws {
+        app = makeTestApplication()
+        ensureStoppedBeforeLaunch()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--show-first-run-onboarding",
+        ]
+        launchTestApplication()
+        app.activate()
+
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        XCTAssertTrue(try require("onboarding.welcome").exists)
+        XCTAssertTrue(try require("onboarding.startTutorial").isEnabled)
+        XCTAssertTrue(try require("onboarding.openProject").isEnabled)
+        XCTAssertTrue(try require("onboarding.openDemo").isEnabled)
+        XCTAssertTrue(try accessibilityValue("project.rootPath").contains("Open a project directory to begin"))
+
+        try require("onboarding.startTutorial").click()
+        let workspaceChooser = app.dialogs["Choose a tutorial workspace"]
+        XCTAssertTrue(workspaceChooser.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertFalse(element("onboarding.error").exists)
+        workspaceChooser.buttons["Cancel"].click()
+
+        try require("onboarding.dismiss").click()
+        XCTAssertFalse(element("onboarding.welcome").waitForExistence(timeout: 1))
+        XCTAssertTrue(try require("panel.emptyWorkbench").exists)
+        XCTAssertTrue(try accessibilityValue("project.rootPath").contains("Open a project directory to begin"))
+    }
+
+    func testShowWelcomeOverOpenProjectReturnsToSameNotebook() throws {
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-welcome")
+        let notebooks = project.appendingPathComponent("notebooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: notebooks, withIntermediateDirectories: true)
+        try """
+        <!-- casa-rs-notebook:v1 id=019f1111-1111-7111-8111-111111111111 -->
+
+        # Welcome regression notebook
+
+        The active project and notebook must survive the welcome overlay.
+        """.write(
+            to: notebooks.appendingPathComponent("welcome-regression.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        productionProjectURL = project
+
+        launchLiveProductionProject(
+            project,
+            environment: [:],
+            requiredElements: ["notebook.document.scroll"]
+        )
+        let projectRootBeforeWelcome = try accessibilityValue("project.rootPath")
+
+        app.menuBars.menuBarItems["Workbench"].click()
+        let showWelcome = app.menuItems["Show Welcome"]
+        XCTAssertTrue(showWelcome.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(showWelcome.isEnabled)
+        showWelcome.click()
+
+        XCTAssertTrue(try require("onboarding.welcome").exists)
+        try require("onboarding.dismiss").click()
+
+        XCTAssertFalse(element("onboarding.welcome").waitForExistence(timeout: 1))
+        XCTAssertTrue(try require("notebook.document.scroll").exists)
+        XCTAssertEqual(try accessibilityValue("project.rootPath"), projectRootBeforeWelcome)
+    }
+
     func testT64CanonicalImagingReadinessIsVisibleAndBlocksInfeasibleLaunch() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -77,7 +144,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.capability")).contains("Unsupported request"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.plan")).contains("Pending launch"))
         XCTAssertTrue(try textValue(try require("task.imagerReadiness.cache")).contains("auto"))
-        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v6"))
+        XCTAssertTrue(try textValue(try require("task.imagerReadiness.provider")).contains("casa_imager_task v7"))
         XCTAssertTrue(try require("task.imagerReadiness.unsupported.task.preview_png").exists)
         XCTAssertFalse(try require("task.run").isEnabled)
     }
@@ -603,7 +670,7 @@ final class CasarsMacUITests: XCTestCase {
         try clickIdentified("dock.mode.notebooks")
         let selector = notebookSelector(notebookID)
         XCTAssertTrue(selector.waitForExistence(timeout: 5), app.debugDescription)
-        try require("notebook.selector.open").click()
+        try require("notebook.row.\(notebookID)").doubleClick()
 
         XCTAssertTrue(element("notebook.viewMode").waitForExistence(timeout: 5), app.debugDescription)
 
@@ -648,6 +715,41 @@ final class CasarsMacUITests: XCTestCase {
         try require("notebook.taskReplace.confirm").click()
         XCTAssertTrue(waitForValue("task.parameter.mode", containing: "list"))
         XCTAssertFalse(app.buttons["Stop"].isEnabled, "Replacing notebook parameters must not execute the task")
+    }
+
+    func testProjectFileContextMenuRequiresConfirmationForImmediateDeletion() throws {
+        let project = try makeProductionProjectRoot(prefix: "casars-mac-ui-removal")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let file = project.appendingPathComponent("large-output.dat")
+        try Data(repeating: 0x2A, count: 1024).write(to: file)
+        productionProjectURL = project
+
+        app = makeTestApplication()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES",
+            "--open-project", project.path,
+        ]
+        launchTestApplication()
+        app.activate()
+        XCTAssertTrue(app.windows["casa-rs Workbench"].waitForExistence(timeout: 10))
+        try clickIdentified("dock.mode.files")
+
+        let row = try require("file.row.\(file.path)")
+        row.rightClick()
+        XCTAssertTrue(app.menuItems["Move to Trash"].waitForExistence(timeout: 3))
+        let deleteImmediately = app.menuItems["Delete Immediately…"]
+        XCTAssertTrue(deleteImmediately.exists)
+        deleteImmediately.click()
+
+        let alert = app.alerts["Delete large-output.dat immediately?"]
+        XCTAssertTrue(alert.waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        alert.buttons["Delete"].click()
+
+        XCTAssertTrue(pollUntil(timeout: 5) {
+            !FileManager.default.fileExists(atPath: file.path)
+        })
+        XCTAssertFalse(row.waitForExistence(timeout: 2))
     }
 
     func testCanonicalMeasurementSetSelectorDiagnosticsReachTheLaunchedApp() throws {
@@ -1810,7 +1912,15 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: templateManifest), templateManifestData)
         XCTAssertEqual(try Data(contentsOf: templateMarkdown), templateMarkdownData)
         XCTAssertTrue(forkedSource.contains("# First Look at Imaging: TW Hya"))
-        XCTAssertTrue(forkedSource.contains("019f6666-6666-7666-8666-666666666666"))
+        for taskCellID in [
+            "019f6666-6666-7666-8666-666666666601",
+            "019f6666-6666-7666-8666-666666666602",
+            "019f6666-6666-7666-8666-666666666603",
+            "019f6666-6666-7666-8666-666666666666",
+            "019f6666-6666-7666-8666-666666666605",
+        ] {
+            XCTAssertTrue(forkedSource.contains(taskCellID), "Missing guide task cell \(taskCellID)")
+        }
         let pythonCellID = "019f0000-0000-7000-8000-000000000418"
         let pythonSource = """
         import matplotlib.pyplot as plt
@@ -1858,9 +1968,14 @@ final class CasarsMacUITests: XCTestCase {
         )
         let acquisitionStartedAt = Date()
         try clickIdentified("tutorial.approval.approve")
-        XCTAssertTrue(
-            waitForValue("tutorial.dataset.\(datasetID)", containing: "ready", timeout: 1_800),
-            app.debugDescription
+        let datasetStatus = try XCTUnwrap(
+            waitForTutorialDatasetOutcome(datasetID, timeout: 1_800),
+            "The tutorial dataset did not reach a terminal state.\n\(app.debugDescription)"
+        )
+        XCTAssertEqual(
+            datasetStatus,
+            "ready",
+            "The tutorial dataset ended with status \(datasetStatus).\n\(app.debugDescription)"
         )
         let acquisitionDurationSeconds = Date().timeIntervalSince(acquisitionStartedAt)
         let measurementSet = project
@@ -1918,7 +2033,7 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertEqual(explorerRevisions[0]["source_references"] as? [String], [measurementSet.path])
 
         try clickIdentified("central.tab.tab-scientific-notebook")
-        let taskCellID = "019f6666-6666-7666-8666-666666666666"
+        let taskCellID = "019f6666-6666-7666-8666-666666666601"
         try bringIntoView(
             "notebook.parameters.open.\(taskCellID)",
             in: "notebook.document.scroll",
@@ -1945,9 +2060,13 @@ final class CasarsMacUITests: XCTestCase {
         }
         if element("task.safety.confirm").exists { try clickIdentified("task.safety.confirm") }
         try clickIdentified("task.run")
+        let taskStatus = try XCTUnwrap(
+            waitForTaskRunTerminalStatus(timeout: 1_800),
+            "The tutorial imaging task did not reach a terminal state.\n\(app.debugDescription)"
+        )
         XCTAssertTrue(
-            waitForValue("task.run.status", containing: "succeeded", timeout: 1_800),
-            app.debugDescription
+            taskStatus.localizedCaseInsensitiveContains("succeeded"),
+            "The tutorial imaging task ended with status \(taskStatus).\n\(app.debugDescription)"
         )
         let taskReceipt = try waitForReceiptObject(in: runs, timeout: 30) {
             $0["operation_id"] as? String == "imager" && $0["status"] as? String == "succeeded"
@@ -1957,6 +2076,13 @@ final class CasarsMacUITests: XCTestCase {
         XCTAssertTrue(markdownAfterTask.contains("id=\(taskCellID) kind=task"))
         XCTAssertTrue(markdownAfterTask.contains("id=\(taskRunCellID) kind=task"))
         XCTAssertEqual((taskReceipt["schema_version"] as? NSNumber)?.intValue, 2)
+        let executedTaskParameters = try XCTUnwrap(
+            (taskReceipt["sparse_intent"] as? [String: Any])?["parameters"] as? [String: Any]
+        )
+        XCTAssertEqual(executedTaskParameters["field"] as? String, "3")
+        XCTAssertEqual(executedTaskParameters["phasecenter"] as? String, "3")
+        XCTAssertEqual(executedTaskParameters["gridder"] as? String, "standard")
+        XCTAssertEqual(executedTaskParameters["write_pb"] as? Bool, true)
         XCTAssertFalse((taskReceipt["products"] as? [[String: Any]] ?? []).isEmpty)
 
         try clickIdentified("central.tab.tab-scientific-notebook")
@@ -2301,6 +2427,32 @@ final class CasarsMacUITests: XCTestCase {
             try accessibilityValue("prototypeTask.parameterSource.imsize"),
             "tutorial override"
         )
+    }
+
+    func testDisplayFontSizeScalesTutorialRichText() throws {
+        launchTutorialPrototype()
+        app.menuBars.menuBarItems["Display"].click()
+        let resetFontSize = app.menuItems["Reset Font Size"]
+        XCTAssertTrue(resetFontSize.waitForExistence(timeout: 3), app.debugDescription)
+        resetFontSize.click()
+
+        let heading = try require("notebook.richElement.rich-element-0")
+        let prose = try require("notebook.richElement.rich-element-1")
+        let originalHeadingHeight = heading.frame.height
+        let originalProseHeight = prose.frame.height
+
+        for _ in 0..<3 {
+            app.typeKey("+", modifierFlags: [.command])
+        }
+
+        XCTAssertGreaterThan(heading.frame.height, originalHeadingHeight)
+        XCTAssertGreaterThan(prose.frame.height, originalProseHeight)
+
+        for _ in 0..<3 {
+            app.typeKey("-", modifierFlags: [.command])
+        }
+        XCTAssertEqual(heading.frame.height, originalHeadingHeight, accuracy: 1)
+        XCTAssertEqual(prose.frame.height, originalProseHeight, accuracy: 1)
     }
 
     func testProductionTutorialForkApprovalReadyAndTaskLoading() throws {
@@ -2834,13 +2986,22 @@ final class CasarsMacUITests: XCTestCase {
         at output: URL,
         repoRoot: URL
     ) throws {
-        let simobserve = repoRoot
-            .appendingPathComponent("target", isDirectory: true)
+        let targetRoot: URL
+        if let configuredTarget = ProcessInfo.processInfo.environment["CARGO_TARGET_DIR"] {
+            targetRoot = URL(
+                fileURLWithPath: configuredTarget,
+                isDirectory: true,
+                relativeTo: repoRoot
+            ).standardizedFileURL
+        } else {
+            targetRoot = repoRoot.appendingPathComponent("target", isDirectory: true)
+        }
+        let simobserve = targetRoot
             .appendingPathComponent("debug", isDirectory: true)
             .appendingPathComponent("simobserve")
         XCTAssertTrue(
             FileManager.default.isExecutableFile(atPath: simobserve.path),
-            "The deterministic GUI journey must build target/debug/simobserve"
+            "The deterministic GUI journey must build \(simobserve.path)"
         )
         let request: [String: Any] = [
             "kind": "run",
@@ -2905,6 +3066,7 @@ final class CasarsMacUITests: XCTestCase {
         app.launchEnvironment["CODEX_HOME"] = environment["codexHome"] ?? ""
         app.launchEnvironment["CASA_RS_AGENT_COMMAND"] = environment["agentCommand"] ?? "codex"
         app.launchEnvironment["CASA_RS_GUI_TEST_PYTHON"] = environment["pythonCommand"] ?? "python3"
+        app.launchEnvironment["CASARS_LAUNCH_MODE"] = "installed_suite"
         if let repoRoot = environment["repoRoot"] {
             app.launchEnvironment["CASA_RS_REPO_ROOT"] = repoRoot
             app.launchEnvironment["CASA_RS_SOURCE_ROOT"] = repoRoot
@@ -3258,6 +3420,53 @@ final class CasarsMacUITests: XCTestCase {
             for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
             timeout: timeout
         ) == .completed
+    }
+
+    private func waitForTaskRunTerminalStatus(timeout: TimeInterval) -> String? {
+        pollForValue(timeout: timeout) {
+            guard let value = try? accessibilityValue("task.run.status") else { return nil }
+            return ["succeeded", "failed", "cancelled"].contains {
+                value.localizedCaseInsensitiveContains($0)
+            } ? value : nil
+        }
+    }
+
+    private func waitForTutorialDatasetOutcome(
+        _ datasetID: String,
+        timeout: TimeInterval,
+        maxNetworkResumes: Int = 3
+    ) -> String? {
+        var networkResumeCount = 0
+        var resumedCurrentFailure = false
+        let terminalFailures = [
+            "cancelled",
+            "checksum_failed",
+            "unsafe_archive",
+            "destination_collision",
+        ]
+        return pollForValue(timeout: timeout, interval: 0.25) {
+            let dataset = element("tutorial.dataset.\(datasetID)")
+            guard dataset.exists, let status = dataset.value as? String else {
+                return nil
+            }
+            if status == "ready" || terminalFailures.contains(status) {
+                return status
+            }
+            guard status == "network_failed" else {
+                resumedCurrentFailure = false
+                return nil
+            }
+            guard networkResumeCount < maxNetworkResumes else {
+                return status
+            }
+            let resume = element("tutorial.dataset.resume.\(datasetID)")
+            if !resumedCurrentFailure, resume.exists, resume.isHittable {
+                resume.click()
+                networkResumeCount += 1
+                resumedCurrentFailure = true
+            }
+            return nil
+        }
     }
 
     private func pollUntil(

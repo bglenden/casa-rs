@@ -707,6 +707,119 @@ fn request(
     }
 }
 
+#[test]
+fn numeric_phasecenter_uses_unselected_field_direction() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = measurement_set_fixture(
+        root.path(),
+        "numeric-phasecenter.ms",
+        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 1, false).with_two_fields(),
+    );
+    let mut imaging = request(
+        measurement_set,
+        root.path().join("literal"),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.phase_center = Some("J2000 1.0001rad 0.5rad".to_string());
+    execute_continuum(imaging.clone()).expect("literal phase center");
+    let expected = product_plane(&imaging.image_name, ".residual");
+
+    for (name, phase_center, phase_center_field) in [
+        ("numeric", Some(" 1 ".to_string()), None),
+        ("field", None, Some(1)),
+    ] {
+        imaging.image_name = root.path().join(name);
+        imaging.phase_center = phase_center;
+        imaging.phase_center_field = phase_center_field;
+        execute_continuum(imaging.clone()).expect("unselected FIELD_ID phase center");
+        let actual = product_plane(&imaging.image_name, ".residual");
+        for (actual, expected) in actual.iter().zip(expected.iter()) {
+            assert!(
+                (actual - expected).abs() < 1e-5,
+                "{name}: {actual} != {expected}"
+            );
+        }
+    }
+    imaging.phase_center_field = None;
+    imaging.phase_center = Some("1".to_string());
+    imaging.image_name = root.path().join("continuum-subtracted");
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            start: Some(CubeAxisValue::Channel(0)),
+            width: Some(CubeAxisValue::Channel(1)),
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(1),
+    };
+    imaging.continuum_subtraction = Some(VisibilityContinuumSubtraction {
+        fit_spw: "0:0".to_string(),
+        fit_order: 0,
+    });
+    execute_continuum(imaging.clone()).expect("continuum fit uses selected science field 0");
+    assert!(
+        product_plane(&imaging.image_name, ".residual")
+            .iter()
+            .all(|value| value.abs() < 1e-5)
+    );
+    imaging.phase_center = Some("-1".to_string());
+    let error = execute_continuum(imaging)
+        .err()
+        .expect("negative FIELD_ID rejected");
+    assert!(
+        error
+            .to_string()
+            .contains("phasecenter FIELD_ID -1 must be non-negative")
+    );
+}
+
+#[test]
+fn numeric_phasecenter_preserves_native_field_reference() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let ms_path = tiny_measurement_set(root.path());
+    let mut ms = MeasurementSet::open(&ms_path).expect("open MS");
+    let field = ms.subtable_mut(SubtableId::Field).expect("FIELD");
+    let mut keywords = field
+        .column_keywords("PHASE_DIR")
+        .expect("phase keywords")
+        .clone();
+    let Value::Record(mut measures) = keywords.get("MEASINFO").expect("measure reference").clone()
+    else {
+        panic!("MEASINFO must be a record");
+    };
+    measures.upsert("Ref", string("ICRS"));
+    keywords.upsert("MEASINFO", Value::Record(measures));
+    field.set_column_keywords("PHASE_DIR", keywords);
+    ms.save().expect("save ICRS FIELD");
+    drop(ms);
+    for (name, phase_center, phase_center_field) in [
+        ("numeric-icrs", Some("0".to_string()), None),
+        ("field-icrs", None, Some(0)),
+    ] {
+        let mut imaging = request(
+            ms_path.clone(),
+            root.path().join(name),
+            ContinuumAlgorithm::Dirty,
+        );
+        imaging.phase_center = phase_center;
+        imaging.phase_center_field = phase_center_field;
+        execute_continuum(imaging.clone()).expect("ICRS field phase center");
+        let image = PagedImage::<f32>::open(format!("{}.image", imaging.image_name.display()))
+            .expect("image");
+        let CoordinateModel::Direction(direction) = image.coordinates().coordinate(0) else {
+            panic!("first coordinate must be direction");
+        };
+        assert_eq!(
+            direction.direction_ref(),
+            casa_types::measures::direction::DirectionRef::ICRS
+        );
+    }
+}
+
 fn set_production_io_environment() {
     // The application deliberately requires measured spill rates at its
     // production boundary; these values are only test calibration facts.

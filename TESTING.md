@@ -285,11 +285,13 @@ remote run satisfies the single GUI gate. The worker needs full initialized
 Xcode, Developer Tools mode, SSH access, and a real logged-in console session;
 automatic login is a worker-provisioning choice rather than a repository
 requirement. The console must be unlocked when the gate starts. The runner
-holds a test-scoped `caffeinate` assertion while it owns the GUI window; it does
-not permanently disable the worker's normal screen-lock policy. The remote
-runner selects a named manifest journey and invokes the same harness contract
-as the local entrypoint; it does not accept a second selector or artifact
-policy. Only artifacts marked `transport` in the manifest are copied back.
+holds a host-wide worker lock and a test-scoped `caffeinate` assertion while it
+owns the GUI window; overlapping or orphaned XCTest processes are rejected so
+one journey cannot terminate another journey's app. It does not permanently
+disable the worker's normal screen-lock policy. The remote runner selects a
+named manifest journey and invokes the same harness contract as the local
+entrypoint; it does not accept a second selector or artifact policy. Only
+artifacts marked `transport` in the manifest are copied back.
 
 `just assistant-live-gui` is the opt-in real-account acceptance exception. It
 uses the installed Codex CLI's existing ChatGPT subscription, an isolated

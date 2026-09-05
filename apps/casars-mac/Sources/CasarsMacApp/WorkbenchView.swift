@@ -16,11 +16,14 @@ private let datasetClickLogger = Logger(
 struct WorkbenchView: View {
     @ObservedObject var store: WorkbenchStore
     var initialMeasurementSetExplorerMode: MeasurementSetExplorerMode = .summary
+    var firstRunOnboardingIsPresented = false
+    var dismissFirstRunOnboarding: () -> Void = {}
     @State private var leftDockWidth: CGFloat = 250
     @State private var inspectorWidth: CGFloat = 250
     @State private var aiDrawerWidth: CGFloat = 400
     @State private var autoCollapsedLeftDockForDrawer = false
     @State private var autoCollapsedInspectorForDrawer = false
+    @State private var onboardingError: String?
 
     private var isAIDrawerPresented: Bool {
         (store.isAIPrototypeRuntime && store.state.prototypeAI?.presentation == .drawer)
@@ -28,85 +31,99 @@ struct WorkbenchView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            HStack(alignment: .top, spacing: 0) {
-                if !store.state.leftDockCollapsed {
-                    LeftDockView(store: store)
-                        .frame(
-                            width: leftDockWidth,
-                            height: geometry.size.height,
-                            alignment: .top
+        ZStack {
+            GeometryReader { geometry in
+                HStack(alignment: .top, spacing: 0) {
+                    if !store.state.leftDockCollapsed {
+                        LeftDockView(store: store)
+                            .frame(
+                                width: leftDockWidth,
+                                height: geometry.size.height,
+                                alignment: .top
+                            )
+
+                        HorizontalResizeHandle(
+                            width: $leftDockWidth,
+                            range: 190...420,
+                            anchor: .left,
+                            accessibilityID: "split.resizeHandle"
+                        )
+                    }
+
+                    if !store.state.inspectorCollapsed {
+                        InspectorView(store: store)
+                            .frame(width: inspectorWidth)
+
+                        HorizontalResizeHandle(
+                            width: $inspectorWidth,
+                            range: 220...520,
+                            anchor: .left,
+                            accessibilityID: "split.resizeHandle"
+                        )
+                    }
+
+                    CentralWorkspaceView(
+                        store: store,
+                        initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
+                    )
+                        .frame(minWidth: isAIDrawerPresented ? 360 : 560)
+
+                    if store.isAIPrototypeRuntime,
+                       store.state.prototypeAI?.presentation == .drawer
+                    {
+                        HorizontalResizeHandle(
+                            width: $aiDrawerWidth,
+                            range: 340...520,
+                            anchor: .right,
+                            accessibilityID: "aiPrototype.resizeHandle"
                         )
 
-                    HorizontalResizeHandle(
-                        width: $leftDockWidth,
-                        range: 190...420,
-                        anchor: .left,
-                        accessibilityID: "split.resizeHandle"
+                        AIChatPrototypeView(store: store, layout: .drawer)
+                            .frame(width: aiDrawerWidth)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    } else if store.state.assistantDiscussion?.presentation == .drawer {
+                        HorizontalResizeHandle(
+                            width: $aiDrawerWidth,
+                            range: 340...520,
+                            anchor: .right,
+                            accessibilityID: "assistant.resizeHandle"
+                        )
+
+                        AssistantDiscussionView(store: store, layout: .drawer)
+                            .frame(width: aiDrawerWidth)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .onAppear {
+                    reconcilePanelsForDrawer(
+                        containerWidth: geometry.size.width,
+                        drawerPresented: isAIDrawerPresented
                     )
                 }
-
-                if !store.state.inspectorCollapsed {
-                    InspectorView(store: store)
-                        .frame(width: inspectorWidth)
-
-                    HorizontalResizeHandle(
-                        width: $inspectorWidth,
-                        range: 220...520,
-                        anchor: .left,
-                        accessibilityID: "split.resizeHandle"
+                .onChange(of: isAIDrawerPresented) { presented in
+                    reconcilePanelsForDrawer(
+                        containerWidth: geometry.size.width,
+                        drawerPresented: presented
                     )
                 }
-
-                CentralWorkspaceView(
-                    store: store,
-                    initialMeasurementSetExplorerMode: initialMeasurementSetExplorerMode
-                )
-                    .frame(minWidth: isAIDrawerPresented ? 360 : 560)
-
-                if store.isAIPrototypeRuntime,
-                   store.state.prototypeAI?.presentation == .drawer
-                {
-                    HorizontalResizeHandle(
-                        width: $aiDrawerWidth,
-                        range: 340...520,
-                        anchor: .right,
-                        accessibilityID: "aiPrototype.resizeHandle"
+                .onChange(of: geometry.size.width) { width in
+                    reconcilePanelsForDrawer(
+                        containerWidth: width,
+                        drawerPresented: isAIDrawerPresented
                     )
-
-                    AIChatPrototypeView(store: store, layout: .drawer)
-                        .frame(width: aiDrawerWidth)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                } else if store.state.assistantDiscussion?.presentation == .drawer {
-                    HorizontalResizeHandle(
-                        width: $aiDrawerWidth,
-                        range: 340...520,
-                        anchor: .right,
-                        accessibilityID: "assistant.resizeHandle"
-                    )
-
-                    AssistantDiscussionView(store: store, layout: .drawer)
-                        .frame(width: aiDrawerWidth)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .onAppear {
-                reconcilePanelsForDrawer(
-                    containerWidth: geometry.size.width,
-                    drawerPresented: isAIDrawerPresented
-                )
-            }
-            .onChange(of: isAIDrawerPresented) { presented in
-                reconcilePanelsForDrawer(
-                    containerWidth: geometry.size.width,
-                    drawerPresented: presented
-                )
-            }
-            .onChange(of: geometry.size.width) { width in
-                reconcilePanelsForDrawer(
-                    containerWidth: width,
-                    drawerPresented: isAIDrawerPresented
+            .allowsHitTesting(!firstRunOnboardingIsPresented)
+            .accessibilityHidden(firstRunOnboardingIsPresented)
+
+            if firstRunOnboardingIsPresented {
+                FirstRunOnboardingView(
+                    errorMessage: onboardingError,
+                    startTutorial: startGuidedTutorial,
+                    openProject: openProjectFromOnboarding,
+                    openDemo: openDemoFromOnboarding,
+                    dismiss: dismissFirstRunOnboarding
                 )
             }
         }
@@ -132,6 +149,77 @@ struct WorkbenchView: View {
         .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { date in
             store.refreshProjectFromDiskIfNeeded(now: date)
         }
+        .alert(item: Binding(
+            get: { store.pendingProjectItemDeletion },
+            set: { target in
+                if target == nil { store.cancelImmediateProjectItemDeletion() }
+            }
+        )) { target in
+            Alert(
+                title: Text("Delete \(target.name) immediately?"),
+                message: Text(immediateDeletionMessage(target)),
+                primaryButton: .destructive(Text("Delete")) {
+                    store.confirmImmediateProjectItemDeletion()
+                },
+                secondaryButton: .cancel {
+                    store.cancelImmediateProjectItemDeletion()
+                }
+            )
+        }
+    }
+
+    private func immediateDeletionMessage(_ target: ProjectItemRemovalTarget) -> String {
+        if let bytes = target.sizeBytes, bytes > 0 {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+            return "This permanently removes \(size) and cannot be undone."
+        }
+        return "This permanently removes the selected item and cannot be undone."
+    }
+
+    private func startGuidedTutorial() {
+        let template: URL
+        do {
+            template = try BundledTutorialTemplate.twHyaFirstLookURL()
+        } catch {
+            onboardingError = error.localizedDescription
+            return
+        }
+
+        guard let workspace = ProjectOpenPanel.chooseDirectory(
+            title: "Choose a tutorial workspace",
+            message: "Select or create a folder for editable notes, acquired data, plots, and task results.",
+            prompt: "Use Workspace"
+        ) else {
+            return
+        }
+
+        store.openProject(path: workspace.path)
+        guard store.state.hasProject else {
+            onboardingError = store.state.lastErrors.last ?? "Workbench could not open that tutorial workspace."
+            return
+        }
+
+        store.openTutorialTemplate(path: template.path)
+        dismissFirstRunOnboarding()
+    }
+
+    private func openProjectFromOnboarding() {
+        guard let url = ProjectOpenPanel.chooseDirectory() else { return }
+        store.openProject(path: url.path)
+        guard store.state.hasProject else {
+            onboardingError = store.state.lastErrors.last ?? "Workbench could not open that project directory."
+            return
+        }
+        dismissFirstRunOnboarding()
+    }
+
+    private func openDemoFromOnboarding() {
+        store.openFixtureProject()
+        guard store.state.hasProject else {
+            onboardingError = store.state.lastErrors.last ?? "Workbench could not create the demo project."
+            return
+        }
+        dismissFirstRunOnboarding()
     }
 
     private func reconcilePanelsForDrawer(containerWidth: CGFloat, drawerPresented: Bool) {
@@ -194,6 +282,7 @@ struct CommandSearchField: View {
 
 struct LeftDockView: View {
     @ObservedObject var store: WorkbenchStore
+    @Environment(\.colorScheme) private var colorScheme
     @State private var datasetOrder: DatasetOrder = .alphabetical
 
     var body: some View {
@@ -206,6 +295,14 @@ struct LeftDockView: View {
                         .accessibilityIdentifier("project.name")
 
                     Spacer()
+
+                    if let target = store.projectItemRemovalInProgress {
+                        ProgressView()
+                            .controlSize(.small)
+                            .help("Removing \(target.name)")
+                            .accessibilityLabel("Removing \(target.name)")
+                            .accessibilityIdentifier("projectItem.removal.progress")
+                    }
 
                     Button {
                         store.toggleInspector()
@@ -226,7 +323,7 @@ struct LeftDockView: View {
 
                 Text(projectSourceLabel)
                     .workbenchFont(.caption2, weight: .semibold)
-                    .foregroundStyle(Color(nsColor: .labelColor))
+                    .foregroundStyle(colorScheme == .dark ? Color.white : Color.black)
                     .accessibilityIdentifier("project.source")
 
                 if store.isNotebookPrototypeRuntime {
@@ -512,6 +609,20 @@ struct LeftDockView: View {
                         .padding(.vertical, 3)
                         .tag(Optional(summary.id))
                         .accessibilityIdentifier("notebook.selector.\(summary.id)")
+                        .overlay {
+                            DockRowClickTarget(
+                                identifier: "notebook.row.\(summary.id)",
+                                label: "Open \(summary.filename)",
+                                help: "Double-click to open the notebook",
+                                onSingleClick: {
+                                    store.selectPrototypeNotebook(summary.id)
+                                },
+                                onDoubleClick: {
+                                    store.selectPrototypeNotebook(summary.id)
+                                    store.openDefaultTab(kind: .notebook)
+                                }
+                            )
+                        }
                     }
                 }
                 .listStyle(.sidebar)
@@ -567,6 +678,25 @@ struct LeftDockView: View {
                         .padding(.vertical, 3)
                         .tag(Optional(document.id))
                         .accessibilityIdentifier("notebook.selector.\(document.id)")
+                        .overlay {
+                            DockRowClickTarget(
+                                identifier: "notebook.row.\(document.id)",
+                                label: "Open \(document.filename)",
+                                help: "Double-click to open the notebook",
+                                onSingleClick: {
+                                    store.selectScientificNotebook(document.id)
+                                },
+                                onDoubleClick: {
+                                    store.selectScientificNotebook(document.id)
+                                    store.openDefaultTab(kind: .notebook)
+                                }
+                            )
+                        }
+                        .contextMenu {
+                            if let target = store.notebookRemovalTarget(document.id) {
+                                projectItemRemovalMenu(target)
+                            }
+                        }
                     }
                 }
                 .listStyle(.sidebar)
@@ -629,8 +759,10 @@ struct LeftDockView: View {
             .contentShape(Rectangle())
             .tag(Optional(dataset.id))
             .overlay {
-                DatasetRowClickTarget(
-                    datasetID: dataset.id,
+                DockRowClickTarget(
+                    identifier: "dataset.row.\(dataset.id)",
+                    label: "Open \(URL(fileURLWithPath: dataset.id).lastPathComponent)",
+                    help: "Double-click to open the dataset explorer",
                     onSingleClick: {
                         store.selectDataset(dataset.id)
                     },
@@ -647,6 +779,10 @@ struct LeftDockView: View {
                     Button("Open in Table Browser") {
                         store.openDatasetTableBrowser(dataset.id)
                     }
+                }
+                if let target = store.datasetRemovalTarget(dataset.id) {
+                    Divider()
+                    projectItemRemovalMenu(target)
                 }
             }
     }
@@ -834,10 +970,22 @@ struct LeftDockView: View {
                     }
                 )
             } else {
-                List {
+                List(selection: Binding(
+                    get: { store.selectedProjectFileRemovalTarget?.path },
+                    set: { path in
+                        let node = path.flatMap { ProjectFileNode.find(path: $0, in: nodes) }
+                        store.selectProjectFileForRemoval(node.flatMap(projectFileRemovalTarget))
+                    }
+                )) {
                     OutlineGroup(nodes, children: \.children) { node in
                         ProjectFileRow(node: node)
+                            .tag(Optional(node.path))
                             .accessibilityIdentifier("file.row.\(node.id)")
+                            .contextMenu {
+                                if let target = projectFileRemovalTarget(node) {
+                                    projectItemRemovalMenu(target)
+                                }
+                            }
                     }
                 }
                 .listStyle(.sidebar)
@@ -861,6 +1009,28 @@ struct LeftDockView: View {
                 }
             )
         }
+    }
+
+    private func projectFileRemovalTarget(_ node: ProjectFileNode) -> ProjectItemRemovalTarget? {
+        store.fileRemovalTarget(
+            path: node.path,
+            name: node.name,
+            isDirectory: node.isDirectory,
+            sizeBytes: node.sizeBytes
+        )
+    }
+
+    @ViewBuilder
+    private func projectItemRemovalMenu(_ target: ProjectItemRemovalTarget) -> some View {
+        Button("Move to Trash") {
+            store.moveProjectItemToTrash(target)
+        }
+        .disabled(!store.canRemoveProjectItem(target))
+
+        Button("Delete Immediately…", role: .destructive) {
+            store.requestImmediateProjectItemDeletion(target)
+        }
+        .disabled(!store.canRemoveProjectItem(target))
     }
 }
 
@@ -971,6 +1141,16 @@ private struct ProjectFileNode: Identifiable, Hashable {
             depth: 0,
             remaining: &remaining
         )
+    }
+
+    static func find(path: String, in nodes: [ProjectFileNode]) -> ProjectFileNode? {
+        for node in nodes {
+            if node.path == path { return node }
+            if let children = node.children, let match = find(path: path, in: children) {
+                return match
+            }
+        }
+        return nil
     }
 
     private static func scanDirectory(
@@ -1089,49 +1269,51 @@ private struct ProjectFileRow: View {
     }
 }
 
-private struct DatasetRowClickTarget: NSViewRepresentable {
-    let datasetID: String
+private struct DockRowClickTarget: NSViewRepresentable {
+    let identifier: String
+    let label: String
+    let help: String
     let onSingleClick: () -> Void
     let onDoubleClick: () -> Void
 
-    func makeNSView(context: Context) -> DatasetRowClickView {
-        let view = DatasetRowClickView()
-        view.configureAccessibility(datasetID: datasetID)
+    func makeNSView(context: Context) -> DockRowClickView {
+        let view = DockRowClickView()
+        view.configureAccessibility(identifier: identifier, label: label, help: help)
         view.onSingleClick = onSingleClick
         view.onDoubleClick = onDoubleClick
         return view
     }
 
-    func updateNSView(_ nsView: DatasetRowClickView, context: Context) {
-        nsView.configureAccessibility(datasetID: datasetID)
+    func updateNSView(_ nsView: DockRowClickView, context: Context) {
+        nsView.configureAccessibility(identifier: identifier, label: label, help: help)
         nsView.onSingleClick = onSingleClick
         nsView.onDoubleClick = onDoubleClick
     }
 }
 
-private final class DatasetRowClickView: NSView {
-    var datasetID = ""
+private final class DockRowClickView: NSView {
+    var itemIdentifier = ""
     var onSingleClick: (() -> Void)?
     var onDoubleClick: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { false }
 
-    func configureAccessibility(datasetID: String) {
-        self.datasetID = datasetID
+    func configureAccessibility(identifier: String, label: String, help: String) {
+        itemIdentifier = identifier
         setAccessibilityElement(true)
         setAccessibilityRole(.button)
-        setAccessibilityIdentifier("dataset.row.\(datasetID)")
-        setAccessibilityLabel("Open \(URL(fileURLWithPath: datasetID).lastPathComponent)")
-        setAccessibilityHelp("Double-click to open the dataset explorer")
+        setAccessibilityIdentifier(identifier)
+        setAccessibilityLabel(label)
+        setAccessibilityHelp(help)
     }
 
     override func mouseDown(with event: NSEvent) {
-        let clickedDatasetID = datasetID
+        let clickedItemIdentifier = itemIdentifier
         if event.clickCount >= 2 {
-            datasetClickLogger.debug("row_mouse_down double id=\(clickedDatasetID, privacy: .public)")
+            datasetClickLogger.debug("row_mouse_down double id=\(clickedItemIdentifier, privacy: .public)")
             onDoubleClick?()
         } else {
-            datasetClickLogger.debug("row_mouse_down single id=\(clickedDatasetID, privacy: .public)")
+            datasetClickLogger.debug("row_mouse_down single id=\(clickedItemIdentifier, privacy: .public)")
             onSingleClick?()
         }
     }
