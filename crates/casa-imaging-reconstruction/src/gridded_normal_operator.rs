@@ -47,7 +47,7 @@ use crate::{
 use crate::spectral_operator::{GriddedNormalLocalContribution, StandardConvolution};
 
 const RECORD_DOMAIN: &[u8] = b"casa-rs-gridded-normal-operator";
-const RECORD_VERSION: u32 = 7;
+const RECORD_VERSION: u32 = 8;
 const TAP_KEY_BITS: u32 = 24;
 const TAP_KEY_MASK: u64 = (1_u64 << TAP_KEY_BITS) - 1;
 const CHANNEL_KEY_BITS: u32 = 24;
@@ -63,7 +63,7 @@ const GRIDDED_NORMAL_HOT_TILE_DUPLICATES: usize = GRIDDED_NORMAL_LANE_COUNT - 1;
 /// Taylor records use the problem-derived width returned by
 /// [`gridded_normal_operator_record_bytes`].
 pub const GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 40;
-const AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 88;
+const AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES: usize = 96;
 const AW_MUELLER_SHIFT: u32 = TAP_KEY_BITS + CHANNEL_KEY_BITS;
 const AW_GROUP_END_BIT: u64 = 1_u64 << (AW_MUELLER_SHIFT + 4);
 const AW_RECORD_KEY_MASK: u64 = (AW_GROUP_END_BIT << 1) - 1;
@@ -362,6 +362,7 @@ struct ReducedRecordKey {
 struct AwRecordCoordinates {
     frequency_hz: u64,
     uvw_m: [u64; 3],
+    prediction_w_m: u64,
     parallactic_angle_deg: u64,
     pointing_phase_gradient_rad_per_grid_cell: [u64; 2],
     mueller_element: u32,
@@ -372,6 +373,7 @@ impl From<AwReplayCoordinates> for AwRecordCoordinates {
         Self {
             frequency_hz: canonical_zero_bits(value.frequency_hz),
             uvw_m: value.uvw_m.map(canonical_zero_bits),
+            prediction_w_m: canonical_zero_bits(value.prediction_w_m),
             parallactic_angle_deg: canonical_zero_bits(value.parallactic_angle_deg),
             pointing_phase_gradient_rad_per_grid_cell: value
                 .pointing_phase_gradient_rad_per_grid_cell
@@ -386,6 +388,7 @@ impl From<AwRecordCoordinates> for AwReplayCoordinates {
         Self {
             frequency_hz: f64::from_bits(value.frequency_hz),
             uvw_m: value.uvw_m.map(f64::from_bits),
+            prediction_w_m: f64::from_bits(value.prediction_w_m),
             parallactic_angle_deg: f64::from_bits(value.parallactic_angle_deg),
             pointing_phase_gradient_rad_per_grid_cell: value
                 .pointing_phase_gradient_rad_per_grid_cell
@@ -2846,9 +2849,7 @@ fn static_binding(specification: &SpectralOperatorSpecification) -> LogicalIdent
             encoder.usize(plan.normal_moment_count());
             encoder.u64(plan.reference_frequency_hz().to_bits());
             encoder.usize(
-                record_layout
-                    .record_bytes()
-                    .expect("validated Taylor record width"),
+                record_bytes(record_layout, aw_projection).expect("validated Taylor record width"),
             );
         }
         GriddedNormalRecordLayout::TaylorViaChannelMajor { plan, channels } => {
@@ -3153,6 +3154,7 @@ fn encode_and_checksum_mode(
                     coordinates.uvw_m[0],
                     coordinates.uvw_m[1],
                     coordinates.uvw_m[2],
+                    coordinates.prediction_w_m,
                     coordinates.parallactic_angle_deg,
                     coordinates.pointing_phase_gradient_rad_per_grid_cell[0],
                     coordinates.pointing_phase_gradient_rad_per_grid_cell[1],
@@ -3207,6 +3209,7 @@ fn valid_aw_coordinates(value: AwReplayCoordinates) -> bool {
     value.frequency_hz.is_finite()
         && value.frequency_hz > 0.0
         && value.uvw_m.into_iter().all(f64::is_finite)
+        && value.prediction_w_m.is_finite()
         && value.parallactic_angle_deg.is_finite()
         && value
             .pointing_phase_gradient_rad_per_grid_cell
@@ -3366,13 +3369,14 @@ fn decode_aw_record(
     let aw = AwReplayCoordinates {
         frequency_hz: value(0)?,
         uvw_m: [value(1)?, value(2)?, value(3)?],
-        parallactic_angle_deg: value(4)?,
-        pointing_phase_gradient_rad_per_grid_cell: [value(5)?, value(6)?],
+        prediction_w_m: value(4)?,
+        parallactic_angle_deg: value(5)?,
+        pointing_phase_gradient_rad_per_grid_cell: [value(6)?, value(7)?],
         mueller_element: u32::try_from((key >> AW_MUELLER_SHIFT) & 0x0f)
             .map_err(|_| SpectralOperatorError::InvalidGriddedRecord)?,
     };
-    let forward_scale = Complex64::new(value(7)?, value(8)?);
-    let imaging_weight = value(9)?;
+    let forward_scale = Complex64::new(value(8)?, value(9)?);
+    let imaging_weight = value(10)?;
     if key & !AW_RECORD_KEY_MASK != 0
         || output_channel >= output_channels
         || !valid_aw_coordinates(aw)
@@ -3591,7 +3595,7 @@ mod tests {
     fn t42_taylor_v5_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
         let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 3).unwrap();
         let layout = GriddedNormalRecordLayout::Taylor(plan);
-        assert_eq!(RECORD_VERSION, 7);
+        assert_eq!(RECORD_VERSION, 8);
         assert_eq!(layout.record_bytes().unwrap(), 48);
         assert_eq!(
             GriddedNormalRecordLayout::Taylor(
@@ -3637,6 +3641,7 @@ mod tests {
             AwReplayCoordinates {
                 frequency_hz: 1.25e9,
                 uvw_m: [125.0, -72.5, 911.25],
+                prediction_w_m: 925.5,
                 parallactic_angle_deg: 37.5,
                 pointing_phase_gradient_rad_per_grid_cell: [1.25e-4, -2.5e-4],
                 mueller_element: 0,
@@ -3644,6 +3649,7 @@ mod tests {
             AwReplayCoordinates {
                 frequency_hz: 1.75e9,
                 uvw_m: [-14.0, 88.0, -413.5],
+                prediction_w_m: -421.75,
                 parallactic_angle_deg: 312.0,
                 pointing_phase_gradient_rad_per_grid_cell: [-3.0e-4, 4.5e-4],
                 mueller_element: 15,
@@ -3689,6 +3695,18 @@ mod tests {
         assert_eq!(decoded[1].forward_scale, Complex64::new(1.75, -1.25));
         assert_eq!(decoded[1].imaging_weight, 6.0);
         assert!(decoded[1].group_end);
+        assert_eq!(RECORD_VERSION, 8);
+        assert_eq!(AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, 96);
+        assert!(matches!(
+            decode_aw_record(&encoded[..88], 4),
+            Err(SpectralOperatorError::InvalidGriddedRecord)
+        ));
+        let mut corrupt = encoded[..AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES].to_vec();
+        corrupt[40..48].copy_from_slice(&f64::NAN.to_le_bytes());
+        assert!(matches!(
+            decode_aw_record(&corrupt, 4),
+            Err(SpectralOperatorError::InvalidGriddedRecord)
+        ));
     }
 
     #[test]
@@ -3719,7 +3737,7 @@ mod tests {
         taylor_v4.usize(layout.record_bytes().unwrap());
         let taylor_v4 = LogicalIdentity::from_sha256(taylor_v4.finish());
 
-        assert_eq!(RECORD_VERSION, 7);
+        assert_eq!(RECORD_VERSION, 8);
         assert_eq!(layout.record_bytes().unwrap(), 32);
         assert_ne!(
             legacy_v2, taylor_v4,

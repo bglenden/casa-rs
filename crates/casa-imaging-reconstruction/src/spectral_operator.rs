@@ -232,6 +232,7 @@ struct SpectralOperatorSample {
     parallactic_angle_deg: f64,
     pointing_phase_gradient_rad_per_grid_cell: [f64; 2],
     mueller_element: u32,
+    aw_prediction_w_m: Option<f64>,
 }
 
 /// Row-local AW coordinates retained by the private gridded-normal replay.
@@ -242,21 +243,25 @@ struct SpectralOperatorSample {
 pub(crate) struct AwReplayCoordinates {
     pub(crate) frequency_hz: f64,
     pub(crate) uvw_m: [f64; 3],
+    pub(crate) prediction_w_m: f64,
     pub(crate) parallactic_angle_deg: f64,
     pub(crate) pointing_phase_gradient_rad_per_grid_cell: [f64; 2],
     pub(crate) mueller_element: u32,
 }
 
 impl AwReplayCoordinates {
-    fn from_sample(sample: SpectralOperatorSample) -> Self {
-        Self {
+    fn from_sample(sample: SpectralOperatorSample) -> Result<Self, SpectralOperatorError> {
+        Ok(Self {
             frequency_hz: sample.frequency_hz,
             uvw_m: sample.uvw_m,
+            prediction_w_m: sample
+                .aw_prediction_w_m
+                .ok_or(SpectralOperatorError::InvalidSample)?,
             parallactic_angle_deg: sample.parallactic_angle_deg,
             pointing_phase_gradient_rad_per_grid_cell: sample
                 .pointing_phase_gradient_rad_per_grid_cell,
             mueller_element: sample.mueller_element,
-        }
+        })
     }
 }
 
@@ -338,6 +343,7 @@ impl SpectralOperatorSample {
             parallactic_angle_deg: 0.0,
             pointing_phase_gradient_rad_per_grid_cell: [0.0; 2],
             mueller_element: 0,
+            aw_prediction_w_m: None,
         })
     }
 
@@ -356,9 +362,11 @@ impl SpectralOperatorSample {
         parallactic_angles_rad: [f64; 2],
         pointing_phase_gradient_rad_per_grid_cell: [f64; 2],
         mueller_element: u32,
+        prediction_w_m: f64,
     ) -> Result<Self, SpectralOperatorError> {
         let pa = 0.5 * (parallactic_angles_rad[0] + parallactic_angles_rad[1]);
         if !pa.is_finite()
+            || !prediction_w_m.is_finite()
             || pointing_phase_gradient_rad_per_grid_cell
                 .iter()
                 .any(|value| !value.is_finite())
@@ -368,6 +376,7 @@ impl SpectralOperatorSample {
         self.parallactic_angle_deg = pa.to_degrees();
         self.pointing_phase_gradient_rad_per_grid_cell = pointing_phase_gradient_rad_per_grid_cell;
         self.mueller_element = mueller_element;
+        self.aw_prediction_w_m = Some(prediction_w_m);
         Ok(self)
     }
 
@@ -5067,7 +5076,9 @@ impl CompleteDataOwnerState {
                 let polarized = stencil
                     .iter()
                     .copied()
-                    .map(|sample| sample.with_aw_coordinates(pa, pointing, mueller))
+                    .map(|sample| {
+                        sample.with_aw_coordinates(pa, pointing, mueller, selected.density_uvw_m[2])
+                    })
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 predictions[row] +=
                     self.operators[chart_ordinal].predict_stencil_polarization(&polarized, 0)?;
@@ -5177,7 +5188,12 @@ impl CompleteDataOwnerState {
                     .with_mosaic_route(selected.field_id(), selected.pointing_directions())
                     .with_mosaic_response(mosaic_response)
                     .with_published_weight(weight)?
-                    .with_aw_coordinates(pa, pointing, mueller)?;
+                    .with_aw_coordinates(
+                        pa,
+                        pointing,
+                        mueller,
+                        selected.density_uvw_m[2],
+                    )?;
                     if OBSERVE && chart_ordinal == 0 && spectral_ordinal == 0 {
                         if let Some(probe) = self
                             .science_probe
@@ -5796,7 +5812,12 @@ impl CompleteDataOwnerState {
                 )
                 .with_mosaic_response(mosaic_response)
                 .with_published_weight(weight)?
-                .with_aw_coordinates(pa, pointing, mueller)?;
+                .with_aw_coordinates(
+                    pa,
+                    pointing,
+                    mueller,
+                    resampled.selected.density_uvw_m[2],
+                )?;
                 if predicts_residual {
                     self.operators[chart_ordinal]
                         .push_with_residual_polarization(sample, predicted, 0)?;
@@ -6328,8 +6349,9 @@ pub(crate) fn aw_replay_coordinates(
             parallactic_angles_rad,
             pointing_phase_gradient_rad_per_grid_cell,
             mueller_element,
+            selected.density_uvw_m[2],
         )?;
-    Ok(AwReplayCoordinates::from_sample(sample))
+    AwReplayCoordinates::from_sample(sample)
 }
 
 fn selected_visibility(value: SelectedVisibilitySample) -> Complex64 {
@@ -7016,7 +7038,7 @@ impl SpectralSlabOperator {
         if sample.imaging_weight == 0.0 {
             return Ok(());
         }
-        let Some(taps) = self.operator_taps(sample)? else {
+        let Some(taps) = self.operator_taps(sample, false)? else {
             return Ok(());
         };
         let taps = self.prepare_grid_taps(taps, true)?;
@@ -7164,36 +7186,17 @@ impl SpectralSlabOperator {
     fn operator_taps(
         &mut self,
         sample: SpectralOperatorSample,
+        prediction: bool,
     ) -> Result<Option<OperatorTaps>, SpectralOperatorError> {
         if self.aw_projection.is_some() {
-            let uv_lambda = sample.uv_lambda();
-            let grid_position = [
-                uv_lambda[0]
-                    * self.geometry.grid_shape[0] as f64
-                    * self.geometry.increment_rad[0].abs()
-                    + self.geometry.grid_shape[0] as f64 / 2.0,
-                -uv_lambda[1]
-                    * self.geometry.grid_shape[1] as f64
-                    * self.geometry.increment_rad[1].abs()
-                    + self.geometry.grid_shape[1] as f64 / 2.0,
-            ];
-            let reference_frequency_hz = self
-                .output_channel_frequencies_hz
-                .get(self.output_channel_frequencies_hz.len() / 2)
-                .copied()
-                .ok_or(SpectralOperatorError::InvalidSample)?;
-            return AwVisibilitySample::new(
-                sample.frequency_hz,
-                reference_frequency_hz,
-                sample.uvw_lambda()[2],
-                sample.mueller_element,
-                sample.parallactic_angle_deg,
-                grid_position,
-                sample.pointing_phase_gradient_rad_per_grid_cell,
-            )
-            .map(OperatorTaps::Aw)
-            .map(Some)
-            .map_err(Into::into);
+            return self
+                .aw_visibility_sample(
+                    AwReplayCoordinates::from_sample(sample)?,
+                    [0, 0],
+                    prediction,
+                )
+                .map(OperatorTaps::Aw)
+                .map(Some);
         }
         if self.mosaic_normal.is_none() {
             return Ok(self
@@ -7300,7 +7303,7 @@ impl SpectralSlabOperator {
         sample: SpectralOperatorSample,
     ) -> Result<AwScienceProbePair, SpectralOperatorError> {
         let OperatorTaps::Aw(sample) = self
-            .operator_taps(sample)?
+            .operator_taps(sample, false)?
             .ok_or(SpectralOperatorError::InvalidSample)?
         else {
             return Err(SpectralOperatorError::ProblemMismatch);
@@ -8175,7 +8178,7 @@ impl SpectralSlabOperator {
         if sample.imaging_weight == 0.0 {
             return Ok(());
         }
-        let Some(taps) = self.operator_taps(sample)? else {
+        let Some(taps) = self.operator_taps(sample, false)? else {
             return Ok(());
         };
         let taps = self.prepare_grid_taps(taps, self.psf_grids.is_some())?;
@@ -8519,7 +8522,7 @@ impl SpectralSlabOperator {
         if polarization >= self.polarization_count {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        let Some(taps) = self.operator_taps(sample)? else {
+        let Some(taps) = self.operator_taps(sample, true)? else {
             return Ok(Complex64::new(0.0, 0.0));
         };
         match self.basis {
@@ -8802,6 +8805,7 @@ impl SpectralSlabOperator {
         &self,
         coordinates: AwReplayCoordinates,
         tile_origin: [usize; 2],
+        prediction: bool,
     ) -> Result<AwVisibilitySample, SpectralOperatorError> {
         if tile_origin[0] > self.geometry.grid_shape[0]
             || tile_origin[1] > self.geometry.grid_shape[1]
@@ -8827,10 +8831,17 @@ impl SpectralSlabOperator {
             .get(self.output_channel_frequencies_hz.len() / 2)
             .copied()
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
+        // CASA GridToData selects the CF from the MS W while DataToGrid uses
+        // the transformed W. Both place the stencil with transformed UV.
+        let w_m = if prediction {
+            coordinates.prediction_w_m
+        } else {
+            coordinates.uvw_m[2]
+        };
         AwVisibilitySample::new(
             coordinates.frequency_hz,
             reference_frequency_hz,
-            coordinates.uvw_m[2] * scale,
+            w_m * scale,
             coordinates.mueller_element,
             coordinates.parallactic_angle_deg,
             grid_position,
@@ -8843,7 +8854,7 @@ impl SpectralSlabOperator {
         &self,
         coordinates: AwReplayCoordinates,
     ) -> Result<([usize; 2], usize), SpectralOperatorError> {
-        let sample = self.aw_visibility_sample(coordinates, [0, 0])?;
+        let sample = self.aw_visibility_sample(coordinates, [0, 0], false)?;
         self.aw_projection
             .as_ref()
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?
@@ -8866,7 +8877,7 @@ impl SpectralSlabOperator {
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
-        let sample = self.aw_visibility_sample(coordinates, [0, 0])?;
+        let sample = self.aw_visibility_sample(coordinates, [0, 0], true)?;
         let degrid = |grid: &Array2<Complex64>| {
             degrid_operator(
                 &self.gridder,
@@ -9107,7 +9118,7 @@ impl SpectralSlabOperator {
         if !gridded.re.is_finite() || !gridded.im.is_finite() {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
-        let sample = self.aw_visibility_sample(coordinates, tile_origin)?;
+        let sample = self.aw_visibility_sample(coordinates, tile_origin, false)?;
         let shape = [grids[plane].nrows(), grids[plane].ncols()];
         let grid = grids[plane]
             .as_slice_mut()
@@ -11140,6 +11151,52 @@ mod tests {
         assert_eq!(
             gradient,
             [-std::f64::consts::TAU / 9.0, std::f64::consts::TAU / 7.0]
+        );
+    }
+
+    #[test]
+    fn t51_aw_prediction_retains_original_w_and_transformed_grid_placement() {
+        let slab = operator();
+        let frequency_hz = 1.0e9;
+        let transformed = [2.0, -3.0, 100.0];
+        let selected =
+            SpectralOperatorSample::new(0, transformed, frequency_hz, 0.0, [0.0; 2], 1.0, 1.0)
+                .unwrap();
+        assert_eq!(
+            super::AwReplayCoordinates::from_sample(selected),
+            Err(SpectralOperatorError::InvalidSample),
+            "missing original W cannot enter AW replay"
+        );
+        for original_w_m in [-125.0, 0.0, 75.0] {
+            let sample = selected
+                .with_aw_coordinates([0.0; 2], [0.0; 2], 0, original_w_m)
+                .unwrap();
+            let coordinates = super::AwReplayCoordinates::from_sample(sample).unwrap();
+            assert_eq!(coordinates.uvw_m, transformed);
+            assert_eq!(coordinates.prediction_w_m, original_w_m);
+            let scale = frequency_hz / super::SPEED_OF_LIGHT_M_PER_S;
+            let position = [2.0 * scale * 0.02 + 4.0, 3.0 * scale * 0.02 + 3.0];
+            let expected = |w_m| {
+                AwVisibilitySample::new(frequency_hz, 1.0, w_m * scale, 0, 0.0, position, [0.0; 2])
+                    .unwrap()
+            };
+            assert_eq!(
+                slab.aw_visibility_sample(coordinates, [1, 2], false)
+                    .unwrap(),
+                expected(transformed[2]),
+                "gridding retains the transformed W selector"
+            );
+            assert_eq!(
+                slab.aw_visibility_sample(coordinates, [1, 2], true)
+                    .unwrap(),
+                expected(original_w_m),
+                "prediction uses source W without changing transformed UV placement"
+            );
+        }
+        assert!(
+            selected
+                .with_aw_coordinates([0.0; 2], [0.0; 2], 0, f64::NAN)
+                .is_err()
         );
     }
 
