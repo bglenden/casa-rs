@@ -12,6 +12,7 @@ from pathlib import Path
 import tempfile
 import sys
 import subprocess
+import types
 
 import numpy as np
 
@@ -236,6 +237,162 @@ class FrozenCasaRecipeExecutionTests(unittest.TestCase):
         self.assertEqual("ran", result["results"]["rust"]["status"])
         self.assertEqual("reused", result["results"]["casa"]["status"])
         self.assertIs(compared, result["results"]["product_comparison"])
+
+
+class EmbeddedCasaBenchmarkTests(unittest.TestCase):
+    @staticmethod
+    def _embedded_source() -> str:
+        script = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text(
+            encoding="utf-8"
+        )
+        marker = 'cat >"$tmpdir/casa-imager-bench.py" <<\'PY\'\n'
+        source = script.split(marker, 1)[1].split("\nPY\n", 1)[0]
+        compile(source, "casa-imager-bench.py", "exec")
+        return source
+
+    @staticmethod
+    def _base_environment() -> dict[str, str]:
+        return {
+            "CASA_RS_BENCH_MS_PATH": "/tmp/input.ms",
+            "CASA_RS_BENCH_REPEATS": "1",
+            "CASA_RS_BENCH_FIELD": "0",
+            "CASA_RS_BENCH_STOKES": "I",
+            "CASA_RS_BENCH_USEPOINTING": "1",
+            "CASA_RS_BENCH_PHASECENTER_FIELD": "",
+            "CASA_RS_BENCH_SPW": "9",
+            "CASA_RS_BENCH_CHANNEL_START": "0",
+            "CASA_RS_BENCH_CHANNEL_COUNT": "1",
+            "CASA_RS_BENCH_CUBE_START": "",
+            "CASA_RS_BENCH_CUBE_WIDTH": "",
+            "CASA_RS_BENCH_IMSIZE": "128",
+            "CASA_RS_BENCH_CELL_ARCSEC": "0.6",
+            "CASA_RS_BENCH_NITER": "0",
+            "CASA_RS_BENCH_NMAJOR": "-1",
+            "CASA_RS_BENCH_GAIN": "0.1",
+            "CASA_RS_BENCH_THRESHOLD_JY": "0",
+            "CASA_RS_BENCH_NSIGMA": "0",
+            "CASA_RS_BENCH_PSFCUTOFF": "0.35",
+            "CASA_RS_BENCH_PBLIMIT": "0.2",
+            "CASA_RS_BENCH_PBCOR": "0",
+            "CASA_RS_BENCH_MINOR_CYCLE_LENGTH": "2",
+            "CASA_RS_BENCH_CYCLEFACTOR": "1",
+            "CASA_RS_BENCH_MIN_PSFFRACTION": "0.05",
+            "CASA_RS_BENCH_MAX_PSFFRACTION": "0.8",
+            "CASA_RS_BENCH_WEIGHTING": "natural",
+            "CASA_RS_BENCH_ROBUST": "0.5",
+            "CASA_RS_BENCH_PERCHANWEIGHTDENSITY": "0",
+            "CASA_RS_BENCH_DECONVOLVER": "mtmfs",
+            "CASA_RS_BENCH_USEMASK": "user",
+            "CASA_RS_BENCH_MASK_BOX": "",
+            "CASA_RS_BENCH_SAVEMODEL": "none",
+            "CASA_RS_BENCH_FITSPW": "",
+            "CASA_RS_BENCH_FITORDER": "0",
+            "CASA_RS_BENCH_SIDELOBETHRESHOLD": "3",
+            "CASA_RS_BENCH_NOISETHRESHOLD": "5",
+            "CASA_RS_BENCH_NTERMS": "2",
+            "CASA_RS_BENCH_CASA_GRIDDER": "awproject",
+            "CASA_RS_BENCH_GRIDDER": "awproject",
+            "CASA_RS_BENCH_FACETS": "1",
+            "CASA_RS_BENCH_WPROJPLANES": "32",
+            "CASA_RS_BENCH_SCALES": "",
+            "CASA_RS_BENCH_SMALL_SCALE_BIAS": "0.6",
+            "CASA_RS_BENCH_RESTORING_BEAM": "common",
+            "CASA_RS_BENCH_SPECMODE": "mfs",
+            "CASA_RS_BENCH_INTERPOLATION": "linear",
+            "CASA_RS_BENCH_KEEP_OUTPUT_ROOT": "",
+            "CASA_RS_BENCH_CASA_RESULT_JSON": "",
+            "CASA_RS_BENCH_CASA_LOG_FILE": "",
+            "CASA_RS_BENCH_UVRANGE": "<12km",
+            "CASA_RS_BENCH_INTENT": "OBSERVE_TARGET#UNSPECIFIED",
+            "CASA_RS_BENCH_ATERM": "1",
+            "CASA_RS_BENCH_PSTERM": "0",
+            "CASA_RS_BENCH_WBAWP": "1",
+            "CASA_RS_BENCH_CONJBEAMS": "1",
+            "CASA_RS_BENCH_COMPUTEPASTEP": "360.0",
+            "CASA_RS_BENCH_ROTATEPASTEP": "360.0",
+            "CASA_RS_BENCH_POINTINGOFFSETSIGDEV": "0.0",
+            "CASA_RS_BENCH_NORMTYPE": "flatnoise",
+            "CASA_RS_BENCH_MOSWEIGHT": "0",
+            "CASA_RS_BENCH_PSFPHASECENTER": "",
+            "CASA_RS_BENCH_VPTABLE": "",
+        }
+
+    def _execute_embedded_casa(self, environment: dict[str, str]) -> dict[str, object]:
+        captured: dict[str, dict[str, object]] = {}
+        casa_tasks = types.ModuleType("casatasks")
+        casa_tasks.casalog = mock.Mock()
+        casa_tasks.uvcontsub = mock.Mock()
+
+        def fake_tclean(**kwargs: object) -> dict[str, object]:
+            captured["kwargs"] = kwargs
+            return {}
+
+        casa_tasks.tclean = fake_tclean
+        with (
+            mock.patch.dict(os.environ, environment, clear=True),
+            mock.patch.dict(sys.modules, {"casatasks": casa_tasks}),
+            mock.patch("builtins.print"),
+        ):
+            exec(compile(self._embedded_source(), "casa-imager-bench.py", "exec"), {})
+        return captured["kwargs"]
+
+    def test_embedded_casa_call_forwards_selection_and_aw_controls(self) -> None:
+        kwargs = self._execute_embedded_casa(self._base_environment())
+
+        self.assertEqual("<12km", kwargs["uvrange"])
+        self.assertEqual("OBSERVE_TARGET#UNSPECIFIED", kwargs["intent"])
+        self.assertTrue(kwargs["aterm"])
+        self.assertFalse(kwargs["psterm"])
+        self.assertTrue(kwargs["wbawp"])
+        self.assertTrue(kwargs["conjbeams"])
+        self.assertEqual(360.0, kwargs["computepastep"])
+        self.assertEqual(360.0, kwargs["rotatepastep"])
+        self.assertEqual([0.0], kwargs["pointingoffsetsigdev"])
+        self.assertEqual("flatnoise", kwargs["normtype"])
+        self.assertFalse(kwargs["mosweight"])
+
+        bench = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text(
+            encoding="utf-8"
+        )
+        for name, shell_value in (
+            ("UVRANGE", "uvrange"),
+            ("INTENT", "intent"),
+            ("ATERM", "aterm"),
+            ("PSTERM", "psterm"),
+            ("WBAWP", "wbawp"),
+            ("CONJBEAMS", "conjbeams"),
+            ("COMPUTEPASTEP", "computepastep"),
+            ("ROTATEPASTEP", "rotatepastep"),
+            ("POINTINGOFFSETSIGDEV", "pointingoffsetsigdev"),
+            ("NORMTYPE", "normtype"),
+            ("MOSWEIGHT", "mosweight"),
+            ("PSFPHASECENTER", "psfphasecenter"),
+            ("VPTABLE", "vptable"),
+        ):
+            self.assertIn(f'CASA_RS_BENCH_{name}="${shell_value}"', bench)
+
+    def test_embedded_casa_call_preserves_explicit_false_and_empty_controls(self) -> None:
+        environment = self._base_environment()
+        environment.update(
+            {
+                "CASA_RS_BENCH_UVRANGE": "",
+                "CASA_RS_BENCH_INTENT": "",
+                "CASA_RS_BENCH_ATERM": "0",
+                "CASA_RS_BENCH_PSTERM": "1",
+                "CASA_RS_BENCH_WBAWP": "0",
+                "CASA_RS_BENCH_CONJBEAMS": "0",
+                "CASA_RS_BENCH_MOSWEIGHT": "1",
+            }
+        )
+        kwargs = self._execute_embedded_casa(environment)
+
+        self.assertEqual("", kwargs["uvrange"])
+        self.assertEqual("", kwargs["intent"])
+        self.assertFalse(kwargs["aterm"])
+        self.assertTrue(kwargs["psterm"])
+        self.assertFalse(kwargs["wbawp"])
+        self.assertFalse(kwargs["conjbeams"])
+        self.assertTrue(kwargs["mosweight"])
 
 
 class CompletedRecipeReceiptRecoveryTests(unittest.TestCase):
