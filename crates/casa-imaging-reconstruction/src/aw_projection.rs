@@ -788,19 +788,17 @@ impl AwReplayTiming {
     }
 }
 
-impl Drop for AwReplayTiming {
-    fn drop(&mut self) {
-        for (role, totals) in AW_TIMING_ROLES.iter().zip(
-            self.totals
-                .get_mut()
-                .unwrap_or_else(PoisonError::into_inner),
-        ) {
+impl AwReplayTiming {
+    fn emit(&self, scope: &str) {
+        let totals = *self.totals.lock().unwrap_or_else(PoisonError::into_inner);
+        for (role, totals) in AW_TIMING_ROLES.iter().zip(totals) {
             if totals.calls == 0 {
                 continue;
             }
             eprintln!(
-                "imaging_aw_replay_timing owner={} scope=operator_lifetime role={} sample_interval={} calls={} sampled_calls={} catalog_samples={} provider_samples={} fused_tap_samples={} dot_product_samples={} sampled_catalog_nanos={} sampled_provider_nanos={} sampled_fused_tap_nanos={} sampled_dot_product_envelope_nanos={} provider_loaded_calls={} sampled_provider_loaded_calls={} sampled_provider_loaded_nanos={}",
+                "imaging_aw_replay_timing owner={} scope={} role={} sample_interval={} calls={} sampled_calls={} catalog_samples={} provider_samples={} fused_tap_samples={} dot_product_samples={} sampled_catalog_nanos={} sampled_provider_nanos={} sampled_fused_tap_nanos={} sampled_dot_product_envelope_nanos={} provider_loaded_calls={} sampled_provider_loaded_calls={} sampled_provider_loaded_nanos={}",
                 self.owner,
+                scope,
                 role,
                 AW_TIMING_SAMPLE_INTERVAL,
                 totals.calls,
@@ -818,6 +816,12 @@ impl Drop for AwReplayTiming {
                 totals.sampled_provider_loaded_nanos,
             );
         }
+    }
+}
+
+impl Drop for AwReplayTiming {
+    fn drop(&mut self) {
+        self.emit("operator_lifetime");
     }
 }
 
@@ -910,6 +914,12 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
     #[must_use]
     pub const fn diagnostics(&self) -> AwOperatorDiagnostics {
         self.diagnostics
+    }
+
+    pub(crate) fn emit_timing_checkpoint(&self) {
+        if let Some(timing) = &self.replay_timing {
+            timing.emit("operator_checkpoint");
+        }
     }
 
     /// Select the gridding metadata and return the exact integral footprint
@@ -1844,6 +1854,19 @@ mod tests {
         let mut disabled = None;
         AwTimingCall::mark(&mut disabled, 0);
         assert!(disabled.is_none());
+    }
+
+    #[test]
+    fn t51_aw_replay_timing_checkpoints_preserve_cumulative_totals() {
+        let timing = AwReplayTiming::new();
+        drop(AwReplayTiming::begin(Some(&timing), 6));
+        timing.emit("operator_checkpoint");
+        assert_eq!(timing.totals.lock().unwrap()[6].calls, 1);
+        drop(AwReplayTiming::begin(Some(&timing), 6));
+        timing.emit("operator_checkpoint");
+        let totals = timing.totals.lock().unwrap()[6];
+        assert_eq!(totals.calls, 2);
+        assert_eq!(totals.sampled_calls, 1);
     }
 
     #[test]

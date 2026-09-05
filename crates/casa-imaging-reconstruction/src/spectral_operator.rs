@@ -5157,7 +5157,10 @@ impl CompleteDataOwnerState {
                     continue;
                 };
                 let counters = match aw.lock() {
-                    Ok(aw) => aw.diagnostics(),
+                    Ok(aw) => {
+                        aw.emit_timing_checkpoint();
+                        aw.diagnostics()
+                    }
                     Err(_) => {
                         eprintln!(
                             "imaging_aw_block_progress owner={} chart={} diagnostics_available=0",
