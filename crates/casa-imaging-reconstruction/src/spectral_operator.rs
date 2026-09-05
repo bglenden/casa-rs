@@ -4004,6 +4004,249 @@ pub struct CompleteDataOwnerState {
 struct SpectralScienceProbe {
     sample: Option<SpectralScienceSample>,
     polynomial_aw: BTreeMap<(u32, usize), PolynomialAwScienceAggregate>,
+    cumulative: Option<CumulativeAwScienceProbe>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CumulativeAwProbeConfig {
+    row_start: u64,
+    row_end: u64,
+    ddid: i32,
+    spw: u32,
+    channels: usize,
+    correlations: usize,
+    accepted_hands: u64,
+}
+
+impl CumulativeAwProbeConfig {
+    fn parse(value: &str) -> Result<Self, SpectralOperatorError> {
+        let values = value
+            .split(':')
+            .map(str::parse::<u64>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| SpectralOperatorError::DiagnosticConfiguration)?;
+        let [
+            row_start,
+            row_end,
+            ddid,
+            spw,
+            channels,
+            correlations,
+            accepted_hands,
+        ] = values.as_slice()
+        else {
+            return Err(SpectralOperatorError::DiagnosticConfiguration);
+        };
+        let groups = row_end
+            .checked_sub(*row_start)
+            .and_then(|rows| rows.checked_mul(*channels))
+            .ok_or(SpectralOperatorError::DiagnosticConfiguration)?;
+        if groups == 0
+            || groups > 262_144
+            || *channels > 4096
+            || *correlations != 4
+            || *ddid > i32::MAX as u64
+            || *spw > u32::MAX as u64
+            || *accepted_hands > groups * 2
+        {
+            return Err(SpectralOperatorError::DiagnosticConfiguration);
+        }
+        Ok(Self {
+            row_start: *row_start,
+            row_end: *row_end,
+            ddid: *ddid as i32,
+            spw: *spw as u32,
+            channels: *channels as usize,
+            correlations: *correlations as usize,
+            accepted_hands: *accepted_hands,
+        })
+    }
+
+    fn slot(self, address: SelectedSampleAddress) -> Result<Option<usize>, SpectralOperatorError> {
+        if !(self.row_start..self.row_end).contains(&address.physical_row) {
+            return Ok(None);
+        }
+        if address.data_description_id != self.ddid
+            || address.spectral_window_id != self.spw
+            || address.channel_index as usize >= self.channels
+        {
+            return Err(SpectralOperatorError::DiagnosticCoverageMismatch);
+        }
+        Ok(Some(
+            (address.physical_row - self.row_start) as usize * self.channels
+                + address.channel_index as usize,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CumulativeAwChannel {
+    raw_weight: f64,
+    imaging_weight: f64,
+    accepted: [u64; 2],
+    off_grid: [u64; 2],
+    weighted_norm: [f64; 2],
+}
+
+#[derive(Debug)]
+struct CumulativeAwScienceProbe {
+    config: CumulativeAwProbeConfig,
+    measurement_set: Option<MeasurementSetIdentity>,
+    seen: Vec<bool>,
+    groups: usize,
+    channels: Vec<CumulativeAwChannel>,
+}
+
+impl CumulativeAwScienceProbe {
+    fn new(config: CumulativeAwProbeConfig) -> Self {
+        Self {
+            config,
+            measurement_set: None,
+            seen: vec![false; (config.row_end - config.row_start) as usize * config.channels],
+            groups: 0,
+            channels: vec![CumulativeAwChannel::default(); config.channels],
+        }
+    }
+
+    fn record_group(
+        &mut self,
+        address: SelectedSampleAddress,
+        correlation_mask: u32,
+    ) -> Result<bool, SpectralOperatorError> {
+        let Some(slot) = self.config.slot(address)? else {
+            return Ok(false);
+        };
+        if correlation_mask != (1 << self.config.correlations) - 1
+            || self.seen[slot]
+            || self
+                .measurement_set
+                .is_some_and(|ms| ms != address.measurement_set)
+        {
+            return Err(SpectralOperatorError::DiagnosticCoverageMismatch);
+        }
+        self.measurement_set = Some(address.measurement_set);
+        self.seen[slot] = true;
+        self.groups += 1;
+        Ok(true)
+    }
+
+    fn observe_inputs(
+        &mut self,
+        group: &[crate::weighting::WeightingSampleValue],
+    ) -> Result<(), SpectralOperatorError> {
+        let first = group.first().ok_or(SpectralOperatorError::InvalidSample)?;
+        let selected = first.selected();
+        if self.config.slot(selected.address())?.is_none() {
+            return Ok(());
+        }
+        let mut mask = 0_u32;
+        let mut flags = 0_u32;
+        for weighted in group {
+            let input = weighted.selected();
+            let index = input.address().correlation_index;
+            if index >= self.config.correlations as u32 || mask & (1 << index) != 0 {
+                return Err(SpectralOperatorError::DiagnosticCoverageMismatch);
+            }
+            mask |= 1 << index;
+            flags |= u32::from(input.channel_flag) << index;
+        }
+        self.record_group(selected.address(), mask)?;
+        let weight = first
+            .source_imaging_weight()
+            .ok_or(SpectralOperatorError::InvalidSample)?;
+        let channel = &mut self.channels[selected.address().channel_index as usize];
+        channel.raw_weight += f64::from(selected.input_weight);
+        channel.imaging_weight += weight;
+        eprintln!(
+            "sample\t{}\t{}\t{:.17e}\t{:.17e}\t{weight:.17e}\t{flags}",
+            selected.address().physical_row,
+            selected.address().channel_index,
+            selected.output_frame_frequency_hz(),
+            selected.input_weight,
+        );
+        Ok(())
+    }
+
+    fn observe_aw(
+        &mut self,
+        address: SelectedSampleAddress,
+        sample: SpectralOperatorSample,
+        aw: &AwScienceProbePair,
+    ) -> Result<(), SpectralOperatorError> {
+        if self.config.slot(address)?.is_none() {
+            return Ok(());
+        }
+        let channel = &mut self.channels[address.channel_index as usize];
+        for (role, name, probe) in [(0, "CFS", &aw.imaging), (1, "WTCF", &aw.normal)] {
+            if probe.taps.is_empty() {
+                channel.off_grid[role] += 1;
+                continue;
+            }
+            channel.accepted[role] += 1;
+            channel.weighted_norm[role] += sample.imaging_weight
+                * sample.spectral_factor
+                * sample.spectral_factor
+                * probe.raw_tap_sum.norm();
+            eprintln!(
+                "role_sample_rust\t{}\t{}\t{}\t{name}\t{:.17e}\t{:.17e}\t{}\t{:.17e}\t{:.17e}\t{:.17e}\t{}\t{}\t{}\t{}",
+                address.physical_row,
+                address.channel_index,
+                address.correlation_index,
+                probe.selected_frequency_hz,
+                probe.selected_w_lambda,
+                probe.mueller_element,
+                probe.raw_tap_sum.re,
+                probe.raw_tap_sum.im,
+                probe.raw_tap_sum.norm(),
+                probe.grid_location[0],
+                probe.grid_location[1],
+                probe.fractional_offset[0],
+                probe.fractional_offset[1],
+            );
+        }
+        Ok(())
+    }
+
+    fn complete(&self) -> bool {
+        self.groups == self.seen.len()
+    }
+
+    fn stop_reason(&self) -> SpectralOperatorError {
+        let accepted = self.channels.iter().fold([0_u64; 2], |mut sum, channel| {
+            for (sum, count) in sum.iter_mut().zip(channel.accepted) {
+                *sum += count;
+            }
+            sum
+        });
+        if !self.complete() || accepted != [self.config.accepted_hands; 2] {
+            SpectralOperatorError::DiagnosticCoverageMismatch
+        } else {
+            SpectralOperatorError::DiagnosticStop
+        }
+    }
+
+    fn emit(&self) {
+        eprintln!(
+            "cumulative_coverage\t{}\t{}\t{}\t{:?}",
+            self.groups,
+            self.seen.len(),
+            self.config.accepted_hands,
+            self.stop_reason()
+        );
+        for (index, channel) in self.channels.iter().enumerate() {
+            eprintln!(
+                "channel_rust\t{index}\t{:.17e}\t{:.17e}\t{}\t{}\t{}\t{}\t{:.17e}\t{:.17e}",
+                channel.raw_weight,
+                channel.imaging_weight,
+                channel.accepted[0],
+                channel.accepted[1],
+                channel.off_grid[0],
+                channel.off_grid[1],
+                channel.weighted_norm[0],
+                channel.weighted_norm[1],
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -4049,6 +4292,53 @@ struct SpectralScienceSample {
 }
 
 impl SpectralScienceProbe {
+    fn configured(
+        enabled: bool,
+        config: impl FnOnce() -> Result<Option<CumulativeAwProbeConfig>, SpectralOperatorError>,
+    ) -> Result<Option<Self>, SpectralOperatorError> {
+        if !enabled {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            cumulative: config()?.map(CumulativeAwScienceProbe::new),
+            ..Self::default()
+        }))
+    }
+
+    fn from_environment(
+        specification: &SpectralOperatorSpecification,
+    ) -> Result<Option<Self>, SpectralOperatorError> {
+        let probe = Self::configured(imaging_science_trace_enabled(), || {
+            static CONFIG: OnceLock<
+                Result<Option<CumulativeAwProbeConfig>, SpectralOperatorError>,
+            > = OnceLock::new();
+            *CONFIG.get_or_init(|| match std::env::var("CASA_RS_TRACE_AW_GROUP") {
+                Ok(value) => CumulativeAwProbeConfig::parse(&value).map(Some),
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(_) => Err(SpectralOperatorError::DiagnosticConfiguration),
+            })
+        })?;
+        if probe
+            .as_ref()
+            .is_some_and(|probe| probe.cumulative.is_some())
+            && (specification.aw_projection.is_none()
+                || specification.chart_count() != 1
+                || !matches!(specification.basis, SpectralBasisPlan::Polynomial(_)))
+        {
+            return Err(SpectralOperatorError::DiagnosticConfiguration);
+        }
+        Ok(probe)
+    }
+
+    fn finish(self) -> Result<(), SpectralOperatorError> {
+        let stop = self
+            .cumulative
+            .as_ref()
+            .map(CumulativeAwScienceProbe::stop_reason);
+        self.emit();
+        stop.map_or(Ok(()), Err)
+    }
+
     fn observe_polynomial_aw(
         &mut self,
         spectral_window: u32,
@@ -4092,6 +4382,9 @@ impl SpectralScienceProbe {
     }
 
     fn emit(self) {
+        if let Some(cumulative) = &self.cumulative {
+            cumulative.emit();
+        }
         for ((spw, moment), aggregate) in self.polynomial_aw {
             eprintln!(
                 "imaging_science_probe_v1 boundary=polynomial_aw_summary spw={spw} normal_moment={moment} accepted_count={} post_briggs_imaging_weight_sum={:.17e} published_polarization_weight_sum={:.17e} taylor_x_moment_sum={:.17e} pre_cf_imaging_moment_sum={:.17e} pre_cf_published_moment_sum={:.17e} selected_imaging_cf_normalization_sum={:.17e} selected_normal_cf_normalization_sum={:.17e} accumulated_normal_sumwt={:.17e} accumulated_published_cfs_sumwt={:.17e}",
@@ -4429,6 +4722,7 @@ impl CompleteDataOwnerState {
             .collect::<Result<Vec<_>, _>>()?;
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
+        let science_probe = SpectralScienceProbe::from_environment(&specification)?;
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -4448,7 +4742,7 @@ impl CompleteDataOwnerState {
             reusable_domains: None,
             linear_rows,
             aw_projection,
-            science_probe: imaging_science_trace_enabled().then(SpectralScienceProbe::default),
+            science_probe,
         })
     }
 
@@ -4488,6 +4782,7 @@ impl CompleteDataOwnerState {
             .collect::<Result<Vec<_>, _>>()?;
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
+        let science_probe = SpectralScienceProbe::from_environment(&specification)?;
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -4507,7 +4802,7 @@ impl CompleteDataOwnerState {
             reusable_domains: None,
             linear_rows,
             aw_projection,
-            science_probe: imaging_science_trace_enabled().then(SpectralScienceProbe::default),
+            science_probe,
         })
     }
 
@@ -4615,7 +4910,28 @@ impl CompleteDataOwnerState {
         self.coverage.adopt(block.coverage_checkpoint());
         self.predicted_selected.clear();
         for group in block.correlation_groups() {
+            if OBSERVE {
+                if let Some(probe) = self
+                    .science_probe
+                    .as_mut()
+                    .and_then(|probe| probe.cumulative.as_mut())
+                {
+                    probe.observe_inputs(group)?;
+                }
+            }
             self.consume_correlation_group::<OBSERVE>(group)?;
+            if OBSERVE
+                && self
+                    .science_probe
+                    .as_ref()
+                    .and_then(|probe| probe.cumulative.as_ref())
+                    .is_some_and(CumulativeAwScienceProbe::complete)
+            {
+                self.science_probe
+                    .take()
+                    .expect("complete diagnostic exists")
+                    .finish()?;
+            }
         }
         self.sample_count = self
             .sample_count
@@ -4803,6 +5119,28 @@ impl CompleteDataOwnerState {
                     .with_mosaic_response(mosaic_response)
                     .with_published_weight(weight)?
                     .with_aw_coordinates(pa, pointing, mueller)?;
+                    if OBSERVE && chart_ordinal == 0 && spectral_ordinal == 0 {
+                        if let Some(probe) = self
+                            .science_probe
+                            .as_ref()
+                            .and_then(|probe| probe.cumulative.as_ref())
+                        {
+                            let input = weighted.selected();
+                            if probe.config.slot(input.address())?.is_some() {
+                                eprintln!(
+                                    "hand_sample\t{}\t{}\t{}\t{:.17e}\t{:.17e}\t{raw_weight:.17e}\t{weight:.17e}\t{}\t{}\t{}",
+                                    input.address().physical_row,
+                                    input.address().channel_index,
+                                    input.address().correlation_index,
+                                    input.raw_input_weight,
+                                    input.input_weight,
+                                    u8::from(input.row_flag),
+                                    u8::from(input.channel_flag),
+                                    u8::from(flags[row]),
+                                );
+                            }
+                        }
+                    }
                     if OBSERVE && active && weight > 0.0 {
                         let sample_candidate = self.science_probe.as_ref().is_some_and(|probe| {
                             probe.sample.as_ref().is_none_or(|current| {
@@ -4827,6 +5165,15 @@ impl CompleteDataOwnerState {
                                 .science_probe
                                 .as_mut()
                                 .expect("observed path has probe");
+                            if chart_ordinal == 0 {
+                                if let Some(cumulative) = &mut probe.cumulative {
+                                    cumulative.observe_aw(
+                                        weighted.selected().address(),
+                                        sample,
+                                        &aw,
+                                    )?;
+                                }
+                            }
                             if let Some(plan) = polynomial {
                                 probe.observe_polynomial_aw(
                                     selected.address().spectral_window_id,
@@ -5667,7 +6014,7 @@ impl CompleteDataOwnerState {
             SpectralBasisPlan::Joint { .. } => SpectralPrimitiveCatalog::UnnormalizedJointBlockV1,
         };
         if let Some(probe) = self.science_probe.take() {
-            probe.emit();
+            probe.finish()?;
         }
         let domains = if let Some(reusable) = self.reusable_domains {
             let residual_model = self
@@ -5750,7 +6097,7 @@ impl CompleteDataOwnerState {
             )?;
         }
         if let Some(probe) = self.science_probe.take() {
-            probe.emit();
+            probe.finish()?;
         }
         let mut primitives = Vec::with_capacity(self.operators.len());
         let mut ffts = Vec::with_capacity(self.operators.len());
@@ -10548,6 +10895,21 @@ fn checked_cells(shape: [usize; 2]) -> Result<usize, SpectralOperatorError> {
 /// Exact reason the spectral operator plan or operator rejected its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SpectralOperatorError {
+    /// An opt-in diagnostic requested an invalid or unbounded source-group capture.
+    #[error(
+        "invalid CASA_RS_TRACE_AW_GROUP: expected bounded start:end:ddid:spw:channels:4:accepted_hands"
+    )]
+    DiagnosticConfiguration,
+    /// The complete requested diagnostic was emitted; no scientific completion is minted.
+    #[error(
+        "diagnostic stop: requested AW source group captured before FFT; not an acceptance run"
+    )]
+    DiagnosticStop,
+    /// Diagnostic records expose missing, repeated, or differently admitted source samples.
+    #[error(
+        "diagnostic source coverage or accepted hand count differs; emitted records are diagnostic evidence, not acceptance"
+    )]
+    DiagnosticCoverageMismatch,
     /// The prepared paired AW operator rejected its cache or row-local input.
     #[error("AW projection failed: {0}")]
     AwProjection(#[from] crate::AwOperatorError),
@@ -12321,6 +12683,94 @@ mod tests {
         assert_eq!(one.psf(), split.psf());
         assert_eq!(one.sensitivity(), split.sensitivity());
         assert_eq!(one.sum_weight(), split.sum_weight());
+    }
+
+    #[test]
+    fn t51_cumulative_aw_probe_configuration_is_explicit_and_bounded() {
+        let config = super::CumulativeAwProbeConfig::parse("10:12:0:3:2:4:6").unwrap();
+        assert_eq!(config.row_end - config.row_start, 2);
+        assert_eq!(config.channels, 2);
+        assert_eq!(config.accepted_hands, 6);
+        for invalid in [
+            "",
+            "10:12:0:3:2:4",
+            "12:10:0:3:2:4:0",
+            "10:10:0:3:2:4:0",
+            "10:12:0:3:0:4:0",
+            "10:12:0:3:2:2:0",
+            "10:12:0:3:2:4:9",
+            "0:262145:0:3:1:4:0",
+            "0:1:0:3:4097:4:0",
+            "0:1:-1:3:1:4:0",
+            "0:18446744073709551615:0:3:2:4:0",
+        ] {
+            assert_eq!(
+                super::CumulativeAwProbeConfig::parse(invalid),
+                Err(SpectralOperatorError::DiagnosticConfiguration),
+                "{invalid}"
+            );
+        }
+    }
+
+    #[test]
+    fn t51_cumulative_aw_probe_requires_exact_coverage_before_diagnostic_stop() {
+        let config = super::CumulativeAwProbeConfig::parse("10:12:0:3:2:4:6").unwrap();
+        let ms = MeasurementSetIdentity::new(LogicalIdentity::from_sha256([93; 32]));
+        let address = |row, channel| mosaic_address(ms, row, channel, 1.0e9, 1.0e6);
+        let mut probe = super::CumulativeAwScienceProbe::new(config);
+        assert!(probe.record_group(address(10, 0), 15).unwrap());
+        assert!(!probe.record_group(address(99, 0), 15).unwrap());
+        assert!(
+            !probe.complete(),
+            "larger physical rows cannot complete a group"
+        );
+        assert_eq!(
+            probe.record_group(address(10, 0), 15),
+            Err(SpectralOperatorError::DiagnosticCoverageMismatch)
+        );
+        assert_eq!(
+            probe.record_group(address(10, 1), 9),
+            Err(SpectralOperatorError::DiagnosticCoverageMismatch)
+        );
+        assert_eq!(
+            probe.record_group(address(10, 2), 15),
+            Err(SpectralOperatorError::DiagnosticCoverageMismatch)
+        );
+        for (row, channel) in [(11, 1), (10, 1), (11, 0)] {
+            assert!(probe.record_group(address(row, channel), 15).unwrap());
+        }
+        assert!(probe.complete());
+        assert_eq!(
+            probe.stop_reason(),
+            SpectralOperatorError::DiagnosticCoverageMismatch
+        );
+        probe.channels[0].accepted = [3, 3];
+        probe.channels[1].accepted = [3, 3];
+        assert_eq!(probe.stop_reason(), SpectralOperatorError::DiagnosticStop);
+        let observer = SpectralScienceProbe {
+            cumulative: Some(probe),
+            ..SpectralScienceProbe::default()
+        };
+        assert_eq!(
+            observer.finish(),
+            Err(SpectralOperatorError::DiagnosticStop)
+        );
+    }
+
+    #[test]
+    fn t51_cumulative_aw_probe_disabled_does_not_read_or_allocate_configuration() {
+        assert!(
+            SpectralScienceProbe::configured(false, || panic!(
+                "disabled observer read configuration"
+            ))
+            .unwrap()
+            .is_none()
+        );
+        let observer = SpectralScienceProbe::configured(true, || Ok(None))
+            .unwrap()
+            .unwrap();
+        assert!(observer.cumulative.is_none());
+        assert_eq!(observer.finish(), Ok(()));
     }
 
     #[test]
