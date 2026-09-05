@@ -1,0 +1,31 @@
+[package]
+name = "casa-imaging-reconstruction"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native authoritative reconstruction and model-state algorithms"
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+cpp-interop-tests = ["casa-test-support/cpp-interop-tests"]
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-model = { path = "../casa-imaging-model" }
+casa-numerics = { path = "../casa-numerics" }
+ndarray.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
+sha2 = "0.10"
+smallvec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+casa-images = { path = "../casa-images" }
+casa-test-support = { path = "../casa-test-support" }
+serde_json = "1"

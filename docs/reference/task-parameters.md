@@ -10,16 +10,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 
 - Parameter catalog schema version: `1`
 - Parameter surface schema version: `1`
-- Concepts: 401
-- Surfaces: 42 (40 task, 2 session)
-- Surface bindings: 773
+- Concepts: 402
+- Surfaces: 41 (39 task, 2 session)
+- Surface bindings: 757
 
 | Surface | Kind | Contract | Provider family | Parameters | Summary |
 |---|---|---:|---|---:|---|
 | [MSExplore](#surface-msexplore)<br><code>msexplore</code> | task | 4 | <code>msexplore</code> | 68 | explore and export common MeasurementSet plotms-style plots |
-| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 3 | <code>calibration</code> | 51 | apply, inspect, and solve CASA-style calibration workflows |
+| [Calibrate](#surface-calibrate)<br><code>calibrate</code> | task | 4 | <code>calibration</code> | 49 | apply, inspect, and solve CASA-style calibration workflows |
 | [ImportVLA](#surface-importvla)<br><code>importvla</code> | task | 3 | <code>importvla</code> | 12 | scan or import old VLA export archives from disk |
-| [Imager](#surface-imager)<br><code>imager</code> | task | 7 | <code>imager</code> | 91 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
+| [Imager](#surface-imager)<br><code>imager</code> | task | 15 | <code>imager</code> | 94 | Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet |
 | [SimObserve](#surface-simobserve)<br><code>simobserve</code> | task | 3 | <code>simobserve</code> | 43 | Generate a CASA-compatible synthetic VLA MeasurementSet |
 | [Table Browser](#surface-tablebrowser)<br><code>tablebrowser</code> | session | 3 | <code>table_browser</code> | 7 | browse arbitrary casacore tables |
 | [ImExplore](#surface-imexplore)<br><code>imexplore</code> | session | 3 | <code>image_browser</code> | 17 | browse persistent casacore images |
@@ -29,7 +29,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | [Export FITS](#surface-exportfits)<br><code>exportfits</code> | task | 3 | <code>image_analysis</code> | 4 | Export CASA images to FITS |
 | [MSTransform](#surface-mstransform)<br><code>mstransform</code> | task | 3 | <code>mstransform</code> | 11 | Materialize a selected MeasurementSet into a new output MS. |
 | [Split](#surface-split)<br><code>split</code> | task | 3 | <code>mstransform</code> | 11 | Create a selected MeasurementSet subset, equivalent to CASA split. |
-| [UV Continuum Subtraction](#surface-uvcontsub)<br><code>uvcontsub</code> | task | 3 | <code>calibration</code> | 17 | Subtract continuum emission from a MeasurementSet. |
 | [Applycal](#surface-applycal)<br><code>applycal</code> | task | 3 | <code>calibration</code> | 21 | Apply one or more calibration tables to a MeasurementSet. |
 | [Gaincal](#surface-gaincal)<br><code>gaincal</code> | task | 3 | <code>calibration</code> | 28 | Solve antenna gain calibration for a MeasurementSet. |
 | [Bandpass](#surface-bandpass)<br><code>bandpass</code> | task | 3 | <code>calibration</code> | 25 | Solve bandpass calibration for a MeasurementSet. |
@@ -145,16 +144,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Calibrate (<code>calibrate</code>)
 
 - Kind: `task`
-- Contract version: `3`
+- Contract version: `4`
 - Category: Calibration
 - Provider family: `calibration`
 - Summary: apply, inspect, and solve CASA-style calibration workflows
 
 | Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
 |---|---|---|---|---|---|
-| <code>mode</code> | <code>calibrate.mode@r1</code> | <code>choice (9 values)</code> | <code>"apply"</code>; optional | Workflow | Calibration workflow to run from the launcher form |
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; required when (mode="apply" or mode="continuum_subtract" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal") | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>"none"</code>; required when (mode="continuum_subtract" or mode="export_corrected_data") | Input | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
+| <code>mode</code> | <code>calibrate.mode@r2</code> | <code>choice (8 values)</code> | <code>"apply"</code>; optional | Workflow | Calibration workflow to run from the launcher form |
+| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | <code>[]</code>; required when (mode="apply" or mode="export_corrected_data" or mode="solve_bandpass" or mode="solve_gain" or mode="gencal") | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
+| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | <code>"none"</code>; required when (mode="export_corrected_data") | Input | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
 | <code>summary_paths</code> | <code>parameter.summary_paths@r1</code> | <code>string</code> | <code>"none"</code>; required when mode="summary" | Inspect | Comma-separated calibration-table paths for summary mode |
 | <code>gaintables</code> | <code>parameter.gaintables@r1</code> | <code>string</code> | <code>"none"</code>; optional | Input | Comma-separated list of calibration-table paths to apply in order |
 | <code>table_path</code> | <code>parameter.table_path@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; required when mode="stats" | Inspect | Calibration-table path for stats mode |
@@ -170,9 +169,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
 | <code>stats_axis</code> | <code>parameter.stats_axis@r1</code> | <code>choice (4 values)</code> | <code>"amp"</code>; optional | Inspect | Complex axis to summarize in stats mode |
 | <code>stats_datacolumn</code> | <code>parameter.stats_datacolumn@r1</code> | <code>string</code> | <code>"none"</code>; optional | Inspect | Calibration-table column to inspect in stats mode |
-| <code>fit_spw</code> | <code>parameter.fit_spw@r1</code> | <code>string</code> | <code>"none"</code>; required when mode="continuum_subtract" | Continuum Subtraction | CASA-style line-free channel selector for uvcontsub, e.g. 0:0~500;900~1919 |
 | <code>use_flags</code> | <code>parameter.use_flags@r1</code> | <code>bool</code> | <code>false</code>; optional | Inspect | Include flagged values in stats calculations |
-| <code>fit_order</code> | <code>parameter.fit_order@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum Subtraction | Polynomial order for continuum fitting |
 | <code>out_table</code> | <code>parameter.out_table@r1</code> | <code>path (calibration_table)</code> | <code>"none"</code>; required when (mode="solve_bandpass" or mode="solve_gain" or mode="fluxscale" or mode="gencal") | Solve | Output calibration-table path for solve, fluxscale, and gencal workflows |
 | <code>refant</code> | <code>parameter.refant@r1</code> | <code>string</code> | <code>"none"</code>; required when (mode="solve_bandpass" or mode="solve_gain") | Solve | Reference antenna name or id for solve workflows |
 | <code>gain_type</code> | <code>parameter.gain_type@r1</code> | <code>choice (2 values)</code> | <code>"g"</code>; optional | Solve Gain | Gain family for solve-gain mode |
@@ -234,7 +231,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 ## Imager (<code>imager</code>)
 
 - Kind: `task`
-- Contract version: `7`
+- Contract version: `15`
 - Category: Imaging
 - Provider family: `imager`
 - Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet
@@ -257,7 +254,7 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>channel_start</code> | <code>parameter.channel_start@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | First selected input channel |
 | <code>channel_count</code> | <code>parameter.channel_count@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Context | Number of selected input channels |
 | <code>stokes</code> | <code>image.selection.stokes@r1</code> | <code>string</code> | <code>"I"</code>; optional | Context | Stokes selector. |
-| <code>specmode</code> | <code>parameter.specmode@r1</code> | <code>choice (3 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging, cube with CASA Doppler/frame handling, or cubedata in the native data frame without Doppler correction |
+| <code>specmode</code> | <code>parameter.specmode@r2</code> | <code>choice (5 values)</code> | <code>"mfs"</code>; optional | Stages | MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; cubesource tracked in the source rest frame; or MVC MT-MFS via a channel cube |
 | <code>start</code> | <code>parameter.start@r1</code> | <code>string</code> | <code>"none"</code>; optional | Stages | Cube-axis start channel, frequency, or velocity |
 | <code>width</code> | <code>imager.width@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Cube-axis width as channels, frequency, or velocity |
 | <code>outframe</code> | <code>parameter.outframe@r1</code> | <code>choice (10 values)</code> | <code>"none"</code>; optional | Stages | Spectral frame used for cube output coordinates |
@@ -303,16 +300,16 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>pblimit</code> | <code>parameter.pblimit@r1</code> | <code>float</code> | <code>0.2</code>; optional | Stages | Mosaic primary-beam cutoff for flat-noise normalization |
 | <code>wterm</code> | <code>parameter.wterm@r1</code> | <code>choice (3 values)</code> | <code>"none"</code>; optional | Stages | W-term correction mode |
 | <code>gridder</code> | <code>parameter.gridder@r1</code> | <code>choice (7 values)</code> | <code>"standard"</code>; optional | Stages | CASA tclean gridder family |
-| <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r1</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Stages | Backend policy for standard/MFS-compatible gridding stages |
+| <code>standard_mfs_acceleration</code> | <code>parameter.standard_mfs_acceleration@r1</code> | <code>choice (4 values)</code> | <code>"cpu"</code>; optional | Stages | Backend policy for standard/MFS-compatible gridding stages |
 | <code>parallel</code> | <code>parameter.parallel@r1</code> | <code>optional&lt;bool&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Permit planned local parallel or accelerated execution; false forces the serial CPU comparison surface |
 | <code>imaging_read_ahead_blocks</code> | <code>parameter.imaging_read_ahead_blocks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Maximum number of live source row blocks used for bounded read and prepare overlap<br><em>Surface:</em> The runtime rejects zero; Auto defaults are selected from mode and memory geometry. |
-| <code>imaging_fft_backend</code> | <code>parameter.imaging_fft_backend@r1</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Stages | Backend policy for dirty and residual product FFT transforms |
+| <code>imaging_fft_backend</code> | <code>parameter.imaging_fft_backend@r1</code> | <code>choice (4 values)</code> | <code>"rustfft"</code>; optional | Stages | Backend policy for dirty and residual product FFT transforms |
 | <code>chanchunks</code> | <code>parameter.chanchunks@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Stages | Requested number of top-level spectral channel chunks; the memory planner may select a larger active plane group when it fits<br><em>Surface:</em> Applies to cube and cubedata imaging; the runtime rejects zero and MFS use. |
 | <code>uvrange</code> | <code>ms.selection.uvrange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | UV range selector.<br><em>Surface:</em> The complete CASA UV-range selector reaches the shared MeasurementSet selection engine. |
 | <code>intent</code> | <code>ms.selection.intent@r1</code> | <code>string</code> | <code>"none"</code>; optional | Context | Intent selector.<br><em>Surface:</em> The complete CASA intent selector reaches the shared MeasurementSet selection engine. |
 | <code>cfcache</code> | <code>parameter.cfcache@r1</code> | <code>optional&lt;path (directory)&gt; (states: auto)</code> | <code>"auto"</code>; optional | Advanced Wide-Field | AWProject convolution-function cache selection<br><em>Surface:</em> auto selects the managed plan-keyed cache; an explicit path preserves CASA cache interoperability. |
 | <code>cf_resident_mb</code> | <code>parameter.cf_resident_mb@r1</code> | <code>integer; unit dimension: data_size</code> | <code>256</code>; optional | Advanced Wide-Field | AW convolution-function working-memory ceiling in MiB<br><em>Surface:</em> Per-allocation full-cell LRU and compact source-order tap ceiling in MiB; the runtime charges both and rejects zero. |
-| <code>facets</code> | <code>parameter.facets@r1</code> | <code>integer</code> | <code>1</code>; optional | Advanced Wide-Field | Number of wide-field image facets<br><em>Surface:</em> Unsupported facet layouts fail closed with a capability diagnostic. |
+| <code>facets</code> | <code>parameter.facets@r2</code> | <code>integer</code> | <code>1</code>; optional | Advanced Wide-Field | Number of wide-field image facets<br><em>Surface:</em> Constant-basis MFS executes exact regular facets; unsupported basis combinations fail closed. |
 | <code>psfphasecenter</code> | <code>parameter.psfphasecenter@r1</code> | <code>optional&lt;string&gt; (states: none); unit dimension: angle</code> | <code>"none"</code>; optional | Advanced Wide-Field | Optional distinct AWProject PSF phase center |
 | <code>vptable</code> | <code>parameter.vptable@r1</code> | <code>optional&lt;path (table)&gt; (states: none)</code> | <code>"none"</code>; optional | Advanced Wide-Field | Optional CASA voltage-pattern table for AWProject |
 | <code>aterm</code> | <code>parameter.aterm@r1</code> | <code>bool</code> | <code>true</code>; optional | Advanced Wide-Field | Enable the aperture-illumination A term for AWProject |
@@ -323,15 +320,18 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>rotatepastep</code> | <code>parameter.rotatepastep@r1</code> | <code>float; unit dimension: angle</code> | <code>360.0</code>; optional | Advanced Wide-Field | AW convolution-function parallactic-angle rotation step in degrees |
 | <code>pointingoffsetsigdev</code> | <code>parameter.pointingoffsetsigdev@r1</code> | <code>string</code> | <code>"0"</code>; optional | Advanced Wide-Field | Comma-separated AW pointing grouping/refresh thresholds; non-pairs use CASA 600,600 |
 | <code>mosweight</code> | <code>parameter.mosweight@r1</code> | <code>bool</code> | <code>false</code>; optional | Advanced Wide-Field | Use per-pointing mosaic weight-density handling |
-| <code>normtype</code> | <code>parameter.normtype@r1</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | AWProject sensitivity normalization policy |
-| <code>imaging_memory_target_mb</code> | <code>parameter.imaging_memory_target_mb@r2</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required when imaging_memory_pressure_policy="oversubscribe" | Execution Resources | Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. stage-aware and hybrid currently apply their corresponding caps only in planner probes. oversubscribe requires an explicit target and alone may retain it beyond measured headroom. |
-| <code>imaging_memory_pressure_policy</code> | <code>parameter.imaging_memory_pressure_policy@r1</code> | <code>choice (6 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging memory-pressure and stage-residency policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. stage-aware and hybrid are planner-probe-only until their requested runtime actions are implemented. |
+| <code>normtype</code> | <code>parameter.normtype@r1</code> | <code>choice (3 values)</code> | <code>"flatnoise"</code>; optional | Advanced Wide-Field | Mosaic and AWProject sensitivity normalization policy |
+| <code>imaging_memory_target_mb</code> | <code>parameter.imaging_memory_target_mb@r2</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; required when imaging_memory_pressure_policy="oversubscribe" | Execution Resources | Optional shared imaging memory target in MiB<br><em>Surface:</em> none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom. |
+| <code>imaging_memory_pressure_policy</code> | <code>parameter.imaging_memory_pressure_policy@r2</code> | <code>choice (4 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging memory-pressure policy<br><em>Surface:</em> auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. |
 | <code>imaging_prepare_buffer_mb</code> | <code>parameter.imaging_prepare_buffer_mb@r1</code> | <code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code> | <code>"none"</code>; optional | Execution Resources | Optional source-stream preparation buffer in MiB |
 | <code>imaging_row_block_rows</code> | <code>parameter.imaging_row_block_rows@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Execution Resources | Optional bounded source-stream row-block override |
 | <code>imaging_prepare_workers</code> | <code>parameter.imaging_prepare_workers@r1</code> | <code>optional&lt;integer&gt; (states: none)</code> | <code>"none"</code>; optional | Execution Resources | Optional source-stream preparation worker count |
 | <code>imaging_fft_precision</code> | <code>parameter.imaging_fft_precision@r1</code> | <code>choice (3 values)</code> | <code>"auto"</code>; optional | Execution Resources | Imaging-wide FFT precision policy<br><em>Surface:</em> auto selects only a correctness-qualified FFT precision and reports any fallback. |
 | <code>projection</code> | <code>parameter.projection@r1</code> | <code>choice (1 values)</code> | <code>"SIN"</code>; optional | Stage Parameters | Sky projection used for the image direction coordinate<br><em>Surface:</em> Unsupported projections fail before imaging; the value is never silently rewritten to SIN. |
 | <code>standard_mfs_grid_threads</code> | <code>parameter.standard_mfs_grid_threads@r1</code> | <code>optional&lt;integer&gt; (states: auto)</code> | <code>"auto"</code>; optional | Execution Resources | Grid-stage worker selection for standard, mosaic, and AWProject MFS imaging<br><em>Surface:</em> auto delegates to the resource-adaptive execution planner; a positive integer is an explicit override. |
+| <code>fitspw</code> | <code>parameter.fitspw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Continuum Subtraction | Fit SPW selector. |
+| <code>fitorder</code> | <code>parameter.fitorder@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum Subtraction | Polynomial fit order. |
+| <code>save_continuum_residual</code> | <code>parameter.save_continuum_residual@r1</code> | <code>bool</code> | <code>false</code>; optional | Continuum Subtraction | Overwrite output-role selected cells in an existing CORRECTED_DATA column in place<br><em>Surface:</em> Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged. |
 
 <a id="surface-simobserve"></a>
 
@@ -557,36 +557,6 @@ Sources: `crates/casa-provider-contracts/resources/parameter-catalog.json`, `cra
 | <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
 | <code>datacolumn</code> | <code>parameter.datacolumn@r1</code> | <code>string</code> | <code>"DATA"</code>; optional | Data | Visibility data column used by the surface. |
 | <code>keepflags</code> | <code>parameter.keepflags@r1</code> | <code>bool</code> | <code>true</code>; optional | Data | Preserve rows that are fully flagged in the selected output. |
-
-<a id="surface-uvcontsub"></a>
-
-## UV Continuum Subtraction (<code>uvcontsub</code>)
-
-- Kind: `task`
-- Contract version: `3`
-- Category: MeasurementSet
-- Provider family: `calibration`
-- Summary: Subtract continuum emission from a MeasurementSet.
-
-| Parameter | Concept ID / revision | Type / unit | Default / required | Group | Summary |
-|---|---|---|---|---|---|
-| <code>vis</code> | <code>data.input.vis@r1</code> | <code>array&lt;path (measurement_set)&gt;</code> | no default; required | Input | Input MeasurementSet path or paths.<br><em>Surface:</em> Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input. |
-| <code>outputvis</code> | <code>parameter.outputvis@r1</code> | <code>path (measurement_set)</code> | no default; required | Input | Output MeasurementSet path for corrected-data export or continuum subtraction<br><em>Surface:</em> Canonical outputvis maps to provider field output_measurement_set. |
-| <code>output</code> | <code>calibration.report.output@r1</code> | <code>path (any)</code> | <code>"none"</code>; optional | Output | Optional destination for a calibration task report. |
-| <code>overwrite</code> | <code>output.overwrite@r1</code> | <code>bool</code> | <code>false</code>; optional | Output | Replace an existing output file |
-| <code>format</code> | <code>parameter.format@r1</code> | <code>choice (2 values)</code> | <code>"text"</code>; optional | Output | Execution report format |
-| <code>stats_datacolumn</code> | <code>parameter.stats_datacolumn@r1</code> | <code>string</code> | <code>"none"</code>; optional | Inspect | Calibration-table column to inspect in stats mode |
-| <code>fit_spw</code> | <code>parameter.fit_spw@r1</code> | <code>string</code> | no default; required | Continuum Subtraction | CASA-style line-free channel selector for uvcontsub, e.g. 0:0~500;900~1919 |
-| <code>fit_order</code> | <code>parameter.fit_order@r1</code> | <code>integer</code> | <code>0</code>; optional | Continuum Subtraction | Polynomial order for continuum fitting |
-| <code>selectdata</code> | <code>parameter.selectdata@r1</code> | <code>bool</code> | <code>true</code>; optional | Selection | Whether detailed data-selection controls are enabled.<br><em>Surface:</em> Enables the detailed selection controls for this calibration workflow. |
-| <code>field</code> | <code>ms.selection.field@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | CASA field selector.<br><em>Surface:</em> This calibration provider currently accepts comma-separated FIELD_ID integers. |
-| <code>spw</code> | <code>ms.selection.spw@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated SPECTRAL_WINDOW_ID integers |
-| <code>antenna</code> | <code>ms.selection.antenna@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated antenna ids matched against ANTENNA1/ANTENNA2 |
-| <code>scan</code> | <code>ms.selection.scan@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated scan numbers |
-| <code>observation</code> | <code>ms.selection.observation@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated OBSERVATION_ID integers |
-| <code>array</code> | <code>ms.selection.array@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Comma-separated ARRAY_ID integers |
-| <code>timerange</code> | <code>ms.selection.timerange@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Inclusive TIME range in MJD seconds |
-| <code>msselect</code> | <code>ms.selection.msselect@r1</code> | <code>string</code> | <code>"none"</code>; optional | Selection | Raw TaQL WHERE expression to AND with the structured selectors |
 
 <a id="surface-applycal"></a>
 

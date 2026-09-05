@@ -40,6 +40,8 @@ repeats="${BENCH_REPEATS:-${IMAGER_BENCH_REPEATS:-5}}"
 profile_repeats="${BENCH_PROFILE_REPEATS:-${IMAGER_BENCH_PROFILE_REPEATS:-$repeats}}"
 profile_warmups="${BENCH_PROFILE_WARMUPS:-${IMAGER_BENCH_PROFILE_WARMUPS:-0}}"
 field="${IMAGER_BENCH_FIELD:-0}"
+stokes="${IMAGER_BENCH_STOKES:-I}"
+usepointing="${IMAGER_BENCH_USEPOINTING:-}"
 phasecenter_field="${IMAGER_BENCH_PHASECENTER_FIELD:-}"
 spw="${IMAGER_BENCH_SPW:-0}"
 channel_start="${IMAGER_BENCH_CHANNEL_START:-0}"
@@ -49,6 +51,26 @@ cube_width="${IMAGER_BENCH_CUBE_WIDTH:-}"
 specmode="${IMAGER_BENCH_SPECMODE:-mfs}"
 gridder="${IMAGER_BENCH_GRIDDER:-standard}"
 casa_gridder="${IMAGER_BENCH_CASA_GRIDDER:-$gridder}"
+if [[ -z "$usepointing" ]]; then
+  if [[ "$gridder" == "mosaic" ]]; then
+    usepointing=1
+  else
+    usepointing=0
+  fi
+fi
+case "$usepointing" in
+  1|true|TRUE|yes|YES|on|ON)
+    usepointing_enabled=1
+    ;;
+  0|false|FALSE|no|NO|off|OFF)
+    usepointing_enabled=0
+    ;;
+  *)
+    echo "error: IMAGER_BENCH_USEPOINTING must be 0/1, true/false, yes/no, or on/off" >&2
+    exit 2
+    ;;
+esac
+facets="${IMAGER_BENCH_FACETS:-1}"
 interpolation="${IMAGER_BENCH_INTERPOLATION:-linear}"
 imsize="${IMAGER_BENCH_IMSIZE:-128}"
 cell_arcsec="${IMAGER_BENCH_CELL_ARCSEC:-30}"
@@ -60,6 +82,14 @@ weighting="${IMAGER_BENCH_WEIGHTING:-natural}"
 robust="${IMAGER_BENCH_ROBUST:-0.5}"
 perchanweightdensity="${IMAGER_BENCH_PERCHANWEIGHTDENSITY:-}"
 deconvolver="${IMAGER_BENCH_DECONVOLVER:-hogbom}"
+usemask="${IMAGER_BENCH_USEMASK:-user}"
+mask_box="${IMAGER_BENCH_MASK_BOX:-}"
+savemodel="${IMAGER_BENCH_SAVEMODEL:-none}"
+fitspw="${IMAGER_BENCH_FITSPW:-}"
+fitorder="${IMAGER_BENCH_FITORDER:-0}"
+save_continuum_residual="${IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL:-0}"
+sidelobethreshold="${IMAGER_BENCH_SIDELOBETHRESHOLD:-3.0}"
+noisethreshold="${IMAGER_BENCH_NOISETHRESHOLD:-5.0}"
 standard_mfs_acceleration="${IMAGER_BENCH_STANDARD_MFS_ACCELERATION:-auto}"
 standard_mfs_grid_threads="${IMAGER_BENCH_STANDARD_MFS_GRID_THREADS:-}"
 standard_mfs_metal_minor_cycle_chunk="${IMAGER_BENCH_STANDARD_MFS_METAL_MINOR_CYCLE_CHUNK:-}"
@@ -68,6 +98,8 @@ imaging_fft_backend="${IMAGER_BENCH_IMAGING_FFT_BACKEND:-auto}"
 hogbom_iteration_mode="${IMAGER_BENCH_HOGBOM_ITERATION_MODE:-strict}"
 nterms="${IMAGER_BENCH_NTERMS:-1}"
 scales="${IMAGER_BENCH_SCALES:-}"
+small_scale_bias="${IMAGER_BENCH_SMALL_SCALE_BIAS:-0.6}"
+restoring_beam="${IMAGER_BENCH_RESTORING_BEAM:-}"
 wterm="${IMAGER_BENCH_WTERM:-none}"
 wprojplanes="${IMAGER_BENCH_WPROJPLANES:-}"
 casa_wprojplanes="${IMAGER_BENCH_CASA_WPROJPLANES:-}"
@@ -80,11 +112,13 @@ parallel="${IMAGER_BENCH_PARALLEL:-}"
 chanchunks="${IMAGER_BENCH_CHANCHUNKS:-}"
 mode="${IMAGER_BENCH_MODE:-dirty}"
 niter="${IMAGER_BENCH_NITER:-4}"
+nmajor="${IMAGER_BENCH_NMAJOR:--1}"
 gain="${IMAGER_BENCH_GAIN:-0.1}"
 threshold_jy="${IMAGER_BENCH_THRESHOLD_JY:-0}"
 nsigma="${IMAGER_BENCH_NSIGMA:-0}"
 psfcutoff="${IMAGER_BENCH_PSFCUTOFF:-0.35}"
 pblimit="${IMAGER_BENCH_PBLIMIT:-0.2}"
+casa_pblimit="${IMAGER_BENCH_CASA_PBLIMIT:-$pblimit}"
 write_pb="${IMAGER_BENCH_WRITE_PB:-0}"
 pbcor="${IMAGER_BENCH_PBCOR:-0}"
 keep_output_root="${IMAGER_BENCH_KEEP_OUTPUT_ROOT:-}"
@@ -100,6 +134,8 @@ skip_rust="${IMAGER_BENCH_SKIP_RUST:-0}"
 skip_profile="${IMAGER_BENCH_SKIP_PROFILE:-0}"
 reuse_rust_prefix="${IMAGER_BENCH_REUSE_RUST_PREFIX:-}"
 reuse_casa_prefix="${IMAGER_BENCH_REUSE_CASA_PREFIX:-}"
+casa_result_json="${IMAGER_BENCH_CASA_RESULT_JSON:-}"
+casa_log_file="${IMAGER_BENCH_CASA_LOG_FILE:-}"
 
 case "$gridder" in
   wproject|widefield|awproject|awp2|awphpg)
@@ -174,6 +210,10 @@ if [[ -n "$chanchunks" && ! "$chanchunks" =~ ^[0-9]+$ ]]; then
   echo "error: IMAGER_BENCH_CHANCHUNKS must be an unsigned integer" >&2
   exit 2
 fi
+if [[ ! "$facets" =~ ^[1-9][0-9]*$ ]]; then
+  echo "error: IMAGER_BENCH_FACETS must be an integer >= 1" >&2
+  exit 2
+fi
 
 if [[ "$specmode" != "mfs" && "$specmode" != "cube" && "$specmode" != "cubedata" ]]; then
   echo "error: IMAGER_BENCH_SPECMODE must be mfs, cube, or cubedata" >&2
@@ -202,8 +242,8 @@ case "$hogbom_iteration_mode" in
     exit 2
     ;;
 esac
-if [[ "$hogbom_iteration_mode" == "casa_inclusive" ]]; then
-  hogbom_iteration_mode="casa"
+if [[ "$hogbom_iteration_mode" == "casa" || "$hogbom_iteration_mode" == "casa_inclusive" ]]; then
+  hogbom_iteration_mode="casa-inclusive"
 fi
 
 if [[ "$ms_staging" != "copy" && "$ms_staging" != "direct" ]]; then
@@ -333,6 +373,11 @@ else
   casa_niter="$niter"
 fi
 
+if [[ ! "$nmajor" =~ ^(-1|[0-9]+)$ ]]; then
+  echo "error: IMAGER_BENCH_NMAJOR must be -1 or an unsigned integer" >&2
+  exit 2
+fi
+
 median_from_file() {
   python3 - "$1" <<'PY'
 import statistics
@@ -406,19 +451,29 @@ emit_rust_backend_diagnostics() {
 
 echo "ms_path=$ms_path"
 echo "CASA_RS_CASA_PYTHON=$CASA_RS_CASA_PYTHON"
-echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder field=$field phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
+echo "mode=$mode specmode=$specmode gridder=$gridder casa_gridder=$casa_gridder facets=$facets field=$field stokes=$stokes usepointing=$usepointing_enabled phasecenter_field=$phasecenter_field spw=$spw channel_start=$channel_start channel_count=$channel_count cube_start=$cube_start cube_width=$cube_width interpolation=$interpolation weighting=$weighting robust=$robust perchanweightdensity=$perchanweightdensity_enabled deconvolver=$deconvolver standard_mfs_acceleration=$standard_mfs_acceleration imaging_fft_precision=$imaging_fft_precision imaging_fft_backend=$imaging_fft_backend parallel=$parallel chanchunks=$chanchunks hogbom_iteration_mode=$hogbom_iteration_mode nterms=$nterms scales=$scales wterm=$wterm wprojplanes=$wprojplanes casa_wprojplanes=$casa_wprojplanes imaging_memory_target_mb=$imaging_memory_target_mb imaging_prepare_buffer_mb=$imaging_prepare_buffer_mb imaging_row_block_rows=$imaging_row_block_rows imaging_prepare_workers=$imaging_prepare_workers imaging_read_ahead_blocks=$imaging_read_ahead_blocks imsize=$imsize cell_arcsec=$cell_arcsec repeats=$repeats profile_repeats=$profile_repeats profile_warmups=$profile_warmups niter=$niter nmajor=$nmajor nsigma=$nsigma cycleniter=$minor_cycle_length cyclefactor=$cyclefactor minpsffraction=$min_psf_fraction maxpsffraction=$max_psf_fraction pblimit=$pblimit write_pb=$write_pb_enabled pbcor=$pbcor_enabled ms_staging=$ms_staging phase_probe=$phase_probe_enabled skip_casa=$skip_casa skip_rust=$skip_rust_enabled skip_profile=$skip_profile_enabled reuse_rust_prefix=$reuse_rust_prefix reuse_casa_prefix=$reuse_casa_prefix"
 echo
 
 if [[ "$skip_rust_enabled" == "0" ]]; then
-  cargo build --release -p casars-imager --bin casars-imager --example profile_imager >/dev/null
+  cargo build --release -p casars-imager --bin casars-imager >/dev/null
+  if [[ "$ms_staging" == "copy" ]]; then
+    cargo build --release -p casa-ms --example initialize_imaging_owner >/dev/null
+  fi
 fi
 
 tmpdir="$(mktemp -d "$tmp_root/casa-rs-imager-bench.XXXXXX")"
 trap 'rm -rf "$tmpdir"' EXIT
-if [[ "$ms_staging" == "copy" ]]; then
-  staged_ms_path="$tmpdir/benchmark.ms"
-  cp -R "$ms_path" "$staged_ms_path"
-  ms_path="$staged_ms_path"
+source_ms_path="$ms_path"
+rust_ms_path="$source_ms_path"
+casa_ms_path="$source_ms_path"
+if [[ "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" ]]; then
+  rust_ms_path="$tmpdir/benchmark.ms"
+  cp -R "$source_ms_path" "$rust_ms_path"
+  target/release/examples/initialize_imaging_owner "$rust_ms_path" >/dev/null
+fi
+if [[ "$ms_staging" == "copy" && "$skip_casa" != "1" && "$skip_casa" != "true" && "$skip_casa" != "yes" && "$skip_casa" != "on" && ( "$savemodel" == "modelcolumn" || -n "$fitspw" ) ]]; then
+  casa_ms_path="$tmpdir/casa-benchmark.ms"
+  cp -R "$source_ms_path" "$casa_ms_path"
 fi
 if [[ -n "$keep_output_root" ]]; then
   mkdir -p "$keep_output_root/rust" "$keep_output_root/casa"
@@ -455,6 +510,17 @@ if [[ "$perchanweightdensity_enabled" == "1" ]]; then
 else
   rust_density_flags+=(--no-perchanweightdensity)
 fi
+rust_pointing_flags=()
+if [[ "$usepointing_enabled" == "1" ]]; then
+  rust_pointing_flags+=(--usepointing)
+fi
+rust_continuum_flags=()
+if [[ -n "$fitspw" ]]; then
+  rust_continuum_flags+=(--fitspw "$fitspw" --fitorder "$fitorder")
+fi
+if [[ "$save_continuum_residual" == "1" || "$save_continuum_residual" == "true" || "$save_continuum_residual" == "yes" || "$save_continuum_residual" == "on" ]]; then
+  rust_continuum_flags+=(--save-continuum-residual)
+fi
 rust_source_stream_flags=()
 if [[ -n "$imaging_memory_target_mb" ]]; then
   rust_source_stream_flags+=(--imaging-memory-target-mb "$imaging_memory_target_mb")
@@ -474,6 +540,10 @@ fi
 rust_thread_flags=()
 if [[ -n "$standard_mfs_grid_threads" ]]; then
   rust_thread_flags+=(--standard-mfs-grid-threads "$standard_mfs_grid_threads")
+fi
+rust_mask_flags=(--usemask "$usemask")
+if [[ -n "$mask_box" ]]; then
+  rust_mask_flags+=(--mask-box "$mask_box")
 fi
 if [[ -n "$standard_mfs_metal_minor_cycle_chunk" ]]; then
   rust_thread_flags+=(--standard-mfs-metal-minor-cycle-chunk "$standard_mfs_metal_minor_cycle_chunk")
@@ -504,7 +574,7 @@ for run in $(seq 1 "$repeats"); do
   rust_stderr="$tmpdir/rust-$run.stderr"
   if [[ -n "$scales" ]]; then
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$ms_path" \
+      --ms "$rust_ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
@@ -514,13 +584,18 @@ for run in $(seq 1 "$repeats"); do
       --channel-count "$channel_count" \
       --specmode "$specmode" \
       --gridder "$gridder" \
+      --facets "$facets" \
       --interpolation "$interpolation" \
       ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
       --datacolumn DATA \
       --weighting "$weighting" \
       --robust "$robust" \
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+      ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
       --deconvolver "$deconvolver" \
+      --savemodel "$savemodel" \
+      ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
+      ${rust_mask_flags[@]+"${rust_mask_flags[@]}"} \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
       --imaging-fft-backend "$imaging_fft_backend" \
@@ -531,6 +606,7 @@ for run in $(seq 1 "$repeats"); do
       --nterms "$nterms" \
       --scales "$scales" \
       --niter "$niter" \
+      --nmajor "$nmajor" \
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
@@ -550,7 +626,7 @@ for run in $(seq 1 "$repeats"); do
     fi
   else
     if ! run_with_optional_phasecenter run_timed_command "$rust_stderr" target/release/casars-imager \
-      --ms "$ms_path" \
+      --ms "$rust_ms_path" \
       --imagename "$prefix" \
       --imsize "$imsize" \
       --cell-arcsec "$cell_arcsec" \
@@ -560,13 +636,18 @@ for run in $(seq 1 "$repeats"); do
       --channel-count "$channel_count" \
       --specmode "$specmode" \
       --gridder "$gridder" \
+      --facets "$facets" \
       --interpolation "$interpolation" \
       ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
       --datacolumn DATA \
       --weighting "$weighting" \
       --robust "$robust" \
       ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+      ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
       --deconvolver "$deconvolver" \
+      --savemodel "$savemodel" \
+      ${rust_continuum_flags[@]+"${rust_continuum_flags[@]}"} \
+      ${rust_mask_flags[@]+"${rust_mask_flags[@]}"} \
       --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
       --imaging-fft-backend "$imaging_fft_backend" \
@@ -576,6 +657,7 @@ for run in $(seq 1 "$repeats"); do
       --hogbom-iteration-mode "$hogbom_iteration_mode" \
       --nterms "$nterms" \
       --niter "$niter" \
+      --nmajor "$nmajor" \
       --gain "$gain" \
       --threshold-jy "$threshold_jy" \
       --nsigma "$nsigma" \
@@ -613,19 +695,22 @@ elif [[ "$skip_profile_enabled" == "1" ]]; then
   echo "  skipped=1"
 elif [[ -n "$scales" ]]; then
   run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$ms_path" \
+    "$rust_ms_path" \
     --field "$field" \
+    --stokes "$stokes" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
     --gridder "$gridder" \
+    --facets "$facets" \
     --interpolation "$interpolation" \
     ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
     --datacolumn DATA \
     --weighting "$weighting" \
     --robust "$robust" \
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+    ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
@@ -656,19 +741,22 @@ elif [[ -n "$scales" ]]; then
     | sed 's/^/  /'
 else
   run_with_optional_phasecenter target/release/examples/profile_imager \
-    "$ms_path" \
+    "$rust_ms_path" \
     --field "$field" \
+    --stokes "$stokes" \
     --spw "$spw" \
     --channel-start "$channel_start" \
     --channel-count "$channel_count" \
     --specmode "$specmode" \
     --gridder "$gridder" \
+    --facets "$facets" \
     --interpolation "$interpolation" \
     ${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"} \
     --datacolumn DATA \
     --weighting "$weighting" \
     --robust "$robust" \
     ${rust_density_flags[@]+"${rust_density_flags[@]}"} \
+    ${rust_pointing_flags[@]+"${rust_pointing_flags[@]}"} \
     --deconvolver "$deconvolver" \
     --standard-mfs-acceleration "$standard_mfs_acceleration" \
       --imaging-fft-precision "$imaging_fft_precision" \
@@ -700,15 +788,19 @@ fi
 echo
 
 cat >"$tmpdir/casa-imager-bench.py" <<'PY'
+import json
 import os
 import statistics
 import tempfile
 import time
-from casatasks import tclean
+import numpy as np
+from casatasks import casalog, tclean, uvcontsub
 
 vis = os.environ["CASA_RS_BENCH_MS_PATH"]
 repeats = int(os.environ["CASA_RS_BENCH_REPEATS"])
 field = os.environ["CASA_RS_BENCH_FIELD"]
+stokes = os.environ["CASA_RS_BENCH_STOKES"]
+usepointing = os.environ["CASA_RS_BENCH_USEPOINTING"].lower() in ("1", "true", "yes", "on")
 phasecenter_field = os.environ["CASA_RS_BENCH_PHASECENTER_FIELD"]
 spw = os.environ["CASA_RS_BENCH_SPW"]
 chan_start = int(os.environ["CASA_RS_BENCH_CHANNEL_START"])
@@ -718,6 +810,7 @@ cube_width = os.environ.get("CASA_RS_BENCH_CUBE_WIDTH", "")
 imsize = int(os.environ["CASA_RS_BENCH_IMSIZE"])
 cell_arcsec = os.environ["CASA_RS_BENCH_CELL_ARCSEC"]
 niter = int(os.environ["CASA_RS_BENCH_NITER"])
+nmajor = int(os.environ["CASA_RS_BENCH_NMAJOR"])
 gain = float(os.environ["CASA_RS_BENCH_GAIN"])
 threshold_jy = os.environ["CASA_RS_BENCH_THRESHOLD_JY"]
 nsigma = float(os.environ["CASA_RS_BENCH_NSIGMA"])
@@ -732,16 +825,56 @@ weighting = os.environ["CASA_RS_BENCH_WEIGHTING"]
 robust = float(os.environ["CASA_RS_BENCH_ROBUST"])
 perchanweightdensity = os.environ["CASA_RS_BENCH_PERCHANWEIGHTDENSITY"].lower() in ("1", "true", "yes", "on")
 deconvolver = os.environ["CASA_RS_BENCH_DECONVOLVER"]
+usemask = os.environ["CASA_RS_BENCH_USEMASK"]
+mask_box = os.environ["CASA_RS_BENCH_MASK_BOX"]
+savemodel = os.environ["CASA_RS_BENCH_SAVEMODEL"]
+fitspw = os.environ["CASA_RS_BENCH_FITSPW"]
+fitorder = int(os.environ["CASA_RS_BENCH_FITORDER"])
+sidelobethreshold = float(os.environ["CASA_RS_BENCH_SIDELOBETHRESHOLD"])
+noisethreshold = float(os.environ["CASA_RS_BENCH_NOISETHRESHOLD"])
 nterms = int(os.environ["CASA_RS_BENCH_NTERMS"])
 casa_gridder = os.environ.get("CASA_RS_BENCH_CASA_GRIDDER", os.environ["CASA_RS_BENCH_GRIDDER"])
+facets = int(os.environ["CASA_RS_BENCH_FACETS"])
 wprojplanes_env = os.environ.get("CASA_RS_BENCH_WPROJPLANES", "")
 scales = [] if os.environ["CASA_RS_BENCH_SCALES"] == "" else [int(float(v)) for v in os.environ["CASA_RS_BENCH_SCALES"].split(",")]
+smallscalebias = float(os.environ["CASA_RS_BENCH_SMALL_SCALE_BIAS"])
+restoringbeam = os.environ["CASA_RS_BENCH_RESTORING_BEAM"]
 specmode = os.environ["CASA_RS_BENCH_SPECMODE"]
 interpolation = os.environ["CASA_RS_BENCH_INTERPOLATION"]
 keep_output_root = os.environ.get("CASA_RS_BENCH_KEEP_OUTPUT_ROOT", "")
+casa_result_json = os.environ.get("CASA_RS_BENCH_CASA_RESULT_JSON", "")
+casa_log_file = os.environ.get("CASA_RS_BENCH_CASA_LOG_FILE", "")
 casa_keep_prefix = os.path.join(keep_output_root, "casa", "casa") if keep_output_root else ""
 spw_selector = f"{spw}:{chan_start}" if chan_count == 1 else f"{spw}:{chan_start}~{chan_start + chan_count - 1}"
 times = []
+
+if fitspw:
+    continuum_subtracted_vis = f"{vis}.contsub"
+    uvcontsub(
+        vis=vis,
+        outputvis=continuum_subtracted_vis,
+        field=field,
+        spw=spw,
+        fitspec=fitspw,
+        fitorder=fitorder,
+        datacolumn="data",
+    )
+    vis = continuum_subtracted_vis
+
+def json_safe(value):
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    return value
+
+if casa_log_file:
+    os.makedirs(os.path.dirname(casa_log_file), exist_ok=True)
+    casalog.setlogfile(casa_log_file)
 
 with tempfile.TemporaryDirectory() as td:
     for run in range(repeats):
@@ -756,17 +889,21 @@ with tempfile.TemporaryDirectory() as td:
             imagename=prefix,
             datacolumn="data",
             field=field,
-            stokes="I",
+            stokes=stokes,
+            usepointing=usepointing,
             specmode=specmode,
             gridder=casa_gridder,
+            facets=facets,
             weighting=weighting,
             perchanweightdensity=perchanweightdensity,
             deconvolver=deconvolver,
             nterms=nterms,
             scales=scales,
+            smallscalebias=smallscalebias,
             imsize=imsize,
             cell=f"{cell_arcsec}arcsec",
             niter=niter,
+            nmajor=nmajor,
             cycleniter=cycleniter,
             robust=robust,
             gain=gain,
@@ -783,11 +920,15 @@ with tempfile.TemporaryDirectory() as td:
             parallel=False,
             pblimit=pblimit,
             pbcor=pbcor,
-            usemask="user",
-            mask="",
-            savemodel="none",
+            usemask=usemask,
+            mask=(f"box[[{mask_box.split(',')[0]}pix,{mask_box.split(',')[1]}pix],[{mask_box.split(',')[2]}pix,{mask_box.split(',')[3]}pix]]" if mask_box else ""),
+            savemodel=savemodel,
+            sidelobethreshold=sidelobethreshold,
+            noisethreshold=noisethreshold,
             psfcutoff=psfcutoff,
         )
+        if restoringbeam:
+            kwargs["restoringbeam"] = restoringbeam
         if specmode in ("cube", "cubedata"):
             casa_start = int(cube_start) if cube_start else chan_start
             casa_width = int(cube_width) if cube_width else 1
@@ -808,10 +949,15 @@ with tempfile.TemporaryDirectory() as td:
             kwargs["wprojplanes"] = -1
         if phasecenter_field:
             kwargs["phasecenter"] = int(phasecenter_field)
-        tclean(**kwargs)
+        result = tclean(**kwargs)
         elapsed = time.perf_counter() - start
         times.append(elapsed)
         print(f"run={run + 1} real={elapsed:.6f}")
+        if casa_result_json and run == repeats - 1:
+            os.makedirs(os.path.dirname(casa_result_json), exist_ok=True)
+            with open(casa_result_json, "w", encoding="utf-8") as handle:
+                json.dump(json_safe(result), handle, indent=2, sort_keys=True)
+                handle.write("\n")
 
 print(f"median={statistics.median(times):.6f}")
 if casa_keep_prefix:
@@ -829,9 +975,11 @@ if [[ "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || 
 else
   echo "CASA tclean timings (seconds):"
   echo "casa_run_start repeats=$repeats"
-  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
+  CASA_RS_BENCH_STOKES="$stokes" \
+  CASA_RS_BENCH_USEPOINTING="$usepointing_enabled" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \
@@ -841,6 +989,7 @@ else
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
   CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
+  CASA_RS_BENCH_FACETS="$facets" \
   CASA_RS_BENCH_WPROJPLANES="$casa_wprojplanes" \
   CASA_RS_BENCH_IMSIZE="$imsize" \
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
@@ -848,14 +997,24 @@ else
   CASA_RS_BENCH_ROBUST="$robust" \
   CASA_RS_BENCH_PERCHANWEIGHTDENSITY="$perchanweightdensity_enabled" \
   CASA_RS_BENCH_DECONVOLVER="$deconvolver" \
+  CASA_RS_BENCH_USEMASK="$usemask" \
+  CASA_RS_BENCH_MASK_BOX="$mask_box" \
+  CASA_RS_BENCH_SAVEMODEL="$savemodel" \
+  CASA_RS_BENCH_FITSPW="$fitspw" \
+  CASA_RS_BENCH_FITORDER="$fitorder" \
+  CASA_RS_BENCH_SIDELOBETHRESHOLD="$sidelobethreshold" \
+  CASA_RS_BENCH_NOISETHRESHOLD="$noisethreshold" \
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \
+  CASA_RS_BENCH_SMALL_SCALE_BIAS="$small_scale_bias" \
+  CASA_RS_BENCH_RESTORING_BEAM="$restoring_beam" \
   CASA_RS_BENCH_NITER="$casa_niter" \
+  CASA_RS_BENCH_NMAJOR="$nmajor" \
   CASA_RS_BENCH_GAIN="$gain" \
   CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
   CASA_RS_BENCH_NSIGMA="$nsigma" \
   CASA_RS_BENCH_PSFCUTOFF="$psfcutoff" \
-  CASA_RS_BENCH_PBLIMIT="$pblimit" \
+  CASA_RS_BENCH_PBLIMIT="$casa_pblimit" \
   CASA_RS_BENCH_PBCOR="$pbcor_enabled" \
   CASA_RS_BENCH_MINOR_CYCLE_LENGTH="$minor_cycle_length" \
   CASA_RS_BENCH_CYCLEFACTOR="$cyclefactor" \
@@ -863,9 +1022,42 @@ else
   CASA_RS_BENCH_MAX_PSFFRACTION="$max_psf_fraction" \
   CASA_RS_BENCH_INTERPOLATION="$interpolation" \
   CASA_RS_BENCH_KEEP_OUTPUT_ROOT="$keep_output_root" \
+  CASA_RS_BENCH_CASA_RESULT_JSON="$casa_result_json" \
+  CASA_RS_BENCH_CASA_LOG_FILE="$casa_log_file" \
     "$CASA_RS_CASA_PYTHON" "$tmpdir/casa-imager-bench.py" | sed 's/^/  /'
 fi
 echo
+
+if [[ "$savemodel" == "modelcolumn" && "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
+  model_data_receipt="${keep_output_root:-$tmpdir}/model-data-comparison.json"
+  "$CASA_RS_CASA_PYTHON" tools/science/compare_model_data.py \
+    --source "$source_ms_path" \
+    --rust "$rust_ms_path" \
+    --casa "$casa_ms_path" \
+    --field "$field" \
+    --spw "$spw" \
+    --channel-start "$channel_start" \
+    --channel-count "$channel_count" \
+    --output "$model_data_receipt"
+  echo
+fi
+
+if [[ -n "$fitspw" && "$save_continuum_residual" != "0" && "$save_continuum_residual" != "false" && "$save_continuum_residual" != "no" && "$save_continuum_residual" != "off" && "$ms_staging" == "copy" && "$skip_rust_enabled" == "0" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
+  continuum_residual_receipt="${keep_output_root:-$tmpdir}/continuum-residual-comparison.json"
+  "$CASA_RS_CASA_PYTHON" tools/science/compare_model_data.py \
+    --source "$source_ms_path" \
+    --rust "$rust_ms_path" \
+    --casa "$casa_ms_path.contsub" \
+    --rust-column CORRECTED_DATA \
+    --casa-column DATA \
+    --comparison-key continuum_residual \
+    --field "$field" \
+    --spw "$spw" \
+    --channel-start "$channel_start" \
+    --channel-count "$channel_count" \
+    --output "$continuum_residual_receipt"
+  echo
+fi
 
 if [[ -n "$keep_output_root" ]]; then
   echo "Kept benchmark products:"
@@ -885,9 +1077,11 @@ fi
 
 if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_casa" == "1" || "$skip_casa" == "true" || "$skip_casa" == "yes" || "$skip_casa" == "on" ) ]]; then
   echo "CASA PySynthesisImager stage medians (milliseconds):"
-  CASA_RS_BENCH_MS_PATH="$ms_path" \
+  CASA_RS_BENCH_MS_PATH="$casa_ms_path" \
   CASA_RS_BENCH_REPEATS="$repeats" \
   CASA_RS_BENCH_FIELD="$field" \
+  CASA_RS_BENCH_STOKES="$stokes" \
+  CASA_RS_BENCH_USEPOINTING="$usepointing_enabled" \
   CASA_RS_BENCH_PHASECENTER_FIELD="$phasecenter_field" \
   CASA_RS_BENCH_SPW="$spw" \
   CASA_RS_BENCH_CHANNEL_START="$channel_start" \
@@ -897,6 +1091,7 @@ if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_cas
   CASA_RS_BENCH_SPECMODE="$specmode" \
   CASA_RS_BENCH_GRIDDER="$gridder" \
   CASA_RS_BENCH_CASA_GRIDDER="$casa_gridder" \
+  CASA_RS_BENCH_FACETS="$facets" \
   CASA_RS_BENCH_WPROJPLANES="$wprojplanes" \
   CASA_RS_BENCH_IMSIZE="$imsize" \
   CASA_RS_BENCH_CELL_ARCSEC="$cell_arcsec" \
@@ -907,6 +1102,7 @@ if [[ "$phase_probe_enabled" == "1" && -z "$reuse_casa_prefix" && ! ( "$skip_cas
   CASA_RS_BENCH_NTERMS="$nterms" \
   CASA_RS_BENCH_SCALES="$scales" \
   CASA_RS_BENCH_NITER="$casa_niter" \
+  CASA_RS_BENCH_NMAJOR="$nmajor" \
   CASA_RS_BENCH_GAIN="$gain" \
   CASA_RS_BENCH_THRESHOLD_JY="$threshold_jy" \
   CASA_RS_BENCH_NSIGMA="$nsigma" \

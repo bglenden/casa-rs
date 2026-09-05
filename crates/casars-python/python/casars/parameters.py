@@ -59,6 +59,25 @@ class ParameterDiagnostic:
     suggestions: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderUnsupportedReason:
+    """Exact typed reason owned by the canonical task provider."""
+
+    kind: str
+    id: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderInvocation:
+    """Versioned canonical provider request projected by Rust."""
+
+    protocol_name: str | None
+    protocol_version: int | None
+    args: tuple[str, ...]
+    stdin: str | None
+    unsupported_reasons: tuple[ProviderUnsupportedReason, ...]
+
+
 def _frontend() -> Any:
     return import_module("._frontend", __package__)
 
@@ -466,6 +485,27 @@ class SurfaceParameters(MutableMapping[str, ParameterData]):
             successful,
         )
         return Path(outcome.path)
+
+    def provider_invocation(self) -> ProviderInvocation:
+        """Project this task through the canonical provider-owned request seam."""
+
+        if self.kind != "task":
+            raise TypeError("provider invocation exists only for task parameters")
+        projected = _frontend_call(
+            _frontend().parameter_provider_invocation,
+            self.surface,
+            self._resolved_values(),
+        )
+        return ProviderInvocation(
+            protocol_name=projected.protocol_name,
+            protocol_version=projected.protocol_version,
+            args=tuple(projected.args),
+            stdin=projected.stdin,
+            unsupported_reasons=tuple(
+                ProviderUnsupportedReason(kind=reason.kind, id=reason.id)
+                for reason in projected.unsupported_reasons
+            ),
+        )
 
     def _resolved_values(self) -> dict[str, Any]:
         values = {

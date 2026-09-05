@@ -187,7 +187,8 @@ packaging scripts, and suite inventory all project from this catalog.
 
 ## Parameter Catalog and Surface Definitions
 
-ADR-0006 defines the common parameter model.
+ADR-0006 defines the common parameter model. ADR-0012 defines the optional
+current-only profile contract used by imager.
 
 `ParameterCatalog` entries describe reusable concepts:
 
@@ -243,10 +244,12 @@ identifies format version, surface ID, surface kind, and contract version. The
 differences from current defaults.
 
 This makes additive evolution cheap: a newly added optional parameter receives
-its current default without editing existing files. A changed default is also
-adopted when the old file omitted that parameter, with a compatibility warning.
-Renames and type/value changes require explicit ordered migrations. Future
-versions and unmigratable required values are errors.
+its current default without adding an override to a saved file. A surface may
+publish explicit ordered migrations for older contracts, including warnings for
+changed defaults. An empty migration set declares a current-only surface: only
+the exact current contract and canonical parameter names are accepted. The
+imager surface is current-only. Future, stale, and otherwise unmigratable
+contracts are errors.
 
 Parameter documents do not support includes, environment or shell expansion,
 remote URLs, or executable expressions. Relative task paths resolve against the

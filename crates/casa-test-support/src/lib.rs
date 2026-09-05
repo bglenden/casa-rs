@@ -12,6 +12,7 @@ pub mod ms_interop;
 mod oracle_ffi;
 mod oracle_runtime;
 pub mod quanta_interop;
+pub mod spectral_interop;
 pub mod table_interop;
 pub mod table_measures_interop;
 mod table_oracle;
@@ -40,10 +41,28 @@ pub use test_data::*;
 /// Deterministic, filesystem-free measures inputs for cross-crate tests.
 pub fn deterministic_measures_provider()
 -> std::sync::Arc<dyn casa_types::measures::MeasuresProvider> {
+    deterministic_measures_provider_for_identity([90; 32])
+}
+
+/// Deterministic Measures inputs with an explicit fixture-owned state identity.
+pub fn deterministic_measures_provider_for_identity(
+    identity_sha256: [u8; 32],
+) -> std::sync::Arc<dyn casa_types::measures::MeasuresProvider> {
     #[derive(Debug)]
-    struct Provider;
+    struct Provider {
+        identity_sha256: [u8; 32],
+    }
 
     impl casa_types::measures::MeasuresProvider for Provider {
+        fn prepare_bounded_state(
+            &self,
+        ) -> Result<Option<casa_types::measures::MeasuresProviderState>, String> {
+            Ok(Some(casa_types::measures::MeasuresProviderState::new(
+                self.identity_sha256,
+                0,
+            )))
+        }
+
         fn eop_values(
             &self,
             _utc_mjd: f64,
@@ -121,7 +140,7 @@ pub fn deterministic_measures_provider()
         }
     }
 
-    std::sync::Arc::new(Provider)
+    std::sync::Arc::new(Provider { identity_sha256 })
 }
 
 #[cfg(test)]

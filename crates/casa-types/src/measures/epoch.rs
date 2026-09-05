@@ -326,23 +326,31 @@ impl FromStr for EpochRef {
     type Err = MeasureError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_uppercase().as_str() {
-            "LAST" => Ok(Self::LAST),
-            "LMST" => Ok(Self::LMST),
-            "GMST1" | "GMST" => Ok(Self::GMST1),
-            "GAST" => Ok(Self::GAST),
-            "UT1" | "UT" => Ok(Self::UT1),
-            "UT2" => Ok(Self::UT2),
-            "UTC" => Ok(Self::UTC),
-            "TAI" | "IAT" => Ok(Self::TAI),
-            "TT" | "TDT" | "ET" => Ok(Self::TT),
-            "TCG" => Ok(Self::TCG),
-            "TDB" => Ok(Self::TDB),
-            "TCB" => Ok(Self::TCB),
-            _ => Err(MeasureError::UnknownRefType {
+        let references = [
+            ("LAST", Self::LAST),
+            ("LMST", Self::LMST),
+            ("GMST1", Self::GMST1),
+            ("GMST", Self::GMST1),
+            ("GAST", Self::GAST),
+            ("UT1", Self::UT1),
+            ("UT", Self::UT1),
+            ("UT2", Self::UT2),
+            ("UTC", Self::UTC),
+            ("TAI", Self::TAI),
+            ("IAT", Self::TAI),
+            ("TT", Self::TT),
+            ("TDT", Self::TT),
+            ("ET", Self::TT),
+            ("TCG", Self::TCG),
+            ("TDB", Self::TDB),
+            ("TCB", Self::TCB),
+        ];
+        references
+            .into_iter()
+            .find_map(|(name, reference)| s.eq_ignore_ascii_case(name).then_some(reference))
+            .ok_or_else(|| MeasureError::UnknownRefType {
                 input: s.to_owned(),
-            }),
-        }
+            })
     }
 }
 

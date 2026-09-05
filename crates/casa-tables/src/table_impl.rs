@@ -1,22 +1,70 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use casa_types::{ArrayValue, RecordValue, ScalarValue, Value};
 
 use crate::schema::{ColumnType, TableSchema};
-use crate::storage::{CompositeStorage, RequiredScalarColumnData, StorageProfiler};
-use crate::table::{SelectedArray1DCells, SelectedArray2DCells, TableError};
+use crate::storage::{
+    CompositeStorage, RequiredScalarColumnData, RetainedTableReadMetadata, StorageProfiler,
+    TABLE_CONTROL_FILE, TableDatContents, TableDatResult, read_table_dat_dispatch,
+};
+use crate::table::{
+    RequiredScalarColumnDestination, SelectedArray1DCells, SelectedArray1DCellsMut,
+    SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape,
+    TableError,
+};
 
 type ScalarColumnValueMap = HashMap<String, Vec<Option<ScalarValue>>>;
 type RequiredScalarColumnValueMap = HashMap<String, RequiredScalarColumnData>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct LazyRowsSource {
     path: PathBuf,
     row_count_hint: usize,
+    read_metadata: OnceLock<RetainedTableReadMetadata>,
+}
+
+impl LazyRowsSource {
+    fn read_metadata(&self) -> Result<&RetainedTableReadMetadata, TableError> {
+        if self.read_metadata.get().is_none() {
+            let control_path = self.path.join(TABLE_CONTROL_FILE);
+            let parsed = read_table_dat_dispatch(&control_path).map_err(|error| {
+                TableError::Storage(format!(
+                    "failed to read control metadata for table {}: {error}",
+                    self.path.display()
+                ))
+            })?;
+            let table_dat = match parsed {
+                TableDatResult::Plain(table_dat) => table_dat,
+                TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
+                    return Err(TableError::Storage(format!(
+                        "typed selected reads require a plain table at {}",
+                        self.path.display()
+                    )));
+                }
+            };
+            let read_metadata =
+                RetainedTableReadMetadata::open(&self.path, table_dat).map_err(|error| {
+                    TableError::Storage(format!(
+                        "failed to initialize retained read metadata for table {}: {error}",
+                        self.path.display()
+                    ))
+                })?;
+            let _ = self.read_metadata.set(read_metadata);
+        }
+        Ok(self
+            .read_metadata
+            .get()
+            .expect("table read metadata initialized before shared access"))
+    }
+
+    fn plain_table_dat(&self) -> Result<&TableDatContents, TableError> {
+        Ok(&self.read_metadata()?.table_dat)
+    }
 }
 
 #[derive(Debug)]
@@ -223,6 +271,55 @@ pub(crate) struct TableImpl {
 }
 
 impl TableImpl {
+    pub(crate) fn retained_lazy_metadata_heap_bytes(&self) -> Option<usize> {
+        if self.loaded_rows.get().is_some()
+            || self
+                .loaded_scalar_columns
+                .values()
+                .any(|values| values.get().is_some())
+            || self
+                .loaded_array_columns
+                .values()
+                .any(|values| values.get().is_some())
+            || self
+                .buffered_array_cells
+                .values()
+                .any(|values| values.get().is_some())
+            || !self.pending_scalar_cells.by_column.is_empty()
+            || !self.pending_array_cells.by_column.is_empty()
+        {
+            return None;
+        }
+
+        let lazy_rows = self.lazy_rows.as_ref()?;
+        let mut bytes = path_heap_bytes(&lazy_rows.path)
+            .checked_add(lazy_rows.read_metadata.get()?.retained_heap_bytes()?)?
+            .checked_add(string_keyed_map_heap_bytes(&self.loaded_scalar_columns)?)?
+            .checked_add(string_keyed_map_heap_bytes(&self.loaded_array_columns)?)?
+            .checked_add(string_keyed_map_heap_bytes(&self.buffered_array_cells)?)?
+            .checked_add(string_keyed_map_heap_bytes(
+                &self.pending_scalar_cells.by_column,
+            )?)?
+            .checked_add(string_keyed_map_heap_bytes(
+                &self.pending_array_cells.by_column,
+            )?)?
+            .checked_add(self.keywords.retained_heap_bytes()?)?
+            .checked_add(
+                self.column_keywords
+                    .capacity()
+                    .checked_mul(size_of::<(String, RecordValue)>())?,
+            )?;
+        for (column, keywords) in &self.column_keywords {
+            bytes = bytes
+                .checked_add(column.capacity())?
+                .checked_add(keywords.retained_heap_bytes()?)?;
+        }
+        if let Some(schema) = &self.schema {
+            bytes = bytes.checked_add(schema.retained_heap_bytes()?)?;
+        }
+        Some(bytes)
+    }
+
     pub(crate) fn new() -> Self {
         let loaded_rows = OnceLock::new();
         loaded_rows
@@ -300,7 +397,14 @@ impl TableImpl {
         column_keywords: HashMap<String, RecordValue>,
         schema: Option<TableSchema>,
         path: PathBuf,
+        retained_read_metadata: Option<RetainedTableReadMetadata>,
     ) -> Self {
+        let read_metadata = OnceLock::new();
+        if let Some(retained_read_metadata) = retained_read_metadata {
+            read_metadata
+                .set(retained_read_metadata)
+                .expect("initialize retained table read metadata");
+        }
         Self {
             loaded_rows: OnceLock::new(),
             loaded_scalar_columns: lazy_scalar_column_store(schema.as_ref()),
@@ -311,6 +415,7 @@ impl TableImpl {
             lazy_rows: Some(LazyRowsSource {
                 path,
                 row_count_hint: row_count,
+                read_metadata,
             }),
             persisted_row_count: row_count,
             keywords,
@@ -460,14 +565,16 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
         let values = storage
-            .load_array_column_rows_2d_channel_range_typed_with_row_hint(
+            .load_array_column_rows_2d_channel_range_typed_from_plain(
                 &source.path,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
                 column,
                 row_indices,
                 channel_start,
                 channel_count,
-                Some(source.row_count_hint as u64),
             )
             .map_err(|err| {
                 TableError::Storage(format!(
@@ -491,6 +598,35 @@ impl TableImpl {
         Ok(values)
     }
 
+    fn fill_array_column_rows_2d_channel_range_typed_now(
+        source: &LazyRowsSource,
+        column: &str,
+        row_indices: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, TableError> {
+        let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
+        storage
+            .fill_array_column_rows_2d_channel_range_typed_from_plain(
+                &source.path,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
+                column,
+                row_indices,
+                channel_start,
+                channel_count,
+                destination,
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to fill typed selected channel range for array column '{column}' from table {}: {err}",
+                    source.path.display()
+                ))
+            })
+    }
+
     fn load_array_column_rows_1d_typed_now(
         source: &LazyRowsSource,
         column: &str,
@@ -501,12 +637,14 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
         let values = storage
-            .load_array_column_rows_1d_typed_with_row_hint(
+            .load_array_column_rows_1d_typed_from_plain(
                 &source.path,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
                 column,
                 row_indices,
-                Some(source.row_count_hint as u64),
             )
             .map_err(|err| {
                 TableError::Storage(format!(
@@ -526,6 +664,31 @@ impl TableImpl {
             );
         }
         Ok(values)
+    }
+
+    fn fill_array_column_rows_1d_typed_now(
+        source: &LazyRowsSource,
+        column: &str,
+        row_indices: &[usize],
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, TableError> {
+        let storage = CompositeStorage;
+        let read_metadata = source.read_metadata()?;
+        storage
+            .fill_array_column_rows_1d_typed_from_plain(
+                &source.path,
+                &read_metadata.table_dat,
+                &read_metadata.tiled,
+                column,
+                row_indices,
+                destination,
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to fill typed selected 1-D rows for array column '{column}' from table {}: {err}",
+                    source.path.display()
+                ))
+            })
     }
 
     fn load_scalar_column_rows_now(
@@ -1071,8 +1234,9 @@ impl TableImpl {
             .expect("lazy source checked before selected scalar load");
         let requested = columns.iter().copied().collect::<HashSet<_>>();
         let mut values_by_column = CompositeStorage
-            .load_named_required_scalar_column_rows_with_row_hint(
+            .load_named_required_scalar_column_rows_from_plain(
                 &source.path,
+                source.plain_table_dat()?,
                 &requested,
                 row_indices,
                 Some(source.row_count_hint as u64),
@@ -1099,6 +1263,45 @@ impl TableImpl {
             }
         }
         Ok(Some(values_by_column))
+    }
+
+    pub(crate) fn required_scalar_columns_for_rows_into(
+        &self,
+        row_indices: &[usize],
+        destinations: &mut [RequiredScalarColumnDestination<'_>],
+    ) -> Result<(), TableError> {
+        if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
+            return Err(TableError::Storage(
+                "required scalar reusable fills require a lazy disk-backed table".to_string(),
+            ));
+        }
+        if destinations.iter().any(|destination| {
+            self.pending_scalar_cells
+                .by_column
+                .contains_key(destination.column())
+        }) {
+            return Err(TableError::Storage(
+                "required scalar reusable fills do not support pending scalar-cell overrides"
+                    .to_string(),
+            ));
+        }
+        let source = self
+            .lazy_rows
+            .as_ref()
+            .expect("lazy source checked before reusable selected scalar load");
+        CompositeStorage
+            .fill_named_required_scalar_column_rows_from_plain(
+                &source.path,
+                source.plain_table_dat()?,
+                row_indices,
+                destinations,
+            )
+            .map_err(|err| {
+                TableError::Storage(format!(
+                    "failed to fill required selected scalar columns from table {}: {err}",
+                    source.path.display()
+                ))
+            })
     }
 
     pub(crate) fn array_cell(
@@ -1277,6 +1480,41 @@ impl TableImpl {
         Ok(Some(values))
     }
 
+    pub(crate) fn array_cell_is_defined_uncached(
+        &self,
+        row_index: usize,
+        column: &str,
+    ) -> Result<bool, TableError> {
+        if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
+            return Err(TableError::Storage(format!(
+                "{column} metadata-only definedness requires a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} metadata-only definedness does not support pending array-cell overrides"
+            )));
+        }
+        let source = self
+            .lazy_rows
+            .as_ref()
+            .expect("lazy source checked before metadata-only definedness");
+        let metadata = source.read_metadata()?;
+        CompositeStorage
+            .plain_array_cell_is_defined_uncached(
+                &metadata.table_dat,
+                &metadata.tiled,
+                column,
+                row_index,
+            )
+            .map_err(|error| {
+                TableError::Storage(format!(
+                    "failed to inspect {column} cell {row_index} in table {}: {error}",
+                    source.path.display()
+                ))
+            })
+    }
+
     pub(crate) fn array_cells_2d_channel_range_typed_uncached(
         &self,
         row_indices: &[usize],
@@ -1309,6 +1547,39 @@ impl TableImpl {
         )
     }
 
+    pub(crate) fn array_cells_2d_channel_range_typed_uncached_into(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, TableError> {
+        if self.loaded_rows.get().is_some() {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads require a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads do not support pending array-cell overrides"
+            )));
+        }
+        let Some(source) = &self.lazy_rows else {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected channel reads require a lazy disk-backed table"
+            )));
+        };
+        Self::fill_array_column_rows_2d_channel_range_typed_now(
+            source,
+            column,
+            row_indices,
+            channel_start,
+            channel_count,
+            destination,
+        )
+    }
+
     pub(crate) fn array_cells_1d_typed_uncached(
         &self,
         row_indices: &[usize],
@@ -1331,6 +1602,30 @@ impl TableImpl {
             )));
         };
         Self::load_array_column_rows_1d_typed_now(source, column, row_indices)
+    }
+
+    pub(crate) fn array_cells_1d_typed_uncached_into(
+        &self,
+        row_indices: &[usize],
+        column: &str,
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, TableError> {
+        if self.loaded_rows.get().is_some() {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads require a lazy disk-backed table"
+            )));
+        }
+        if self.pending_array_cells.by_column.contains_key(column) {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads do not support pending array-cell overrides"
+            )));
+        }
+        let Some(source) = &self.lazy_rows else {
+            return Err(TableError::Storage(format!(
+                "{column} typed selected 1-D reads require a lazy disk-backed table"
+            )));
+        };
+        Self::fill_array_column_rows_1d_typed_now(source, column, row_indices, destination)
     }
 
     pub(crate) fn row_mut(
@@ -1587,6 +1882,39 @@ impl TableImpl {
     }
 
     #[cfg(test)]
+    pub(crate) fn has_cached_control_metadata(&self) -> bool {
+        self.lazy_rows
+            .as_ref()
+            .is_some_and(|source| source.read_metadata.get().is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_tiled_header_count(&self) -> usize {
+        self.lazy_rows
+            .as_ref()
+            .and_then(|source| source.read_metadata.get())
+            .map_or(0, |metadata| metadata.tiled.cached_header_count())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_control_metadata_heap_bytes(&self) -> usize {
+        self.lazy_rows
+            .as_ref()
+            .and_then(|source| source.read_metadata.get())
+            .and_then(|metadata| metadata.table_dat.retained_heap_bytes())
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_tiled_header_heap_bytes(&self) -> usize {
+        self.lazy_rows
+            .as_ref()
+            .and_then(|source| source.read_metadata.get())
+            .and_then(|metadata| metadata.tiled.retained_heap_bytes())
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
     pub(crate) fn has_loaded_scalar_column(&self, column: &str) -> bool {
         self.loaded_scalar_columns
             .get(column)
@@ -1607,6 +1935,27 @@ impl TableImpl {
             .get(column)
             .is_some_and(|cells| !cells.is_empty())
     }
+}
+
+pub(crate) fn path_heap_bytes(path: &std::path::Path) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        path.as_os_str().as_bytes().len()
+    }
+    #[cfg(not(unix))]
+    {
+        path.as_os_str().to_string_lossy().len()
+    }
+}
+
+fn string_keyed_map_heap_bytes<V>(map: &HashMap<String, V>) -> Option<usize> {
+    map.capacity()
+        .checked_mul(size_of::<(String, V)>())?
+        .checked_add(
+            map.keys()
+                .try_fold(0_usize, |bytes, key| bytes.checked_add(key.capacity()))?,
+        )
 }
 
 fn required_scalar_column_data_len(values: &RequiredScalarColumnData) -> usize {

@@ -1,0 +1,95 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 7.722679563563566e-07,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "2a2f9fed1af895374947aa4855402250e99c8fbdb69e56ebf5af71bd8d606d23",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "natural_weighting",
+    "briggs_weighting",
+    "measurement_equation",
+    "psf",
+    "residual",
+    "sumwt",
+    "wcs"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021035Z-issue607-standard-mfs-dirty-representative-14753e05.comparison.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "c6dd5182c30a3bdb0c23b835d7a23baae4f20165bec6ef912ebf0b6d722ca7c8"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021035Z-issue607-standard-mfs-dirty-representative-14753e05.json",
+      "role": "additional production comparison",
+      "sha256": "fb34d21d4cf029549f89551dd4cc7f7be9d15a990c9f66f831fa311a72c5fa05"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021131Z-issue607-standard-mfs-representative-ee36e173.comparison.json",
+      "role": "additional production comparison",
+      "sha256": "26c138728004181314b7841f70b5c1a68950f5633cf0fdf3bb1d3e86723c461c"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021131Z-issue607-standard-mfs-representative-ee36e173.json",
+      "role": "additional production comparison",
+      "sha256": "de19cd1d5ce9d9942335089b023572b38b4439aedcba8dd14763cfc36d4416f1"
+    }
+  ],
+  "mode": {
+    "weightings": [
+      "briggs",
+      "natural"
+    ]
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "c6dd5182c30a3bdb0c23b835d7a23baae4f20165bec6ef912ebf0b6d722ca7c8",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "scripts/bench-imager-vs-casa.sh",
+    "scripts/run-issue607-standard-portfolio.sh"
+  ],
+  "scenario_id": "standard-mfs-dirty-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "b809244e72611baefd928a06fd1cdea4bf2093c4",
+  "validity_rule": null
+}

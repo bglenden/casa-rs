@@ -46,7 +46,7 @@ use casars_imagebrowser_protocol::{
     ImageMaskReference as ProtocolImageMaskReference, ImagePlaneContentMode, ImageProfilePayload,
     ImageRegionReference as ProtocolImageRegionReference,
 };
-use casars_imager::{ManagedImagingOutput, ManagedImagingStageTimings};
+use casars_imager::ManagedImagingOutput;
 use casars_tablebrowser_protocol::{
     BrowserBookmark, BrowserCommand, BrowserComplex32Value, BrowserComplex64Value,
     BrowserContentMode, BrowserFocus, BrowserInspectorSnapshot, BrowserParameters,
@@ -149,9 +149,9 @@ use crate::execution::{ExecutionEvent, ExecutionPlan, RunningProcess, spawn_proc
 use crate::graphics::{
     BrowserRenderTheme, ImagePlaneColormap, ImagePlaneOverlayMarker, ImagePlaneRenderInput,
     ImageSpectrumOverlaySeries, ImageSpectrumRenderInput, ImagingPlotPayload,
-    ImagingPlotRenderInput, ImagingPlotSeries, MsExplorePlotRenderInput, PlotRenderInput,
-    image_plane_layout, image_spectrum_layout, plot_theme, render_image_plane_image,
-    render_image_spectrum_image, render_plot_image,
+    ImagingPlotRenderInput, MsExplorePlotRenderInput, PlotRenderInput, image_plane_layout,
+    image_spectrum_layout, plot_theme, render_image_plane_image, render_image_spectrum_image,
+    render_plot_image,
 };
 use crate::imaging_workflow::{
     ImagingDiagnosticKind, imaging_catalog_entries, imaging_preferred_diagnostic,
@@ -2283,7 +2283,7 @@ struct MeasurementSetRunSnapshot {
 
 #[derive(Debug, Clone)]
 enum CurrentPlotPayload {
-    MsPlot(MsPlotPayload),
+    MsPlot(Box<MsPlotPayload>),
     Imaging(ImagingPlotPayload),
 }
 
@@ -11811,12 +11811,6 @@ impl AppState {
                     report,
                 )));
             return Some(match target {
-                PlotCatalogTarget::Imaging(ImagingDiagnosticKind::ResidualByChannel) => {
-                    "Per-channel residual peak before and after deconvolution.".to_string()
-                }
-                PlotCatalogTarget::Imaging(ImagingDiagnosticKind::IterationsByChannel) => {
-                    "Per-channel major-cycle and minor-iteration counts.".to_string()
-                }
                 PlotCatalogTarget::Imaging(kind) => {
                     format!(
                         "Preview the {} written by the latest imaging run.",
@@ -11999,9 +11993,6 @@ impl AppState {
             ManagedCalibrationOutput::ExportCorrectedData(_) => {
                 self.activate_result_tab(ResultTab::Overview);
             }
-            ManagedCalibrationOutput::ContinuumSubtract(_) => {
-                self.activate_result_tab(ResultTab::Overview);
-            }
             ManagedCalibrationOutput::Summary(_) => {
                 self.activate_result_tab(ResultTab::Overview);
             }
@@ -12078,15 +12069,6 @@ impl AppState {
                 vec![
                     format!("output={}", report.output_ms.display()),
                     format!("rows={}", report.row_count),
-                ],
-            ),
-            ManagedCalibrationOutput::ContinuumSubtract(report) => (
-                Some(WorkflowStageId::Apply),
-                "Continuum Subtract".to_string(),
-                vec![
-                    format!("output={}", report.output_ms.display()),
-                    format!("rows={}", report.row_count),
-                    format!("fit_order={}", report.fit_order),
                 ],
             ),
             ManagedCalibrationOutput::Summary(summaries) => (
@@ -12419,85 +12401,13 @@ impl AppState {
                 report,
             )));
         match target {
-            PlotCatalogTarget::Imaging(ImagingDiagnosticKind::ResidualByChannel) => {
-                let initial = report
-                    .run
-                    .channels
-                    .iter()
-                    .map(|channel| {
-                        (
-                            channel.channel_index,
-                            channel.initial_residual_peak_jy_per_beam as f64,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let final_values = report
-                    .run
-                    .channels
-                    .iter()
-                    .map(|channel| {
-                        (
-                            channel.channel_index,
-                            channel.final_residual_peak_jy_per_beam as f64,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                Ok(ImagingPlotPayload::ChannelSeries {
-                    title: "Residual Peak By Channel".to_string(),
-                    y_label: "Jy / beam".to_string(),
-                    series: vec![
-                        ImagingPlotSeries {
-                            label: "Initial".to_string(),
-                            points: initial,
-                            color_index: 0,
-                        },
-                        ImagingPlotSeries {
-                            label: "Final".to_string(),
-                            points: final_values,
-                            color_index: 1,
-                        },
-                    ],
-                })
-            }
-            PlotCatalogTarget::Imaging(ImagingDiagnosticKind::IterationsByChannel) => {
-                Ok(ImagingPlotPayload::ChannelSeries {
-                    title: "Cycle Counts By Channel".to_string(),
-                    y_label: "Count".to_string(),
-                    series: vec![
-                        ImagingPlotSeries {
-                            label: "Major cycles".to_string(),
-                            points: report
-                                .run
-                                .channels
-                                .iter()
-                                .map(|channel| (channel.channel_index, channel.major_cycles as f64))
-                                .collect(),
-                            color_index: 2,
-                        },
-                        ImagingPlotSeries {
-                            label: "Minor iterations".to_string(),
-                            points: report
-                                .run
-                                .channels
-                                .iter()
-                                .map(|channel| {
-                                    (channel.channel_index, channel.minor_iterations as f64)
-                                })
-                                .collect(),
-                            color_index: 3,
-                        },
-                    ],
-                })
-            }
             PlotCatalogTarget::Imaging(kind) => {
                 let artifact_kind = match kind {
-                    ImagingDiagnosticKind::PsfPreview => "psf",
-                    ImagingDiagnosticKind::ResidualPreview => "residual",
-                    ImagingDiagnosticKind::ModelPreview => "model",
-                    ImagingDiagnosticKind::ImagePreview => "image",
-                    ImagingDiagnosticKind::AlphaPreview => "alpha",
-                    ImagingDiagnosticKind::ResidualByChannel
-                    | ImagingDiagnosticKind::IterationsByChannel => unreachable!(),
+                    ImagingDiagnosticKind::Psf => "psf",
+                    ImagingDiagnosticKind::Residual => "residual",
+                    ImagingDiagnosticKind::Model => "model",
+                    ImagingDiagnosticKind::Image => "image",
+                    ImagingDiagnosticKind::Alpha => "alpha",
                 };
                 let artifact = report
                     .artifacts
@@ -12532,7 +12442,7 @@ impl AppState {
                 &self.current_calibration_plot_request(),
                 preset,
             )
-            .map(CurrentPlotPayload::MsPlot)
+            .map(|payload| CurrentPlotPayload::MsPlot(Box::new(payload)))
             .map_err(|error| error.to_string());
         }
         if self.app.id == "imager" {
@@ -12541,7 +12451,7 @@ impl AppState {
                 .map(CurrentPlotPayload::Imaging);
         }
         self.current_msexplore_plot_payload()
-            .map(CurrentPlotPayload::MsPlot)
+            .map(|payload| CurrentPlotPayload::MsPlot(Box::new(payload)))
     }
 
     fn current_plot_spec_key(&self) -> Result<String, String> {
@@ -13307,11 +13217,11 @@ impl AppState {
             pixel_height.max(1),
             match payload {
                 CurrentPlotPayload::MsPlot(payload) => {
-                    PlotRenderInput::MsExplore(MsExplorePlotRenderInput {
-                        payload,
+                    PlotRenderInput::MsExplore(Box::new(MsExplorePlotRenderInput {
+                        payload: *payload,
                         theme_mode,
                         terminal_cell_px: panel.font_size,
-                    })
+                    }))
                 }
                 CurrentPlotPayload::Imaging(payload) => {
                     PlotRenderInput::Imaging(ImagingPlotRenderInput {
@@ -14241,6 +14151,10 @@ impl AppState {
             .render_sparse()
             .map_err(|error| error.to_string())?;
         let invocation = crate::parameters_cli::project_task_invocation(parameter_session)?;
+        crate::parameters_cli::ensure_supported_invocation(
+            parameter_session.bundle().surface.id(),
+            &invocation,
+        )?;
         let arguments = invocation
             .args
             .into_iter()
@@ -15003,7 +14917,6 @@ impl AppState {
             ManagedCalibrationOutput::FluxScale(report) => &report.output_table,
             ManagedCalibrationOutput::Gencal(report) => &report.output_table,
             ManagedCalibrationOutput::Apply(_)
-            | ManagedCalibrationOutput::ContinuumSubtract(_)
             | ManagedCalibrationOutput::ExportCorrectedData(_)
             | ManagedCalibrationOutput::Summary(_)
             | ManagedCalibrationOutput::PlanApply(_)
@@ -16116,19 +16029,6 @@ fn build_calibration_overview_lines(report: &ManagedCalibrationOutput) -> Vec<St
                 report.row_count, report.source_column, report.output_column
             ),
         ],
-        ManagedCalibrationOutput::ContinuumSubtract(report) => vec![
-            "Continuum Subtraction".to_string(),
-            format!("Input MS: {}", report.input_ms.display()),
-            format!("Output MS: {}", report.output_ms.display()),
-            format!(
-                "Rows: {}   Fitted rows: {}   Skipped fits: {}",
-                report.row_count, report.fitted_row_count, report.skipped_fit_count
-            ),
-            format!(
-                "Source: {}   Output: {}   Fit order: {}",
-                report.source_column, report.output_column, report.fit_order
-            ),
-        ],
         ManagedCalibrationOutput::Summary(summaries) => {
             let mut lines = vec![
                 "Calibration Table Summary".to_string(),
@@ -16261,13 +16161,6 @@ fn build_imaging_overview_lines(report: &ManagedImagingOutput) -> Vec<String> {
             report.run.clean_stop_reason.as_deref().unwrap_or("n/a")
         ),
     ];
-    if !report.run.channels.is_empty() {
-        lines.push(format!(
-            "Cube planes: {}   Taylor terms: {}",
-            report.run.channels.len(),
-            report.request.nterms
-        ));
-    }
     if !report.run.warnings.is_empty() {
         lines.push(String::new());
         lines.push("Warnings".to_string());
@@ -16288,12 +16181,8 @@ fn build_imaging_overview_lines(report: &ManagedImagingOutput) -> Vec<String> {
     }
     lines.push(String::new());
     lines.push(format!(
-        "Frontend timing: {}",
-        render_managed_stage_timing_summary(&report.run.frontend_timings)
-    ));
-    lines.push(format!(
-        "Core timing: {}",
-        render_managed_stage_timing_summary(&report.run.stage_timings)
+        "Elapsed: {}",
+        format_duration_ns(report.run.elapsed_ns)
     ));
     lines
 }
@@ -16311,20 +16200,11 @@ fn imaging_history_details(report: &ManagedImagingOutput) -> Vec<String> {
     if let Some(stop) = &report.run.clean_stop_reason {
         details.push(format!("stop={stop}"));
     }
-    if !report.run.channels.is_empty() {
-        details.push(format!("channels={}", report.run.channels.len()));
-    }
+    details.push(format!(
+        "elapsed={}",
+        format_duration_ns(report.run.elapsed_ns)
+    ));
     details
-}
-
-fn render_managed_stage_timing_summary(timings: &ManagedImagingStageTimings) -> String {
-    timings
-        .values_ns
-        .iter()
-        .take(4)
-        .map(|(label, ns)| format!("{label}={}", format_duration_ns(*ns)))
-        .collect::<Vec<_>>()
-        .join("  ")
 }
 
 fn yes_no(value: bool) -> &'static str {

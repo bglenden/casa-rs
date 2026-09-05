@@ -6,17 +6,14 @@
 //! source channels needed by a schedule candidate.
 
 use std::collections::{BTreeMap, HashMap};
+use std::mem::size_of;
 use std::ops::Range;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use casa_imaging::{
-    GeometryRoutePlan, GridderRoutePlan, ImagingSourceBlockView, ModelRoutePlan,
-    PolarizationRoutePlan, SpectralRoutePlan, VisibilityBlockView, VisibilityComplexSamplesRef,
-    VisibilityFloatSamplesRef, VisibilitySourcePartition, VisibilitySourcePartitionId,
-    VisibilitySourceShape, WeightingRoutePlan,
+use casa_tables::{
+    RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCellsMut, Table,
 };
-use casa_tables::{RequiredScalarColumnValues, SelectedArray1DCells, SelectedArray2DCells, Table};
 #[cfg(test)]
 use casa_types::ScalarValue;
 use casa_types::{ArrayValue, Complex32, Complex64, PrimitiveType};
@@ -228,21 +225,6 @@ impl SourcePartition {
             },
         }
     }
-
-    /// Convert this MeasurementSet partition into the imaging source contract.
-    pub fn to_visibility_source_partition(&self) -> VisibilitySourcePartition {
-        VisibilitySourcePartition {
-            id: VisibilitySourcePartitionId(self.id.0),
-            ms_id: self.ms_id,
-            data_desc_id: self.data_desc_id,
-            spectral_window_id: self.spw_id,
-            polarization_id: self.polarization_id,
-            shape: VisibilitySourceShape {
-                channel_count: self.shape.channel_count,
-                correlation_count: self.shape.corr_count,
-            },
-        }
-    }
 }
 
 /// Physical read plan for one homogeneous visibility block.
@@ -341,65 +323,6 @@ impl VisibilityBuffer {
     /// Number of selected rows currently represented.
     pub fn row_count(&self) -> usize {
         self.row_indices.len()
-    }
-
-    /// Borrow this buffer as a validated neutral imaging visibility block.
-    pub fn as_visibility_block_view(&self) -> MsResult<VisibilityBlockView<'_>> {
-        let partition = self.source_partition.as_ref().ok_or_else(|| {
-            MsError::InvalidInput("visibility buffer requires a source partition".to_string())
-        })?;
-        let view = VisibilityBlockView {
-            partition: partition.to_visibility_source_partition(),
-            row_indices: &self.row_indices,
-            channel_start: self.channel_start,
-            channel_count: self.channel_count,
-            data: self
-                .data
-                .as_ref()
-                .map(VisibilityComplexSamples::as_visibility_ref),
-            flags: self.flags.as_deref(),
-            weights: self
-                .weights
-                .as_ref()
-                .map(VisibilityFloatSamples::as_visibility_ref),
-            weight_spectrum: self
-                .weight_spectrum
-                .as_ref()
-                .map(VisibilityFloatSamples::as_visibility_ref),
-            uvw_m: self.uvw.as_deref(),
-            flag_row: self.flag_row.as_deref(),
-            antenna1: self.antenna1.as_deref(),
-            antenna2: self.antenna2.as_deref(),
-            field_ids: self.field_ids.as_deref(),
-            time: self.time.as_deref(),
-        };
-        view.validate()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        Ok(view)
-    }
-
-    /// Borrow this buffer with imaging route plans attached.
-    pub fn as_imaging_source_block_view<'a>(
-        &'a self,
-        spectral: &'a SpectralRoutePlan,
-        polarization: &'a PolarizationRoutePlan,
-        geometry: &'a GeometryRoutePlan,
-        weighting: &'a WeightingRoutePlan,
-        gridder: &'a GridderRoutePlan,
-        model: Option<&'a ModelRoutePlan>,
-    ) -> MsResult<ImagingSourceBlockView<'a>> {
-        let view = ImagingSourceBlockView {
-            source: self.as_visibility_block_view()?,
-            spectral,
-            polarization,
-            geometry,
-            weighting,
-            gridder,
-            model,
-        };
-        view.validate()
-            .map_err(|error| MsError::InvalidInput(error.to_string()))?;
-        Ok(view)
     }
 
     fn clear_for_request(&mut self, request: &VisibilityBufferRequest) {
@@ -505,14 +428,6 @@ impl VisibilityComplexSamples {
         self.len() == 0
     }
 
-    /// Borrow samples through the neutral imaging visibility-block contract.
-    pub fn as_visibility_ref(&self) -> VisibilityComplexSamplesRef<'_> {
-        match self {
-            Self::Complex32(values) => VisibilityComplexSamplesRef::Complex32(values),
-            Self::Complex64(values) => VisibilityComplexSamplesRef::Complex64(values),
-        }
-    }
-
     fn capacity(&self) -> usize {
         match self {
             Self::Complex32(values) => values.capacity(),
@@ -551,14 +466,6 @@ impl VisibilityFloatSamples {
         self.len() == 0
     }
 
-    /// Borrow samples through the neutral imaging visibility-block contract.
-    pub fn as_visibility_ref(&self) -> VisibilityFloatSamplesRef<'_> {
-        match self {
-            Self::Float32(values) => VisibilityFloatSamplesRef::Float32(values),
-            Self::Float64(values) => VisibilityFloatSamplesRef::Float64(values),
-        }
-    }
-
     fn capacity(&self) -> usize {
         match self {
             Self::Float32(values) => values.capacity(),
@@ -593,6 +500,10 @@ pub struct VisibilityBufferFillReport {
     pub logical_output_bytes: u64,
     /// Modeled bytes the storage path must read for this request.
     pub modeled_physical_read_bytes: u64,
+    /// Bytes explicitly copied while arranging selected rows into the retained output layout.
+    pub explicit_adaptation_copy_bytes: u64,
+    /// Bytes copied outside the named arrangement paths instrumented by this fill.
+    pub implicit_copy_bytes: u64,
     /// Per-column storage and byte-count facts.
     pub columns: Vec<VisibilityBufferColumnReport>,
     /// Allocation reuse details for the caller-owned buffer.
@@ -693,19 +604,16 @@ impl MeasurementSet {
 
         let total_started = Instant::now();
         let capacity_before = collect_capacities(buffer);
+        let mut explicit_adaptation_copy_bytes =
+            u64::try_from(request.row_indices.len().saturating_mul(size_of::<usize>()))
+                .unwrap_or(u64::MAX);
         let mut timings = VisibilityBufferTimings::default();
         let mut columns = Vec::new();
         buffer.clear_for_request(request);
 
-        if request.include_data {
-            buffer.data = None;
-        }
-        if request.include_flags {
-            buffer.flags = None;
-        }
-        if request.include_weight_spectrum {
-            buffer.weight_spectrum = None;
-        }
+        let data_existing = buffer.data.take();
+        let flags_existing = buffer.flags.take();
+        let weight_spectrum_existing = buffer.weight_spectrum.take();
         let uvw_existing = buffer.uvw.take();
         let scalar_existing = ScalarColumnExistingBuffers {
             antenna1: buffer.antenna1.take(),
@@ -749,6 +657,7 @@ impl MeasurementSet {
                         &request.row_indices,
                         request.channel_start,
                         request.channel_count,
+                        data_existing,
                     )
                     .map(|result| (result, started.elapsed()))
                 })
@@ -762,6 +671,7 @@ impl MeasurementSet {
                         &request.row_indices,
                         request.channel_start,
                         request.channel_count,
+                        flags_existing,
                     )
                     .map(|result| (result, started.elapsed()))
                 })
@@ -782,6 +692,7 @@ impl MeasurementSet {
                         &request.row_indices,
                         request.channel_start,
                         request.channel_count,
+                        weight_spectrum_existing,
                     )
                     .map(|result| (result, started.elapsed()))
                 })
@@ -823,15 +734,23 @@ impl MeasurementSet {
             buffer.flags = Some(flags);
             columns.push(report);
         }
-        if let Some(((weights, row_corr_count, report), elapsed)) = parallel_reads.weights {
+        if let Some(((weights, row_corr_count, report, copied_bytes), elapsed)) =
+            parallel_reads.weights
+        {
             timings.weights_ns = elapsed_ns(elapsed);
             corr_count = merge_corr_count(corr_count, row_corr_count)?;
             buffer.weights = Some(weights);
+            explicit_adaptation_copy_bytes = explicit_adaptation_copy_bytes
+                .checked_add(copied_bytes)
+                .ok_or_else(|| {
+                    invalid_input("visibility adaptation copy bytes overflow".to_string())
+                })?;
             columns.push(report);
         }
         if let Some((weights, elapsed)) = parallel_reads.weight_spectrum {
             timings.weight_spectrum_ns = elapsed_ns(elapsed);
-            if let Some((weights, row_corr_count, report)) = weights {
+            if let Some((weights, row_corr_count, report, copied_bytes)) = weights {
+                debug_assert_eq!(copied_bytes, 0);
                 corr_count = merge_corr_count(corr_count, row_corr_count)?;
                 buffer.weight_spectrum = Some(weights);
                 columns.push(report);
@@ -839,11 +758,36 @@ impl MeasurementSet {
         }
         if let Some(((uvw, report), elapsed)) = parallel_reads.uvw {
             timings.uvw_ns = elapsed_ns(elapsed);
+            explicit_adaptation_copy_bytes = explicit_adaptation_copy_bytes
+                .checked_add(report.logical_output_bytes)
+                .ok_or_else(|| {
+                    invalid_input("visibility adaptation copy bytes overflow".to_string())
+                })?;
             buffer.uvw = Some(uvw);
             columns.push(report);
         }
         if let Some((scalars, elapsed)) = parallel_reads.scalars {
             timings.scalar_ns = elapsed_ns(elapsed);
+            explicit_adaptation_copy_bytes = scalars.reports.iter().try_fold(
+                explicit_adaptation_copy_bytes,
+                |total, report| {
+                    if scalar_output_reuses_retained_buffer(
+                        report.column.as_str(),
+                        request.row_indices.len(),
+                        &capacity_before,
+                    ) {
+                        total
+                            .checked_add(report.logical_output_bytes)
+                            .ok_or_else(|| {
+                                invalid_input(
+                                    "visibility adaptation copy bytes overflow".to_string(),
+                                )
+                            })
+                    } else {
+                        Ok(total)
+                    }
+                },
+            )?;
             buffer.antenna1 = scalars.antenna1;
             buffer.antenna2 = scalars.antenna2;
             buffer.data_desc_ids = scalars.data_desc_ids;
@@ -882,6 +826,8 @@ impl MeasurementSet {
             timings,
             logical_output_bytes,
             modeled_physical_read_bytes,
+            explicit_adaptation_copy_bytes,
+            implicit_copy_bytes: 0,
             columns,
             allocation,
         })
@@ -895,7 +841,12 @@ type DataReadResult = (
     VisibilityBufferColumnReport,
 );
 type BoolChannelReadResult = (Vec<bool>, usize, VisibilityBufferColumnReport);
-type FloatReadResult = (VisibilityFloatSamples, usize, VisibilityBufferColumnReport);
+type FloatReadResult = (
+    VisibilityFloatSamples,
+    usize,
+    VisibilityBufferColumnReport,
+    u64,
+);
 type UvwReadResult = (Vec<f64>, VisibilityBufferColumnReport);
 
 struct ParallelVisibilityReads {
@@ -1190,42 +1141,6 @@ fn ensure_typed_channel_block_shape(
     Ok(axis0_count)
 }
 
-struct TypedChannelBlock {
-    primitive: PrimitiveType,
-    corr_count: usize,
-    cells: SelectedArray2DCells,
-}
-
-fn read_typed_channel_block(
-    ms: &MeasurementSet,
-    column_name: &str,
-    row_indices: &[usize],
-    channel_start: usize,
-    channel_count: usize,
-) -> MsResult<Option<TypedChannelBlock>> {
-    let cells = ms
-        .main_table()
-        .column_accessor(column_name)?
-        .array_cells_2d_channel_range_typed_uncached(row_indices, channel_start, channel_count)?;
-    let Some(cells) = cells else {
-        return Ok(None);
-    };
-    let primitive = cells.primitive_type();
-    let corr_count = ensure_typed_channel_block_shape(
-        column_name,
-        cells.row_count(),
-        cells.axis0_count(),
-        cells.channel_count(),
-        row_indices.len(),
-        channel_count,
-    )?;
-    Ok(Some(TypedChannelBlock {
-        primitive,
-        corr_count,
-        cells,
-    }))
-}
-
 fn channel_block_report(
     ms: &MeasurementSet,
     column_name: &str,
@@ -1253,35 +1168,69 @@ fn read_complex_channel_column(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
+    existing: Option<VisibilityComplexSamples>,
 ) -> MsResult<(
     VisibilityComplexSamples,
     usize,
     VisibilityBufferColumnReport,
 )> {
-    let block =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
-            .ok_or_else(|| {
-                invalid_input(format!(
-                    "required visibility column {column_name} is undefined for the selected rows"
-                ))
-            })?;
-    let primitive = block.primitive;
-    let corr_count = block.corr_count;
-    let samples = match block.cells {
-        SelectedArray2DCells::Complex32(values) => {
-            VisibilityComplexSamples::Complex32(values.into_values())
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    let accessor = ms.main_table().column_accessor(column_name)?;
+    let (samples, shape) = match primitive {
+        PrimitiveType::Complex32 => {
+            let mut values = match existing {
+                Some(VisibilityComplexSamples::Complex32(values)) => values,
+                _ => Vec::new(),
+            };
+            let shape = accessor
+                .fill_array_cells_2d_channel_range_typed_uncached(
+                    row_indices,
+                    channel_start,
+                    channel_count,
+                    SelectedArray2DCellsMut::Complex32(&mut values),
+                )?
+                .ok_or_else(|| {
+                    invalid_input(format!(
+                        "required visibility column {column_name} is undefined for the selected rows"
+                    ))
+                })?;
+            (VisibilityComplexSamples::Complex32(values), shape)
         }
-        SelectedArray2DCells::Complex64(values) => {
-            VisibilityComplexSamples::Complex64(values.into_values())
+        PrimitiveType::Complex64 => {
+            let mut values = match existing {
+                Some(VisibilityComplexSamples::Complex64(values)) => values,
+                _ => Vec::new(),
+            };
+            let shape = accessor
+                .fill_array_cells_2d_channel_range_typed_uncached(
+                    row_indices,
+                    channel_start,
+                    channel_count,
+                    SelectedArray2DCellsMut::Complex64(&mut values),
+                )?
+                .ok_or_else(|| {
+                    invalid_input(format!(
+                        "required visibility column {column_name} is undefined for the selected rows"
+                    ))
+                })?;
+            (VisibilityComplexSamples::Complex64(values), shape)
         }
         other => {
             return Err(column_type_error(
                 column_name,
                 "Complex32 or Complex64 array",
-                other.primitive_type(),
+                other,
             ));
         }
     };
+    let corr_count = ensure_typed_channel_block_shape(
+        column_name,
+        shape.row_count,
+        shape.axis0_count,
+        shape.channel_count,
+        row_indices.len(),
+        channel_count,
+    )?;
     let report = channel_block_report(
         ms,
         column_name,
@@ -1300,20 +1249,35 @@ fn read_bool_channel_column(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
+    existing: Option<Vec<bool>>,
 ) -> MsResult<(Vec<bool>, usize, VisibilityBufferColumnReport)> {
-    let block =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
-            .ok_or_else(|| {
-                invalid_input(format!(
-                    "required visibility column {column_name} is undefined for the selected rows"
-                ))
-            })?;
-    let primitive = block.primitive;
-    let corr_count = block.corr_count;
-    let SelectedArray2DCells::Bool(values) = block.cells else {
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    if primitive != PrimitiveType::Bool {
         return Err(column_type_error(column_name, "Bool array", primitive));
-    };
-    let out = values.into_values();
+    }
+    let mut out = existing.unwrap_or_default();
+    let shape = ms
+        .main_table()
+        .column_accessor(column_name)?
+        .fill_array_cells_2d_channel_range_typed_uncached(
+            row_indices,
+            channel_start,
+            channel_count,
+            SelectedArray2DCellsMut::Bool(&mut out),
+        )?
+        .ok_or_else(|| {
+            invalid_input(format!(
+                "required visibility column {column_name} is undefined for the selected rows"
+            ))
+        })?;
+    let corr_count = ensure_typed_channel_block_shape(
+        column_name,
+        shape.row_count,
+        shape.axis0_count,
+        shape.channel_count,
+        row_indices.len(),
+        channel_count,
+    )?;
     let report = channel_block_report(
         ms,
         column_name,
@@ -1332,29 +1296,59 @@ fn read_float_channel_column(
     row_indices: &[usize],
     channel_start: usize,
     channel_count: usize,
-) -> MsResult<Option<(VisibilityFloatSamples, usize, VisibilityBufferColumnReport)>> {
-    let Some(block) =
-        read_typed_channel_block(ms, column_name, row_indices, channel_start, channel_count)?
-    else {
-        return Ok(None);
-    };
-    let primitive = block.primitive;
-    let corr_count = block.corr_count;
-    let samples = match block.cells {
-        SelectedArray2DCells::Float32(values) => {
-            VisibilityFloatSamples::Float32(values.into_values())
+    existing: Option<VisibilityFloatSamples>,
+) -> MsResult<Option<FloatReadResult>> {
+    let primitive = main_column_primitive_type(ms.main_table(), column_name)?;
+    let accessor = ms.main_table().column_accessor(column_name)?;
+    let (samples, shape) = match primitive {
+        PrimitiveType::Float32 => {
+            let mut values = match existing {
+                Some(VisibilityFloatSamples::Float32(values)) => values,
+                _ => Vec::new(),
+            };
+            let Some(shape) = accessor.fill_array_cells_2d_channel_range_typed_uncached(
+                row_indices,
+                channel_start,
+                channel_count,
+                SelectedArray2DCellsMut::Float32(&mut values),
+            )?
+            else {
+                return Ok(None);
+            };
+            (VisibilityFloatSamples::Float32(values), shape)
         }
-        SelectedArray2DCells::Float64(values) => {
-            VisibilityFloatSamples::Float64(values.into_values())
+        PrimitiveType::Float64 => {
+            let mut values = match existing {
+                Some(VisibilityFloatSamples::Float64(values)) => values,
+                _ => Vec::new(),
+            };
+            let Some(shape) = accessor.fill_array_cells_2d_channel_range_typed_uncached(
+                row_indices,
+                channel_start,
+                channel_count,
+                SelectedArray2DCellsMut::Float64(&mut values),
+            )?
+            else {
+                return Ok(None);
+            };
+            (VisibilityFloatSamples::Float64(values), shape)
         }
         other => {
             return Err(column_type_error(
                 column_name,
                 "Float32 or Float64 array",
-                other.primitive_type(),
+                other,
             ));
         }
     };
+    let corr_count = ensure_typed_channel_block_shape(
+        column_name,
+        shape.row_count,
+        shape.axis0_count,
+        shape.channel_count,
+        row_indices.len(),
+        channel_count,
+    )?;
     let report = channel_block_report(
         ms,
         column_name,
@@ -1364,7 +1358,7 @@ fn read_float_channel_column(
         corr_count,
         row_indices.len(),
     )?;
-    Ok(Some((samples, corr_count, report)))
+    Ok(Some((samples, corr_count, report, 0)))
 }
 
 fn read_float_row_column(
@@ -1372,7 +1366,7 @@ fn read_float_row_column(
     column_name: &str,
     row_indices: &[usize],
     existing: Option<VisibilityFloatSamples>,
-) -> MsResult<(VisibilityFloatSamples, usize, VisibilityBufferColumnReport)> {
+) -> MsResult<FloatReadResult> {
     if let Ok(cells) = ms
         .main_table()
         .column_accessor(column_name)?
@@ -1380,13 +1374,15 @@ fn read_float_row_column(
     {
         let primitive = cells.primitive_type();
         let corr_count = cells.axis0_count();
-        let samples = match cells {
-            SelectedArray1DCells::Float32(values) => VisibilityFloatSamples::Float32(
-                reuse_or_replace_f32(existing, values.into_values()),
-            ),
-            SelectedArray1DCells::Float64(values) => VisibilityFloatSamples::Float64(
-                reuse_or_replace_f64(existing, values.into_values()),
-            ),
+        let (samples, copied_bytes) = match cells {
+            SelectedArray1DCells::Float32(values) => {
+                let (values, copied_bytes) = reuse_or_replace_f32(existing, values.into_values());
+                (VisibilityFloatSamples::Float32(values), copied_bytes)
+            }
+            SelectedArray1DCells::Float64(values) => {
+                let (values, copied_bytes) = reuse_or_replace_f64(existing, values.into_values());
+                (VisibilityFloatSamples::Float64(values), copied_bytes)
+            }
             other => {
                 return Err(column_type_error(
                     column_name,
@@ -1405,7 +1401,7 @@ fn read_float_row_column(
             elements_per_channel_or_row: corr_count,
             row_count: row_indices.len(),
         })?;
-        return Ok((samples, corr_count, report));
+        return Ok((samples, corr_count, report, copied_bytes));
     }
 
     let values = ms
@@ -1492,32 +1488,37 @@ fn read_float_row_column(
         elements_per_channel_or_row: corr_count,
         row_count: row_indices.len(),
     })?;
-    Ok((samples, corr_count, report))
+    let copied_bytes =
+        u64::try_from(sample_count.saturating_mul(primitive.fixed_width_bytes().unwrap_or(0)))
+            .unwrap_or(u64::MAX);
+    Ok((samples, corr_count, report, copied_bytes))
 }
 
 fn reuse_or_replace_f32(
     existing: Option<VisibilityFloatSamples>,
     replacement: Vec<f32>,
-) -> Vec<f32> {
+) -> (Vec<f32>, u64) {
     if let Some(VisibilityFloatSamples::Float32(mut values)) = existing {
+        let copied_bytes = (replacement.len() as u64).saturating_mul(size_of::<f32>() as u64);
         values.clear();
         values.extend_from_slice(&replacement);
-        values
+        (values, copied_bytes)
     } else {
-        replacement
+        (replacement, 0)
     }
 }
 
 fn reuse_or_replace_f64(
     existing: Option<VisibilityFloatSamples>,
     replacement: Vec<f64>,
-) -> Vec<f64> {
+) -> (Vec<f64>, u64) {
     if let Some(VisibilityFloatSamples::Float64(mut values)) = existing {
+        let copied_bytes = (replacement.len() as u64).saturating_mul(size_of::<f64>() as u64);
         values.clear();
         values.extend_from_slice(&replacement);
-        values
+        (values, copied_bytes)
     } else {
-        replacement
+        (replacement, 0)
     }
 }
 
@@ -1715,8 +1716,24 @@ struct ColumnReportInput<'a> {
     row_count: usize,
 }
 
-fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColumnReport> {
-    let ColumnReportInput {
+struct ModeledColumnPhysicalRead {
+    element_bytes: usize,
+    granularity: VisibilityChannelReadGranularity,
+    bytes: u64,
+}
+
+/// Apply the visibility-buffer storage-manager model to one MAIN-table column.
+pub(crate) fn modeled_main_column_physical_read_bytes(
+    table: &Table,
+    column_name: &str,
+    channelized: bool,
+    channel_start: usize,
+    requested_channels: usize,
+    elements_per_channel_or_row: usize,
+    row_count: usize,
+) -> MsResult<u64> {
+    let primitive = main_column_primitive_type(table, column_name)?;
+    Ok(modeled_column_physical_read(&ColumnReportInput {
         table,
         column_name,
         primitive,
@@ -1725,49 +1742,77 @@ fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColum
         requested_channels,
         elements_per_channel_or_row,
         row_count,
+    })?
+    .bytes)
+}
+
+fn column_report(input: ColumnReportInput<'_>) -> MsResult<VisibilityBufferColumnReport> {
+    let physical_read = modeled_column_physical_read(&input)?;
+    let ColumnReportInput {
+        table,
+        column_name,
+        primitive,
+        channelized,
+        channel_start: _,
+        requested_channels,
+        elements_per_channel_or_row,
+        row_count,
     } = input;
-    let element_bytes = primitive.fixed_width_bytes().ok_or_else(|| {
-        MsError::InvalidInput(format!(
-            "{column_name} has variable-width type {primitive:?}"
-        ))
-    })?;
     let data_manager_types = data_manager_types_for_column(table, column_name);
-    let granularity = if channelized {
-        channel_granularity_for_column(table, column_name)
-    } else {
-        VisibilityChannelReadGranularity::NotChannelized
-    };
     let logical_elements = row_count
         .saturating_mul(requested_channels)
         .saturating_mul(elements_per_channel_or_row);
-    let logical_output_bytes = logical_elements.saturating_mul(element_bytes) as u64;
-    let physical_channels = match granularity {
-        VisibilityChannelReadGranularity::RequestedRange => modeled_tile_aligned_channel_count(
-            table,
-            column_name,
-            channel_start,
-            requested_channels,
-        )
-        .unwrap_or(requested_channels),
-        VisibilityChannelReadGranularity::FullCell if channelized => {
-            modeled_full_cell_channel_count(table, column_name).unwrap_or(requested_channels)
-        }
-        VisibilityChannelReadGranularity::FullCell
-        | VisibilityChannelReadGranularity::NotChannelized => requested_channels,
-    };
-    let physical_bytes = row_count
-        .saturating_mul(physical_channels)
-        .saturating_mul(elements_per_channel_or_row)
-        .saturating_mul(element_bytes) as u64;
+    let logical_output_bytes = logical_elements.saturating_mul(physical_read.element_bytes) as u64;
     Ok(VisibilityBufferColumnReport {
         column: column_name.to_string(),
         primitive_type: format!("{primitive:?}"),
         channelized,
-        channel_read_granularity: granularity,
-        element_bytes,
+        channel_read_granularity: physical_read.granularity,
+        element_bytes: physical_read.element_bytes,
         logical_output_bytes,
-        modeled_physical_read_bytes: physical_bytes,
+        modeled_physical_read_bytes: physical_read.bytes,
         data_manager_types,
+    })
+}
+
+fn modeled_column_physical_read(
+    input: &ColumnReportInput<'_>,
+) -> MsResult<ModeledColumnPhysicalRead> {
+    let element_bytes = input.primitive.fixed_width_bytes().ok_or_else(|| {
+        MsError::InvalidInput(format!(
+            "{} has variable-width type {:?}",
+            input.column_name, input.primitive
+        ))
+    })?;
+    let granularity = if input.channelized {
+        channel_granularity_for_column(input.table, input.column_name)
+    } else {
+        VisibilityChannelReadGranularity::NotChannelized
+    };
+    let physical_channels = match granularity {
+        VisibilityChannelReadGranularity::RequestedRange => modeled_tile_aligned_channel_count(
+            input.table,
+            input.column_name,
+            input.channel_start,
+            input.requested_channels,
+        )
+        .unwrap_or(input.requested_channels),
+        VisibilityChannelReadGranularity::FullCell if input.channelized => {
+            modeled_full_cell_channel_count(input.table, input.column_name)
+                .unwrap_or(input.requested_channels)
+        }
+        VisibilityChannelReadGranularity::FullCell
+        | VisibilityChannelReadGranularity::NotChannelized => input.requested_channels,
+    };
+    let bytes = input
+        .row_count
+        .saturating_mul(physical_channels)
+        .saturating_mul(input.elements_per_channel_or_row)
+        .saturating_mul(element_bytes) as u64;
+    Ok(ModeledColumnPhysicalRead {
+        element_bytes,
+        granularity,
+        bytes,
     })
 }
 
@@ -1989,7 +2034,17 @@ fn allocation_report(
             continue;
         }
         let before = capacity_before.get(name).copied().unwrap_or(0);
-        if before >= *after && before > 0 {
+        let type_marker = match name.as_str() {
+            "data" => Some("data_type"),
+            "weights" => Some("weights_type"),
+            "weight_spectrum" => Some("weight_spectrum_type"),
+            _ => None,
+        };
+        let same_type = type_marker.is_none_or(|marker| {
+            capacity_before.contains_key(marker)
+                && capacity_before.get(marker) == capacity_after.get(marker)
+        });
+        if before >= *after && before > 0 && same_type {
             reused_buffers += 1;
         } else {
             grown_or_retyped_buffers += 1;
@@ -2001,6 +2056,31 @@ fn allocation_report(
         capacity_before,
         capacity_after,
     }
+}
+
+fn scalar_output_reuses_retained_buffer(
+    column: &str,
+    row_count: usize,
+    capacity_before: &BTreeMap<String, usize>,
+) -> bool {
+    let buffer = match column {
+        "ANTENNA1" => "antenna1",
+        "ANTENNA2" => "antenna2",
+        "DATA_DESC_ID" => "data_desc_ids",
+        "FIELD_ID" => "field_ids",
+        "FLAG_ROW" => "flag_row",
+        "TIME" => "time",
+        "INTERVAL" => "interval",
+        "EXPOSURE" => "exposure",
+        "ARRAY_ID" => "array_ids",
+        "OBSERVATION_ID" => "observation_ids",
+        "SCAN_NUMBER" => "scan_numbers",
+        "STATE_ID" => "state_ids",
+        _ => return false,
+    };
+    capacity_before
+        .get(buffer)
+        .is_some_and(|capacity| *capacity >= row_count)
 }
 
 fn primitive_type_capacity_marker(primitive: PrimitiveType) -> usize {
@@ -2135,6 +2215,7 @@ mod tests {
         assert_eq!(report.channel_count, 2);
         assert!(report.logical_output_bytes > 0);
         assert!(report.modeled_physical_read_bytes >= report.logical_output_bytes);
+        assert_eq!(report.explicit_adaptation_copy_bytes, 64);
 
         let Some(VisibilityComplexSamples::Complex32(data)) = &buffer.data else {
             panic!("expected Complex32 data");
@@ -2182,55 +2263,27 @@ mod tests {
         assert_eq!(buffer.scan_numbers.as_deref(), Some(&[17, 7][..]));
         assert_eq!(buffer.state_ids.as_deref(), Some(&[18, 8][..]));
 
-        let view = buffer.as_visibility_block_view().unwrap();
-        assert_eq!(view.partition.id, VisibilitySourcePartitionId(0));
-        assert_eq!(view.partition.shape.channel_count, 4);
-        assert_eq!(view.partition.shape.correlation_count, 2);
-        assert_eq!(view.row_indices, &[1, 0]);
-        assert_eq!(view.channel_range(), 1..3);
-        let Some(VisibilityComplexSamplesRef::Complex32(view_data)) = view.data else {
-            panic!("expected Complex32 view data");
-        };
-        assert_eq!(view_data.len(), data.len());
-        assert_eq!(
-            view_data[view.channel_row_corr_index(1, 1, 1)],
-            Complex32::new(21.0, -21.0)
-        );
-        let Some(VisibilityFloatSamplesRef::Float32(view_weights)) = view.weights else {
-            panic!("expected Float32 view weights");
-        };
-        assert_eq!(view_weights, &[11.0, 12.0, 1.0, 2.0]);
-        let spectral = SpectralRoutePlan::identity_for_block(view);
-        let polarization = PolarizationRoutePlan {
-            output_stokes: casa_imaging::PlaneStokes::I,
-        };
-        let geometry = GeometryRoutePlan {
-            geometry: casa_imaging::ImageGeometry {
-                image_shape: [64, 64],
-                cell_size_rad: [1.0e-6, 1.0e-6],
-            },
-        };
-        let weighting = WeightingRoutePlan {
-            weighting: casa_imaging::WeightingMode::Natural,
-        };
-        let gridder = GridderRoutePlan {
-            gridder_mode: casa_imaging::GridderMode::Standard,
-        };
-        let imaging_view = buffer
-            .as_imaging_source_block_view(
-                &spectral,
-                &polarization,
-                &geometry,
-                &weighting,
-                &gridder,
-                None,
-            )
-            .unwrap();
-        assert_eq!(imaging_view.spectral.channel_route_count(), 2);
-        assert_eq!(imaging_view.source.channel_range(), 1..3);
-
+        let data_pointer = buffer.data.as_ref().map(|samples| match samples {
+            VisibilityComplexSamples::Complex32(values) => values.as_ptr() as usize,
+            VisibilityComplexSamples::Complex64(values) => values.as_ptr() as usize,
+        });
+        let flag_pointer = buffer.flags.as_ref().map(|values| values.as_ptr() as usize);
         let second_report = ms.fill_visibility_buffer(&request, &mut buffer).unwrap();
         assert!(second_report.allocation.reused_buffers > 0);
+        assert!(
+            second_report.explicit_adaptation_copy_bytes > report.explicit_adaptation_copy_bytes
+        );
+        assert_eq!(
+            buffer.data.as_ref().map(|samples| match samples {
+                VisibilityComplexSamples::Complex32(values) => values.as_ptr() as usize,
+                VisibilityComplexSamples::Complex64(values) => values.as_ptr() as usize,
+            }),
+            data_pointer
+        );
+        assert_eq!(
+            buffer.flags.as_ref().map(|values| values.as_ptr() as usize),
+            flag_pointer
+        );
     }
 
     #[test]

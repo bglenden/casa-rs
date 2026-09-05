@@ -43,19 +43,23 @@ use thiserror::Error;
 use crate::schema::{SchemaError, TableSchema};
 use crate::table::{
     ColumnOverride, ColumnOverrides, GeneratedScalarColumn, GeneratedScalarValueRun,
-    SelectedArray1DCells, SelectedArray2DCells, StreamedScalarColumn, StreamedScalarType,
+    RequiredScalarColumnDestination, RequiredScalarColumnValuesMut, SelectedArray1DCells,
+    SelectedArray1DCellsMut, SelectedArray1DShape, SelectedArray2DCells, SelectedArray2DCellsMut,
+    SelectedArray2DShape, StreamedScalarColumn, StreamedScalarType,
 };
 
 use self::data_type::CasacoreDataType;
 use self::incremental_stman::{
     IsmColumnResult, read_ism_file, read_ism_file_columns, read_ism_required_scalar_columns_rows,
-    read_ism_scalar_column, read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
+    read_ism_required_scalar_columns_rows_reusing, read_ism_scalar_column,
+    read_ism_scalar_column_rows, write_ism_file, write_ism_file_indexed,
     write_ism_file_scalar_column_sources,
 };
 use self::standard_stman::{
     read_ssm_array_column_rows, read_ssm_file, read_ssm_file_columns,
-    read_ssm_required_scalar_columns_rows, read_ssm_scalar_column_rows, write_ssm_file,
-    write_ssm_file_indexed, write_ssm_file_scalar_column_sources,
+    read_ssm_required_scalar_columns_rows, read_ssm_required_scalar_columns_rows_reusing,
+    read_ssm_scalar_column_rows, write_ssm_file, write_ssm_file_indexed,
+    write_ssm_file_scalar_column_sources,
 };
 use self::stman_aipsio::scalar_value_is_default;
 use self::stman_aipsio::{
@@ -63,13 +67,13 @@ use self::stman_aipsio::{
     read_stman_array_column_rows, read_stman_file, read_stman_scalar_column,
     read_stman_scalar_column_rows, write_stman_file,
 };
-pub(crate) use self::table_control::RefTableDatContents;
+pub(crate) use self::table_control::{
+    RefTableDatContents, TableDatContents, TableDatResult, read_table_dat_dispatch,
+};
+pub(crate) use self::tiled_stman::TiledReadMetadata;
 use self::virtual_engine::{VirtualContext, is_virtual_engine, lookup_engine};
 
-use self::table_control::{
-    TableDatContents, TableDatResult, read_table_dat_dispatch, write_concat_table_dat,
-    write_ref_table_dat, write_table_dat,
-};
+use self::table_control::{write_concat_table_dat, write_ref_table_dat, write_table_dat};
 
 pub(crate) const TABLE_CONTROL_FILE: &str = "table.dat";
 pub(crate) const TABLE_DATA_FILE_PREFIX: &str = "table.f";
@@ -85,6 +89,28 @@ struct SelectedArray2DChannelRead<'a> {
 struct SelectedArray1DRead<'a> {
     column: &'a str,
     selected_rows: &'a [usize],
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RetainedTableReadMetadata {
+    pub(crate) table_dat: TableDatContents,
+    pub(crate) tiled: TiledReadMetadata,
+}
+
+impl RetainedTableReadMetadata {
+    pub(crate) fn open(
+        table_path: &Path,
+        table_dat: TableDatContents,
+    ) -> Result<Self, StorageError> {
+        let tiled = TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
+        Ok(Self { table_dat, tiled })
+    }
+
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        self.table_dat
+            .retained_heap_bytes()?
+            .checked_add(self.tiled.retained_heap_bytes()?)
+    }
 }
 
 fn reorder_row_to_requested_columns(row: &RecordValue, columns: &[&str]) -> RecordValue {
@@ -293,6 +319,8 @@ pub(crate) struct StorageSnapshot {
     pub(crate) virtual_bindings: Vec<virtual_engine::VirtualColumnBinding>,
     /// Data manager info extracted from table.dat (empty for memory tables).
     pub(crate) dm_info: Vec<DataManagerInfo>,
+    /// Parsed immutable storage metadata retained by a lazy plain-table open.
+    pub(crate) retained_read_metadata: Option<RetainedTableReadMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -1284,7 +1312,7 @@ impl CompositeStorage {
         }
         match table_dat {
             TableDatResult::Plain(table_dat) => {
-                let snapshot = self.load_plain_table_metadata(table_path, &table_dat)?;
+                let snapshot = self.load_plain_table_metadata(table_path, table_dat)?;
                 if profile_open {
                     eprintln!(
                         "table_open_profile path={} stage=storage_load_metadata_only/plain_metadata rows={} dm_count={} elapsed_s={:.3}",
@@ -1492,6 +1520,23 @@ impl CompositeStorage {
             });
         };
 
+        self.load_named_required_scalar_column_rows_from_plain(
+            table_path,
+            &table_dat,
+            columns,
+            selected_rows,
+            row_hint,
+        )
+    }
+
+    pub(crate) fn load_named_required_scalar_column_rows_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        columns: &HashSet<&str>,
+        selected_rows: &[usize],
+        row_hint: Option<u64>,
+    ) -> Result<RequiredScalarColumnSnapshot, StorageError> {
         if table_dat
             .column_set
             .data_managers
@@ -1503,7 +1548,7 @@ impl CompositeStorage {
                 .map(|column| {
                     self.load_plain_scalar_column_rows(
                         table_path,
-                        &table_dat,
+                        table_dat,
                         column,
                         selected_rows,
                         row_hint,
@@ -1572,7 +1617,7 @@ impl CompositeStorage {
             }
             let values = self.load_plain_scalar_column_rows(
                 table_path,
-                &table_dat,
+                table_dat,
                 column,
                 selected_rows,
                 row_hint,
@@ -1586,6 +1631,135 @@ impl CompositeStorage {
             row_count: selected_rows.len(),
             columns: loaded,
         })
+    }
+
+    pub(crate) fn fill_named_required_scalar_column_rows_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        selected_rows: &[usize],
+        destinations: &mut [RequiredScalarColumnDestination<'_>],
+    ) -> Result<(), StorageError> {
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            return Err(StorageError::FormatMismatch(
+                "required scalar reusable fills do not support virtual columns".to_string(),
+            ));
+        }
+
+        let mut outputs = HashMap::with_capacity(destinations.len());
+        for destination in destinations.iter_mut() {
+            let values = match destination.values_mut() {
+                RequiredScalarColumnValuesMut::Bool(values) => {
+                    RequiredScalarColumnData::Bool(std::mem::take(*values))
+                }
+                RequiredScalarColumnValuesMut::Int32(values) => {
+                    RequiredScalarColumnData::Int32(std::mem::take(*values))
+                }
+                RequiredScalarColumnValuesMut::Float32(values) => {
+                    RequiredScalarColumnData::Float32(std::mem::take(*values))
+                }
+                RequiredScalarColumnValuesMut::Float64(values) => {
+                    RequiredScalarColumnData::Float64(std::mem::take(*values))
+                }
+            };
+            outputs.insert(destination.column().to_string(), values);
+        }
+
+        let fill_result = (|| {
+            let mut loaded = HashSet::with_capacity(destinations.len());
+            for dm in &table_dat.column_set.data_managers {
+                let bound_cols: Vec<(usize, &_)> = table_dat
+                    .column_set
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, entry)| entry.dm_seq_nr == dm.seq_nr)
+                    .collect();
+                let requested: Vec<(usize, &_)> = bound_cols
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(dm_col_idx, (desc_idx, entry))| {
+                        destinations
+                            .iter()
+                            .any(|destination| destination.column() == entry.original_name)
+                            .then_some((dm_col_idx, &table_dat.table_desc.columns[*desc_idx]))
+                    })
+                    .collect();
+                if requested.is_empty() {
+                    continue;
+                }
+                let data_path = table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", dm.seq_nr));
+                match dm.type_name.as_str() {
+                    "StandardStMan" => read_ssm_required_scalar_columns_rows_reusing(
+                        &data_path,
+                        &dm.data,
+                        &requested,
+                        selected_rows,
+                        &mut outputs,
+                    )?,
+                    "IncrementalStMan" => {
+                        let all_descs = bound_cols
+                            .iter()
+                            .map(|(desc_idx, _)| &table_dat.table_desc.columns[*desc_idx])
+                            .collect::<Vec<_>>();
+                        read_ism_required_scalar_columns_rows_reusing(
+                            &data_path,
+                            &dm.data,
+                            &all_descs,
+                            &requested,
+                            selected_rows,
+                            &mut outputs,
+                        )?;
+                    }
+                    other => {
+                        return Err(StorageError::FormatMismatch(format!(
+                            "required scalar reusable fills do not support data manager {other}"
+                        )));
+                    }
+                }
+                loaded.extend(requested.iter().map(|(_, desc)| desc.col_name.as_str()));
+            }
+            for destination in destinations.iter() {
+                if !loaded.contains(destination.column()) {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "required scalar reusable fill did not load column '{}'",
+                        destination.column()
+                    )));
+                }
+            }
+            Ok(())
+        })();
+
+        for destination in destinations.iter_mut() {
+            let Some(values) = outputs.remove(destination.column()) else {
+                continue;
+            };
+            match (destination.values_mut(), values) {
+                (
+                    RequiredScalarColumnValuesMut::Bool(destination),
+                    RequiredScalarColumnData::Bool(values),
+                ) => **destination = values,
+                (
+                    RequiredScalarColumnValuesMut::Int32(destination),
+                    RequiredScalarColumnData::Int32(values),
+                ) => **destination = values,
+                (
+                    RequiredScalarColumnValuesMut::Float32(destination),
+                    RequiredScalarColumnData::Float32(values),
+                ) => **destination = values,
+                (
+                    RequiredScalarColumnValuesMut::Float64(destination),
+                    RequiredScalarColumnData::Float64(values),
+                ) => **destination = values,
+                _ => unreachable!("required scalar reusable fill preserves destination types"),
+            }
+        }
+        fill_result
     }
 
     pub(crate) fn load_array_column_with_row_hint(
@@ -1673,14 +1847,16 @@ impl CompositeStorage {
 
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(table_dat) => {
-                let request = SelectedArray2DChannelRead {
+                let read_metadata =
+                    TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
+                self.load_array_column_rows_2d_channel_range_typed_from_plain(
+                    table_path,
+                    &table_dat,
+                    &read_metadata,
                     column,
                     selected_rows,
                     channel_start,
                     channel_count,
-                };
-                self.load_plain_array_column_rows_2d_channel_range_typed(
-                    table_path, &table_dat, request,
                 )
             }
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
@@ -1689,6 +1865,58 @@ impl CompositeStorage {
                 )))
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn load_array_column_rows_2d_channel_range_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        column: &str,
+        selected_rows: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+    ) -> Result<Option<SelectedArray2DCells>, StorageError> {
+        let request = SelectedArray2DChannelRead {
+            column,
+            selected_rows,
+            channel_start,
+            channel_count,
+        };
+        self.load_plain_array_column_rows_2d_channel_range_typed(
+            table_path,
+            table_dat,
+            read_metadata,
+            request,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn fill_array_column_rows_2d_channel_range_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        column: &str,
+        selected_rows: &[usize],
+        channel_start: usize,
+        channel_count: usize,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, StorageError> {
+        let request = SelectedArray2DChannelRead {
+            column,
+            selected_rows,
+            channel_start,
+            channel_count,
+        };
+        self.fill_plain_array_column_rows_2d_channel_range_typed(
+            table_path,
+            table_dat,
+            read_metadata,
+            request,
+            destination,
+        )
     }
 
     pub(crate) fn load_array_column_rows_1d_typed_with_row_hint(
@@ -1714,11 +1942,15 @@ impl CompositeStorage {
 
         match read_table_dat_dispatch(&control_path)? {
             TableDatResult::Plain(table_dat) => {
-                let request = SelectedArray1DRead {
+                let read_metadata =
+                    TiledReadMetadata::open(table_path, &table_dat.column_set.data_managers)?;
+                self.load_array_column_rows_1d_typed_from_plain(
+                    table_path,
+                    &table_dat,
+                    &read_metadata,
                     column,
                     selected_rows,
-                };
-                self.load_plain_array_column_rows_1d_typed(table_path, &table_dat, request)
+                )
             }
             TableDatResult::Ref(_) | TableDatResult::Concat(_) => {
                 Err(StorageError::FormatMismatch(format!(
@@ -1726,6 +1958,43 @@ impl CompositeStorage {
                 )))
             }
         }
+    }
+
+    pub(crate) fn load_array_column_rows_1d_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        column: &str,
+        selected_rows: &[usize],
+    ) -> Result<SelectedArray1DCells, StorageError> {
+        let request = SelectedArray1DRead {
+            column,
+            selected_rows,
+        };
+        self.load_plain_array_column_rows_1d_typed(table_path, table_dat, read_metadata, request)
+    }
+
+    pub(crate) fn fill_array_column_rows_1d_typed_from_plain(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        column: &str,
+        selected_rows: &[usize],
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, StorageError> {
+        let request = SelectedArray1DRead {
+            column,
+            selected_rows,
+        };
+        self.fill_plain_array_column_rows_1d_typed(
+            table_path,
+            table_dat,
+            read_metadata,
+            request,
+            destination,
+        )
     }
 
     /// Load a PlainTable from table.dat contents and data files.
@@ -1994,6 +2263,7 @@ impl CompositeStorage {
             virtual_columns,
             virtual_bindings: Vec::new(),
             dm_info,
+            retained_read_metadata: None,
         })
     }
 
@@ -2682,6 +2952,7 @@ impl CompositeStorage {
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: Vec::new(),
+            retained_read_metadata: None,
         };
         array_column_from_snapshot(&snapshot, column)
     }
@@ -2860,10 +3131,72 @@ impl CompositeStorage {
         }
     }
 
+    pub(crate) fn plain_array_cell_is_defined_uncached(
+        &self,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        column: &str,
+        row_index: usize,
+    ) -> Result<bool, StorageError> {
+        let desc_idx = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .position(|desc| desc.col_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("array column '{column}' not found"))
+            })?;
+        if !table_dat.table_desc.columns[desc_idx].is_array {
+            return Err(StorageError::FormatMismatch(format!(
+                "column '{column}' is not an array column"
+            )));
+        }
+        let dm_seq_nr = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing ColumnSet binding"
+                ))
+            })?
+            .dm_seq_nr;
+        let dm = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|manager| manager.seq_nr == dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data manager {dm_seq_nr}"
+                ))
+            })?;
+        if dm.type_name != "TiledShapeStMan" {
+            return Err(StorageError::FormatMismatch(format!(
+                "metadata-only array-cell definedness for column '{column}' requires TiledShapeStMan, found {}",
+                dm.type_name
+            )));
+        }
+        let target_col_idx = table_dat
+            .column_set
+            .columns
+            .iter()
+            .filter(|entry| entry.dm_seq_nr == dm_seq_nr)
+            .position(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data-manager column binding"
+                ))
+            })?;
+        read_metadata.shape_cell_is_defined(dm_seq_nr, target_col_idx, row_index)
+    }
+
     fn load_plain_array_column_rows_2d_channel_range_typed(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
         request: SelectedArray2DChannelRead<'_>,
     ) -> Result<Option<SelectedArray2DCells>, StorageError> {
         let column = request.column;
@@ -2925,6 +3258,7 @@ impl CompositeStorage {
         match dm.type_name.as_str() {
             "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_2d_channel_range_typed(
                 table_path,
+                read_metadata,
                 dm,
                 &table_dat.table_desc.columns,
                 &bound_cols,
@@ -2940,10 +3274,92 @@ impl CompositeStorage {
         }
     }
 
+    fn fill_plain_array_column_rows_2d_channel_range_typed(
+        &self,
+        table_path: &Path,
+        table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        request: SelectedArray2DChannelRead<'_>,
+        destination: SelectedArray2DCellsMut<'_>,
+    ) -> Result<Option<SelectedArray2DShape>, StorageError> {
+        let column = request.column;
+        let desc_idx = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .position(|desc| desc.col_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("array column '{column}' not found"))
+            })?;
+        let col_desc = &table_dat.table_desc.columns[desc_idx];
+        if !col_desc.is_array {
+            return Err(StorageError::FormatMismatch(format!(
+                "column '{column}' is not an array column"
+            )));
+        }
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D channel reads do not support virtual columns in table containing '{column}'"
+            )));
+        }
+        let dm_seq_nr = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing ColumnSet binding"
+                ))
+            })?
+            .dm_seq_nr;
+        let dm = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data manager {dm_seq_nr}"
+                ))
+            })?;
+        let bound_cols: Vec<(usize, &_)> = table_dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+            .collect();
+        match dm.type_name.as_str() {
+            "TiledShapeStMan" => tiled_stman::fill_tiled_column_rows_2d_channel_range_typed(
+                table_path,
+                read_metadata,
+                dm,
+                &table_dat.table_desc.columns,
+                &bound_cols,
+                desc_idx,
+                request.selected_rows,
+                request.channel_start,
+                request.channel_count,
+                destination,
+            ),
+            other => Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D channel reads for column '{}' require TiledShapeStMan, found {other}",
+                request.column
+            ))),
+        }
+    }
+
     fn load_plain_array_column_rows_1d_typed(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
         request: SelectedArray1DRead<'_>,
     ) -> Result<SelectedArray1DCells, StorageError> {
         let column = request.column;
@@ -3005,6 +3421,7 @@ impl CompositeStorage {
         match dm.type_name.as_str() {
             "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_1d_typed(
                 table_path,
+                read_metadata,
                 dm,
                 &table_dat.table_desc.columns,
                 &bound_cols,
@@ -3018,10 +3435,89 @@ impl CompositeStorage {
         }
     }
 
-    fn load_plain_table_metadata(
+    fn fill_plain_array_column_rows_1d_typed(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
+        read_metadata: &TiledReadMetadata,
+        request: SelectedArray1DRead<'_>,
+        destination: SelectedArray1DCellsMut<'_>,
+    ) -> Result<SelectedArray1DShape, StorageError> {
+        let column = request.column;
+        let desc_idx = table_dat
+            .table_desc
+            .columns
+            .iter()
+            .position(|desc| desc.col_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!("array column '{column}' not found"))
+            })?;
+        let col_desc = &table_dat.table_desc.columns[desc_idx];
+        if !col_desc.is_array {
+            return Err(StorageError::FormatMismatch(format!(
+                "column '{column}' is not an array column"
+            )));
+        }
+        if table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .any(|dm| is_virtual_engine(&dm.type_name))
+        {
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 1-D reads do not support virtual columns in table containing '{column}'"
+            )));
+        }
+        let dm_seq_nr = table_dat
+            .column_set
+            .columns
+            .iter()
+            .find(|entry| entry.original_name == column)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing ColumnSet binding"
+                ))
+            })?
+            .dm_seq_nr;
+        let dm = table_dat
+            .column_set
+            .data_managers
+            .iter()
+            .find(|dm| dm.seq_nr == dm_seq_nr)
+            .ok_or_else(|| {
+                StorageError::FormatMismatch(format!(
+                    "array column '{column}' missing data manager {dm_seq_nr}"
+                ))
+            })?;
+        let bound_cols: Vec<(usize, &_)> = table_dat
+            .column_set
+            .columns
+            .iter()
+            .enumerate()
+            .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
+            .collect();
+        match dm.type_name.as_str() {
+            "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::fill_tiled_column_rows_1d_typed(
+                table_path,
+                read_metadata,
+                dm,
+                &table_dat.table_desc.columns,
+                &bound_cols,
+                desc_idx,
+                request.selected_rows,
+                destination,
+            ),
+            other => Err(StorageError::FormatMismatch(format!(
+                "typed selected 1-D reads for column '{}' require TiledColumnStMan or TiledShapeStMan, found {other}",
+                request.column
+            ))),
+        }
+    }
+
+    fn load_plain_table_metadata(
+        &self,
+        table_path: &Path,
+        table_dat: TableDatContents,
     ) -> Result<StorageSnapshot, StorageError> {
         let schema = table_dat.to_table_schema()?;
         let keywords = table_dat.table_desc.table_keywords.clone();
@@ -3045,8 +3541,12 @@ impl CompositeStorage {
             }
         }
 
+        let row_count = table_dat.nrrow.max(table_dat.column_set.nrrow) as usize;
+        let dm_info = extract_dm_info(&table_dat);
+        let retained_read_metadata = Some(RetainedTableReadMetadata::open(table_path, table_dat)?);
+
         Ok(StorageSnapshot {
-            row_count: table_dat.nrrow.max(table_dat.column_set.nrrow) as usize,
+            row_count,
             rows: Vec::new(),
             undefined_cells: Vec::new(),
             keywords,
@@ -3055,7 +3555,8 @@ impl CompositeStorage {
             table_info: load_table_info(table_path),
             virtual_columns,
             virtual_bindings: Vec::new(),
-            dm_info: extract_dm_info(table_dat),
+            dm_info,
+            retained_read_metadata,
         })
     }
 
@@ -3159,6 +3660,7 @@ impl CompositeStorage {
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: vec![],
+            retained_read_metadata: None,
         })
     }
 
@@ -3219,6 +3721,7 @@ impl CompositeStorage {
             virtual_columns: HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: vec![],
+            retained_read_metadata: None,
         })
     }
 

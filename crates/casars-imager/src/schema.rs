@@ -65,6 +65,28 @@ mod tests {
         };
         assert!(choices.contains(&"modelcolumn".to_string()));
 
+        let save_continuum_residual = schema
+            .arguments
+            .iter()
+            .find(|argument| argument.id == "save_continuum_residual")
+            .expect("save_continuum_residual argument");
+        assert_eq!(save_continuum_residual.default.as_deref(), Some("false"));
+        assert!(matches!(
+            save_continuum_residual.value_kind,
+            UiValueKind::Bool
+        ));
+        let UiArgumentParser::Toggle { true_flags, .. } = &save_continuum_residual.parser else {
+            panic!("save_continuum_residual should use a toggle parser");
+        };
+        assert!(true_flags.contains(&"--save-continuum-residual".to_string()));
+        assert!(
+            save_continuum_residual
+                .help
+                .contains("existing CORRECTED_DATA")
+        );
+        assert!(save_continuum_residual.help.contains("in place"));
+        assert!(schema.render_help().contains("--save-continuum-residual"));
+
         let startmodel = schema
             .arguments
             .iter()
@@ -92,7 +114,7 @@ mod tests {
             .iter()
             .find(|argument| argument.id == "standard_mfs_acceleration")
             .expect("standard_mfs_acceleration argument");
-        assert_eq!(standard_mfs_acceleration.default.as_deref(), Some("auto"));
+        assert_eq!(standard_mfs_acceleration.default.as_deref(), Some("cpu"));
         assert!(standard_mfs_acceleration.advanced);
         let UiArgumentParser::Option { flags, choices, .. } = &standard_mfs_acceleration.parser
         else {
@@ -140,7 +162,7 @@ mod tests {
         assert_eq!(default_for("chanchunks"), "none");
         assert_eq!(default_for("parallel"), "none");
         assert_eq!(default_for("imaging_read_ahead_blocks"), "none");
-        assert_eq!(default_for("imaging_fft_backend"), "auto");
+        assert_eq!(default_for("imaging_fft_backend"), "rustfft");
         assert_eq!(default_for("imaging_memory_target_mb"), "none");
         assert_eq!(default_for("imaging_memory_pressure_policy"), "auto");
         for id in [
@@ -173,8 +195,6 @@ mod tests {
                 "conservative-no-swap".to_string(),
                 "aggressive".to_string(),
                 "oversubscribe".to_string(),
-                "stage-aware".to_string(),
-                "hybrid".to_string(),
             ]
         );
         assert!(

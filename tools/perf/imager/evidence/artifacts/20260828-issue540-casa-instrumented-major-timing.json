@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "record_kind": "issue540_exact_casa_instrumented_major_timing",
+  "truth_class": "recorded_observation",
+  "work_issue": 540,
+  "casa": {
+    "version": "6.7.6.14",
+    "source_revision": "9c42dc103aeed74a4a1af2d42f8ef00dfee4abd2",
+    "casacore_revision": "aaf72eb7edd5a5fecefa78ca04713233b7b6ffd6",
+    "instrumented_synthesis_sha256": "03d33464377ff7b221915f0b61086b630ae1ee13cdd2ce0461590a50b6ee41f9",
+    "built_synthesis_sha256": "4cf8685206d31c23a687e4f6e184f381eee14dfcdbcba1430f944a8f5e35f9aa",
+    "runtime": "isolated source-built Python 3.12 casatools and casatasks",
+    "absolute_timing_comparability": "The source-built runtime is 14.84 percent faster than the frozen official CASA.app anchor, so the official 688.996833-second run remains the absolute pass/fail anchor. This run supplies stage attribution and convergence counts."
+  },
+  "workload": {
+    "id": "wave3-standard-mfs-single-term-heavy-wave2-serial",
+    "dataset": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+    "rows_per_ms_pass": 4094064,
+    "channels": 64,
+    "image_pixels": [1024, 1024],
+    "weighting": "briggs",
+    "robust": 0.5,
+    "deconvolver": "hogbom",
+    "niter": 500,
+    "cycleniter": 50,
+    "nmajor": -1,
+    "workers": 1,
+    "parallel": false,
+    "savemodel": "none",
+    "readonly_ms": true
+  },
+  "observer_gate": {
+    "geometry": "same full MS, all 64 channels, 1024 pixels; niter=1 and nmajor=1 only for turnaround",
+    "trace_off_before_seconds": 133.343391,
+    "trace_on_seconds": 132.328566,
+    "trace_off_after_seconds": 131.461036,
+    "trace_off_mean_seconds": 132.4022135,
+    "trace_relative_to_off_mean_percent": -0.05562407006135528,
+    "status": "pass_below_run_noise"
+  },
+  "full_run": {
+    "wall_seconds": 586.779085,
+    "frozen_official_casa_app_wall_seconds": 688.996833,
+    "minor_cycles": 10,
+    "iterations": 500,
+    "science_major_cycles_excluding_psf": 11,
+    "traced_major_invocations_including_psf": 12,
+    "stage_seconds": {
+      "parameter_setup": 0.000155,
+      "initialize_imagers": 2.512348,
+      "select_data": 1.500598,
+      "define_image": 1.01165,
+      "set_weighting": 9.680101,
+      "make_psf": 32.446149,
+      "make_pb": 1.329252,
+      "initial_residual_major": 34.827264,
+      "ten_minor_cycles": 0.849224,
+      "ten_later_major_cycles": 504.9252,
+      "convergence_checks": 0.159652,
+      "restore_images": 0.030323
+    },
+    "later_major_mean_seconds": {
+      "total": 50.48455366,
+      "degrid": 17.60140702,
+      "grid": 31.09132028,
+      "paired_degrid_grid": 48.6927273,
+      "remaining_control_validation_finalize": 1.79182636
+    },
+    "cycle_thresholds": [
+      6.082977771759033,
+      3.4336912631988525,
+      2.6511383056640625,
+      2.1784310340881348,
+      1.8631068468093872,
+      1.611828327178955,
+      1.4272689819335938,
+      1.2705292701721191,
+      1.1417291164398193,
+      1.0333644151687622
+    ]
+  },
+  "major_invocations_seconds": [
+    {"cycle": 1, "dopsf": true, "total": 32.4305276, "degrid": 0.0, "grid": 30.7866742},
+    {"cycle": 2, "dopsf": false, "total": 34.812296, "degrid": 0.000178195, "grid": 33.0634774},
+    {"cycle": 3, "dopsf": false, "total": 50.5406488, "degrid": 17.6188691, "grid": 31.0957987},
+    {"cycle": 4, "dopsf": false, "total": 50.4281139, "degrid": 17.5595221, "grid": 31.0928532},
+    {"cycle": 5, "dopsf": false, "total": 50.437032, "degrid": 17.5969023, "grid": 31.0592367},
+    {"cycle": 6, "dopsf": false, "total": 50.6089034, "degrid": 17.6604511, "grid": 31.1529438},
+    {"cycle": 7, "dopsf": false, "total": 50.5380868, "degrid": 17.6125277, "grid": 31.122756},
+    {"cycle": 8, "dopsf": false, "total": 50.4664196, "degrid": 17.5968401, "grid": 31.0792684},
+    {"cycle": 9, "dopsf": false, "total": 50.452696, "degrid": 17.5941231, "grid": 31.0732483},
+    {"cycle": 10, "dopsf": false, "total": 50.502413, "degrid": 17.6055196, "grid": 31.1051898},
+    {"cycle": 11, "dopsf": false, "total": 50.3999424, "degrid": 17.5767576, "grid": 31.0454082},
+    {"cycle": 12, "dopsf": false, "total": 50.4712807, "degrid": 17.5925575, "grid": 31.0864997}
+  ],
+  "lock_recovery": {
+    "cause": "stale unheld MAIN table.lock persisted a one-entry data-manager-change vector for a table with eight managers",
+    "action": "moved the 325-byte lock to a named backup, allowed casacore to generate a 260-byte lock for CASA, then restored the original casa-rs-compatible lock after the CASA run",
+    "science_data_changed": false,
+    "casa_generated_lock_backup": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/issue540-casa-instrumented/instrumented-casa-wave1-table.lock"
+  }
+}

@@ -28,37 +28,6 @@ impl Table {
             return Self::open(options);
         }
 
-        crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(&options.path);
-        let storage = CompositeStorage;
-        let row_hint = crate::lock::read_sync_data_from_table_dir(&options.path)
-            .map_err(|e| TableError::LockIo {
-                path: options.path.display().to_string(),
-                message: e.to_string(),
-            })?
-            .map(|sync| sync.nrrow);
-        let snapshot = storage.load_with_row_hint(&options.path, row_hint)?;
-        let info = snapshot.table_info;
-        let mut table = Self {
-            inner: TableImpl::with_rows_keywords_and_schema(
-                snapshot.rows,
-                snapshot.undefined_cells,
-                snapshot.keywords,
-                snapshot.column_keywords,
-                snapshot.schema,
-            ),
-            source_path: Some(options.path.clone()),
-            kind: TableKind::Plain,
-            virtual_columns: snapshot.virtual_columns,
-            virtual_bindings: Vec::new(),
-            table_info: info,
-            dm_info: snapshot.dm_info,
-            external_sync: None,
-            measures: None,
-            marked_for_delete: false,
-            lock_state: None,
-        };
-        table.validate()?;
-
         let perm = matches!(
             lock_opts.mode,
             LockMode::PermanentLocking | LockMode::PermanentLockingWait
@@ -101,13 +70,31 @@ impl Table {
                 }
             }
             LockMode::AutoLocking | LockMode::DefaultLocking => {
-                let _ = lock_file.acquire(LockType::Read, 1);
+                if !lock_file
+                    .acquire(LockType::Read, 1)
+                    .map_err(|e| TableError::LockIo {
+                        path: options.path.display().to_string(),
+                        message: e.to_string(),
+                    })?
+                {
+                    return Err(TableError::LockFailed {
+                        path: options.path.display().to_string(),
+                        message: "could not acquire retained read lock".into(),
+                    });
+                }
             }
             LockMode::AutoNoReadLocking => {
                 // Skip read lock on open — only write locks are acquired.
             }
             LockMode::UserLocking | LockMode::UserNoReadLocking | LockMode::NoLocking => {}
         }
+
+        // Metadata must be read only after the initial lock is acquired. A
+        // writer may publish a new table generation while this opener waits;
+        // opening first would retain the stale pre-publication descriptor.
+        // Ordinary open remains lazy, so retained readers do not materialize
+        // row payloads here.
+        let mut table = Self::open(options.clone())?;
 
         // Read sync data if available.
         let sync_data = lock_file
@@ -228,6 +215,21 @@ impl Table {
     /// C++ equivalent: `Table::unlock()`.
     #[cfg(unix)]
     pub fn unlock(&mut self) -> Result<(), TableError> {
+        self.unlock_with_metadata_only_flush(false)
+    }
+
+    /// Releases the current lock after flushing only table metadata.
+    ///
+    /// This preserves the existing on-disk data-manager layout and must only
+    /// be used when the locked mutation changed table or column metadata, not
+    /// row values.
+    #[cfg(unix)]
+    pub fn unlock_metadata_only(&mut self) -> Result<(), TableError> {
+        self.unlock_with_metadata_only_flush(true)
+    }
+
+    #[cfg(unix)]
+    fn unlock_with_metadata_only_flush(&mut self, metadata_only: bool) -> Result<(), TableError> {
         // Memory tables have no lock to release.
         // C++ equivalent: MemoryTable::unlock() is a no-op.
         if self.kind == TableKind::Memory {
@@ -257,7 +259,11 @@ impl Table {
 
         // If write-locked, flush data to disk.
         if is_write_locked {
-            self.save(save_opts)?;
+            if metadata_only {
+                self.save_metadata_only(save_opts)?;
+            } else {
+                self.save(save_opts)?;
+            }
 
             // Gather sync info from immutable borrows.
             let nrrow = self.row_count() as u64;
@@ -306,6 +312,27 @@ impl Table {
             .as_ref()
             .map(|s| s.lock_file.has_lock(lock_type))
             .unwrap_or(false)
+    }
+
+    /// Return the casacore-compatible modification counter observed by this lock.
+    ///
+    /// The value is meaningful only while this table retains a read or write
+    /// lock. It is the durable counter used by table locking to decide whether
+    /// an already-open table must be reloaded after another writer commits.
+    #[cfg(unix)]
+    pub fn locked_modify_counter(&self) -> Result<u32, TableError> {
+        let state = self
+            .lock_state
+            .as_ref()
+            .ok_or_else(|| TableError::NotLocked {
+                operation: "locked_modify_counter".into(),
+            })?;
+        if !state.lock_file.has_lock(LockType::Read) {
+            return Err(TableError::NotLocked {
+                operation: "locked_modify_counter".into(),
+            });
+        }
+        Ok(state.sync_data.modify_counter)
     }
 
     /// Tests if the table is opened by another process.

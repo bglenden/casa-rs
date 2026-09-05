@@ -44,11 +44,14 @@ explicit work or signoff points. In particular:
   invoked from the TUI and the generic Swift task panel. The Swift store blocks
   these mutating tasks until the user explicitly confirms the mutation/product
   write.
-- `split`, `plotms`, `imhead`, `imstat`, `uvcontsub`, `gencal`, `gaincal`,
+- `split`, `plotms`, `imhead`, `imstat`, `gencal`, `gaincal`,
   `bandpass`, `fluxscale`, and `applycal` are first-class shared-catalog tasks.
   Their schemas are projected from the underlying provider binaries with hidden
   defaults or subcommands where needed, so the GUI and TUI expose task-shaped
   parameters instead of the broader provider surface.
+- Visibility-domain continuum subtraction is an inline `imager` transform,
+  selected with `fitspw` and `fitorder`; it is not a second standalone task or
+  calibration-owned algorithm.
 - `imcollapse`, `imfit`, `impbcor`, `widebandpbcor`, `concat`, `statwt`,
   `hanningsmooth`, `clearcal`, `delmod`, `ft`, `imcontsub`, `simanalyze`, and
   `simalma` are shared-catalog tasks backed by the local CASA `casatasks`

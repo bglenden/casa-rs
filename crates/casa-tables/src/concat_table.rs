@@ -293,6 +293,7 @@ impl ConcatTable {
             virtual_columns: std::collections::HashSet::new(),
             virtual_bindings: Vec::new(),
             dm_info: vec![],
+            retained_read_metadata: None,
         };
 
         let storage = CompositeStorage;

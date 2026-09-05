@@ -85,14 +85,14 @@ mod tests {
     #[test]
     fn builtins_cover_exact_current_configurable_catalog() {
         let catalog = builtin_surface_catalog().expect("valid built-in parameter catalog");
-        assert_eq!(catalog.surfaces.len(), 42);
+        assert_eq!(catalog.surfaces.len(), 41);
         assert_eq!(
             catalog
                 .surfaces
                 .iter()
                 .filter(|surface| surface.kind() == SurfaceKind::Task)
                 .count(),
-            40
+            39
         );
         assert_eq!(
             catalog
@@ -224,7 +224,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             surfaces.len(),
-            23,
+            22,
             "update the safety inventory intentionally"
         );
         for (surface, binding) in surfaces {
@@ -352,10 +352,34 @@ mod tests {
     }
 
     #[test]
-    fn imager_vlass_controls_share_one_catalog_owned_awproject_surface() {
+    fn imager_wide_field_controls_share_one_catalog_owned_surface() {
         let catalog = builtin_surface_catalog().unwrap();
         let surface = catalog.surface("imager").unwrap();
-        assert_eq!(surface.contract_version(), 7);
+        assert_eq!(surface.contract_version(), 15);
+        assert_eq!(surface.bindings().len(), 94);
+        for binding in surface.bindings() {
+            let concept = catalog
+                .catalog
+                .concept(&binding.concept)
+                .unwrap_or_else(|| panic!("missing imager concept for {}", binding.name));
+            assert!(!concept.casa_name.is_empty(), "{}.casa_name", binding.name);
+            assert!(
+                !concept.documentation.summary.is_empty(),
+                "{}.documentation",
+                binding.name
+            );
+            assert!(binding.projections.cli.is_some(), "{}.cli", binding.name);
+            assert!(
+                binding.projections.provider.is_some(),
+                "{}.provider",
+                binding.name
+            );
+            assert!(
+                binding.projections.python.is_some(),
+                "{}.python",
+                binding.name
+            );
+        }
         let memory_target = catalog
             .catalog
             .concepts
@@ -371,7 +395,6 @@ mod tests {
         for name in [
             "cfcache",
             "cf_resident_mb",
-            "facets",
             "psfphasecenter",
             "vptable",
             "aterm",
@@ -382,7 +405,6 @@ mod tests {
             "rotatepastep",
             "pointingoffsetsigdev",
             "mosweight",
-            "normtype",
         ] {
             let binding = surface
                 .bindings()
@@ -398,6 +420,63 @@ mod tests {
             assert!(binding.projections.cli.is_some(), "{name}");
             assert!(binding.projections.python.is_some(), "{name}");
         }
+
+        let normtype = surface
+            .bindings()
+            .iter()
+            .find(|binding| binding.name == "normtype")
+            .expect("missing imager normalization binding");
+        assert_eq!(
+            normtype.active_when,
+            Predicate::Any {
+                predicates: vec![
+                    awproject.clone(),
+                    Predicate::Equals {
+                        parameter: "gridder".to_string(),
+                        value: ParameterValue::String("mosaic".to_string()),
+                    },
+                ],
+            }
+        );
+
+        let facet_concepts = catalog
+            .catalog
+            .concepts
+            .iter()
+            .filter(|concept| concept.id.as_str() == "parameter.facets")
+            .collect::<Vec<_>>();
+        assert_eq!(facet_concepts.len(), 1, "one canonical facets concept");
+        assert_eq!(facet_concepts[0].semantic_revision, SemanticRevision(2));
+        let facet_bindings = surface
+            .bindings()
+            .iter()
+            .filter(|binding| binding.name == "facets")
+            .collect::<Vec<_>>();
+        assert_eq!(facet_bindings.len(), 1, "one canonical facets binding");
+        let facets = facet_bindings[0];
+        assert_eq!(
+            facets.active_when,
+            Predicate::Any {
+                predicates: vec![
+                    Predicate::Equals {
+                        parameter: "gridder".to_string(),
+                        value: ParameterValue::String("widefield".to_string()),
+                    },
+                    awproject.clone(),
+                ],
+            }
+        );
+        assert_eq!(facets.concept.semantic_revision, SemanticRevision(2));
+        assert_eq!(
+            facets.default,
+            crate::DefaultSpec::Literal {
+                value: ParameterValue::Integer(1),
+            }
+        );
+        assert_eq!(facets.projections.presentation.group, "Advanced Wide-Field");
+        assert!(facets.projections.presentation.advanced);
+        assert!(facets.projections.cli.is_some());
+        assert!(facets.projections.python.is_some());
 
         let usepointing = surface
             .bindings()
@@ -426,7 +505,18 @@ mod tests {
             .find(|binding| binding.name == "stokes")
             .unwrap();
         assert_eq!(stokes.concept.id.as_str(), "image.selection.stokes");
-        assert_eq!(stokes.aliases, ["polarization"]);
+        assert!(stokes.aliases.is_empty());
+        assert!(
+            surface
+                .bindings()
+                .iter()
+                .all(|binding| binding.aliases.is_empty()),
+            "current imager profiles expose canonical names only"
+        );
+        assert!(
+            surface.migrations().is_empty(),
+            "current imager profiles retain no migration reader"
+        );
 
         for name in [
             "imaging_memory_target_mb",
@@ -466,21 +556,13 @@ mod tests {
             .iter()
             .find(|binding| binding.name == "imaging_memory_pressure_policy")
             .expect("imaging memory policy binding");
-        assert!(
-            memory_policy
-                .surface_note
-                .as_deref()
-                .is_some_and(|note| note.contains("planner-probe-only"))
-        );
-        let migration = surface
-            .migrations()
-            .iter()
-            .find(|migration| migration.from_contract == 6)
-            .expect("imager contract 6 to 7 migration");
-        assert_eq!(
-            migration.changed_defaults,
-            vec!["imaging_memory_pressure_policy".to_string()]
-        );
+        let memory_policy_note = memory_policy
+            .surface_note
+            .as_deref()
+            .expect("memory policy note");
+        assert!(memory_policy_note.contains("oversubscribe"));
+        assert!(!memory_policy_note.contains("stage-aware"));
+        assert!(!memory_policy_note.contains("hybrid"));
     }
 
     #[test]
@@ -537,7 +619,6 @@ mod tests {
                     "fluxscale",
                     "gaincal",
                     "gencal",
-                    "uvcontsub",
                 ][..],
                 "output",
                 "calibration.report.output",

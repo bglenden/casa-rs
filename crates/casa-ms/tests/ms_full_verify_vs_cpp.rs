@@ -18,10 +18,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
+use casa_imaging_model::{
+    AntennaSelection, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, IdSelection, IntentSelection, LogicalIdentity, ModelStateIdentity,
+    MsColumnKind, ObservationSelection, RowSelection, SelectedMainRow, SelectedRows,
+    SpectralWindowSelection, TimeSelection, UvSelection, VisibilityColumn, WeightColumn,
+};
 use casa_ms::OptionalMainColumn;
 use casa_ms::SubTable;
 use casa_ms::builder::MeasurementSetBuilder;
 use casa_ms::ms::MeasurementSet;
+use casa_ms::{
+    SelectedObservationContentBudget, SelectedObservationResolutionRequest,
+    SelectedVisibilityWrite, SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
+    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+};
 use casa_tables::{ColumnType, Table};
 use casa_test_support::casacore_oracle_available;
 use casa_test_support::ms_interop::MeasurementSetOracle;
@@ -973,6 +984,26 @@ fn digest_measurement_set_manifest(ms: &MeasurementSet) -> String {
     out
 }
 
+fn rust_model_data_sample(
+    path: &Path,
+    row: usize,
+    correlation: usize,
+    channel: usize,
+) -> casa_types::Complex32 {
+    let measurement_set = MeasurementSet::open(path).expect("open MODEL_DATA probe in Rust");
+    let value = measurement_set
+        .main_table()
+        .column_accessor("MODEL_DATA")
+        .expect("MODEL_DATA accessor")
+        .get(row)
+        .expect("read MODEL_DATA cell")
+        .expect("defined MODEL_DATA cell");
+    let Value::Array(ArrayValue::Complex32(values)) = value else {
+        panic!("MODEL_DATA is not Complex32")
+    };
+    values[[correlation, channel]]
+}
+
 #[test]
 fn ms_full_manifest_matches_cpp_for_basic_fixture() {
     if !casacore_oracle_available() {
@@ -995,6 +1026,224 @@ fn ms_full_manifest_matches_cpp_for_basic_fixture() {
     let rust_manifest = digest_measurement_set_manifest(&ms);
     let cpp_manifest = MeasurementSetOracle::digest_manifest(&ms_path).unwrap();
     assert_eq!(rust_manifest, cpp_manifest);
+}
+
+#[test]
+fn model_data_write_read_interoperability_matrix() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping model_data_write_read_interoperability_matrix: C++ casacore not available"
+        );
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let ms_path = dir.path().join("model_data_commit.ms");
+    let builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
+    let mut ms = MeasurementSet::create(&ms_path, builder).unwrap();
+    populate_subtables(&mut ms);
+    populate_main_rows(&mut ms, 6);
+    ms.save().unwrap();
+    initialize_measurement_set_owner_manifest(&ms_path).expect("initialize owner manifest");
+
+    let selection = ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(
+            6,
+            (0_u32..6).map(|row| SelectedMainRow::new(u64::from(row), 0)),
+        )
+        .unwrap(),
+        RowSelection::new(
+            IdSelection::All,
+            TimeSelection::All,
+            UvSelection::All,
+            AntennaSelection::All,
+            IdSelection::All,
+            IdSelection::All,
+            IntentSelection::All,
+            IdSelection::All,
+        ),
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(0, (0..16).collect())],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularRl),
+                CorrelationProduct::new(2, CorrelationType::CircularLr),
+                CorrelationProduct::new(3, CorrelationType::CircularLl),
+            ],
+        )],
+    );
+    let model_selection = selection.clone();
+    let request = SelectedObservationResolutionRequest::new(
+        ms_path.display().to_string(),
+        LogicalIdentity::from_sha256([2; 32]),
+        selection,
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(1 << 20, 6, 64),
+        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+    );
+    let resolved = resolve_selected_observation(request).expect("resolve owner state");
+    let (_, access) = resolved.into_parts();
+    let mut writer = SelectedVisibilityWrite::begin(
+        &ms_path,
+        access.source_state(),
+        &model_selection,
+        SelectedVisibilityWriteTargets::new(true, false),
+    )
+    .expect("begin MODEL_DATA write");
+    let rust_written = casa_types::Complex32::new(4.5, -1.25);
+    writer
+        .write(MsColumnKind::ModelData, 0, 0, 0, rust_written)
+        .expect("write prediction");
+    writer
+        .complete(SelectedVisibilityWriteGenerations {
+            model_data: Some(LogicalIdentity::from_sha256([73; 32])),
+            corrected_data: None,
+        })
+        .expect("complete MODEL_DATA write");
+
+    let reopened = MeasurementSet::open(&ms_path).expect("reopen committed MS in Rust");
+    let rust_manifest = digest_measurement_set_manifest(&reopened);
+    let cpp_manifest = MeasurementSetOracle::digest_manifest(&ms_path).unwrap();
+    assert_eq!(rust_manifest, cpp_manifest);
+    assert_eq!(rust_model_data_sample(&ms_path, 0, 0, 0), rust_written); // Rust write, Rust read.
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&ms_path, 0, 0, 0)
+            .expect("Rust write, C++ read"),
+        rust_written
+    );
+
+    let cpp_path = dir.path().join("cpp_model_data_write.ms");
+    let builder = MeasurementSetBuilder::new()
+        .with_main_column(OptionalMainColumn::Data)
+        .with_main_column(OptionalMainColumn::ModelData);
+    let mut cpp_written_ms = MeasurementSet::create(&cpp_path, builder).unwrap();
+    populate_subtables(&mut cpp_written_ms);
+    populate_main_rows(&mut cpp_written_ms, 6);
+    cpp_written_ms.save().unwrap();
+    drop(cpp_written_ms);
+    let cpp_written = casa_types::Complex32::new(-7.25, 3.5);
+    MeasurementSetOracle::write_model_data_sample(&cpp_path, 1, 0, 0, cpp_written)
+        .expect("C++ MODEL_DATA write");
+    assert_eq!(rust_model_data_sample(&cpp_path, 1, 0, 0), cpp_written); // C++ write, Rust read.
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&cpp_path, 1, 0, 0)
+            .expect("C++ write, C++ read"),
+        cpp_written
+    );
+}
+
+#[test]
+fn model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage() {
+    if !casacore_oracle_available() {
+        eprintln!(
+            "skipping model_data_clone_preserves_cpp_heterogeneous_tiled_shape_storage: C++ casacore not available"
+        );
+        return;
+    }
+
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let path = directory.path().join("cpp-heterogeneous-tiled-shape.ms");
+    MeasurementSetOracle::write_heterogeneous_tiled_shape_fixture(&path)
+        .expect("C++ creates heterogeneous TiledShapeStMan fixture");
+    initialize_measurement_set_owner_manifest(&path).expect("initialize owner manifest");
+    let selection = ObservationSelection::new(
+        SelectedRows::from_ordered_main_rows(
+            2,
+            [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 1)],
+        )
+        .expect("two heterogeneous rows"),
+        RowSelection::new(
+            IdSelection::All,
+            TimeSelection::All,
+            UvSelection::All,
+            AntennaSelection::All,
+            IdSelection::All,
+            IdSelection::All,
+            IntentSelection::All,
+            IdSelection::All,
+        ),
+        vec![
+            DataDescriptionSelection::new(0, 0, 0),
+            DataDescriptionSelection::new(1, 1, 0),
+        ],
+        vec![
+            SpectralWindowSelection::new(0, (0..16).collect()),
+            SpectralWindowSelection::new(1, (0..8).collect()),
+        ],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularRl),
+                CorrelationProduct::new(2, CorrelationType::CircularLr),
+                CorrelationProduct::new(3, CorrelationType::CircularLl),
+            ],
+        )],
+    );
+    let request = SelectedObservationResolutionRequest::new(
+        path.display().to_string(),
+        LogicalIdentity::from_sha256([82; 32]),
+        selection.clone(),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(1 << 20, 2, 64),
+        casa_test_support::deterministic_measures_provider_for_identity([91; 32]),
+    );
+    let resolved = resolve_selected_observation(request).expect("resolve C++ fixture");
+    let (_, access) = resolved.into_parts();
+    let storage = access
+        .selected_visibility_storage_plan(SelectedVisibilityWriteTargets::new(true, false))
+        .expect("MODEL_DATA storage plan");
+    assert_eq!(storage.additional_persistent_bytes(), 768);
+    assert_eq!(storage.maximum_cell_bytes(), 512);
+    assert_eq!(storage.write_buffer_bytes(), 1_024);
+
+    let mut writer = SelectedVisibilityWrite::begin(
+        &path,
+        access.source_state(),
+        &selection,
+        SelectedVisibilityWriteTargets::new(true, false),
+    )
+    .expect("clone and initialize MODEL_DATA");
+    let rust_first = casa_types::Complex32::new(4.25, -0.75);
+    let rust_second = casa_types::Complex32::new(-3.0, 2.5);
+    writer
+        .write(MsColumnKind::ModelData, 0, 15, 3, rust_first)
+        .expect("write 4x16 cell");
+    writer
+        .write(MsColumnKind::ModelData, 1, 7, 2, rust_second)
+        .expect("write 4x8 cell");
+    writer
+        .complete(SelectedVisibilityWriteGenerations {
+            model_data: Some(LogicalIdentity::from_sha256([83; 32])),
+            corrected_data: None,
+        })
+        .expect("complete Rust write");
+
+    MeasurementSetOracle::verify_heterogeneous_model_clone(&path)
+        .expect("C++ verifies cloned TiledShapeStMan and heterogeneous row shapes");
+    assert_eq!(rust_model_data_sample(&path, 0, 3, 15), rust_first);
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&path, 0, 3, 15)
+            .expect("Rust write, C++ read"),
+        rust_first
+    );
+
+    let cpp_written = casa_types::Complex32::new(9.5, 1.25);
+    MeasurementSetOracle::write_model_data_sample(&path, 1, 1, 6, cpp_written)
+        .expect("C++ writes heterogeneous MODEL_DATA cell");
+    assert_eq!(rust_model_data_sample(&path, 1, 1, 6), cpp_written);
+    assert_eq!(
+        MeasurementSetOracle::read_model_data_sample(&path, 1, 1, 6).expect("C++ write, C++ read"),
+        cpp_written
+    );
 }
 
 /// Run a whole-MS Rust↔C++ parity check against an external MeasurementSet.

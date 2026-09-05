@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import datetime as dt
+import hashlib
+import json
 import os
 import pathlib
 import re
@@ -72,7 +74,7 @@ SUPPORTED_HOGBOM_ITERATION_MODES = {
 }
 SUPPORTED_MS_STAGING = {"copy", "direct"}
 SUPPORTED_BOOLEAN_FLAGS = {"0", "1", "false", "true", "no", "yes", "off", "on"}
-STRING_IMAGING_OVERRIDE_KEYS = {"start", "width"}
+STRING_IMAGING_OVERRIDE_KEYS = {"mask_box", "start", "width"}
 DEFAULT_COMPARISON_PRODUCTS = [".image", ".residual", ".psf"]
 STRUCTURED_DIFFERENCE_REVIEW_LEGEND = {
     "good": "No review action expected from this check.",
@@ -412,6 +414,9 @@ def apply_imaging_overrides(manifest: dict[str, Any], overrides: list[str]) -> N
         key, value = override.split("=", 1)
         if not key:
             raise HarnessError("--set-imaging key must not be empty")
+        if key == "mask_box" and value.strip().lower() in {"null", "none"}:
+            imaging.pop(key, None)
+            continue
         imaging[key] = parse_override_value(key, value)
 
 
@@ -563,8 +568,13 @@ def build_plan(
         "IMAGER_BENCH_SPECMODE": specmode,
         "IMAGER_BENCH_GRIDDER": gridder,
         "IMAGER_BENCH_CASA_GRIDDER": casa_gridder,
+        "IMAGER_BENCH_FACETS": str(int_value(imaging, "facets", 1)),
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
+        "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
+        "IMAGER_BENCH_USEPOINTING": boolean_env_value(
+            imaging, "usepointing", gridder == "mosaic"
+        ),
         "IMAGER_BENCH_PHASECENTER_FIELD": optional_int_string(
             imaging, "phasecenter_field"
         ),
@@ -583,6 +593,23 @@ def build_plan(
             specmode in {"cube", "cubedata"},
         ),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
+        "IMAGER_BENCH_USEMASK": str_value(imaging, "usemask", "user"),
+        "IMAGER_BENCH_MASK_BOX": str_value(imaging, "mask_box", ""),
+        "IMAGER_BENCH_SAVEMODEL": str_value(imaging, "savemodel", "none"),
+        "IMAGER_BENCH_FITSPW": str_value(imaging, "fitspw", ""),
+        "IMAGER_BENCH_FITORDER": str(int_value(imaging, "fitorder", 0)),
+        "IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL": boolean_env_value(
+            imaging, "save_continuum_residual", False
+        ),
+        "IMAGER_BENCH_SIDELOBETHRESHOLD": str(
+            float_value(imaging, "sidelobethreshold", 3.0)
+        ),
+        "IMAGER_BENCH_NOISETHRESHOLD": str(
+            float_value(imaging, "noisethreshold", 5.0)
+        ),
+        "IMAGER_BENCH_CASA_PBLIMIT": str(
+            float_value(imaging, "casa_pblimit", float_value(imaging, "pblimit", 0.2))
+        ),
         "IMAGER_BENCH_STANDARD_MFS_ACCELERATION": str_value(
             imaging, "standard_mfs_acceleration", "auto"
         ),
@@ -599,6 +626,7 @@ def build_plan(
         "IMAGER_BENCH_WPROJPLANES": wprojplanes,
         "IMAGER_BENCH_CASA_WPROJPLANES": casa_wprojplanes,
         "IMAGER_BENCH_NITER": str(int_value(imaging, "niter", 4)),
+        "IMAGER_BENCH_NMAJOR": str(int_value(imaging, "nmajor", -1)),
         "IMAGER_BENCH_GAIN": str(float_value(imaging, "gain", 0.1)),
         "IMAGER_BENCH_THRESHOLD_JY": str(float_value(imaging, "threshold_jy", 0.0)),
         "IMAGER_BENCH_NSIGMA": str(float_value(imaging, "nsigma", 0.0)),
@@ -688,6 +716,7 @@ def build_plan(
         "mode": {
             "specmode": specmode,
             "gridder": gridder,
+            "facets": int_value(imaging, "facets", 1),
             "bench_mode": bench_mode,
             "image_shape": [
                 int_value(imaging, "imsize", 128),
@@ -733,6 +762,7 @@ def build_plan(
             "hogbom_iteration_mode": hogbom_iteration_mode,
             "nterms": int_value(imaging, "nterms", 1),
             "niter": int_value(imaging, "niter", 4),
+            "nmajor": int_value(imaging, "nmajor", -1),
             "wprojplanes": optional_int_string(imaging, "wprojplanes") or None,
         },
         "run": {
@@ -772,8 +802,16 @@ def build_plan(
             "require_exact_product_inventory": bool_value(
                 comparison, "require_exact_product_inventory", False
             ),
+            "require_direction_wcs_parity": bool_value(
+                comparison, "require_direction_wcs_parity", False
+            ),
             "require_metadata_parity": bool_value(
                 comparison, "require_metadata_parity", False
+            ),
+            **(
+                {"metadata_contract": comparison["metadata_contract"]}
+                if "metadata_contract" in comparison
+                else {}
             ),
             "source_regions": comparison.get("source_regions", []),
             "tolerances": comparison.get("tolerances"),
@@ -1182,6 +1220,50 @@ def parse_benchmark_log(text: str) -> dict[str, Any]:
         "stage_medians_ms": {"rust": rust_stages, "casa": casa_stages},
         "casa_clean_control_diagnostics": parse_casa_clean_control_diagnostics(text),
         "product_paths": parse_product_paths(text),
+        "model_data_comparison": parse_model_data_comparison(text),
+        "continuum_residual_comparison": parse_continuum_residual_comparison(text),
+    }
+
+
+def parse_model_data_comparison(text: str) -> dict[str, Any]:
+    match = re.search(
+        r"^model_data_comparison=(.+) status=(pass|fail) nrms=([^\s]+)$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return {"status": "not_run"}
+    path = pathlib.Path(match.group(1).strip())
+    if not path.is_file():
+        return {"status": "missing", "path": str(path)}
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    if receipt.get("schema") != "casa-rs-model-data-comparison-v1":
+        raise HarnessError("MODEL_DATA comparison receipt has an unexpected schema")
+    return {
+        **receipt,
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def parse_continuum_residual_comparison(text: str) -> dict[str, Any]:
+    match = re.search(
+        r"^continuum_residual_comparison=(.+) status=(pass|fail) nrms=([^\s]+)$",
+        text,
+        flags=re.MULTILINE,
+    )
+    if match is None:
+        return {"status": "not_run"}
+    path = pathlib.Path(match.group(1).strip())
+    if not path.is_file():
+        return {"status": "missing", "path": str(path)}
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    if receipt.get("schema") != "casa-rs-continuum-residual-comparison-v1":
+        raise HarnessError("continuum-residual comparison receipt has an unexpected schema")
+    return {
+        **receipt,
+        "path": str(path),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }
 
 
@@ -3097,18 +3179,34 @@ def compare_products(
         "require_exact_product_inventory": plan["comparison"][
             "require_exact_product_inventory"
         ],
+        "require_direction_wcs_parity": plan["comparison"].get(
+            "require_direction_wcs_parity", False
+        ),
         "require_metadata_parity": plan["comparison"]["require_metadata_parity"],
         "source_regions": plan["comparison"].get("source_regions", []),
         "tolerances": plan["comparison"].get("tolerances"),
         "panel_dir": str(panel_dir),
         "structure_workspace_dir": str(structure_workspace_dir),
     }
+    if plan["comparison"].get("metadata_contract") is not None:
+        request["metadata_contract"] = plan["comparison"]["metadata_contract"]
     comparison = compare_image_products(
         casa_python=casa_python,
         request=request,
         artifact_prefix=log_path,
         cwd=REPO_ROOT,
     )
+    if "schema_version" not in comparison and comparison.get("status") != "completed":
+        # The comparator facade retains detailed operational diagnostics in its
+        # protocol artifacts. The run receipt embeds only the closed live
+        # terminal summary accepted by run-result schema v3.
+        return {
+            "status": str(comparison.get("status", "failed_execution")),
+            "reason": str(
+                comparison.get("reason") or "image-product comparison did not complete"
+            ),
+            "products": {},
+        }
     comparison["panel_dir"] = str(panel_dir)
     comparison["source_regions"] = plan["comparison"].get("source_regions", [])
     comparison["tolerances"] = plan["comparison"].get("tolerances")

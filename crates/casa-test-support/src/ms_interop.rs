@@ -9,6 +9,7 @@ use std::path::Path;
 #[cfg(has_casacore_cpp)]
 use crate::oracle_runtime::CasacoreOracleRuntime;
 use crate::oracle_runtime::{OracleError, oracle_operation};
+use casa_types::Complex32;
 
 /// Timings for a C++ MeasurementSet create/open/read workload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,9 +41,39 @@ unsafe extern "C" {
         path: *const std::ffi::c_char,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
+    #[link_name = "cpp_ms_write_heterogeneous_tiled_shape_fixture"]
+    fn ffi_cpp_ms_write_heterogeneous_tiled_shape_fixture(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_ms_verify_heterogeneous_model_clone"]
+    fn ffi_cpp_ms_verify_heterogeneous_model_clone(
+        path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
     #[link_name = "cpp_ms_verify_basic_fixture"]
     fn ffi_cpp_ms_verify_basic_fixture(
         path: *const std::ffi::c_char,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_ms_read_model_data_sample"]
+    fn ffi_cpp_ms_read_model_data_sample(
+        path: *const std::ffi::c_char,
+        row: u64,
+        correlation: u32,
+        channel: u32,
+        out_real: *mut f32,
+        out_imaginary: *mut f32,
+        out_error: *mut *mut std::ffi::c_char,
+    ) -> i32;
+    #[link_name = "cpp_ms_write_model_data_sample"]
+    fn ffi_cpp_ms_write_model_data_sample(
+        path: *const std::ffi::c_char,
+        row: u64,
+        correlation: u32,
+        channel: u32,
+        real: f32,
+        imaginary: f32,
         out_error: *mut *mut std::ffi::c_char,
     ) -> i32;
     #[link_name = "cpp_ms_bench_create_open"]
@@ -116,6 +147,45 @@ impl MeasurementSetOracle {
         })
     }
 
+    /// Write a C++-created two-shape DATA fixture using `TiledShapeStMan`.
+    pub fn write_heterogeneous_tiled_shape_fixture(path: &Path) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.write_heterogeneous_tiled_shape_fixture", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_write_heterogeneous_tiled_shape_fixture(c_path.as_ptr(), &mut error)
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.write_heterogeneous_tiled_shape_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Verify C++ storage-manager and row-shape interop after Rust clones MODEL_DATA.
+    pub fn verify_heterogeneous_model_clone(path: &Path) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.verify_heterogeneous_model_clone", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc =
+                unsafe { ffi_cpp_ms_verify_heterogeneous_model_clone(c_path.as_ptr(), &mut error) };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.verify_heterogeneous_model_clone",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     /// Verify the standard MeasurementSet interop fixture using C++ casacore.
     pub fn verify_basic_fixture(path: &Path) -> Result<(), OracleError> {
         oracle_operation!("measurement_set.verify_basic_fixture", {
@@ -125,6 +195,75 @@ impl MeasurementSetOracle {
             unsafe {
                 CasacoreOracleRuntime::cpp_status(
                     "measurement_set.verify_basic_fixture",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Read one `MODEL_DATA` sample through C++ casacore.
+    pub fn read_model_data_sample(
+        path: &Path,
+        row: u64,
+        correlation: u32,
+        channel: u32,
+    ) -> Result<Complex32, OracleError> {
+        oracle_operation!("measurement_set.read_model_data_sample", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut real = 0.0_f32;
+            let mut imaginary = 0.0_f32;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_read_model_data_sample(
+                    c_path.as_ptr(),
+                    row,
+                    correlation,
+                    channel,
+                    &mut real,
+                    &mut imaginary,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.read_model_data_sample",
+                    rc,
+                    error,
+                    cpp_table_free_error,
+                )?;
+            }
+            Ok(Complex32::new(real, imaginary))
+        })
+    }
+
+    /// Write one `MODEL_DATA` sample through C++ casacore.
+    pub fn write_model_data_sample(
+        path: &Path,
+        row: u64,
+        correlation: u32,
+        channel: u32,
+        value: Complex32,
+    ) -> Result<(), OracleError> {
+        oracle_operation!("measurement_set.write_model_data_sample", {
+            let c_path = CasacoreOracleRuntime::c_path("MeasurementSet path", path)?;
+            let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
+            let rc = unsafe {
+                ffi_cpp_ms_write_model_data_sample(
+                    c_path.as_ptr(),
+                    row,
+                    correlation,
+                    channel,
+                    value.re,
+                    value.im,
+                    &mut error,
+                )
+            };
+            unsafe {
+                CasacoreOracleRuntime::cpp_status(
+                    "measurement_set.write_model_data_sample",
                     rc,
                     error,
                     cpp_table_free_error,
@@ -366,6 +505,17 @@ mod tests {
         if cfg!(has_casacore_cpp) {
             MeasurementSetOracle::write_basic_fixture(path).unwrap();
             assert!(MeasurementSetOracle::verify_basic_fixture(path).is_ok());
+            assert!(MeasurementSetOracle::read_model_data_sample(path, 0, 0, 0).is_err());
+            assert!(
+                MeasurementSetOracle::write_model_data_sample(
+                    path,
+                    0,
+                    0,
+                    0,
+                    Complex32::new(1.0, 2.0),
+                )
+                .is_err()
+            );
             assert!(MeasurementSetOracle::bench_create_open(path, 4).is_ok());
             assert!(MeasurementSetOracle::digest_manifest(path).is_ok());
             assert!(MeasurementSetOracle::table_row_digest(path, "MAIN", 0).is_ok());
@@ -379,6 +529,20 @@ mod tests {
             ));
             assert!(matches!(
                 MeasurementSetOracle::verify_basic_fixture(path),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::read_model_data_sample(path, 0, 0, 0),
+                Err(OracleError::Unavailable { .. })
+            ));
+            assert!(matches!(
+                MeasurementSetOracle::write_model_data_sample(
+                    path,
+                    0,
+                    0,
+                    0,
+                    Complex32::new(1.0, 2.0),
+                ),
                 Err(OracleError::Unavailable { .. })
             ));
             assert!(matches!(

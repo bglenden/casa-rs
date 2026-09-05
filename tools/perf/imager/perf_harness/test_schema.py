@@ -151,11 +151,38 @@ def _legacy_casa_tclean_result() -> dict[str, object]:
 
 
 class SchemaTests(unittest.TestCase):
+    def test_current_comparison_product_accepts_neutral_existence_evidence(
+        self,
+    ) -> None:
+        product = {
+            "status": "missing",
+            "left_path": "/tmp/left.image",
+            "right_path": "/tmp/right.image",
+            "left_exists": True,
+            "right_exists": False,
+        }
+
+        schema_contract._validate_comparison_product(
+            product,
+            protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+            source="comparison product",
+        )
+
+        product["right_exists"] = "no"
+        with self.assertRaisesRegex(ContractError, "right_exists must be boolean"):
+            schema_contract._validate_comparison_product(
+                product,
+                protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+                source="comparison product",
+            )
+
     def test_current_product_contract_accepts_bound_source_region_evidence(
         self,
     ) -> None:
         product = {
             "status": "compared",
+            "metadata_parity_required": False,
+            "metadata": {"status": "not_required", "parity": None},
             "review_panel": {
                 "status": "written",
                 "zoom_panel": {
@@ -207,6 +234,29 @@ class SchemaTests(unittest.TestCase):
                 malformed,
                 protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
                 source="malformed product",
+            )
+
+    def test_current_product_contract_accepts_shape_mismatch_dimensions(self) -> None:
+        product = {
+            "status": "shape_mismatch",
+            "left_path": "/tmp/left.image",
+            "right_path": "/tmp/right.image",
+            "left_shape": [512, 512, 1, 1],
+            "right_shape": [2, 2, 1, 1],
+        }
+
+        schema_contract._validate_comparison_product(
+            product,
+            protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+            source="shape mismatch product",
+        )
+
+        product["right_shape"][0] = 0
+        with self.assertRaisesRegex(ContractError, "must be a positive integer"):
+            schema_contract._validate_comparison_product(
+                product,
+                protocol_variant=schema_contract.COMPARISON_SCHEMA_VERSION,
+                source="shape mismatch product",
             )
 
     def test_workload_rejects_unknown_and_unversioned_shapes(self) -> None:
@@ -809,6 +859,76 @@ class SchemaTests(unittest.TestCase):
             self.assertEqual("full", comparison["mode"])
             self.assertTrue(comparison["tolerances"]["require_full_array"])
 
+    def test_t48_manifest_pins_dirty_response_scope(self) -> None:
+        manifest = load_workload_manifest(
+            REPO_ROOT / "tools/perf/imager/workloads/t48-heterogeneous-mosaic-mfs.json"
+        )
+
+        self.assertEqual("dirty", manifest["imaging"]["mode"])
+        self.assertEqual(0, manifest["imaging"]["niter"])
+        self.assertEqual("I", manifest["imaging"]["stokes"])
+        self.assertTrue(manifest["imaging"]["usepointing"])
+        self.assertTrue(manifest["comparison"]["require_direction_wcs_parity"])
+        self.assertFalse(manifest["comparison"]["require_metadata_parity"])
+        metadata = manifest["comparison"]["metadata_contract"]
+        self.assertEqual(
+            [
+                "obsdate",
+                "observer",
+                "pointingcenter",
+                "telescope",
+                "telescopeposition",
+            ],
+            metadata["coordinates"]["excluded_fields"],
+        )
+        parity_units = {
+            suffix
+            for suffix, policy in metadata["products"].items()
+            if policy["unit"]["comparison"] == "parity"
+        }
+        self.assertEqual(
+            {".image", ".image.pbcor", ".model", ".pb", ".sumwt", ".weight"},
+            parity_units,
+        )
+        for suffix in (".psf", ".residual"):
+            self.assertEqual(
+                {
+                    "comparison": "expected",
+                    "left": "Jy/beam",
+                    "right": "",
+                },
+                metadata["products"][suffix]["unit"],
+            )
+        for suffix in (".image", ".image.pbcor", ".psf"):
+            self.assertEqual(
+                "scientific",
+                metadata["products"][suffix]["restoring_beam"]["comparison"],
+            )
+            self.assertEqual(
+                {"beam_area_relative": 0.001, "beam_kernel_nrmse": 0.001},
+                manifest["comparison"]["tolerances"]["products"][suffix],
+            )
+        self.assertEqual(
+            {
+                "comparison": "presence",
+                "left": "present",
+                "right": "absent",
+            },
+            metadata["products"][".residual"]["restoring_beam"],
+        )
+        self.assertTrue(
+            manifest["comparison"]["tolerances"]["default"]["require_topology_parity"]
+        )
+
+    def test_nmajor_accepts_casa_unlimited_and_rejects_lower_values(self) -> None:
+        workload = explicit_aw_workload()
+        workload["imaging"]["nmajor"] = -1
+        validate_workload_manifest(workload)
+
+        workload["imaging"]["nmajor"] = -2
+        with self.assertRaisesRegex(ContractError, "nmajor must be -1 or nonnegative"):
+            validate_workload_manifest(workload)
+
     def test_casa_recipe_requires_path_and_lowercase_sha256(self) -> None:
         workload = explicit_aw_workload()
         workload["casa"] = {
@@ -926,6 +1046,14 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "deterministic user-mask clean"):
             validate_workload_manifest(workload)
 
+        box_mask = copy.deepcopy(workload)
+        box_mask["imaging"]["mask_box"] = "1,2,30,40"
+        validate_workload_manifest(box_mask)
+
+        box_mask["imaging"]["mask_box"] = "30,2,1,40"
+        with self.assertRaisesRegex(ContractError, "ordered corners"):
+            validate_workload_manifest(box_mask)
+
         workload["imaging"]["mask_image"] = "masks/clean.mask"
         with self.assertRaisesRegex(ContractError, "must be set together"):
             validate_workload_manifest(workload)
@@ -937,7 +1065,7 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "lowercase SHA-256"):
             validate_workload_manifest(workload)
 
-    def test_full_comparison_requires_bounded_exact_metadata_contract(self) -> None:
+    def test_full_comparison_requires_bounded_inventory_and_wcs_policy(self) -> None:
         workload = {
             "schema_version": 1,
             "id": "full-comparison",
@@ -964,6 +1092,12 @@ class SchemaTests(unittest.TestCase):
             },
         }
         validate_workload_manifest(workload)
+
+        direction_scoped = copy.deepcopy(workload)
+        direction_scoped["comparison"]["require_exact_product_inventory"] = False
+        direction_scoped["comparison"]["require_metadata_parity"] = False
+        direction_scoped["comparison"]["require_direction_wcs_parity"] = True
+        validate_workload_manifest(direction_scoped)
 
         for key, message in (
             ("full_chunk_elements", "full_chunk_elements"),

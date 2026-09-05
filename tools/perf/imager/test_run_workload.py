@@ -193,6 +193,47 @@ class CompletedRecipeReceiptRecoveryTests(unittest.TestCase):
 
 
 class StageBreakdownTests(unittest.TestCase):
+    def test_continuum_residual_comparison_is_bound_to_the_run_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "continuum-residual-comparison.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": "casa-rs-continuum-residual-comparison-v1",
+                        "status": "pass",
+                        "continuum_residual": {"normalized_rms": 3.0e-5},
+                    }
+                )
+            )
+            parsed = run_workload.parse_benchmark_log(
+                f"continuum_residual_comparison={path} status=pass nrms=3.000000000e-05\n"
+            )
+
+        comparison = parsed["continuum_residual_comparison"]
+        self.assertEqual("pass", comparison["status"])
+        self.assertEqual(str(path), comparison["path"])
+        self.assertRegex(comparison["sha256"], r"^[0-9a-f]{64}$")
+
+    def test_model_data_comparison_is_bound_to_the_run_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "model-data-comparison.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": "casa-rs-model-data-comparison-v1",
+                        "status": "pass",
+                        "model_data": {"normalized_rms": 2.5e-5},
+                    }
+                )
+            )
+            parsed = run_workload.parse_benchmark_log(
+                f"model_data_comparison={path} status=pass nrms=2.500000000e-05\n"
+            )
+
+        self.assertEqual("pass", parsed["model_data_comparison"]["status"])
+        self.assertEqual(str(path), parsed["model_data_comparison"]["path"])
+        self.assertRegex(parsed["model_data_comparison"]["sha256"], r"^[0-9a-f]{64}$")
+
     def test_parse_log_marks_missing_timing_sections_without_claiming_runs(
         self,
     ) -> None:
@@ -679,7 +720,9 @@ real 1.145408
                 "specmode": "mfs",
                 "gridder": "mosaic",
                 "field": "",
+                "stokes": "Q",
                 "phasecenter_field": 0,
+                "usepointing": True,
                 "spw": "0",
                 "deconvolver": "mtmfs",
                 "hogbom_iteration_mode": "casa",
@@ -708,6 +751,8 @@ real 1.145408
             )
 
         self.assertEqual("0", plan["command"]["env"]["IMAGER_BENCH_PHASECENTER_FIELD"])
+        self.assertEqual("Q", plan["command"]["env"]["IMAGER_BENCH_STOKES"])
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_USEPOINTING"])
         self.assertEqual("2", plan["command"]["env"]["IMAGER_BENCH_NTERMS"])
         self.assertEqual(
             "casa", plan["command"]["env"]["IMAGER_BENCH_HOGBOM_ITERATION_MODE"]
@@ -881,6 +926,68 @@ real 1.145408
             plan["command"]["env"]["IMAGER_BENCH_REUSE_CASA_PREFIX"],
         )
 
+    def test_faceted_widefield_plan_preserves_exact_command_controls(self) -> None:
+        manifest_path = (
+            run_workload.WORKLOAD_DIR / "issue518-t32-vla-faceted-clean.json"
+        )
+        manifest = run_workload.load_manifest(manifest_path)
+        plan = run_workload.build_plan(
+            manifest_path=manifest_path,
+            manifest=manifest,
+            repeats_override=None,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        env = plan["command"]["env"]
+        self.assertEqual("widefield", env["IMAGER_BENCH_GRIDDER"])
+        self.assertEqual("widefield", env["IMAGER_BENCH_CASA_GRIDDER"])
+        self.assertEqual("2", env["IMAGER_BENCH_FACETS"])
+        self.assertEqual("1", env["IMAGER_BENCH_WPROJPLANES"])
+        self.assertEqual("1", env["IMAGER_BENCH_CASA_WPROJPLANES"])
+        self.assertEqual("cpu", env["IMAGER_BENCH_STANDARD_MFS_ACCELERATION"])
+        self.assertEqual("rustfft", env["IMAGER_BENCH_IMAGING_FFT_BACKEND"])
+        self.assertEqual("auto", env["IMAGER_BENCH_IMAGING_FFT_PRECISION"])
+        self.assertEqual("0", env["IMAGER_BENCH_PARALLEL"])
+        self.assertEqual(2, plan["mode"]["facets"])
+        self.assertEqual(24, plan["mode"]["channel_count"])
+        self.assertEqual("copy", plan["run"]["ms_staging"])
+        self.assertEqual("copy", env["IMAGER_BENCH_MS_STAGING"])
+        self.assertEqual("full", plan["comparison"]["mode"])
+        self.assertEqual(
+            [".image", ".residual", ".model", ".psf"],
+            plan["comparison"]["products"],
+        )
+        self.assertFalse(plan["comparison"]["require_exact_product_inventory"])
+        self.assertFalse(plan["comparison"]["require_metadata_parity"])
+        self.assertTrue(plan["comparison"]["require_direction_wcs_parity"])
+        self.assertEqual(
+            ["facet-seam-x", "facet-seam-y"],
+            [region["id"] for region in plan["comparison"]["source_regions"]],
+        )
+        self.assertTrue(
+            all(
+                ".model" in region["products"]
+                for region in plan["comparison"]["source_regions"]
+            )
+        )
+
+        bench = (run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh").read_text()
+        self.assertIn('--facets "$facets"', bench)
+        self.assertIn('--stokes "$stokes"', bench)
+        self.assertIn("rust_pointing_flags+=(--usepointing)", bench)
+        self.assertIn("facets=facets,", bench)
+        self.assertIn("stokes=stokes,", bench)
+        self.assertIn("usepointing=usepointing,", bench)
+        self.assertIn(
+            'initialize_imaging_owner "$rust_ms_path"',
+            bench,
+        )
+        self.assertIn('CASA_RS_BENCH_MS_PATH="$casa_ms_path"', bench)
+        self.assertIn('casa_ms_path="$tmpdir/casa-benchmark.ms"', bench)
+        self.assertIn('cp -R "$source_ms_path" "$casa_ms_path"', bench)
+
     def test_reuse_prefixes_imply_skipping_the_reused_implementation(self) -> None:
         manifest = {
             "id": "reuse-both",
@@ -987,6 +1094,52 @@ real 1.145408
             )
             self.assertTrue(Path(request["structure_workspace_dir"]).is_absolute())
             self.assertEqual(str(root / "comparisons" / "panels"), result["panel_dir"])
+
+    def test_generic_comparison_failure_closes_to_terminal_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            plan = {
+                "artifacts": {"comparison_root": str(root / "comparisons")},
+                "products": {
+                    "rust_prefix": str(root / "rust"),
+                    "casa_prefix": str(root / "casa"),
+                },
+                "environment": {
+                    "executables": {"casa_python": {"path": sys.executable}}
+                },
+                "comparison": {
+                    "products": [".model"],
+                    "max_elements_per_product": 100,
+                    "mode": "full",
+                    "full_chunk_elements": 50,
+                    "require_exact_product_inventory": False,
+                    "require_direction_wcs_parity": True,
+                    "require_metadata_parity": False,
+                    "source_regions": [],
+                    "tolerances": None,
+                },
+            }
+            runner = mock.Mock(
+                return_value={
+                    "status": "failed_validation",
+                    "reason": "exact-zero centroid was rejected",
+                    "failure": {"kind": "comparison_protocol_binding"},
+                    "products": {},
+                    "input": "/comparison/input.json",
+                }
+            )
+
+            with mock.patch.object(run_workload, "compare_image_products", runner):
+                result = run_workload.compare_products(plan, {}, root / "run.log")
+
+            self.assertEqual(
+                {
+                    "status": "failed_validation",
+                    "reason": "exact-zero centroid was rejected",
+                    "products": {},
+                },
+                result,
+            )
 
     def test_vlass_recipe_plan_preserves_real_aw_and_reports_rust_unavailable(
         self,
@@ -1225,6 +1378,31 @@ real 1.145408
         )
         self.assertEqual("1", env["CASA_RS_STANDARD_MFS_PROFILE_DETAIL"])
 
+    def test_casa_unlimited_nmajor_flows_to_the_matched_benchmark(self) -> None:
+        manifest = {
+            "id": "unlimited-major-cycles",
+            "mode_id": "standard-mfs-clean",
+            "dataset": {"key": "medium.ms", "path": "/tmp/medium.ms"},
+            "imaging": {
+                "mode": "clean",
+                "specmode": "mfs",
+                "gridder": "standard",
+                "nmajor": -1,
+            },
+        }
+
+        plan = run_workload.build_plan(
+            manifest_path=Path("manifest.json"),
+            manifest=manifest,
+            repeats_override=1,
+            run_label_override=None,
+            storage_label_override=None,
+            dry_run=True,
+        )
+
+        self.assertEqual("-1", plan["command"]["env"]["IMAGER_BENCH_NMAJOR"])
+        self.assertEqual(-1, plan["mode"]["nmajor"])
+
     def test_imaging_overrides_support_backend_sweeps(self) -> None:
         manifest = {
             "id": "backend-sweep",
@@ -1254,6 +1432,10 @@ real 1.145408
                 "niter=1000",
                 "pbcor=true",
                 "scales=0,10,30",
+                "mask_box=208,208,303,303",
+                "fitspw=0:0~7;16~23",
+                "fitorder=1",
+                "save_continuum_residual=true",
             ],
         )
         plan = run_workload.build_plan(
@@ -1278,6 +1460,19 @@ real 1.145408
         self.assertEqual(1000, plan["mode"]["niter"])
         self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_PBCOR"])
         self.assertEqual("0,10,30", plan["command"]["env"]["IMAGER_BENCH_SCALES"])
+        self.assertEqual(
+            "208,208,303,303", plan["command"]["env"]["IMAGER_BENCH_MASK_BOX"]
+        )
+        self.assertEqual(
+            "0:0~7;16~23", plan["command"]["env"]["IMAGER_BENCH_FITSPW"]
+        )
+        self.assertEqual("1", plan["command"]["env"]["IMAGER_BENCH_FITORDER"])
+        self.assertEqual(
+            "1", plan["command"]["env"]["IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL"]
+        )
+
+        run_workload.apply_imaging_overrides(manifest, ["mask_box=null"])
+        self.assertNotIn("mask_box", manifest["imaging"])
 
     def test_imaging_overrides_are_forbidden_for_frozen_recipe_evidence(self) -> None:
         manifest = {
@@ -1460,6 +1655,22 @@ image_product_write suffix=.image.pbcor role=image.pbcor shape=1024x1024x1x1 ele
         self.assertEqual(
             {".image": "1024x1024x1x1", ".image.pbcor": "1024x1024x1x1"},
             summary["image_product_write_shape_by_suffix"],
+        )
+
+    def test_parse_backend_plan_logs_ignores_unversioned_gridded_replay_summary(
+        self,
+    ) -> None:
+        parsed = run_workload.parse_backend_plan_logs(
+            """imaging_gridded_replay_summary ordinal=1 blocks=31985 artifact_bytes=1574840232 payload_bytes=1572537216 read_bytes=1574840232 read_operations=94909 payload_copy_bytes=0 payload_copy_operations=0 buffer_allocations=2 buffer_reuses=31983 source_slots=2 workers=1 worker_threads_started=0 dispatch_waves=127940 active_worker_slots=1 minimum_partitions_per_active_worker=127940 maximum_partitions_per_active_worker=127940 partitions_executed=127940 commits_completed=127940 planned_source_capacity_bytes=262288 planned_kernel_window_capacity_bytes=115140 planned_gridded_route_maximum_frame_records=4096 planned_gridded_route_maximum_frame_groups=4096 planned_gridded_route_capacity_bytes=114708 frames_routed=31985 encoded_records=49141788 routed_record_memberships=49141788 prediction_groups=49141788 degrid_records=49141788 grid_records=49141788 sector_rescans=0 peak_physical_route_capacity_bytes=114708 peak_partial_dynamic_capacity_bytes=0 peak_worker_stack_capacity_bytes=0 peak_kernel_window_capacity_bytes=115068 peak_live_source_blocks=2 peak_live_source_current_bytes=131216 peak_live_source_capacity_bytes=262288 ready_queue_high_water=0 producer_wait_nanos=1964086 consumer_wait_nanos=142338671 source_starved_nanos=142323713 overlap_nanos=1322028272 source_fill_nanos=1436830268 prepare_nanos=683595493 execute_nanos=4125092333 commit_nanos=3312497 wall_nanos=5008788834
+"""
+        )
+
+        self.assertNotIn("imaging_gridded_replay", parsed)
+        self.assertNotIn("imaging_gridded_replay", parsed["collection_stats"])
+        receipt = canonical_workload_result(extra_results={"backend_plan_logs": parsed})
+        run_workload.validate_run_result(
+            receipt,
+            source="gridded replay summary remains log-only",
         )
 
     def test_mosaic_resident_product_diagnostic_is_parsed(self) -> None:

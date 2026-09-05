@@ -9,7 +9,8 @@ startup settings. A profile can be loaded by the CLI, edited in the TUI or
 native GUI, or manipulated from Python without changing the parameter names or
 their meaning.
 
-This guide describes the implemented interface from ADR-0006. Provider JSON
+This guide describes the implemented interface from ADR-0006, with current-only
+surface evolution defined by ADR-0012. Provider JSON
 requests, results, progress, and session events remain machine transports; TOML
 is the sole human-authored parameter-profile format.
 
@@ -27,7 +28,7 @@ designed to paste cleanly into Markdown:
 format = 1
 surface = "imager"
 kind = "task"
-contract = 1
+contract = 15
 
 [parameters]
 vis = "data/target.ms"
@@ -52,6 +53,13 @@ expressions, and executable selection are not part of the format. Unknown,
 duplicate, inactive, or wrong-surface parameters are errors with source
 locations where possible. A compound value is replaced as one value; profiles
 are not recursive merge patches.
+
+The imager profile contract is current-only. Its `contract` must equal the
+current imager surface contract listed in the generated parameter reference,
+and `[parameters]` must use canonical names. Stale contracts and historical
+aliases are rejected rather than migrated or silently interpreted. Other
+surfaces retain older profiles only when their canonical definition publishes
+an explicit ordered migration chain.
 
 Relative dataset and product paths resolve against the explicit workspace, GUI
 project root, or process current directory. They do not resolve relative to the
@@ -212,10 +220,16 @@ result = tasks.run(
 Companion constructors are `parameters.last(...)`,
 `parameters.last_successful(...)`, and `parameters.load(path, ...)`.
 `TaskParameters` supports mapping-style updates, `reset(name)`, `reload()`,
-`save(path)`, and `run()`. `tasks.run()` accepts every catalog task and routes
-through the common runner. Catalog-generated CASA-named keyword wrappers and
-type stubs are available directly under `casars.tasks` without copying defaults
-into Python signatures; there is no second provider-specific task API.
+`save(path)`, `provider_invocation()`, and `run()`. The invocation exposes the
+provider protocol name/version, exact canonical request stdin, and typed
+owner-defined unsupported reasons. `tasks.run()` accepts every catalog task and
+routes through the common runner; a known ineligible imager request raises
+`TaskCapabilityError` before launch without Python interpreting programme or
+backend state. Successful completions retain the same provider invocation while
+result and receipt projection remains Rust-owned. Catalog-generated CASA-named
+keyword wrappers and type stubs are available directly under `casars.tasks`
+without copying defaults into Python signatures; there is no second
+provider-specific task API.
 
 Session profiles for `imexplore` and `tablebrowser` use the same constructors
 and validation model. Open them with `sessions.open(surface, parameters=p)` or

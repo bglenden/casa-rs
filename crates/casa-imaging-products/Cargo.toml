@@ -1,0 +1,21 @@
+[package]
+name = "casa-imaging-products"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Native continuum product algorithms and the Product Generation Authority"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-imaging-model = { path = "../casa-imaging-model" }
+casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
+casa-numerics = { path = "../casa-numerics" }
+ndarray.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
+sha2 = "0.10"
+thiserror.workspace = true

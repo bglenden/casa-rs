@@ -616,10 +616,12 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_ROBUST`
   - Briggs robustness parameter passed to both Rust and CASA when weighting is `briggs`
 - `IMAGER_BENCH_NITER`
+- `IMAGER_BENCH_NMAJOR` (`-1` preserves CASA's unlimited default)
 - `IMAGER_BENCH_HOGBOM_ITERATION_MODE`
   - `strict` uses casa-rs' corrected Hogbom component accounting
   - `casa` reproduces CASA's documented inclusive Hogbom off-by-one behavior;
-    use this for Rust-vs-CASA Hogbom product comparisons
+    use this for Rust-vs-CASA Hogbom product comparisons; see the canonical
+    [CASA bug record](../../../docs/CASA%20(C%2B%2B)%20bugs.md#casa-hogbom-niter-off-by-one-bug)
 - `IMAGER_BENCH_GAIN`
 - `IMAGER_BENCH_THRESHOLD_JY`
 - `IMAGER_BENCH_NSIGMA`
@@ -628,8 +630,10 @@ It does not add personal workstation data fallbacks.
 - `IMAGER_BENCH_WTERM`
   - currently only `none` is supported in the Rust-vs-CASA benchmark script because the Rust-only `direct` mode has no matching `tclean` configuration in this harness
 - `IMAGER_BENCH_MS_STAGING`
-  - `copy` copies the MeasurementSet into the script temp directory before
-    timing; this is the default for small workloads
+  - `copy` gives Rust an explicitly owner-initialized MeasurementSet copy in
+    the script temp directory while CASA reads the unchanged source; this is
+    appropriate for small, disposable correctness workloads whose source was
+    not created by casa-rs
   - `direct` benchmarks the manifest MeasurementSet path in place and is the
     required mode for about-memory or larger-than-memory datasets
 - `IMAGER_BENCH_TMP_ROOT`

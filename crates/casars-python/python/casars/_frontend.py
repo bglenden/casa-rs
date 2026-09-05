@@ -9774,19 +9774,31 @@ class _UniffiConverterTypeSurfaceParameterWriteResult(_UniffiConverterRustBuffer
 
 
 class SurfaceProviderInvocation:
+    protocol_name: "typing.Optional[str]"
+    protocol_version: "typing.Optional[int]"
     args: "typing.List[str]"
     stdin: "typing.Optional[str]"
-    def __init__(self, *, args: "typing.List[str]", stdin: "typing.Optional[str]"):
+    unsupported_reasons: "typing.List[SurfaceProviderUnsupportedReason]"
+    def __init__(self, *, protocol_name: "typing.Optional[str]", protocol_version: "typing.Optional[int]", args: "typing.List[str]", stdin: "typing.Optional[str]", unsupported_reasons: "typing.List[SurfaceProviderUnsupportedReason]"):
+        self.protocol_name = protocol_name
+        self.protocol_version = protocol_version
         self.args = args
         self.stdin = stdin
+        self.unsupported_reasons = unsupported_reasons
 
     def __str__(self):
-        return "SurfaceProviderInvocation(args={}, stdin={})".format(self.args, self.stdin)
+        return "SurfaceProviderInvocation(protocol_name={}, protocol_version={}, args={}, stdin={}, unsupported_reasons={})".format(self.protocol_name, self.protocol_version, self.args, self.stdin, self.unsupported_reasons)
 
     def __eq__(self, other):
+        if self.protocol_name != other.protocol_name:
+            return False
+        if self.protocol_version != other.protocol_version:
+            return False
         if self.args != other.args:
             return False
         if self.stdin != other.stdin:
+            return False
+        if self.unsupported_reasons != other.unsupported_reasons:
             return False
         return True
 
@@ -9794,19 +9806,64 @@ class _UniffiConverterTypeSurfaceProviderInvocation(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
         return SurfaceProviderInvocation(
+            protocol_name=_UniffiConverterOptionalString.read(buf),
+            protocol_version=_UniffiConverterOptionalUInt32.read(buf),
             args=_UniffiConverterSequenceString.read(buf),
             stdin=_UniffiConverterOptionalString.read(buf),
+            unsupported_reasons=_UniffiConverterSequenceTypeSurfaceProviderUnsupportedReason.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
+        _UniffiConverterOptionalString.check_lower(value.protocol_name)
+        _UniffiConverterOptionalUInt32.check_lower(value.protocol_version)
         _UniffiConverterSequenceString.check_lower(value.args)
         _UniffiConverterOptionalString.check_lower(value.stdin)
+        _UniffiConverterSequenceTypeSurfaceProviderUnsupportedReason.check_lower(value.unsupported_reasons)
 
     @staticmethod
     def write(value, buf):
+        _UniffiConverterOptionalString.write(value.protocol_name, buf)
+        _UniffiConverterOptionalUInt32.write(value.protocol_version, buf)
         _UniffiConverterSequenceString.write(value.args, buf)
         _UniffiConverterOptionalString.write(value.stdin, buf)
+        _UniffiConverterSequenceTypeSurfaceProviderUnsupportedReason.write(value.unsupported_reasons, buf)
+
+
+class SurfaceProviderUnsupportedReason:
+    kind: "str"
+    id: "str"
+    def __init__(self, *, kind: "str", id: "str"):
+        self.kind = kind
+        self.id = id
+
+    def __str__(self):
+        return "SurfaceProviderUnsupportedReason(kind={}, id={})".format(self.kind, self.id)
+
+    def __eq__(self, other):
+        if self.kind != other.kind:
+            return False
+        if self.id != other.id:
+            return False
+        return True
+
+class _UniffiConverterTypeSurfaceProviderUnsupportedReason(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SurfaceProviderUnsupportedReason(
+            kind=_UniffiConverterString.read(buf),
+            id=_UniffiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.kind)
+        _UniffiConverterString.check_lower(value.id)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.kind, buf)
+        _UniffiConverterString.write(value.id, buf)
 
 
 class SurfaceRunSafety:
@@ -18824,6 +18881,31 @@ class _UniffiConverterSequenceTypeSurfaceParameterTypeField(_UniffiConverterRust
 
 
 
+class _UniffiConverterSequenceTypeSurfaceProviderUnsupportedReason(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeSurfaceProviderUnsupportedReason.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeSurfaceProviderUnsupportedReason.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeSurfaceProviderUnsupportedReason.read(buf) for i in range(count)
+        ]
+
+
+
 class _UniffiConverterSequenceTypeTableBrowserArrayElement(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -20634,6 +20716,7 @@ __all__ = [
     "SurfaceParameterTypeField",
     "SurfaceParameterWriteResult",
     "SurfaceProviderInvocation",
+    "SurfaceProviderUnsupportedReason",
     "SurfaceRunSafety",
     "TableBrowserArrayElement",
     "TableBrowserBreadcrumb",

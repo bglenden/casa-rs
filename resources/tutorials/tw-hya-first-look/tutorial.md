@@ -103,7 +103,7 @@ This cell makes that intent explicit with `niter = 0` and `dirty_only = true`.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 1
+contract = 15
 
 [parameters]
 vis = "data/twhya_calibrated.ms"
@@ -144,7 +144,7 @@ iteration limit.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 1
+contract = 15
 
 [parameters]
 vis = "data/twhya_calibrated.ms"
@@ -220,7 +220,7 @@ resolution against sensitivity.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 1
+contract = 15
 
 [parameters]
 vis = "data/twhya_smoothed.ms"

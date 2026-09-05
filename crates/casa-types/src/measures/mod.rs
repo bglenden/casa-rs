@@ -71,7 +71,9 @@ pub use epoch::{EpochRef, MEpoch, MjdHighPrec};
 pub use error::MeasureError;
 pub use frame::{IauModel, MeasFrame};
 pub use position::{MPosition, PositionRef};
-pub use provider::{EopValues, MeasuresProvider, NamedSourceDirection, ObservatoryPosition};
+pub use provider::{
+    EopValues, MeasuresProvider, MeasuresProviderState, NamedSourceDirection, ObservatoryPosition,
+};
 pub use record::{
     direction_from_record, direction_to_record, doppler_from_record, doppler_to_record,
     epoch_from_record, epoch_to_record, frequency_from_record, frequency_to_record,

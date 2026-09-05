@@ -167,6 +167,21 @@ pub fn resolve_profile(
             ),
         )]));
     }
+    if profile.header.contract < bundle.surface.contract_version()
+        && bundle.surface.migrations().is_empty()
+    {
+        let mut diagnostic = Diagnostic::error(
+            DiagnosticCode::UnsupportedContract,
+            format!(
+                "profile contract {} is not the current contract {} for surface {:?}",
+                profile.header.contract,
+                bundle.surface.contract_version(),
+                bundle.surface.id()
+            ),
+        );
+        diagnostic.location = profile.header_locations.get("contract").copied();
+        return Err(ProfileError::Diagnostics(vec![diagnostic]));
+    }
 
     let (parameters, mut diagnostics) = migrate_parameters(profile, bundle)?;
     let known = bundle
@@ -1156,6 +1171,8 @@ cell = "0.0002777777777777778deg"
             let resolved = resolve_profile(&parsed, &bundle).unwrap_or_else(|error| {
                 panic!("resolve frozen {label}-field VLASS profile: {error}")
             });
+            assert_eq!(parsed.header.contract, bundle.surface.contract_version());
+            assert!(resolved.diagnostics.is_empty(), "{label}");
             assert_eq!(
                 resolved.values["field"],
                 ParameterValue::String(expected_field.to_string()),
@@ -1184,29 +1201,9 @@ cell = "0.0002777777777777778deg"
                 !resolved
                     .explicit_overrides
                     .contains_key("imaging_memory_pressure_policy"),
-                "{label}.imaging_memory_pressure_policy must adopt the safe default"
+                "{label}.imaging_memory_pressure_policy must adopt the current default"
             );
-            assert!(
-                resolved.diagnostics.iter().any(|diagnostic| {
-                    diagnostic.code == DiagnosticCode::DefaultChanged
-                        && diagnostic.parameter.as_deref() == Some("imaging_memory_pressure_policy")
-                }),
-                "{label}.imaging_memory_pressure_policy migration must be explicit"
-            );
-            for name in [
-                "cfcache",
-                "cf_resident_mb",
-                "facets",
-                "aterm",
-                "psterm",
-                "wbawp",
-                "conjbeams",
-                "computepastep",
-                "rotatepastep",
-                "pointingoffsetsigdev",
-                "mosweight",
-                "normtype",
-            ] {
+            for name in ["cfcache", "cf_resident_mb", "wprojplanes", "usepointing"] {
                 assert!(
                     resolved.explicit_overrides.contains_key(name),
                     "{label}.{name}"
@@ -1218,7 +1215,40 @@ cell = "0.0002777777777777778deg"
             let round_trip = resolve_profile(&parse_profile(&sparse).unwrap(), &bundle)
                 .unwrap_or_else(|error| panic!("round-trip frozen {label}-field profile: {error}"));
             assert_eq!(round_trip.values, resolved.values, "{label}");
+            assert_eq!(
+                sparse, source,
+                "{label} fixture must be canonical sparse TOML"
+            );
         }
+    }
+
+    #[test]
+    fn current_only_surface_rejects_a_stale_contract_without_migration() {
+        let mut bundle = bundle(SurfaceKind::Task);
+        let SurfaceDefinition::Task(definition) = &mut bundle.surface else {
+            unreachable!()
+        };
+        definition.contract_version = 2;
+        let stale = parse_profile(
+            r#"[casars]
+format = 1
+surface = "imager"
+kind = "task"
+contract = 1
+
+[parameters]
+imsize = 256
+"#,
+        )
+        .unwrap();
+
+        let ProfileError::Diagnostics(diagnostics) = resolve_profile(&stale, &bundle).unwrap_err()
+        else {
+            panic!("expected current-contract diagnostic")
+        };
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].code, DiagnosticCode::UnsupportedContract);
+        assert_eq!(diagnostics[0].location.unwrap().line, 5);
     }
 
     #[test]

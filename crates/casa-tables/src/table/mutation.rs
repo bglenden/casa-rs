@@ -208,6 +208,11 @@ impl Table {
                 set.remove(name);
             }
             self.inner.remove_column_keywords(name);
+            for group in &mut self.dm_info {
+                group.columns.retain(|column| column != name);
+            }
+            self.dm_info.retain(|group| !group.columns.is_empty());
+            self.virtual_columns.remove(name);
             Ok(())
         })();
         self.finish_write_operation(auto_unlock, result)
@@ -268,6 +273,16 @@ impl Table {
                 }
             }
             self.inner.rename_column_keywords(old, new.to_string());
+            for group in &mut self.dm_info {
+                for column in &mut group.columns {
+                    if column == old {
+                        *column = new.to_string();
+                    }
+                }
+            }
+            if self.virtual_columns.remove(old) {
+                self.virtual_columns.insert(new.to_string());
+            }
             Ok(())
         })();
         self.finish_write_operation(auto_unlock, result)

@@ -1,0 +1,4990 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+use super::{
+    BoundObservationSource, BoundSelectedObservation, ObservationSourceBinding,
+    SelectedObservationContentBudget, SelectedObservationRow, SelectedObservationTraversalError,
+    access::validate_input_weight_group, bound_observation::consume_validated_stream,
+};
+use crate::derived::engine::MsCalEngine;
+use crate::subtables::SubTable;
+use crate::{
+    MeasurementSet, MsSelectionIoBudget, ResolvedSelectedObservationAccess,
+    SelectedObservationResolutionRequest, SyntheticObservationRequest, SyntheticSpectralSetup,
+    SyntheticWorkerPolicy, generate_synthetic_observation_ms,
+    initialize_measurement_set_owner_manifest, resolve_selected_observation,
+    tutorial_vla_a_antennas,
+};
+use casa_imaging_model::{
+    AntennaResponseClass, AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration,
+    ConsistencyToken, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DataDescriptionSelection, DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec,
+    DirectionFrame, Epoch, FacetLayout, FiniteValuePolicy, FlagPolicy, FrequencyFrame,
+    GeometryInput, IdSelection, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    ImagingRequest, InstrumentModel, InstrumentResponse, IntentSelection, ItrfPosition,
+    LogicalIdentity, MeasurementEquationContract, MeasurementSetIdentity, MetadataGeneration,
+    MetadataTableKind, MissingPointingPolicy, ModelBounds, ModelColumnState, ModelColumnWrite,
+    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
+    MsColumnKind, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    ObservationSelection, ObservationSnapshotInput, ObservationSource, ObservationSourceInput,
+    ObservationSourceProvenance, ObservationSourceState, ObservationTransactionRequirements,
+    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
+    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
+    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
+    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
+    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
+    PsfPhaseCentreLaw, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
+    RowSelection, ScientificContract, SelectedColumns, SelectedInputWeightGroup, SelectedMainRow,
+    SelectedObservationGenerationId, SelectedObservationInspectionError,
+    SelectedObservationPassError, SelectedObservationRunChannel, SelectedObservationRunCorrelation,
+    SelectedObservationRunRow, SelectedObservationSample, SelectedRows, SelectedSpectralEvaluation,
+    SelectedVisibilitySample, SelectionBound, SkyDirection, SourceGenerations, SpectralContract,
+    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
+    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
+    TaylorValidityPolicy, TimeRange, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
+};
+use casa_imaging_reconstruction::compile_spectral_stencil;
+use casa_tables::{ColumnSchema, LockMode, LockOptions, LockType, Table, TableOptions};
+use casa_types::measures::{
+    EopValues, MeasuresProvider, MeasuresProviderState,
+    direction::{DirectionRef, MDirection},
+    epoch::{EpochRef, MEpoch},
+    frame::MeasFrame,
+    frequency::{FrequencyRef, MFrequency},
+    position::MPosition,
+};
+use casa_types::{ArrayValue, PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
+use ndarray::ArrayD;
+use std::convert::Infallible;
+use std::mem::size_of;
+use std::sync::{Arc, Mutex};
+
+mod t41_ephemeris_oracle;
+
+/// Canonical model-lifecycle commitment matching the compiled snapshot.
+fn model_lifecycle(model: ModelStateIdentity) -> ModelLifecycleRequirements {
+    let input = match model {
+        ModelStateIdentity::Empty => ModelInputCommitment::Empty,
+        ModelStateIdentity::Seed(source) => ModelInputCommitment::AlignedSeed {
+            source,
+            support: LogicalIdentity::from_sha256([0xa5; 32]),
+        },
+        ModelStateIdentity::Generation(generation) => ModelInputCommitment::Generation(generation),
+    };
+    ModelLifecycleRequirements::new(
+        ModelBounds::new(
+            10_000_000, 10_000_000, 10_000_000, 10_000_000, 1.0e30, 1.0e30,
+        )
+        .expect("valid model lifecycle bounds"),
+        NumericPrecision::F32,
+        input,
+    )
+}
+
+#[derive(Debug)]
+struct AccountedTestMeasures {
+    state: Mutex<AccountedTestMeasuresState>,
+}
+
+#[derive(Debug)]
+struct AccountedTestMeasuresState {
+    identity_sha256: [u8; 32],
+    retained: Vec<u8>,
+    dut1_seconds: f64,
+}
+
+impl AccountedTestMeasures {
+    fn with_heap_bytes(bytes: usize) -> Self {
+        Self::with_identity(90, bytes)
+    }
+
+    fn with_identity(identity: u8, bytes: usize) -> Self {
+        Self {
+            state: Mutex::new(AccountedTestMeasuresState {
+                identity_sha256: [identity; 32],
+                retained: vec![0; bytes],
+                dut1_seconds: 0.0,
+            }),
+        }
+    }
+
+    fn grow(&self, additional: usize) {
+        self.state
+            .lock()
+            .expect("test Measures residency lock")
+            .retained
+            .reserve_exact(additional);
+    }
+
+    fn mutate_science(&self, identity: u8, dut1_seconds: f64) {
+        let mut state = self.state.lock().expect("test Measures state lock");
+        state.identity_sha256 = [identity; 32];
+        state.dut1_seconds = dut1_seconds;
+    }
+}
+
+impl MeasuresProvider for AccountedTestMeasures {
+    fn prepare_bounded_state(&self) -> Result<Option<MeasuresProviderState>, String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "test Measures state lock poisoned".to_string())?;
+        Ok(Some(MeasuresProviderState::new(
+            state.identity_sha256,
+            state.retained.capacity(),
+        )))
+    }
+
+    fn eop_values(&self, _utc_mjd: f64) -> Result<Option<EopValues>, String> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "test Measures state lock poisoned".to_string())?;
+        Ok(Some(EopValues {
+            dut1_seconds: state.dut1_seconds,
+            x_arcsec: 0.0,
+            y_arcsec: 0.0,
+            dx_mas: 0.0,
+            dy_mas: 0.0,
+            is_predicted: false,
+        }))
+    }
+}
+
+#[derive(Debug)]
+struct OpaqueTestMeasures;
+
+impl MeasuresProvider for OpaqueTestMeasures {}
+
+#[test]
+fn retained_selected_samples_are_bounded_and_block_partition_invariant() {
+    let directory = tempfile::tempdir().expect("temporary selected-observation fixture");
+    let path = directory.path().join("selected.ms");
+    generate_fixture(&path);
+
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let one_row_budget = content_budget_for_rows(&problem, source, 1, 1);
+    let two_row_budget = content_budget_for_rows(&problem, source, 2, 1);
+    let one_row =
+        BoundObservationSource::open(&problem, source, &source_state(source), one_row_budget)
+            .expect("bind one-row physical blocks");
+    let two_rows =
+        BoundObservationSource::open(&problem, source, &source_state(source), two_row_budget)
+            .expect("bind two-row physical blocks");
+    assert_eq!(
+        one_row.content_plan().rows_per_block(),
+        1,
+        "{:?}",
+        one_row.content_plan()
+    );
+    assert_eq!(
+        two_rows.content_plan().rows_per_block(),
+        2,
+        "{:?}",
+        two_rows.content_plan()
+    );
+    assert_eq!(
+        one_row.content_plan().bytes_per_row(),
+        two_rows.content_plan().bytes_per_row()
+    );
+    assert!(
+        one_row.content_plan().preparation_bytes_per_row() > one_row.content_plan().bytes_per_row()
+    );
+    assert!(one_row.content_plan().retained_bytes() > 0);
+    assert!(one_row.content_plan().initialization_scratch_bytes() > 0);
+    assert!(one_row.content_plan().maximum_resident_bytes() <= one_row_budget.available_bytes());
+    assert!(two_rows.content_plan().maximum_resident_bytes() <= two_row_budget.available_bytes());
+    assert!(
+        one_row.content_plan().preparation_bytes_per_block()
+            > one_row.content_plan().bytes_per_block()
+    );
+
+    let one_row_samples = one_row
+        .selected_samples(&problem)
+        .expect("prepare one-row selected stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read one-row selected stream");
+    let two_row_samples = two_rows
+        .selected_samples(&problem)
+        .expect("prepare two-row selected stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read two-row selected stream");
+
+    assert_eq!(one_row_samples.len(), 8);
+    assert_eq!(one_row_samples, two_row_samples);
+    assert_eq!(
+        one_row_samples
+            .iter()
+            .map(|sample| {
+                (
+                    sample.address.physical_row,
+                    sample.address.channel_index,
+                    sample.address.correlation_index,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 0, 0),
+            (0, 0, 1),
+            (0, 2, 0),
+            (0, 2, 1),
+            (1, 0, 0),
+            (1, 0, 1),
+            (1, 2, 0),
+            (1, 2, 1),
+        ]
+    );
+    let first = &one_row_samples[0];
+    assert_eq!(first.address.frequency_centre_hz, 1.4e9);
+    assert_eq!(first.address.frequency_lower_hz, 1.3995e9);
+    assert_eq!(first.address.frequency_upper_hz, 1.4005e9);
+    assert_eq!(first.address.channel_width_hz, 1.0e6);
+    assert_eq!(first.address.frequency_frame, FrequencyFrame::Topocentric);
+    assert_eq!(first.address.correlation_type, CorrelationType::CircularRr);
+    assert_eq!(
+        first.visibility,
+        SelectedVisibilitySample::Complex32([0.0, 0.0])
+    );
+    assert_eq!(first.coordinates.density_uvw_m, first.coordinates.raw_uvw_m);
+    assert_eq!(
+        first.coordinates.transformed_uvw_m,
+        first.coordinates.raw_uvw_m
+    );
+    assert_eq!(first.coordinates.phase_shift_m, 0.0);
+    assert_eq!(
+        first.coordinates.phase_direction,
+        first.coordinates.delay_direction
+    );
+    assert_eq!(
+        first.coordinates.phase_direction,
+        first.coordinates.pointing_directions.antenna1
+    );
+    assert_eq!(
+        first.coordinates.phase_direction.frame(),
+        DirectionFrame::J2000
+    );
+    assert_eq!(first.metadata.antenna1, 0);
+    assert_eq!(first.metadata.antenna2, 1);
+    assert_eq!(first.metadata.feed1, 0);
+    assert_eq!(first.metadata.feed2, 0);
+    assert_eq!(
+        inspect_samples(&problem, one_row_samples).expect("inspect exact bounded stream"),
+        inspect_samples(&problem, two_row_samples).expect("inspect repartitioned bounded stream")
+    );
+}
+
+#[test]
+fn t33_non_toy_vla_traversal_reports_row_shared_parallactic_angles() {
+    let directory = tempfile::tempdir().expect("temporary T33 VLA fixture");
+    let path = directory.path().join("t33-vla-polarization.ms");
+    let mut request =
+        SyntheticObservationRequest::vla_ppdisk("unused.fits", &path, tutorial_vla_a_antennas());
+    request.predict_model = false;
+    request.allow_below_elevation_limit = true;
+    request.duration_seconds = 3.0;
+    request.integration_seconds = 1.0;
+    request.spectral_setup = SyntheticSpectralSetup {
+        name: "t33-three-channel".to_string(),
+        start_frequency_hz: 1.4e9,
+        channel_width_hz: 1.0e6,
+        channel_count: 3,
+    };
+    request.worker_policy = SyntheticWorkerPolicy::Fixed;
+    request.row_workers = Some(1);
+    request.channel_workers = Some(1);
+    let report =
+        generate_synthetic_observation_ms(&request).expect("generate non-toy T33 VLA fixture");
+    assert_eq!(report.antenna_count, 27);
+    assert_eq!(report.baseline_count, 351);
+    assert_eq!(report.time_sample_count, 3);
+    assert_eq!(report.main_row_count, 1_053);
+
+    let problem = compiled_problem_with_polarization(
+        &path,
+        report.main_row_count,
+        vec![
+            PolarizationCoordinate::StokesI,
+            PolarizationCoordinate::StokesQ,
+            PolarizationCoordinate::StokesU,
+            PolarizationCoordinate::StokesV,
+        ],
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 37, 1),
+    )
+    .expect("bind non-toy T33 traversal");
+    let samples = bound
+        .selected_samples(&problem)
+        .expect("prepare non-toy T33 stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read non-toy T33 stream");
+    assert_eq!(samples.len(), report.main_row_count * 4);
+
+    let measurement_set = MeasurementSet::open(&path).expect("open T33 VLA fixture");
+    let geometry = MsCalEngine::new(&measurement_set).expect("bind physical geometry");
+    let first = &samples[0];
+    let time_mjd_seconds = first.coordinates.time.mjd_days() * 86_400.0;
+    let field_id = usize::try_from(first.metadata.field_id).expect("field id");
+    let antenna1 = usize::try_from(first.metadata.antenna1).expect("antenna 1");
+    let antenna2 = usize::try_from(first.metadata.antenna2).expect("antenna 2");
+    let physical = [
+        geometry
+            .parallactic_angle(time_mjd_seconds, field_id, antenna1)
+            .expect("antenna 1 physical parallactic angle"),
+        geometry
+            .parallactic_angle(time_mjd_seconds, field_id, antenna2)
+            .expect("antenna 2 physical parallactic angle"),
+    ];
+    for (operator, physical) in first
+        .coordinates
+        .parallactic_angles_rad
+        .iter()
+        .zip(physical)
+    {
+        assert!(
+            (operator + physical).abs() < 1.0e-12,
+            "CASA's polarization operator uses the negative physical parallactic angle"
+        );
+    }
+
+    let mut minimum = [f64::INFINITY; 2];
+    let mut maximum = [f64::NEG_INFINITY; 2];
+    for row_samples in samples.chunks_exact(4) {
+        let expected = row_samples[0].coordinates.parallactic_angles_rad;
+        assert!(expected.iter().all(|angle| angle.is_finite()));
+        assert!(
+            row_samples
+                .iter()
+                .all(|sample| sample.coordinates.parallactic_angles_rad == expected)
+        );
+        for antenna in 0..2 {
+            minimum[antenna] = minimum[antenna].min(expected[antenna]);
+            maximum[antenna] = maximum[antenna].max(expected[antenna]);
+        }
+    }
+    assert!(
+        (maximum[0] - minimum[0]).abs() > 1.0e-4 || (maximum[1] - minimum[1]).abs() > 1.0e-4,
+        "realistic VLA rows must not collapse to a constant feed rotation"
+    );
+}
+
+#[test]
+fn facet_chart_projections_are_domain_major_and_block_partition_invariant() {
+    let directory = tempfile::tempdir().expect("temporary multidomain projection fixture");
+    let path = directory.path().join("multidomain.ms");
+    generate_fixture_with_phase_center(&path, 32, [1.0, -0.5]);
+
+    let problem = compiled_problem_with_geometry(&path, 480, multidomain_geometry());
+    assert!(matches!(
+        problem.geometry().domains()[0].role(),
+        ImageDomainRole::Main
+    ));
+    assert!(matches!(
+        problem.geometry().domains()[1].role(),
+        ImageDomainRole::Outlier(name) if name == "alpha"
+    ));
+    assert!(matches!(
+        problem.geometry().domains()[2].role(),
+        ImageDomainRole::Outlier(name) if name == "zeta"
+    ));
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    let traverse = |rows_per_block| {
+        let observation = BoundSelectedObservation::open(
+            &problem,
+            test_measures(&problem),
+            vec![ObservationSourceBinding::new(
+                source_state(source),
+                bound_content_budget_for_rows(&problem, source, rows_per_block, 1),
+            )],
+        )
+        .expect("bind multidomain traversal");
+        let (mut source, mut consumer) = observation
+            .into_block_stream(&problem)
+            .expect("split multidomain block traversal");
+        let mut storage = source.create_storage(0);
+        let mut projected_rows = Vec::new();
+        let mut peak_current = 0;
+        let mut peak_capacity = 0;
+        while source
+            .fill_next(&mut storage)
+            .expect("fill multidomain block")
+            .is_some()
+        {
+            peak_current = peak_current.max(
+                storage
+                    .resident_current_bytes()
+                    .expect("measure multidomain current bytes"),
+            );
+            peak_capacity = peak_capacity.max(
+                storage
+                    .resident_capacity_bytes()
+                    .expect("measure multidomain capacity bytes"),
+            );
+            consumer
+                .consume(&storage, |run| {
+                    for reported in run.samples() {
+                        let sample = reported.selected();
+                        let address = sample.address();
+                        if address.channel_index == 0 && address.correlation_index == 0 {
+                            projected_rows.push((
+                                address.physical_row,
+                                sample.coordinates().raw_uvw_m,
+                                sample.domain_projections().iter().collect::<Vec<_>>(),
+                            ));
+                        }
+                    }
+                    Ok::<_, Infallible>(())
+                })
+                .expect("consume multidomain block");
+        }
+        let mut terminal = source.complete().expect("complete multidomain source");
+        terminal
+            .record_runtime_residency(1, peak_current, peak_capacity)
+            .expect("record multidomain residency");
+        let (_, completion) = consumer
+            .complete(terminal)
+            .expect("complete multidomain inspection");
+        (projected_rows, completion)
+    };
+
+    let (one_row, one_row_completion) = traverse(7);
+    let (two_rows, two_row_completion) = traverse(19);
+    assert_eq!(
+        one_row, two_rows,
+        "physical block boundaries are not geometry"
+    );
+    assert_eq!(
+        one_row_completion.generation_id(),
+        two_row_completion.generation_id(),
+        "selected generation is invariant to block partitioning"
+    );
+    assert_eq!(one_row.len(), 480);
+    for (_, raw_uvw_m, projections) in one_row {
+        assert_eq!(
+            projections
+                .iter()
+                .map(|projection| (projection.domain_ordinal(), projection.facet_ordinal()))
+                .collect::<Vec<_>>(),
+            vec![(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (2, 0)]
+        );
+        assert_ne!(projections[0].model().transformed_uvw_m(), raw_uvw_m);
+        assert_ne!(projections[0].model(), projections[1].model());
+        assert!(!projections[0].psf_shares_model());
+        assert_eq!(projections[0].psf(), projections[3].psf());
+        assert!(projections[4].psf_shares_model());
+        assert!(!projections[5].psf_shares_model());
+        assert_ne!(
+            projections[4].model().transformed_uvw_m(),
+            projections[5].model().transformed_uvw_m()
+        );
+    }
+}
+
+#[test]
+fn selected_projection_preserves_cell_flags_and_derives_parallel_hand_group_flags() {
+    let directory = tempfile::tempdir().expect("temporary paired-flag fixture");
+    let path = directory.path().join("paired-flag.ms");
+    generate_fixture(&path);
+
+    let mut measurement_set = MeasurementSet::open(&path).expect("open paired-flag fixture");
+    let mut flags = match measurement_set
+        .main_table()
+        .cell_accessor(0, "FLAG")
+        .and_then(|cell| cell.array())
+        .expect("read FLAG cell")
+        .clone()
+    {
+        ArrayValue::Bool(flags) => flags,
+        other => panic!("FLAG must be Bool, found {:?}", other.primitive_type()),
+    };
+    *flags.iter_mut().next().expect("nonempty FLAG cell") = true;
+    measurement_set
+        .main_table_mut()
+        .cell_accessor_mut(0, "FLAG")
+        .expect("open FLAG cell for mutation")
+        .set(Value::Array(ArrayValue::Bool(flags)))
+        .expect("flag only the first parallel hand");
+    measurement_set.save().expect("persist paired-flag fixture");
+    drop(measurement_set);
+
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind paired-flag fixture");
+    let samples = bound
+        .selected_samples(&problem)
+        .expect("prepare paired-flag stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read paired-flag stream");
+
+    assert!(samples[0].channel_flag, "the stored RR flag remains exact");
+    assert!(!samples[1].channel_flag, "the stored LL flag remains exact");
+    assert!(samples[0].parallel_hand_group_flag);
+    assert!(
+        samples[1].parallel_hand_group_flag,
+        "one flagged parallel hand excludes the complete Stokes-I group"
+    );
+    assert!(
+        samples[2..]
+            .iter()
+            .all(|sample| !sample.parallel_hand_group_flag),
+        "other row/channel groups remain usable"
+    );
+}
+
+#[test]
+fn block_traversal_reports_one_canonical_unequal_parallel_hand_weight_group() {
+    let directory = tempfile::tempdir().expect("temporary paired-weight fixture");
+    let path = directory.path().join("paired-weight.ms");
+    generate_fixture(&path);
+
+    let mut measurement_set = MeasurementSet::open(&path).expect("open paired-weight fixture");
+    let mut weights = match measurement_set
+        .main_table()
+        .cell_accessor(0, "WEIGHT")
+        .and_then(|cell| cell.array())
+        .expect("read WEIGHT cell")
+        .clone()
+    {
+        ArrayValue::Float32(weights) => weights,
+        other => panic!("WEIGHT must be Float32, found {:?}", other.primitive_type()),
+    };
+    {
+        let mut elements = weights.iter_mut();
+        *elements.next().expect("first parallel-hand weight") = 3.0;
+        *elements.next().expect("last parallel-hand weight") = 7.0;
+        assert!(elements.next().is_none(), "fixture has exactly two hands");
+    }
+    measurement_set
+        .main_table_mut()
+        .cell_accessor_mut(0, "WEIGHT")
+        .expect("open WEIGHT cell for mutation")
+        .set(Value::Array(ArrayValue::Float32(weights)))
+        .expect("persist unequal parallel-hand weights");
+    measurement_set.save().expect("save paired-weight fixture");
+    drop(measurement_set);
+
+    let problem = compiled_problem(&path, 2);
+    let logical_source = &problem.inputs().observation_snapshot().sources()[0];
+    let observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(logical_source),
+            bound_content_budget_for_rows(&problem, logical_source, 2, 1),
+        )],
+    )
+    .expect("bind paired-weight fixture");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split paired-weight traversal");
+    let mut storage = source.create_storage(0);
+    assert!(
+        source
+            .fill_next(&mut storage)
+            .expect("fill paired-weight block")
+            .is_some()
+    );
+    let mut reported = Vec::new();
+    consumer
+        .consume(&storage, |run| {
+            reported.extend(run.samples().map(|sample| {
+                let selected = sample.selected();
+                (
+                    selected.address().physical_row,
+                    selected.address().channel_index,
+                    selected.address().correlation_index,
+                    selected.input_weight(),
+                    selected.input_weight_group().endpoints(),
+                    selected.input_weight_group().is_density_owner(),
+                )
+            }));
+            Ok::<_, Infallible>(())
+        })
+        .expect("consume paired-weight block");
+
+    assert_eq!(reported[0].0, 0);
+    assert_eq!(reported[0].1, reported[1].1);
+    assert_eq!(reported[0].2, 0);
+    assert_eq!(reported[1].2, 1);
+    assert_eq!(reported[0].3, 3.0);
+    assert_eq!(reported[1].3, 7.0);
+    assert_eq!(reported[0].4, (3.0, Some(7.0)));
+    assert_eq!(reported[1].4, (3.0, Some(7.0)));
+    assert!(reported[0].5, "first correlation owns density");
+    assert!(!reported[1].5, "paired correlation reuses that density");
+}
+
+#[test]
+fn imaging_weight_groups_reject_ambiguous_or_mixed_multi_correlation_layouts() {
+    let products = |types: &[CorrelationType]| {
+        types
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, correlation_type)| {
+                CorrelationProduct::new(index as u32, correlation_type)
+            })
+            .collect::<Vec<_>>()
+    };
+    for valid in [
+        products(&[CorrelationType::CircularRl]),
+        products(&[CorrelationType::CircularRr, CorrelationType::CircularLl]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLr,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::LinearXx,
+            CorrelationType::LinearXy,
+            CorrelationType::LinearYx,
+            CorrelationType::LinearYy,
+        ]),
+    ] {
+        validate_input_weight_group(&valid, 0).expect("canonical imaging-weight group");
+    }
+    for invalid in [
+        products(&[]),
+        products(&[CorrelationType::CircularRr, CorrelationType::CircularRl]),
+        products(&[CorrelationType::CircularRl, CorrelationType::CircularLr]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::LinearXy,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularLr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[
+            CorrelationType::CircularRr,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularRl,
+            CorrelationType::CircularLl,
+        ]),
+        products(&[CorrelationType::CircularRr, CorrelationType::LinearYy]),
+    ] {
+        assert!(matches!(
+            validate_input_weight_group(&invalid, 7),
+            Err(
+                super::BoundObservationSourceError::UnsupportedImagingWeightCorrelationGroup {
+                    polarization_id: 7
+                }
+            )
+        ));
+    }
+}
+
+#[test]
+fn sparse_manifest_reads_only_selected_physical_rows() {
+    let directory = tempfile::tempdir().expect("temporary sparse selected-observation fixture");
+    let path = directory.path().join("sparse.ms");
+    generate_fixture_with_rows(&path, 64);
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        64,
+        [SelectedMainRow::new(0, 0), SelectedMainRow::new(63, 0)],
+    )
+    .expect("sparse exact row manifest");
+    let measurement_set = MeasurementSet::open(&path).expect("open sparse fixture");
+    let times = [0, 63].map(|row| main_time_mjd_seconds(&measurement_set, row));
+    let sparse_filter = RowSelection::new(
+        IdSelection::All,
+        TimeSelection::Ranges(
+            times
+                .into_iter()
+                .map(|time| {
+                    TimeRange::new(
+                        Some(SelectionBound::inclusive(time)),
+                        Some(SelectionBound::inclusive(time)),
+                    )
+                })
+                .collect(),
+        ),
+        UvSelection::All,
+        AntennaSelection::All,
+        IdSelection::All,
+        IdSelection::All,
+        IntentSelection::All,
+        IdSelection::All,
+    );
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input_with_selected_rows_and_filter(
+            &path,
+            1,
+            selected_rows,
+            sparse_filter,
+        )],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile sparse selected observation");
+    let problem = compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile sparse selected-observation problem");
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let samples = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind sparse selected observation")
+    .selected_samples(&problem)
+    .expect("prepare sparse selected stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("read sparse selected stream");
+
+    assert_eq!(samples.len(), 2 * 2 * 2);
+    assert_eq!(
+        samples
+            .iter()
+            .map(|sample| sample.address.physical_row)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [0, 63].into_iter().collect()
+    );
+}
+
+#[test]
+fn unconditional_sparse_manifest_is_rejected_without_scanning_intervening_rows() {
+    let directory = tempfile::tempdir().expect("temporary incomplete-manifest fixture");
+    let path = directory.path().join("incomplete-manifest.ms");
+    generate_fixture_with_rows(&path, 64);
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        64,
+        [SelectedMainRow::new(0, 0), SelectedMainRow::new(63, 0)],
+    )
+    .expect("corrupt unconditional row manifest");
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input_with_selected_rows(&path, 1, selected_rows)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile incomplete unconditional manifest");
+    let problem = compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile incomplete-manifest problem");
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    assert!(matches!(
+        BoundObservationSource::open(
+            &problem,
+            source,
+            &source_state(source),
+            content_budget_for_rows(&problem, source, 2, 1),
+        ),
+        Err(super::BoundObservationSourceError::IncompleteUnconditionalRowManifest)
+    ));
+}
+
+#[test]
+fn retained_metadata_is_rejected_before_content_blocks_are_planned() {
+    let directory = tempfile::tempdir().expect("temporary metadata-budget fixture");
+    let path = directory.path().join("metadata-budget.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let error = match BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        SelectedObservationContentBudget::new(1, 1, 4),
+    ) {
+        Ok(_) => {
+            panic!("retained geometry and coordinate catalogs must fit before engine construction")
+        }
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        super::BoundObservationSourceError::ContentPlan(
+            super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
+        )
+    ));
+}
+
+#[test]
+fn selected_observation_rejects_opaque_foreign_and_mutated_measures_providers() {
+    let directory = tempfile::tempdir().expect("temporary Measures-binding fixture");
+    let path = directory.path().join("measures-binding.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    assert!(matches!(
+        super::SelectedObservationMeasures::new(Arc::new(OpaqueTestMeasures)),
+        Err(super::SelectedObservationMeasuresError::UnaccountedProvider)
+    ));
+
+    let foreign = super::SelectedObservationMeasures::new(Arc::new(
+        AccountedTestMeasures::with_identity(91, 0),
+    ))
+    .expect("acquire foreign provider state");
+    let foreign_binding = ObservationSourceBinding::new(
+        source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    );
+    assert!(matches!(
+        BoundSelectedObservation::open(&problem, foreign, vec![foreign_binding]),
+        Err(super::BoundSelectedObservationError::Measures(
+            super::SelectedObservationMeasuresError::ReferenceIdentityMismatch { .. }
+        ))
+    ));
+
+    let mutable_provider = Arc::new(AccountedTestMeasures::with_heap_bytes(64));
+    let erased_provider: Arc<dyn MeasuresProvider> = mutable_provider.clone();
+    let mutated = super::SelectedObservationMeasures::new(erased_provider)
+        .expect("acquire mutable provider before mutation");
+    mutable_provider.mutate_science(92, 0.25);
+    let mutated_binding = ObservationSourceBinding::new(
+        source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    );
+    assert!(matches!(
+        BoundSelectedObservation::open(&problem, mutated, vec![mutated_binding]),
+        Err(super::BoundSelectedObservationError::Measures(
+            super::SelectedObservationMeasuresError::ProviderStateChanged { .. }
+        ))
+    ));
+}
+
+#[test]
+fn selected_observation_rejects_missing_substituted_and_unexpected_ephemeris_before_source_open() {
+    let directory = tempfile::tempdir().expect("temporary ephemeris-binding fixture");
+    let absent_path = directory.path().join("source-must-not-open.ms");
+    let moving = compiled_problem_with_centres(
+        &absent_path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let moving_source = &moving.inputs().observation_snapshot().sources()[0];
+    let budget = SelectedObservationContentBudget::new(1 << 20, 1, 4);
+
+    let missing = BoundSelectedObservation::open(
+        &moving,
+        test_measures(&moving),
+        vec![ObservationSourceBinding::new(
+            source_state(moving_source),
+            budget,
+        )],
+    )
+    .err()
+    .expect("required ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        missing,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: Some(expected),
+            actual: None,
+        } if measurement_set == moving_source.identity() && expected == identity(90)
+    ));
+
+    let substituted = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(91),
+        budget.reference_data_budget(),
+    )
+    .expect("admit substituted ephemeris fixture");
+    let substituted = BoundSelectedObservation::open(
+        &moving,
+        test_measures(&moving),
+        vec![
+            ObservationSourceBinding::new(source_state(moving_source), budget)
+                .with_ephemeris(Some(substituted)),
+        ],
+    )
+    .err()
+    .expect("substituted ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        substituted,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: Some(expected),
+            actual: Some(actual),
+        } if measurement_set == moving_source.identity()
+            && expected == identity(90)
+            && actual == identity(91)
+    ));
+
+    let fixed = compiled_problem(&absent_path, 2);
+    let fixed_source = &fixed.inputs().observation_snapshot().sources()[0];
+    let unexpected = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(90),
+        budget.reference_data_budget(),
+    )
+    .expect("admit unexpected ephemeris fixture");
+    let unexpected = BoundSelectedObservation::open(
+        &fixed,
+        test_measures(&fixed),
+        vec![
+            ObservationSourceBinding::new(source_state(fixed_source), budget)
+                .with_ephemeris(Some(unexpected)),
+        ],
+    )
+    .err()
+    .expect("unexpected ephemeris must fail before opening the absent source");
+    assert!(matches!(
+        unexpected,
+        super::BoundSelectedObservationError::EphemerisReferenceMismatch {
+            measurement_set,
+            expected: None,
+            actual: Some(actual),
+        } if measurement_set == fixed_source.identity() && actual == identity(90)
+    ));
+}
+
+#[test]
+fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charge() {
+    let directory = tempfile::tempdir().expect("temporary exact ephemeris fixture");
+    let path = directory.path().join("exact-ephemeris.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let budget = SelectedObservationContentBudget::new(64 << 20, 1, 4);
+    let ephemeris = crate::SelectedObservationEphemeris::named(
+        "Mars",
+        identity(90),
+        budget.reference_data_budget(),
+    )
+    .expect("admit exact ephemeris fixture");
+    let binding =
+        ObservationSourceBinding::new(source_state(source), budget).with_ephemeris(Some(ephemeris));
+    let reference_data_bytes = binding.reference_data_bytes();
+    let certificate =
+        BoundSelectedObservation::certify_residency(&problem, std::slice::from_ref(&binding))
+            .expect("certify exact ephemeris binding");
+
+    assert!(reference_data_bytes > 0);
+    assert_eq!(
+        certificate.reference_data_bytes(source.identity()),
+        Some(reference_data_bytes)
+    );
+    assert_eq!(
+        certificate.aggregate_reference_data_bytes(),
+        reference_data_bytes
+    );
+    let bound = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+        .expect("open exact ephemeris binding");
+    assert_eq!(bound.residency_certificate(), &certificate);
+}
+
+#[test]
+fn measures_provider_growth_during_traversal_prevents_owner_completion() {
+    let directory = tempfile::tempdir().expect("temporary Measures-mutation fixture");
+    let path = directory.path().join("measures-mutation.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    let mutable_provider = Arc::new(AccountedTestMeasures::with_heap_bytes(64));
+    let erased_provider: Arc<dyn MeasuresProvider> = mutable_provider.clone();
+    let measures =
+        super::SelectedObservationMeasures::new(erased_provider).expect("account mutable provider");
+    let shared_bytes = selected_observation_shared_bytes(
+        &measures,
+        BoundObservationSource::retained_source_slot_bytes(),
+        single_binding_graph_initialization_bytes(source),
+    );
+    let budget = content_budget_for_rows_with_shared_bytes(&problem, source, shared_bytes, 1, 1);
+    let mut observation = BoundSelectedObservation::open(
+        &problem,
+        measures,
+        vec![ObservationSourceBinding::new(source_state(source), budget)],
+    )
+    .expect("bind provider before mutation");
+    let mut mutated = false;
+
+    let error = observation
+        .traverse(&problem, |_| {
+            if !mutated {
+                mutable_provider.grow(4_096);
+                mutated = true;
+            }
+            Ok::<_, Infallible>(())
+        })
+        .expect_err("terminal provider mutation must prevent owner completion");
+
+    assert!(matches!(
+        error,
+        SelectedObservationTraversalError::Source(super::BoundObservationSourceError::Storage(
+            crate::MsError::MeasuresRuntime(_)
+        ))
+    ));
+}
+
+#[test]
+fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
+    let directory = tempfile::tempdir().expect("temporary cube-contribution fixture");
+    let path = directory.path().join("cube-contributions.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSamplingLaw::CUBIC,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9],
+            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9],
+        },
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let mut observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        )],
+    )
+    .expect("bind real MeasurementSet cube traversal");
+    let mut values = Vec::new();
+    let mut stencils = Vec::new();
+
+    let completion = observation
+        .traverse(&problem, |reported| {
+            let sample = reported.selected();
+            let evaluation = reported.spectral_evaluation();
+            stencils.push(
+                compile_spectral_stencil(&problem, sample, evaluation)
+                    .expect("compile reconstruction-owned cubic stencil")
+                    .contributions()
+                    .iter()
+                    .map(|term| (term.output_channel(), term.factor()))
+                    .collect::<Vec<_>>(),
+            );
+            values.push((
+                sample.address().channel_index,
+                evaluation.native(),
+                evaluation.output_frame(),
+                evaluation.effective_weight(),
+                evaluation.is_valid(),
+            ));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete source-backed cube traversal");
+
+    assert_eq!(completion.sample_count(), 8);
+    assert_eq!(values[0].0, 0);
+    assert_eq!(values[0].1.centre_hz().to_bits(), 1.4e9_f64.to_bits());
+    assert_eq!(values[0].1.boundaries_hz(), [1.3995e9, 1.4005e9]);
+    assert_eq!(values[0].2, values[0].1);
+    assert_eq!(values[0].3, 1.0);
+    assert!(values[0].4);
+    assert_eq!(values[1], values[0]);
+    assert_eq!(values[2].0, 2);
+    assert_eq!(values[2].1.centre_hz().to_bits(), 1.402e9_f64.to_bits());
+    assert_eq!(values[2].1.boundaries_hz(), [1.4015e9, 1.4025e9]);
+    assert_eq!(values[2].2, values[2].1);
+    assert_eq!(values[3], values[2]);
+    // Casacore InterpolateArray1D uses four-point polynomial interpolation
+    // (Neville's algorithm). At the first half-channel this is the exact
+    // CASA/casacore coefficient oracle, including its signed outer term.
+    assert_eq!(
+        stencils[0],
+        vec![(0, 0.3125), (1, 0.9375), (2, -0.3125), (3, 0.0625)]
+    );
+}
+
+#[cfg(feature = "cpp-interop-tests")]
+#[test]
+fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
+    use casa_test_support::spectral_interop::{
+        SpectralInterpolationMethod, SpectralInterpolationOracle,
+    };
+
+    let directory = tempfile::tempdir().expect("temporary T35 source-backed fixture");
+    let path = directory.path().join("t35-spectral-tracer.ms");
+    generate_fixture(&path);
+    let output_centres = vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9];
+    let output_boundaries = vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9];
+
+    let identity = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSamplingLaw::IDENTITY,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.4e9, 1.402e9],
+            channel_boundaries_hz: vec![1.3995e9, 1.401e9, 1.4025e9],
+        },
+    );
+    let nonidentity = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSamplingLaw::CUBIC,
+        SpectralWcs::Tabular {
+            channel_centres_hz: output_centres.clone(),
+            channel_boundaries_hz: output_boundaries,
+        },
+    );
+
+    let trace = |problem: &casa_imaging_model::CompiledProblem| {
+        let source = &problem.inputs().observation_snapshot().sources()[0];
+        let mut observation = BoundSelectedObservation::open(
+            problem,
+            test_measures(problem),
+            vec![ObservationSourceBinding::new(
+                source_state(source),
+                content_budget_for_rows(problem, source, 1, 1),
+            )],
+        )
+        .expect("bind the common T35 MeasurementSet");
+        let mut receipts = Vec::new();
+        observation
+            .traverse(problem, |reported| {
+                let sample = *reported.selected();
+                let evaluation = reported.spectral_evaluation();
+                let stencil = compile_spectral_stencil(problem, &sample, evaluation)
+                    .expect("compile paired spectral stencil");
+                receipts.push((sample, evaluation, stencil));
+                Ok::<_, Infallible>(())
+            })
+            .expect("traverse the common T35 MeasurementSet");
+        receipts
+    };
+
+    let identity_receipts = trace(&identity);
+    assert_eq!(identity_receipts.len(), 8);
+    for (sample, evaluation, stencil) in &identity_receipts {
+        let expected_channel = if sample.address.channel_index == 0 {
+            0
+        } else {
+            1
+        };
+        assert_eq!(
+            stencil
+                .contributions()
+                .iter()
+                .map(|term| (term.output_channel(), term.factor()))
+                .collect::<Vec<_>>(),
+            vec![(expected_channel, 1.0)]
+        );
+        assert_eq!(evaluation.native(), evaluation.output_frame());
+        assert_eq!(evaluation.effective_weight(), sample.input_weight as f64);
+        assert_eq!(evaluation.is_valid(), !sample.parallel_hand_group_flag);
+        assert_eq!(
+            stencil.covariance(),
+            casa_imaging_model::SpectralCovariance::PropagateIndependentSourceNoise
+        );
+    }
+
+    let nonidentity_receipts = trace(&nonidentity);
+    let (sample, evaluation, stencil) = &nonidentity_receipts[0];
+    assert_eq!(
+        sample.address.frequency_centre_hz.to_bits(),
+        1.4e9_f64.to_bits()
+    );
+    assert_eq!(
+        evaluation.output_frame().centre_hz().to_bits(),
+        1.4e9_f64.to_bits()
+    );
+    assert_eq!(
+        evaluation.output_frame().boundaries_hz(),
+        [1.3995e9, 1.4005e9]
+    );
+    assert_eq!(evaluation.effective_weight(), 1.0);
+    assert!(evaluation.is_valid());
+
+    let casa = SpectralInterpolationOracle::coefficients(
+        &output_centres,
+        evaluation.output_frame().centre_hz(),
+        SpectralInterpolationMethod::Cubic,
+    )
+    .expect("CASA/casacore cubic spectral oracle");
+    assert!(casa.valid);
+    let rust =
+        stencil
+            .contributions()
+            .iter()
+            .fold(vec![0.0; output_centres.len()], |mut dense, term| {
+                dense[term.output_channel() as usize] = term.factor();
+                dense
+            });
+    for (rust, casa) in rust.iter().zip(&casa.coefficients) {
+        assert!(
+            (rust - casa).abs() <= 2.0 * f64::EPSILON,
+            "CASA/casacore and Rust cubic coefficients diverged: rust={rust} casa={casa}"
+        );
+    }
+
+    let model = [2.0, -1.0, 0.5, 4.0];
+    let source_visibility = -3.25;
+    let prediction = stencil
+        .contributions()
+        .iter()
+        .map(|term| term.factor() * model[term.output_channel() as usize])
+        .sum::<f64>();
+    let lhs = prediction * source_visibility;
+    let rhs = stencil
+        .contributions()
+        .iter()
+        .map(|term| model[term.output_channel() as usize] * term.factor() * source_visibility)
+        .sum::<f64>();
+    assert!((lhs - rhs).abs() <= f64::EPSILON * lhs.abs().max(1.0));
+}
+
+#[test]
+fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
+    let directory = tempfile::tempdir().expect("temporary transformed-frame fixture");
+    let path = directory.path().join("transformed-contributions.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_transformed_sampling(
+        &path,
+        2,
+        SpectralSamplingLaw::LINEAR,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.4e9, 1.4001e9],
+            channel_boundaries_hz: vec![1.39995e9, 1.40005e9, 1.40015e9],
+        },
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let expected_measures = test_measures(&problem);
+    let expected_shared_bytes = selected_observation_shared_bytes(
+        &expected_measures,
+        BoundObservationSource::retained_source_slot_bytes(),
+        single_binding_graph_initialization_bytes(source),
+    );
+    let expected_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, expected_shared_bytes, 1, 1);
+    let expected_source = BoundObservationSource::open_with_measures(
+        &problem,
+        source,
+        &source_state(source),
+        &expected_measures,
+        expected_shared_bytes,
+        expected_budget,
+        None,
+    )
+    .expect("open independent frame-conversion oracle");
+    let expected_output_frame = MeasFrame::new()
+        .with_measures(expected_measures.provider())
+        .with_epoch(MEpoch::from_mjd(59_000.25, EpochRef::UTC))
+        .with_position(MPosition::new_itrf(-1_601_188.0, -5_041_977.0, 3_554_875.0))
+        .with_direction(MDirection::from_angles(1.0, -0.5, DirectionRef::J2000));
+    let mut observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        )],
+    )
+    .expect("bind transformed-frame traversal");
+    let mut values = Vec::new();
+
+    let completion = observation
+        .traverse(&problem, |reported| {
+            assert_eq!(
+                reported.selected().address().frequency_frame,
+                FrequencyFrame::Topocentric
+            );
+            let sample = reported.selected();
+            let frame = expected_source
+                .geometry_engine()
+                .spectral_frame_observatory(
+                    sample.coordinates().time.mjd_days() * 86_400.0,
+                    usize::try_from(sample.metadata().field_id).expect("non-negative FIELD_ID"),
+                )
+                .expect("independent row frame");
+            let transform_to_output = |frequency_hz| {
+                MFrequency::new(frequency_hz, FrequencyRef::TOPO)
+                    .convert_to(FrequencyRef::GEO, &frame)
+                    .expect("TOPO to GEO")
+                    .convert_to(FrequencyRef::BARY, &frame)
+                    .expect("GEO to BARY")
+                    .convert_to(FrequencyRef::LSRK, &expected_output_frame)
+                    .expect("BARY to LSRK")
+                    .hz()
+            };
+            let image_anchor_hz = transform_to_output(sample.address().frequency_centre_hz);
+            let image_anchor_boundaries = [
+                transform_to_output(sample.address().frequency_lower_hz),
+                transform_to_output(sample.address().frequency_upper_hz),
+            ];
+            let transform_in_native_field_frame = |frequency_hz| {
+                MFrequency::new(frequency_hz, FrequencyRef::TOPO)
+                    .convert_to(FrequencyRef::GEO, &frame)
+                    .expect("source-only TOPO to GEO")
+                    .convert_to(FrequencyRef::BARY, &frame)
+                    .expect("source-only GEO to BARY")
+                    .convert_to(FrequencyRef::LSRK, &frame)
+                    .expect("source-only BARY to LSRK")
+                    .hz()
+            };
+            let native_field_hz =
+                transform_in_native_field_frame(sample.address().frequency_centre_hz);
+            let native_field_boundaries = [
+                transform_in_native_field_frame(sample.address().frequency_lower_hz),
+                transform_in_native_field_frame(sample.address().frequency_upper_hz),
+            ];
+            assert!((image_anchor_hz - native_field_hz).abs() > 1.0);
+            assert_ne!(image_anchor_boundaries, native_field_boundaries);
+            let evaluation = reported.spectral_evaluation();
+            assert_eq!(
+                evaluation.native().centre_hz().to_bits(),
+                sample.address().frequency_centre_hz.to_bits()
+            );
+            assert_eq!(
+                evaluation.native().boundaries_hz(),
+                [
+                    sample.address().frequency_lower_hz,
+                    sample.address().frequency_upper_hz,
+                ]
+            );
+            assert_eq!(
+                evaluation.output_frame().centre_hz().to_bits(),
+                native_field_hz.to_bits()
+            );
+            assert_eq!(
+                evaluation.output_frame().boundaries_hz(),
+                native_field_boundaries
+            );
+            assert_eq!(evaluation.effective_weight(), 1.0);
+            assert!(evaluation.is_valid());
+            values.push((
+                sample.address().channel_index,
+                image_anchor_hz,
+                native_field_hz,
+                native_field_boundaries,
+            ));
+            Ok::<_, Infallible>(())
+        })
+        .expect("owner converts each selected frequency before output mapping");
+
+    assert_eq!(
+        problem.geometry().spectral().output_frame(),
+        FrequencyFrame::Lsrk
+    );
+    assert_eq!(completion.sample_count(), 8);
+    assert_eq!(values.len(), 8);
+    assert_eq!(values[0].0, 0);
+    assert!(
+        values[0].1 != values[0].2,
+        "the image anchor must remain observably distinct from the native FIELD frame"
+    );
+    assert_eq!(values[1].3, values[0].3);
+    assert_eq!(values[2].0, 2);
+    assert_eq!(values[3].3, values[2].3);
+}
+
+#[test]
+fn real_ms_cubedata_traversal_compiles_source_backed_casa_cubic_stencils() {
+    let directory = tempfile::tempdir().expect("temporary cubedata-contribution fixture");
+    let path = directory.path().join("cubedata-contributions.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_sampling(
+        &path,
+        2,
+        SpectralSamplingLaw::CUBIC,
+        SpectralWcs::Tabular {
+            channel_centres_hz: vec![1.3995e9, 1.4005e9, 1.4015e9, 1.4025e9],
+            channel_boundaries_hz: vec![1.399e9, 1.4e9, 1.401e9, 1.402e9, 1.403e9],
+        },
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let mut observation = BoundSelectedObservation::open(
+        &problem,
+        test_measures(&problem),
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        )],
+    )
+    .expect("bind real MeasurementSet cubedata traversal");
+    let mut values = Vec::new();
+    let mut stencils = Vec::new();
+
+    observation
+        .traverse(&problem, |reported| {
+            let sample = reported.selected();
+            let evaluation = reported.spectral_evaluation();
+            stencils.push(
+                compile_spectral_stencil(&problem, sample, evaluation)
+                    .expect("compile reconstruction-owned cubic stencil")
+                    .contributions()
+                    .iter()
+                    .map(|term| (term.output_channel(), term.factor()))
+                    .collect::<Vec<_>>(),
+            );
+            values.push((
+                sample.address().channel_index,
+                evaluation.native(),
+                evaluation.output_frame(),
+                evaluation.effective_weight(),
+                evaluation.is_valid(),
+            ));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete source-backed cubedata traversal");
+
+    assert_eq!(values[0].0, 0);
+    assert_eq!(values[0].1, values[0].2);
+    assert_eq!(values[0].3, 1.0);
+    assert!(values[0].4);
+    assert_eq!(values[1], values[0]);
+    assert_eq!(values[2].0, 2);
+    assert_eq!(values[2].1, values[2].2);
+    assert_eq!(values[2].3, 1.0);
+    assert!(values[2].4);
+    assert_eq!(values[3], values[2]);
+    assert_eq!(
+        stencils[0],
+        vec![(0, 0.3125), (1, 0.9375), (2, -0.3125), (3, 0.0625)]
+    );
+}
+
+#[test]
+fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget() {
+    let directory = tempfile::tempdir().expect("temporary Measures-budget fixture");
+    let path = directory.path().join("measures-budget.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    let baseline_measures = test_measures(&problem);
+    let baseline_shared_bytes = selected_observation_shared_bytes(
+        &baseline_measures,
+        BoundObservationSource::retained_source_slot_bytes(),
+        0,
+    );
+    let baseline_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, baseline_shared_bytes, 1, 1);
+    let baseline = BoundObservationSource::open_with_measures(
+        &problem,
+        source,
+        &source_state(source),
+        &baseline_measures,
+        baseline_shared_bytes,
+        baseline_budget,
+        None,
+    )
+    .expect("bind baseline provider residency");
+
+    let large_provider = Arc::new(AccountedTestMeasures::with_heap_bytes(128 * 1_024));
+    let erased_provider: Arc<dyn MeasuresProvider> = large_provider;
+    let large_measures = super::SelectedObservationMeasures::new(erased_provider)
+        .expect("account large provider residency");
+    let large_shared_bytes = selected_observation_shared_bytes(
+        &large_measures,
+        BoundObservationSource::retained_source_slot_bytes(),
+        0,
+    );
+    assert!(matches!(
+        BoundObservationSource::open_with_measures(
+            &problem,
+            source,
+            &source_state(source),
+            &large_measures,
+            large_shared_bytes,
+            baseline_budget,
+            None,
+        ),
+        Err(super::BoundObservationSourceError::ContentPlan(
+            super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
+                | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
+        ))
+    ));
+
+    let large_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, large_shared_bytes, 1, 1);
+    let large = BoundObservationSource::open_with_measures(
+        &problem,
+        source,
+        &source_state(source),
+        &large_measures,
+        large_shared_bytes,
+        large_budget,
+        None,
+    )
+    .expect("bind admitted large provider residency");
+    assert_eq!(
+        large.content_plan().retained_bytes() - baseline.content_plan().retained_bytes(),
+        large_measures.retained_bytes() - baseline_measures.retained_bytes(),
+        "the shared provider allocation must have one exact retained owner"
+    );
+    assert!(large.content_plan().maximum_resident_bytes() <= large_budget.available_bytes());
+    assert_eq!(
+        large
+            .selected_samples(&problem)
+            .expect("prepare accounted provider traversal")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("complete accounted provider traversal")
+            .len(),
+        8
+    );
+}
+
+#[test]
+fn retained_source_slots_are_charged_once_and_rejected_under_a_tight_budget() {
+    let directory = tempfile::tempdir().expect("temporary source-slot budget fixture");
+    let path = directory.path().join("source-slot-budget.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let slot_allocation_bytes = Vec::<BoundObservationSource>::with_capacity(1)
+        .capacity()
+        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
+        .expect("finite source-slot allocation");
+
+    let omitted_measures = test_measures(&problem);
+    let omitted_shared_bytes = selected_observation_shared_bytes(
+        &omitted_measures,
+        0,
+        single_binding_graph_initialization_bytes(source),
+    );
+    let omitted_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, omitted_shared_bytes, 1, 1);
+    let omitted_error = match BoundSelectedObservation::open(
+        &problem,
+        omitted_measures,
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            omitted_budget,
+        )],
+    ) {
+        Ok(_) => panic!("a budget omitting the source-slot allocation must be rejected"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        omitted_error,
+        super::BoundSelectedObservationError::Source { error, .. }
+            if matches!(
+                *error,
+                super::BoundObservationSourceError::ContentPlan(
+                    super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
+                        | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
+                )
+            )
+    ));
+
+    let admitted_measures = test_measures(&problem);
+    let measures_retained_bytes = admitted_measures.retained_bytes();
+    let admitted_shared_bytes = selected_observation_shared_bytes(
+        &admitted_measures,
+        slot_allocation_bytes,
+        single_binding_graph_initialization_bytes(source),
+    );
+    let admitted_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, admitted_shared_bytes, 1, 1);
+    let admitted = BoundSelectedObservation::open(
+        &problem,
+        admitted_measures,
+        vec![ObservationSourceBinding::new(
+            source_state(source),
+            admitted_budget,
+        )],
+    )
+    .expect("bind an exactly admitted source-slot allocation");
+    assert_eq!(
+        admitted.source_slot_allocation_bytes(),
+        slot_allocation_bytes,
+        "the projection must use the retained Vec's actual slot capacity"
+    );
+
+    let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
+        .expect("open fixture for source-slot accounting comparison");
+    let without_slots = super::content_plan::selected_content_plan(
+        &measurement_set,
+        &problem,
+        source,
+        super::content_plan::SelectedObservationSharedBytes::new(measures_retained_bytes, 0, 0, 0),
+        admitted_budget,
+    )
+    .expect("plan the same retained state without the source-slot owner");
+    let bound_plan = admitted
+        .source_content_plan(0)
+        .expect("bound source content plan");
+    assert_eq!(
+        bound_plan.retained_bytes() - without_slots.retained_bytes(),
+        slot_allocation_bytes,
+        "source identity, owner headers, content plan, and inline padding are charged once"
+    );
+    assert!(bound_plan.maximum_resident_bytes() <= admitted_budget.available_bytes());
+}
+
+#[test]
+fn consumed_binding_graph_is_charged_once_at_actual_capacity_under_a_tight_budget() {
+    let directory = tempfile::tempdir().expect("temporary binding-graph budget fixture");
+    let path = directory.path().join("binding-graph-budget.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let source_slot_bytes = Vec::<BoundObservationSource>::with_capacity(1)
+        .capacity()
+        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
+        .expect("finite source-slot allocation");
+
+    let mut omitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(4_096);
+    let omitted_state = source_state(source);
+    let omitted_binding_graph_bytes = expected_binding_graph_initialization_bytes(
+        std::slice::from_ref(source),
+        std::slice::from_ref(&omitted_state),
+        omitted_bindings.capacity(),
+    );
+    let omitted_measures = test_measures(&problem);
+    let omitted_shared_bytes =
+        selected_observation_shared_bytes(&omitted_measures, source_slot_bytes, 0);
+    let omitted_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, omitted_shared_bytes, 1, 1);
+    omitted_bindings.push(ObservationSourceBinding::new(omitted_state, omitted_budget));
+    let omitted_error =
+        match BoundSelectedObservation::open(&problem, omitted_measures, omitted_bindings) {
+            Ok(_) => panic!("a tight budget omitting the live binding graph must be rejected"),
+            Err(error) => error,
+        };
+    assert!(matches!(
+        omitted_error,
+        super::BoundSelectedObservationError::Source { error, .. }
+            if matches!(
+                *error,
+                super::BoundObservationSourceError::ContentPlan(
+                    super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
+                )
+            )
+    ));
+
+    let mut admitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(4_096);
+    let admitted_state = source_state(source);
+    let binding_graph_bytes = expected_binding_graph_initialization_bytes(
+        std::slice::from_ref(source),
+        std::slice::from_ref(&admitted_state),
+        admitted_bindings.capacity(),
+    );
+    assert_eq!(binding_graph_bytes, omitted_binding_graph_bytes);
+    let admitted_measures = test_measures(&problem);
+    let measures_retained_bytes = admitted_measures.retained_bytes();
+    let admitted_shared_bytes = selected_observation_shared_bytes(
+        &admitted_measures,
+        source_slot_bytes,
+        binding_graph_bytes,
+    );
+    let admitted_budget =
+        content_budget_for_rows_with_shared_bytes(&problem, source, admitted_shared_bytes, 1, 1);
+    admitted_bindings.push(ObservationSourceBinding::new(
+        admitted_state,
+        admitted_budget,
+    ));
+    let admitted = BoundSelectedObservation::open(&problem, admitted_measures, admitted_bindings)
+        .expect("bind an exactly admitted oversized binding graph");
+
+    let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
+        .expect("open fixture for binding-slot accounting comparison");
+    let without_binding_graph = super::content_plan::selected_content_plan(
+        &measurement_set,
+        &problem,
+        source,
+        super::content_plan::SelectedObservationSharedBytes::new(
+            measures_retained_bytes,
+            0,
+            source_slot_bytes,
+            0,
+        ),
+        admitted_budget,
+    )
+    .expect("plan the same initialization without the consumed binding graph");
+    let bound_plan = admitted
+        .source_content_plan(0)
+        .expect("bound source content plan");
+    assert_eq!(
+        bound_plan.initialization_scratch_bytes()
+            - without_binding_graph.initialization_scratch_bytes(),
+        binding_graph_bytes,
+        "the complete consumed binding graph must be charged exactly once"
+    );
+    assert_eq!(
+        bound_plan.retained_bytes(),
+        without_binding_graph.retained_bytes(),
+        "the consumed binding graph is not retained after initialization"
+    );
+    assert!(bound_plan.maximum_resident_bytes() <= admitted_budget.available_bytes());
+}
+
+#[test]
+fn later_binding_generation_allocations_are_included_in_the_once_only_graph_peak() {
+    let directory = tempfile::tempdir().expect("temporary multi-binding graph fixture");
+    let first_path = directory.path().join("first-binding-graph.ms");
+    let second_path = directory.path().join("second-binding-graph.ms");
+    generate_fixture(&first_path);
+    generate_fixture(&second_path);
+    let problem = compiled_problem_with_sources(&[(&first_path, 1, 2), (&second_path, 2, 2)]);
+    let sources = problem.inputs().observation_snapshot().sources();
+    let source_slot_bytes = Vec::<BoundObservationSource>::with_capacity(sources.len())
+        .capacity()
+        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
+        .expect("finite multi-source slot allocation");
+
+    let first_omitted_state = source_state(&sources[0]);
+    let (second_omitted_state, second_generation_bytes) =
+        source_state_with_generation_capacity(&sources[1], 8_192);
+    let omitted_states = [first_omitted_state, second_omitted_state];
+    let mut omitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(sources.len());
+    let full_binding_graph_bytes = expected_binding_graph_initialization_bytes(
+        sources,
+        &omitted_states,
+        omitted_bindings.capacity(),
+    );
+    let graph_without_second_generations = full_binding_graph_bytes
+        .checked_sub(second_generation_bytes)
+        .expect("second generation allocations belong to the live graph");
+    assert!(
+        second_generation_bytes
+            > sources[1]
+                .generations()
+                .retained_manifest_bytes()
+                .expect("compiled second-source generation manifest"),
+        "the second binding must retain deliberately oversized generation capacities"
+    );
+
+    let omitted_measures = test_measures(&problem);
+    let first_omitted_budget = content_budget_for_rows_with_shared_bytes(
+        &problem,
+        &sources[0],
+        selected_observation_shared_bytes(
+            &omitted_measures,
+            source_slot_bytes,
+            graph_without_second_generations,
+        ),
+        1,
+        1,
+    );
+    let second_omitted_budget = content_budget_for_rows_with_shared_bytes(
+        &problem,
+        &sources[1],
+        super::content_plan::SelectedObservationSharedBytes::NONE,
+        1,
+        1,
+    );
+    let [first_omitted_state, second_omitted_state] = omitted_states;
+    omitted_bindings.push(ObservationSourceBinding::new(
+        first_omitted_state,
+        first_omitted_budget,
+    ));
+    omitted_bindings.push(ObservationSourceBinding::new(
+        second_omitted_state,
+        second_omitted_budget,
+    ));
+    let omitted_error =
+        match BoundSelectedObservation::open(&problem, omitted_measures, omitted_bindings) {
+            Ok(_) => panic!("uncharged later-binding generation capacity must be rejected"),
+            Err(error) => error,
+        };
+    assert!(matches!(
+        omitted_error,
+        super::BoundSelectedObservationError::Source {
+            measurement_set,
+            error,
+        } if measurement_set == sources[0].identity()
+            && matches!(
+                *error,
+                super::BoundObservationSourceError::ContentPlan(
+                    super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
+                )
+            )
+    ));
+
+    let first_admitted_state = source_state(&sources[0]);
+    let (second_admitted_state, admitted_second_generation_bytes) =
+        source_state_with_generation_capacity(&sources[1], 8_192);
+    assert_eq!(admitted_second_generation_bytes, second_generation_bytes);
+    let admitted_states = [first_admitted_state, second_admitted_state];
+    let mut admitted_bindings = Vec::<ObservationSourceBinding>::with_capacity(sources.len());
+    let admitted_graph_bytes = expected_binding_graph_initialization_bytes(
+        sources,
+        &admitted_states,
+        admitted_bindings.capacity(),
+    );
+    assert_eq!(admitted_graph_bytes, full_binding_graph_bytes);
+    let admitted_measures = test_measures(&problem);
+    let measures_retained_bytes = admitted_measures.retained_bytes();
+    let first_admitted_budget = content_budget_for_rows_with_shared_bytes(
+        &problem,
+        &sources[0],
+        selected_observation_shared_bytes(
+            &admitted_measures,
+            source_slot_bytes,
+            admitted_graph_bytes,
+        ),
+        1,
+        1,
+    );
+    let second_admitted_budget = content_budget_for_rows_with_shared_bytes(
+        &problem,
+        &sources[1],
+        super::content_plan::SelectedObservationSharedBytes::NONE,
+        1,
+        1,
+    );
+    let [first_admitted_state, second_admitted_state] = admitted_states;
+    admitted_bindings.push(ObservationSourceBinding::new(
+        first_admitted_state,
+        first_admitted_budget,
+    ));
+    admitted_bindings.push(ObservationSourceBinding::new(
+        second_admitted_state,
+        second_admitted_budget,
+    ));
+    let admitted = BoundSelectedObservation::open(&problem, admitted_measures, admitted_bindings)
+        .expect("admit the complete multi-binding graph exactly once");
+
+    let measurement_set = MeasurementSet::open_retained_read(sources[0].provenance().locator())
+        .expect("open first source for graph accounting comparison");
+    let without_binding_graph = super::content_plan::selected_content_plan(
+        &measurement_set,
+        &problem,
+        &sources[0],
+        super::content_plan::SelectedObservationSharedBytes::new(
+            measures_retained_bytes,
+            0,
+            source_slot_bytes,
+            0,
+        ),
+        first_admitted_budget,
+    )
+    .expect("plan the first source without the shared binding graph");
+    let bound_plan = admitted
+        .source_content_plan(0)
+        .expect("bound first-source content plan");
+    assert_eq!(
+        bound_plan.initialization_scratch_bytes()
+            - without_binding_graph.initialization_scratch_bytes(),
+        admitted_graph_bytes,
+        "outer slots and every nested binding allocation are charged once at the first peak"
+    );
+    assert!(bound_plan.maximum_resident_bytes() <= first_admitted_budget.available_bytes());
+}
+
+#[test]
+fn retained_opened_table_metadata_is_charged_once_for_oversized_variable_references() {
+    let directory = tempfile::tempdir().expect("temporary oversized-MEASINFO fixture");
+    let path = directory.path().join("oversized-measinfo.ms");
+    generate_fixture(&path);
+    let centres = CentreLaws::new(
+        PhaseCentreLaw::Observation,
+        DelayCentreLaw::PhaseTrackingCentre,
+        PointingCentreLaw::Observation(ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTime,
+            PointingInterpolation::Nearest,
+            PointingExtrapolation::HoldNearest,
+            MissingPointingPolicy::Reject,
+        )),
+    );
+    let baseline_problem = compiled_problem_with_centres(&path, 2, centres.clone());
+    let baseline_source = &baseline_problem.inputs().observation_snapshot().sources()[0];
+    let baseline_budget = content_budget_for_rows(&baseline_problem, baseline_source, 1, 1);
+    let baseline = BoundObservationSource::open(
+        &baseline_problem,
+        baseline_source,
+        &source_state(baseline_source),
+        baseline_budget,
+    )
+    .expect("bind baseline POINTING source");
+    let baseline_retained_bytes = baseline.content_plan().retained_bytes();
+    drop(baseline);
+    let baseline_storage_bytes = MeasurementSet::open_retained_read(&path)
+        .expect("open baseline retained MeasurementSet")
+        .retained_read_metadata_bytes()
+        .expect("project baseline retained MeasurementSet");
+
+    const REFERENCE_COUNT: usize = 2_048;
+    let mut measurement_set = MeasurementSet::open(&path).expect("open metadata fixture");
+    {
+        let mut pointing = measurement_set.pointing_mut().expect("POINTING subtable");
+        let table = pointing.table_mut();
+        table
+            .add_column(
+                ColumnSchema::scalar("DIRECTION_REF", PrimitiveType::Int32),
+                Some(Value::Scalar(ScalarValue::Int32(0))),
+            )
+            .expect("add variable reference column");
+        let mut keywords = table
+            .column_keywords("DIRECTION")
+            .cloned()
+            .expect("DIRECTION keywords");
+        keywords.upsert(
+            "MEASINFO",
+            Value::Record(RecordValue::new(vec![
+                RecordField::new(
+                    "type",
+                    Value::Scalar(ScalarValue::String("direction".to_string())),
+                ),
+                RecordField::new(
+                    "VarRefCol",
+                    Value::Scalar(ScalarValue::String("DIRECTION_REF".to_string())),
+                ),
+                RecordField::new(
+                    "TabRefTypes",
+                    Value::Array(ArrayValue::from_string_vec(vec![
+                        "J2000".to_string();
+                        REFERENCE_COUNT
+                    ])),
+                ),
+                RecordField::new(
+                    "TabRefCodes",
+                    Value::Array(ArrayValue::from_i32_vec(
+                        (0..REFERENCE_COUNT)
+                            .map(|code| i32::try_from(code).expect("reference code fits i32"))
+                            .collect(),
+                    )),
+                ),
+            ])),
+        );
+        table.set_column_keywords("DIRECTION", keywords);
+    }
+    measurement_set.save().expect("save oversized MEASINFO");
+
+    let problem = compiled_problem_with_centres(&path, 2, centres);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    assert!(matches!(
+        BoundObservationSource::open(&problem, source, &source_state(source), baseline_budget,),
+        Err(super::BoundObservationSourceError::ContentPlan(
+            super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
+                | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
+        ))
+    ));
+
+    let inflated_budget = content_budget_for_rows(&problem, source, 1, 1);
+    let inflated =
+        BoundObservationSource::open(&problem, source, &source_state(source), inflated_budget)
+            .expect("bind oversized variable-reference source");
+    let inflated_storage_bytes = MeasurementSet::open_retained_read(&path)
+        .expect("open inflated retained MeasurementSet")
+        .retained_read_metadata_bytes()
+        .expect("project inflated retained MeasurementSet");
+    assert_eq!(
+        inflated.content_plan().retained_bytes() - baseline_retained_bytes,
+        inflated_storage_bytes - baseline_storage_bytes,
+        "the opened MeasurementSet object graph must be the sole retained owner of persisted MEASINFO"
+    );
+    assert_eq!(
+        inflated.content_plan().pointing_reference_scratch_bytes(),
+        "DIRECTION_REF".len() + size_of::<Option<ScalarValue>>(),
+        "borrowed TabRefTypes and TabRefCodes leave only the selected integer cell as scratch"
+    );
+    assert!(inflated.content_plan().maximum_resident_bytes() <= inflated_budget.available_bytes());
+    let samples = inflated
+        .selected_samples(&problem)
+        .expect("prepare oversized variable-reference source")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("evaluate borrowed TabRefTypes and TabRefCodes");
+    assert_eq!(samples.len(), 8);
+    assert_eq!(
+        inflated.retained_storage_metadata_bytes(),
+        Some(inflated_storage_bytes),
+        "bounded traversal must not populate an uncharged retained table cache"
+    );
+}
+
+#[test]
+fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
+    let directory = tempfile::tempdir().expect("temporary variable-reference fixture");
+    let path = directory.path().join("variable-reference.ms");
+    generate_fixture(&path);
+    let reference_column = format!("DIRECTION_REF_{}", "X".repeat(8_192));
+    let mut measurement_set = MeasurementSet::open(&path).expect("open POINTING fixture");
+    {
+        let mut pointing = measurement_set.pointing_mut().expect("POINTING subtable");
+        let table = pointing.table_mut();
+        table
+            .add_column(
+                ColumnSchema::scalar(&reference_column, PrimitiveType::String),
+                Some(Value::Scalar(ScalarValue::String("J2000".to_string()))),
+            )
+            .expect("add string reference column");
+        let mut keywords = table
+            .column_keywords("DIRECTION")
+            .cloned()
+            .expect("DIRECTION keywords");
+        keywords.upsert(
+            "MEASINFO",
+            Value::Record(RecordValue::new(vec![
+                RecordField::new(
+                    "type",
+                    Value::Scalar(ScalarValue::String("direction".to_string())),
+                ),
+                RecordField::new(
+                    "VarRefCol",
+                    Value::Scalar(ScalarValue::String(reference_column.clone())),
+                ),
+            ])),
+        );
+        table.set_column_keywords("DIRECTION", keywords);
+    }
+    measurement_set
+        .save()
+        .expect("save string variable-reference POINTING metadata");
+
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTime,
+                PointingInterpolation::Nearest,
+                PointingExtrapolation::HoldNearest,
+                MissingPointingPolicy::Reject,
+            )),
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let one_row_budget = content_budget_for_rows(&problem, source, 1, 1);
+    let two_row_budget = content_budget_for_rows(&problem, source, 2, 1);
+    let one_row =
+        BoundObservationSource::open(&problem, source, &source_state(source), one_row_budget)
+            .expect("bind one-row variable-reference source");
+    let two_rows =
+        BoundObservationSource::open(&problem, source, &source_state(source), two_row_budget)
+            .expect("bind two-row variable-reference source");
+    let expected_scratch = reference_column
+        .len()
+        .checked_add("J2000".len())
+        .and_then(|bytes| bytes.checked_add(size_of::<Option<ScalarValue>>()))
+        .expect("variable-reference scratch fits usize");
+    assert_eq!(
+        one_row.content_plan().pointing_reference_scratch_bytes(),
+        expected_scratch
+    );
+    assert_eq!(
+        two_rows.content_plan().pointing_reference_scratch_bytes(),
+        expected_scratch,
+        "one-at-a-time string scratch must not be multiplied by block rows"
+    );
+    assert_eq!(
+        two_rows.content_plan().preparation_bytes_per_block(),
+        2 * one_row.content_plan().preparation_bytes_per_block(),
+        "the separately charged reference scratch must not leak into per-row payload"
+    );
+    assert!(matches!(
+        BoundObservationSource::open(
+            &problem,
+            source,
+            &source_state(source),
+            SelectedObservationContentBudget::new(
+                one_row_budget.available_bytes() - expected_scratch,
+                1,
+                4,
+            ),
+        ),
+        Err(super::BoundObservationSourceError::ContentPlan(
+            super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
+                | super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
+        ))
+    ));
+    assert!(two_rows.content_plan().maximum_resident_bytes() <= two_row_budget.available_bytes());
+    let retained_storage_bytes = two_rows
+        .retained_storage_metadata_bytes()
+        .expect("project retained string-reference storage");
+    let samples = two_rows
+        .selected_samples(&problem)
+        .expect("prepare variable-string reference source")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("evaluate bounded variable-string references");
+    assert_eq!(samples.len(), 8);
+    assert_eq!(
+        two_rows.retained_storage_metadata_bytes(),
+        Some(retained_storage_bytes),
+        "variable reference reads must not create hidden retained table state"
+    );
+}
+
+#[test]
+fn retained_predicate_catalog_is_charged_before_construction() {
+    let directory = tempfile::tempdir().expect("temporary predicate-budget fixture");
+    let path = directory.path().join("predicate-budget.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let admitted = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind source with predicate allowance");
+    let predicate_bytes =
+        super::row_selection::CompiledRowPredicate::shared_retained_heap_bytes(source)
+            .expect("finite predicate projection");
+    let old_unaccounted_budget = admitted
+        .content_plan()
+        .maximum_resident_bytes()
+        .checked_sub(predicate_bytes)
+        .expect("predicate contributes retained bytes");
+
+    assert!(matches!(
+        BoundObservationSource::open(
+            &problem,
+            source,
+            &source_state(source),
+            SelectedObservationContentBudget::new(old_unaccounted_budget, 1, 4),
+        ),
+        Err(super::BoundObservationSourceError::ContentPlan(
+            super::content_plan::SelectedObservationContentPlanError::InsufficientBudget { .. }
+        ))
+    ));
+}
+
+#[test]
+fn post_compile_source_generation_changes_are_rejected_before_planning_or_streaming() {
+    let directory = tempfile::tempdir().expect("temporary stale-generation fixture");
+    let path = directory.path().join("stale-generations.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let changed_generation = identity(201);
+    let changes = [
+        (
+            "DATA",
+            generations_with_changed_column(source, MsColumnKind::Data, changed_generation),
+        ),
+        (
+            "FLAG",
+            generations_with_changed_column(source, MsColumnKind::Flag, changed_generation),
+        ),
+        (
+            "WEIGHT",
+            generations_with_changed_column(source, MsColumnKind::Weight, changed_generation),
+        ),
+        (
+            "POINTING metadata",
+            generations_with_changed_metadata(
+                source,
+                MetadataTableKind::Pointing,
+                changed_generation,
+            ),
+        ),
+        (
+            "consistency token",
+            SourceGenerations::new(
+                ConsistencyToken::new(changed_generation),
+                source.generations().columns().clone(),
+                source.generations().metadata_generations().to_vec(),
+                source.generations().model_column(),
+            ),
+        ),
+    ];
+
+    for (changed, generations) in changes {
+        let current = ObservationSourceState::new(
+            source.identity(),
+            source.selection().rows().clone(),
+            generations,
+        );
+        let error = match BoundObservationSource::open(
+            &problem,
+            source,
+            &current,
+            SelectedObservationContentBudget::new(1, 1, 4),
+        ) {
+            Ok(_) => panic!("a post-compile generation change must fail before budget admission"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(
+                error,
+                super::BoundObservationSourceError::StaleSourceGenerations
+            ),
+            "{changed} change returned {error:?}"
+        );
+    }
+}
+
+#[test]
+fn completed_model_data_write_does_not_stale_selected_observation_reads() {
+    let directory = tempfile::tempdir().expect("temporary model-generation fixture");
+    let path = directory.path().join("advanced-model-generation.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let changed_generation = identity(204);
+    let current = ObservationSourceState::new(
+        source.identity(),
+        source.selection().rows().clone(),
+        SourceGenerations::new(
+            ConsistencyToken::new(changed_generation),
+            source.generations().columns().clone(),
+            source.generations().metadata_generations().to_vec(),
+            ModelColumnState::Present(changed_generation),
+        ),
+    );
+
+    BoundObservationSource::open(
+        &problem,
+        source,
+        &current,
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("MODEL_DATA is a write precondition, not a selected-observation input");
+}
+
+#[test]
+fn post_compile_flag_storage_mutation_with_fresh_generation_is_rejected() {
+    let directory = tempfile::tempdir().expect("temporary mutated-FLAG fixture");
+    let path = directory.path().join("mutated-flag.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    let mut measurement_set = MeasurementSet::open(&path).expect("open fixture for FLAG mutation");
+    let mut flags = match measurement_set
+        .main_table()
+        .cell_accessor(0, "FLAG")
+        .and_then(|cell| cell.array())
+        .expect("read compiled FLAG cell")
+        .clone()
+    {
+        ArrayValue::Bool(flags) => flags,
+        other => panic!("FLAG must be Bool, found {:?}", other.primitive_type()),
+    };
+    let first = flags.iter_mut().next().expect("nonempty FLAG cell");
+    *first = !*first;
+    measurement_set
+        .main_table_mut()
+        .cell_accessor_mut(0, "FLAG")
+        .expect("open FLAG cell for mutation")
+        .set(Value::Array(ArrayValue::Bool(flags)))
+        .expect("mutate FLAG after compilation");
+    measurement_set
+        .save()
+        .expect("persist post-compile FLAG mutation");
+    drop(measurement_set);
+
+    let current = ObservationSourceState::new(
+        source.identity(),
+        source.selection().rows().clone(),
+        generations_with_changed_column(source, MsColumnKind::Flag, identity(202)),
+    );
+    let error = match BoundObservationSource::open(
+        &problem,
+        source,
+        &current,
+        SelectedObservationContentBudget::new(1, 1, 4),
+    ) {
+        Ok(_) => panic!("fresh FLAG generation must reject mutated storage before planning"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        super::BoundObservationSourceError::StaleSourceGenerations
+    ));
+}
+
+#[test]
+fn post_compile_pointing_storage_mutation_with_fresh_generation_is_rejected() {
+    let directory = tempfile::tempdir().expect("temporary mutated-POINTING fixture");
+    let path = directory.path().join("mutated-pointing.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+
+    let mut measurement_set =
+        MeasurementSet::open(&path).expect("open fixture for POINTING mutation");
+    measurement_set
+        .pointing_mut()
+        .expect("POINTING subtable")
+        .set_array(0, "DIRECTION", direction_array([0.125, -0.25]))
+        .expect("mutate POINTING after compilation");
+    measurement_set
+        .save()
+        .expect("persist post-compile POINTING mutation");
+    drop(measurement_set);
+
+    let current = ObservationSourceState::new(
+        source.identity(),
+        source.selection().rows().clone(),
+        generations_with_changed_metadata(source, MetadataTableKind::Pointing, identity(203)),
+    );
+    let error = match BoundObservationSource::open(
+        &problem,
+        source,
+        &current,
+        SelectedObservationContentBudget::new(1, 1, 4),
+    ) {
+        Ok(_) => panic!("fresh POINTING generation must reject mutated metadata before planning"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        super::BoundObservationSourceError::StaleSourceGenerations
+    ));
+}
+
+#[test]
+fn post_compile_selected_row_change_is_rejected_before_streaming() {
+    let directory = tempfile::tempdir().expect("temporary stale-row fixture");
+    let path = directory.path().join("stale-rows.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let changed_rows = SelectedRows::from_ordered_main_rows(2, [SelectedMainRow::new(0, 0)])
+        .expect("changed current row manifest");
+    let current = ObservationSourceState::new(
+        source.identity(),
+        changed_rows,
+        source.generations().clone(),
+    );
+
+    let error = match BoundObservationSource::open(
+        &problem,
+        source,
+        &current,
+        SelectedObservationContentBudget::new(1, 1, 4),
+    ) {
+        Ok(_) => panic!("a post-compile selection change must fail before budget admission"),
+        Err(error) => error,
+    };
+
+    assert!(matches!(
+        error,
+        super::BoundObservationSourceError::StaleSelectedRows
+    ));
+}
+
+#[test]
+fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
+    let directory = tempfile::tempdir().expect("temporary row-projection fixture");
+    let path = directory.path().join("row-projection.ms");
+    generate_fixture(&path);
+    let measurement_set = MeasurementSet::open(&path).expect("open row-projection fixture");
+    let selection = measurement_set
+        .selected_observation_row_selection(&[0], None, None, None)
+        .expect("resolve frontend selectors to the native row contract");
+    let mut rows = Vec::new();
+
+    measurement_set
+        .visit_selected_observation_rows(
+            &selection,
+            MsSelectionIoBudget {
+                available_bytes: 2 * SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+                maximum_live_blocks: 2,
+                requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+                storage_alignment_rows: None,
+            },
+            |row| rows.push(row),
+        )
+        .expect("visit canonical selected rows");
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row.physical_row(), row.data_description_id()))
+            .collect::<Vec<_>>(),
+        vec![(0, 0), (1, 0)]
+    );
+    assert!(rows.iter().all(|row| !row.flag_row()));
+    assert!(rows.iter().all(|row| row.observation_id() == 0));
+}
+
+#[test]
+fn terminal_poll_failure_prevents_owner_minted_completion() {
+    let directory = tempfile::tempdir().expect("temporary terminal-poll fixture");
+    let path = directory.path().join("terminal-poll.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem(&path, 2);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind terminal-poll source");
+    let exact = bound
+        .selected_samples(&problem)
+        .expect("prepare exact source stream");
+    let terminal_failure = exact.chain(std::iter::once(Err(
+        super::BoundObservationSourceError::InvalidRowGeometry,
+    )));
+    let mut consumed = 0_usize;
+
+    let error = consume_validated_stream(&problem, terminal_failure, |_| {
+        consumed += 1;
+        Ok::<_, Infallible>(())
+    })
+    .expect_err("a source error on the terminal poll must prevent completion");
+
+    assert_eq!(consumed, 8, "all exact values precede the terminal failure");
+    assert!(matches!(
+        error,
+        SelectedObservationTraversalError::Source(
+            super::BoundObservationSourceError::InvalidRowGeometry
+        )
+    ));
+}
+
+#[test]
+#[cfg(unix)]
+fn owner_rebound_requires_exhaustive_proof_and_fresh_locked_state() {
+    let directory = tempfile::tempdir().expect("temporary owner-rebound fixture");
+    let path = directory.path().join("owner-rebound.ms");
+    generate_fixture(&path);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize selected owner");
+    let request = owner_resolution_request(&path, 2);
+    let (problem, access) = owner_problem_and_access(request.clone());
+    let mut selected = access.open(&problem).expect("open owner-validated source");
+    let mut consumed = 0_usize;
+
+    let partial = selected
+        .traverse(&problem, |_| {
+            consumed += 1;
+            Err::<(), _>(std::io::Error::other("stop before exhaustive completion"))
+        })
+        .expect_err("partial traversal cannot mint completion or replay proof");
+    assert_eq!(consumed, 1);
+    assert!(matches!(
+        partial,
+        SelectedObservationTraversalError::Consumer(_)
+    ));
+
+    let initial = selected
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("exhaustive owner traversal");
+    let proof = initial
+        .replay_proof()
+        .expect("exhaustive owner traversal mints replay proof");
+    assert!(
+        proof.authorize_rebound_completion(&initial).is_none(),
+        "the durable proof alone cannot authorize its original completion"
+    );
+    drop(selected);
+
+    let (fresh_problem, fresh_access) = owner_problem_and_access(request.clone());
+    assert_eq!(fresh_problem.problem_id(), problem.problem_id());
+    let mut rebound = fresh_access
+        .rebind(&problem, &proof)
+        .expect("fresh locked owner state authorizes the opaque proof");
+    assert!(
+        !rebound.can_resume_after(&initial),
+        "rebind must mint a fresh attempt-local access binding"
+    );
+    let rebound_completion = rebound
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("freshly rebound traversal remains exhaustive");
+    assert!(!initial.same_access_binding(&rebound_completion));
+    let authorization = proof
+        .authorize_rebound_completion(&rebound_completion)
+        .expect("only the freshly rebound terminal completion authorizes generation and count");
+    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
+    drop(rebound);
+
+    let (_, stale_access) = owner_problem_and_access(request);
+    external_locked_keyword_mutation(&path);
+    let error = match stale_access.rebind(&problem, &proof) {
+        Ok(_) => panic!("fresh-lock rebind must close the resolve/open mutation gap"),
+        Err(error) => error,
+    };
+    let super::BoundSelectedObservationError::Source { error, .. } = error else {
+        panic!("unexpected rebound failure: {error:?}")
+    };
+    assert!(matches!(
+        error.as_ref(),
+        super::BoundObservationSourceError::OwnerState(owner)
+            if matches!(owner.as_ref(), crate::ObservationOwnerError::ModificationCounterMismatch { table, .. } if table == "MAIN")
+    ));
+}
+
+#[test]
+fn row_manifest_validation_occurs_in_the_sole_value_traversal() {
+    let directory = tempfile::tempdir().expect("temporary one-pass fixture");
+    let path = directory.path().join("one-pass.ms");
+    generate_fixture(&path);
+    let measurement_set = MeasurementSet::open(&path).expect("open one-pass fixture");
+    let first_time = main_time_mjd_seconds(&measurement_set, 0);
+    let selected_rows = SelectedRows::from_ordered_main_rows(1, [SelectedMainRow::new(0, 0)])
+        .expect("stale one-row manifest");
+    let first_row_filter = RowSelection::new(
+        IdSelection::All,
+        TimeSelection::Ranges(vec![TimeRange::new(
+            Some(SelectionBound::inclusive(first_time)),
+            Some(SelectionBound::inclusive(first_time)),
+        )]),
+        UvSelection::All,
+        AntennaSelection::All,
+        IdSelection::All,
+        IdSelection::All,
+        IntentSelection::All,
+        IdSelection::All,
+    );
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input_with_selected_rows_and_filter(
+            &path,
+            1,
+            selected_rows,
+            first_row_filter,
+        )],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile stale one-row observation");
+    let problem = compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile one-pass problem");
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 1, 1),
+    );
+
+    let mut bound =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+            .expect("binding must not hide a preliminary MAIN traversal");
+    let mut consumed = 0_usize;
+    let error = bound
+        .traverse(&problem, |_| {
+            consumed += 1;
+            Ok::<_, Infallible>(())
+        })
+        .expect_err("the authoritative traversal must reject the stale row manifest");
+
+    assert_eq!(
+        consumed, 4,
+        "the mismatching second row is validated before reaching the consumer"
+    );
+    assert!(matches!(
+        error,
+        SelectedObservationTraversalError::Source(
+            super::BoundObservationSourceError::SourceRowCountMismatch
+        )
+    ));
+}
+
+#[test]
+fn selected_observation_residency_is_cardinality_independent_and_schedule_invariant() {
+    let directory = tempfile::tempdir().expect("temporary residency fixtures");
+    let small_path = directory.path().join("small.ms");
+    let large_path = directory.path().join("large.ms");
+    generate_fixture_with_rows(&small_path, 4);
+    generate_fixture_with_rows(&large_path, 64);
+
+    let small_problem = compiled_problem(&small_path, 4);
+    let small_source = &small_problem.inputs().observation_snapshot().sources()[0];
+    let synchronous_budget = content_budget_for_rows(&small_problem, small_source, 1, 1);
+    let double_buffered_budget = content_budget_for_rows(&small_problem, small_source, 1, 2);
+    let synchronous = BoundObservationSource::open(
+        &small_problem,
+        small_source,
+        &source_state(small_source),
+        synchronous_budget,
+    )
+    .expect("bind synchronous selected observation");
+    let double_buffered = BoundObservationSource::open(
+        &small_problem,
+        small_source,
+        &source_state(small_source),
+        double_buffered_budget,
+    )
+    .expect("bind double-buffered selected observation");
+    assert_eq!(synchronous.content_plan().rows_per_block(), 1);
+    assert_eq!(double_buffered.content_plan().rows_per_block(), 1);
+    assert_eq!(synchronous.content_plan().maximum_live_blocks(), 1);
+    assert_eq!(double_buffered.content_plan().maximum_live_blocks(), 2);
+    assert!(
+        synchronous.content_plan().maximum_resident_bytes() <= synchronous_budget.available_bytes()
+    );
+    assert!(
+        double_buffered.content_plan().maximum_resident_bytes()
+            <= double_buffered_budget.available_bytes()
+    );
+
+    let synchronous_samples = synchronous
+        .selected_samples(&small_problem)
+        .expect("prepare synchronous replay")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read synchronous replay");
+    let mut double_buffered_stream = double_buffered
+        .selected_samples(&small_problem)
+        .expect("prepare double-buffered replay");
+    let mut double_buffered_samples = vec![
+        double_buffered_stream
+            .next()
+            .expect("double-buffered replay has a first sample")
+            .expect("read first double-buffered sample"),
+    ];
+    assert_eq!(
+        double_buffered_stream.scheduling_state(),
+        (Some(0), vec![(1, 1)], 2),
+        "the owner must have a distinct second block resident ahead of the active block"
+    );
+    for _ in 0..3 {
+        double_buffered_samples.push(
+            double_buffered_stream
+                .next()
+                .expect("first row has four selected samples")
+                .expect("read first-row sample"),
+        );
+    }
+    double_buffered_samples.push(
+        double_buffered_stream
+            .next()
+            .expect("double-buffered replay reaches its second row")
+            .expect("read second-row sample"),
+    );
+    assert_eq!(
+        double_buffered_stream.scheduling_state(),
+        (Some(1), vec![(0, 2)], 2),
+        "consumption must alternate buffers while the released slot reads ahead"
+    );
+    double_buffered_samples.extend(
+        double_buffered_stream
+            .collect::<Result<Vec<_>, _>>()
+            .expect("read remaining double-buffered replay"),
+    );
+    assert_eq!(synchronous_samples, double_buffered_samples);
+    assert_eq!(
+        inspect_samples(&small_problem, synchronous_samples).expect("inspect synchronous replay"),
+        inspect_samples(&small_problem, double_buffered_samples)
+            .expect("inspect double-buffered replay")
+    );
+
+    let synchronous_plan = ObservationSourceBinding::new(
+        source_state(small_source),
+        bound_content_budget_for_rows(&small_problem, small_source, 1, 1),
+    );
+    let double_buffered_plan = ObservationSourceBinding::new(
+        source_state(small_source),
+        bound_content_budget_for_rows(&small_problem, small_source, 1, 2),
+    );
+    let mut synchronous_observation = BoundSelectedObservation::open(
+        &small_problem,
+        test_measures(&small_problem),
+        vec![synchronous_plan],
+    )
+    .expect("bind synchronous owner traversal");
+    let synchronous_completion = synchronous_observation
+        .traverse(&small_problem, |_| Ok::<_, Infallible>(()))
+        .expect("complete synchronous owner traversal");
+    let mut double_buffered_observation = BoundSelectedObservation::open(
+        &small_problem,
+        test_measures(&small_problem),
+        vec![double_buffered_plan],
+    )
+    .expect("bind double-buffered owner traversal");
+    let double_buffered_completion = double_buffered_observation
+        .traverse(&small_problem, |_| Ok::<_, Infallible>(()))
+        .expect("complete double-buffered owner traversal");
+    assert_eq!(
+        synchronous_completion.generation_id(),
+        double_buffered_completion.generation_id(),
+        "read-ahead scheduling and alternating physical buffers are absent from content identity"
+    );
+    assert_eq!(
+        synchronous_completion.sample_count(),
+        double_buffered_completion.sample_count()
+    );
+
+    let large_problem = compiled_problem(&large_path, 64);
+    let large_source = &large_problem.inputs().observation_snapshot().sources()[0];
+    let large_budget = content_budget_for_rows(&large_problem, large_source, 1, 1);
+    let large = BoundObservationSource::open(
+        &large_problem,
+        large_source,
+        &source_state(large_source),
+        large_budget,
+    )
+    .expect("bind large selected observation");
+    assert_eq!(
+        large.content_plan().bytes_per_row(),
+        synchronous.content_plan().bytes_per_row(),
+        "MAIN and POINTING table cardinality must not enter simultaneous residency"
+    );
+    assert_eq!(
+        large.content_plan().bytes_per_block(),
+        synchronous.content_plan().bytes_per_block()
+    );
+    assert_eq!(
+        large_source
+            .selection()
+            .rows()
+            .retained_manifest_bytes()
+            .expect("large retained row manifest byte count"),
+        small_source
+            .selection()
+            .rows()
+            .retained_manifest_bytes()
+            .expect("small retained row manifest byte count"),
+        "selected-row cardinality is encoded without retaining a row-sized corpus"
+    );
+    assert_eq!(
+        large.content_plan().retained_bytes(),
+        synchronous.content_plan().retained_bytes(),
+        "source cardinality does not increase retained selection state"
+    );
+    assert_eq!(
+        large.content_plan().initialization_scratch_bytes(),
+        synchronous.content_plan().initialization_scratch_bytes(),
+        "shared selected-row allocations are retained once, not recharged as validation scratch"
+    );
+    assert_eq!(
+        large_budget.available_bytes(),
+        synchronous_budget.available_bytes()
+    );
+    assert!(large.content_plan().maximum_resident_bytes() <= large_budget.available_bytes());
+    let large_with_small_budget = BoundObservationSource::open(
+        &large_problem,
+        large_source,
+        &source_state(large_source),
+        synchronous_budget,
+    )
+    .expect("compact selection admits the larger source under the same one-row budget");
+    assert_eq!(
+        large_with_small_budget.content_plan().rows_per_block(),
+        synchronous.content_plan().rows_per_block()
+    );
+    assert_eq!(
+        large
+            .selected_samples(&large_problem)
+            .expect("prepare large bounded replay")
+            .try_fold(0_usize, |count, sample| sample.map(|_| count + 1))
+            .expect("read large bounded replay"),
+        64 * 2 * 2
+    );
+}
+
+#[test]
+fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
+    let directory = tempfile::tempdir().expect("temporary block-stream fixture");
+    let path = directory.path().join("block-stream.ms");
+    generate_fixture_with_rows(&path, 4);
+    let problem = compiled_problem(&path, 4);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 1, 1),
+    );
+    let mut scalar =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
+            .expect("bind scalar traversal");
+    let mut scalar_samples = Vec::new();
+    let scalar_completion = scalar
+        .traverse(&problem, |sample| {
+            scalar_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete scalar traversal");
+
+    let block = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+        .expect("bind block traversal");
+    let (mut source, mut consumer) = block
+        .into_block_stream(&problem)
+        .expect("split block traversal");
+    let mut storage = source.create_storage(0);
+    let mut block_samples = Vec::new();
+    let mut peak_current = 0_u64;
+    let mut peak_capacity = 0_u64;
+    while source
+        .fill_next(&mut storage)
+        .expect("fill canonical block")
+        .is_some()
+    {
+        peak_current = peak_current.max(
+            storage
+                .resident_current_bytes()
+                .expect("measure block current bytes"),
+        );
+        peak_capacity = peak_capacity.max(
+            storage
+                .resident_capacity_bytes()
+                .expect("measure block capacity bytes"),
+        );
+        consumer
+            .consume(&storage, |run| {
+                block_samples
+                    .extend(run.samples().map(|sample| {
+                        (sample.selected().to_owned(), sample.spectral_evaluation())
+                    }));
+                Ok::<_, Infallible>(())
+            })
+            .expect("consume canonical block");
+    }
+    let mut terminal = source.complete().expect("complete terminal source poll");
+    terminal
+        .record_runtime_residency(1, peak_current, peak_capacity)
+        .expect("record one-slot residency");
+    let (block, block_completion) = consumer
+        .complete(terminal)
+        .expect("combine source and inspection completion");
+
+    assert_eq!(block_samples, scalar_samples);
+    assert_eq!(
+        block_completion.generation_id(),
+        scalar_completion.generation_id()
+    );
+    assert_eq!(
+        block_completion.sample_count(),
+        scalar_completion.sample_count()
+    );
+    let measurements = block_completion.measurements();
+    assert_eq!(measurements.peak_live_blocks(), 1);
+    assert_eq!(measurements.selected_sample_count(), 16);
+    assert_eq!(measurements.selected_channel_run_count(), 8);
+    assert_eq!(measurements.modeled_physical_read_bytes(), Some(636));
+    assert_eq!(
+        measurements.selected_sample_handoff_bytes(),
+        (4 * size_of::<SelectedObservationRunRow>()
+            + 8 * size_of::<SelectedObservationRunChannel>()
+            + 16 * (size_of::<SelectedObservationRunCorrelation>()
+                + size_of::<SelectedSpectralEvaluation>())) as u64
+    );
+    let expected_scratch = 2
+        * (size_of::<SelectedObservationRunCorrelation>()
+            + size_of::<SelectedSpectralEvaluation>())
+        + size_of::<SelectedInputWeightGroup>();
+    assert_eq!(
+        measurements.peak_consumer_scratch_current_bytes(),
+        expected_scratch as u64
+    );
+    assert!(measurements.consumer_scratch_capacity_bytes() >= expected_scratch as u64);
+    assert!(block.can_resume_after(&block_completion));
+}
+
+#[test]
+fn retained_selected_observation_owns_canonical_multi_source_order() {
+    let directory = tempfile::tempdir().expect("temporary multi-source fixture");
+    let first_path = directory.path().join("first.ms");
+    let second_path = directory.path().join("second.ms");
+    generate_fixture(&first_path);
+    generate_fixture(&second_path);
+    let problem = compiled_problem_with_sources(&[(&first_path, 1, 2), (&second_path, 2, 2)]);
+    let sources = problem.inputs().observation_snapshot().sources();
+    let source_slot_allocation_bytes = Vec::<BoundObservationSource>::with_capacity(sources.len())
+        .capacity()
+        .checked_mul(BoundObservationSource::retained_source_slot_bytes())
+        .expect("finite source-slot allocation");
+    let binding_states: Vec<_> = sources.iter().map(source_state).collect();
+    let binding_capacity = Vec::<ObservationSourceBinding>::with_capacity(sources.len()).capacity();
+    let binding_graph_initialization_bytes =
+        expected_binding_graph_initialization_bytes(sources, &binding_states, binding_capacity);
+    let one_row_measures = test_measures(&problem);
+    let one_row_bindings: Vec<_> = sources
+        .iter()
+        .enumerate()
+        .map(|(source_index, source)| {
+            ObservationSourceBinding::new(
+                source_state(source),
+                content_budget_for_rows_with_shared_bytes(
+                    &problem,
+                    source,
+                    if source_index == 0 {
+                        selected_observation_shared_bytes(
+                            &one_row_measures,
+                            source_slot_allocation_bytes,
+                            binding_graph_initialization_bytes,
+                        )
+                    } else {
+                        super::content_plan::SelectedObservationSharedBytes::NONE
+                    },
+                    1,
+                    1,
+                ),
+            )
+        })
+        .collect();
+    let one_row_expected_bytes = one_row_bindings
+        .iter()
+        .map(|binding| binding.content_budget().available_bytes())
+        .sum::<usize>();
+    let one_row_residency =
+        BoundSelectedObservation::certify_residency(&problem, &one_row_bindings)
+            .expect("certify every one-row source budget");
+    let two_row_measures = test_measures(&problem);
+    let mut two_row_bindings: Vec<_> = sources
+        .iter()
+        .enumerate()
+        .map(|(source_index, source)| {
+            ObservationSourceBinding::new(
+                source_state(source),
+                content_budget_for_rows_with_shared_bytes(
+                    &problem,
+                    source,
+                    if source_index == 0 {
+                        selected_observation_shared_bytes(
+                            &two_row_measures,
+                            source_slot_allocation_bytes,
+                            binding_graph_initialization_bytes,
+                        )
+                    } else {
+                        super::content_plan::SelectedObservationSharedBytes::NONE
+                    },
+                    2,
+                    1,
+                ),
+            )
+        })
+        .collect();
+    two_row_bindings.reverse();
+    let two_row_expected_bytes = two_row_bindings
+        .iter()
+        .map(|binding| binding.content_budget().available_bytes())
+        .sum::<usize>();
+    let two_row_residency =
+        BoundSelectedObservation::certify_residency(&problem, &two_row_bindings)
+            .expect("certify reordered two-row source budgets");
+    let mut one_row = BoundSelectedObservation::open(&problem, one_row_measures, one_row_bindings)
+        .expect("bind canonical multi-source observation");
+    let mut two_rows = BoundSelectedObservation::open(&problem, two_row_measures, two_row_bindings)
+        .expect("bind reordered source states and budgets by typed identity");
+
+    assert_eq!(one_row.residency_certificate(), &one_row_residency);
+    assert_eq!(two_rows.residency_certificate(), &two_row_residency);
+    assert_eq!(
+        one_row_residency.aggregate_resident_bytes(),
+        one_row_expected_bytes
+    );
+    assert_eq!(
+        two_row_residency.aggregate_resident_bytes(),
+        two_row_expected_bytes
+    );
+    assert_eq!(one_row_residency.peak_live_blocks(), 1);
+    assert_eq!(two_row_residency.peak_live_blocks(), 1);
+    assert_ne!(
+        one_row_residency, two_row_residency,
+        "per-source budget facts remain part of the opaque owner certificate"
+    );
+
+    let shared_measures_bytes = test_measures(&problem).retained_bytes();
+    for (source_index, source) in sources.iter().enumerate() {
+        let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
+            .expect("open multi-source fixture for uncharged comparison");
+        let uncharged = super::content_plan::selected_content_plan(
+            &measurement_set,
+            &problem,
+            source,
+            super::content_plan::SelectedObservationSharedBytes::NONE,
+            content_budget_for_rows(&problem, source, 1, 1),
+        )
+        .expect("plan source without the shared Measures owner");
+        let bound = one_row
+            .source_content_plan(source_index)
+            .expect("bound canonical source plan");
+        assert_eq!(
+            bound.retained_bytes() - uncharged.retained_bytes(),
+            if source_index == 0 {
+                shared_measures_bytes + one_row.source_slot_allocation_bytes()
+            } else {
+                0
+            },
+            "the provider and source-slot allocation must be charged only to the first canonical source"
+        );
+    }
+
+    let mut one_row_samples = Vec::new();
+    let one_row_completion = one_row
+        .traverse(&problem, |sample| {
+            one_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete canonical multi-source traversal");
+    let mut two_row_samples = Vec::new();
+    let two_row_completion = two_rows
+        .traverse(&problem, |sample| {
+            two_row_samples.push((sample.selected().to_owned(), sample.spectral_evaluation()));
+            Ok::<_, Infallible>(())
+        })
+        .expect("complete repartitioned multi-source traversal");
+
+    assert_eq!(one_row_samples.len(), 16);
+    assert_eq!(one_row_samples, two_row_samples);
+    assert_eq!(one_row_completion.sample_count(), 16);
+    let one_row_measurements = one_row_completion.measurements();
+    assert_eq!(one_row_measurements.source_pass_count(), 2);
+    assert_eq!(one_row_measurements.block_count(), 4);
+    assert_eq!(one_row_measurements.stored_row_count(), 4);
+    assert_eq!(one_row_measurements.stored_sample_count(), 24);
+    assert_eq!(one_row_measurements.logical_output_bytes(), 636);
+    assert_eq!(
+        one_row_measurements.modeled_physical_read_bytes(),
+        Some(636)
+    );
+    assert_eq!(one_row_measurements.source_read_operations(), 76);
+    assert_eq!(one_row_measurements.request_handoff_bytes(), 32);
+    assert_eq!(one_row_measurements.selected_sample_count(), 16);
+    assert_eq!(one_row_measurements.selected_channel_run_count(), 0);
+    assert_eq!(
+        one_row_measurements.selected_sample_handoff_bytes(),
+        16 * size_of::<super::SelectedObservationTraversalSample<'static>>() as u64
+    );
+    assert_eq!(one_row_measurements.allocated_storage_buffers(), 38);
+    assert_eq!(one_row_measurements.reused_storage_buffers(), 38);
+    assert_eq!(one_row_measurements.peak_live_blocks(), 1);
+    assert!(
+        one_row_measurements.peak_live_capacity_bytes()
+            >= one_row_measurements.peak_live_current_bytes()
+    );
+    assert!(one_row_measurements.source_read_nanos() > 0);
+    assert!(one_row_measurements.source_fill_nanos() >= one_row_measurements.source_read_nanos());
+    assert!(one_row_measurements.source_arrangement_nanos() > 0);
+    let two_row_measurements = two_row_completion.measurements();
+    assert_eq!(two_row_measurements.source_pass_count(), 2);
+    assert_eq!(two_row_measurements.block_count(), 2);
+    assert_eq!(two_row_measurements.stored_row_count(), 4);
+    assert_eq!(two_row_measurements.stored_sample_count(), 24);
+    assert_eq!(two_row_measurements.logical_output_bytes(), 636);
+    assert_eq!(
+        two_row_measurements.modeled_physical_read_bytes(),
+        Some(636)
+    );
+    assert_eq!(two_row_measurements.source_read_operations(), 38);
+    assert_eq!(two_row_measurements.request_handoff_bytes(), 32);
+    assert_eq!(two_row_measurements.allocated_storage_buffers(), 38);
+    assert_eq!(two_row_measurements.reused_storage_buffers(), 0);
+    assert_eq!(
+        one_row_completion.generation_id(),
+        two_row_completion.generation_id(),
+        "physical source and row blocking are absent from content identity"
+    );
+    assert_eq!(
+        one_row_completion.observation_snapshot_id(),
+        problem.inputs().observation_snapshot().snapshot_id()
+    );
+    assert_eq!(
+        one_row_completion.observation_provenance_id(),
+        problem.inputs().observation_snapshot().provenance_id()
+    );
+    assert_eq!(
+        one_row_completion.commitment_id(),
+        problem.selected_observation().commitment_id()
+    );
+    assert_eq!(
+        one_row_samples
+            .chunks_exact(8)
+            .map(|samples| samples[0].0.address.measurement_set)
+            .collect::<Vec<_>>(),
+        problem
+            .selected_observation()
+            .read_set()
+            .sources()
+            .iter()
+            .map(|source| source.measurement_set())
+            .collect::<Vec<_>>()
+    );
+    assert!(one_row.can_resume_after(&one_row_completion));
+    assert!(!two_rows.can_resume_after(&one_row_completion));
+    let repeated = one_row
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("mint a fresh completion for a repeated retained traversal");
+    assert_eq!(
+        one_row_completion.generation_id(),
+        repeated.generation_id(),
+        "content generation remains stable across attempts"
+    );
+    assert!(one_row_completion.precedes(&repeated));
+    assert!(!one_row_completion.same_access_binding(&two_row_completion));
+    assert!(!one_row.can_resume_after(&one_row_completion));
+    assert!(one_row.can_resume_after(&repeated));
+}
+
+#[test]
+fn retained_observation_cannot_be_rebound_to_equivalent_cross_provenance_problem() {
+    let directory = tempfile::tempdir().expect("temporary provenance-binding fixture");
+    let path = directory.path().join("provenance.ms");
+    generate_fixture(&path);
+    let compile_with_request = |selection_request| {
+        let selected_rows = SelectedRows::from_ordered_main_rows(
+            2,
+            [SelectedMainRow::new(0, 0), SelectedMainRow::new(1, 0)],
+        )
+        .expect("selected provenance-test rows");
+        let source = source_input_with_selected_rows_filter_and_request(
+            &path,
+            1,
+            selected_rows,
+            RowSelection::new(
+                IdSelection::All,
+                TimeSelection::All,
+                UvSelection::All,
+                AntennaSelection::All,
+                IdSelection::All,
+                IdSelection::All,
+                IntentSelection::All,
+                IdSelection::All,
+            ),
+            selection_request,
+        );
+        let snapshot = compile_observation(ObservationSnapshotInput::new(
+            vec![source],
+            vec![(ReferenceDataKind::Measures, identity(90))],
+            ModelStateIdentity::Empty,
+        ))
+        .expect("compile provenance-test snapshot");
+        compile(ImagingRequest::new(
+            specification(),
+            geometry(),
+            ProblemInputIdentities::new(snapshot.clone()),
+            model_lifecycle(snapshot.model()),
+        ))
+        .expect("compile provenance-test problem")
+    };
+    let first_problem = compile_with_request(identity(211));
+    let second_problem = compile_with_request(identity(212));
+    assert_eq!(
+        first_problem.inputs().observation_snapshot().snapshot_id(),
+        second_problem.inputs().observation_snapshot().snapshot_id(),
+        "source provenance is deliberately absent from scientific snapshot identity"
+    );
+    assert_eq!(first_problem.problem_id(), second_problem.problem_id());
+    assert_ne!(
+        first_problem
+            .inputs()
+            .observation_snapshot()
+            .provenance_id(),
+        second_problem
+            .inputs()
+            .observation_snapshot()
+            .provenance_id()
+    );
+    let source = &first_problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&first_problem, source, 2, 1),
+    );
+    let mut retained = BoundSelectedObservation::open(
+        &first_problem,
+        test_measures(&first_problem),
+        vec![binding],
+    )
+    .expect("bind first provenance exactly");
+    let mut consumed = 0_usize;
+
+    let error = retained
+        .traverse(&second_problem, |_| {
+            consumed += 1;
+            Ok::<_, Infallible>(())
+        })
+        .expect_err("equivalent science cannot relabel retained access with new provenance");
+
+    assert_eq!(consumed, 0);
+    assert!(matches!(
+        error,
+        SelectedObservationTraversalError::Binding(
+            super::BoundSelectedObservationError::ProblemMismatch
+        )
+    ));
+}
+
+#[test]
+fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
+    let directory = tempfile::tempdir().expect("temporary fixed-centre fixture");
+    let path = directory.path().join("fixed.ms");
+    generate_fixture(&path);
+    let phase = SkyDirection::new(DirectionFrame::J2000, 0.7, -0.2);
+    let delay = SkyDirection::new(DirectionFrame::J2000, 0.8, -0.25);
+    let pointing = SkyDirection::new(DirectionFrame::J2000, 0.9, -0.3);
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Fixed(phase),
+            DelayCentreLaw::Fixed(delay),
+            PointingCentreLaw::Fixed(pointing),
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind fixed-centre source");
+    let samples = bound
+        .selected_samples(&problem)
+        .expect("prepare fixed-centre stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("evaluate fixed-centre samples");
+
+    assert_eq!(samples.len(), 8);
+    for sample in &samples {
+        assert_eq!(sample.coordinates.phase_direction, phase);
+        assert_eq!(sample.coordinates.delay_direction, delay);
+        assert_eq!(sample.coordinates.pointing_directions.antenna1, pointing);
+        assert_eq!(sample.coordinates.pointing_directions.antenna2, pointing);
+        assert_ne!(
+            sample.coordinates.transformed_uvw_m,
+            sample.coordinates.raw_uvw_m
+        );
+        assert_ne!(
+            sample.coordinates.density_uvw_m,
+            sample.coordinates.raw_uvw_m
+        );
+        assert_ne!(sample.coordinates.phase_shift_m, 0.0);
+    }
+    inspect_samples(&problem, samples).expect("inspect fixed-centre stream");
+}
+
+#[test]
+fn retained_mosaic_projection_uses_girar_uvw_with_adjoint_phase_sign() {
+    let directory = tempfile::tempdir().expect("temporary mosaic-projection fixture");
+    let path = directory.path().join("mosaic-projection.ms");
+    generate_fixture(&path);
+    let phase = SkyDirection::new(DirectionFrame::J2000, 0.7, -0.2);
+    let centres = CentreLaws::new(
+        PhaseCentreLaw::Fixed(phase),
+        DelayCentreLaw::PhaseTrackingCentre,
+        PointingCentreLaw::PhaseTrackingCentre,
+    );
+    let problem = compiled_problem_with_geometry(
+        &path,
+        2,
+        geometry_with_centres_and_uvw(centres, UvwCoordinateLaw::MosaicPhaseTrackingCentre),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let bound = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind mosaic-projection source");
+    let sample = bound
+        .selected_samples(&problem)
+        .expect("prepare mosaic-projection stream")
+        .next()
+        .expect("one selected sample")
+        .expect("evaluate mosaic-projection sample");
+    let target_direction = problem.geometry().domains()[0].model_phase_centre();
+    let target = MDirection::from_angles(
+        target_direction.longitude_rad(),
+        target_direction.latitude_rad(),
+        DirectionRef::J2000,
+    );
+    let (expected_uvw_m, casa_dphase_m) = bound
+        .geometry_engine()
+        .reproject_raw_uvw_for_mosaic_to_direction(
+            sample.coordinates.raw_uvw_m,
+            usize::try_from(sample.metadata.field_id).expect("field id"),
+            &target,
+        )
+        .expect("CASA girarUVW projection");
+    let projection = sample
+        .domain_projections
+        .iter()
+        .next()
+        .expect("primary projection")
+        .model();
+
+    assert_eq!(projection.transformed_uvw_m(), expected_uvw_m);
+    assert_eq!(projection.phase_shift_m(), -casa_dphase_m);
+}
+
+#[test]
+fn retained_selected_samples_evaluate_moving_centres_at_each_row_time() {
+    let directory = tempfile::tempdir().expect("temporary moving-centre fixture");
+    let path = directory.path().join("moving.ms");
+    generate_fixture(&path);
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Ephemeris("Mars".to_string()),
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let samples = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind moving-centre source")
+    .selected_samples(&problem)
+    .expect("prepare moving-centre stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("evaluate moving-centre samples");
+
+    let first = &samples[0];
+    let second_row = samples
+        .iter()
+        .find(|sample| sample.address.physical_row == 1)
+        .expect("second selected row");
+    assert_ne!(
+        first.coordinates.phase_direction,
+        second_row.coordinates.phase_direction
+    );
+    assert_ne!(
+        first.domain_projections.iter().next().unwrap().model(),
+        second_row.domain_projections.iter().next().unwrap().model(),
+        "moving rows must not retain one fixed primary-domain projection",
+    );
+    for sample in &samples {
+        assert_eq!(
+            sample.coordinates.phase_direction,
+            sample.coordinates.delay_direction
+        );
+        assert_eq!(
+            sample.coordinates.phase_direction,
+            sample.coordinates.pointing_directions.antenna1
+        );
+        assert_ne!(sample.coordinates.phase_shift_m, 0.0);
+        let primary = sample
+            .domain_projections
+            .iter()
+            .next()
+            .expect("primary image-domain projection")
+            .model();
+        assert_eq!(
+            primary.transformed_uvw_m(),
+            sample.coordinates.transformed_uvw_m,
+        );
+        assert_eq!(primary.phase_shift_m(), sample.coordinates.phase_shift_m);
+    }
+    inspect_samples(&problem, samples).expect("inspect moving-centre stream");
+}
+
+#[test]
+fn retained_selected_samples_preserve_bounded_per_antenna_pointing_directions() {
+    let directory = tempfile::tempdir().expect("temporary POINTING fixture");
+    let path = directory.path().join("pointing.ms");
+    generate_fixture(&path);
+    let antenna1_pointing = [0.91, -0.31];
+    let antenna2_pointing = [0.93, -0.29];
+    let mut measurement_set = MeasurementSet::open(&path).expect("open POINTING fixture");
+    {
+        let mut pointing = measurement_set.pointing_mut().expect("POINTING subtable");
+        pointing
+            .set_array(0, "DIRECTION", direction_array(antenna1_pointing))
+            .expect("set antenna-0 POINTING direction");
+        pointing
+            .set_array(1, "DIRECTION", direction_array(antenna2_pointing))
+            .expect("set antenna-1 POINTING direction");
+    }
+    measurement_set.save().expect("save POINTING fixture");
+
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTime,
+                PointingInterpolation::Nearest,
+                PointingExtrapolation::HoldNearest,
+                MissingPointingPolicy::Reject,
+            )),
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let one_row = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind one-row POINTING stream");
+    let two_rows = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind two-row POINTING stream");
+    assert_eq!(one_row.content_plan().rows_per_block(), 1);
+    assert_eq!(two_rows.content_plan().rows_per_block(), 2);
+    assert!(
+        one_row.content_plan().preparation_bytes_per_block()
+            > one_row.content_plan().bytes_per_block()
+    );
+    let one_row_samples = one_row
+        .selected_samples(&problem)
+        .expect("prepare one-row POINTING stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read one-row POINTING stream");
+    let two_row_samples = two_rows
+        .selected_samples(&problem)
+        .expect("prepare two-row POINTING stream")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read two-row POINTING stream");
+
+    assert_eq!(one_row_samples, two_row_samples);
+    for sample in &one_row_samples {
+        assert_eq!(
+            sample.coordinates.pointing_directions.antenna1,
+            SkyDirection::new(
+                DirectionFrame::J2000,
+                antenna1_pointing[0],
+                antenna1_pointing[1],
+            )
+        );
+        assert_eq!(
+            sample.coordinates.pointing_directions.antenna2,
+            SkyDirection::new(
+                DirectionFrame::J2000,
+                antenna2_pointing[0],
+                antenna2_pointing[1],
+            )
+        );
+    }
+    inspect_samples(&problem, one_row_samples).expect("inspect exact bounded POINTING stream");
+}
+
+#[test]
+fn observation_pointing_missing_policy_is_explicit_and_fail_closed() {
+    let directory = tempfile::tempdir().expect("temporary missing-POINTING fixture");
+    let path = directory.path().join("missing-pointing.ms");
+    generate_fixture(&path);
+    let mut measurement_set = MeasurementSet::open(&path).expect("open POINTING fixture");
+    {
+        let mut pointing = measurement_set.pointing_mut().expect("POINTING subtable");
+        pointing
+            .set_i32(0, "ANTENNA_ID", 98)
+            .expect("detach first POINTING antenna");
+        pointing
+            .set_i32(1, "ANTENNA_ID", 99)
+            .expect("detach second POINTING antenna");
+    }
+    measurement_set.save().expect("save POINTING fixture");
+
+    let fallback_problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            observation_pointing(MissingPointingPolicy::UsePhaseTrackingCentre),
+        ),
+    );
+    let source = &fallback_problem.inputs().observation_snapshot().sources()[0];
+    let fallback = BoundObservationSource::open(
+        &fallback_problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&fallback_problem, source, 2, 1),
+    )
+    .expect("bind fallback POINTING source")
+    .selected_samples(&fallback_problem)
+    .expect("prepare fallback POINTING stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("explicitly fall back to phase centre");
+    for sample in fallback {
+        assert_eq!(
+            sample.coordinates.pointing_directions.antenna1,
+            sample.coordinates.phase_direction
+        );
+        assert_eq!(
+            sample.coordinates.pointing_directions.antenna2,
+            sample.coordinates.phase_direction
+        );
+    }
+
+    let rejecting_problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            observation_pointing(MissingPointingPolicy::Reject),
+        ),
+    );
+    let source = &rejecting_problem.inputs().observation_snapshot().sources()[0];
+    let error = BoundObservationSource::open(
+        &rejecting_problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&rejecting_problem, source, 2, 1),
+    )
+    .expect("bind rejecting POINTING source")
+    .selected_samples(&rejecting_problem)
+    .expect("prepare rejecting POINTING stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect_err("missing required POINTING must fail closed");
+    assert!(matches!(
+        error,
+        super::BoundObservationSourceError::MissingPointingDirection { .. }
+    ));
+}
+
+#[test]
+fn observation_pointing_interpolates_each_antenna_on_the_shortest_arc() {
+    let directory = tempfile::tempdir().expect("temporary interpolated-POINTING fixture");
+    let path = directory.path().join("interpolated-pointing.ms");
+    generate_fixture(&path);
+    let mut measurement_set = MeasurementSet::open(&path).expect("open POINTING fixture");
+    let first_time = match measurement_set
+        .main_table()
+        .cell_accessor(0, "TIME")
+        .and_then(|cell| cell.scalar())
+        .expect("MAIN.TIME row 0")
+    {
+        ScalarValue::Float64(value) => *value,
+        other => panic!(
+            "MAIN.TIME must be Float64, found {:?}",
+            other.primitive_type()
+        ),
+    };
+    let second_time = match measurement_set
+        .main_table()
+        .cell_accessor(1, "TIME")
+        .and_then(|cell| cell.scalar())
+        .expect("MAIN.TIME row 1")
+    {
+        ScalarValue::Float64(value) => *value,
+        other => panic!(
+            "MAIN.TIME must be Float64, found {:?}",
+            other.primitive_type()
+        ),
+    };
+    let before_time = first_time - 0.5;
+    let after_time = second_time + 0.5;
+    {
+        let mut pointing = measurement_set.pointing_mut().expect("POINTING subtable");
+        for (row, antenna, direction) in [(0, 0, [0.0, 0.0]), (1, 1, [0.4, 0.0])] {
+            pointing
+                .set_i32(row, "ANTENNA_ID", antenna)
+                .expect("set POINTING antenna");
+            pointing
+                .set_f64(row, "TIME", before_time)
+                .expect("set POINTING time");
+            pointing
+                .set_f64(row, "TIME_ORIGIN", before_time)
+                .expect("set POINTING origin");
+            pointing
+                .set_f64(row, "INTERVAL", -1.0)
+                .expect("set POINTING timestamp semantics");
+            pointing
+                .set_array(row, "DIRECTION", direction_array(direction))
+                .expect("set POINTING direction");
+        }
+        pointing
+            .table_mut()
+            .add_row(pointing_row(0, after_time, [0.2, 0.0]))
+            .expect("append antenna-0 bracket");
+        pointing
+            .table_mut()
+            .add_row(pointing_row(1, after_time, [0.6, 0.0]))
+            .expect("append antenna-1 bracket");
+    }
+    measurement_set.save().expect("save POINTING fixture");
+
+    let problem = compiled_problem_with_centres(
+        &path,
+        2,
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::Observation(ObservationPointingLaw::new(
+                PointingDirectionColumn::Direction,
+                PointingDirectionSemantic::AntennaBoresight,
+                PointingTimeSampling::VisibilityTime,
+                PointingInterpolation::GreatCircleShortestArc,
+                PointingExtrapolation::Reject,
+                MissingPointingPolicy::Reject,
+            )),
+        ),
+    );
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let samples = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind interpolated POINTING source")
+    .selected_samples(&problem)
+    .expect("prepare interpolated POINTING stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("interpolate POINTING directions");
+
+    for sample in &samples[..4] {
+        assert!(
+            (sample
+                .coordinates
+                .pointing_directions
+                .antenna1
+                .longitude_rad()
+                - 0.05)
+                .abs()
+                < 1.0e-12
+        );
+        assert!(
+            (sample
+                .coordinates
+                .pointing_directions
+                .antenna2
+                .longitude_rad()
+                - 0.45)
+                .abs()
+                < 1.0e-12
+        );
+    }
+    for sample in &samples[4..] {
+        assert!(
+            (sample
+                .coordinates
+                .pointing_directions
+                .antenna1
+                .longitude_rad()
+                - 0.15)
+                .abs()
+                < 1.0e-12
+        );
+        assert!(
+            (sample
+                .coordinates
+                .pointing_directions
+                .antenna2
+                .longitude_rad()
+                - 0.55)
+                .abs()
+                < 1.0e-12
+        );
+    }
+}
+
+#[test]
+fn selected_rows_pair_owner_derived_heterogeneous_apertures_with_antenna_pointings() {
+    let directory = tempfile::tempdir().expect("temporary heterogeneous response fixture");
+    let path = directory.path().join("heterogeneous-response.ms");
+    generate_fixture(&path);
+    let mut measurement_set = MeasurementSet::open(&path).expect("open response fixture");
+    {
+        let mut observation = measurement_set
+            .observation_mut()
+            .expect("OBSERVATION subtable");
+        observation
+            .set_string(0, "TELESCOPE_NAME", "ALMA")
+            .expect("set telescope");
+    }
+    {
+        let mut antenna = measurement_set.antenna_mut().expect("ANTENNA subtable");
+        antenna
+            .put_dish_diameter(0, 12.0)
+            .expect("set ALMA aperture");
+        antenna.put_dish_diameter(1, 7.0).expect("set ACA aperture");
+    }
+    measurement_set.save().expect("save response fixture");
+
+    let centres = CentreLaws::new(
+        PhaseCentreLaw::Observation,
+        DelayCentreLaw::PhaseTrackingCentre,
+        observation_pointing(MissingPointingPolicy::Reject),
+    );
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(&path, 1, 2)],
+        vec![
+            (ReferenceDataKind::Measures, identity(90)),
+            (ReferenceDataKind::Instrument, identity(91)),
+        ],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile heterogeneous observation");
+    let science = ScientificContract::new(
+        SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+        MeasurementEquationContract::new(InstrumentResponse::PrimaryBeam, inner_products()),
+    )
+    .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+    let problem = compile(ImagingRequest::new(
+        specification_with_science(
+            science,
+            ReconstructionBasis::Constant,
+            vec![PolarizationCoordinate::StokesI],
+        ),
+        geometry_with_centres(centres),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile heterogeneous response problem");
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let samples = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 2, 1),
+    )
+    .expect("bind heterogeneous source")
+    .selected_samples(&problem)
+    .expect("prepare heterogeneous stream")
+    .collect::<Result<Vec<_>, _>>()
+    .expect("evaluate heterogeneous stream");
+
+    assert!(!samples.is_empty());
+    for sample in samples {
+        let responses = sample
+            .metadata
+            .antenna_responses
+            .expect("direction-dependent rows carry response classes");
+        assert_eq!(responses.antenna1, AntennaResponseClass::CasaAlma12m);
+        assert_eq!(responses.antenna2, AntennaResponseClass::CasaAca7m);
+        assert_eq!(responses.family_envelope, AntennaResponseClass::CasaAlma12m);
+        assert_eq!(sample.metadata.antenna1, 0);
+        assert_eq!(sample.metadata.antenna2, 1);
+    }
+}
+
+#[test]
+fn multi_spw_selection_is_block_invariant_across_prediction_and_residual_replays() {
+    let directory = tempfile::tempdir().expect("temporary multi-SPW fixture");
+    let path = directory.path().join("multi-spw.ms");
+    generate_fixture(&path);
+    extend_fixture_with_second_spw(&path);
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![multi_spw_source_input(&path, 1)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile multi-SPW observation");
+    let problem = compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile multi-SPW problem");
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let one_row = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 1, 1),
+    )
+    .expect("bind one-row multi-SPW stream");
+    let three_rows = BoundObservationSource::open(
+        &problem,
+        source,
+        &source_state(source),
+        content_budget_for_rows(&problem, source, 3, 1),
+    )
+    .expect("bind three-row multi-SPW stream");
+    assert_eq!(one_row.content_plan().rows_per_block(), 1);
+    assert_eq!(three_rows.content_plan().rows_per_block(), 3);
+
+    let prediction = one_row
+        .selected_samples(&problem)
+        .expect("prepare prediction replay")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read prediction replay");
+    let residual = one_row
+        .selected_samples(&problem)
+        .expect("prepare residual replay")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read residual replay");
+    let repartitioned = three_rows
+        .selected_samples(&problem)
+        .expect("prepare repartitioned replay")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("read repartitioned replay");
+
+    assert_eq!(prediction, residual);
+    assert_eq!(prediction, repartitioned);
+    assert_eq!(prediction.len(), 16);
+    assert_eq!(
+        prediction
+            .iter()
+            .map(|sample| {
+                (
+                    sample.address.physical_row,
+                    sample.address.data_description_id,
+                    sample.address.spectral_window_id,
+                    sample.address.channel_index,
+                    sample.address.correlation_index,
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 0, 0, 0, 0),
+            (0, 0, 0, 0, 1),
+            (0, 0, 0, 2, 0),
+            (0, 0, 0, 2, 1),
+            (1, 0, 0, 0, 0),
+            (1, 0, 0, 0, 1),
+            (1, 0, 0, 2, 0),
+            (1, 0, 0, 2, 1),
+            (2, 1, 1, 1, 0),
+            (2, 1, 1, 1, 1),
+            (2, 1, 1, 2, 0),
+            (2, 1, 1, 2, 1),
+            (3, 1, 1, 1, 0),
+            (3, 1, 1, 1, 1),
+            (3, 1, 1, 2, 0),
+            (3, 1, 1, 2, 1),
+        ]
+    );
+    assert_eq!(prediction[8].address.frequency_centre_hz, 1.501e9);
+    assert_eq!(prediction[12].address.frequency_centre_hz, 1.501e9);
+    let prediction_inspection =
+        inspect_samples(&problem, prediction).expect("inspect prediction replay");
+    let residual_inspection = inspect_samples(&problem, residual).expect("inspect residual replay");
+    assert_eq!(prediction_inspection, residual_inspection);
+}
+
+fn inspect_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: impl IntoIterator<Item = SelectedObservationSample>,
+) -> Result<(SelectedObservationGenerationId, u64), SelectedObservationInspectionError> {
+    match problem.inspect_selected_observation(samples.into_iter().map(Ok::<_, Infallible>), |_| {
+        Ok::<_, Infallible>(())
+    }) {
+        Ok(inspection) => Ok(inspection),
+        Err(SelectedObservationPassError::Inspection(error)) => Err(error),
+        Err(SelectedObservationPassError::External(error)) => match error {},
+    }
+}
+
+fn extend_fixture_with_second_spw(path: &std::path::Path) {
+    let mut measurement_set = MeasurementSet::open(path).expect("open multi-SPW fixture");
+    let mut spectral_window = measurement_set
+        .spectral_window()
+        .expect("SPECTRAL_WINDOW")
+        .table()
+        .rows()
+        .expect("SPECTRAL_WINDOW rows")[0]
+        .clone();
+    spectral_window.upsert(
+        "NAME",
+        Value::Scalar(ScalarValue::String("second-spw".to_string())),
+    );
+    spectral_window.upsert(
+        "CHAN_FREQ",
+        Value::Array(ArrayValue::Float64(
+            ArrayD::from_shape_vec(vec![3], vec![1.5e9, 1.501e9, 1.502e9])
+                .expect("second-SPW frequency shape"),
+        )),
+    );
+    spectral_window.upsert(
+        "REF_FREQUENCY",
+        Value::Scalar(ScalarValue::Float64(1.501e9)),
+    );
+    measurement_set
+        .spectral_window_mut()
+        .expect("mutable SPECTRAL_WINDOW")
+        .table_mut()
+        .add_row(spectral_window)
+        .expect("append second SPECTRAL_WINDOW");
+
+    let mut data_description = measurement_set
+        .data_description()
+        .expect("DATA_DESCRIPTION")
+        .table()
+        .rows()
+        .expect("DATA_DESCRIPTION rows")[0]
+        .clone();
+    data_description.upsert("SPECTRAL_WINDOW_ID", Value::Scalar(ScalarValue::Int32(1)));
+    measurement_set
+        .data_description_mut()
+        .expect("mutable DATA_DESCRIPTION")
+        .table_mut()
+        .add_row(data_description)
+        .expect("append second DATA_DESCRIPTION");
+
+    let original_rows = measurement_set
+        .main_table()
+        .rows()
+        .expect("MAIN rows")
+        .to_vec();
+    for mut row in original_rows {
+        row.upsert("DATA_DESC_ID", Value::Scalar(ScalarValue::Int32(1)));
+        measurement_set
+            .main_table_mut()
+            .add_row(row)
+            .expect("append second-SPW MAIN row");
+    }
+    measurement_set.save().expect("save multi-SPW fixture");
+}
+
+fn pointing_row(antenna_id: i32, time_mjd_seconds: f64, direction: [f64; 2]) -> RecordValue {
+    RecordValue::new(vec![
+        RecordField::new("ANTENNA_ID", Value::Scalar(ScalarValue::Int32(antenna_id))),
+        RecordField::new("DIRECTION", Value::Array(direction_array(direction))),
+        RecordField::new("INTERVAL", Value::Scalar(ScalarValue::Float64(-1.0))),
+        RecordField::new("NAME", Value::Scalar(ScalarValue::String(String::new()))),
+        RecordField::new("NUM_POLY", Value::Scalar(ScalarValue::Int32(0))),
+        RecordField::new("TARGET", Value::Array(direction_array(direction))),
+        RecordField::new(
+            "TIME",
+            Value::Scalar(ScalarValue::Float64(time_mjd_seconds)),
+        ),
+        RecordField::new(
+            "TIME_ORIGIN",
+            Value::Scalar(ScalarValue::Float64(time_mjd_seconds)),
+        ),
+        RecordField::new("TRACKING", Value::Scalar(ScalarValue::Bool(true))),
+    ])
+}
+
+fn observation_pointing(missing: MissingPointingPolicy) -> PointingCentreLaw {
+    PointingCentreLaw::Observation(ObservationPointingLaw::new(
+        PointingDirectionColumn::Direction,
+        PointingDirectionSemantic::AntennaBoresight,
+        PointingTimeSampling::VisibilityTime,
+        PointingInterpolation::Nearest,
+        PointingExtrapolation::HoldNearest,
+        missing,
+    ))
+}
+
+fn direction_array(direction: [f64; 2]) -> ArrayValue {
+    ArrayValue::Float64(
+        ArrayD::from_shape_vec(vec![2, 1], direction.to_vec())
+            .expect("constant POINTING direction shape"),
+    )
+}
+
+fn generate_fixture(path: &std::path::Path) {
+    generate_fixture_with_rows(path, 2);
+}
+
+fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
+    let mut antennas = tutorial_vla_a_antennas();
+    antennas.truncate(2);
+    let mut request = SyntheticObservationRequest::vla_ppdisk("unused.fits", path, antennas);
+    request.predict_model = false;
+    request.allow_below_elevation_limit = true;
+    request.duration_seconds = row_count as f64;
+    request.integration_seconds = 1.0;
+    request.spectral_setup = SyntheticSpectralSetup {
+        name: "three-channel".to_string(),
+        start_frequency_hz: 1.4e9,
+        channel_width_hz: 1.0e6,
+        channel_count: 3,
+    };
+    request.worker_policy = SyntheticWorkerPolicy::Fixed;
+    request.row_workers = Some(1);
+    request.channel_workers = Some(1);
+    generate_synthetic_observation_ms(&request).expect("generate bounded disk fixture");
+}
+
+fn generate_fixture_with_phase_center(
+    path: &std::path::Path,
+    row_count: usize,
+    phase_center_rad: [f64; 2],
+) {
+    let mut antennas = tutorial_vla_a_antennas();
+    antennas.truncate(6);
+    let mut request = SyntheticObservationRequest::vla_ppdisk("unused.fits", path, antennas);
+    request.predict_model = false;
+    request.allow_below_elevation_limit = true;
+    request.duration_seconds = row_count as f64;
+    request.integration_seconds = 1.0;
+    request.phase_center_rad = phase_center_rad;
+    request.spectral_setup = SyntheticSpectralSetup {
+        name: "three-channel".to_string(),
+        start_frequency_hz: 1.4e9,
+        channel_width_hz: 1.0e6,
+        channel_count: 3,
+    };
+    request.worker_policy = SyntheticWorkerPolicy::Fixed;
+    request.row_workers = Some(1);
+    request.channel_workers = Some(1);
+    generate_synthetic_observation_ms(&request).expect("generate fixed-centre disk fixture");
+}
+
+#[cfg(unix)]
+fn owner_resolution_request(
+    path: &std::path::Path,
+    row_count: usize,
+) -> SelectedObservationResolutionRequest {
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        row_count as u64,
+        (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
+    )
+    .expect("owner selected-row manifest");
+    SelectedObservationResolutionRequest::new(
+        path.display().to_string(),
+        identity(2),
+        fixture_selection(
+            selected_rows,
+            RowSelection::new(
+                IdSelection::All,
+                TimeSelection::All,
+                UvSelection::All,
+                AntennaSelection::All,
+                IdSelection::All,
+                IdSelection::All,
+                IntentSelection::All,
+                IdSelection::All,
+            ),
+        ),
+        VisibilityColumn::Data,
+        WeightColumn::Weight,
+        Vec::new(),
+        ModelStateIdentity::Empty,
+        SelectedObservationContentBudget::new(64 << 20, 1, 4),
+        Arc::new(AccountedTestMeasures::with_identity(90, 0)),
+    )
+}
+
+#[cfg(unix)]
+fn owner_problem_and_access(
+    request: SelectedObservationResolutionRequest,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    ResolvedSelectedObservationAccess,
+) {
+    let (snapshot_input, access) = resolve_selected_observation(request)
+        .expect("resolve selected owner")
+        .into_parts();
+    let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
+    let problem = compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile owner problem");
+    (problem, access)
+}
+
+#[cfg(unix)]
+fn external_locked_keyword_mutation(path: &std::path::Path) {
+    let mut table = Table::open_with_lock(
+        TableOptions::new(path),
+        LockOptions::new(LockMode::UserLocking),
+    )
+    .expect("open external owner writer");
+    assert!(
+        table
+            .lock(LockType::Write, 0)
+            .expect("acquire external owner write lock")
+    );
+    table.keywords_mut().upsert(
+        "EXTERNAL_OWNER_REBOUND_MUTATION",
+        Value::Scalar(ScalarValue::Bool(true)),
+    );
+    table.unlock().expect("commit external owner mutation");
+}
+
+fn main_time_mjd_seconds(measurement_set: &MeasurementSet, row: usize) -> f64 {
+    match measurement_set
+        .main_table()
+        .cell_accessor(row, "TIME")
+        .and_then(|cell| cell.scalar())
+        .expect("MAIN.TIME")
+    {
+        ScalarValue::Float64(value) => *value,
+        other => panic!(
+            "MAIN.TIME must be Float64, found {:?}",
+            other.primitive_type()
+        ),
+    }
+}
+
+fn source_state(source: &ObservationSource) -> ObservationSourceState {
+    ObservationSourceState::new(
+        source.identity(),
+        source.selection().rows().clone(),
+        source.generations().clone(),
+    )
+}
+
+fn source_state_with_generation_capacity(
+    source: &ObservationSource,
+    capacity: usize,
+) -> (ObservationSourceState, usize) {
+    let source_generations = source.generations();
+    let selected_columns = source_generations.columns();
+    let mut column_generations = Vec::with_capacity(capacity);
+    column_generations.extend_from_slice(selected_columns.generations());
+    let mut metadata_generations = Vec::with_capacity(capacity);
+    metadata_generations.extend_from_slice(source_generations.metadata_generations());
+    let retained_generation_bytes = column_generations
+        .capacity()
+        .checked_mul(size_of::<ColumnGeneration>())
+        .and_then(|bytes| {
+            metadata_generations
+                .capacity()
+                .checked_mul(size_of::<MetadataGeneration>())
+                .and_then(|metadata| bytes.checked_add(metadata))
+        })
+        .expect("finite oversized generation allocations");
+    let state = ObservationSourceState::new(
+        source.identity(),
+        source.selection().rows().clone(),
+        SourceGenerations::new(
+            source_generations.consistency_token(),
+            SelectedColumns::new(
+                selected_columns.visibility(),
+                selected_columns.flags(),
+                selected_columns.weights(),
+                column_generations,
+            ),
+            metadata_generations,
+            source_generations.model_column(),
+        ),
+    );
+    assert_eq!(
+        state.additional_retained_heap_bytes([source.selection().rows()]),
+        Some(retained_generation_bytes),
+        "the compact row manifest is shared while generation vectors remain binding-owned"
+    );
+    (state, retained_generation_bytes)
+}
+
+fn test_measures(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> super::SelectedObservationMeasures {
+    super::measures::test_selected_observation_measures(problem)
+        .expect("bind deterministic Measures provider")
+}
+
+fn content_budget_for_rows(
+    problem: &casa_imaging_model::CompiledProblem,
+    source: &ObservationSource,
+    target_rows_per_block: usize,
+    maximum_live_blocks: usize,
+) -> SelectedObservationContentBudget {
+    let measures = test_measures(problem);
+    content_budget_for_rows_with_shared_bytes(
+        problem,
+        source,
+        selected_observation_shared_bytes(
+            &measures,
+            BoundObservationSource::retained_source_slot_bytes(),
+            0,
+        ),
+        target_rows_per_block,
+        maximum_live_blocks,
+    )
+}
+
+fn bound_content_budget_for_rows(
+    problem: &casa_imaging_model::CompiledProblem,
+    source: &ObservationSource,
+    target_rows_per_block: usize,
+    maximum_live_blocks: usize,
+) -> SelectedObservationContentBudget {
+    let measures = test_measures(problem);
+    content_budget_for_rows_with_shared_bytes(
+        problem,
+        source,
+        selected_observation_shared_bytes(
+            &measures,
+            BoundObservationSource::retained_source_slot_bytes(),
+            single_binding_graph_initialization_bytes(source),
+        ),
+        target_rows_per_block,
+        maximum_live_blocks,
+    )
+}
+
+fn single_binding_graph_initialization_bytes(source: &ObservationSource) -> usize {
+    let state = source_state(source);
+    expected_binding_graph_initialization_bytes(
+        std::slice::from_ref(source),
+        std::slice::from_ref(&state),
+        Vec::<ObservationSourceBinding>::with_capacity(1).capacity(),
+    )
+}
+
+fn expected_binding_graph_initialization_bytes(
+    sources: &[ObservationSource],
+    states: &[ObservationSourceState],
+    binding_capacity: usize,
+) -> usize {
+    assert_eq!(sources.len(), states.len());
+    let binding_slot_bytes = binding_capacity
+        .checked_mul(size_of::<ObservationSourceBinding>())
+        .expect("finite binding slot allocation");
+    states
+        .iter()
+        .enumerate()
+        .try_fold(binding_slot_bytes, |bytes, (state_index, state)| {
+            state
+                .additional_retained_heap_bytes(
+                    sources
+                        .iter()
+                        .map(|source| source.selection().rows())
+                        .chain(
+                            states[..state_index]
+                                .iter()
+                                .map(ObservationSourceState::selected_rows),
+                        ),
+                )
+                .and_then(|additional| bytes.checked_add(additional))
+        })
+        .expect("finite binding graph allocation")
+}
+
+fn selected_observation_shared_bytes(
+    measures: &super::SelectedObservationMeasures,
+    source_slots_retained_bytes: usize,
+    binding_graph_initialization_bytes: usize,
+) -> super::content_plan::SelectedObservationSharedBytes {
+    super::content_plan::SelectedObservationSharedBytes::new(
+        measures.retained_bytes(),
+        0,
+        source_slots_retained_bytes,
+        binding_graph_initialization_bytes,
+    )
+}
+
+fn content_budget_for_rows_with_shared_bytes(
+    problem: &casa_imaging_model::CompiledProblem,
+    source: &ObservationSource,
+    shared_bytes: super::content_plan::SelectedObservationSharedBytes,
+    target_rows_per_block: usize,
+    maximum_live_blocks: usize,
+) -> SelectedObservationContentBudget {
+    assert!(target_rows_per_block > 0);
+    let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
+        .expect("open retained fixture while deriving its exact content budget");
+    let admitted = |available_bytes| {
+        super::content_plan::selected_content_plan(
+            &measurement_set,
+            problem,
+            source,
+            shared_bytes,
+            SelectedObservationContentBudget::new(available_bytes, maximum_live_blocks, 4),
+        )
+        .ok()
+        .is_some_and(|plan| plan.rows_per_block() >= target_rows_per_block)
+    };
+    let mut upper = 1_usize;
+    while !admitted(upper) {
+        upper = upper
+            .checked_mul(2)
+            .expect("fixture content budget fits usize");
+    }
+    let mut lower = 0_usize;
+    while lower + 1 < upper {
+        let middle = lower + (upper - lower) / 2;
+        if admitted(middle) {
+            upper = middle;
+        } else {
+            lower = middle;
+        }
+    }
+    SelectedObservationContentBudget::new(upper, maximum_live_blocks, 4)
+}
+
+fn compiled_problem(
+    path: &std::path::Path,
+    row_count: usize,
+) -> casa_imaging_model::CompiledProblem {
+    compiled_problem_with_sources(&[(path, 1, row_count)])
+}
+
+fn compiled_problem_with_polarization(
+    path: &std::path::Path,
+    row_count: usize,
+    coordinates: Vec<PolarizationCoordinate>,
+) -> casa_imaging_model::CompiledProblem {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile polarized selected observation");
+    compile(ImagingRequest::new(
+        specification_with_sampling_basis_and_polarization(
+            SpectralSamplingLaw::IDENTITY,
+            ReconstructionBasis::Constant,
+            coordinates,
+        ),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile polarized selected-observation problem")
+}
+
+fn compiled_problem_with_sampling(
+    path: &std::path::Path,
+    row_count: usize,
+    sampling: SpectralSamplingLaw,
+    wcs: SpectralWcs,
+) -> casa_imaging_model::CompiledProblem {
+    let channels = match &wcs {
+        SpectralWcs::Linear { channels, .. } => *channels,
+        SpectralWcs::Tabular {
+            channel_centres_hz, ..
+        } => channel_centres_hz.len(),
+    };
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile spectral-contribution observation");
+    compile(ImagingRequest::new(
+        specification_with_sampling_and_basis(
+            sampling,
+            ReconstructionBasis::ChannelLocal { channels },
+        ),
+        geometry_with_spectral_wcs(wcs),
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("compile spectral-contribution problem")
+}
+
+fn compiled_problem_with_transformed_sampling(
+    path: &std::path::Path,
+    row_count: usize,
+    sampling: SpectralSamplingLaw,
+    wcs: SpectralWcs,
+) -> casa_imaging_model::CompiledProblem {
+    let channels = match &wcs {
+        SpectralWcs::Linear { channels, .. } => *channels,
+        SpectralWcs::Tabular {
+            channel_centres_hz, ..
+        } => channel_centres_hz.len(),
+    };
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile transformed spectral-contribution observation");
+    let geometry = geometry_with_spectral_wcs(wcs);
+    let transformed = geometry
+        .spectral()
+        .clone()
+        .with_output_frame(FrequencyFrame::Lsrk)
+        .with_anchor(SpectralFrameAnchor::Conversion {
+            epoch: Epoch::new(59_000.25, TimeScale::Utc),
+            direction: SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+            observatory_position: ItrfPosition::new(-1_601_188.0, -5_041_977.0, 3_554_875.0),
+        });
+    compile(ImagingRequest::new(
+        specification_with_sampling_and_basis(
+            sampling,
+            ReconstructionBasis::ChannelLocal { channels },
+        ),
+        geometry.with_spectral(transformed),
+        ProblemInputIdentities::new(snapshot),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("compile transformed spectral-contribution problem")
+}
+
+fn compiled_problem_with_centres(
+    path: &std::path::Path,
+    row_count: usize,
+    centres: CentreLaws,
+) -> casa_imaging_model::CompiledProblem {
+    let mut references = vec![(ReferenceDataKind::Measures, identity(90))];
+    if matches!(centres.phase_tracking(), PhaseCentreLaw::Ephemeris(_)) {
+        references.push((ReferenceDataKind::Ephemeris, identity(90)));
+    }
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        references,
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile fixed-centre observation");
+    compile(ImagingRequest::new(
+        specification(),
+        geometry_with_centres(centres),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile fixed-centre problem")
+}
+
+fn compiled_problem_with_geometry(
+    path: &std::path::Path,
+    row_count: usize,
+    geometry: GeometryInput,
+) -> casa_imaging_model::CompiledProblem {
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        vec![source_input(path, 1, row_count)],
+        vec![(ReferenceDataKind::Measures, identity(90))],
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile geometry fixture observation");
+    compile(ImagingRequest::new(
+        specification(),
+        geometry,
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile geometry fixture problem")
+}
+
+fn compiled_problem_with_sources(
+    sources: &[(&std::path::Path, u8, usize)],
+) -> casa_imaging_model::CompiledProblem {
+    let references = vec![(ReferenceDataKind::Measures, identity(90))];
+    let sources = sources
+        .iter()
+        .map(|(path, source, row_count)| source_input(path, *source, *row_count))
+        .collect();
+    let snapshot = compile_observation(ObservationSnapshotInput::new(
+        sources,
+        references,
+        ModelStateIdentity::Empty,
+    ))
+    .expect("compile selected observation");
+    compile(ImagingRequest::new(
+        specification(),
+        geometry(),
+        ProblemInputIdentities::new(snapshot.clone()),
+        model_lifecycle(snapshot.model()),
+    ))
+    .expect("compile selected-observation problem")
+}
+
+fn source_input(path: &std::path::Path, source: u8, row_count: usize) -> ObservationSourceInput {
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        row_count as u64,
+        (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
+    )
+    .expect("selected row manifest");
+    source_input_with_selected_rows(path, source, selected_rows)
+}
+
+fn source_input_with_selected_rows(
+    path: &std::path::Path,
+    source: u8,
+    selected_rows: SelectedRows,
+) -> ObservationSourceInput {
+    source_input_with_selected_rows_and_filter(
+        path,
+        source,
+        selected_rows,
+        RowSelection::new(
+            IdSelection::All,
+            TimeSelection::All,
+            UvSelection::All,
+            AntennaSelection::All,
+            IdSelection::All,
+            IdSelection::All,
+            IntentSelection::All,
+            IdSelection::All,
+        ),
+    )
+}
+
+fn source_input_with_selected_rows_and_filter(
+    path: &std::path::Path,
+    source: u8,
+    selected_rows: SelectedRows,
+    rows_filter: RowSelection,
+) -> ObservationSourceInput {
+    source_input_with_selected_rows_filter_and_request(
+        path,
+        source,
+        selected_rows,
+        rows_filter,
+        scoped_identity(source, 2),
+    )
+}
+
+fn source_input_with_selected_rows_filter_and_request(
+    path: &std::path::Path,
+    source: u8,
+    selected_rows: SelectedRows,
+    rows_filter: RowSelection,
+    selection_request: LogicalIdentity,
+) -> ObservationSourceInput {
+    let selection = fixture_selection(selected_rows, rows_filter);
+    let columns = [
+        MsColumnKind::Data,
+        MsColumnKind::Flag,
+        MsColumnKind::FlagRow,
+        MsColumnKind::Weight,
+        MsColumnKind::Uvw,
+        MsColumnKind::Time,
+        MsColumnKind::TimeCentroid,
+        MsColumnKind::Interval,
+        MsColumnKind::Exposure,
+        MsColumnKind::FieldId,
+        MsColumnKind::DataDescriptionId,
+        MsColumnKind::Antenna1,
+        MsColumnKind::Antenna2,
+        MsColumnKind::Feed1,
+        MsColumnKind::Feed2,
+        MsColumnKind::ScanNumber,
+        MsColumnKind::StateId,
+        MsColumnKind::ObservationId,
+        MsColumnKind::ArrayId,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, kind)| ColumnGeneration::new(kind, scoped_identity(source, 10 + index as u8)))
+    .collect();
+    let metadata = [
+        MetadataTableKind::Antenna,
+        MetadataTableKind::DataDescription,
+        MetadataTableKind::Feed,
+        MetadataTableKind::Field,
+        MetadataTableKind::Observation,
+        MetadataTableKind::Pointing,
+        MetadataTableKind::Polarization,
+        MetadataTableKind::SpectralWindow,
+        MetadataTableKind::State,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, kind)| MetadataGeneration::new(kind, scoped_identity(source, 40 + index as u8)))
+    .collect();
+    ObservationSourceInput::new(
+        MeasurementSetIdentity::new(scoped_identity(source, 1)),
+        ObservationSourceProvenance::new(path.display().to_string(), selection_request),
+        selection,
+        SourceGenerations::new(
+            ConsistencyToken::new(scoped_identity(source, 3)),
+            SelectedColumns::new(
+                VisibilityColumn::Data,
+                FlagPolicy::FlagOrFlagRow,
+                WeightColumn::Weight,
+                columns,
+            ),
+            metadata,
+            ModelColumnState::Absent,
+        ),
+    )
+}
+
+fn fixture_selection(
+    selected_rows: SelectedRows,
+    rows_filter: RowSelection,
+) -> ObservationSelection {
+    ObservationSelection::new(
+        selected_rows,
+        rows_filter,
+        vec![DataDescriptionSelection::new(0, 0, 0)],
+        vec![SpectralWindowSelection::new(0, vec![0, 2])],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularLl),
+            ],
+        )],
+    )
+}
+
+fn generations_with_changed_column(
+    source: &ObservationSource,
+    changed: MsColumnKind,
+    generation: LogicalIdentity,
+) -> SourceGenerations {
+    let expected = source.generations();
+    let columns = expected
+        .columns()
+        .generations()
+        .iter()
+        .copied()
+        .map(|current| {
+            if current.kind() == changed {
+                ColumnGeneration::new(changed, generation)
+            } else {
+                current
+            }
+        })
+        .collect();
+    SourceGenerations::new(
+        expected.consistency_token(),
+        SelectedColumns::new(
+            expected.columns().visibility(),
+            expected.columns().flags(),
+            expected.columns().weights(),
+            columns,
+        ),
+        expected.metadata_generations().to_vec(),
+        expected.model_column(),
+    )
+}
+
+fn generations_with_changed_metadata(
+    source: &ObservationSource,
+    changed: MetadataTableKind,
+    generation: LogicalIdentity,
+) -> SourceGenerations {
+    let expected = source.generations();
+    let metadata = expected
+        .metadata_generations()
+        .iter()
+        .copied()
+        .map(|current| {
+            if current.kind() == changed {
+                MetadataGeneration::new(changed, generation)
+            } else {
+                current
+            }
+        })
+        .collect();
+    SourceGenerations::new(
+        expected.consistency_token(),
+        expected.columns().clone(),
+        metadata,
+        expected.model_column(),
+    )
+}
+
+fn multi_spw_source_input(path: &std::path::Path, source: u8) -> ObservationSourceInput {
+    let selected_rows = SelectedRows::from_ordered_main_rows(
+        4,
+        [
+            SelectedMainRow::new(0, 0),
+            SelectedMainRow::new(1, 0),
+            SelectedMainRow::new(2, 1),
+            SelectedMainRow::new(3, 1),
+        ],
+    )
+    .expect("multi-SPW selected row manifest");
+    let selection = ObservationSelection::new(
+        selected_rows,
+        RowSelection::new(
+            IdSelection::All,
+            TimeSelection::All,
+            UvSelection::All,
+            AntennaSelection::All,
+            IdSelection::All,
+            IdSelection::All,
+            IntentSelection::All,
+            IdSelection::All,
+        ),
+        vec![
+            DataDescriptionSelection::new(0, 0, 0),
+            DataDescriptionSelection::new(1, 1, 0),
+        ],
+        vec![
+            SpectralWindowSelection::new(0, vec![0, 2]),
+            SpectralWindowSelection::new(1, vec![1, 2]),
+        ],
+        vec![CorrelationSelection::new(
+            0,
+            vec![
+                CorrelationProduct::new(0, CorrelationType::CircularRr),
+                CorrelationProduct::new(1, CorrelationType::CircularLl),
+            ],
+        )],
+    );
+    let columns = [
+        MsColumnKind::Data,
+        MsColumnKind::Flag,
+        MsColumnKind::FlagRow,
+        MsColumnKind::Weight,
+        MsColumnKind::Uvw,
+        MsColumnKind::Time,
+        MsColumnKind::TimeCentroid,
+        MsColumnKind::Interval,
+        MsColumnKind::Exposure,
+        MsColumnKind::FieldId,
+        MsColumnKind::DataDescriptionId,
+        MsColumnKind::Antenna1,
+        MsColumnKind::Antenna2,
+        MsColumnKind::Feed1,
+        MsColumnKind::Feed2,
+        MsColumnKind::ScanNumber,
+        MsColumnKind::StateId,
+        MsColumnKind::ObservationId,
+        MsColumnKind::ArrayId,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, kind)| ColumnGeneration::new(kind, scoped_identity(source, 10 + index as u8)))
+    .collect();
+    let metadata = [
+        MetadataTableKind::Antenna,
+        MetadataTableKind::DataDescription,
+        MetadataTableKind::Feed,
+        MetadataTableKind::Field,
+        MetadataTableKind::Observation,
+        MetadataTableKind::Pointing,
+        MetadataTableKind::Polarization,
+        MetadataTableKind::SpectralWindow,
+        MetadataTableKind::State,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, kind)| MetadataGeneration::new(kind, scoped_identity(source, 40 + index as u8)))
+    .collect();
+    ObservationSourceInput::new(
+        MeasurementSetIdentity::new(scoped_identity(source, 1)),
+        ObservationSourceProvenance::new(path.display().to_string(), scoped_identity(source, 2)),
+        selection,
+        SourceGenerations::new(
+            ConsistencyToken::new(scoped_identity(source, 3)),
+            SelectedColumns::new(
+                VisibilityColumn::Data,
+                FlagPolicy::FlagOrFlagRow,
+                WeightColumn::Weight,
+                columns,
+            ),
+            metadata,
+            ModelColumnState::Absent,
+        ),
+    )
+}
+
+fn identity(byte: u8) -> LogicalIdentity {
+    LogicalIdentity::from_sha256([byte; 32])
+}
+
+fn scoped_identity(source: u8, byte: u8) -> LogicalIdentity {
+    let mut digest = [byte; 32];
+    digest[0] = source;
+    LogicalIdentity::from_sha256(digest)
+}
+
+fn specification() -> ProblemSpecification {
+    specification_with_sampling(SpectralSamplingLaw::IDENTITY)
+}
+
+fn specification_with_sampling(sampling: SpectralSamplingLaw) -> ProblemSpecification {
+    specification_with_sampling_and_basis(sampling, ReconstructionBasis::Constant)
+}
+
+fn specification_with_sampling_and_basis(
+    sampling: SpectralSamplingLaw,
+    basis: ReconstructionBasis,
+) -> ProblemSpecification {
+    specification_with_sampling_basis_and_polarization(
+        sampling,
+        basis,
+        vec![PolarizationCoordinate::StokesI],
+    )
+}
+
+fn specification_with_sampling_basis_and_polarization(
+    sampling: SpectralSamplingLaw,
+    basis: ReconstructionBasis,
+    coordinates: Vec<PolarizationCoordinate>,
+) -> ProblemSpecification {
+    specification_with_science(
+        ScientificContract::new(
+            SpectralContract::new(sampling, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
+        ),
+        basis,
+        coordinates,
+    )
+}
+
+fn inner_products() -> DeclaredInnerProducts {
+    DeclaredInnerProducts::new(
+        ModelInnerProduct::HermitianEuclidean,
+        VisibilityInnerProduct::HermitianEuclidean,
+    )
+}
+
+fn specification_with_science(
+    science: ScientificContract,
+    basis: ReconstructionBasis,
+    coordinates: Vec<PolarizationCoordinate>,
+) -> ProblemSpecification {
+    ProblemSpecification::new(
+        science,
+        ReconstructionContract::new(
+            basis,
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(10, 0.1, 0.0),
+            PolarizationContract::new(coordinates),
+        ),
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        ProductRequirements::new(
+            vec![ProductKind::Psf],
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            ProductValidityPolicies::new(
+                PrimaryBeamValidityPolicy::new(
+                    0.2,
+                    ProductSupportComparison::StrictlyGreater,
+                    ProductBlankingPolicy::ZeroAndFalseMask,
+                )
+                .expect("valid PB policy"),
+                TaylorValidityPolicy::new(
+                    TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
+                    0.1,
+                    ProductSupportComparison::StrictlyGreater,
+                    ProductBlankingPolicy::ZeroAndFalseMask,
+                )
+                .expect("valid Taylor policy"),
+            ),
+        ),
+        ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+        NumericsContract::new(
+            vec![NumericPrecision::F32],
+            ReductionPolicy::Compensated,
+            FiniteValuePolicy::FlagInputRejectGenerated,
+            NumericalStage::ALL
+                .into_iter()
+                .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+                .collect(),
+        ),
+    )
+}
+
+fn geometry() -> GeometryInput {
+    geometry_with_centres(CentreLaws::new(
+        PhaseCentreLaw::Observation,
+        DelayCentreLaw::PhaseTrackingCentre,
+        PointingCentreLaw::PhaseTrackingCentre,
+    ))
+}
+
+fn geometry_with_spectral_wcs(wcs: SpectralWcs) -> GeometryInput {
+    geometry().with_spectral(SpectralCoordinateSpec::new(
+        FrequencyFrame::Topocentric,
+        FrequencyFrame::Topocentric,
+        SpectralFrameAnchor::NotApplicable,
+        wcs,
+        RestFrequency::NotApplicable,
+        casa_imaging_model::DopplerConvention::NotApplicable,
+    ))
+}
+
+fn geometry_with_centres(centres: CentreLaws) -> GeometryInput {
+    geometry_with_centres_and_uvw(centres, UvwCoordinateLaw::PhaseTrackingCentre)
+}
+
+fn geometry_with_centres_and_uvw(centres: CentreLaws, uvw: UvwCoordinateLaw) -> GeometryInput {
+    let direction = DirectionCoordinateSpec::new(
+        Projection::Sin,
+        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+        [15.0, 15.0],
+        [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+        [[1.0, 0.0], [0.0, 1.0]],
+        [180.0, 0.0],
+    );
+    GeometryInput::new(
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(32, 32),
+            direction,
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+        centres,
+        uvw,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 3,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            casa_imaging_model::DopplerConvention::NotApplicable,
+        ),
+    )
+}
+
+fn multidomain_geometry() -> GeometryInput {
+    let domain = |role, direction, facets, psf_phase_centre| {
+        ImageDomainSpec::new(
+            role,
+            ImageShape::new(512, 512),
+            DirectionCoordinateSpec::new(
+                Projection::Sin,
+                direction,
+                [255.0, 255.0],
+                [-4.848_136_811_095_36e-6, 4.848_136_811_095_36e-6],
+                [[1.0, 0.0], [0.0, 1.0]],
+                [180.0, 0.0],
+            ),
+            facets,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )
+        .with_psf_phase_centre(psf_phase_centre)
+    };
+    let main = SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5);
+    let alpha = SkyDirection::new(DirectionFrame::J2000, 1.01, -0.49);
+    let zeta = SkyDirection::new(DirectionFrame::J2000, 1.02, -0.48);
+    GeometryInput::new(
+        // Deliberately unordered input proves compiler order reaches selected rows.
+        vec![
+            domain(
+                ImageDomainRole::Outlier("zeta".to_string()),
+                zeta,
+                FacetLayout::Single,
+                PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.025, -0.475)),
+            ),
+            domain(
+                ImageDomainRole::Main,
+                main,
+                FacetLayout::Regular {
+                    columns: 2,
+                    rows: 2,
+                },
+                PsfPhaseCentreLaw::Fixed(SkyDirection::new(DirectionFrame::J2000, 1.005, -0.495)),
+            ),
+            domain(
+                ImageDomainRole::Outlier("alpha".to_string()),
+                alpha,
+                FacetLayout::Single,
+                PsfPhaseCentreLaw::ImageDomainReference,
+            ),
+        ],
+        CentreLaws::new(
+            PhaseCentreLaw::Observation,
+            DelayCentreLaw::PhaseTrackingCentre,
+            PointingCentreLaw::PhaseTrackingCentre,
+        ),
+        UvwCoordinateLaw::PhaseTrackingCentre,
+        SpectralCoordinateSpec::new(
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Topocentric,
+            SpectralFrameAnchor::NotApplicable,
+            SpectralWcs::Linear {
+                channels: 3,
+                reference_pixel: 0.0,
+                reference_frequency_hz: 1.4e9,
+                increment_hz: 1.0e6,
+            },
+            RestFrequency::NotApplicable,
+            casa_imaging_model::DopplerConvention::NotApplicable,
+        ),
+    )
+}

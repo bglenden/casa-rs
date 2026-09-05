@@ -2,7 +2,7 @@
 
 Truth class: historical evidence snapshot
 Last reality check: 2026-05-18
-Verification: `python3 -m py_compile tools/perf/imager/run_workload.py tools/perf/imager/test_run_workload.py`; `python3 -m unittest tools/perf/imager/test_run_workload.py`; `cargo test -p casars-imager --lib managed_output -- --nocapture`; `cargo check -p casars-imager --example profile_imager`; `tools/perf/imager/run_workload.py --dry-run --output-dir target/imperformance-wave1/stage-instrumentation-dry-run wave1-standard-mfs-dirty-smoke`; `CASA_RS_TESTDATA_ROOT=/Users/brianglendenning/SoftwareProjects/casatestdata CASA_RS_CASA_PYTHON=/Users/brianglendenning/SoftwareProjects/casa-build/venv/bin/python tools/perf/imager/run_workload.py --repeats 1 --output-dir target/imperformance-wave1/stage-instrumentation-smoke wave1-standard-mfs-dirty-smoke`
+Historical verification: Python workload checks and the then-current Rust profiling harness. The profiling example was deleted by the T23 native continuum cutover; current performance evidence must use the native application path.
 
 Work issue: #246
 Child issue: #249
@@ -98,7 +98,7 @@ baseline matrix in #251.
 ## Overhead Boundary
 
 The #249 implementation does not add timers to the hot imaging loops. It
-reuses timings already produced by `profile_imager` and `casa_phase_bench.py`,
+reused timings produced by the then-current Rust and CASA profiling harnesses,
 then performs a dictionary normalization pass in the Python harness after the
 benchmark process completes. Instrumentation overhead on imaging execution is
 therefore bounded to the existing profiler runs; the new category mapping is

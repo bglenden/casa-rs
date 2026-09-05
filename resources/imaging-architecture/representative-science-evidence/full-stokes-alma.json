@@ -1,0 +1,81 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 0.00017984,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "d36c40dc5e5ec07d246067782538b5d7f56359cd3cc52d797c27311f9e1dd6f4",
+  "dataset": {
+    "correlations": 4,
+    "identity_sha256": "06a6668898d0c193fe55f83e9bf0226bcbd02a1da07d278243c9dfe56c2eb8b7",
+    "image_shape": [
+      512,
+      512,
+      4,
+      1
+    ],
+    "selected_channels": 8,
+    "selected_rows": 41760,
+    "selected_samples": 1336320
+  },
+  "dimensions": [
+    "xx_xy_yx_yy",
+    "crosshand_values_flags_and_weights",
+    "iquv",
+    "airy_primary_beam",
+    "dirty_and_hogbom",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/full-stokes-v3/oracle.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "20552536c8b0e35997b5442f8a124bb69e79c336e9906599ee463da35b3f735f"
+    }
+  ],
+  "mode": {
+    "cross_hands_nontrivial": true,
+    "stokes": [
+      "I",
+      "Q",
+      "U",
+      "V"
+    ]
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "20552536c8b0e35997b5442f8a124bb69e79c336e9906599ee463da35b3f735f",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "crates/casa-imaging-application/tests/t34_full_stokes_casa_oracle.rs"
+  ],
+  "scenario_id": "full-stokes-alma",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "7ad4fd3fc5b09e3d89ebe756731e2a28e81c6d00",
+  "validity_rule": null
+}

@@ -240,24 +240,6 @@
       "include_in_suite": true
     },
     {
-      "id": "uvcontsub",
-      "kind": "task",
-      "launch": {
-        "executable": "calibrate",
-        "cargo_package": "casa-calibration",
-        "override_env": "CASARS_CALIBRATE_BIN"
-      },
-      "shell_kind": "workflow",
-      "interaction": "one_shot",
-      "browser_kind": null,
-      "dataset_kinds": [
-        "measurement_set"
-      ],
-      "show_in_tui": true,
-      "show_in_swift": true,
-      "include_in_suite": true
-    },
-    {
       "id": "applycal",
       "kind": "task",
       "launch": {

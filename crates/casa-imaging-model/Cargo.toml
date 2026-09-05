@@ -1,0 +1,17 @@
+[package]
+name = "casa-imaging-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Private logical model and compiler for CASA-RS imaging problems"
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+sha2 = "0.10"
+smallvec.workspace = true
+thiserror.workspace = true

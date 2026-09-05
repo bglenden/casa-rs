@@ -45,20 +45,24 @@ pub mod builder;
 pub mod column_def;
 pub mod columns;
 pub mod derived;
+mod ephemeris;
 pub mod error;
 pub mod flagging;
 pub mod grouping;
-pub mod least_squares;
 pub(crate) mod listobs;
 mod metadata;
 pub mod ms;
 pub mod msexplore;
+mod observation_owner;
 pub mod plot;
 mod plot_data;
 mod plot_visibility;
 pub mod presentation;
 mod probes;
 pub mod schema;
+mod selected_observation;
+mod selected_observation_buffer;
+mod selected_pointing;
 pub mod selection;
 pub mod simulation;
 pub mod simulation_task;
@@ -74,6 +78,7 @@ pub mod write_session;
 pub(crate) mod test_helpers;
 
 pub use builder::{MeasurementSetBuilder, MsSchemas};
+pub use ephemeris::{SelectedObservationEphemeris, SelectedObservationEphemerisError};
 pub use error::{MsError, MsResult};
 pub use flagging::{
     FlagDataAction, FlagDataColumn, FlagDataMode, FlagDataReport, FlagDataRequest, FlagMerge,
@@ -88,6 +93,7 @@ pub use listobs::{
 };
 pub(crate) use listobs::{ListObsOptions, ListObsSummary, ListObsUvCoverage};
 pub use ms::MeasurementSet;
+pub(crate) use ms::{MainRowSelectionCursor, MainRowSelectionFact};
 pub use msexplore::task_contract::{
     MSEXPLORE_TASK_PROTOCOL_NAME, MSEXPLORE_TASK_PROTOCOL_VERSION, MsExploreFlagEditRequest,
     MsExplorePlotArtifact, MsExplorePlotExportRequest, MsExploreRunTaskRequest,
@@ -105,6 +111,16 @@ pub use msexplore::{
     build_msexplore_payload_from_spec, build_msexplore_plot_payload,
     build_msexplore_plot_payload_from_path, export_msexplore_plot, preview_msexplore_flag_edit,
     preview_msexplore_flag_edit_for_request, render_msexplore_plot_image,
+};
+pub use observation_owner::{
+    ObservationOwnerError, ResolvedSelectedObservation, ResolvedSelectedObservationAccess,
+    SelectedObservationResolutionRequest, initialize_measurement_set_owner_manifest,
+    resolve_selected_observation,
+};
+#[cfg(unix)]
+pub use observation_owner::{
+    SelectedVisibilityStoragePlan, SelectedVisibilityWrite, SelectedVisibilityWriteGenerations,
+    SelectedVisibilityWriteTargets,
 };
 pub use plot::{
     ListObsPlotExportFormat as MeasurementSetPlotExportFormat,
@@ -129,6 +145,28 @@ pub use probes::{
 };
 pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
+pub use selected_observation::{
+    BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
+    ObservationSourceBinding, SelectedObservationBlock, SelectedObservationBlockConsumer,
+    SelectedObservationBlockSource, SelectedObservationCompletion,
+    SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationMeasuresError, SelectedObservationReferenceDataBudget,
+    SelectedObservationReplayAuthorization, SelectedObservationReplayProof,
+    SelectedObservationResidencyCertificate, SelectedObservationRow,
+    SelectedObservationRowSelection, SelectedObservationSpectralEnvelope,
+    SelectedObservationSpectralEnvelopeReducer, SelectedObservationSpectralRange,
+    SelectedObservationSpectralRangeMeasurements, SelectedObservationSpectralWindow,
+    SelectedObservationTerminal, SelectedObservationTraversalError,
+    SelectedObservationTraversalMeasurements, SelectedObservationTraversalRun,
+    SelectedObservationTraversalSample,
+};
+pub(crate) use selected_observation_buffer::{
+    SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,
+    SelectedStoredVisibility, SelectedVisibilityColumn, SelectedWeightColumn,
+};
+pub(crate) use selected_pointing::{
+    PointingDirectionBracket, PointingDirectionColumn, PointingDirectionQuery, PointingReadPlan,
+};
 pub use selection::syntax::{
     ChannelSelection, ChannelSelectionSegment, SpwSelector, parse_numeric_id_selector,
     parse_spw_selector,
@@ -194,7 +232,11 @@ pub use write_session::{
     standard_main_scalar_column_plans,
 };
 
-pub(crate) fn open_measures_runtime()
+/// Open the production Measures provider used by MeasurementSet-backed applications.
+///
+/// Keeping discovery here ensures frontends use the same reference-data authority
+/// as selected-observation resolution and derived-column evaluation.
+pub fn open_measures_runtime()
 -> MsResult<std::sync::Arc<dyn casa_types::measures::MeasuresProvider>> {
     #[cfg(test)]
     {

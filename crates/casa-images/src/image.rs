@@ -1818,6 +1818,15 @@ impl<T: ImagePixel> PagedImage<T> {
         Ok(())
     }
 
+    /// Rebinds embedded table references for an imminent whole-directory move.
+    ///
+    /// The caller must save this image and then move its directory as a unit to
+    /// `destination`. Pixel and mask storage remain at the current private path
+    /// until that move occurs.
+    pub fn prepare_relocation(&mut self, destination: impl AsRef<Path>) {
+        self.rewrite_mask_keyword_paths(destination.as_ref());
+    }
+
     /// Returns a reference to the underlying table metadata.
     ///
     /// For tiled images opened from disk, the table may have been loaded via a
@@ -3443,6 +3452,25 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn prepared_relocation_keeps_persistent_masks_readable_after_directory_move() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("staging.image");
+        let visible = dir.path().join("visible.image");
+        let expected =
+            ArrayD::from_shape_vec(IxDyn(&[2, 2]), vec![true, false, false, true]).unwrap();
+        let mut image = PagedImage::<f32>::create(vec![2, 2], make_coords(), &staging).unwrap();
+        image.put_mask("mask0", &expected).unwrap();
+        image.set_default_mask("mask0").unwrap();
+        image.prepare_relocation(&visible);
+        image.save().unwrap();
+        drop(image);
+
+        std::fs::rename(&staging, &visible).unwrap();
+        let reopened = PagedImage::<f32>::open(&visible).unwrap();
+        assert_eq!(reopened.get_mask().unwrap(), Some(expected));
     }
 
     #[test]

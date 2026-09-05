@@ -15,13 +15,19 @@ members = [
     "crates/casa-values",
     "crates/casa-aipsio",
     "crates/casa-logging",
+    "crates/casa-numerics",
     "crates/casa-calibration",
     "crates/casa-measures-tools",
     "crates/casa-tables",
     "crates/casa-lattices",
     "crates/casa-coordinates",
     "crates/casa-images",
-    "crates/casa-imaging",
+    "crates/casa-imaging-model",
+    "crates/casa-imaging-reconstruction",
+    "crates/casa-imaging-products",
+    "crates/casa-imaging-application",
+    "crates/casa-imaging-runtime",
+    "crates/casa-simulation-synthesis",
     "crates/casa-measures-data",
     "crates/casa-test-support",
     "crates/casa-ms",
@@ -42,6 +48,8 @@ ndarray = "0.17"
 num-complex = "0.4"
 ratatui-graphics = { path = "crates/ratatui-graphics", default-features = false, features = ["panel", "plotters", "kitty"] }
 rustfft = "6.4"
+sha2 = { version = "0.10", features = ["asm"] }
+smallvec = "1.15"
 sofars = "0.6"
 thiserror = "2.0"
 tracing = "0.1"
@@ -61,7 +69,7 @@ opt-level = 2
 opt-level = 2
 [profile.test.package.casa-ms]
 opt-level = 2
-[profile.test.package.casa-imaging]
+[profile.test.package.casa-simulation-synthesis]
 opt-level = 2
 [profile.test.package.casa-test-support]
 opt-level = 2

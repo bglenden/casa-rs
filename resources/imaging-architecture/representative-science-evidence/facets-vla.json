@@ -1,0 +1,76 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 6.65037e-07,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".model",
+        ".psf",
+        ".residual"
+      ],
+      "required": [
+        ".image",
+        ".model",
+        ".psf",
+        ".residual"
+      ]
+    }
+  },
+  "contract_digest": "d450f0eee0acd9203fdc7a453584ea644e7bfd8908d7c1d9cf37607480648587",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "351_baselines",
+    "full_track",
+    "four_facets",
+    "facet_seams",
+    "dirty_and_hogbom"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/issue518-t32/results/20260901T020459Z-issue518-t32-vla-faceted-dirty-a08733cc.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "883fa80c6e57b18259d35d20a9520f3542233f445de1443f17f026262d8c8b13"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/issue518-t32/results/20260901T021624Z-issue518-t32-vla-faceted-clean-a7b6bf56.json",
+      "role": "additional production comparison",
+      "sha256": "034548e50fcc0d39fe7f8066aa01558d41314598aa7c5ce76d07139b1acdcac8"
+    }
+  ],
+  "mode": {
+    "facet_seams_checked": true,
+    "facets": 4
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "883fa80c6e57b18259d35d20a9520f3542233f445de1443f17f026262d8c8b13",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "scripts/bench-imager-vs-casa.sh"
+  ],
+  "scenario_id": "facets-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "745bd58f34de752f39b30cbe4651524045f24d89",
+  "validity_rule": null
+}

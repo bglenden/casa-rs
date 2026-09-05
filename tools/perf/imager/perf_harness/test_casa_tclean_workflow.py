@@ -606,9 +606,7 @@ class CompletedOuterPublicationRecoveryTests(unittest.TestCase):
             raw_output = {
                 "status": "completed",
                 "products": {
-                    suffix: {
-                        "structured_difference": {"review": {"label": "good"}}
-                    }
+                    suffix: {"structured_difference": {"review": {"label": "good"}}}
                 },
             }
             artifact_prefix = comparison_root / "casa-measured-001"
@@ -635,9 +633,7 @@ class CompletedOuterPublicationRecoveryTests(unittest.TestCase):
                     "normalize_comparison_request",
                     return_value=request,
                 ),
-                mock.patch.object(
-                    casa_tclean_workflow, "validate_comparison_output"
-                ),
+                mock.patch.object(casa_tclean_workflow, "validate_comparison_output"),
                 mock.patch.object(
                     casa_tclean_workflow,
                     "apply_tolerance_contract",

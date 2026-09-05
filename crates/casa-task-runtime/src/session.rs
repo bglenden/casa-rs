@@ -526,12 +526,11 @@ niter = 2
 
     #[test]
     fn aggregate_calibrate_enforces_every_selected_modes_required_inputs() {
-        let cases: [(&str, &[&str]); 9] = [
+        let cases: [(&str, &[&str]); 8] = [
             ("apply", &["vis"]),
             ("summary", &["summary_paths"]),
             ("stats", &["table_path"]),
             ("export_corrected_data", &["vis", "outputvis"]),
-            ("continuum_subtract", &["vis", "outputvis", "fit_spw"]),
             ("solve_gain", &["vis", "out_table", "refant"]),
             ("solve_bandpass", &["vis", "out_table", "refant"]),
             (

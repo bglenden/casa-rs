@@ -245,14 +245,14 @@ mod tests {
     #[test]
     fn builtin_catalog_covers_every_surface_and_one_launcher() {
         let catalog = builtin_application_catalog().expect("valid application catalog");
-        assert_eq!(catalog.applications.len(), 43);
+        assert_eq!(catalog.applications.len(), 42);
         assert_eq!(
             catalog
                 .applications
                 .iter()
                 .filter(|application| application.kind == ApplicationKind::Task)
                 .count(),
-            42
+            41
         );
         let launcher = catalog.application("casars").expect("launcher entry");
         assert_eq!(launcher.kind, ApplicationKind::Launcher);

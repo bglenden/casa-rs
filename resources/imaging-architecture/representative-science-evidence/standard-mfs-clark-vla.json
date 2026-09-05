@@ -1,0 +1,80 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 0.0004426777214955015,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".mask",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "584efaf45fbb1e718d029bd94580c46ce926f1643228150f6f0bb87505b61f05",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "clark",
+    "major_minor_cycles",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021155Z-issue607-standard-mfs-representative-43df797b.comparison.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "92d61e412d1d761723b9bf0a88e303860b281681e257363f38b63e8333a1e30e"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/standard-portfolio-b809/20260903T021155Z-issue607-standard-mfs-representative-43df797b.json",
+      "role": "additional production comparison",
+      "sha256": "d9ca0d9b585f6382e5ea5b2ccea37b62712704123f4129be1680ba7c5348fe0b"
+    }
+  ],
+  "mode": {
+    "deconvolver": "clark"
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "92d61e412d1d761723b9bf0a88e303860b281681e257363f38b63e8333a1e30e",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "scripts/bench-imager-vs-casa.sh",
+    "scripts/run-issue607-standard-portfolio.sh"
+  ],
+  "scenario_id": "standard-mfs-clark-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "b809244e72611baefd928a06fd1cdea4bf2093c4",
+  "validity_rule": null
+}

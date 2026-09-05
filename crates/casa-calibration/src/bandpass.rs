@@ -43,7 +43,7 @@ use crate::writer::{
     CalibrationTableDescriptor, CalibrationTableWriter, set_fixed_unit_keyword,
     set_measinfo_keyword,
 };
-use casa_ms::least_squares::solve_weighted_least_squares;
+use casa_numerics::solve_weighted_least_squares;
 
 const LEGACY_CAL_HISTORY_KEYWORD: &str = "CAL_HISTORY";
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![allow(dead_code)]
 
+use std::mem::size_of;
 use std::path::Path;
 
 use casa_aipsio::{AipsIo, AipsOpenOption};
@@ -1477,6 +1478,57 @@ fn value_to_casacore_data_type(value: &Value) -> Result<CasacoreDataType, Storag
 use crate::schema::{ColumnSchema, TableSchema};
 
 impl TableDatContents {
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let table_desc = &self.table_desc;
+        let mut bytes = table_desc
+            .name
+            .capacity()
+            .checked_add(table_desc.version.capacity())?
+            .checked_add(table_desc.comment.capacity())?
+            .checked_add(table_desc.table_keywords.retained_heap_bytes()?)?
+            .checked_add(table_desc.private_keywords.retained_heap_bytes()?)?
+            .checked_add(
+                table_desc
+                    .columns
+                    .capacity()
+                    .checked_mul(size_of::<ColumnDescContents>())?,
+            )?;
+        for column in &table_desc.columns {
+            bytes = bytes
+                .checked_add(column.class_name.capacity())?
+                .checked_add(column.col_name.capacity())?
+                .checked_add(column.comment.capacity())?
+                .checked_add(column.data_manager_type.capacity())?
+                .checked_add(column.data_manager_group.capacity())?
+                .checked_add(column.shape.capacity().checked_mul(size_of::<i32>())?)?
+                .checked_add(column.keywords.retained_heap_bytes()?)?;
+        }
+
+        let column_set = &self.column_set;
+        bytes = bytes
+            .checked_add(
+                column_set
+                    .data_managers
+                    .capacity()
+                    .checked_mul(size_of::<DataManagerEntry>())?,
+            )?
+            .checked_add(
+                column_set
+                    .columns
+                    .capacity()
+                    .checked_mul(size_of::<PlainColumnEntry>())?,
+            )?;
+        for manager in &column_set.data_managers {
+            bytes = bytes
+                .checked_add(manager.type_name.capacity())?
+                .checked_add(manager.data.capacity())?;
+        }
+        for column in &column_set.columns {
+            bytes = bytes.checked_add(column.original_name.capacity())?;
+        }
+        Some(bytes)
+    }
+
     pub(crate) fn to_table_schema(&self) -> Result<TableSchema, StorageError> {
         let columns: Vec<ColumnSchema> = self
             .table_desc

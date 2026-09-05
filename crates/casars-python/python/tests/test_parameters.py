@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 import pytest
 
@@ -13,10 +14,10 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 
 def test_catalog_and_definition_are_projected_from_rust() -> None:
     catalog = parameters.catalog()
-    assert len(catalog["surfaces"]) == 42
+    assert len(catalog["surfaces"]) == 41
     assert (
         len([surface for surface in catalog["surfaces"] if surface["kind"] == "task"])
-        == 40
+        == 39
     )
     assert (
         len(
@@ -155,10 +156,63 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
 ) -> None:
     profile = REPO_ROOT / f"resources/test-profiles/{surface}-cross-surface.toml"
     expected_path = profile.with_suffix(".expected.json")
-    import json
-
     expected = json.loads(expected_path.read_text(encoding="utf-8"))
     loaded = parameters.load(profile, workspace=REPO_ROOT)
 
     assert loaded.surface == expected["surface"]
     assert {name: loaded[name] for name in expected["values"]} == expected["values"]
+    if surface == "imager":
+        invocation = loaded.provider_invocation()
+        assert invocation.protocol_name == "casa_imager_task"
+        assert invocation.protocol_version == 7
+        assert json.loads(invocation.stdin or "null") == expected["request"]
+        assert {reason.id for reason in invocation.unsupported_reasons} >= {
+            "task.aw_projection",
+            "task.grid_threads",
+            "task.memory_target",
+            "task.memory_pressure_policy",
+        }
+
+
+@pytest.mark.parametrize(
+    ("name", "overrides", "expected_reason"),
+    [
+        ("continuum", {"write_preview_pngs": False}, None),
+        (
+            "cube",
+            {
+                "specmode": "cube",
+                "channel_count": 4,
+                "perchanweightdensity": False,
+                "write_preview_pngs": False,
+            },
+            None,
+        ),
+            (
+                "mosaic",
+                {"gridder": "mosaic", "usepointing": True, "write_preview_pngs": False},
+                None,
+            ),
+    ],
+)
+def test_imager_python_profiles_round_trip_exact_provider_requests(
+    tmp_path: Path,
+    name: str,
+    overrides: dict[str, object],
+    expected_reason: str | None,
+) -> None:
+    values = TaskParameters.defaults("imager", workspace=tmp_path)
+    values.set_many(
+        {"vis": f"{name}.ms", "imagename": f"products/{name}", **overrides}
+    )
+    before = values.provider_invocation()
+    profile = values.save(tmp_path / f"{name}.toml")
+    after = TaskParameters.load("imager", profile, workspace=tmp_path).provider_invocation()
+
+    assert before == after
+    assert before.protocol_name == "casa_imager_task"
+    assert before.protocol_version == 7
+    assert json.loads(before.stdin or "null")["request"]["measurement_set"] == f"{name}.ms"
+    assert [reason.id for reason in before.unsupported_reasons] == (
+        [] if expected_reason is None else [expected_reason]
+    )

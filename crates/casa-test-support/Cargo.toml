@@ -60,6 +60,11 @@ path = "tests/image_expr_interop.rs"
 required-features = ["cpp-interop-tests"]
 
 [[test]]
+name = "hogbom_interop"
+path = "tests/hogbom_interop.rs"
+required-features = ["cpp-interop-tests"]
+
+[[test]]
 name = "images_interop"
 path = "tests/images_interop.rs"
 required-features = ["cpp-interop-tests"]

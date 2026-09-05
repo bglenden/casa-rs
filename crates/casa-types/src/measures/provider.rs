@@ -3,6 +3,41 @@
 
 use std::fmt::Debug;
 
+/// Immutable identity and retained residency of one prepared Measures provider.
+///
+/// The identity must commit every scientific value exposed by the provider
+/// after preparation. A provider entering a bounded operation must eagerly
+/// stabilize all caches first, then return the same state on every later call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MeasuresProviderState {
+    identity_sha256: [u8; 32],
+    retained_heap_bytes: usize,
+}
+
+impl MeasuresProviderState {
+    /// Construct a provider-owned state from its scientific-content digest and
+    /// exact retained heap residency.
+    #[must_use]
+    pub const fn new(identity_sha256: [u8; 32], retained_heap_bytes: usize) -> Self {
+        Self {
+            identity_sha256,
+            retained_heap_bytes,
+        }
+    }
+
+    /// Return the authoritative SHA-256 identity of the prepared scientific state.
+    #[must_use]
+    pub const fn identity_sha256(self) -> [u8; 32] {
+        self.identity_sha256
+    }
+
+    /// Return exact heap bytes retained beyond the concrete provider object.
+    #[must_use]
+    pub const fn retained_heap_bytes(self) -> usize {
+        self.retained_heap_bytes
+    }
+}
+
 /// Interpolated Earth-orientation values at one UTC epoch.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct EopValues {
@@ -49,6 +84,18 @@ pub struct NamedSourceDirection {
 /// Implementations may load files or cache data, but `casa-types` depends only
 /// on these scientific values and never performs discovery or I/O itself.
 pub trait MeasuresProvider: Debug + Send + Sync {
+    /// Prepare this provider for a bounded retained operation and return its
+    /// authoritative immutable state and exact retained residency.
+    ///
+    /// Returning `Some` promises that every cache any later provider method can
+    /// retain has been materialized, the identity commits every scientific
+    /// value those methods can expose, and repeated calls return the same
+    /// state. Bounded owners reject the default `None` rather than accepting
+    /// opaque, relabeled, or subsequently changing provider state.
+    fn prepare_bounded_state(&self) -> Result<Option<MeasuresProviderState>, String> {
+        Ok(None)
+    }
+
     /// Interpolate EOP values at a UTC MJD.
     fn eop_values(&self, _utc_mjd: f64) -> Result<Option<EopValues>, String> {
         Ok(None)
@@ -91,6 +138,10 @@ pub(crate) struct TestMeasuresProvider;
 
 #[cfg(test)]
 impl MeasuresProvider for TestMeasuresProvider {
+    fn prepare_bounded_state(&self) -> Result<Option<MeasuresProviderState>, String> {
+        Ok(Some(MeasuresProviderState::new([0; 32], 0)))
+    }
+
     fn eop_values(&self, _utc_mjd: f64) -> Result<Option<EopValues>, String> {
         Ok(Some(EopValues {
             dut1_seconds: 0.0,

@@ -28,6 +28,9 @@ class ImagingToleranceTests(unittest.TestCase):
             "diff_max": lambda value: value["products"][".image.tt0"].update(
                 diff_abs_max_over_right_peak=0.0050001
             ),
+            "source_diff_rms": lambda value: value["products"][".image.tt0"][
+                "source_regions"
+            ][0]["difference"].update(diff_rms_over_right_rms=0.0010001),
             "peak": lambda value: value["products"][".image.tt0"]["source_regions"][0][
                 "left"
             ]["peak_abs"].update(abs_value=10.010001),
@@ -85,6 +88,31 @@ class ImagingToleranceTests(unittest.TestCase):
 
         self.assertEqual(
             "passed",
+            evaluate_comparison_tolerances(comparison, make_contract())["status"],
+        )
+
+    def test_per_channel_beams_use_the_worst_channel_metric(self) -> None:
+        comparison = make_comparison()
+        product = comparison["products"][".image.tt0"]
+        beam = lambda major: {
+            "major": {"value": major, "unit": "arcsec"},
+            "minor": {"value": 1.0, "unit": "arcsec"},
+            "positionangle": {"value": 10.0, "unit": "deg"},
+        }
+        product["metadata"]["left"]["restoring_beam"] = {
+            "beams": {"*0": {"*0": beam(2.0)}, "*1": {"*0": beam(2.001)}}
+        }
+        product["metadata"]["right"]["restoring_beam"] = {
+            "beams": {"*0": {"*0": beam(2.0)}, "*1": {"*0": beam(2.0)}}
+        }
+
+        self.assertEqual(
+            "passed",
+            evaluate_comparison_tolerances(comparison, make_contract())["status"],
+        )
+        product["metadata"]["left"]["restoring_beam"]["beams"]["*1"]["*0"] = beam(2.01)
+        self.assertEqual(
+            "failed",
             evaluate_comparison_tolerances(comparison, make_contract())["status"],
         )
 
@@ -401,6 +429,10 @@ def make_comparison() -> dict:
                             "centroid_pixels": [4.0, 8.0],
                             "integrated_flux": 20.0,
                             "peak_abs": {"abs_value": 10.0},
+                        },
+                        "difference": {
+                            "status": "measured",
+                            "diff_rms_over_right_rms": 0.001,
                         },
                     }
                 ],

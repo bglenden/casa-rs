@@ -25,6 +25,7 @@ pub enum DiagnosticCode {
     WrongKind,
     FutureFormat,
     FutureContract,
+    UnsupportedContract,
     MissingRequired,
     InvalidType,
     InvalidValue,

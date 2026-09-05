@@ -22,6 +22,10 @@
 //!   Opens with UserLocking, acquires write lock, adds a row, unlocks.
 //!   Exits 0 on success.
 //!
+//! - `hold_write_with_row <id> <name> <signal_file> <wait_file>` —
+//!   Adds a row while holding the write lock, signals, then waits to publish
+//!   the row until `wait_file` appears.
+//!
 //! - `read_row_count` —
 //!   Opens with UserLocking, acquires read lock, prints row count to
 //!   stdout, unlocks. Exits 0 on success.
@@ -123,6 +127,46 @@ fn main() {
                     RecordField::new("name", Value::Scalar(ScalarValue::String(name.to_string()))),
                 ]))
                 .unwrap();
+            table.unlock().unwrap_or_else(|e| {
+                eprintln!("unlock failed: {e}");
+                process::exit(3);
+            });
+        }
+
+        "hold_write_with_row" => {
+            if args.len() < 7 {
+                eprintln!(
+                    "Usage: lock_helper <table_dir> hold_write_with_row <id> <name> <signal_file> <wait_file>"
+                );
+                process::exit(2);
+            }
+            let id: i32 = args[3].parse().unwrap();
+            let name = &args[4];
+            let signal_file = &args[5];
+            let wait_file = &args[6];
+
+            let mut table = Table::open_with_lock(opts, lock_opts).unwrap_or_else(|e| {
+                eprintln!("open_with_lock failed: {e}");
+                process::exit(3);
+            });
+            table.lock(LockType::Write, 1).unwrap_or_else(|e| {
+                eprintln!("lock failed: {e}");
+                process::exit(3);
+            });
+            table
+                .add_row(RecordValue::new(vec![
+                    RecordField::new("id", Value::Scalar(ScalarValue::Int32(id))),
+                    RecordField::new("name", Value::Scalar(ScalarValue::String(name.to_string()))),
+                ]))
+                .unwrap();
+            fs::write(signal_file, "row staged").unwrap();
+
+            for _ in 0..100 {
+                if Path::new(wait_file).exists() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
             table.unlock().unwrap_or_else(|e| {
                 eprintln!("unlock failed: {e}");
                 process::exit(3);

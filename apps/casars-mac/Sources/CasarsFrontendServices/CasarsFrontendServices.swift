@@ -14153,14 +14153,20 @@ public func FfiConverterTypeSurfaceParameterWriteResult_lower(_ value: SurfacePa
 
 
 public struct SurfaceProviderInvocation {
+    public var protocolName: String?
+    public var protocolVersion: UInt32?
     public var args: [String]
     public var stdin: String?
+    public var unsupportedReasons: [SurfaceProviderUnsupportedReason]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(args: [String], stdin: String?) {
+    public init(protocolName: String?, protocolVersion: UInt32?, args: [String], stdin: String?, unsupportedReasons: [SurfaceProviderUnsupportedReason]) {
+        self.protocolName = protocolName
+        self.protocolVersion = protocolVersion
         self.args = args
         self.stdin = stdin
+        self.unsupportedReasons = unsupportedReasons
     }
 }
 
@@ -14171,18 +14177,30 @@ extension SurfaceProviderInvocation: Sendable {}
 
 extension SurfaceProviderInvocation: Equatable, Hashable {
     public static func ==(lhs: SurfaceProviderInvocation, rhs: SurfaceProviderInvocation) -> Bool {
+        if lhs.protocolName != rhs.protocolName {
+            return false
+        }
+        if lhs.protocolVersion != rhs.protocolVersion {
+            return false
+        }
         if lhs.args != rhs.args {
             return false
         }
         if lhs.stdin != rhs.stdin {
             return false
         }
+        if lhs.unsupportedReasons != rhs.unsupportedReasons {
+            return false
+        }
         return true
     }
 
     public func hash(into hasher: inout Hasher) {
+        hasher.combine(protocolName)
+        hasher.combine(protocolVersion)
         hasher.combine(args)
         hasher.combine(stdin)
+        hasher.combine(unsupportedReasons)
     }
 }
 
@@ -14197,14 +14215,20 @@ public struct FfiConverterTypeSurfaceProviderInvocation: FfiConverterRustBuffer 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceProviderInvocation {
         return
             try SurfaceProviderInvocation(
+                protocolName: FfiConverterOptionString.read(from: &buf),
+                protocolVersion: FfiConverterOptionUInt32.read(from: &buf),
                 args: FfiConverterSequenceString.read(from: &buf),
-                stdin: FfiConverterOptionString.read(from: &buf)
+                stdin: FfiConverterOptionString.read(from: &buf),
+                unsupportedReasons: FfiConverterSequenceTypeSurfaceProviderUnsupportedReason.read(from: &buf)
         )
     }
 
     public static func write(_ value: SurfaceProviderInvocation, into buf: inout [UInt8]) {
+        FfiConverterOptionString.write(value.protocolName, into: &buf)
+        FfiConverterOptionUInt32.write(value.protocolVersion, into: &buf)
         FfiConverterSequenceString.write(value.args, into: &buf)
         FfiConverterOptionString.write(value.stdin, into: &buf)
+        FfiConverterSequenceTypeSurfaceProviderUnsupportedReason.write(value.unsupportedReasons, into: &buf)
     }
 }
 
@@ -14221,6 +14245,78 @@ public func FfiConverterTypeSurfaceProviderInvocation_lift(_ buf: RustBuffer) th
 #endif
 public func FfiConverterTypeSurfaceProviderInvocation_lower(_ value: SurfaceProviderInvocation) -> RustBuffer {
     return FfiConverterTypeSurfaceProviderInvocation.lower(value)
+}
+
+
+public struct SurfaceProviderUnsupportedReason {
+    public var kind: String
+    public var id: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(kind: String, id: String) {
+        self.kind = kind
+        self.id = id
+    }
+}
+
+#if compiler(>=6)
+extension SurfaceProviderUnsupportedReason: Sendable {}
+#endif
+
+
+extension SurfaceProviderUnsupportedReason: Equatable, Hashable {
+    public static func ==(lhs: SurfaceProviderUnsupportedReason, rhs: SurfaceProviderUnsupportedReason) -> Bool {
+        if lhs.kind != rhs.kind {
+            return false
+        }
+        if lhs.id != rhs.id {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(id)
+    }
+}
+
+extension SurfaceProviderUnsupportedReason: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSurfaceProviderUnsupportedReason: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SurfaceProviderUnsupportedReason {
+        return
+            try SurfaceProviderUnsupportedReason(
+                kind: FfiConverterString.read(from: &buf),
+                id: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: SurfaceProviderUnsupportedReason, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.id, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceProviderUnsupportedReason_lift(_ buf: RustBuffer) throws -> SurfaceProviderUnsupportedReason {
+    return try FfiConverterTypeSurfaceProviderUnsupportedReason.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSurfaceProviderUnsupportedReason_lower(_ value: SurfaceProviderUnsupportedReason) -> RustBuffer {
+    return FfiConverterTypeSurfaceProviderUnsupportedReason.lower(value)
 }
 
 
@@ -24169,6 +24265,31 @@ fileprivate struct FfiConverterSequenceTypeSurfaceParameterTypeField: FfiConvert
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSurfaceParameterTypeField.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeSurfaceProviderUnsupportedReason: FfiConverterRustBuffer {
+    typealias SwiftType = [SurfaceProviderUnsupportedReason]
+
+    public static func write(_ value: [SurfaceProviderUnsupportedReason], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeSurfaceProviderUnsupportedReason.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [SurfaceProviderUnsupportedReason] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [SurfaceProviderUnsupportedReason]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeSurfaceProviderUnsupportedReason.read(from: &buf))
         }
         return seq
     }

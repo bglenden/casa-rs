@@ -185,7 +185,7 @@ class FullArrayOutputValidationTests(unittest.TestCase):
             "status": "matched",
             "parity": True,
         }
-        with self.assertRaisesRegex(ValueError, "unrequested metadata"):
+        with self.assertRaisesRegex(ValueError, "metadata result fields"):
             validate_comparison_output(bad_metadata, request)
 
         bad_classification = comparison_output(request)
@@ -279,6 +279,7 @@ def normalized_request(*, legacy: bool = False) -> dict[str, object]:
             "max_elements_per_product": 4,
             "full_chunk_elements": 3,
             "require_exact_product_inventory": True,
+            "require_direction_wcs_parity": False,
             "require_metadata_parity": False,
             "source_regions": [],
             "tolerances": None,
@@ -418,6 +419,7 @@ def comparison_output(request: dict[str, object]) -> dict[str, object]:
         "right_label": request["right_label"],
         "requested_products": [SUFFIX],
         "require_exact_product_inventory": True,
+        "require_direction_wcs_parity": False,
         "require_metadata_parity": False,
         "legacy_operand_aliases": request["legacy_operand_aliases"],
         "source_regions": [],

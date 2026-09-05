@@ -67,12 +67,55 @@ flowchart LR
     class density,gridloop,fft,normalize,refresh hot;
 ```
 
-## `casa-rs` Overlay
+## `casa-rs` Native Overlay
 
-The current Rust structure has a useful hard boundary: `casa-imaging` is a pure
+The production continuum route is now one native-only composition:
+
+```mermaid
+flowchart LR
+    surface["Task/CLI surface<br/>parse and unit conversion"] --> application["casa-imaging-application<br/>canonical request and MS binding"]
+    application --> compile["compile<br/>problem and product graph"]
+    compile --> plan["plan<br/>resources, leases, and publication"]
+    plan --> run["run<br/>weighting, paired operators, cycles, products"]
+    run --> publish["independent CASA products<br/>image, psf, residual, model, sumwt"]
+```
+
+`casars-imager` does not own MeasurementSet interpretation, scientific
+operators, planning, product generation, or persistence. Unsupported cube,
+mosaic, W/AW-projection, and backend choices fail as
+`TemporarilyUnavailable`; they do not enter the pre-T23 runners described
+below.
+
+### T35/T36 spectral cutover map
+
+Source inspection for the sparse paired spectral foundation produced this
+compact semantic and performance map. The pre-cutover reference is
+`fff9c2d55^`; the current foundation starts from `af3bd99c5`.
+
+| Concern | Pre-cutover Rust | CASA/casacore and LibRA source evidence | T35/T36 owner and retained behavior |
+|---|---|---|---|
+| Frame evaluation | Cube preparation mixed native frequencies and row-local conversions while building channel maps. | `FTMachine::matchChannel` evaluates row frequencies in the requested frame; Measures context varies with MS, field, epoch, direction, and observatory. | `casa-ms` emits distinct native and output-frame centres plus both transformed boundaries. Its cache key retains source, SPW/channel interval, field, epoch, frame, flags, and weight. |
+| Coefficients | Independent to-grid/from-grid maps and fixed positive interpolation records could diverge. | `InterpolateArray1D` implements nearest, linear, and four-point polynomial cubic; its cubic stencil can contain signed coefficients. LibRA passes the task interpolation choice into the imaging/regridding machinery. | `casa-imaging-reconstruction` compiles one sparse stencil receipt. Prediction, dirty/adjoint, PSF, density, sum-weight, and replay consume that same coefficient sequence; there is no second coefficient authority. |
+| Edges and order | Cube helpers contained useful descending-axis, edge-clipping, and transformed-width rules but scattered them across maps. | Casacore binary bracketing explicitly supports ascending and descending coordinates; non-extrapolating interpolation marks unsupported edges invalid. | The law declares complete-support versus partial-overlap edges. Receipts distinguish flagged, unmapped, and mapped samples and retain canonical source/output order. |
+| Flags, weights, covariance | Flags and weights were applied downstream of a coefficient record that could not declare induced output covariance. | Casacore interpolation treats coefficient evaluation separately from flag validity; shared source samples necessarily induce output covariance. | The source trace reports exact flags and effective weight. The law declares `A C A^H` propagation from independent source noise; coefficients are finite signed `f64`. |
+| Residency and throughput | The old spectral-slab planner preserved bounded row blocks, source reuse, deterministic reductions, and slab halos, but also carried mode-specific control and duplicate maps. | CASA/LibRA operate on visibility buffers rather than materializing a full MeasurementSet cube. | Four terms stay inline for nearest/linear/cubic. Interval integration may spill only up to its planner-declared term bound. Chunking does not enter scientific identity or contribution order. No T37 cube plane arrays or cycles are introduced here. |
+
+The retained performance techniques are bounded source traversal, row-local
+frame caching, canonical reductions, and planner-derived term/residency bounds.
+The displaced semantics are duplicate channel maps, positive-`f32` two-term
+records, and frontend cubic coercion. This map is source-backed; no long CASA
+run was launched for T35/T36.
+
+## Historical pre-T23 `casa-rs` Overlay
+
+The remainder of this section is retained only to explain the implementation
+that T23 removed and the pressure that motivated the refactor. It is not an
+active route or architecture description.
+
+The pre-T23 Rust structure had a useful hard boundary: `casa-imaging` was a pure
 core that consumes prepared batches and emits products, while `casars-imager`
-owns MeasurementSet I/O, mode routing, coordinates, masks, and product writing.
-Most near-term collapse pressure is therefore in the adapter/orchestration
+owned MeasurementSet I/O, mode routing, coordinates, masks, and product writing.
+Most collapse pressure was therefore in the adapter/orchestration
 layer, not in the pure core boundary.
 
 ```mermaid
@@ -368,6 +411,19 @@ hypothesis is:
 
 Once the shape is stable, this same diagram can be annotated with timings and
 resource ownership.
+
+### Historical reconnaissance for the fused terminal MS pass
+
+The T60 terminal-pass work checked the last optimized pre-cutover Rust tree at
+`fff9c2d553eace4b6a57b1df9ded4773f2263ceb`, CASA/casacore, and LibRA before
+choosing its ownership and writeback shape. This is a historical design map,
+not a new benchmark claim.
+
+| Lineage | Technique and observed benefit | Current owner | Disposition |
+|---|---|---|---|
+| Pre-cutover `casa-rs` | Bounded prepared blocks, at most two live source blocks, grouped MS reads, and shared-source replay constrained peak residency and could overlap source I/O with preparation. The archived ledger also recorded both positive evidence (the memory-derived mosaic-cube grouping was `1.098x` faster with exact products) and a negative control (cubedata read-ahead was `22.1%` slower when it reduced active planes), showing that overlap must remain planner-derived. | `casa-ms` selected observation, `casa-tables` grouped reads, and `casa-imaging-runtime` fused replay | Retain bounded/grouped mechanics and causal controls; do not restore the removed frontend stream or dataset-shaped switches. |
+| CASA/casacore | VI2/VisBuffer operates on row/channel/correlation cubes, while `SynthesisImagerVi2::predictModel` zeroes the model cube, degrids it, and writes the complete buffer through `writeVisModel` under the MS lock. Batched column-cell access amortizes table I/O and the whole-buffer write prevents selected flagged or non-Stokes cells from retaining stale model values. | `casa-ms` selection/writeback plus `spectral_operator` prediction and `spectral_cycle` transaction ownership | Adapt the complete selected write set and lock semantics in idiomatic Rust; keep gridding eligibility separate from write eligibility. |
+| LibRA | `SIMapper::degrid` and the synthesis-imager path likewise operate on whole visibility buffers, while workflow job and resampler boundaries separate read, prediction, write, and gridding work for resource placement. The benefit is a mature bulk-I/O and resource seam rather than a measured result on this Rust branch. | `casa-imaging-reconstruction` operators and `casa-imaging-runtime` plan/resource owners | Adapt whole-buffer semantics and explicit resource ownership; reject the distributed frontend/job graph and any extra MS replay for the in-process terminal plan. |
 
 Current `casa-rs` measurement points include:
 

@@ -22,6 +22,7 @@ from .image_compare import (
     comparison_request_binding,
     validate_comparison_output,
 )
+from .metadata_contract import normalize_metadata_contract
 from .host_telemetry import HostTelemetryError, validate_host_telemetry
 from .tolerances import (
     CONTRACT_VERSION as TOLERANCE_CONTRACT_VERSION,
@@ -84,6 +85,7 @@ IMAGING_FIELDS = {
     "calcres",
     "casa_gridder",
     "cell_arcsec",
+    "casa_pblimit",
     "chanchunks",
     "channel_count",
     "channel_start",
@@ -94,6 +96,8 @@ IMAGING_FIELDS = {
     "deconvolver",
     "facets",
     "field",
+    "fitorder",
+    "fitspw",
     "gain",
     "gridder",
     "hogbom_iteration_mode",
@@ -108,15 +112,18 @@ IMAGING_FIELDS = {
     "interpolation",
     "max_psf_fraction",
     "mask_image",
+    "mask_box",
     "mask_sha256",
     "min_psf_fraction",
     "minor_cycle_length",
     "mode",
     "mosweight",
     "niter",
+    "nmajor",
     "normtype",
     "nsigma",
     "nterms",
+    "noisethreshold",
     "parallel",
     "pbcor",
     "pblimit",
@@ -133,8 +140,10 @@ IMAGING_FIELDS = {
     "rotatepastep",
     "robust",
     "savemodel",
+    "save_continuum_residual",
     "scales",
     "smallscalebias",
+    "sidelobethreshold",
     "specmode",
     "spw",
     "standard_mfs_acceleration",
@@ -180,8 +189,10 @@ COMPARISON_FIELDS = {
     "max_elements_per_product",
     "mode",
     "products",
+    "require_direction_wcs_parity",
     "require_exact_product_inventory",
     "require_metadata_parity",
+    "metadata_contract",
     "source_regions",
     "tolerances",
 }
@@ -295,6 +306,7 @@ RESULT_MODE_FIELDS = {
     "chanchunks",
     "channel_count",
     "deconvolver",
+    "facets",
     "gridder",
     "hogbom_iteration_mode",
     "image_shape",
@@ -302,6 +314,7 @@ RESULT_MODE_FIELDS = {
     "imaging_fft_precision",
     "imaging_read_ahead_blocks",
     "niter",
+    "nmajor",
     "nterms",
     "parallel",
     "perchanweightdensity",
@@ -393,6 +406,8 @@ WORKLOAD_RESULT_FIELDS = {
     "benchmark_features",
     "stage_breakdown",
     "product_comparison",
+    "model_data_comparison",
+    "continuum_residual_comparison",
     "casa_repeatability_comparison",
     "casa_tclean_calls",
     "publication_recovery",
@@ -480,8 +495,10 @@ COMPARISON_OUTPUT_FIELDS = {
     "left_label",
     "right_label",
     "requested_products",
+    "require_direction_wcs_parity",
     "require_exact_product_inventory",
     "require_metadata_parity",
+    "metadata_contract",
     "legacy_operand_aliases",
     "source_regions",
     "tolerances",
@@ -557,8 +574,10 @@ COMPARISON_REQUEST_BINDING_FIELDS = {
     "products",
     "max_elements_per_product",
     "full_chunk_elements",
+    "require_direction_wcs_parity",
     "require_exact_product_inventory",
     "require_metadata_parity",
+    "metadata_contract",
     "legacy_operand_aliases",
     "source_regions",
     "tolerances",
@@ -567,6 +586,8 @@ COMPARISON_REQUEST_BINDING_FIELDS = {
 }
 COMPARISON_PRODUCT_FIELDS = {
     "status",
+    "left_exists",
+    "right_exists",
     "rust_exists",
     "casa_exists",
     "rust_path",
@@ -580,9 +601,15 @@ COMPARISON_PRODUCT_FIELDS = {
     "left_label",
     "right_label",
     "comparison_mode",
+    "direction_wcs_parity_required",
+    "direction_wcs",
     "metadata_parity_required",
     "metadata",
     "topology_parity",
+    "left_shape",
+    "right_shape",
+    "rust_shape",
+    "casa_shape",
     "shape",
     "sample_stride",
     "sampled_elements",
@@ -724,6 +751,14 @@ COMPARISON_STRUCTURED_DIFFERENCE_FIELDS = {
     "review",
 }
 LEGACY_COMPARISON_PRODUCT_FIELDS = COMPARISON_PRODUCT_FIELDS - {
+    "direction_wcs_parity_required",
+    "direction_wcs",
+    "left_shape",
+    "right_shape",
+    "rust_shape",
+    "casa_shape",
+    "left_exists",
+    "right_exists",
     "full_array",
     "sampled_structured_difference",
     "source_regions",
@@ -784,6 +819,23 @@ COMPARISON_METADATA_SIDE_FIELDS = {
     "coordinates",
     "restoring_beam",
     "errors",
+}
+COMPARISON_DIRECTION_WCS_FIELDS = {
+    "status",
+    "parity",
+    "field_parity",
+    "left",
+    "right",
+    "reason",
+}
+COMPARISON_DIRECTION_WCS_SIDE_FIELDS = {
+    "status",
+    "shape",
+    "direction",
+    "axis_topology",
+    "stokes",
+    "spectral_axis",
+    "missing_fields",
 }
 CASA_CALL_FIELDS = {
     "name",
@@ -917,7 +969,11 @@ def validate_workload_manifest(
     comparison_mode = comparison.get("mode", "sampled")
     if comparison_mode not in {"full", "sampled"}:
         raise ContractError(f"{source}: comparison.mode must be full or sampled")
-    for key in ("require_exact_product_inventory", "require_metadata_parity"):
+    for key in (
+        "require_exact_product_inventory",
+        "require_direction_wcs_parity",
+        "require_metadata_parity",
+    ):
         if key in comparison and not isinstance(comparison[key], bool):
             raise ContractError(f"{source}: comparison.{key} must be a boolean")
     if "tolerances" in comparison:
@@ -927,6 +983,14 @@ def validate_workload_manifest(
             )
         except ToleranceContractError as error:
             raise ContractError(str(error)) from error
+    if "metadata_contract" in comparison:
+        try:
+            normalize_metadata_contract(
+                comparison["metadata_contract"],
+                products=comparison.get("products", []),
+            )
+        except ValueError as error:
+            raise ContractError(f"{source}: comparison.{error}") from error
     if "source_regions" in comparison:
         _validate_source_regions(comparison, source=source)
 
@@ -1405,7 +1469,7 @@ def _validate_result_dataset(value: Any, *, source: str) -> None:
 def _validate_result_mode(value: Any, *, source: str) -> None:
     mode = _require_dict(value, source)
     _allowed_fields(mode, RESULT_MODE_FIELDS, source)
-    integer_fields = {"channel_count", "niter", "nterms"}
+    integer_fields = {"channel_count", "facets", "niter", "nmajor", "nterms"}
     nullable_integer_fields = {"chanchunks", "imaging_read_ahead_blocks"}
     nullable_string_fields = {
         "start",
@@ -1426,6 +1490,8 @@ def _validate_result_mode(value: Any, *, source: str) -> None:
         _nonempty_string(mode, key, source)
     for key in integer_fields & set(mode):
         _integer(mode, key, source)
+    if "facets" in mode:
+        _positive_integer(mode["facets"], f"{source}: facets")
     for key in nullable_integer_fields & set(mode):
         _optional_integer(mode[key], f"{source}: {key}")
     for key in nullable_string_fields & set(mode):
@@ -1482,7 +1548,11 @@ def _validate_result_comparison(value: Any, *, source: str) -> None:
             raise ContractError(f"{source}: mode must be full or sampled")
     if "products" in comparison:
         _nonempty_string_list(comparison["products"], f"{source}: products")
-    for key in ("require_exact_product_inventory", "require_metadata_parity"):
+    for key in (
+        "require_exact_product_inventory",
+        "require_direction_wcs_parity",
+        "require_metadata_parity",
+    ):
         if key in comparison and not isinstance(comparison[key], bool):
             raise ContractError(f"{source}: {key} must be a boolean")
     if "source_regions" in comparison:
@@ -1497,6 +1567,14 @@ def _validate_result_comparison(value: Any, *, source: str) -> None:
             )
         except ToleranceContractError as error:
             raise ContractError(str(error)) from error
+    if "metadata_contract" in comparison:
+        try:
+            normalize_metadata_contract(
+                comparison["metadata_contract"],
+                products=comparison.get("products", []),
+            )
+        except ValueError as error:
+            raise ContractError(f"{source}: {error}") from error
 
 
 def _validate_result_review(value: Any, *, source: str) -> None:
@@ -1823,6 +1901,43 @@ def _validate_results(
             migrated_environment=migrated_environment,
             source=f"{source}: product_comparison",
         )
+    if "model_data_comparison" in value:
+        comparison = _require_dict(
+            value["model_data_comparison"], f"{source}: model_data_comparison"
+        )
+        status = comparison.get("status")
+        if status not in {"not_run", "missing", "pass", "fail"}:
+            raise ContractError(
+                f"{source}: model_data_comparison.status is invalid: {status!r}"
+            )
+        if status in {"pass", "fail"}:
+            if comparison.get("schema") != "casa-rs-model-data-comparison-v1":
+                raise ContractError(
+                    f"{source}: model_data_comparison schema is invalid"
+                )
+            _sha256_or_historical(
+                comparison.get("sha256"),
+                f"{source}: model_data_comparison.sha256",
+            )
+    if "continuum_residual_comparison" in value:
+        comparison = _require_dict(
+            value["continuum_residual_comparison"],
+            f"{source}: continuum_residual_comparison",
+        )
+        status = comparison.get("status")
+        if status not in {"not_run", "missing", "pass", "fail"}:
+            raise ContractError(
+                f"{source}: continuum_residual_comparison.status is invalid: {status!r}"
+            )
+        if status in {"pass", "fail"}:
+            if comparison.get("schema") != "casa-rs-continuum-residual-comparison-v1":
+                raise ContractError(
+                    f"{source}: continuum_residual_comparison schema is invalid"
+                )
+            _sha256_or_historical(
+                comparison.get("sha256"),
+                f"{source}: continuum_residual_comparison.sha256",
+            )
     if "backend_plan_logs" in value:
         _validate_backend_plan_logs(
             value["backend_plan_logs"], source=f"{source}: backend_plan_logs"
@@ -1989,7 +2104,10 @@ def _validate_comparison_output_parent(
         protocol_variant = protocol_version
         allowed_fields = set(COMPARISON_OUTPUT_FIELDS)
         if protocol_version in LEGACY_COMPARISON_SCHEMA_VERSIONS:
-            allowed_fields.remove("structure_workspace_dir")
+            allowed_fields -= {
+                "require_direction_wcs_parity",
+                "structure_workspace_dir",
+            }
         _allowed_fields(comparison, allowed_fields, source)
         if "request_binding" not in comparison:
             raise ContractError(
@@ -2006,6 +2124,7 @@ def _validate_comparison_output_parent(
             _optional_integer(comparison[key], f"{source}: {key}")
     for key in (
         "require_exact_product_inventory",
+        "require_direction_wcs_parity",
         "require_metadata_parity",
         "legacy_operand_aliases",
     ):
@@ -2189,11 +2308,16 @@ def _validate_bound_comparison_output(
     source: str,
 ) -> None:
     request = _require_dict(binding, f"{source}: request_binding")
-    binding_fields = (
-        COMPARISON_REQUEST_BINDING_FIELDS
-        if protocol_version == COMPARISON_SCHEMA_VERSION
-        else COMPARISON_REQUEST_BINDING_FIELDS - {"structure_workspace_dir"}
-    )
+    binding_fields = set(COMPARISON_REQUEST_BINDING_FIELDS)
+    if protocol_version != COMPARISON_SCHEMA_VERSION:
+        binding_fields -= {"require_direction_wcs_parity", "structure_workspace_dir"}
+    elif "require_direction_wcs_parity" not in request:
+        # Schema-v4 receipts created before the scoped direction-WCS contract
+        # remain bound to their original request shape. New requests always
+        # carry this field explicitly through normalize_comparison_request.
+        binding_fields.remove("require_direction_wcs_parity")
+    if "metadata_contract" not in request:
+        binding_fields.remove("metadata_contract")
     _allowed_fields(request, binding_fields, f"{source}: request_binding")
     if set(request) != binding_fields:
         missing = sorted(binding_fields - set(request))
@@ -2224,10 +2348,11 @@ def _validate_bound_comparison_output(
         _positive_integer(request[key], f"{source}: request_binding.{key}")
     for key in (
         "require_exact_product_inventory",
+        "require_direction_wcs_parity",
         "require_metadata_parity",
         "legacy_operand_aliases",
     ):
-        if not isinstance(request[key], bool):
+        if key in request and not isinstance(request[key], bool):
             raise ContractError(f"{source}: request_binding.{key} must be boolean")
     _validate_comparison_source_regions(
         request["source_regions"],
@@ -2238,6 +2363,13 @@ def _validate_bound_comparison_output(
         _validate_frozen_tolerances(
             request["tolerances"], source=f"{source}: request_binding.tolerances"
         )
+    if "metadata_contract" in request:
+        try:
+            normalize_metadata_contract(
+                request["metadata_contract"], products=request["products"]
+            )
+        except ValueError as error:
+            raise ContractError(f"{source}: request_binding.{error}") from error
     if comparison.get("request_sha256") is None:
         raise ContractError(f"{source}: bound comparison requires request_sha256")
     # Schema-v3 comparison artifacts remain durable historical evidence.  Their
@@ -2304,8 +2436,11 @@ def _validate_comparison_product(
         if key in product:
             _nonempty_string(product, key, source)
     for key in (
+        "left_exists",
+        "right_exists",
         "rust_exists",
         "casa_exists",
+        "direction_wcs_parity_required",
         "metadata_parity_required",
         "topology_parity",
     ):
@@ -2317,6 +2452,9 @@ def _validate_comparison_product(
     for key in ("shape", "sample_stride"):
         if key in product:
             _validate_nonnegative_integer_list(product[key], f"{source}: {key}")
+    for key in ("left_shape", "right_shape", "rust_shape", "casa_shape"):
+        if key in product:
+            _validate_positive_integer_list(product[key], f"{source}: {key}")
     for key in (
         "rust_min",
         "rust_max",
@@ -2351,6 +2489,10 @@ def _validate_comparison_product(
             _validate_peak(product[key], source=f"{source}: {key}")
     if "metadata" in product:
         _validate_comparison_metadata(product["metadata"], source=f"{source}: metadata")
+    if "direction_wcs" in product:
+        _validate_comparison_direction_wcs(
+            product["direction_wcs"], source=f"{source}: direction_wcs"
+        )
     if "source_regions" in product:
         if not isinstance(product["source_regions"], list):
             raise ContractError(f"{source}: source_regions must be a list")
@@ -2558,10 +2700,89 @@ def _validate_comparison_failure(value: Any, *, source: str) -> None:
     _nonempty_string(failure, "reason", source)
 
 
+def _validate_comparison_direction_wcs(value: Any, *, source: str) -> None:
+    result = _require_dict(value, source)
+    _allowed_fields(result, COMPARISON_DIRECTION_WCS_FIELDS, source)
+    _nonempty_string(result, "status", source)
+    if not isinstance(result.get("parity"), bool):
+        raise ContractError(f"{source}: parity must be boolean")
+    if result.get("status") == "unavailable":
+        if set(result) != {"status", "parity", "reason"}:
+            raise ContractError(f"{source}: unavailable fields do not match protocol")
+        _nonempty_string(result, "reason", source)
+        return
+    expected = {"status", "parity", "field_parity", "left", "right"}
+    if set(result) != expected:
+        raise ContractError(f"{source}: fields do not match protocol")
+    parity = _require_dict(result["field_parity"], f"{source}: field_parity")
+    parity_fields = {"shape", "direction", "axis_topology", "stokes", "spectral_axis"}
+    if set(parity) != parity_fields or any(
+        not isinstance(item, bool) for item in parity.values()
+    ):
+        raise ContractError(f"{source}: field_parity fields must be boolean")
+    nested_fields = {
+        "direction": {
+            "axes",
+            "cdelt",
+            "conversionSystem",
+            "crpix",
+            "crval",
+            "latpole",
+            "longpole",
+            "pc",
+            "projection",
+            "projection_parameters",
+            "system",
+            "units",
+        },
+        "axis_topology": {
+            "pixelmap0",
+            "pixelmap1",
+            "pixelmap2",
+            "worldmap0",
+            "worldmap1",
+            "worldmap2",
+        },
+        "stokes": {"axes", "cdelt", "crpix", "crval", "pc", "stokes"},
+        "spectral_axis": {
+            "record",
+            "name",
+            "system",
+            "conversion_system",
+            "unit",
+            "wcs_type",
+        },
+    }
+    for side in ("left", "right"):
+        details = _require_dict(result[side], f"{source}: {side}")
+        if set(details) != COMPARISON_DIRECTION_WCS_SIDE_FIELDS:
+            raise ContractError(f"{source}: {side} fields do not match protocol")
+        _nonempty_string(details, "status", f"{source}: {side}")
+        if details["shape"] is not None:
+            _validate_positive_integer_list(details["shape"], f"{source}: {side}.shape")
+        for section, section_fields in nested_fields.items():
+            section_value = _require_dict(
+                details[section], f"{source}: {side}.{section}"
+            )
+            if set(section_value) != section_fields:
+                raise ContractError(
+                    f"{source}: {side}.{section} fields do not match protocol"
+                )
+        _string_list_allow_empty(
+            details["missing_fields"], f"{source}: {side}.missing_fields"
+        )
+
+
 def _validate_comparison_metadata(value: Any, *, source: str) -> None:
     metadata = _require_dict(value, source)
     _allowed_fields(metadata, COMPARISON_METADATA_FIELDS, source)
     _nonempty_string(metadata, "status", source)
+    if metadata["status"] == "not_required":
+        if metadata != {"status": "not_required", "parity": None}:
+            raise ContractError(
+                f"{source}: unrequested metadata fields do not match protocol"
+            )
+        return
     if "parity" in metadata and not isinstance(metadata["parity"], bool):
         raise ContractError(f"{source}: parity must be boolean")
     if "field_parity" in metadata:
@@ -3864,6 +4085,13 @@ def _validate_nonnegative_integer_list(value: Any, source: str) -> None:
         _nonnegative_integer(item, f"{source}[{index}]")
 
 
+def _validate_positive_integer_list(value: Any, source: str) -> None:
+    if not isinstance(value, list) or not value:
+        raise ContractError(f"{source} must be a non-empty list")
+    for index, item in enumerate(value):
+        _positive_integer(item, f"{source}[{index}]")
+
+
 def _validate_array_bounds(value: Any, source: str) -> None:
     bounds = _require_dict(value, source)
     if set(bounds) != {"blc", "trc", "inc"}:
@@ -4009,6 +4237,7 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "channel_count",
         "channel_start",
         "facets",
+        "fitorder",
         "imaging_memory_target_mb",
         "imaging_prepare_buffer_mb",
         "imaging_prepare_workers",
@@ -4017,9 +4246,11 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "imsize",
         "minor_cycle_length",
         "niter",
+        "nmajor",
         "nterms",
     }
     numbers = {
+        "casa_pblimit",
         "cell_arcsec",
         "computepastep",
         "pointingoffsetsigdev",
@@ -4048,6 +4279,7 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
         "psterm",
         "restart",
         "restoration",
+        "save_continuum_residual",
         "usepointing",
         "wbawp",
         "write_pb",
@@ -4061,6 +4293,8 @@ def _validate_imaging_types(imaging: dict[str, Any], source: str) -> None:
     }
     for key in integers & set(imaging):
         _integer(imaging, key, f"{source}: imaging")
+    if imaging.get("nmajor", -1) < -1:
+        raise ContractError(f"{source}: imaging.nmajor must be -1 or nonnegative")
     for key in numbers & set(imaging):
         finite_number(imaging[key], field=f"{source}: imaging.{key}", optional=False)
     for key in booleans & set(imaging):
@@ -4227,15 +4461,46 @@ def _validate_cross_fields(
         raise ContractError(
             f"{source}: imaging.mask_image requires imaging.usemask=user"
         )
+    mask_box = imaging.get("mask_box")
+    if mask_box is not None:
+        if imaging.get("usemask") != "user":
+            raise ContractError(
+                f"{source}: imaging.mask_box requires imaging.usemask=user"
+            )
+        try:
+            coordinates = [int(value) for value in str(mask_box).split(",")]
+        except ValueError as error:
+            raise ContractError(
+                f"{source}: imaging.mask_box must be x0,y0,x1,y1"
+            ) from error
+        if len(coordinates) != 4 or coordinates[0] > coordinates[2] or coordinates[1] > coordinates[3]:
+            raise ContractError(
+                f"{source}: imaging.mask_box must be x0,y0,x1,y1 with ordered corners"
+            )
     deterministic_clean = (
         imaging.get("mode") == "clean"
         and imaging.get("niter", 0) > 0
         and imaging.get("usemask") == "user"
     )
-    if deterministic_clean and not mask_image:
+    if deterministic_clean and not (mask_image or mask_box is not None):
         raise ContractError(
-            f"{source}: deterministic user-mask clean requires imaging.mask_image and imaging.mask_sha256"
+            f"{source}: deterministic user-mask clean requires a digested mask image or imaging.mask_box"
         )
+
+    fitspw = imaging.get("fitspw")
+    if "fitorder" in imaging and imaging["fitorder"] < 0:
+        raise ContractError(f"{source}: imaging.fitorder must be nonnegative")
+    if "fitorder" in imaging and not fitspw:
+        raise ContractError(f"{source}: imaging.fitorder requires imaging.fitspw")
+    if imaging.get("save_continuum_residual"):
+        if not fitspw:
+            raise ContractError(
+                f"{source}: imaging.save_continuum_residual requires imaging.fitspw"
+            )
+        if run.get("ms_staging") != "copy":
+            raise ContractError(
+                f"{source}: persisted continuum-residual comparison requires run.ms_staging=copy"
+            )
 
     comparison_mode = comparison.get("mode", "sampled")
     if comparison_mode == "full":
@@ -4243,13 +4508,18 @@ def _validate_cross_fields(
             raise ContractError(
                 f"{source}: comparison.mode=full requires comparison.full_chunk_elements >= 1"
             )
-        if comparison.get("require_exact_product_inventory") is not True:
+        if "require_exact_product_inventory" not in comparison:
             raise ContractError(
-                f"{source}: comparison.mode=full requires require_exact_product_inventory=true"
+                f"{source}: comparison.mode=full requires an explicit "
+                "require_exact_product_inventory policy"
             )
-        if comparison.get("require_metadata_parity") is not True:
+        if not (
+            comparison.get("require_metadata_parity") is True
+            or comparison.get("require_direction_wcs_parity") is True
+        ):
             raise ContractError(
-                f"{source}: comparison.mode=full requires require_metadata_parity=true"
+                f"{source}: comparison.mode=full requires "
+                "require_metadata_parity=true or require_direction_wcs_parity=true"
             )
         if "products" not in comparison:
             raise ContractError(

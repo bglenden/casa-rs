@@ -64,7 +64,7 @@ User-authored prose remains ordinary Markdown.
 format = 1
 surface = "imager"
 kind = "task"
-contract = 3
+contract = 15
 
 [parameters]
 vis = "data/twhya.ms"
@@ -126,7 +126,8 @@ rendering is shared through `MarkdownPresentation` and
 projection that hides CASA control comments outside fenced code and preserves
 ordinary HTML comments and fenced content.
 
-Task cells contain sparse ADR-0006 TOML. Selecting or double-clicking the
+Task cells contain sparse ADR-0006 TOML and follow ADR-0012 when their surface
+is current-only. Selecting or double-clicking the
 parameter block opens a normal task tab populated from that intent. A new task
 tab loads directly; replacing an already edited task tab first displays a typed
 diff and requires confirmation. Rerunning a cell creates a new immutable

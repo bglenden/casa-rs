@@ -5,12 +5,6 @@ public protocol TaskExecution {
     func cancel()
 }
 
-public extension SurfaceProviderInvocation {
-    init(args: [String]) {
-        self.init(args: args, stdin: nil)
-    }
-}
-
 public struct GenericTaskRequest: Equatable {
     public var runID: String
     public var task: ApplicationCatalogEntry

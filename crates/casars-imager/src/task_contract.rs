@@ -5,18 +5,16 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use casa_imaging::{
-    AwProjectControls, AwProjectNormalization, CleanStopReason, Deconvolver, GaussianUvTaper,
-    HogbomIterationMode, MinorCycleTrace, RestoringBeamMode, UvTaperSize, WTermMode, WeightingMode,
-};
+use casa_imaging_application::{ImagingRequestVersion, installed_imaging_capability_catalog};
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, CubeInterpolation,
     parse_rest_frequency_hz as parse_ms_rest_frequency_hz,
 };
 use casa_provider_contracts::{
-    ProviderCliMachineActions, ProviderCliProjection, ProviderProjectionMetadata,
-    ProviderProtocolDescriptor, ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract,
-    TaskProviderSchemas, TaskSemanticContract, builtin_surface_bundle, merged_components,
+    ParameterValue, ProviderCliMachineActions, ProviderCliProjection, ProviderInvocation,
+    ProviderInvocationAdaptation, ProviderProjectionMetadata, ProviderProtocolDescriptor,
+    ProviderSurfaceKind, TaskOperationDescriptor, TaskProviderContract, TaskProviderSchemas,
+    TaskSemanticContract, builtin_surface_bundle, merged_components,
 };
 use casa_types::measures::doppler::DopplerRef;
 use casa_types::measures::frequency::FrequencyRef;
@@ -24,16 +22,18 @@ use schemars::{JsonSchema, schema::RootSchema, schema_for};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AutoMultiThresholdConfig, ChannelRunSummary, CleanMaskMode, CliConfig, FrontendStageTimings,
-    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy, RunSummary,
-    SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, apply_parallel_runtime_control,
-    run_from_request,
+    AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
+    CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, HogbomIterationMode,
+    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
+    RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
+    UvTaperSize, WTermMode, WeightingMode, apply_parallel_runtime_control, run_from_request,
+    validate_parallel_acceleration,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 4;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 7;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -83,7 +83,69 @@ pub fn imager_protocol_descriptor() -> ProviderProtocolDescriptor {
 /// Typed imager-only schemas flattened into the shared provider envelope.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImagerAdditionalSchemas {
+    /// Schema for newline-delimited progress events.
     pub progress_event_schema: RootSchema,
+    /// Current canonical imaging-request contract version.
+    pub imaging_request_version: u32,
+    /// Typed installed-capability catalog projected from the application owner.
+    pub capability_catalog: ImagerCapabilityCatalog,
+    /// Schema for the typed installed-capability catalog.
+    pub capability_catalog_schema: RootSchema,
+}
+
+/// Typed provider-boundary projection of the installed imaging capabilities.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerCapabilityCatalog {
+    /// Version of this transport projection.
+    pub schema_version: u32,
+    /// Sole semantic owner of the projected entries.
+    pub owner: String,
+    /// Stable deterministic capability entries.
+    pub entries: Vec<ImagerCapabilityCatalogEntry>,
+}
+
+/// One typed installed-capability entry at the provider boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerCapabilityCatalogEntry {
+    /// Scientific or task capability family.
+    pub kind: String,
+    /// Stable owner-defined requirement identity.
+    pub id: String,
+    /// Whether the current installed build supports the requirement.
+    pub supported: bool,
+    /// Exact owner-defined typed reason identity when unsupported.
+    pub unsupported_reason: Option<ImagerUnsupportedReason>,
+}
+
+/// Exact typed unsupported reason projected from the application owner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerUnsupportedReason {
+    /// Capability, task, or request-constraint family.
+    pub kind: String,
+    /// Stable application-owned reason identity.
+    pub id: String,
+}
+
+fn imager_capability_catalog() -> ImagerCapabilityCatalog {
+    ImagerCapabilityCatalog {
+        schema_version: 1,
+        owner: "casa-imaging-application".to_string(),
+        entries: installed_imaging_capability_catalog()
+            .into_iter()
+            .map(|entry| {
+                let requirement = entry.requirement();
+                ImagerCapabilityCatalogEntry {
+                    kind: requirement.catalog_kind().to_string(),
+                    id: requirement.catalog_id(),
+                    supported: entry.unsupported().is_none(),
+                    unsupported_reason: entry.unsupported().map(|reason| ImagerUnsupportedReason {
+                        kind: reason.catalog_kind().to_string(),
+                        id: reason.catalog_id(),
+                    }),
+                }
+            })
+            .collect(),
+    }
 }
 
 /// Build the current imager schema bundle with the shared envelope.
@@ -91,6 +153,8 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
     let request_schema = schema_for!(ImagerTaskRequest);
     let result_schema = schema_for!(ImagerTaskResult);
     let progress_event_schema = schema_for!(ImagerProgressEvent);
+    let capability_catalog_schema = schema_for!(ImagerCapabilityCatalog);
+    let capability_catalog = imager_capability_catalog();
     TaskProviderContract {
         protocol: imager_protocol_descriptor(),
         semantic: TaskSemanticContract {
@@ -102,7 +166,12 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
                 result_kind: Some("run".to_string()),
             }],
         },
-        components: merged_components([&request_schema, &result_schema, &progress_event_schema]),
+        components: merged_components([
+            &request_schema,
+            &result_schema,
+            &progress_event_schema,
+            &capability_catalog_schema,
+        ]),
         annotations: serde_json::json!({}),
         projections: ProviderProjectionMetadata {
             cli: Some(ProviderCliProjection {
@@ -124,9 +193,165 @@ pub fn imager_task_schema_bundle() -> TaskProviderContract<ImagerAdditionalSchem
             result_schema,
             additional: ImagerAdditionalSchemas {
                 progress_event_schema,
+                imaging_request_version: ImagingRequestVersion::CURRENT.as_u32(),
+                capability_catalog,
+                capability_catalog_schema,
             },
         },
     }
+}
+
+/// Project one fully resolved canonical parameter set into the typed imager
+/// task request transported by the provider bundle.
+///
+/// Parameter resolution, defaults, activation, and constraints remain owned by
+/// the shared parameter catalog. This provider-owned step maps those resolved
+/// values directly into the typed request used by every machine surface; CLI
+/// spellings are transport output only and are not reparsed here.
+pub fn imager_provider_invocation(
+    values: &BTreeMap<String, ParameterValue>,
+    direct_args: Vec<String>,
+) -> Result<ProviderInvocationAdaptation, String> {
+    let (managed_args, _task_args) = split_managed_output_args(direct_args)?;
+    let config = CliConfig::from_parameter_values(values)?;
+    let request = ImagerTaskRequest::Run(ImagerRunTaskRequest::from_cli_config(&config));
+    let mut stdin = serde_json::to_string(&request)
+        .map_err(|error| format!("serialize canonical imager task request: {error}"))?;
+    stdin.push('\n');
+
+    let mut args = managed_args;
+    args.extend(["--json-run".to_string(), "-".to_string()]);
+    Ok(ProviderInvocationAdaptation {
+        invocation: ProviderInvocation {
+            args,
+            stdin: Some(stdin),
+        },
+        consumed_parameters: IMAGER_PROJECTED_PARAMETERS
+            .iter()
+            .filter(|name| values.contains_key(**name))
+            .map(|name| (*name).to_string())
+            .collect(),
+    })
+}
+
+const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
+    "vis",
+    "imagename",
+    "imsize",
+    "cell",
+    "datacolumn",
+    "savemodel",
+    "startmodel",
+    "outlierfile",
+    "field",
+    "phasecenter_field",
+    "ddid",
+    "phasecenter",
+    "spw",
+    "channel_start",
+    "channel_count",
+    "stokes",
+    "specmode",
+    "chanchunks",
+    "start",
+    "width",
+    "outframe",
+    "veltype",
+    "interpolation",
+    "restfreq",
+    "restoringbeam",
+    "perchanweightdensity",
+    "dirty_only",
+    "niter",
+    "threshold",
+    "nmajor",
+    "fullsummary",
+    "gain",
+    "nsigma",
+    "psfcutoff",
+    "minor_cycle_length",
+    "cyclefactor",
+    "deconvolver",
+    "minpsffraction",
+    "maxpsffraction",
+    "nterms",
+    "hogbom_iteration_mode",
+    "scales",
+    "smallscalebias",
+    "usemask",
+    "sidelobethreshold",
+    "noisethreshold",
+    "lownoisethreshold",
+    "negativethreshold",
+    "minbeamfrac",
+    "growiterations",
+    "mask_box",
+    "weighting",
+    "mask_image",
+    "robust",
+    "wprojplanes",
+    "usepointing",
+    "uvtaper",
+    "write_preview_pngs",
+    "write_pb",
+    "pbcor",
+    "pblimit",
+    "wterm",
+    "gridder",
+    "standard_mfs_acceleration",
+    "parallel",
+    "imaging_read_ahead_blocks",
+    "imaging_fft_backend",
+    "uvrange",
+    "intent",
+    "cfcache",
+    "cf_resident_mb",
+    "facets",
+    "psfphasecenter",
+    "vptable",
+    "aterm",
+    "psterm",
+    "wbawp",
+    "conjbeams",
+    "computepastep",
+    "rotatepastep",
+    "pointingoffsetsigdev",
+    "mosweight",
+    "normtype",
+    "imaging_memory_target_mb",
+    "imaging_memory_pressure_policy",
+    "imaging_prepare_buffer_mb",
+    "imaging_row_block_rows",
+    "imaging_prepare_workers",
+    "imaging_fft_precision",
+    "standard_mfs_grid_threads",
+    "projection",
+    "fitspw",
+    "fitorder",
+    "save_continuum_residual",
+];
+
+fn split_managed_output_args(args: Vec<String>) -> Result<(Vec<String>, Vec<String>), String> {
+    let mut managed = Vec::new();
+    let mut task = Vec::with_capacity(args.len());
+    let mut args = args.into_iter();
+    while let Some(argument) = args.next() {
+        if argument != "--managed-output" {
+            task.push(argument);
+            continue;
+        }
+        managed.push(argument);
+        let value = args
+            .next()
+            .ok_or_else(|| "--managed-output requires its projected boolean value".to_string())?;
+        if !matches!(value.as_str(), "true" | "false") {
+            return Err(format!(
+                "--managed-output expects true or false, found {value:?}"
+            ));
+        }
+        managed.push(value);
+    }
+    Ok((managed, task))
 }
 
 /// Opt-in controls for low-rate running imager progress telemetry.
@@ -1109,6 +1334,10 @@ pub enum ImagerSpectralMode {
     Cube,
     /// Produce a spectral cube in the native data frame.
     Cubedata,
+    /// Produce a source-rest-frame cube for a moving target.
+    Cubesource,
+    /// Multi-term continuum reconstruction through cube major cycles.
+    Mvc,
 }
 
 impl From<SpectralMode> for ImagerSpectralMode {
@@ -1117,6 +1346,8 @@ impl From<SpectralMode> for ImagerSpectralMode {
             SpectralMode::Mfs => Self::Mfs,
             SpectralMode::Cube => Self::Cube,
             SpectralMode::Cubedata => Self::Cubedata,
+            SpectralMode::Cubesource => Self::Cubesource,
+            SpectralMode::Mvc => Self::Mvc,
         }
     }
 }
@@ -1127,6 +1358,8 @@ impl From<ImagerSpectralMode> for SpectralMode {
             ImagerSpectralMode::Mfs => Self::Mfs,
             ImagerSpectralMode::Cube => Self::Cube,
             ImagerSpectralMode::Cubedata => Self::Cubedata,
+            ImagerSpectralMode::Cubesource => Self::Cubesource,
+            ImagerSpectralMode::Mvc => Self::Mvc,
         }
     }
 }
@@ -1505,13 +1738,16 @@ pub enum ImagerCubeInterpolation {
     /// Linear interpolation.
     #[default]
     Linear,
+    /// Four-point cubic interpolation.
+    Cubic,
 }
 
 impl From<CubeInterpolation> for ImagerCubeInterpolation {
     fn from(value: CubeInterpolation) -> Self {
         match value {
             CubeInterpolation::Nearest => Self::Nearest,
-            CubeInterpolation::Linear | CubeInterpolation::Cubic => Self::Linear,
+            CubeInterpolation::Linear => Self::Linear,
+            CubeInterpolation::Cubic => Self::Cubic,
         }
     }
 }
@@ -1521,6 +1757,7 @@ impl From<ImagerCubeInterpolation> for CubeInterpolation {
         match value {
             ImagerCubeInterpolation::Nearest => Self::Nearest,
             ImagerCubeInterpolation::Linear => Self::Linear,
+            ImagerCubeInterpolation::Cubic => Self::Cubic,
         }
     }
 }
@@ -1771,9 +2008,6 @@ pub struct ImagerAwProjectConfig {
     /// Per-allocation full-cell LRU and compact source-order tap ceiling in MiB.
     #[serde(default = "default_aw_cf_resident_mb")]
     pub cf_resident_mb: usize,
-    /// CASA facet count.
-    #[serde(default = "default_one_usize")]
-    pub facets: usize,
     /// Optional distinct PSF phase center in radians.
     #[serde(default)]
     pub psf_phase_center_direction_rad: Option<[f64; 2]>,
@@ -1816,7 +2050,6 @@ impl From<&AwProjectControls> for ImagerAwProjectConfig {
         Self {
             cf_cache: value.cf_cache.clone(),
             cf_resident_mb: value.cf_resident_bytes.div_ceil(1024 * 1024),
-            facets: value.facets,
             psf_phase_center_direction_rad: value.psf_phase_center_direction_rad,
             vp_table: value.vp_table.clone(),
             a_term: value.a_term,
@@ -1845,7 +2078,6 @@ impl ImagerAwProjectConfig {
         Ok(AwProjectControls {
             cf_cache: self.cf_cache,
             cf_resident_bytes,
-            facets: self.facets,
             w_plane_count,
             psf_phase_center_direction_rad: self.psf_phase_center_direction_rad,
             vp_table: self.vp_table,
@@ -1873,6 +2105,9 @@ pub struct ImagerRunTaskRequest {
     pub image_name: PathBuf,
     /// Square image size in pixels.
     pub image_size: usize,
+    /// Number of regular image facets along each direction axis.
+    #[serde(default = "default_one_usize")]
+    pub facets: usize,
     /// Cell size in arcseconds.
     pub cell_arcsec: f64,
     /// Image direction-coordinate projection.
@@ -1905,12 +2140,21 @@ pub struct ImagerRunTaskRequest {
     /// Optional selected-channel count.
     #[serde(default)]
     pub channel_count: Option<usize>,
+    /// Optional CASA-style line-free channel selector for visibility-domain continuum fitting.
+    #[serde(default)]
+    pub continuum_fit_spw: Option<String>,
+    /// Polynomial order used for visibility-domain continuum fitting.
+    #[serde(default)]
+    pub continuum_fit_order: usize,
     /// Optional explicit data-column override.
     #[serde(default)]
     pub data_column: Option<String>,
     /// Model persistence mode.
     #[serde(default)]
     pub save_model: ImagerSaveModel,
+    /// Persist continuum-subtracted output-role visibilities into existing CORRECTED_DATA.
+    #[serde(default)]
+    pub save_continuum_residual: bool,
     /// Optional CASA image used to seed the initial model product.
     #[serde(default)]
     pub start_model: Option<PathBuf>,
@@ -1980,6 +2224,9 @@ pub struct ImagerRunTaskRequest {
     /// Mosaic primary-beam cutoff used for flat-noise normalization.
     #[serde(default = "default_mosaic_pb_limit")]
     pub mosaic_pb_limit: f32,
+    /// CASA `normtype` used by mosaic and A/W-projection product publication.
+    #[serde(default = "default_aw_normalization")]
+    pub normalization: ImagerAwProjectNormalization,
     /// Write CASA-style PB-corrected mosaic image products.
     #[serde(default)]
     pub pbcor: bool,
@@ -2105,12 +2352,28 @@ pub struct ImagerRunTaskRequest {
 }
 
 impl ImagerRunTaskRequest {
+    /// Return exact application-owned reasons that make this request
+    /// unavailable in the installed build, without opening data or planning
+    /// execution.
+    pub fn unsupported_reasons(&self) -> Result<Vec<ImagerUnsupportedReason>, String> {
+        Ok(
+            crate::native_application::unsupported_requirements(&self.to_cli_config()?)
+                .into_iter()
+                .map(|reason| ImagerUnsupportedReason {
+                    kind: reason.catalog_kind().to_string(),
+                    id: reason.catalog_id(),
+                })
+                .collect(),
+        )
+    }
+
     /// Build the canonical request from one parsed CLI config.
     pub fn from_cli_config(config: &CliConfig) -> Self {
         Self {
             measurement_set: config.ms.clone(),
             image_name: config.imagename.clone(),
             image_size: config.imsize,
+            facets: config.facets,
             cell_arcsec: config.cell_arcsec,
             projection: ImagerProjection::Sin,
             field_ids: config.field_ids.clone(),
@@ -2125,8 +2388,11 @@ impl ImagerRunTaskRequest {
                 .or_else(|| config.spw.map(|spw| spw.to_string())),
             channel_start: config.channel_start,
             channel_count: config.channel_count,
+            continuum_fit_spw: config.continuum_fit_spw.clone(),
+            continuum_fit_order: config.continuum_fit_order,
             data_column: config.datacolumn.clone(),
             save_model: config.save_model.into(),
+            save_continuum_residual: config.save_continuum_residual,
             start_model: config.start_model.clone(),
             outlier_file: config.outlier_file.clone(),
             correlation: config
@@ -2154,6 +2420,7 @@ impl ImagerRunTaskRequest {
             nsigma: config.nsigma,
             psf_cutoff: config.psf_cutoff,
             mosaic_pb_limit: config.mosaic_pb_limit,
+            normalization: config.normalization.into(),
             pbcor: config.pbcor,
             write_pb: config.write_pb,
             minor_cycle_length: config.minor_cycle_length,
@@ -2170,7 +2437,7 @@ impl ImagerRunTaskRequest {
             w_project_planes: config.w_project_planes,
             aw_project: config.aw_project.as_ref().map(Into::into),
             dirty_only: config.dirty_only,
-            parallel: None,
+            parallel: config.parallel,
             chanchunks: config.chanchunks,
             standard_mfs_acceleration: config.standard_mfs_acceleration,
             standard_mfs_backend: config.standard_mfs_backend.clone(),
@@ -2204,11 +2471,25 @@ impl ImagerRunTaskRequest {
         if self.phasecenter_field.is_some() && self.phasecenter.is_some() {
             return Err("--phasecenter and --phasecenter-field are mutually exclusive".to_string());
         }
-        if deconvolver == Deconvolver::Mtmfs && spectral_mode != SpectralMode::Mfs {
-            return Err("deconvolver='mtmfs' currently requires specmode='mfs'".to_string());
+        if deconvolver == Deconvolver::Mtmfs
+            && !matches!(spectral_mode, SpectralMode::Mfs | SpectralMode::Mvc)
+        {
+            return Err("deconvolver='mtmfs' requires specmode='mfs' or 'mvc'".to_string());
+        }
+        if spectral_mode == SpectralMode::Mvc
+            && (deconvolver != Deconvolver::Mtmfs || self.nterms < 2)
+        {
+            return Err("specmode='mvc' requires deconvolver='mtmfs' and nterms > 1".to_string());
         }
         if deconvolver != Deconvolver::Mtmfs && self.nterms != 1 {
-            return Err("nterms > 1 currently requires deconvolver='mtmfs'".to_string());
+            return Err("nterms > 1 requires deconvolver='mtmfs'".to_string());
+        }
+        if spectral_mode == SpectralMode::Mvc
+            && self
+                .channel_count
+                .is_some_and(|channels| channels < self.nterms)
+        {
+            return Err("mvc requires nchan >= nterms".to_string());
         }
         if self.nterms == 0 {
             return Err("nterms must be at least 1".to_string());
@@ -2219,6 +2500,7 @@ impl ImagerRunTaskRequest {
         if self.chanchunks.is_some() && spectral_mode == SpectralMode::Mfs {
             return Err("chanchunks applies only to cube and cubedata imaging".to_string());
         }
+        validate_parallel_acceleration(self.parallel, self.standard_mfs_acceleration)?;
         if self.imaging_memory_target_mb == Some(0) {
             return Err("imaging_memory_target_mb must be positive".to_string());
         }
@@ -2277,10 +2559,19 @@ impl ImagerRunTaskRequest {
                 }
             }
         }
+        let mut aw_project = self
+            .aw_project
+            .clone()
+            .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
+            .transpose()?;
+        if let Some(controls) = &mut aw_project {
+            controls.normalization = self.normalization.into();
+        }
         let mut config = CliConfig {
             ms: self.measurement_set.clone(),
             imagename: self.image_name.clone(),
             imsize: self.image_size,
+            facets: self.facets,
             cell_arcsec: self.cell_arcsec,
             field_ids: self.field_ids.clone(),
             uvrange: self.uvrange.clone(),
@@ -2295,8 +2586,11 @@ impl ImagerRunTaskRequest {
             spw_selector: self.spw_selector.clone(),
             channel_start: self.channel_start,
             channel_count: self.channel_count,
+            continuum_fit_spw: self.continuum_fit_spw.clone(),
+            continuum_fit_order: self.continuum_fit_order,
             datacolumn: self.data_column.clone(),
             save_model: self.save_model.into(),
+            save_continuum_residual: self.save_continuum_residual,
             start_model: self.start_model.clone(),
             outlier_file: self.outlier_file.clone(),
             correlation: self
@@ -2323,6 +2617,7 @@ impl ImagerRunTaskRequest {
             nsigma: self.nsigma,
             psf_cutoff: self.psf_cutoff,
             mosaic_pb_limit: self.mosaic_pb_limit,
+            normalization: self.normalization.into(),
             pbcor: self.pbcor,
             write_pb: self.write_pb,
             minor_cycle_length: self.minor_cycle_length,
@@ -2337,12 +2632,9 @@ impl ImagerRunTaskRequest {
             w_term_mode: self.w_term_mode.into(),
             force_standard_gridder: self.force_standard_gridder,
             w_project_planes: self.w_project_planes,
-            aw_project: self
-                .aw_project
-                .clone()
-                .map(|aw_project| aw_project.into_runtime(self.w_project_planes, self.use_pointing))
-                .transpose()?,
+            aw_project,
             dirty_only: self.dirty_only,
+            parallel: self.parallel,
             chanchunks: self.chanchunks,
             standard_mfs_acceleration: self.standard_mfs_acceleration,
             standard_mfs_backend: self.standard_mfs_backend.clone(),
@@ -2460,129 +2752,165 @@ impl From<CleanStopReason> for ImagerCleanStopReason {
     }
 }
 
-/// Stable timing breakdown reported by the pure imaging core.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerCoreStageTimings {
-    /// Controller bookkeeping time outside explicit solve/refresh stages.
-    pub controller_overhead_ns: u64,
-    /// Imaging-weighting and taper time.
-    pub weighting_ns: u64,
-    /// Backend executor/sample-plan setup time.
-    pub executor_build_ns: u64,
-    /// PSF grid allocation and zero-initialization time.
-    pub psf_grid_alloc_ns: u64,
-    /// Planned-sample replay/build time before scalar grid updates.
-    pub planned_sample_replay_ns: u64,
-    /// Scalar grid-update loop time after planned samples exist.
-    pub grid_update_ns: u64,
-    /// PSF grid time.
-    pub psf_grid_ns: u64,
-    /// PSF FFT time.
-    pub psf_fft_ns: u64,
-    /// PSF image correction/copy time after FFT.
-    pub psf_image_correction_ns: u64,
-    /// PSF normalization time.
-    pub psf_normalize_ns: u64,
-    /// Model FFT time.
-    pub model_fft_ns: u64,
-    /// Residual grid allocation and zero-initialization time.
-    pub residual_grid_alloc_ns: u64,
-    /// Residual degrid/grid time.
-    pub residual_degrid_grid_ns: u64,
-    /// Residual FFT time.
-    pub residual_fft_ns: u64,
-    /// Residual image correction/copy time after FFT.
-    pub residual_image_correction_ns: u64,
-    /// Residual normalization time.
-    pub residual_normalize_ns: u64,
-    /// Minor-cycle total time.
-    pub minor_cycle_ns: u64,
-    /// Solver-only minor-cycle time.
-    pub minor_cycle_solve_ns: u64,
-    /// Major-cycle refresh time.
-    pub major_cycle_refresh_ns: u64,
-    /// Restoring-beam fit time.
-    pub beam_fit_ns: u64,
-    /// Restore time.
-    pub restore_ns: u64,
-    /// Total imaging-core time.
-    pub total_ns: u64,
+/// Stable terminal reasons for one bounded owner minor cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ImagerMinorCycleStopReason {
+    /// The requested threshold was reached.
+    ThresholdReached,
+    /// The minor-cycle iteration bound was reached.
+    IterationBound,
+    /// The frozen-approximation update envelope was reached.
+    StalenessBound,
+    /// The multiscale trajectory diverged after accepted progress.
+    MultiscaleDivergence,
 }
 
-/// Stable timing breakdown for the MeasurementSet-backed frontend.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerFrontendStageTimings {
-    /// Time spent opening the MeasurementSet.
-    pub open_measurement_set_ns: u64,
-    /// Time spent resolving selection and adapting rows.
-    pub prepare_plane_input_ns: u64,
-    /// Time spent extracting and validating the phase center.
-    pub extract_phase_center_ns: u64,
-    /// Time spent inside the pure imaging core.
-    pub run_imaging_ns: u64,
-    /// Time spent building output coordinates.
-    pub build_coordinate_system_ns: u64,
-    /// Time spent writing image products.
-    pub write_products_ns: u64,
-    /// Total end-to-end frontend time.
-    pub total_ns: u64,
-}
-
-/// Channel-level convergence summary for cube imaging.
+/// One accepted component in machine-readable solver diagnostics.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerChannelRunResult {
-    /// Zero-based output channel index.
-    pub channel_index: usize,
-    /// Major-cycle count for this plane.
-    pub major_cycles: usize,
-    /// Minor-cycle component updates for this plane.
-    pub minor_iterations: usize,
-    /// Final CLEAN stop reason for this plane.
-    pub clean_stop_reason: Option<ImagerCleanStopReason>,
-    /// Peak residual before minor cycles.
-    pub initial_residual_peak_jy_per_beam: f32,
-    /// Peak residual after the final exact refresh.
-    pub final_residual_peak_jy_per_beam: f32,
-    /// Final CASA-style cycle threshold for this plane.
-    pub final_cycle_threshold_jy_per_beam: f32,
-    /// Whether the beam-fit debug summary was available for this plane.
-    pub beam_fit_available: bool,
+pub struct ImagerMinorCycleComponent {
+    /// Image-domain ordinal.
+    pub domain: usize,
+    /// Spectral-basis coefficient ordinal.
+    pub coefficient: usize,
+    /// Polarization-coordinate ordinal.
+    pub polarization: usize,
+    /// X pixel coordinate.
+    pub x: usize,
+    /// Y pixel coordinate.
+    pub y: usize,
+    /// Signed component flux in model units.
+    pub flux: f64,
+    /// Component scale in pixels (`0` for point CLEAN).
+    pub scale_px: f64,
 }
 
-/// One CASA-compatible minor-cycle summary row.
+/// Machine-readable evidence from one auto-multithreshold update.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerMinorCycleSummary {
-    /// Zero-based output channel index. MFS reports channel 0.
-    pub channel_index: usize,
-    /// Zero-based Stokes index. Current scalar-plane runs report Stokes 0.
-    pub stokes_index: usize,
-    /// Zero-based minor-cycle block index within this channel.
-    pub cycle_index: usize,
-    /// CASA `summaryminor.iterDone`: reported iterations consumed by this block.
-    pub iter_done: usize,
-    /// CASA `summaryminor.peakRes`: peak residual after this block.
-    pub peak_res_jy_per_beam: f32,
-    /// CASA `summaryminor.modelFlux`: model flux after this block.
-    pub model_flux_jy: f32,
-    /// CASA `summaryminor.cycleThresh`: cycle threshold for this block.
-    pub cycle_threshold_jy_per_beam: f32,
-    /// CASA deconvolver id. Current task reports a single deconvolver as 0.
-    pub deconvolver_id: usize,
-    /// CASA `summaryminor.cycleStartIter`, present when `fullsummary=true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cycle_start_iter: Option<usize>,
-    /// CASA `summaryminor.startIterDone`, present when `fullsummary=true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_iter_done: Option<usize>,
-    /// CASA `summaryminor.startPeakRes`, present when `fullsummary=true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub start_peak_res_jy_per_beam: Option<f32>,
-    /// CASA `summaryminor.peakResNM`, present when `fullsummary=true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub peak_res_no_mask_jy_per_beam: Option<f32>,
-    /// CASA `summaryminor.stopCode`, present when `fullsummary=true`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop_code: Option<i32>,
+pub struct ImagerAutoMaskDiagnostic {
+    /// Robust residual median.
+    pub median: f64,
+    /// MAD-derived robust RMS.
+    pub robust_rms: f64,
+    /// Positive detection threshold.
+    pub positive_threshold: f64,
+    /// Low-noise growth threshold.
+    pub low_noise_threshold: f64,
+    /// Optional negative detection threshold.
+    pub negative_threshold: Option<f64>,
+    /// Number of support pixels changed in this cycle.
+    pub changed_pixels: usize,
+    /// Whether subsequent cycles keep this support fixed.
+    pub channel_stopped: bool,
+}
+
+/// Owner-calculated evidence for one bounded minor cycle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ImagerMinorCycleDiagnostic {
+    /// One-based cycle ordinal.
+    pub cycle: usize,
+    /// Cumulative controller iterations before this cycle started.
+    pub iterations_entering: usize,
+    /// Component count charged to the reported controller budget.
+    pub iterations: usize,
+    /// Cumulative controller iterations after this cycle completed.
+    pub total_iterations: usize,
+    /// Cumulative actual component count before this cycle started.
+    pub actual_iterations_entering: usize,
+    /// Number of components actually applied in this cycle.
+    pub actual_iterations: usize,
+    /// Cumulative actual component count after this cycle completed.
+    pub total_actual_iterations: usize,
+    /// Cumulative absolute component flux accepted in this cycle.
+    pub total_flux: f64,
+    /// Normalized residual peak at cycle entry.
+    pub initial_peak_flux: f64,
+    /// Final normalized residual peak.
+    pub final_peak_flux: f64,
+    /// Robust RMS used for `nsigma` stopping, when enabled.
+    pub noise_rms: Option<f64>,
+    /// Effective owner threshold.
+    pub effective_threshold: f64,
+    /// Global absolute/noise threshold before applying the cycle threshold.
+    pub global_threshold: f64,
+    /// PSF-derived cycle threshold, when enabled.
+    pub cycle_threshold: Option<f64>,
+    /// Scientific terminal reason.
+    pub stop_reason: ImagerMinorCycleStopReason,
+    /// Exact Clark residual refresh count.
+    pub clark_refreshes: usize,
+    /// One-based major replay ordinal associated with this cycle.
+    pub associated_replay_ordinal: usize,
+    /// Bounded leading component sequence.
+    pub components: Vec<ImagerMinorCycleComponent>,
+    /// Exact x-major reconstruction support.
+    pub mask_support: Vec<bool>,
+    /// Auto-mask evidence, when auto masking was active.
+    pub auto_mask: Option<ImagerAutoMaskDiagnostic>,
+}
+
+fn project_minor_cycle(
+    cycle: &casa_imaging_application::NativeMinorCycleOutcome,
+) -> ImagerMinorCycleDiagnostic {
+    use casa_imaging_application::NativeMinorCycleStopReason as NativeStop;
+
+    ImagerMinorCycleDiagnostic {
+        cycle: cycle.cycle,
+        iterations_entering: cycle.iterations_entering,
+        iterations: cycle.iterations,
+        total_iterations: cycle.total_iterations,
+        actual_iterations_entering: cycle.actual_iterations_entering,
+        actual_iterations: cycle.actual_iterations,
+        total_actual_iterations: cycle.total_actual_iterations,
+        total_flux: cycle.total_flux,
+        initial_peak_flux: cycle.initial_peak_flux,
+        final_peak_flux: cycle.final_peak_flux,
+        noise_rms: cycle.noise_rms,
+        effective_threshold: cycle.effective_threshold,
+        global_threshold: cycle.global_threshold,
+        cycle_threshold: cycle.cycle_threshold,
+        stop_reason: match cycle.stop_reason {
+            NativeStop::ThresholdReached => ImagerMinorCycleStopReason::ThresholdReached,
+            NativeStop::IterationBound => ImagerMinorCycleStopReason::IterationBound,
+            NativeStop::StalenessBound => ImagerMinorCycleStopReason::StalenessBound,
+            NativeStop::MultiscaleDivergence => ImagerMinorCycleStopReason::MultiscaleDivergence,
+        },
+        clark_refreshes: cycle.clark_refreshes,
+        associated_replay_ordinal: cycle.associated_replay_ordinal,
+        components: cycle
+            .recorded_components
+            .iter()
+            .map(|component| {
+                let cell = component.cell();
+                let [x, y] = cell.pixel();
+                ImagerMinorCycleComponent {
+                    domain: cell.domain(),
+                    coefficient: cell.coefficient(),
+                    polarization: cell.polarization(),
+                    x,
+                    y,
+                    flux: component.flux(),
+                    scale_px: component.scale_px(),
+                }
+            })
+            .collect(),
+        mask_support: cycle.mask_support.clone(),
+        auto_mask: cycle.auto_mask.map(|evidence| ImagerAutoMaskDiagnostic {
+            median: evidence.median,
+            robust_rms: evidence.robust_rms,
+            positive_threshold: evidence.positive_threshold,
+            low_noise_threshold: evidence.low_noise_threshold,
+            negative_threshold: evidence.negative_threshold,
+            changed_pixels: evidence.changed_pixels,
+            channel_stopped: evidence.channel_stopped,
+        }),
+    }
+}
+
+pub(crate) fn project_minor_cycles(
+    cycles: &[casa_imaging_application::NativeMinorCycleOutcome],
+) -> Vec<ImagerMinorCycleDiagnostic> {
+    cycles.iter().map(project_minor_cycle).collect()
 }
 
 /// Stable run metrics emitted after one successful imaging run.
@@ -2594,8 +2922,10 @@ pub struct ImagerRunReport {
     pub gridded_samples: usize,
     /// Total major-cycle count reported by the run.
     pub major_cycles: usize,
-    /// Total minor-cycle component updates executed by the run.
+    /// Total minor-cycle count charged to the reported task/controller budget.
     pub minor_iterations: usize,
+    /// Total minor-cycle components actually applied by the run.
+    pub actual_minor_iterations: usize,
     /// CASA-compatible `iterdone` task-return value.
     pub iterdone: usize,
     /// CASA-compatible `nmajordone` task-return value.
@@ -2604,80 +2934,31 @@ pub struct ImagerRunReport {
     pub stopcode: i32,
     /// Final CLEAN stop reason when deconvolution ran.
     pub clean_stop_reason: Option<ImagerCleanStopReason>,
-    /// CASA-compatible minor-cycle summary rows.
-    pub summaryminor: Vec<ImagerMinorCycleSummary>,
-    /// Timing breakdown reported by the pure imaging core.
-    pub stage_timings: ImagerCoreStageTimings,
-    /// Timing breakdown for the MeasurementSet-backed frontend.
-    pub frontend_timings: ImagerFrontendStageTimings,
-    /// Channel-level diagnostics for cube-like runs.
-    pub channels: Vec<ImagerChannelRunResult>,
-    /// Resolved AWProject plan, source-cache identity, and residency counters.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub awproject: Option<ImagerAwProjectRunReport>,
+    /// Ordered owner-calculated solver diagnostics.
+    pub minor_cycles: Vec<ImagerMinorCycleDiagnostic>,
+    /// Final paired-operator visibility identities and provenance, when produced.
+    pub visibility_products: Option<ImagerVisibilityProductDiagnostic>,
+    /// Measured end-to-end application wall time.
+    pub elapsed_ns: u64,
 }
 
-/// Stable AWProject execution evidence retained in task and managed receipts.
+/// Machine-readable projection of the final visibility-product authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct ImagerAwProjectRunReport {
-    /// Complete immutable plan line, including all science-control bit patterns.
-    pub plan_key: String,
-    /// Versioned AWProject implementation identity.
-    pub implementation: String,
-    /// Source cache interoperability format.
-    pub cache_format: String,
-    /// Canonical source-cache root.
-    pub cache_source: PathBuf,
-    /// Stable metadata fingerprint, rendered as sixteen lowercase hex digits.
-    pub cache_metadata_key: String,
-    /// Number of validated imaging/weight CF pairs.
-    pub paired_cells: usize,
-    /// Number of represented frequency bins.
-    pub frequency_bins: usize,
-    /// Number of represented W planes.
-    pub w_planes: usize,
-    /// Mueller elements represented by the cache.
-    pub mueller_elements: Vec<i32>,
-    /// Number of represented parallactic-angle bins.
-    pub parallactic_angle_bins: usize,
-    /// Number of distinct bit-exact UU/VV affine coordinate definitions.
-    pub uv_coordinate_definitions: usize,
-    /// Configured upper bound on resident paired-CF pixel bytes.
-    pub resident_budget_bytes: usize,
-    /// Number of paired CF cells resident at run completion.
-    pub resident_cells: usize,
-    /// Paired-CF pixel bytes resident at run completion.
-    pub resident_bytes: usize,
-    /// On-disk paired-cell loads performed by the run.
-    pub loads: u64,
-    /// Resident-cache hits performed by the run.
-    pub hits: u64,
-    /// Resident cells evicted by the bounded LRU.
-    pub evictions: u64,
-    /// Valid or rejected samples presented to AWProject gridding.
-    pub attempted_samples: usize,
-    /// Samples that contributed to the AWProject grids.
-    pub accepted_samples: usize,
-    /// Samples rejected by shared selection or weighting preparation.
-    pub rejected_not_gridable: usize,
-    /// Samples rejected for non-finite frequency, weight, or visibility data.
-    pub rejected_invalid_input: usize,
-    /// Samples rejected while placing the RR imaging CF.
-    pub rejected_rr_imaging_plan: usize,
-    /// Samples rejected while placing the LL imaging CF.
-    pub rejected_ll_imaging_plan: usize,
-    /// Samples rejected while placing the RR PSF/WTCF.
-    pub rejected_rr_psf_plan: usize,
-    /// Samples rejected while placing the LL PSF/WTCF.
-    pub rejected_ll_psf_plan: usize,
-    /// Placement rejections caused by non-finite UVW coordinates.
-    pub rejected_nonfinite_coordinate: usize,
-    /// Placement rejections caused by convolution support crossing the grid.
-    pub rejected_outside_grid: usize,
-    /// Placement rejections caused by a CF pixel index outside its cell.
-    pub rejected_kernel_index: usize,
-    /// Placement rejections caused by non-finite or zero CF normalization.
-    pub rejected_invalid_normalization: usize,
+pub struct ImagerVisibilityProductDiagnostic {
+    /// Compiled imaging-problem identity.
+    pub problem_id: String,
+    /// Exact final model generation used for prediction.
+    pub final_model_generation: String,
+    /// Exact selected-observation generation traversed by the final replay.
+    pub selected_generation: String,
+    /// Exact weighting generation paired with the final replay.
+    pub weighting_generation: String,
+    /// Content identity of the model-visibility stream.
+    pub model_product: String,
+    /// Content identity of the observed-minus-model visibility stream.
+    pub residual_product: String,
+    /// Number of canonically selected visibility samples.
+    pub sample_count: u64,
 }
 
 /// Stable artifact kind identifiers for written image products.
@@ -2706,6 +2987,8 @@ pub enum ImagerArtifactKind {
     Alpha,
     /// Spectral-index uncertainty image.
     AlphaError,
+    /// Primary-beam-corrected spectral-index image.
+    AlphaPbcor,
 }
 
 impl ImagerArtifactKind {
@@ -2722,6 +3005,7 @@ impl ImagerArtifactKind {
             Self::ImagePbcor => "image.pbcor",
             Self::Alpha => "alpha",
             Self::AlphaError => "alpha.error",
+            Self::AlphaPbcor => "alpha.pbcor",
         }
     }
 }
@@ -2764,59 +3048,17 @@ impl ImagerRunTaskResult {
                 gridded_samples: summary.gridded_samples,
                 major_cycles: summary.major_cycles,
                 minor_iterations: summary.minor_iterations,
+                actual_minor_iterations: summary.actual_minor_iterations,
                 iterdone: summary.minor_iterations,
                 nmajordone: summary.major_cycles,
                 stopcode: casa_stop_code(summary.clean_stop_reason),
                 clean_stop_reason: summary.clean_stop_reason.map(Into::into),
-                summaryminor: build_summaryminor(summary, request.fullsummary),
-                stage_timings: core_stage_timings(&summary.stage_timings),
-                frontend_timings: frontend_stage_timings(summary.frontend_timings),
-                channels: summary
-                    .channel_summaries
-                    .iter()
-                    .map(channel_result)
-                    .collect(),
-                awproject: summary.awproject.as_ref().map(awproject_run_report),
+                minor_cycles: project_minor_cycles(&summary.minor_cycles),
+                visibility_products: summary.visibility_products.clone(),
+                elapsed_ns: summary.elapsed.as_nanos() as u64,
             },
-            artifacts: build_artifacts(&request),
+            artifacts: build_artifacts_for_products(&request, &summary.output_products),
         }
-    }
-}
-
-pub(crate) fn awproject_run_report(
-    diagnostics: &casa_imaging::AwProjectRunDiagnostics,
-) -> ImagerAwProjectRunReport {
-    let cache = &diagnostics.plan_key.cache;
-    ImagerAwProjectRunReport {
-        plan_key: diagnostics.plan_key.log_line(),
-        implementation: diagnostics.plan_key.implementation.to_string(),
-        cache_format: cache.format.to_string(),
-        cache_source: cache.source_root.clone(),
-        cache_metadata_key: format!("{:016x}", cache.metadata_fingerprint),
-        paired_cells: cache.paired_cells,
-        frequency_bins: cache.frequency_hz_bits.len(),
-        w_planes: cache.w_value_lambda_bits.len(),
-        mueller_elements: cache.mueller_elements.clone(),
-        parallactic_angle_bins: cache.parallactic_angle_deg_bits.len(),
-        uv_coordinate_definitions: cache.uv_coordinates.len(),
-        resident_budget_bytes: diagnostics.resident_budget_bytes,
-        resident_cells: diagnostics.resident.resident_cells,
-        resident_bytes: diagnostics.resident.resident_bytes,
-        loads: diagnostics.resident.loads,
-        hits: diagnostics.resident.hits,
-        evictions: diagnostics.resident.evictions,
-        attempted_samples: diagnostics.samples.attempted_samples,
-        accepted_samples: diagnostics.samples.accepted_samples,
-        rejected_not_gridable: diagnostics.samples.rejected_not_gridable,
-        rejected_invalid_input: diagnostics.samples.rejected_invalid_input,
-        rejected_rr_imaging_plan: diagnostics.samples.rejected_rr_imaging_plan,
-        rejected_ll_imaging_plan: diagnostics.samples.rejected_ll_imaging_plan,
-        rejected_rr_psf_plan: diagnostics.samples.rejected_rr_psf_plan,
-        rejected_ll_psf_plan: diagnostics.samples.rejected_ll_psf_plan,
-        rejected_nonfinite_coordinate: diagnostics.samples.rejected_nonfinite_coordinate,
-        rejected_outside_grid: diagnostics.samples.rejected_outside_grid,
-        rejected_kernel_index: diagnostics.samples.rejected_kernel_index,
-        rejected_invalid_normalization: diagnostics.samples.rejected_invalid_normalization,
     }
 }
 
@@ -2898,7 +3140,7 @@ fn default_max_psf_fraction() -> f32 {
 }
 
 fn default_write_preview_pngs() -> bool {
-    true
+    false
 }
 
 fn default_progress_max_uv_points() -> usize {
@@ -2913,45 +3155,6 @@ fn default_request_per_channel_weight_density(spectral_mode: ImagerSpectralMode)
     matches!(spectral_mode, ImagerSpectralMode::Cube)
 }
 
-fn core_stage_timings(timings: &casa_imaging::ImagingStageTimings) -> ImagerCoreStageTimings {
-    ImagerCoreStageTimings {
-        controller_overhead_ns: timings.controller_overhead.as_nanos() as u64,
-        weighting_ns: timings.weighting.as_nanos() as u64,
-        executor_build_ns: timings.executor_build.as_nanos() as u64,
-        psf_grid_alloc_ns: timings.psf_grid_alloc.as_nanos() as u64,
-        planned_sample_replay_ns: timings.planned_sample_replay.as_nanos() as u64,
-        grid_update_ns: timings.grid_update.as_nanos() as u64,
-        psf_grid_ns: timings.psf_grid.as_nanos() as u64,
-        psf_fft_ns: timings.psf_fft.as_nanos() as u64,
-        psf_image_correction_ns: timings.psf_image_correction.as_nanos() as u64,
-        psf_normalize_ns: timings.psf_normalize.as_nanos() as u64,
-        model_fft_ns: timings.model_fft.as_nanos() as u64,
-        residual_grid_alloc_ns: timings.residual_grid_alloc.as_nanos() as u64,
-        residual_degrid_grid_ns: timings.residual_degrid_grid.as_nanos() as u64,
-        residual_fft_ns: timings.residual_fft.as_nanos() as u64,
-        residual_image_correction_ns: timings.residual_image_correction.as_nanos() as u64,
-        residual_normalize_ns: timings.residual_normalize.as_nanos() as u64,
-        minor_cycle_ns: timings.minor_cycle.as_nanos() as u64,
-        minor_cycle_solve_ns: timings.minor_cycle_solve.as_nanos() as u64,
-        major_cycle_refresh_ns: timings.major_cycle_refresh.as_nanos() as u64,
-        beam_fit_ns: timings.beam_fit.as_nanos() as u64,
-        restore_ns: timings.restore.as_nanos() as u64,
-        total_ns: timings.total.as_nanos() as u64,
-    }
-}
-
-fn frontend_stage_timings(timings: FrontendStageTimings) -> ImagerFrontendStageTimings {
-    ImagerFrontendStageTimings {
-        open_measurement_set_ns: timings.open_measurement_set.as_nanos() as u64,
-        prepare_plane_input_ns: timings.prepare_plane_input.as_nanos() as u64,
-        extract_phase_center_ns: timings.extract_phase_center.as_nanos() as u64,
-        run_imaging_ns: timings.run_imaging.as_nanos() as u64,
-        build_coordinate_system_ns: timings.build_coordinate_system.as_nanos() as u64,
-        write_products_ns: timings.write_products.as_nanos() as u64,
-        total_ns: timings.total.as_nanos() as u64,
-    }
-}
-
 fn casa_stop_code(reason: Option<CleanStopReason>) -> i32 {
     match reason {
         Some(CleanStopReason::IterationLimitReached) => 1,
@@ -2962,62 +3165,6 @@ fn casa_stop_code(reason: Option<CleanStopReason>) -> i32 {
         Some(CleanStopReason::MajorCycleLimitReached) => 9,
         Some(CleanStopReason::DivergenceDetected) => 10,
         None => 0,
-    }
-}
-
-fn build_summaryminor(summary: &RunSummary, fullsummary: bool) -> Vec<ImagerMinorCycleSummary> {
-    if summary.channel_summaries.is_empty() {
-        return summary
-            .minor_cycle_traces
-            .iter()
-            .map(|trace| minor_cycle_summary(0, 0, trace, fullsummary))
-            .collect();
-    }
-    summary
-        .channel_summaries
-        .iter()
-        .flat_map(|channel| {
-            channel
-                .minor_cycle_traces
-                .iter()
-                .map(move |trace| minor_cycle_summary(channel.channel_index, 0, trace, fullsummary))
-        })
-        .collect()
-}
-
-fn minor_cycle_summary(
-    channel_index: usize,
-    stokes_index: usize,
-    trace: &MinorCycleTrace,
-    fullsummary: bool,
-) -> ImagerMinorCycleSummary {
-    ImagerMinorCycleSummary {
-        channel_index,
-        stokes_index,
-        cycle_index: trace.cycle_index,
-        iter_done: trace.reported_updates,
-        peak_res_jy_per_beam: trace.end_peak_residual_jy_per_beam,
-        model_flux_jy: trace.model_flux_jy,
-        cycle_threshold_jy_per_beam: trace.cycle_threshold_jy_per_beam,
-        deconvolver_id: 0,
-        cycle_start_iter: fullsummary.then_some(trace.start_reported_iteration),
-        start_iter_done: fullsummary.then_some(trace.start_reported_iteration),
-        start_peak_res_jy_per_beam: fullsummary.then_some(trace.start_peak_residual_jy_per_beam),
-        peak_res_no_mask_jy_per_beam: fullsummary.then_some(trace.end_peak_residual_jy_per_beam),
-        stop_code: fullsummary.then_some(casa_stop_code(trace.clean_stop_reason)),
-    }
-}
-
-fn channel_result(summary: &ChannelRunSummary) -> ImagerChannelRunResult {
-    ImagerChannelRunResult {
-        channel_index: summary.channel_index,
-        major_cycles: summary.major_cycles,
-        minor_iterations: summary.minor_iterations,
-        clean_stop_reason: summary.clean_stop_reason.map(Into::into),
-        initial_residual_peak_jy_per_beam: summary.initial_residual_peak_jy_per_beam,
-        final_residual_peak_jy_per_beam: summary.final_residual_peak_jy_per_beam,
-        final_cycle_threshold_jy_per_beam: summary.final_cycle_threshold_jy_per_beam,
-        beam_fit_available: summary.beam_fit_debug.is_some(),
     }
 }
 
@@ -3037,13 +3184,12 @@ fn artifact(
     }
 }
 
-pub(crate) fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtifact> {
+pub(crate) fn build_artifacts_for_products(
+    request: &ImagerRunTaskRequest,
+    products: &[String],
+) -> Vec<ImagerArtifact> {
     let base = request.image_name.to_string_lossy().to_string();
-    let config = request
-        .to_cli_config()
-        .expect("canonical imager request must reconstruct its validated CLI config");
-    let plan = crate::single_plane_plan::build_single_plane_execution_plan(&config, false, 1);
-    let mut output_products = plan.output_products;
+    let mut output_products = products.to_vec();
     if PathBuf::from(format!("{base}.mask")).exists()
         && !output_products.iter().any(|suffix| suffix == ".mask")
     {
@@ -3069,7 +3215,9 @@ pub(crate) fn build_artifacts(request: &ImagerRunTaskRequest) -> Vec<ImagerArtif
 fn artifact_kind_for_product_suffix(suffix: &str) -> ImagerArtifactKind {
     if suffix == ".alpha.error" {
         ImagerArtifactKind::AlphaError
-    } else if suffix == ".alpha" || suffix == ".alpha.pbcor" {
+    } else if suffix == ".alpha.pbcor" {
+        ImagerArtifactKind::AlphaPbcor
+    } else if suffix == ".alpha" {
         ImagerArtifactKind::Alpha
     } else if suffix.starts_with(".psf") {
         ImagerArtifactKind::Psf
@@ -3106,6 +3254,7 @@ fn artifact_label_for_product_suffix(suffix: &str) -> String {
         ImagerArtifactKind::ImagePbcor => "PB-corrected Image",
         ImagerArtifactKind::Alpha => "Spectral Index",
         ImagerArtifactKind::AlphaError => "Spectral Index Error",
+        ImagerArtifactKind::AlphaPbcor => "PB-corrected Spectral Index",
     };
     suffix
         .split(".tt")
@@ -3142,17 +3291,11 @@ fn product_preview_requested(request: &ImagerRunTaskRequest, suffix: &str) -> bo
 mod tests {
     use super::{ImagerObservedMemoryConfidence, ImagerObservedMemoryKind};
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::ffi::OsString;
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use casa_imaging::{
-        AwConvolutionFunctionCacheIdentity, AwConvolutionFunctionResidentStats,
-        AwConvolutionFunctionUvCoordinateIdentity, AwProjectPlanKey, AwProjectRunDiagnostics,
-        AwProjectSampleStats, CleanStopReason, Deconvolver, GaussianUvTaper, RestoringBeamMode,
-        UvTaperSize, WTermMode, WeightingMode,
-    };
     use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
     use casa_provider_contracts::ProviderSurfaceKind;
     use casa_types::measures::doppler::DopplerRef;
@@ -3160,20 +3303,22 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_TASK_PROTOCOL_NAME,
-        IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind, ImagerAutoMultiThresholdConfig,
-        ImagerAwProjectConfig, ImagerAwProjectNormalization, ImagerCleanMaskMode,
+        IMAGER_OBSERVABILITY_SCHEMA_VERSION, IMAGER_PROJECTED_PARAMETERS,
+        IMAGER_TASK_PROTOCOL_NAME, IMAGER_TASK_PROTOCOL_VERSION, ImagerArtifactKind,
+        ImagerAutoMultiThresholdConfig, ImagerAwProjectNormalization, ImagerCleanMaskMode,
         ImagerCleanStopReason, ImagerCubeAxisConfig, ImagerCubeAxisValue, ImagerCubeInterpolation,
         ImagerDeconvolver, ImagerHogbomIterationMode, ImagerObservedResourceId,
         ImagerObservedResourceState, ImagerObservedStageKind, ImagerPlaneSelection,
         ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime, ImagerProjection,
         ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
-        awproject_run_report, imager_task_schema_bundle,
+        ImagerTaskRequest, ImagerUnsupportedReason, ImagerUvTaper, ImagerUvTaperSize,
+        ImagerWTermMode, ImagerWeighting, imager_task_schema_bundle,
     };
     use crate::{
-        CliConfig, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
-        SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
+        AwProjectNormalization, CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper,
+        ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
+        RestoringBeamMode, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy, UvTaperSize,
+        WTermMode, WeightingMode,
     };
 
     #[test]
@@ -3189,12 +3334,37 @@ mod tests {
         assert_eq!(bundle.semantic.operations.len(), 1);
         assert_eq!(bundle.semantic.operations[0].request_kind, "run");
         assert!(bundle.components.contains_key("ImagerRunTaskRequest"));
+        assert_eq!(bundle.domain_schemas.additional.imaging_request_version, 3);
+        assert_eq!(bundle.annotations, serde_json::json!({}));
+        let capabilities = &bundle.domain_schemas.additional.capability_catalog.entries;
+        let awproject = capabilities
+            .iter()
+            .find(|entry| entry.id == "task.aw_projection")
+            .expect("AWProject capability");
+        assert_eq!(awproject.kind, "task");
+        assert!(!awproject.supported);
+        assert_eq!(
+            awproject.unsupported_reason.as_ref(),
+            Some(&ImagerUnsupportedReason {
+                kind: "task".to_string(),
+                id: "task.aw_projection".to_string(),
+            })
+        );
         assert!(bundle.projections.cli.is_some());
         assert_eq!(bundle.parameter_surfaces.len(), 1);
         assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");
         bundle.parameter_surfaces[0]
             .validate()
             .expect("embedded imager parameter surface");
+        assert_eq!(
+            bundle.parameter_surfaces[0]
+                .surface
+                .bindings()
+                .iter()
+                .map(|binding| binding.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            IMAGER_PROJECTED_PARAMETERS.iter().copied().collect()
+        );
         assert_eq!(
             serde_json::to_value(&bundle).unwrap()["parameter_surfaces"]
                 .as_array()
@@ -3207,6 +3377,11 @@ mod tests {
         let progress_event_schema =
             serde_json::to_value(&bundle.domain_schemas.additional.progress_event_schema).unwrap();
         assert!(request_schema.to_string().contains("ImagerTaskRequest"));
+        assert_eq!(
+            request_schema["definitions"]["ImagerRunTaskRequest"]["properties"]["save_continuum_residual"]
+                ["default"],
+            false
+        );
         assert!(result_schema.to_string().contains("ImagerTaskResult"));
         assert!(
             progress_event_schema
@@ -3215,116 +3390,12 @@ mod tests {
         );
         let form = casa_provider_contracts::project_ui_form(&bundle.parameter_surfaces[0]);
         assert_eq!(form["command_id"], "imager");
-    }
-
-    #[test]
-    fn awproject_receipt_preserves_plan_cache_and_residency_identity() {
-        let diagnostics = sample_awproject_diagnostics();
-        let report = awproject_run_report(&diagnostics);
-        assert!(
-            report
-                .plan_key
-                .starts_with("awproject_plan implementation=test-aw-v1")
-        );
-        assert_eq!(report.implementation, "test-aw-v1");
-        assert_eq!(report.cache_format, "casa-cf-cache-pagedimage-v1");
-        assert_eq!(report.cache_source, PathBuf::from("/tmp/test-cf-cache"));
-        assert_eq!(report.cache_metadata_key, "0123456789abcdef");
-        assert_eq!(report.paired_cells, 1024);
-        assert_eq!(report.frequency_bins, 16);
-        assert_eq!(report.w_planes, 32);
-        assert_eq!(report.mueller_elements, vec![0, 15]);
-        assert_eq!(report.uv_coordinate_definitions, 1);
-        assert_eq!(report.resident_budget_bytes, 384 * 1024 * 1024);
-        assert_eq!(report.resident_cells, 7);
-        assert_eq!(report.loads, 11);
-        assert_eq!(report.hits, 13);
-        assert_eq!(report.evictions, 3);
-        assert_eq!(report.attempted_samples, 101);
-        assert_eq!(report.accepted_samples, 89);
-        assert_eq!(report.rejected_outside_grid, 12);
-    }
-
-    fn sample_awproject_diagnostics() -> AwProjectRunDiagnostics {
-        let uv = AwConvolutionFunctionUvCoordinateIdentity {
-            reference_value_bits: [0.0f64.to_bits(); 2],
-            reference_pixel_bits: [180.0f64.to_bits(); 2],
-            increment_bits: [(-8.0f64).to_bits(), 8.0f64.to_bits()],
-            pc_matrix_bits: [
-                [1.0f64.to_bits(), 0.0f64.to_bits()],
-                [0.0f64.to_bits(), 1.0f64.to_bits()],
-            ],
-        };
-        let cache = AwConvolutionFunctionCacheIdentity {
-            format: "casa-cf-cache-pagedimage-v1",
-            source_root: PathBuf::from("/tmp/test-cf-cache"),
-            metadata_fingerprint: 0x0123_4567_89ab_cdef,
-            paired_cells: 1024,
-            frequency_hz_bits: vec![2.0e9f64.to_bits(); 16],
-            w_value_lambda_bits: vec![0.0f64.to_bits(); 32],
-            mueller_elements: vec![0, 15],
-            parallactic_angle_deg_bits: vec![56.0f64.to_bits()],
-            telescope_names: vec!["EVLA".to_string()],
-            band_names: vec!["EVLA_S".to_string()],
-            diameter_m_bits: vec![25.0f64.to_bits()],
-            conjugate_frequency_hz_bits: vec![2.0e9f64.to_bits()],
-            conjugate_polarizations: vec![8],
-            polarization_codes: vec![-1],
-            w_increment_bits: vec![0.5f64.to_bits()],
-            uv_coordinates: vec![uv],
-            imaging_shapes: vec![[360, 360]],
-            weight_shapes: vec![[720, 720]],
-            sampling: vec![20],
-            imaging_supports: vec![[7, 7]],
-            weight_supports: vec![[16, 16]],
-            rotational_symmetry: vec![false],
-            pixel_type: "complex32",
-        };
-        AwProjectRunDiagnostics {
-            plan_key: AwProjectPlanKey {
-                implementation: "test-aw-v1",
-                cache,
-                image_shape: [12_150, 12_150],
-                cell_size_rad_bits: [1.0e-6f64.to_bits(); 2],
-                projection: "SIN",
-                phase_center_direction_rad_bits: [1.0f64.to_bits(), 0.5f64.to_bits()],
-                plane_stokes: "I",
-                selected_frequency_range_hz_bits: [2.0e9f64.to_bits(), 4.0e9f64.to_bits()],
-                reference_frequency_hz_bits: 3.0e9f64.to_bits(),
-                primary_beam_model: "evla-lband-common".to_string(),
-                pb_limit_bits: 0.2f32.to_bits(),
-                w_plane_count: 32,
-                facets: 1,
-                psf_phase_center_direction_rad_bits: None,
-                vp_table: None,
-                a_term: true,
-                ps_term: false,
-                wb_awp: true,
-                conjugate_beams: true,
-                compute_pa_step_deg_bits: 360.0f64.to_bits(),
-                rotate_pa_step_deg_bits: 360.0f64.to_bits(),
-                pointing_offset_sigdev_bits: vec![0.0f64.to_bits()],
-                use_pointing: true,
-                mosaic_weighting: false,
-                normalization: "flatnoise",
-                precision: "cf-complex32-accumulate-complex64-product-f32",
-            },
-            resident_budget_bytes: 384 * 1024 * 1024,
-            resident: AwConvolutionFunctionResidentStats {
-                resident_cells: 7,
-                resident_bytes: 128 * 1024 * 1024,
-                loads: 11,
-                hits: 13,
-                evictions: 3,
-            },
-            samples: AwProjectSampleStats {
-                attempted_samples: 101,
-                accepted_samples: 89,
-                rejected_rr_imaging_plan: 12,
-                rejected_outside_grid: 12,
-                ..AwProjectSampleStats::default()
-            },
-        }
+        let arguments = form["arguments"].as_array().expect("UI arguments");
+        let save_continuum_residual = arguments
+            .iter()
+            .find(|argument| argument["id"] == "save_continuum_residual")
+            .expect("save_continuum_residual UI argument");
+        assert_eq!(save_continuum_residual["default"], "false");
     }
 
     #[test]
@@ -3350,10 +3421,15 @@ mod tests {
             OsString::from("2"),
             OsString::from("--spw"),
             OsString::from("5:10~19"),
+            OsString::from("--fitspw"),
+            OsString::from("5:0~9;20~29"),
+            OsString::from("--fitorder"),
+            OsString::from("1"),
             OsString::from("--datacolumn"),
             OsString::from("CORRECTED_DATA"),
             OsString::from("--savemodel"),
             OsString::from("modelcolumn"),
+            OsString::from("--save-continuum-residual"),
             OsString::from("--corr"),
             OsString::from("XX"),
             OsString::from("--specmode"),
@@ -3425,7 +3501,7 @@ mod tests {
             OsString::from("--imaging-fft-backend"),
             OsString::from("metal-mpsgraph"),
             OsString::from("--imaging-memory-pressure-policy"),
-            OsString::from("stage-aware"),
+            OsString::from("aggressive"),
             OsString::from("--dirty-only"),
             OsString::from("--no-preview-pngs"),
         ])
@@ -3449,8 +3525,11 @@ mod tests {
         );
         assert_eq!(restored.phasecenter_field, Some(2));
         assert_eq!(restored.spw_selector.as_deref(), Some("5:10~19"));
+        assert_eq!(restored.continuum_fit_spw.as_deref(), Some("5:0~9;20~29"));
+        assert_eq!(restored.continuum_fit_order, 1);
         assert_eq!(restored.datacolumn.as_deref(), Some("CORRECTED_DATA"));
         assert_eq!(restored.save_model, SaveModelMode::ModelColumn);
+        assert!(restored.save_continuum_residual);
         assert_eq!(restored.correlation.as_deref(), Some("XX"));
         assert_eq!(restored.spectral_mode, SpectralMode::Cube);
         assert_eq!(restored.weighting, WeightingMode::Briggs { robust: -1.0 });
@@ -3474,14 +3553,74 @@ mod tests {
         );
         assert_eq!(
             restored.imaging_memory_pressure_policy,
-            ImagingMemoryPressurePolicy::StageAware
+            ImagingMemoryPressurePolicy::Aggressive
         );
         assert!(restored.dirty_only);
         assert!(!restored.write_preview_pngs);
     }
 
     #[test]
-    fn run_request_preserves_legacy_numeric_spw_without_selector() {
+    fn widefield_facets_round_trip_without_selecting_aw_projection() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/faceted"),
+            OsString::from("--imsize"),
+            OsString::from("512"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("0.35"),
+            OsString::from("--gridder"),
+            OsString::from("widefield"),
+            OsString::from("--facets"),
+            OsString::from("2"),
+            OsString::from("--wprojplanes"),
+            OsString::from("1"),
+        ])
+        .expect("parse faceted widefield request");
+
+        assert_eq!(config.facets, 2);
+        assert_eq!(config.w_term_mode, WTermMode::None);
+        assert_eq!(config.w_project_planes, Some(1));
+        assert!(config.aw_project.is_none());
+
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        assert_eq!(request.facets, 2);
+        let restored = request.to_cli_config().expect("restore faceted request");
+        assert_eq!(restored.facets, 2);
+        assert_eq!(restored.w_term_mode, WTermMode::None);
+        assert_eq!(restored.w_project_planes, Some(1));
+        assert!(restored.aw_project.is_none());
+    }
+
+    #[test]
+    fn natural_weighting_ignores_the_casa_robust_parameter() {
+        let parse = |weighting_before_robust| {
+            let mut args = vec![
+                OsString::from("--ms"),
+                OsString::from("demo.ms"),
+                OsString::from("--imagename"),
+                OsString::from("out/natural"),
+                OsString::from("--imsize"),
+                OsString::from("512"),
+                OsString::from("--cell-arcsec"),
+                OsString::from("0.35"),
+            ];
+            let controls = if weighting_before_robust {
+                ["--weighting", "natural", "--robust", "0.5"]
+            } else {
+                ["--robust", "0.5", "--weighting", "natural"]
+            };
+            args.extend(controls.into_iter().map(OsString::from));
+            CliConfig::parse(args).expect("parse CASA natural weighting controls")
+        };
+
+        assert_eq!(parse(true).weighting, WeightingMode::Natural);
+        assert_eq!(parse(false).weighting, WeightingMode::Natural);
+    }
+
+    #[test]
+    fn run_request_preserves_numeric_spw_without_selector() {
         let mut config = CliConfig::parse([
             OsString::from("--ms"),
             OsString::from("demo.ms"),
@@ -3620,11 +3759,37 @@ mod tests {
     }
 
     #[test]
+    fn mosaic_flatsky_normalization_roundtrips_through_the_task_contract() {
+        let config = CliConfig::parse([
+            OsString::from("--ms"),
+            OsString::from("demo.ms"),
+            OsString::from("--imagename"),
+            OsString::from("out/demo"),
+            OsString::from("--imsize"),
+            OsString::from("256"),
+            OsString::from("--cell-arcsec"),
+            OsString::from("1.0"),
+            OsString::from("--gridder"),
+            OsString::from("mosaic"),
+            OsString::from("--usepointing"),
+            OsString::from("--normtype"),
+            OsString::from("flatsky"),
+        ])
+        .expect("mosaic flatsky CLI");
+
+        let request = ImagerRunTaskRequest::from_cli_config(&config);
+        assert_eq!(request.normalization, ImagerAwProjectNormalization::Flatsky);
+        let restored = request.to_cli_config().expect("task request roundtrip");
+        assert_eq!(restored.normalization, AwProjectNormalization::FlatSky);
+    }
+
+    #[test]
     fn task_request_defaults_match_cli_defaults() {
         let request = ImagerRunTaskRequest {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -3636,8 +3801,11 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: None,
@@ -3660,6 +3828,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.2,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -3678,7 +3847,7 @@ mod tests {
             dirty_only: false,
             parallel: None,
             chanchunks: None,
-            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Auto,
+            standard_mfs_acceleration: StandardMfsAccelerationPolicy::Cpu,
             standard_mfs_backend: None,
             standard_mfs_grid_threads: None,
             standard_mfs_tile_anchor: None,
@@ -3695,8 +3864,8 @@ mod tests {
             imaging_prepare_workers: None,
             imaging_read_ahead_blocks: None,
             imaging_fft_precision: ImagingFftPrecisionPolicy::Auto,
-            imaging_fft_backend: ImagingFftBackendPolicy::Auto,
-            write_preview_pngs: true,
+            imaging_fft_backend: ImagingFftBackendPolicy::RustFft,
+            write_preview_pngs: false,
             progress: None,
         };
         let config = request.to_cli_config().unwrap();
@@ -3705,6 +3874,22 @@ mod tests {
         assert_eq!(config.spectral_mode, SpectralMode::Mfs);
         assert!(!config.per_channel_weight_density);
         assert!(!config.use_pointing);
+
+        let mut parallel = request.clone();
+        parallel.parallel = Some(true);
+        assert_eq!(
+            parallel.to_cli_config().unwrap().standard_mfs_acceleration,
+            StandardMfsAccelerationPolicy::Cpu
+        );
+        let mut serial = request.clone();
+        serial.parallel = Some(false);
+        serial.standard_mfs_acceleration = StandardMfsAccelerationPolicy::MultiCpu;
+        assert!(
+            serial
+                .to_cli_config()
+                .unwrap_err()
+                .contains("parallel=false conflicts")
+        );
 
         let cube = ImagerRunTaskRequest {
             spectral_mode: ImagerSpectralMode::Cube,
@@ -3719,6 +3904,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -3730,8 +3916,11 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: None,
@@ -3754,6 +3943,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -3869,7 +4059,7 @@ mod tests {
         assert_eq!(WTermMode::from(ImagerWTermMode::Direct), WTermMode::Direct);
         assert_eq!(
             ImagerCubeInterpolation::from(CubeInterpolation::Cubic),
-            ImagerCubeInterpolation::Linear
+            ImagerCubeInterpolation::Cubic
         );
         assert_eq!(
             CubeInterpolation::from(ImagerCubeInterpolation::Nearest),
@@ -3989,6 +4179,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -4000,8 +4191,11 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: None,
@@ -4024,6 +4218,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -4141,7 +4336,7 @@ mod tests {
     }
 
     #[test]
-    fn artifact_generation_covers_layout_branches() {
+    fn artifact_generation_uses_the_application_member_inventory() {
         let temp = tempdir().expect("artifact dir");
         let image_name = temp.path().join("artifact/demo");
         fs::create_dir_all(image_name.parent().unwrap()).expect("artifact parent");
@@ -4151,6 +4346,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: image_name.clone(),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -4162,8 +4358,11 @@ mod tests {
             spw_selector: Some("7".to_string()),
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: None,
             outlier_file: None,
             correlation: Some(ImagerPlaneSelection::CorrXX),
@@ -4186,6 +4385,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.1,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,
@@ -4229,8 +4429,17 @@ mod tests {
         assert_eq!(standard_config.spw, Some(7));
         assert_eq!(standard_config.correlation.as_deref(), Some("XX"));
 
-        let standard_artifacts = super::build_artifacts(&standard);
-        assert_eq!(standard_artifacts.len(), 6);
+        let standard_artifacts = super::build_artifacts_for_products(
+            &standard,
+            &[
+                ".psf".to_string(),
+                ".residual".to_string(),
+                ".model".to_string(),
+                ".image".to_string(),
+                ".sumwt".to_string(),
+            ],
+        );
+        assert_eq!(standard_artifacts.len(), 5);
         let standard_psf = standard_artifacts
             .iter()
             .find(|artifact| artifact.kind == ImagerArtifactKind::Psf)
@@ -4244,89 +4453,18 @@ mod tests {
                     && artifact.label == "Sum of Weights")
         );
 
-        let mtmfs = ImagerRunTaskRequest {
-            deconvolver: ImagerDeconvolver::Mtmfs,
-            nterms: 2,
-            write_preview_pngs: false,
-            ..standard
-        };
-        let mtmfs_artifacts = super::build_artifacts(&mtmfs);
-        assert_eq!(mtmfs_artifacts.len(), 15);
         assert_eq!(
-            mtmfs_artifacts
+            standard_artifacts
                 .iter()
-                .filter(|artifact| artifact.kind == ImagerArtifactKind::Alpha)
-                .count(),
-            1
-        );
-        assert_eq!(
-            mtmfs_artifacts
-                .iter()
-                .filter(|artifact| artifact.kind == ImagerArtifactKind::AlphaError)
-                .count(),
-            1
-        );
-        assert_eq!(
-            mtmfs_artifacts
-                .iter()
-                .filter(|artifact| artifact.kind == ImagerArtifactKind::Sumwt)
-                .count(),
-            3
-        );
-        assert!(
-            mtmfs_artifacts
-                .iter()
-                .all(|artifact| artifact.preview_png_path.is_none())
-        );
-
-        let awproject = ImagerRunTaskRequest {
-            use_pointing: true,
-            write_pb: true,
-            aw_project: Some(ImagerAwProjectConfig {
-                cf_cache: PathBuf::from("/tmp/vlass-cf-cache"),
-                cf_resident_mb: 512,
-                facets: 1,
-                psf_phase_center_direction_rad: None,
-                vp_table: None,
-                a_term: true,
-                ps_term: false,
-                wb_awp: true,
-                conjugate_beams: true,
-                compute_pa_step_deg: 360.0,
-                rotate_pa_step_deg: 360.0,
-                pointing_offset_sigdev: vec![0.0],
-                mosaic_weighting: false,
-                normalization: ImagerAwProjectNormalization::Flatnoise,
-            }),
-            ..mtmfs
-        };
-        let awproject_artifacts = super::build_artifacts(&awproject);
-        assert_eq!(awproject_artifacts.len(), 19);
-        assert_eq!(
-            awproject_artifacts
-                .iter()
-                .filter(|artifact| artifact.kind == ImagerArtifactKind::Psf)
-                .count(),
-            3
-        );
-        assert_eq!(
-            awproject_artifacts
-                .iter()
-                .filter(|artifact| artifact.kind == ImagerArtifactKind::Weight)
-                .count(),
-            3
-        );
-        assert_eq!(
-            awproject_artifacts
-                .iter()
-                .filter(|artifact| artifact.kind == ImagerArtifactKind::PrimaryBeam)
-                .count(),
-            1
-        );
-        assert!(
-            awproject_artifacts
-                .iter()
-                .all(|artifact| !artifact.path.ends_with(".pb.tt1"))
+                .map(|artifact| artifact.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                ImagerArtifactKind::Psf,
+                ImagerArtifactKind::Residual,
+                ImagerArtifactKind::Model,
+                ImagerArtifactKind::Image,
+                ImagerArtifactKind::Sumwt,
+            ]
         );
     }
 
@@ -4788,6 +4926,7 @@ mod tests {
             measurement_set: PathBuf::from("demo.ms"),
             image_name: PathBuf::from("out/demo"),
             image_size: 64,
+            facets: 1,
             cell_arcsec: 1.5,
             projection: ImagerProjection::Sin,
             field_ids: None,
@@ -4799,8 +4938,11 @@ mod tests {
             spw_selector: None,
             channel_start: None,
             channel_count: None,
+            continuum_fit_spw: None,
+            continuum_fit_order: 0,
             data_column: None,
             save_model: ImagerSaveModel::None,
+            save_continuum_residual: false,
             start_model: Some(PathBuf::from("seed.model")),
             outlier_file: Some(PathBuf::from("outliers.txt")),
             correlation: None,
@@ -4823,6 +4965,7 @@ mod tests {
             nsigma: 0.0,
             psf_cutoff: 0.35,
             mosaic_pb_limit: 0.2,
+            normalization: ImagerAwProjectNormalization::Flatnoise,
             pbcor: false,
             write_pb: false,
             minor_cycle_length: 1000,

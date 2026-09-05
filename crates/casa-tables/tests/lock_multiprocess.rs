@@ -16,7 +16,7 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 
-use casa_tables::{LockMode, LockOptions, LockType, Table, TableOptions};
+use casa_tables::{LockMode, LockOptions, LockType, Table, TableError, TableOptions};
 use casa_types::{PrimitiveType, RecordField, RecordValue, ScalarValue, Value};
 
 /// Locate the test-built lock_helper binary.
@@ -121,6 +121,44 @@ fn write_lock_contention_across_processes() {
 }
 
 #[test]
+fn auto_locked_open_acquires_read_lock_before_loading_metadata() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let locked_file = tmp.path().join("writer-locked.signal");
+    let release_file = tmp.path().join("writer-release.signal");
+
+    let mut writer = Command::new(&helper)
+        .args([
+            table_dir,
+            "hold_write_lock",
+            locked_file.to_str().unwrap(),
+            release_file.to_str().unwrap(),
+        ])
+        .spawn()
+        .expect("failed to spawn lock holder");
+    assert!(
+        wait_for_file(&locked_file, Duration::from_secs(10)),
+        "writer did not acquire its lock"
+    );
+
+    let table_dat = opts.path().join("table.dat");
+    let hidden_table_dat = opts.path().join("table.dat.hidden-by-lock-order-test");
+    fs::rename(&table_dat, &hidden_table_dat).unwrap();
+    let result = Table::open_with_lock(opts, LockOptions::new(LockMode::AutoLocking));
+    fs::rename(&hidden_table_dat, &table_dat).unwrap();
+    fs::write(&release_file, "release").unwrap();
+    let status = writer.wait().expect("lock holder wait failed");
+
+    assert!(status.success(), "lock holder should exit cleanly");
+    assert!(
+        matches!(result, Err(TableError::LockFailed { .. })),
+        "retained open must fail on the held read lock before consulting unavailable metadata: {result:?}"
+    );
+}
+
+#[test]
 fn cross_process_write_then_read() {
     let tmp = tempfile::TempDir::new().unwrap();
     let opts = create_test_table(tmp.path());
@@ -159,6 +197,49 @@ fn cross_process_write_then_read() {
     let mut table = Table::open_with_lock(opts, lock_opts).unwrap();
     table.lock(LockType::Read, 1).unwrap();
     assert_eq!(table.row_count(), 2);
+}
+
+#[test]
+fn waiting_locked_open_reads_metadata_published_before_acquisition() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let opts = create_test_table(tmp.path());
+    let helper = helper_binary();
+    let table_dir = opts.path().to_str().unwrap();
+    let staged_file = tmp.path().join("row-staged.signal");
+    let publish_file = tmp.path().join("publish.signal");
+
+    let mut writer = Command::new(&helper)
+        .args([
+            table_dir,
+            "hold_write_with_row",
+            "42",
+            "published",
+            staged_file.to_str().unwrap(),
+            publish_file.to_str().unwrap(),
+        ])
+        .spawn()
+        .expect("failed to spawn staged writer");
+    assert!(
+        wait_for_file(&staged_file, Duration::from_secs(10)),
+        "writer did not stage the new row while holding its lock"
+    );
+
+    let publish_file_for_thread = publish_file.clone();
+    let publisher = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(500));
+        fs::write(publish_file_for_thread, "publish").unwrap();
+    });
+    let table = Table::open_with_lock(opts, LockOptions::new(LockMode::PermanentLockingWait))
+        .expect("waiting open should acquire after the writer publishes");
+
+    publisher.join().unwrap();
+    let status = writer.wait().expect("staged writer wait failed");
+    assert!(status.success(), "staged writer should exit cleanly");
+    assert_eq!(
+        table.row_count(),
+        2,
+        "metadata must be loaded after lock acquisition, not retained from before the writer published"
+    );
 }
 
 #[test]

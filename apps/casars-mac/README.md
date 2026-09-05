@@ -151,17 +151,18 @@ local `.app` bundle under `dist/`, unpacks the tutorial-registry
 `${CASA_RS_TUTORIAL_DATA_ROOT}` or `~/SoftwareProjects/casa-tutorial-data` into
 a temporary project, and launches that project with `/usr/bin/open` so Dock
 activation, menus, and native full-screen Spaces behave like a normal macOS app.
-Imager defaults for the TW Hya tutorial sample pick field 5, SPW 0, 250 px,
-and 0.1 arcsec cells, matching the documented ALMA First Look MFS
-imaging slice. If the local tutorial archive is not staged, the launcher falls
-back to the bundled `mssel_test_small_multifield_spw.ms.tgz` fixture and its
-NGC4826-F3/SPW 5/raw YY defaults. Demo-mode temporary projects are removed
+The imager binds only the selected MeasurementSet into the canonical task;
+science and execution defaults come from the versioned parameter catalog, not
+from dataset names or app-local fixture rules. If the local tutorial archive is
+not staged, the launcher falls back to the bundled
+`mssel_test_small_multifield_spw.ms.tgz` fixture without inferring field, SPW,
+Stokes, output, or algorithm settings. Demo-mode temporary projects are removed
 after the launched app exits; the default launcher stays attached until that
 exit so cleanup is deterministic. Pass `--project` to inspect an existing
 project directory, `--imager-ms` to open a MeasurementSet directly on the
-imager task, `--run-active-task` to start the selected task after launch,
-imager launch overrides such as `--image-size`, `--cell-arcsec`,
-`--spectral-mode`, `--channel-count`, and `--niter` to tune the schema task,
+imager task, `--run-active-task` to start the selected task after launch, or
+explicit imager launch overrides such as `--image-size`, `--cell-arcsec`,
+`--spectral-mode`, `--channel-count`, and `--niter` to change the schema task,
 `--tutorial-pack` together with `--project` to fork a portable tutorial template
 into that project, or `--empty` to start without opening a project. A legacy
 `pack.json` is accepted only as explicit one-shot migration input; the

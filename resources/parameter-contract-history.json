@@ -17,6 +17,11 @@
       "fingerprint": "d10ff24f863e66e9e76d0c8637b357b95feca7bc93921235cd869840ce0c47f2"
     },
     {
+      "id": "calibrate.mode",
+      "semantic_revision": 2,
+      "fingerprint": "594f532851b163f22979f705d9ef90755b621e82389aa46c1fe221e736500b23"
+    },
+    {
       "id": "calibrate.output",
       "semantic_revision": 1,
       "fingerprint": "63678a3eed3347c7f54c88bdd695c6d3723cbaf350b0b530c441896b00a7a2c0"
@@ -652,6 +657,11 @@
       "fingerprint": "bf7d536e17f347990826491f21b56f321c435e8b06176bb4d4c32811a6757492"
     },
     {
+      "id": "parameter.facets",
+      "semantic_revision": 2,
+      "fingerprint": "0d15bb270d62dce34ba158e4567ba0b9c823754aa9a8eea76f485952bcee9062"
+    },
+    {
       "id": "parameter.featherimage",
       "semantic_revision": 1,
       "fingerprint": "0f70d8ca8ce36b0e9579b244d0ec8daedeba4d883deb185418c56fe0694c9439"
@@ -940,6 +950,11 @@
       "id": "parameter.imaging_memory_pressure_policy",
       "semantic_revision": 1,
       "fingerprint": "8732f218bce265479a349e392edf8b86d6b65fec35cc7f05b768f524d6e5287b"
+    },
+    {
+      "id": "parameter.imaging_memory_pressure_policy",
+      "semantic_revision": 2,
+      "fingerprint": "ba4827b5182edb283e52609c62f99980fdf12ce7abf22047dc80d3fb782c601c"
     },
     {
       "id": "parameter.imaging_memory_target_mb",
@@ -1572,6 +1587,11 @@
       "fingerprint": "b7f3637f27eedfbde3a972e6d8bdd4f2717f915e088e84828b6a62454e6093a7"
     },
     {
+      "id": "parameter.save_continuum_residual",
+      "semantic_revision": 1,
+      "fingerprint": "225612082b50ad7fea0f385bb21cd94c7e10dd401310a1df5eb5b33a7c2b75f4"
+    },
+    {
       "id": "parameter.savemodel",
       "semantic_revision": 1,
       "fingerprint": "0ef73578b7920d27d82566611cab6d65f09fcf15d33b49a006510f4a42ab1c0b"
@@ -1715,6 +1735,11 @@
       "id": "parameter.specmode",
       "semantic_revision": 1,
       "fingerprint": "de61fa51aa2940e6bf8a73073a26d0ef846f46c27f8de692c368058a78a2abac"
+    },
+    {
+      "id": "parameter.specmode",
+      "semantic_revision": 2,
+      "fingerprint": "69d3ba73a4a834ac3b12747623be9635076213a4cd8e0528b1d82919f078c977"
     },
     {
       "id": "parameter.spwlist",
@@ -2134,6 +2159,11 @@
       "fingerprint": "45e166e01d0570205eaf4fb90efc2fff5fea9fb8cb8b37de261bd9eaa8821b95"
     },
     {
+      "id": "calibrate",
+      "contract_version": 4,
+      "fingerprint": "a2fc77dfb01b217ad4f2d50b3512c44f13adab1d75b1b64474d12f27174104a1"
+    },
+    {
       "id": "clearcal",
       "contract_version": 1,
       "fingerprint": "5c00940ae32a554810ed4cd8a85d70bd5f0afc3670e698dd13c12c5e71518e62"
@@ -2347,6 +2377,46 @@
       "id": "imager",
       "contract_version": 7,
       "fingerprint": "817501c165110801bb06ebb1a8961feff085640f5c133d121d216f91ef1c68e3"
+    },
+    {
+      "id": "imager",
+      "contract_version": 8,
+      "fingerprint": "3bd6cad6d370af533a534bb4123fb734e18ef43c18d117260971118d22fc8597"
+    },
+    {
+      "id": "imager",
+      "contract_version": 9,
+      "fingerprint": "72f083f9db60770ab8b702aee9adad1f8b3f6c9eac8e1494d332a36b712d6985"
+    },
+    {
+      "id": "imager",
+      "contract_version": 10,
+      "fingerprint": "bf013a341a65bd699a95b5bd58addae88f7e1f8c4c99923e8036e55533c12ad3"
+    },
+    {
+      "id": "imager",
+      "contract_version": 11,
+      "fingerprint": "ee76d12e9ce530fd9b99eb9726b684c84086cdbf0d68a4f5cc33f37ddb29c160"
+    },
+    {
+      "id": "imager",
+      "contract_version": 12,
+      "fingerprint": "c20d1664021fb7c474f5de4b0fc59a2a48a0dc46fa482672496e1730255c1bc2"
+    },
+    {
+      "id": "imager",
+      "contract_version": 13,
+      "fingerprint": "ac6834d92778aa8323f474649422b6dce640947b1f4141243e66775e55bd0c5c"
+    },
+    {
+      "id": "imager",
+      "contract_version": 14,
+      "fingerprint": "dee6c8d006fba164ca84d2b8d6150a8ec8b12e95075fc8dcf5706099905fdd76"
+    },
+    {
+      "id": "imager",
+      "contract_version": 15,
+      "fingerprint": "8662fe48bc23f1cf78300d270cd4da753bea2827ac91962a32d7efd64d3df800"
     },
     {
       "id": "imcollapse",

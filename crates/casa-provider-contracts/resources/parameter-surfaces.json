@@ -3619,7 +3619,7 @@
     {
       "kind": "task",
       "id": "calibrate",
-      "contract_version": 3,
+      "contract_version": 4,
       "display_name": "Calibrate",
       "category": "Calibration",
       "summary": "apply, inspect, and solve CASA-style calibration workflows",
@@ -3708,7 +3708,7 @@
           "name": "mode",
           "concept": {
             "id": "calibrate.mode",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 0,
           "default": {
@@ -3777,14 +3777,6 @@
                 "value": {
                   "kind": "string",
                   "value": "apply"
-                }
-              },
-              {
-                "kind": "equals",
-                "parameter": "mode",
-                "value": {
-                  "kind": "string",
-                  "value": "continuum_subtract"
                 }
               },
               {
@@ -3861,14 +3853,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "export_corrected_data"
                     }
                   },
@@ -3935,14 +3919,6 @@
                 "parameter": "mode",
                 "value": {
                   "kind": "string",
-                  "value": "continuum_subtract"
-                }
-              },
-              {
-                "kind": "equals",
-                "parameter": "mode",
-                "value": {
-                  "kind": "string",
                   "value": "export_corrected_data"
                 }
               }
@@ -3969,14 +3945,6 @@
               "emit_when": {
                 "kind": "any",
                 "predicates": [
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
                   {
                     "kind": "equals",
                     "parameter": "mode",
@@ -4114,14 +4082,6 @@
                     "value": {
                       "kind": "string",
                       "value": "apply"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
                     }
                   },
                   {
@@ -4276,14 +4236,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -4356,14 +4308,6 @@
                     "value": {
                       "kind": "string",
                       "value": "apply"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
                     }
                   },
                   {
@@ -4450,14 +4394,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -4530,14 +4466,6 @@
                     "value": {
                       "kind": "string",
                       "value": "apply"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
                     }
                   },
                   {
@@ -4853,14 +4781,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -5045,14 +4965,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "stats"
                     }
                   }
@@ -5067,74 +4979,6 @@
               "label": "Stats Data Column",
               "group": "Inspect",
               "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "fit_spw",
-          "concept": {
-            "id": "parameter.fit_spw",
-            "semantic_revision": 1
-          },
-          "order": 18,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "equals",
-            "parameter": "mode",
-            "value": {
-              "kind": "string",
-              "value": "continuum_subtract"
-            }
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--fitspw"
-              ],
-              "false_flags": [],
-              "metavar": "SPW:CHANNELS"
-            },
-            "provider": {
-              "field": "fit_spw",
-              "adapter": "omit_none",
-              "emit_when": {
-                "kind": "any",
-                "predicates": [
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  }
-                ]
-              }
-            },
-            "python": {
-              "name": "fit_spw",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Line-free Channels",
-              "group": "Continuum Subtraction",
-              "advanced": false,
               "hidden": false
             }
           },
@@ -5197,69 +5041,6 @@
             "presentation": {
               "label": "Use Flags",
               "group": "Inspect",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "fit_order",
-          "concept": {
-            "id": "parameter.fit_order",
-            "semantic_revision": 1
-          },
-          "order": 20,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 0
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--fitorder"
-              ],
-              "false_flags": [],
-              "metavar": "ORDER"
-            },
-            "provider": {
-              "field": "fit_order",
-              "adapter": "identity",
-              "emit_when": {
-                "kind": "any",
-                "predicates": [
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  }
-                ]
-              }
-            },
-            "python": {
-              "name": "fit_order",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Fit Order",
-              "group": "Continuum Subtraction",
               "advanced": false,
               "hidden": false
             }
@@ -6568,14 +6349,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -6648,14 +6421,6 @@
                     "value": {
                       "kind": "string",
                       "value": "apply"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
                     }
                   },
                   {
@@ -6740,14 +6505,6 @@
                     "value": {
                       "kind": "string",
                       "value": "apply"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
                     }
                   },
                   {
@@ -6847,14 +6604,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -6947,14 +6696,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -7032,14 +6773,6 @@
                     "value": {
                       "kind": "string",
                       "value": "apply"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
                     }
                   },
                   {
@@ -7131,14 +6864,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -7223,14 +6948,6 @@
                     "parameter": "mode",
                     "value": {
                       "kind": "string",
-                      "value": "continuum_subtract"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
                       "value": "solve_bandpass"
                     }
                   },
@@ -7308,14 +7025,6 @@
                     "value": {
                       "kind": "string",
                       "value": "apply"
-                    }
-                  },
-                  {
-                    "kind": "equals",
-                    "parameter": "mode",
-                    "value": {
-                      "kind": "string",
-                      "value": "continuum_subtract"
                     }
                   },
                   {
@@ -7541,6 +7250,12 @@
         {
           "from_contract": 2,
           "to_contract": 3,
+          "steps": [],
+          "changed_defaults": []
+        },
+        {
+          "from_contract": 3,
+          "to_contract": 4,
           "steps": [],
           "changed_defaults": []
         }
@@ -8221,7 +7936,7 @@
     {
       "kind": "task",
       "id": "imager",
-      "contract_version": 7,
+      "contract_version": 15,
       "display_name": "Imager",
       "category": "Imaging",
       "summary": "Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet",
@@ -8268,12 +7983,25 @@
         {
           "class": "input_mutation",
           "when": {
-            "kind": "equals",
-            "parameter": "savemodel",
-            "value": {
-              "kind": "string",
-              "value": "modelcolumn"
-            }
+            "kind": "any",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "savemodel",
+                "value": {
+                  "kind": "string",
+                  "value": "modelcolumn"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "save_continuum_residual",
+                "value": {
+                  "kind": "bool",
+                  "value": true
+                }
+              }
+            ]
           }
         }
       ],
@@ -9085,16 +8813,14 @@
               "hidden": false
             }
           },
-          "aliases": [
-            "polarization"
-          ],
+          "aliases": [],
           "reviewed_homonym": null
         },
         {
           "name": "specmode",
           "concept": {
             "id": "parameter.specmode",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 16,
           "default": {
@@ -11470,7 +11196,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "auto"
+              "value": "cpu"
             }
           },
           "required_when": {
@@ -11622,7 +11348,7 @@
             "kind": "literal",
             "value": {
               "kind": "string",
-              "value": "auto"
+              "value": "rustfft"
             }
           },
           "required_when": {
@@ -11847,7 +11573,7 @@
           "name": "facets",
           "concept": {
             "id": "parameter.facets",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 71,
           "default": {
@@ -11861,14 +11587,27 @@
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "gridder",
-            "value": {
-              "kind": "string",
-              "value": "awproject"
-            }
+            "kind": "any",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "widefield"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              }
+            ]
           },
-          "surface_note": "Unsupported facet layouts fail closed with a capability diagnostic.",
+          "surface_note": "Constant-basis MFS executes exact regular facets; unsupported basis combinations fail closed.",
           "projections": {
             "cli": {
               "flags": [
@@ -12390,12 +12129,25 @@
             "kind": "never"
           },
           "active_when": {
-            "kind": "equals",
-            "parameter": "gridder",
-            "value": {
-              "kind": "string",
-              "value": "awproject"
-            }
+            "kind": "any",
+            "predicates": [
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "awproject"
+                }
+              },
+              {
+                "kind": "equals",
+                "parameter": "gridder",
+                "value": {
+                  "kind": "string",
+                  "value": "mosaic"
+                }
+              }
+            ]
           },
           "projections": {
             "cli": {
@@ -12412,7 +12164,7 @@
               "name": "normtype"
             },
             "presentation": {
-              "label": "AW Normalization",
+              "label": "Mosaic / AW Normalization",
               "group": "Advanced Wide-Field",
               "advanced": true,
               "hidden": false
@@ -12444,7 +12196,7 @@
           "active_when": {
             "kind": "always"
           },
-          "surface_note": "none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. stage-aware and hybrid currently apply their corresponding caps only in planner probes. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.",
+          "surface_note": "none delegates to the resource-adaptive planner. auto and conservative-no-swap cap to no-swap headroom; aggressive caps to the physical process ceiling. oversubscribe requires an explicit target and alone may retain it beyond measured headroom.",
           "projections": {
             "cli": {
               "flags": [
@@ -12471,7 +12223,7 @@
           "name": "imaging_memory_pressure_policy",
           "concept": {
             "id": "parameter.imaging_memory_pressure_policy",
-            "semantic_revision": 1
+            "semantic_revision": 2
           },
           "order": 84,
           "default": {
@@ -12487,7 +12239,7 @@
           "active_when": {
             "kind": "always"
           },
-          "surface_note": "auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target. stage-aware and hybrid are planner-probe-only until their requested runtime actions are implemented.",
+          "surface_note": "auto is the safe resource-adaptive default. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit memory target.",
           "projections": {
             "cli": {
               "flags": [
@@ -12764,54 +12516,159 @@
               "hidden": false
             }
           }
+        },
+        {
+          "name": "fitspw",
+          "concept": {
+            "id": "parameter.fitspw",
+            "semantic_revision": 1
+          },
+          "order": 91,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "string",
+              "value": "none"
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--fitspw"
+              ],
+              "false_flags": [],
+              "metavar": "SPW:CHANNELS"
+            },
+            "provider": {
+              "field": "fitspw",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "fitspw",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Line-free Channels",
+              "group": "Continuum Subtraction",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "fitorder",
+          "concept": {
+            "id": "parameter.fitorder",
+            "semantic_revision": 1
+          },
+          "order": 92,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "integer",
+              "value": 0
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": null,
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--fitorder"
+              ],
+              "false_flags": [],
+              "metavar": "ORDER"
+            },
+            "provider": {
+              "field": "fitorder",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "fitorder",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Fit Order",
+              "group": "Continuum Subtraction",
+              "advanced": false,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
+        },
+        {
+          "name": "save_continuum_residual",
+          "concept": {
+            "id": "parameter.save_continuum_residual",
+            "semantic_revision": 1
+          },
+          "order": 93,
+          "default": {
+            "kind": "literal",
+            "value": {
+              "kind": "bool",
+              "value": false
+            }
+          },
+          "required_when": {
+            "kind": "never"
+          },
+          "active_when": {
+            "kind": "always"
+          },
+          "refinements": [],
+          "context_role": null,
+          "surface_note": "Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged.",
+          "projections": {
+            "cli": {
+              "positional": null,
+              "flags": [
+                "--save-continuum-residual"
+              ],
+              "false_flags": [],
+              "metavar": null
+            },
+            "provider": {
+              "field": "save_continuum_residual",
+              "adapter": "identity"
+            },
+            "python": {
+              "name": "save_continuum_residual",
+              "type_hint": null
+            },
+            "presentation": {
+              "label": "Save Continuum Residual",
+              "group": "Continuum Subtraction",
+              "advanced": true,
+              "hidden": false
+            }
+          },
+          "aliases": [],
+          "reviewed_homonym": null
         }
       ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 3,
-          "to_contract": 4,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 4,
-          "to_contract": 5,
-          "steps": [
-            {
-              "kind": "rename",
-              "from": "polarization",
-              "to": "stokes"
-            }
-          ],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 5,
-          "to_contract": 6,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 6,
-          "to_contract": 7,
-          "steps": [],
-          "changed_defaults": [
-            "imaging_memory_pressure_policy"
-          ]
-        }
-      ]
+      "migrations": []
     },
     {
       "kind": "task",
@@ -18800,984 +18657,6 @@
               "label": "Keep Fully Flagged Rows",
               "group": "Data",
               "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        }
-      ],
-      "migrations": [
-        {
-          "from_contract": 1,
-          "to_contract": 2,
-          "steps": [],
-          "changed_defaults": []
-        },
-        {
-          "from_contract": 2,
-          "to_contract": 3,
-          "steps": [],
-          "changed_defaults": []
-        }
-      ]
-    },
-    {
-      "kind": "task",
-      "id": "uvcontsub",
-      "contract_version": 3,
-      "display_name": "UV Continuum Subtraction",
-      "category": "MeasurementSet",
-      "summary": "Subtract continuum emission from a MeasurementSet.",
-      "provider_family": "calibration",
-      "execution": {
-        "invocation_name": "calibrate",
-        "fixed_args": [
-          "--mode",
-          "continuum_subtract"
-        ],
-        "managed_output": {
-          "inject_arguments": [
-            {
-              "flag": "--format",
-              "value": "json"
-            },
-            {
-              "flag": "--managed-output",
-              "value": "true"
-            }
-          ],
-          "raw_stderr_available": true,
-          "raw_stdout_available": true,
-          "stdout_format": "json",
-          "decoder": "calibration-report-v1"
-        },
-        "products": {
-          "kind": "declared",
-          "products": [
-            {
-              "id": "outputvis",
-              "role": "primary",
-              "resource_kind": "measurement_set",
-              "source": {
-                "kind": "parameter",
-                "parameter": "outputvis"
-              },
-              "cardinality": "one",
-              "optional": false,
-              "probe_supported": true
-            },
-            {
-              "id": "output",
-              "role": "auxiliary",
-              "resource_kind": "casa_table",
-              "source": {
-                "kind": "parameter",
-                "parameter": "output"
-              },
-              "cardinality": "one",
-              "optional": true,
-              "probe_supported": true
-            }
-          ]
-        }
-      },
-      "safety_rules": [
-        {
-          "class": "product_write",
-          "when": {
-            "kind": "always"
-          }
-        },
-        {
-          "class": "overwrite",
-          "when": {
-            "kind": "equals",
-            "parameter": "overwrite",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          }
-        }
-      ],
-      "bindings": [
-        {
-          "name": "vis",
-          "concept": {
-            "id": "data.input.vis",
-            "semantic_revision": 1
-          },
-          "order": 0,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [
-            {
-              "kind": "length",
-              "min": 0,
-              "max": 1
-            }
-          ],
-          "context_role": "input_dataset",
-          "surface_note": "Canonical vis maps to provider field measurement_set. This surface uses the MeasurementSet as calibration workflow input.",
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--ms"
-              ],
-              "false_flags": [],
-              "metavar": "PATH"
-            },
-            "provider": {
-              "field": "measurement_set",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "vis",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "MeasurementSet Path",
-              "group": "Input",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "outputvis",
-          "concept": {
-            "id": "parameter.outputvis",
-            "semantic_revision": 1
-          },
-          "order": 1,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": "Canonical outputvis maps to provider field output_measurement_set.",
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--output-ms"
-              ],
-              "false_flags": [],
-              "metavar": "PATH"
-            },
-            "provider": {
-              "field": "output_measurement_set",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "outputvis",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Output MeasurementSet",
-              "group": "Input",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "output",
-          "concept": {
-            "id": "calibration.report.output",
-            "semantic_revision": 1
-          },
-          "order": 2,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "-o",
-                "--output"
-              ],
-              "false_flags": [],
-              "metavar": "PATH"
-            },
-            "provider": {
-              "field": "output",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "output",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Output Path",
-              "group": "Output",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "overwrite",
-          "concept": {
-            "id": "output.overwrite",
-            "semantic_revision": 1
-          },
-          "order": 3,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": false
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--overwrite"
-              ],
-              "false_flags": [],
-              "metavar": null
-            },
-            "provider": {
-              "field": "overwrite",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "overwrite",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Overwrite Output",
-              "group": "Output",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "format",
-          "concept": {
-            "id": "parameter.format",
-            "semantic_revision": 1
-          },
-          "order": 4,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "text"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "presentation",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--format"
-              ],
-              "false_flags": [],
-              "metavar": "FORMAT"
-            },
-            "provider": {
-              "field": "format",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "format",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Output Format",
-              "group": "Output",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "stats_datacolumn",
-          "concept": {
-            "id": "parameter.stats_datacolumn",
-            "semantic_revision": 1
-          },
-          "order": 5,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--datacolumn"
-              ],
-              "false_flags": [],
-              "metavar": "COLUMN"
-            },
-            "provider": {
-              "field": "stats_datacolumn",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "stats_datacolumn",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Stats Data Column",
-              "group": "Inspect",
-              "advanced": true,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "fit_spw",
-          "concept": {
-            "id": "parameter.fit_spw",
-            "semantic_revision": 1
-          },
-          "order": 6,
-          "default": {
-            "kind": "required"
-          },
-          "required_when": {
-            "kind": "always"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--fitspw"
-              ],
-              "false_flags": [],
-              "metavar": "SPW:CHANNELS"
-            },
-            "provider": {
-              "field": "fit_spw",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "fit_spw",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Line-free Channels",
-              "group": "Continuum Subtraction",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "fit_order",
-          "concept": {
-            "id": "parameter.fit_order",
-            "semantic_revision": 1
-          },
-          "order": 7,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "integer",
-              "value": 0
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--fitorder"
-              ],
-              "false_flags": [],
-              "metavar": "ORDER"
-            },
-            "provider": {
-              "field": "fit_order",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "fit_order",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Fit Order",
-              "group": "Continuum Subtraction",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "selectdata",
-          "concept": {
-            "id": "parameter.selectdata",
-            "semantic_revision": 1
-          },
-          "order": 8,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": "Enables the detailed selection controls for this calibration workflow.",
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--selectdata"
-              ],
-              "false_flags": [
-                "--no-selectdata"
-              ],
-              "metavar": null
-            },
-            "provider": {
-              "field": "selectdata",
-              "adapter": "identity"
-            },
-            "python": {
-              "name": "selectdata",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Apply Selection",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "field",
-          "concept": {
-            "id": "ms.selection.field",
-            "semantic_revision": 1
-          },
-          "order": 9,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "always"
-          },
-          "refinements": [],
-          "context_role": "field_selection",
-          "surface_note": "This calibration provider currently accepts comma-separated FIELD_ID integers.",
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--field"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "field",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "field",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Field IDs",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "spw",
-          "concept": {
-            "id": "ms.selection.spw",
-            "semantic_revision": 1
-          },
-          "order": 10,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "refinements": [],
-          "context_role": "spectral_window_selection",
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--spw"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "spw",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "spw",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "SPW IDs",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "antenna",
-          "concept": {
-            "id": "ms.selection.antenna",
-            "semantic_revision": 1
-          },
-          "order": 11,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--antenna"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "antenna",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "antenna",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Antenna IDs",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "scan",
-          "concept": {
-            "id": "ms.selection.scan",
-            "semantic_revision": 1
-          },
-          "order": 12,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--scan"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "scan",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "scan",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Scan Numbers",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "observation",
-          "concept": {
-            "id": "ms.selection.observation",
-            "semantic_revision": 1
-          },
-          "order": 13,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--observation"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "observation",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "observation",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Observation IDs",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "array",
-          "concept": {
-            "id": "ms.selection.array",
-            "semantic_revision": 1
-          },
-          "order": 14,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--array"
-              ],
-              "false_flags": [],
-              "metavar": "IDS"
-            },
-            "provider": {
-              "field": "array",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "array",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Array IDs",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "timerange",
-          "concept": {
-            "id": "ms.selection.timerange",
-            "semantic_revision": 1
-          },
-          "order": 15,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--timerange"
-              ],
-              "false_flags": [],
-              "metavar": "START:END"
-            },
-            "provider": {
-              "field": "timerange",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "timerange",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "Time Range",
-              "group": "Selection",
-              "advanced": false,
-              "hidden": false
-            }
-          },
-          "aliases": [],
-          "reviewed_homonym": null
-        },
-        {
-          "name": "msselect",
-          "concept": {
-            "id": "ms.selection.msselect",
-            "semantic_revision": 1
-          },
-          "order": 16,
-          "default": {
-            "kind": "literal",
-            "value": {
-              "kind": "string",
-              "value": "none"
-            }
-          },
-          "required_when": {
-            "kind": "never"
-          },
-          "active_when": {
-            "kind": "equals",
-            "parameter": "selectdata",
-            "value": {
-              "kind": "bool",
-              "value": true
-            }
-          },
-          "refinements": [],
-          "context_role": null,
-          "surface_note": null,
-          "projections": {
-            "cli": {
-              "positional": null,
-              "flags": [
-                "--msselect"
-              ],
-              "false_flags": [],
-              "metavar": "EXPR"
-            },
-            "provider": {
-              "field": "msselect",
-              "adapter": "omit_none"
-            },
-            "python": {
-              "name": "msselect",
-              "type_hint": null
-            },
-            "presentation": {
-              "label": "MSSelect",
-              "group": "Selection",
-              "advanced": true,
               "hidden": false
             }
           },

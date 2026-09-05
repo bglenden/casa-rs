@@ -641,7 +641,7 @@ fn collect_matching_field_names(ms: &MeasurementSet, pattern: &str) -> MsResult<
     Ok(dedup_strings(matches))
 }
 
-fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
+pub(crate) fn parse_state_selector(ms: &MeasurementSet, value: &str) -> MsResult<Vec<i32>> {
     let state = ms.state()?;
     let mut ids = Vec::new();
     for raw_part in value.split(',') {
@@ -720,7 +720,7 @@ fn build_uvrange_taql(ms: &MeasurementSet, value: &str) -> MsResult<String> {
     Ok(format!("({})", clauses.join(" OR ")))
 }
 
-fn parse_uvrange_selector(value: &str) -> MsResult<Vec<UvSelectionRange>> {
+pub(crate) fn parse_uvrange_selector(value: &str) -> MsResult<Vec<UvSelectionRange>> {
     value
         .split(',')
         .map(str::trim)

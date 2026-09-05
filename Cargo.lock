@@ -419,15 +419,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "block2"
-version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdeb9d870516001442e364c5220d3574d2da8dc765554b4a617230d33fa58ef5"
-dependencies = [
- "objc2",
-]
-
-[[package]]
 name = "brotli-decompressor"
 version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -546,6 +537,7 @@ version = "0.27.0"
 dependencies = [
  "casa-logging",
  "casa-ms",
+ "casa-numerics",
  "casa-provider-contracts",
  "casa-tables",
  "casa-task-runtime",
@@ -576,6 +568,7 @@ version = "0.27.0"
 dependencies = [
  "casa-coordinates",
  "casa-lattices",
+ "casa-numerics",
  "casa-provider-contracts",
  "casa-tables",
  "casa-task-runtime",
@@ -593,28 +586,83 @@ dependencies = [
 ]
 
 [[package]]
-name = "casa-imaging"
+name = "casa-imaging-application"
 version = "0.27.0"
 dependencies = [
  "casa-coordinates",
  "casa-images",
- "casa-lattices",
+ "casa-imaging-model",
+ "casa-imaging-products",
+ "casa-imaging-reconstruction",
+ "casa-imaging-runtime",
+ "casa-ms",
  "casa-test-support",
  "casa-types",
- "libloading",
- "libm",
- "memmap2",
+ "libc",
+ "ndarray",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
+name = "casa-imaging-model"
+version = "0.27.0"
+dependencies = [
+ "sha2",
+ "smallvec",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "casa-imaging-products"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-model",
+ "casa-imaging-reconstruction",
+ "casa-numerics",
  "ndarray",
  "num-complex",
- "objc2",
- "objc2-foundation",
- "objc2-metal",
- "objc2-metal-performance-shaders",
- "objc2-metal-performance-shaders-graph",
- "rayon",
+ "rustfft",
+ "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "casa-imaging-reconstruction"
+version = "0.27.0"
+dependencies = [
+ "casa-images",
+ "casa-imaging-model",
+ "casa-numerics",
+ "casa-test-support",
+ "ndarray",
+ "num-complex",
  "rustfft",
  "serde_json",
- "serial_test",
+ "sha2",
+ "smallvec",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "casa-imaging-runtime"
+version = "0.27.0"
+dependencies = [
+ "casa-imaging-model",
+ "casa-imaging-products",
+ "casa-imaging-reconstruction",
+ "casa-ms",
+ "casa-test-support",
+ "casa-types",
+ "fs2",
+ "libc",
+ "num-complex",
+ "objc2",
+ "objc2-metal",
+ "rayon",
+ "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
@@ -657,6 +705,7 @@ dependencies = [
  "flate2",
  "serde",
  "serde_json",
+ "sha2",
  "tar",
  "tempfile",
  "thiserror 2.0.18",
@@ -679,19 +728,22 @@ name = "casa-ms"
 version = "0.27.0"
 dependencies = [
  "casa-coordinates",
- "casa-imaging",
+ "casa-imaging-model",
+ "casa-imaging-reconstruction",
  "casa-logging",
  "casa-measures-data",
+ "casa-numerics",
  "casa-provider-contracts",
+ "casa-simulation-synthesis",
  "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
  "flate2",
+ "getrandom 0.3.4",
  "image 0.25.10",
  "libc",
  "libm",
- "nalgebra",
  "ndarray",
  "num-complex",
  "plotters",
@@ -699,6 +751,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "sha2",
  "sofars",
  "tar",
  "tempfile",
@@ -725,6 +778,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "casa-numerics"
+version = "0.27.0"
+dependencies = [
+ "libm",
+ "nalgebra",
+]
+
+[[package]]
 name = "casa-provider-contracts"
 version = "0.27.0"
 dependencies = [
@@ -732,6 +793,17 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "casa-simulation-synthesis"
+version = "0.27.0"
+dependencies = [
+ "casa-numerics",
+ "ndarray",
+ "num-complex",
+ "rustfft",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -839,7 +911,6 @@ dependencies = [
  "casa-calibration",
  "casa-coordinates",
  "casa-images",
- "casa-imaging",
  "casa-logging",
  "casa-ms",
  "casa-notebook",
@@ -890,6 +961,7 @@ dependencies = [
  "casa-types",
  "casars",
  "casars-imagebrowser-protocol",
+ "casars-imager",
  "casars-tablebrowser-protocol",
  "flate2",
  "image 0.25.10",
@@ -918,29 +990,20 @@ dependencies = [
 name = "casars-imager"
 version = "0.27.0"
 dependencies = [
- "casa-coordinates",
  "casa-images",
- "casa-imaging",
+ "casa-imaging-application",
  "casa-logging",
- "casa-measures-data",
  "casa-ms",
  "casa-provider-contracts",
- "casa-tables",
  "casa-task-runtime",
  "casa-test-support",
  "casa-types",
- "flate2",
  "image 0.25.10",
- "libc",
  "ndarray",
- "num-complex",
- "objc2-metal",
  "schemars",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
- "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -1902,41 +1965,6 @@ name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
-
-[[package]]
-name = "futures-core"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e3450815272ef58cec6d564423f6e755e25379b217b0bc688e295ba24df6b1d"
-
-[[package]]
-name = "futures-executor"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf29c38818342a3b26b5b923639e7b1f4a61fc5e76102d4b1981c6dc7a7579d"
-dependencies = [
- "futures-core",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-task"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "037711b3d59c33004d3856fbdc83b99d4ff37a24768fa1be9ce3538a1cde4393"
-
-[[package]]
-name = "futures-util"
-version = "0.3.32"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
-dependencies = [
- "futures-core",
- "futures-task",
- "pin-project-lite",
- "slab",
-]
 
 [[package]]
 name = "generic-array"
@@ -2983,35 +3011,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0125f776a10d00af4152d74616409f0d4a2053a6f57fa5b7d6aa2854ac04794"
 dependencies = [
  "bitflags 2.11.0",
- "block2",
- "objc2",
- "objc2-core-foundation",
- "objc2-foundation",
-]
-
-[[package]]
-name = "objc2-metal-performance-shaders"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46a10f15ff4e2045f947ffca8a17fc351b155c321de16f04278a008a1f446784"
-dependencies = [
- "bitflags 2.11.0",
  "objc2",
  "objc2-foundation",
- "objc2-metal",
-]
-
-[[package]]
-name = "objc2-metal-performance-shaders-graph"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3733321d6edbaa799a59b3f2c82b9e83abfa7577eae0274d3c02f9e879eab1aa"
-dependencies = [
- "bitflags 2.11.0",
- "objc2",
- "objc2-foundation",
- "objc2-metal",
- "objc2-metal-performance-shaders",
 ]
 
 [[package]]
@@ -4177,15 +4178,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "scc"
-version = "2.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
-dependencies = [
- "sdd",
-]
-
-[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4234,12 +4226,6 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
-
-[[package]]
-name = "sdd"
-version = "3.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "semver"
@@ -4315,32 +4301,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serial_test"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911bd979bf1070a3f3aa7b691a3b3e9968f339ceeec89e08c280a8a22207a32f"
-dependencies = [
- "futures-executor",
- "futures-util",
- "log",
- "once_cell",
- "parking_lot",
- "scc",
- "serial_test_derive",
-]
-
-[[package]]
-name = "serial_test_derive"
-version = "3.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a7d91949b85b0d2fb687445e448b40d322b6b3e4af6b44a29b21d9a5f33e6d9"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4349,6 +4309,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+ "sha2-asm",
+]
+
+[[package]]
+name = "sha2-asm"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -4447,12 +4417,6 @@ name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
-
-[[package]]
-name = "slab"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smallvec"

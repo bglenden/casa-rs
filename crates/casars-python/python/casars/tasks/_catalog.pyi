@@ -103,7 +103,7 @@ def msexplore(
 
 def calibrate(
     *,
-    mode: Literal['apply', 'continuum_subtract', 'export_corrected_data', 'fluxscale', 'gencal', 'solve_bandpass', 'solve_gain', 'stats', 'summary'] = ...,
+    mode: Literal['apply', 'export_corrected_data', 'fluxscale', 'gencal', 'solve_bandpass', 'solve_gain', 'stats', 'summary'] = ...,
     vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
     outputvis: StrPath = ...,
     summary_paths: str = ...,
@@ -121,9 +121,7 @@ def calibrate(
     format: Literal['json', 'text'] = ...,
     stats_axis: Literal['amp', 'imag', 'phase', 'real'] = ...,
     stats_datacolumn: str = ...,
-    fit_spw: str = ...,
     use_flags: bool = ...,
-    fit_order: int = ...,
     out_table: StrPath = ...,
     refant: str = ...,
     gain_type: Literal['g', 't'] = ...,
@@ -218,7 +216,7 @@ def imager(
     channel_start: int | Literal['none'] = ...,
     channel_count: int | Literal['none'] = ...,
     stokes: str = ...,
-    specmode: Literal['cube', 'cubedata', 'mfs'] = ...,
+    specmode: Literal['cube', 'cubedata', 'cubesource', 'mvc', 'mfs'] = ...,
     start: str = ...,
     width: int | Literal['none'] = ...,
     outframe: Literal['BARY', 'CMB', 'GALACTO', 'GEO', 'LGROUP', 'LSRD', 'LSRK', 'REST', 'TOPO', 'none'] = ...,
@@ -286,13 +284,16 @@ def imager(
     mosweight: bool = ...,
     normtype: Literal['flatnoise', 'flatsky', 'pbsquare'] = ...,
     imaging_memory_target_mb: int | Literal['none'] = ...,
-    imaging_memory_pressure_policy: Literal['auto', 'conservative-no-swap', 'aggressive', 'oversubscribe', 'stage-aware', 'hybrid'] = ...,
+    imaging_memory_pressure_policy: Literal['auto', 'conservative-no-swap', 'aggressive', 'oversubscribe'] = ...,
     imaging_prepare_buffer_mb: int | Literal['none'] = ...,
     imaging_row_block_rows: int | Literal['none'] = ...,
     imaging_prepare_workers: int | Literal['none'] = ...,
     imaging_fft_precision: Literal['auto', 'f32', 'f64'] = ...,
     projection: Literal['SIN'] = ...,
     standard_mfs_grid_threads: int | Literal['auto'] = ...,
+    fitspw: str = ...,
+    fitorder: int = ...,
+    save_continuum_residual: bool = ...,
     parameters: TaskParameters | None = ...,
     profile: StrPath | None = ... ,
     base_source: Literal["defaults", "last", "last_successful"] = ... ,
@@ -503,41 +504,6 @@ def split(
     msselect: str = ...,
     datacolumn: str = ...,
     keepflags: bool = ...,
-    parameters: TaskParameters | None = ...,
-    profile: StrPath | None = ... ,
-    base_source: Literal["defaults", "last", "last_successful"] = ... ,
-    workspace: StrPath | None = ... ,
-    notebook: str | None = ... ,
-    save_last: bool = ... ,
-    record_notebook: bool = ... ,
-    binary: StrPath | None = ... ,
-    check: bool = ... ,
-    timeout: float | None = ... ,
-    env: Mapping[str, str] | None = ... ,
-    confirm_overwrite: bool = ... ,
-    confirm_mutation: bool = ... ,
-) -> TaskCompletion:
-    ...
-
-def uvcontsub(
-    *,
-    vis: StrPath | list[StrPath] | tuple[StrPath, ...] = ...,
-    outputvis: StrPath = ...,
-    output: StrPath = ...,
-    overwrite: bool = ...,
-    format: Literal['json', 'text'] = ...,
-    stats_datacolumn: str = ...,
-    fit_spw: str = ...,
-    fit_order: int = ...,
-    selectdata: bool = ...,
-    field: str = ...,
-    spw: str = ...,
-    antenna: str = ...,
-    scan: str = ...,
-    observation: str = ...,
-    array: str = ...,
-    timerange: str = ...,
-    msselect: str = ...,
     parameters: TaskParameters | None = ...,
     profile: StrPath | None = ... ,
     base_source: Literal["defaults", "last", "last_successful"] = ... ,
@@ -1484,6 +1450,6 @@ def simalma(
 ) -> TaskCompletion:
     ...
 
-TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'uvcontsub', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma')
+TASK_SURFACES = ('msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma')
 
-__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'uvcontsub', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma']
+__all__ = ['TASK_SURFACES', 'msexplore', 'calibrate', 'importvla', 'imager', 'simobserve', 'imhead', 'imstat', 'immoments', 'exportfits', 'mstransform', 'split', 'applycal', 'gaincal', 'bandpass', 'fluxscale', 'gencal', 'plotms', 'plotcal', 'flagdata', 'flagmanager', 'imcollapse', 'imfit', 'impbcor', 'widebandpbcor', 'imcontsub', 'impv', 'imsubimage', 'immath', 'imregrid', 'feather', 'importfits', 'concat', 'statwt', 'hanningsmooth', 'clearcal', 'delmod', 'ft', 'simanalyze', 'simalma']

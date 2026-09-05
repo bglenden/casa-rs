@@ -24,13 +24,12 @@
     },
     {
       "id": "calibrate.mode",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "mode",
       "value_domain": {
         "kind": "choice",
         "values": [
           "apply",
-          "continuum_subtract",
           "export_corrected_data",
           "fluxscale",
           "gencal",
@@ -2989,7 +2988,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "CASA-style line-free channel selector for uvcontsub, e.g. 0:0~500;900~1919",
+        "summary": "CASA-style line-free channel selector for inline visibility-domain continuum subtraction, e.g. 0:0~500;900~1919",
         "details": null,
         "examples": []
       },
@@ -6839,6 +6838,28 @@
       "persistence_class": "profile"
     },
     {
+      "id": "parameter.save_continuum_residual",
+      "semantic_revision": 1,
+      "casa_name": "save_continuum_residual",
+      "value_domain": {
+        "kind": "bool"
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Overwrite output-role selected cells in an existing CORRECTED_DATA column in place",
+        "details": "Default false. Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged.",
+        "examples": [
+          "false"
+        ]
+      },
+      "persistence_class": "profile"
+    },
+    {
       "id": "parameter.savemodel",
       "semantic_revision": 1,
       "casa_name": "savemodel",
@@ -7463,13 +7484,15 @@
     },
     {
       "id": "parameter.specmode",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "specmode",
       "value_domain": {
         "kind": "choice",
         "values": [
           "cube",
           "cubedata",
+          "cubesource",
+          "mvc",
           "mfs"
         ]
       },
@@ -7480,10 +7503,12 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "MFS continuum imaging, cube with CASA Doppler/frame handling, or cubedata in the native data frame without Doppler correction",
+        "summary": "MFS continuum imaging; cube with CASA Doppler/frame handling; cubedata in the native data frame; cubesource tracked in the source rest frame; or MVC MT-MFS via a channel cube",
         "details": null,
         "examples": [
-          "mfs"
+          "mfs",
+          "cubesource",
+          "mvc"
         ]
       },
       "persistence_class": "profile"
@@ -9066,7 +9091,7 @@
     },
     {
       "id": "parameter.facets",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "facets",
       "value_domain": {
         "kind": "integer"
@@ -9083,9 +9108,10 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Number of wide-field image facets",
-        "details": "Unsupported facet layouts fail with a capability diagnostic instead of being reduced to one facet.",
+        "details": "Constant-basis MFS uses an exact regular facets-by-facets chart layout. Non-divisible geometry and unsupported spectral-basis combinations fail closed.",
         "examples": [
-          "1"
+          "1",
+          "2"
         ]
       },
       "persistence_class": "profile"
@@ -9119,7 +9145,7 @@
     },
     {
       "id": "parameter.imaging_memory_pressure_policy",
-      "semantic_revision": 1,
+      "semantic_revision": 2,
       "casa_name": "imaging_memory_pressure_policy",
       "value_domain": {
         "kind": "choice",
@@ -9127,9 +9153,7 @@
           "auto",
           "conservative-no-swap",
           "aggressive",
-          "oversubscribe",
-          "stage-aware",
-          "hybrid"
+          "oversubscribe"
         ]
       },
       "normalization": {
@@ -9139,13 +9163,12 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "Imaging memory-pressure and stage-residency policy",
-        "details": "auto is the safe resource-adaptive default and does not intentionally depend on swap. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit imaging_memory_target_mb. stage-aware and hybrid currently emit planner-probe evidence only; production execution rejects them until their requested release, spill/demotion, product-streaming, and next-use actions are implemented.",
+        "summary": "Imaging memory-pressure policy",
+        "details": "auto is the safe resource-adaptive default and does not intentionally depend on swap. conservative-no-swap and aggressive select bounded production admission behavior. oversubscribe is experimental and requires an explicit imaging_memory_target_mb.",
         "examples": [
           "auto",
           "conservative-no-swap",
-          "stage-aware",
-          "hybrid"
+          "oversubscribe"
         ]
       },
       "persistence_class": "profile"
@@ -9175,7 +9198,7 @@
       "semantic_role": "algorithm",
       "documentation": {
         "summary": "Optional shared imaging memory target in MiB",
-        "details": "none delegates the bounded choice to the immutable execution planner. With an explicit target, auto and conservative-no-swap cap the request to measured no-swap headroom when available, while aggressive caps it to the measured physical process ceiling. stage-aware and hybrid apply the corresponding caps only in planner probes until their requested runtime actions are implemented. Only oversubscribe retains a requested value beyond measured headroom, and it requires an explicit target. If the relevant host snapshot is unavailable, the explicit value is retained as the fallback.",
+        "details": "none delegates the bounded choice to the immutable execution planner. With an explicit target, auto and conservative-no-swap cap the request to measured no-swap headroom when available, while aggressive caps it to the measured physical process ceiling. Only oversubscribe retains a requested value beyond measured headroom, and it requires an explicit target. If the relevant host snapshot is unavailable, the explicit value is retained as the fallback.",
         "examples": [
           "none",
           "16384"
@@ -9320,7 +9343,7 @@
       "unit_dimension": null,
       "semantic_role": "algorithm",
       "documentation": {
-        "summary": "AWProject sensitivity normalization policy",
+        "summary": "Mosaic and AWProject sensitivity normalization policy",
         "details": null,
         "examples": [
           "flatnoise"

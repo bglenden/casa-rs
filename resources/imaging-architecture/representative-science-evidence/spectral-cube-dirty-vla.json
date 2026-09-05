@@ -1,0 +1,75 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "validity": true,
+      "wcs": true
+    },
+    "maximum_normalized_rms": 1.9687908802189238e-06,
+    "product_inventory": {
+      "observed": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "required": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    }
+  },
+  "contract_digest": "2c7b577d7352d04e5a038013b6374af4d45ef632b04b07d961a57f21ef85313a",
+  "dataset": {
+    "correlations": 2,
+    "identity_sha256": "1bf1f1c571681edfe1a5bdc73a66c99b9449be6b308fccefcbacc09ba0a1a3ea",
+    "image_shape": [
+      512,
+      512,
+      1,
+      24
+    ],
+    "selected_channels": 24,
+    "selected_rows": 130923,
+    "selected_samples": 6284304
+  },
+  "dimensions": [
+    "twenty_four_channels",
+    "spectral_sampling",
+    "cube_operator",
+    "bounded_residency",
+    "complete_products"
+  ],
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/issue607/cube-restfreq-fix/20260903T022101Z-issue607-standard-cube-dirty-representative-c578002f.comparison.json",
+      "role": "CASA oracle and production comparison",
+      "sha256": "31a759a76eefc768d731c8957bdb60ff9450fe56f48c7bd362de11972d7321c7"
+    }
+  ],
+  "mode": {
+    "specmode": "cube"
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "31a759a76eefc768d731c8957bdb60ff9450fe56f48c7bd362de11972d7321c7",
+    "kind": "casa"
+  },
+  "repository_evidence": [
+    "scripts/bench-imager-vs-casa.sh",
+    "tools/perf/imager/workloads/issue607-standard-cube-dirty-representative.json"
+  ],
+  "scenario_id": "spectral-cube-dirty-vla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "b809244e72611baefd928a06fd1cdea4bf2093c4",
+  "validity_rule": null
+}

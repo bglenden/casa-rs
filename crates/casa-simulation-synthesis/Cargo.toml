@@ -1,0 +1,18 @@
+[package]
+name = "casa-simulation-synthesis"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "CASA-compatible synthesis kernels used by MeasurementSet simulation"
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+casa-numerics = { path = "../casa-numerics" }
+ndarray.workspace = true
+num-complex.workspace = true
+rustfft.workspace = true
+thiserror.workspace = true

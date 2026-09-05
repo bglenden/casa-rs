@@ -1,0 +1,17 @@
+{
+  "receipt": {
+    "attempt_identity": "terminal-attempt",
+    "finished_unix_millis": 1787917068050,
+    "plan": {
+      "nodes": [
+        {
+          "actual_elapsed_nanos": 176846000000,
+          "node_id": "transaction-read-final-major-2",
+          "status": "completed"
+        }
+      ]
+    },
+    "started_unix_millis": 1787916891204,
+    "status": "completed"
+  }
+}

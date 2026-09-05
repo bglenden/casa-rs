@@ -23,6 +23,29 @@ SCIENTIFIC_BEAM_TOLERANCE_FIELDS = {
 }
 COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
 COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
+DIRECTION_WCS_FIELDS = (
+    "axes",
+    "cdelt",
+    "conversionSystem",
+    "crpix",
+    "crval",
+    "latpole",
+    "longpole",
+    "pc",
+    "projection",
+    "projection_parameters",
+    "system",
+    "units",
+)
+DIRECTION_AXIS_TOPOLOGY_FIELDS = (
+    "pixelmap0",
+    "pixelmap1",
+    "pixelmap2",
+    "worldmap0",
+    "worldmap1",
+    "worldmap2",
+)
+STOKES_WCS_FIELDS = ("axes", "cdelt", "crpix", "crval", "pc", "stokes")
 
 
 # Keep this module importable by the ordinary Python test runner.  The
@@ -85,7 +108,9 @@ def main():
                 panel_displays.get(suffix),
                 mode=request["mode"],
                 full_chunk_elements=request["full_chunk_elements"],
+                require_direction_wcs_parity=request["require_direction_wcs_parity"],
                 require_metadata_parity=request["require_metadata_parity"],
+                metadata_contract=request.get("metadata_contract"),
                 allow_scientific_beam_equivalence=(allow_scientific_beam_equivalence),
                 allow_bounded_mask_topology=has_bounded_mask_topology_contract(
                     request.get("tolerances"), suffix
@@ -131,6 +156,7 @@ def main():
         "right_label": request["right_label"],
         "requested_products": request["products"],
         "require_exact_product_inventory": request["require_exact_product_inventory"],
+        "require_direction_wcs_parity": request["require_direction_wcs_parity"],
         "require_metadata_parity": request["require_metadata_parity"],
         "legacy_operand_aliases": request["legacy_operand_aliases"],
         "source_regions": request["source_regions"],
@@ -142,6 +168,8 @@ def main():
         "products": products,
         "structured_difference_review": summarize_product_reviews(products),
     }
+    if "metadata_contract" in request:
+        output["metadata_contract"] = request["metadata_contract"]
     with open(sys.argv[2], "w", encoding="utf-8") as handle:
         json.dump(output, handle, indent=2, sort_keys=True)
         handle.write("\n")
@@ -170,6 +198,7 @@ def normalized_request(request):
         "max_elements_per_product",
         "full_chunk_elements",
         "require_exact_product_inventory",
+        "require_direction_wcs_parity",
         "require_metadata_parity",
         "legacy_operand_aliases",
         "source_regions",
@@ -179,6 +208,8 @@ def normalized_request(request):
         "request_binding",
         "request_sha256",
     }
+    if "metadata_contract" in request:
+        expected_fields.add("metadata_contract")
     if set(request) != expected_fields:
         missing = sorted(expected_fields - set(request))
         unknown = sorted(set(request) - expected_fields)
@@ -218,7 +249,11 @@ def normalized_request(request):
         )
     ):
         raise ValueError("image comparator products must be a non-empty suffix list")
-    for key in ("require_exact_product_inventory", "require_metadata_parity"):
+    for key in (
+        "require_exact_product_inventory",
+        "require_direction_wcs_parity",
+        "require_metadata_parity",
+    ):
         if not isinstance(request.get(key), bool):
             raise ValueError(f"image comparator {key} must be a boolean")
     if not isinstance(request.get("legacy_operand_aliases"), bool):
@@ -249,11 +284,18 @@ def normalized_request(request):
             "require_exact_product_inventory": request[
                 "require_exact_product_inventory"
             ],
+            "require_direction_wcs_parity": request["require_direction_wcs_parity"],
             "require_metadata_parity": request["require_metadata_parity"],
             "legacy_operand_aliases": request["legacy_operand_aliases"],
             "source_regions": source_regions,
         }
     )
+    metadata_contract = request.get("metadata_contract")
+    if metadata_contract is not None:
+        _, normalize_contract = metadata_contract_functions()
+        metadata_contract = normalize_contract(metadata_contract, products=products)
+    if metadata_contract is not None:
+        normalized["metadata_contract"] = metadata_contract
     binding = comparison_request_binding(normalized)
     if request.get("request_binding") != binding:
         raise ValueError(
@@ -281,6 +323,7 @@ def comparison_request_binding(request):
         "max_elements_per_product",
         "full_chunk_elements",
         "require_exact_product_inventory",
+        "require_direction_wcs_parity",
         "require_metadata_parity",
         "legacy_operand_aliases",
         "source_regions",
@@ -288,7 +331,10 @@ def comparison_request_binding(request):
         "panel_dir",
         "structure_workspace_dir",
     )
-    return {field: request[field] for field in fields}
+    binding = {field: request[field] for field in fields}
+    if "metadata_contract" in request:
+        binding["metadata_contract"] = request["metadata_contract"]
+    return binding
 
 
 def canonical_sha256(value):
@@ -609,7 +655,9 @@ def compare_one(
     panel_display=None,
     mode="sampled",
     full_chunk_elements=1_000_000,
+    require_direction_wcs_parity=False,
     require_metadata_parity=False,
+    metadata_contract=None,
     allow_scientific_beam_equivalence=False,
     allow_bounded_mask_topology=False,
     source_regions=None,
@@ -621,31 +669,43 @@ def compare_one(
     left_path = rust_path
     right_path = casa_path
     if not os.path.isdir(left_path) or not os.path.isdir(right_path):
-        return {
+        result = {
             "status": "missing",
             "left_path": left_path,
             "right_path": right_path,
             "left_exists": os.path.isdir(left_path),
             "right_exists": os.path.isdir(right_path),
-            "rust_path": left_path,
-            "casa_path": right_path,
-            "rust_exists": os.path.isdir(left_path),
-            "casa_exists": os.path.isdir(right_path),
         }
+        if legacy_operand_aliases:
+            result.update(
+                {
+                    "rust_path": left_path,
+                    "casa_path": right_path,
+                    "rust_exists": result["left_exists"],
+                    "casa_exists": result["right_exists"],
+                }
+            )
+        return result
     left = load_image(left_path, max_elements)
     right = load_image(right_path, max_elements)
     if left["shape"] != right["shape"]:
-        return {
+        result = {
             "status": "shape_mismatch",
             "left_path": left_path,
             "right_path": right_path,
             "left_shape": left["shape"],
             "right_shape": right["shape"],
-            "rust_path": left_path,
-            "casa_path": right_path,
-            "rust_shape": left["shape"],
-            "casa_shape": right["shape"],
         }
+        if legacy_operand_aliases:
+            result.update(
+                {
+                    "rust_path": left_path,
+                    "casa_path": right_path,
+                    "rust_shape": left["shape"],
+                    "casa_shape": right["shape"],
+                }
+            )
+        return result
     left_data = left["data"]
     right_data = right["data"]
     mask = np.isfinite(left_data) & np.isfinite(right_data)
@@ -735,20 +795,52 @@ def compare_one(
         panel_arguments["right_label"] = right_label
     panel = write_review_panel(**panel_arguments)
 
+    metadata_required = require_metadata_parity or metadata_contract is not None
+    metadata_captured = (
+        metadata_required or allow_scientific_beam_equivalence or source_regions
+    )
     metadata = (
-        compare_image_metadata(left_path, right_path)
-        if require_metadata_parity
+        compare_image_metadata(
+            left_path,
+            right_path,
+            contract=metadata_contract,
+            suffix=suffix,
+        )
+        if metadata_captured
         else {"status": "not_required", "parity": None}
     )
-    metadata_mismatch = require_metadata_parity and not (
+    metadata_mismatch = metadata_required and not (
         metadata["status"] == "matched"
         or (
-            allow_scientific_beam_equivalence
+            metadata_contract is None
+            and allow_scientific_beam_equivalence
             and is_restoring_beam_only_metadata_mismatch(metadata)
         )
+        or documented_casa_metadata_omission_is_satisfied(
+            metadata,
+            suffix,
+            left_label,
+            right_label,
+            allow_scientific_beam_equivalence,
+        )
+    )
+    direction_wcs = (
+        compare_direction_wcs(left_path, right_path)
+        if require_direction_wcs_parity
+        else None
+    )
+    direction_wcs_mismatch = require_direction_wcs_parity and not (
+        direction_wcs["status"] == "matched"
+    )
+    status = (
+        "direction_wcs_mismatch"
+        if direction_wcs_mismatch
+        else "metadata_mismatch"
+        if metadata_mismatch
+        else "compared"
     )
     result = {
-        "status": "metadata_mismatch" if metadata_mismatch else "compared",
+        "status": status,
         "comparison_mode": mode,
         "left_label": left_label,
         "right_label": right_label,
@@ -777,10 +869,17 @@ def compare_one(
         "right_peak_abs": right_peak_summary,
         "diff_peak_abs": diff_peak,
         "metadata": metadata,
-        "metadata_parity_required": bool(require_metadata_parity),
+        "metadata_parity_required": bool(metadata_required),
         "structured_difference": structure,
         "review_panel": panel,
     }
+    if require_direction_wcs_parity:
+        result.update(
+            {
+                "direction_wcs_parity_required": True,
+                "direction_wcs": direction_wcs,
+            }
+        )
     # Existing ledger and report readers still consume the historical names.
     if legacy_operand_aliases:
         result.update(
@@ -894,6 +993,8 @@ def compare_one(
                 result["source_regions"] = []
                 result["source_region_failure"] = str(error)
                 result["status"] = "source_region_failed"
+    if direction_wcs_mismatch:
+        result["status"] = "direction_wcs_mismatch"
     return result
 
 
@@ -937,9 +1038,113 @@ def compare_source_regions(
                 image_factory=image_factory,
                 beam_area_pixels=right_beam_area_pixels,
             ),
+            "difference": source_region_difference(
+                left_path,
+                right_path,
+                region["blc"],
+                region["trc"],
+                max_elements=max_elements,
+                image_factory=image_factory,
+            ),
         }
         for region in regions
     ]
+
+
+def source_region_difference(
+    left_path,
+    right_path,
+    blc_xy,
+    trc_xy,
+    max_elements,
+    image_factory=None,
+):
+    """Compare a frozen source box on the documented central display plane."""
+
+    if max_elements < 1:
+        raise ValueError("source-region chunk budget must be >= 1")
+    left_tool = new_image_tool(image_factory)
+    right_tool = new_image_tool(image_factory)
+    left_tool.open(left_path)
+    right_tool.open(right_path)
+    try:
+        left_shape = [int(value) for value in left_tool.shape()]
+        right_shape = [int(value) for value in right_tool.shape()]
+        if left_shape != right_shape:
+            raise ValueError(
+                f"source-region images have different shapes: {left_shape} != {right_shape}"
+            )
+        if len(left_shape) < 2:
+            raise ValueError("source region requires at least two image axes")
+        if trc_xy[0] >= left_shape[0] or trc_xy[1] >= left_shape[1]:
+            raise ValueError(
+                f"source region is outside image shape {left_shape}: {blc_xy}..{trc_xy}"
+            )
+        other_axes = display_plane_bounds(left_shape)[0][2:]
+        y_count = trc_xy[1] - blc_xy[1] + 1
+        y_chunk = min(y_count, max_elements)
+        x_chunk = max(1, max_elements // y_chunk)
+        right_squares = []
+        difference_squares = []
+        count = 0
+        chunks = 0
+        for x_start in range(blc_xy[0], trc_xy[0] + 1, x_chunk):
+            x_end = min(trc_xy[0], x_start + x_chunk - 1)
+            for y_start in range(blc_xy[1], trc_xy[1] + 1, y_chunk):
+                y_end = min(trc_xy[1], y_start + y_chunk - 1)
+                blc = [x_start, y_start, *other_axes]
+                trc = [x_end, y_end, *other_axes]
+                inc = [1] * len(left_shape)
+                left = np.asarray(
+                    left_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=False
+                    ),
+                    dtype=np.float64,
+                )
+                right = np.asarray(
+                    right_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=False
+                    ),
+                    dtype=np.float64,
+                )
+                left_mask = np.asarray(
+                    left_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=True
+                    ),
+                    dtype=bool,
+                )
+                right_mask = np.asarray(
+                    right_tool.getchunk(
+                        blc=blc, trc=trc, inc=inc, dropdeg=False, getmask=True
+                    ),
+                    dtype=bool,
+                )
+                valid = left_mask & right_mask & np.isfinite(left) & np.isfinite(right)
+                if np.any(valid):
+                    left_values = left[valid]
+                    right_values = right[valid]
+                    differences = left_values - right_values
+                    count += int(right_values.size)
+                    right_squares.extend(float(value) for value in right_values**2)
+                    difference_squares.extend(float(value) for value in differences**2)
+                chunks += 1
+        right_rms = math.sqrt(math.fsum(right_squares) / count) if count else None
+        difference_rms = (
+            math.sqrt(math.fsum(difference_squares) / count) if count else None
+        )
+        ratio = relative_difference_ratio(difference_rms, right_rms)
+        return {
+            "status": "measured" if count else "no_finite_overlap",
+            "finite_unmasked_count": count,
+            "right_rms": finite_float(right_rms),
+            "difference_rms": finite_float(difference_rms),
+            "diff_rms_over_right_rms": finite_float(ratio),
+            "chunks": chunks,
+            "max_chunk_elements": max_elements,
+        }
+    finally:
+        left_tool.close()
+        right_tool.close()
 
 
 def source_region_statistics(
@@ -950,6 +1155,8 @@ def source_region_statistics(
     image_factory=None,
     beam_area_pixels=None,
 ):
+    """Measure a frozen source box on the documented central display plane."""
+
     if max_elements < 1:
         raise ValueError("source-region chunk budget must be >= 1")
     tool = new_image_tool(image_factory)
@@ -962,7 +1169,7 @@ def source_region_statistics(
             raise ValueError(
                 f"source region is outside image shape {shape}: {blc_xy}..{trc_xy}"
             )
-        other_axes = [0] * (len(shape) - 2)
+        other_axes = display_plane_bounds(shape)[0][2:]
         y_count = trc_xy[1] - blc_xy[1] + 1
         y_chunk = min(y_count, max_elements)
         x_chunk = max(1, max_elements // y_chunk)
@@ -1210,7 +1417,9 @@ def image_metadata(path, image_factory=None):
     }
 
 
-def compare_image_metadata(left_path, right_path, image_factory=None):
+def compare_image_metadata(
+    left_path, right_path, image_factory=None, *, contract=None, suffix=None
+):
     try:
         left = image_metadata(left_path, image_factory=image_factory)
         right = image_metadata(right_path, image_factory=image_factory)
@@ -1220,15 +1429,19 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
             "reason": str(error),
             "parity": False,
         }
-    fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
-    parity = {
-        name: (
-            coordinate_records_equivalent(left.get(name), right.get(name))
-            if name == "coordinates"
-            else left.get(name) == right.get(name)
-        )
-        for name in fields
-    }
+    if contract is not None:
+        field_parity, _ = metadata_contract_functions()
+        parity = field_parity(left, right, suffix=suffix, contract=contract)
+    else:
+        fields = ("shape", "unit", "coordinates", "restoring_beam", "masks")
+        parity = {
+            name: (
+                coordinate_records_equivalent(left.get(name), right.get(name))
+                if name == "coordinates"
+                else left.get(name) == right.get(name)
+            )
+            for name in fields
+        }
     complete = left["status"] == "complete" and right["status"] == "complete"
     return {
         "status": "matched" if complete and all(parity.values()) else "mismatch",
@@ -1236,6 +1449,113 @@ def compare_image_metadata(left_path, right_path, image_factory=None):
         "field_parity": parity,
         "left": left,
         "right": right,
+    }
+
+
+def metadata_contract_functions():
+    try:
+        from .metadata_contract import (
+            metadata_field_parity,
+            normalize_metadata_contract,
+        )
+    except ImportError:
+        from metadata_contract import metadata_field_parity, normalize_metadata_contract
+    return metadata_field_parity, normalize_metadata_contract
+
+
+def compare_direction_wcs(left_path, right_path, image_factory=None):
+    """Compare only direction geometry and the image-axis mapping contract."""
+
+    try:
+        left = direction_wcs_projection(
+            image_metadata(left_path, image_factory=image_factory)
+        )
+        right = direction_wcs_projection(
+            image_metadata(right_path, image_factory=image_factory)
+        )
+    except Exception as error:
+        return {
+            "status": "unavailable",
+            "reason": str(error),
+            "parity": False,
+        }
+    field_parity = {
+        "shape": left["shape"] == right["shape"],
+        "direction": coordinate_records_equivalent(
+            left["direction"], right["direction"]
+        ),
+        "axis_topology": left["axis_topology"] == right["axis_topology"],
+        "stokes": coordinate_records_equivalent(left["stokes"], right["stokes"]),
+        "spectral_axis": left["spectral_axis"] == right["spectral_axis"],
+    }
+    parity = (
+        left["status"] == "complete"
+        and right["status"] == "complete"
+        and all(field_parity.values())
+    )
+    return {
+        "status": "matched" if parity else "mismatch",
+        "parity": parity,
+        "field_parity": field_parity,
+        "left": left,
+        "right": right,
+    }
+
+
+def direction_wcs_projection(metadata):
+    coordinates = metadata.get("coordinates")
+    if not isinstance(coordinates, dict):
+        coordinates = {}
+    direction_record = coordinates.get("direction0")
+    if not isinstance(direction_record, dict):
+        direction_record = {}
+    stokes_record = coordinates.get("stokes1")
+    if not isinstance(stokes_record, dict):
+        stokes_record = {}
+    spectral_record = coordinates.get("spectral2")
+    if not isinstance(spectral_record, dict):
+        spectral_record = {}
+    spectral_conversion = spectral_record.get("conversion")
+    if not isinstance(spectral_conversion, dict):
+        spectral_conversion = {}
+    spectral_wcs = spectral_record.get("wcs")
+    if not isinstance(spectral_wcs, dict):
+        spectral_wcs = {}
+
+    shape = metadata.get("shape")
+    direction = {field: direction_record.get(field) for field in DIRECTION_WCS_FIELDS}
+    axis_topology = {
+        field: coordinates.get(field) for field in DIRECTION_AXIS_TOPOLOGY_FIELDS
+    }
+    stokes = {field: stokes_record.get(field) for field in STOKES_WCS_FIELDS}
+    spectral_axis = {
+        "record": "spectral2" if spectral_record else None,
+        "name": spectral_record.get("name"),
+        "system": spectral_record.get("system"),
+        "conversion_system": spectral_conversion.get("system"),
+        "unit": spectral_record.get("unit"),
+        "wcs_type": spectral_wcs.get("ctype"),
+    }
+    missing_fields = []
+    if shape is None:
+        missing_fields.append("shape")
+    for section, values in (
+        ("direction", direction),
+        ("axis_topology", axis_topology),
+        ("stokes", stokes),
+        ("spectral_axis", spectral_axis),
+    ):
+        missing_fields.extend(
+            f"{section}.{field}" for field, value in values.items() if value is None
+        )
+    return {
+        "status": "complete" if not missing_fields else "incomplete",
+        "shape": shape,
+        "direction": direction,
+        "axis_topology": axis_topology,
+        "stokes": stokes,
+        "spectral_axis": spectral_axis,
+        "missing_fields": missing_fields,
     }
 
 
@@ -1315,6 +1635,74 @@ def is_restoring_beam_only_metadata_mismatch(metadata):
         "restoring_beam": False,
         "masks": True,
     }
+
+
+def documented_casa_metadata_omission_is_satisfied(
+    metadata,
+    suffix,
+    left_label,
+    right_label,
+    allow_scientific_beam_equivalence,
+):
+    """Accept only CASA's established PSF/residual metadata omissions."""
+
+    kind = documented_casa_metadata_omission_kind(
+        metadata, suffix, left_label, right_label
+    )
+    return kind == "psf_unit" or (
+        allow_scientific_beam_equivalence
+        and kind in {"psf_unit_and_beam_roundoff", "residual_unit_and_beam"}
+    )
+
+
+def documented_casa_metadata_omission_kind(metadata, suffix, left_label, right_label):
+    if (
+        left_label != "casa-rs"
+        or right_label != "CASA"
+        or not isinstance(metadata, dict)
+        or metadata.get("status") != "mismatch"
+    ):
+        return None
+    left = metadata.get("left")
+    right = metadata.get("right")
+    parity = metadata.get("field_parity")
+    if (
+        not isinstance(left, dict)
+        or not isinstance(right, dict)
+        or left.get("status") != "complete"
+        or right.get("status") != "complete"
+        or left.get("unit") != "Jy/beam"
+        or right.get("unit") != ""
+        or not isinstance(parity, dict)
+        or parity.get("shape") is not True
+        or parity.get("unit") is not False
+        or parity.get("coordinates") is not True
+        or parity.get("masks") is not True
+    ):
+        return None
+    left_beam = left.get("restoring_beam")
+    right_beam = right.get("restoring_beam")
+    if suffix == ".psf" or suffix.startswith(".psf."):
+        if not isinstance(left_beam, dict) or not left_beam:
+            return None
+        if not isinstance(right_beam, dict) or not right_beam:
+            return None
+        return (
+            "psf_unit"
+            if parity.get("restoring_beam") is True
+            else "psf_unit_and_beam_roundoff"
+            if parity.get("restoring_beam") is False
+            else None
+        )
+    if suffix == ".residual" or suffix.startswith(".residual."):
+        if (
+            isinstance(left_beam, dict)
+            and left_beam
+            and right_beam == {}
+            and parity.get("restoring_beam") is False
+        ):
+            return "residual_unit_and_beam"
+    return None
 
 
 def full_chunk_shape(shape, max_elements):
@@ -1646,8 +2034,8 @@ class FullArrayReducer:
         self.right_masked += int(right.size - np.count_nonzero(right_mask))
         mask_mismatch = left_mask != right_mask
         self.mask_mismatch += int(np.count_nonzero(mask_mismatch))
-        remaining_sample_capacity = (
-            self.MASK_MISMATCH_SAMPLE_LIMIT - len(self.mask_mismatch_samples)
+        remaining_sample_capacity = self.MASK_MISMATCH_SAMPLE_LIMIT - len(
+            self.mask_mismatch_samples
         )
         if remaining_sample_capacity > 0 and np.any(mask_mismatch):
             for local_location in np.argwhere(mask_mismatch)[

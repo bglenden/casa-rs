@@ -232,7 +232,7 @@ package enum PrototypeScientificNotebookFixtureAdapter {
         format = 1
         surface = "imager"
         kind = "task"
-        contract = 1
+        contract = 15
 
         [parameters]
         vis = "data/twhya_calibrated.ms"
@@ -253,7 +253,7 @@ package enum PrototypeScientificNotebookFixtureAdapter {
             taskID: "imager",
             title: "Create TW Hya MFS image",
             annotation: "Use the calibrated continuum data for a reproducible reference image.",
-            contractVersion: 1,
+            contractVersion: 15,
             sparseProfileTOML: imagerProfile,
             parameterRows: imagerRows,
             revisions: [
@@ -313,7 +313,7 @@ package enum PrototypeScientificNotebookFixtureAdapter {
             taskID: "imager",
             title: "Try alternate robust weighting",
             annotation: "Compare resolution and sensitivity after the reference image is accepted.",
-            contractVersion: 1,
+            contractVersion: 15,
             sparseProfileTOML: imagerProfile + "\nrobust = -0.5",
             parameterRows: imagerRows + [
                 PrototypeNotebookParameterRow(parameterID: "robust", label: "Robust", value: "-0.5")

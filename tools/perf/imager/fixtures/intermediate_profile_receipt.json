@@ -1,0 +1,22 @@
+{
+  "receipt": {
+    "attempt_identity": "intermediate-attempt",
+    "finished_unix_millis": 1787916891229,
+    "plan": {
+      "nodes": [
+        {
+          "actual_elapsed_nanos": 152843308875,
+          "node_id": "transaction-read-final-major-1",
+          "status": "completed"
+        },
+        {
+          "actual_elapsed_nanos": 98164792,
+          "node_id": "spectral-cycle-minor-cycle",
+          "status": "completed"
+        }
+      ]
+    },
+    "started_unix_millis": 1787916738204,
+    "status": "completed"
+  }
+}

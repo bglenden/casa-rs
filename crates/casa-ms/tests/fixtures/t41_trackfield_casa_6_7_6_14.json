@@ -1,0 +1,59 @@
+{
+  "schema": "casa-rs-t41-trackfield-direction-oracle-v1",
+  "casa_version": "6.7.6-14",
+  "measurement_set": "/tmp/t41-alma-ephemobj-icrs.ms",
+  "casatestdata_dataset": "measurementset/alma/alma_ephemobj_icrs.ms",
+  "measurement_set_table_dat_sha256": "45c74d6f940e0c7cfbaa3b6237eb66220ddee8325240fa572cc4a237c4ea0b0b",
+  "ephemeris_table_dat_sha256": "7568eaf52b478e5019d42ec5485a61cf2b4786bf00bee2bb4681d97390dbe511",
+  "selection": {
+    "field_id": 1,
+    "spectral_window_id": 0,
+    "data_description_ids": [0],
+    "selected_main_rows": 1620,
+    "unique_row_times": 60
+  },
+  "frame": {
+    "time_reference": "UTC",
+    "observatory": "ALMA",
+    "attached_ephemeris": "EPHEM0_Uranus_57362.91000000.tab",
+    "ephemeris_id": 0,
+    "field_direction_reference": "ICRS",
+    "field_reference_offset_rad": [0.0, 0.0],
+    "field_phase_offset_rad": [0.0, 0.0],
+    "conversion": "COMET -> AZEL -> J2000"
+  },
+  "source": {
+    "casa_source_revision": "61020062cee290f5466cffed5ec5032e0c7a3434",
+    "casacore_source_revision": "3dd6f3f23417b9cf42314f8967fc84d0dd29dc49",
+    "visbuffer": "casatools/src/code/msvis/MSVis/VisBufferUtil.cc:getEphemBasedPhaseDir",
+    "field": "casacore/ms/MeasurementSets/MSFieldColumns.cc:extractDirMeas",
+    "comet": "casacore/measures/Measures/MeasComet.cc:get",
+    "frame": "casacore/measures/Measures/MCFrame.cc:getComet"
+  },
+  "samples": [
+    {
+      "label": "first",
+      "physical_row": 11880,
+      "time_mjd_seconds": 4956163407.167999,
+      "time_mjd_days": 57363.00239777777,
+      "j2000_longitude_rad": 0.26956877506088717,
+      "j2000_latitude_rad": 0.10265823157895348
+    },
+    {
+      "label": "middle",
+      "physical_row": 12960,
+      "time_mjd_seconds": 4956163454.64,
+      "time_mjd_days": 57363.00294722222,
+      "j2000_longitude_rad": 0.2695686234534925,
+      "j2000_latitude_rad": 0.1026581780697825
+    },
+    {
+      "label": "last",
+      "physical_row": 14265,
+      "time_mjd_seconds": 4956163746.96,
+      "time_mjd_days": 57363.00633055556,
+      "j2000_longitude_rad": 0.2695676899869585,
+      "j2000_latitude_rad": 0.1026578485131003
+    }
+  ]
+}

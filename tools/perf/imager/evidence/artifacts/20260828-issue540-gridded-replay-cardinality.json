@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "record_kind": "issue540_gridded_replay_cardinality_discriminator",
+  "truth_class": "recorded_observation",
+  "work_issue": 540,
+  "source_head_revision": "d36e9de325ed85a370781660d8b79bbeebc9c872",
+  "working_tree_modified": true,
+  "dataset": "wave1/vla/single/medium/ms/wave1-vla-single-medium.ms",
+  "shape": {
+    "selected_rows": 263250,
+    "selected_samples": 33696000,
+    "selected_channels": 64,
+    "image_pixels": [1024, 1024],
+    "workers": 1,
+    "partitions_per_block": 1
+  },
+  "source_capture": {
+    "blocks": 6,
+    "logical_bytes": 330905250,
+    "read_operations": 114,
+    "current_bytes": 375131250,
+    "capacity_bytes": 378169650,
+    "capture_ms": 1378.5615
+  },
+  "replay": {
+    "weighted_blocks": 8227,
+    "predicted_samples": 33696000,
+    "wall_ms": 8231.763416,
+    "probe_ms": 665.711312,
+    "wall_without_probe_ms": 7566.052104,
+    "operator_consume_ms": 2749.513358,
+    "projection_spectral_weighting_ms": 4816.538746,
+    "operator_finish_ms": 29.745083
+  },
+  "matched_apply_gate": {
+    "baseline_before_ms": 7566.052104,
+    "baseline_after_ms": 7589.027756,
+    "baseline_mean_ms": 7577.53993,
+    "baseline_spread_percent": 0.3032072705950106,
+    "candidate_stream_apply_ms": 3129.804292,
+    "candidate_improvement_percent": 58.69630089827849,
+    "candidate_output_sha256": "0085232af6f230b41cf0a31958d90051a290ca1c3d0bbf93acfc092ccaea11d8",
+    "full_sample_scale": 15.552,
+    "projected_later_replay_seconds": 48.674716349184,
+    "projected_savings_per_later_replay_seconds": 69.171184642176,
+    "projected_ten_replay_savings_seconds": 691.71184642176,
+    "projection_limit": "Linear scaling from six distributed windows; production implementation and a complete frozen workload remain required."
+  },
+  "gridded_replay": {
+    "representation": "tap-span-key-plus-f64-coefficient",
+    "record_bytes": 16,
+    "raw_contributions": 29169920,
+    "contributing_blocks": 8137,
+    "block_reduced_records": 14520468,
+    "block_reduction_ratio": 2.00888290928364,
+    "estimated_global_records": 13359087,
+    "estimated_global_reduction_ratio": 2.1835264640465324,
+    "hll_precision": 18,
+    "hll_resident_bytes": 262144,
+    "captured_block_reduced_bytes": 232327488,
+    "captured_estimated_global_bytes": 213745392,
+    "projected_full_block_reduced_records": 225822319,
+    "projected_full_block_reduced_bytes": 3613157104,
+    "projection_method": "linear extrapolation from six distributed row windows; not a full MeasurementSet traversal",
+    "artifact": {
+      "path": "/Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/issue540-gridded-replay-window.bin",
+      "records": 14520468,
+      "bytes": 232327488,
+      "write_ms": 29.24233,
+      "sequential_read_bytes": 232327488,
+      "sequential_read_ms": 100.900833,
+      "sha256": "b1ddc21c586122d62bc362e30404e3986eaac8fe6a454d15f34c72d31dc5213c"
+    }
+  },
+  "scientific_guard": {
+    "normal_state_identity": "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91",
+    "expected_identity_matched": true,
+    "selected_generation_proof_bytes": 0,
+    "weighting_coverage_proof_bytes": 0,
+    "operator_coverage_proof_bytes": 0
+  },
+  "interpretation": {
+    "status": "experimental_apply_gate_passed_production_migration_pending",
+    "finding": "A deterministically sorted block-local gridded replay record removes just over half of scalar correlation records in six distributed real-shaped windows. The 232327488-byte artifact was written and read sequentially with a matching SHA-256. Streaming grouped application took 3.129804 seconds between stable 7.566052- and 7.589028-second current-path baselines, a 58.70 percent point improvement. Linear extrapolation projects a 3.61 GB full artifact and 48.67-second later replay; these remain projections, not full-MeasurementSet measurements.",
+    "not_yet_proven": [
+      "full-MeasurementSet artifact size and peak residency",
+      "end-to-end later-replay wall reduction on the exact full workload",
+      "product-level normalized RMS at or below 0.001 after production migration"
+    ]
+  }
+}

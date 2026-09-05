@@ -16,6 +16,7 @@ casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
 casa-logging = { path = "../casa-logging" }
 casa-ms = { path = "../casa-ms" }
+casa-numerics = { path = "../casa-numerics" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
 ndarray.workspace = true

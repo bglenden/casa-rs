@@ -685,6 +685,18 @@ impl RecordValue {
         self.fields.is_empty()
     }
 
+    /// Return the checked logical heap bytes owned by this record.
+    ///
+    /// This hidden support API is used by bounded resource owners that retain
+    /// parsed casacore metadata. It charges vector capacity, string capacity,
+    /// ndarray element storage, and dynamic shape/stride words exactly once;
+    /// allocator headers and implementation-specific collection control bytes
+    /// are outside the projection.
+    #[doc(hidden)]
+    pub fn retained_heap_bytes(&self) -> Option<usize> {
+        record_retained_heap_bytes(self)
+    }
+
     /// Returns a shared reference to the value of the first field named `name`.
     ///
     /// Returns `None` if no field with that name exists. If duplicate field
@@ -833,6 +845,54 @@ impl Value {
             _ => None,
         }
     }
+}
+
+fn record_retained_heap_bytes(record: &RecordValue) -> Option<usize> {
+    let mut bytes = record
+        .fields
+        .capacity()
+        .checked_mul(size_of::<RecordField>())?;
+    for field in &record.fields {
+        bytes = bytes
+            .checked_add(field.name.capacity())?
+            .checked_add(value_retained_heap_bytes(&field.value)?)?;
+    }
+    Some(bytes)
+}
+
+fn value_retained_heap_bytes(value: &Value) -> Option<usize> {
+    match value {
+        Value::Scalar(ScalarValue::String(value)) | Value::TableRef(value) => {
+            Some(value.capacity())
+        }
+        Value::Scalar(_) => Some(0),
+        Value::Array(value) => array_retained_heap_bytes(value),
+        Value::Record(value) => record_retained_heap_bytes(value),
+    }
+}
+
+fn array_retained_heap_bytes(value: &ArrayValue) -> Option<usize> {
+    let dimensions = value.ndim().checked_mul(2 * size_of::<usize>())?;
+    let payload = match value {
+        ArrayValue::Bool(values) => values.len().checked_mul(size_of::<bool>())?,
+        ArrayValue::UInt8(values) => values.len().checked_mul(size_of::<u8>())?,
+        ArrayValue::UInt16(values) => values.len().checked_mul(size_of::<u16>())?,
+        ArrayValue::UInt32(values) => values.len().checked_mul(size_of::<u32>())?,
+        ArrayValue::Int16(values) => values.len().checked_mul(size_of::<i16>())?,
+        ArrayValue::Int32(values) => values.len().checked_mul(size_of::<i32>())?,
+        ArrayValue::Int64(values) => values.len().checked_mul(size_of::<i64>())?,
+        ArrayValue::Float32(values) => values.len().checked_mul(size_of::<f32>())?,
+        ArrayValue::Float64(values) => values.len().checked_mul(size_of::<f64>())?,
+        ArrayValue::Complex32(values) => values.len().checked_mul(size_of::<Complex32>())?,
+        ArrayValue::Complex64(values) => values.len().checked_mul(size_of::<Complex64>())?,
+        ArrayValue::String(values) => {
+            let inline = values.len().checked_mul(size_of::<String>())?;
+            values
+                .iter()
+                .try_fold(inline, |bytes, value| bytes.checked_add(value.capacity()))?
+        }
+    };
+    payload.checked_add(dimensions)
 }
 
 impl From<ScalarValue> for Value {

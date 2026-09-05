@@ -31,7 +31,10 @@ use casa_types::{
 };
 use ndarray::{ArrayD, IxDyn, ShapeBuilder};
 
-use crate::table::{SelectedArray1D, SelectedArray1DCells, SelectedArray2D, SelectedArray2DCells};
+use crate::table::{
+    SelectedArray1D, SelectedArray1DCells, SelectedArray1DCellsMut, SelectedArray1DShape,
+    SelectedArray2D, SelectedArray2DCells, SelectedArray2DCellsMut, SelectedArray2DShape,
+};
 
 /// Maximum number of dimensions supported by stack-allocated arrays in
 /// tile iteration loops.  casacore images are at most 5-D.
@@ -446,6 +449,191 @@ enum TiledVariant {
         cube_map: Vec<u32>,
         pos_map: Vec<u32>,
     },
+}
+
+#[derive(Clone, Debug)]
+struct TiledReadHeader {
+    variant: TiledVariant,
+    header: TiledStManHeader,
+}
+
+/// Immutable tiled-manager metadata retained for the lifetime of one open table.
+///
+/// The metadata is local to the table capability and contains exactly one
+/// parsed header per tiled data manager. It deliberately does not retain tile
+/// payloads or participate in the process-wide tile cache, and it cannot grow
+/// after table-open admission.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TiledReadMetadata {
+    headers: HashMap<u32, TiledReadHeader>,
+}
+
+impl TiledReadMetadata {
+    pub(crate) fn open(
+        table_path: &Path,
+        data_managers: &[DataManagerEntry],
+    ) -> Result<Self, StorageError> {
+        let tiled_manager_count = data_managers
+            .iter()
+            .filter(|manager| is_tiled_manager(&manager.type_name))
+            .count();
+        let mut headers = HashMap::with_capacity(tiled_manager_count);
+        for manager in data_managers
+            .iter()
+            .filter(|manager| is_tiled_manager(&manager.type_name))
+        {
+            let header_path = table_path.join(format!("table.f{}", manager.seq_nr));
+            let (variant, header) = read_tiled_header(&header_path)?;
+            headers.insert(manager.seq_nr, TiledReadHeader { variant, header });
+        }
+        Ok(Self { headers })
+    }
+
+    fn header(&self, dm_seq_nr: u32) -> Result<&TiledReadHeader, StorageError> {
+        self.headers.get(&dm_seq_nr).ok_or_else(|| {
+            StorageError::FormatMismatch(format!(
+                "retained tiled read metadata is missing data manager {dm_seq_nr}"
+            ))
+        })
+    }
+
+    pub(crate) fn retained_heap_bytes(&self) -> Option<usize> {
+        let mut bytes = self
+            .headers
+            .capacity()
+            .checked_mul(std::mem::size_of::<(u32, TiledReadHeader)>())?;
+        for read_header in self.headers.values() {
+            bytes = bytes.checked_add(read_header.retained_heap_bytes()?)?;
+        }
+        Some(bytes)
+    }
+
+    pub(crate) fn shape_cell_is_defined(
+        &self,
+        dm_seq_nr: u32,
+        target_col_idx: usize,
+        row_index: usize,
+    ) -> Result<bool, StorageError> {
+        let read_header = self.header(dm_seq_nr)?;
+        if target_col_idx >= read_header.header.col_data_types.len() {
+            return Err(StorageError::FormatMismatch(format!(
+                "tiled column index {target_col_idx} out of range for data manager {dm_seq_nr}"
+            )));
+        }
+        let TiledVariant::Shape {
+            nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+            ..
+        } = &read_header.variant
+        else {
+            return Err(StorageError::FormatMismatch(format!(
+                "metadata-only array-cell definedness requires TiledShapeStMan Shape variant for data manager {dm_seq_nr}"
+            )));
+        };
+        Ok(shape_row_location(
+            &read_header.header,
+            &ShapeRowMapping {
+                nr_used_row_map: *nr_used_row_map,
+                row_map,
+                cube_map,
+                pos_map,
+            },
+            row_index,
+        )?
+        .is_some())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_header_count(&self) -> usize {
+        self.headers.len()
+    }
+}
+
+impl TiledReadHeader {
+    fn retained_heap_bytes(&self) -> Option<usize> {
+        let variant_bytes = match &self.variant {
+            TiledVariant::Column { default_tile_shape }
+            | TiledVariant::Cell { default_tile_shape } => default_tile_shape
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())?,
+            TiledVariant::Shape {
+                default_tile_shape,
+                row_map,
+                cube_map,
+                pos_map,
+                ..
+            } => default_tile_shape
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())?
+                .checked_add(row_map.capacity().checked_mul(std::mem::size_of::<u32>())?)?
+                .checked_add(
+                    cube_map
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<u32>())?,
+                )?
+                .checked_add(pos_map.capacity().checked_mul(std::mem::size_of::<u32>())?)?,
+            TiledVariant::Data {
+                default_tile_shape,
+                row_map,
+                cube_map,
+                pos_map,
+                ..
+            } => default_tile_shape
+                .capacity()
+                .checked_mul(std::mem::size_of::<i32>())?
+                .checked_add(row_map.capacity().checked_mul(std::mem::size_of::<u64>())?)?
+                .checked_add(
+                    cube_map
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<u32>())?,
+                )?
+                .checked_add(pos_map.capacity().checked_mul(std::mem::size_of::<u32>())?)?,
+        };
+        let mut bytes = variant_bytes
+            .checked_add(
+                self.header
+                    .col_data_types
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<CasacoreDataType>())?,
+            )?
+            .checked_add(self.header.hypercolumn_name.capacity())?
+            .checked_add(
+                self.header
+                    .files
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<Option<TsmFileInfo>>())?,
+            )?
+            .checked_add(
+                self.header
+                    .cubes
+                    .capacity()
+                    .checked_mul(std::mem::size_of::<TsmCubeInfo>())?,
+            )?;
+        for cube in &self.header.cubes {
+            bytes = bytes
+                .checked_add(cube.values.retained_heap_bytes()?)?
+                .checked_add(
+                    cube.cube_shape
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<usize>())?,
+                )?
+                .checked_add(
+                    cube.tile_shape
+                        .capacity()
+                        .checked_mul(std::mem::size_of::<usize>())?,
+                )?;
+        }
+        Some(bytes)
+    }
+}
+
+fn is_tiled_manager(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "TiledColumnStMan" | "TiledShapeStMan" | "TiledCellStMan" | "TiledDataStMan"
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1627,6 +1815,7 @@ pub(crate) fn load_tiled_column_rows(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     table_path: &Path,
+    read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
     all_col_descs: &[ColumnDescContents],
     bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
@@ -1635,8 +1824,7 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     channel_start: usize,
     channel_count: usize,
 ) -> Result<Option<SelectedArray2DCells>, StorageError> {
-    let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
-    let (variant, header) = read_tiled_header(&header_path)?;
+    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
     let Some(target_col_idx) = bound_cols
         .iter()
         .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
@@ -1665,21 +1853,21 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
     match variant {
         TiledVariant::Shape {
             nr_used_row_map,
-            ref row_map,
-            ref cube_map,
-            ref pos_map,
+            row_map,
+            cube_map,
+            pos_map,
             ..
         } => load_tiled_column_rows_shape_variant_2d_channel_range_typed(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
             elem_size,
             selected_rows,
             &ShapeRowMapping {
-                nr_used_row_map,
+                nr_used_row_map: *nr_used_row_map,
                 row_map,
                 cube_map,
                 pos_map,
@@ -1695,16 +1883,87 @@ pub(crate) fn load_tiled_column_rows_2d_channel_range_typed(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_tiled_column_rows_2d_channel_range_typed(
+    table_path: &Path,
+    read_metadata: &TiledReadMetadata,
+    dm: &DataManagerEntry,
+    all_col_descs: &[ColumnDescContents],
+    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    target_desc_idx: usize,
+    selected_rows: &[usize],
+    channel_start: usize,
+    channel_count: usize,
+    destination: SelectedArray2DCellsMut<'_>,
+) -> Result<Option<SelectedArray2DShape>, StorageError> {
+    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let Some(target_col_idx) = bound_cols
+        .iter()
+        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
+    else {
+        return Err(StorageError::FormatMismatch(format!(
+            "tiled column desc index {target_desc_idx} not bound to data manager {}",
+            dm.seq_nr
+        )));
+    };
+    if target_col_idx >= header.col_data_types.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "tiled column index {target_col_idx} out of range for data manager {}",
+            dm.seq_nr
+        )));
+    }
+    let col_desc = &all_col_descs[target_desc_idx];
+    let dt = header.col_data_types[target_col_idx];
+    let elem_size = tile_element_size(dt);
+    if elem_size == 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D read does not support zero-sized element type for column {}",
+            col_desc.col_name
+        )));
+    }
+    match variant {
+        TiledVariant::Shape {
+            nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+            ..
+        } => fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
+            table_path,
+            dm.seq_nr,
+            header,
+            target_col_idx,
+            col_desc,
+            dt,
+            elem_size,
+            selected_rows,
+            &ShapeRowMapping {
+                nr_used_row_map: *nr_used_row_map,
+                row_map,
+                cube_map,
+                pos_map,
+            },
+            channel_start,
+            channel_count,
+            destination,
+        ),
+        _ => Err(StorageError::FormatMismatch(format!(
+            "typed selected 2-D channel reads for column {} require TiledShapeStMan Shape variant",
+            col_desc.col_name
+        ))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn load_tiled_column_rows_1d_typed(
     table_path: &Path,
+    read_metadata: &TiledReadMetadata,
     dm: &DataManagerEntry,
     all_col_descs: &[ColumnDescContents],
     bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
     target_desc_idx: usize,
     selected_rows: &[usize],
 ) -> Result<SelectedArray1DCells, StorageError> {
-    let header_path = table_path.join(format!("table.f{}", dm.seq_nr));
-    let (variant, header) = read_tiled_header(&header_path)?;
+    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
     let Some(target_col_idx) = bound_cols
         .iter()
         .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
@@ -1753,7 +2012,7 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
             load_tiled_column_rows_from_patches_1d_typed(
                 table_path,
                 dm.seq_nr,
-                &header,
+                header,
                 target_col_idx,
                 col_desc,
                 dt,
@@ -1764,25 +2023,124 @@ pub(crate) fn load_tiled_column_rows_1d_typed(
         }
         TiledVariant::Shape {
             nr_used_row_map,
-            ref row_map,
-            ref cube_map,
-            ref pos_map,
+            row_map,
+            cube_map,
+            pos_map,
             ..
         } => load_tiled_column_rows_shape_variant_1d_typed(
             table_path,
             dm.seq_nr,
-            &header,
+            header,
             target_col_idx,
             col_desc,
             dt,
             elem_size,
             selected_rows,
             &ShapeRowMapping {
-                nr_used_row_map,
+                nr_used_row_map: *nr_used_row_map,
                 row_map,
                 cube_map,
                 pos_map,
             },
+        ),
+        _ => Err(StorageError::FormatMismatch(format!(
+            "typed selected 1-D reads for column {} require TiledColumnStMan or TiledShapeStMan",
+            col_desc.col_name
+        ))),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_tiled_column_rows_1d_typed(
+    table_path: &Path,
+    read_metadata: &TiledReadMetadata,
+    dm: &DataManagerEntry,
+    all_col_descs: &[ColumnDescContents],
+    bound_cols: &[(usize, &super::table_control::PlainColumnEntry)],
+    target_desc_idx: usize,
+    selected_rows: &[usize],
+    destination: SelectedArray1DCellsMut<'_>,
+) -> Result<SelectedArray1DShape, StorageError> {
+    let TiledReadHeader { variant, header } = read_metadata.header(dm.seq_nr)?;
+    let Some(target_col_idx) = bound_cols
+        .iter()
+        .position(|(desc_idx, _)| *desc_idx == target_desc_idx)
+    else {
+        return Err(StorageError::FormatMismatch(format!(
+            "tiled column desc index {target_desc_idx} not bound to data manager {}",
+            dm.seq_nr
+        )));
+    };
+    if target_col_idx >= header.col_data_types.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "tiled column index {target_col_idx} out of range for data manager {}",
+            dm.seq_nr
+        )));
+    }
+    let col_desc = &all_col_descs[target_desc_idx];
+    let dt = header.col_data_types[target_col_idx];
+    let elem_size = tile_element_size(dt);
+    if elem_size == 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 1-D read does not support zero-sized element type for column {}",
+            col_desc.col_name
+        )));
+    }
+    match variant {
+        TiledVariant::Column { .. } => {
+            if header.cubes.is_empty() {
+                return Err(StorageError::FormatMismatch(format!(
+                    "typed selected 1-D read for {} found no TiledColumnStMan cube",
+                    col_desc.col_name
+                )));
+            }
+            let patches_by_cube = std::iter::once((
+                0usize,
+                selected_rows
+                    .iter()
+                    .enumerate()
+                    .map(|(out_idx, &pos_in_cube)| SelectedCubeRow {
+                        out_idx,
+                        pos_in_cube,
+                    })
+                    .collect(),
+            ))
+            .collect();
+            fill_tiled_column_rows_from_patches_1d_typed(
+                table_path,
+                dm.seq_nr,
+                header,
+                target_col_idx,
+                col_desc,
+                dt,
+                elem_size,
+                selected_rows.len(),
+                patches_by_cube,
+                destination,
+            )
+        }
+        TiledVariant::Shape {
+            nr_used_row_map,
+            row_map,
+            cube_map,
+            pos_map,
+            ..
+        } => fill_tiled_column_rows_shape_variant_1d_typed(
+            table_path,
+            dm.seq_nr,
+            header,
+            target_col_idx,
+            col_desc,
+            dt,
+            elem_size,
+            selected_rows,
+            &ShapeRowMapping {
+                nr_used_row_map: *nr_used_row_map,
+                row_map,
+                cube_map,
+                pos_map,
+            },
+            destination,
         ),
         _ => Err(StorageError::FormatMismatch(format!(
             "typed selected 1-D reads for column {} require TiledColumnStMan or TiledShapeStMan",
@@ -1912,6 +2270,35 @@ struct ShapeRowMapping<'a> {
     row_map: &'a [u32],
     cube_map: &'a [u32],
     pos_map: &'a [u32],
+}
+
+fn shape_row_location(
+    header: &TiledStManHeader,
+    mapping: &ShapeRowMapping<'_>,
+    row_index: usize,
+) -> Result<Option<(usize, usize)>, StorageError> {
+    let interval_count = mapping.nr_used_row_map as usize;
+    if interval_count > mapping.row_map.len()
+        || interval_count > mapping.cube_map.len()
+        || interval_count > mapping.pos_map.len()
+    {
+        return Err(StorageError::FormatMismatch(
+            "invalid TiledShapeStMan row-map lengths".to_string(),
+        ));
+    }
+    let interval = mapping.row_map[..interval_count].partition_point(|&row| row < row_index as u32);
+    if interval >= interval_count {
+        return Ok(None);
+    }
+    let cube_index = mapping.cube_map[interval] as usize;
+    if cube_index == 0 || cube_index >= header.cubes.len() {
+        return Ok(None);
+    }
+    let row_delta = mapping.row_map[interval] as usize - row_index;
+    let Some(position) = (mapping.pos_map[interval] as usize).checked_sub(row_delta) else {
+        return Ok(None);
+    };
+    Ok(Some((cube_index, position)))
 }
 
 /// Load columns from a `TiledShapeStMan` (one hypercube per unique shape).
@@ -2531,23 +2918,8 @@ fn load_tiled_column_rows_shape_variant_1d_typed(
         std::collections::BTreeMap::new();
     let mut mapped_rows = 0usize;
     for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
             continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
         };
         patches_by_cube
             .entry(cube_idx)
@@ -2577,6 +2949,63 @@ fn load_tiled_column_rows_shape_variant_1d_typed(
         elem_size,
         selected_rows.len(),
         patches_by_cube,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_tiled_column_rows_shape_variant_1d_typed(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected_rows: &[usize],
+    mapping: &ShapeRowMapping<'_>,
+    destination: SelectedArray1DCellsMut<'_>,
+) -> Result<SelectedArray1DShape, StorageError> {
+    let n_intervals = mapping.nr_used_row_map as usize;
+    if n_intervals == 0 {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 1-D read for {} found an empty row map",
+            col_desc.col_name
+        )));
+    }
+    let mut patches_by_cube = std::collections::BTreeMap::<usize, Vec<SelectedCubeRow>>::new();
+    let mut mapped_rows = 0usize;
+    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
+            continue;
+        };
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SelectedCubeRow {
+                out_idx,
+                pos_in_cube,
+            });
+        mapped_rows += 1;
+    }
+    if mapped_rows != selected_rows.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected 1-D read for {} mapped {} of {} requested rows",
+            col_desc.col_name,
+            mapped_rows,
+            selected_rows.len()
+        )));
+    }
+    fill_tiled_column_rows_from_patches_1d_typed(
+        table_path,
+        dm_seq_nr,
+        header,
+        target_col_idx,
+        col_desc,
+        dt,
+        elem_size,
+        selected_rows.len(),
+        patches_by_cube,
+        destination,
     )
 }
 
@@ -2688,6 +3117,93 @@ fn load_tiled_column_rows_from_patches_1d_typed(
             col_desc.col_name
         ))),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_tiled_column_rows_from_patches_1d_typed(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    row_count: usize,
+    patches_by_cube: std::collections::BTreeMap<usize, Vec<SelectedCubeRow>>,
+    destination: SelectedArray1DCellsMut<'_>,
+) -> Result<SelectedArray1DShape, StorageError> {
+    let mut axis0_count = None::<usize>;
+    for (&cube_idx, patches) in &patches_by_cube {
+        if patches.is_empty() {
+            continue;
+        }
+        let cube = header.cubes.get(cube_idx).ok_or_else(|| {
+            StorageError::FormatMismatch(format!("typed selected 1-D read missing cube {cube_idx}"))
+        })?;
+        let shape = typed_1d_cube_shape(cube)?;
+        match axis0_count {
+            Some(expected) if expected != shape.axis0_count => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "typed selected 1-D read for {} found mixed axis-0 lengths: {} and {expected}",
+                    col_desc.col_name, shape.axis0_count
+                )));
+            }
+            None => axis0_count = Some(shape.axis0_count),
+            _ => {}
+        }
+    }
+    let axis0_count = axis0_count.ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "typed selected 1-D read for {} found no selected rows",
+            col_desc.col_name
+        ))
+    })?;
+    let sample_count = row_count.saturating_mul(axis0_count);
+    let mut session = TileReadSession::default();
+    let fill_plan = TypedSelected1DFillPlan {
+        table_path,
+        dm_seq_nr,
+        header,
+        target_col_idx,
+        dt,
+        elem_size,
+        patches_by_cube: &patches_by_cube,
+        row_count,
+        axis0_count,
+    };
+    match (dt, destination) {
+        (CasacoreDataType::TpBool, SelectedArray1DCellsMut::Bool(values)) => {
+            values.resize(sample_count, false);
+            fill_typed_selected_1d_rows(fill_plan, &mut session, values, |bytes, _| bytes[0] != 0)?;
+        }
+        (CasacoreDataType::TpFloat, SelectedArray1DCellsMut::Float32(values)) => {
+            values.resize(sample_count, 0.0);
+            fill_typed_selected_1d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (CasacoreDataType::TpDouble, SelectedArray1DCellsMut::Float64(values)) => {
+            values.resize(sample_count, 0.0);
+            fill_typed_selected_1d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (CasacoreDataType::TpComplex, SelectedArray1DCellsMut::Complex32(values)) => {
+            values.resize(sample_count, Complex32::new(0.0, 0.0));
+            fill_typed_selected_1d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (CasacoreDataType::TpDComplex, SelectedArray1DCellsMut::Complex64(values)) => {
+            values.resize(sample_count, Complex64::new(0.0, 0.0));
+            fill_typed_selected_1d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (actual, destination) => {
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 1-D destination {:?} does not match {actual:?} column {}",
+                destination.primitive_type(),
+                col_desc.col_name
+            )));
+        }
+    }
+    Ok(SelectedArray1DShape {
+        row_count,
+        axis0_count,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2906,23 +3422,8 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
         std::collections::BTreeMap::new();
     let mut mapped_rows = 0usize;
     for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
-        let interval = mapping.row_map[..n_intervals].partition_point(|&rm| rm < row_idx as u32);
-        if interval >= n_intervals {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
             continue;
-        }
-        let cube_idx = mapping.cube_map[interval] as usize;
-        if cube_idx == 0 || cube_idx >= header.cubes.len() {
-            continue;
-        }
-        let diff = mapping.row_map[interval] as usize - row_idx;
-        if diff > mapping.pos_map[interval] as usize {
-            continue;
-        }
-        let Some(pos_in_cube) = (mapping.pos_map[interval] as usize).checked_sub(diff) else {
-            return Err(StorageError::FormatMismatch(format!(
-                "invalid TiledShapeStMan row map for row {row_idx}: interval {interval} has pos {} < diff {diff}",
-                mapping.pos_map[interval]
-            )));
         };
         patches_by_cube
             .entry(cube_idx)
@@ -3059,6 +3560,144 @@ fn load_tiled_column_rows_shape_variant_2d_channel_range_typed(
             col_desc.col_name
         ))),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fill_tiled_column_rows_shape_variant_2d_channel_range_typed(
+    table_path: &Path,
+    dm_seq_nr: u32,
+    header: &TiledStManHeader,
+    target_col_idx: usize,
+    col_desc: &ColumnDescContents,
+    dt: CasacoreDataType,
+    elem_size: usize,
+    selected_rows: &[usize],
+    mapping: &ShapeRowMapping<'_>,
+    channel_start: usize,
+    channel_count: usize,
+    destination: SelectedArray2DCellsMut<'_>,
+) -> Result<Option<SelectedArray2DShape>, StorageError> {
+    let n_intervals = mapping.nr_used_row_map as usize;
+    if n_intervals == 0 {
+        return Ok(None);
+    }
+    let mut patches_by_cube = std::collections::BTreeMap::<usize, Vec<SelectedCubeRow>>::new();
+    let mut mapped_rows = 0usize;
+    for (out_idx, &row_idx) in selected_rows.iter().enumerate() {
+        let Some((cube_idx, pos_in_cube)) = shape_row_location(header, mapping, row_idx)? else {
+            continue;
+        };
+        patches_by_cube
+            .entry(cube_idx)
+            .or_default()
+            .push(SelectedCubeRow {
+                out_idx,
+                pos_in_cube,
+            });
+        mapped_rows += 1;
+    }
+    if mapped_rows != selected_rows.len() {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected read for {} mapped {} of {} requested rows",
+            col_desc.col_name,
+            mapped_rows,
+            selected_rows.len()
+        )));
+    }
+    let mut corr_count = None::<usize>;
+    for (&cube_idx, patches) in &patches_by_cube {
+        if patches.is_empty() {
+            continue;
+        }
+        let cube = header.cubes.get(cube_idx).ok_or_else(|| {
+            StorageError::FormatMismatch(format!("typed selected read missing cube {cube_idx}"))
+        })?;
+        let shape = typed_2d_cube_shape(cube, channel_start, channel_count)?;
+        match corr_count {
+            Some(expected) if expected != shape.corr_count => {
+                return Err(StorageError::FormatMismatch(format!(
+                    "typed selected read for {} found mixed axis-0 lengths: {} and {expected}",
+                    col_desc.col_name, shape.corr_count
+                )));
+            }
+            None => corr_count = Some(shape.corr_count),
+            _ => {}
+        }
+    }
+    let corr_count = corr_count.ok_or_else(|| {
+        StorageError::FormatMismatch(format!(
+            "typed selected read for {} found no selected rows",
+            col_desc.col_name
+        ))
+    })?;
+    let sample_count = channel_count
+        .saturating_mul(selected_rows.len())
+        .saturating_mul(corr_count);
+    let mut session = TileReadSession::default();
+    let fill_plan = TypedSelected2DFillPlan {
+        table_path,
+        dm_seq_nr,
+        header,
+        target_col_idx,
+        column_name: &col_desc.col_name,
+        dt,
+        elem_size,
+        patches_by_cube: &patches_by_cube,
+        row_count: selected_rows.len(),
+        corr_count,
+        channel_start,
+        channel_count,
+    };
+    match (dt, destination) {
+        (CasacoreDataType::TpBool, SelectedArray2DCellsMut::Bool(values)) => {
+            values.resize(sample_count, false);
+            fill_typed_selected_2d_rows(
+                table_path,
+                dm_seq_nr,
+                header,
+                target_col_idx,
+                dt,
+                elem_size,
+                &col_desc.col_name,
+                &patches_by_cube,
+                selected_rows.len(),
+                corr_count,
+                channel_start,
+                channel_count,
+                &mut session,
+                values,
+                |bytes, _| bytes[0] != 0,
+            )?;
+        }
+        (CasacoreDataType::TpFloat, SelectedArray2DCellsMut::Float32(values)) => {
+            values.resize(sample_count, 0.0);
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (CasacoreDataType::TpDouble, SelectedArray2DCellsMut::Float64(values)) => {
+            values.resize(sample_count, 0.0);
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (CasacoreDataType::TpComplex, SelectedArray2DCellsMut::Complex32(values)) => {
+            values.resize(sample_count, Complex32::new(0.0, 0.0));
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (CasacoreDataType::TpDComplex, SelectedArray2DCellsMut::Complex64(values)) => {
+            values.resize(sample_count, Complex64::new(0.0, 0.0));
+            fill_typed_selected_2d_rows_by_copy(fill_plan, &mut session, values)?;
+        }
+        (actual, destination) => {
+            return Err(StorageError::FormatMismatch(format!(
+                "typed selected 2-D destination {:?} does not match {actual:?} column {}",
+                destination.primitive_type(),
+                col_desc.col_name
+            )));
+        }
+    }
+    Ok(Some(SelectedArray2DShape {
+        row_count: selected_rows.len(),
+        axis0_count: corr_count,
+        channel_count,
+    }))
 }
 
 #[derive(Debug, Clone, Copy)]

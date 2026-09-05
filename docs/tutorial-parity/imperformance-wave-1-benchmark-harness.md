@@ -60,8 +60,10 @@ manifest runner stable while the lower-level commands evolve.
 
 The benchmark script supports two MeasurementSet staging modes:
 
-- `copy`: copy the input MS into the script temp directory before timing. This
-  is appropriate only for small, intentionally disposable workloads.
+- `copy`: copy the input MS into the script temp directory, explicitly
+  initialize that disposable copy's casa-rs imaging-owner manifest, and use it
+  for Rust while CASA reads the unchanged source. This is appropriate only for
+  small, intentionally disposable workloads.
 - `direct`: read the manifest MS path in place. This is the default. It can
   also be set explicitly through `CASA_RS_BENCH_MS_STAGING=direct` when
   invoking `run_workload.py`, or through `run.ms_staging: "direct"` in a

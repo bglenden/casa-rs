@@ -1,0 +1,22 @@
+[casars]
+format = 1
+surface = "imager"
+kind = "task"
+contract = 15
+
+[parameters]
+vis = ["representative-continuum.ms"]
+imagename = "products/representative-continuum"
+imsize = [1024, 1024]
+cell = ["0.25arcsec", "0.25arcsec"]
+field = "0~2"
+spw = "0,2"
+stokes = "Q"
+niter = 500
+deconvolver = "multiscale"
+scales = "0,4,12"
+weighting = "briggs"
+robust = -0.25
+write_pb = true
+pbcor = true
+parallel = true

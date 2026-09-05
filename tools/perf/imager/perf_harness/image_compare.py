@@ -16,12 +16,40 @@ from .tolerances import (
     validate_tolerance_contract,
 )
 from .tree_identity import sha256_file
+from .metadata_contract import (
+    metadata_field_parity,
+    normalize_metadata_contract,
+    scientific_beam_products,
+)
 
 
 CASA_IMAGE_COMPARATOR = pathlib.Path(__file__).with_name("casa_image_compare.py")
 COMPARISON_SCHEMA_VERSION = 4
 COORDINATE_RELATIVE_TOLERANCE = 1.0e-12
 COORDINATE_ABSOLUTE_TOLERANCE = 1.0e-12
+DIRECTION_WCS_FIELDS = (
+    "axes",
+    "cdelt",
+    "conversionSystem",
+    "crpix",
+    "crval",
+    "latpole",
+    "longpole",
+    "pc",
+    "projection",
+    "projection_parameters",
+    "system",
+    "units",
+)
+DIRECTION_AXIS_TOPOLOGY_FIELDS = (
+    "pixelmap0",
+    "pixelmap1",
+    "pixelmap2",
+    "worldmap0",
+    "worldmap1",
+    "worldmap2",
+)
+STOKES_WCS_FIELDS = ("axes", "cdelt", "crpix", "crval", "pc", "stokes")
 FULL_STRUCTURE_EVIDENCE_SCOPE = "full_native_central_spatial_plane_disk_backed"
 FULL_STRUCTURE_EVIDENCE_FIELDS = {
     "method",
@@ -187,7 +215,9 @@ COMPARISON_REQUEST_FIELDS = {
     "max_elements_per_product",
     "full_chunk_elements",
     "require_exact_product_inventory",
+    "require_direction_wcs_parity",
     "require_metadata_parity",
+    "metadata_contract",
     "source_regions",
     "tolerances",
     "panel_dir",
@@ -253,7 +283,11 @@ def normalize_comparison_request(request: dict[str, Any]) -> dict[str, Any]:
     legacy_operands = (
         "left_prefix" not in normalized and "right_prefix" not in normalized
     )
-    for key in ("require_exact_product_inventory", "require_metadata_parity"):
+    for key in (
+        "require_exact_product_inventory",
+        "require_direction_wcs_parity",
+        "require_metadata_parity",
+    ):
         if key in normalized and not isinstance(normalized[key], bool):
             raise ValueError(f"{key} must be a boolean")
     tolerances = normalized.get("tolerances")
@@ -263,6 +297,15 @@ def normalize_comparison_request(request: dict[str, Any]) -> dict[str, Any]:
         except ToleranceContractError as error:
             raise ValueError(str(error)) from error
     products = _normalize_product_suffixes(normalized.get("products"))
+    metadata_contract = normalize_metadata_contract(
+        normalized.get("metadata_contract"), products=products
+    )
+    for suffix in scientific_beam_products(metadata_contract):
+        if not _has_scientific_beam_tolerance(tolerances, suffix):
+            raise ValueError(
+                f"metadata_contract product {suffix} requires beam_area_relative "
+                "and beam_kernel_nrmse tolerances"
+            )
     source_regions = _normalize_source_regions(
         normalized.get("source_regions", []), products
     )
@@ -295,6 +338,9 @@ def normalize_comparison_request(request: dict[str, Any]) -> dict[str, Any]:
         "require_exact_product_inventory": bool(
             normalized.get("require_exact_product_inventory", False)
         ),
+        "require_direction_wcs_parity": bool(
+            normalized.get("require_direction_wcs_parity", False)
+        ),
         "require_metadata_parity": bool(
             normalized.get("require_metadata_parity", False)
         ),
@@ -304,6 +350,8 @@ def normalize_comparison_request(request: dict[str, Any]) -> dict[str, Any]:
         "panel_dir": panel_dir,
         "structure_workspace_dir": structure_workspace_dir,
     }
+    if metadata_contract is not None:
+        normalized["metadata_contract"] = metadata_contract
     binding = comparison_request_binding(normalized)
     normalized["request_binding"] = binding
     normalized["request_sha256"] = _canonical_sha256(binding)
@@ -313,7 +361,7 @@ def normalize_comparison_request(request: dict[str, Any]) -> dict[str, Any]:
 def comparison_request_binding(request: dict[str, Any]) -> dict[str, Any]:
     """Return every normalized field that can affect comparison evidence."""
 
-    fields = (
+    fields = [
         "schema_version",
         "mode",
         "left_prefix",
@@ -330,7 +378,14 @@ def comparison_request_binding(request: dict[str, Any]) -> dict[str, Any]:
         "tolerances",
         "panel_dir",
         "structure_workspace_dir",
-    )
+    ]
+    if "require_direction_wcs_parity" in request:
+        fields.insert(
+            fields.index("require_metadata_parity"),
+            "require_direction_wcs_parity",
+        )
+    if "metadata_contract" in request:
+        fields.insert(fields.index("legacy_operand_aliases"), "metadata_contract")
     missing = [field for field in fields if field not in request]
     if missing:
         raise ValueError(
@@ -377,6 +432,12 @@ def validate_comparison_output(
         "panel_dir": request["panel_dir"],
         "structure_workspace_dir": request["structure_workspace_dir"],
     }
+    if "metadata_contract" in request:
+        exact_fields["metadata_contract"] = request["metadata_contract"]
+    if "require_direction_wcs_parity" in request:
+        exact_fields["require_direction_wcs_parity"] = request[
+            "require_direction_wcs_parity"
+        ]
     for field, expected in exact_fields.items():
         if field not in comparison or comparison[field] != expected:
             raise ValueError(f"image comparison output {field} does not match request")
@@ -398,13 +459,36 @@ def validate_comparison_output(
             raise ValueError(
                 f"image comparison product {suffix} right_path does not match request"
             )
+        if product.get("status") == "shape_mismatch":
+            _validate_shape_mismatch_product(
+                product,
+                suffix=suffix,
+                legacy_operand_aliases=request["legacy_operand_aliases"],
+            )
+        if request.get("require_direction_wcs_parity", False) and product.get(
+            "status"
+        ) not in {
+            "missing",
+            "shape_mismatch",
+            "no_finite_overlap",
+        }:
+            _validate_product_direction_wcs(
+                product,
+                suffix=suffix,
+                required=True,
+            )
         if product.get("status") == "compared":
             _validate_product_metadata(
                 product,
                 suffix=suffix,
-                required=request["require_metadata_parity"],
+                required=(
+                    request["require_metadata_parity"] or "metadata_contract" in request
+                ),
                 products=products,
                 tolerance_contract=request["tolerances"],
+                metadata_contract=request.get("metadata_contract"),
+                left_label=request["left_label"],
+                right_label=request["right_label"],
             )
             _validate_product_source_regions(
                 product,
@@ -530,6 +614,9 @@ def _validate_product_metadata(
     required: bool,
     products: dict[str, Any],
     tolerance_contract: dict[str, Any] | None,
+    metadata_contract: dict[str, Any] | None,
+    left_label: str,
+    right_label: str,
 ) -> None:
     label = f"image comparison product {suffix}"
     if product.get("metadata_parity_required") is not required:
@@ -538,9 +625,8 @@ def _validate_product_metadata(
     if not isinstance(metadata, dict):
         raise ValueError(f"{label} metadata result is missing")
     if not required:
-        if metadata != {"status": "not_required", "parity": None}:
-            raise ValueError(f"{label} unrequested metadata result is invalid")
-        return
+        if metadata == {"status": "not_required", "parity": None}:
+            return
 
     expected_fields = {"status", "parity", "field_parity", "left", "right"}
     if set(metadata) != expected_fields:
@@ -566,14 +652,23 @@ def _validate_product_metadata(
             raise ValueError(f"{label} {side} metadata capture is incomplete")
         if value.get("shape") != product.get("shape"):
             raise ValueError(f"{label} {side} metadata shape does not match product")
-    expected_parity = {
-        field: (
-            _coordinate_records_equivalent(left.get(field), right.get(field))
-            if field == "coordinates"
-            else left.get(field) == right.get(field)
+    expected_parity = (
+        metadata_field_parity(
+            left,
+            right,
+            suffix=suffix,
+            contract=metadata_contract,
         )
-        for field in fields
-    }
+        if metadata_contract is not None
+        else {
+            field: (
+                _coordinate_records_equivalent(left.get(field), right.get(field))
+                if field == "coordinates"
+                else left.get(field) == right.get(field)
+            )
+            for field in fields
+        }
+    )
     exact = all(expected_parity.values())
     expected_status = "matched" if exact else "mismatch"
     if (
@@ -582,7 +677,9 @@ def _validate_product_metadata(
         or metadata.get("parity") is not exact
     ):
         raise ValueError(f"{label} metadata parity is not derived from operands")
-    if exact:
+    if not required:
+        return
+    if exact or metadata_contract is not None:
         return
     beam_only = expected_parity == {
         "shape": True,
@@ -591,20 +688,180 @@ def _validate_product_metadata(
         "restoring_beam": False,
         "masks": True,
     }
-    reference = (
-        _scientific_beam_reference(
-            suffix,
-            products,
-            tolerance_contract,
-        )
-        if beam_only
-        else None
+    if beam_only and _scientific_beam_reference(
+        suffix,
+        products,
+        tolerance_contract,
+    ) is not None:
+        return
+
+    omission = _documented_casa_metadata_omission_kind(
+        metadata,
+        suffix,
+        left_label,
+        right_label,
     )
-    if reference is None:
-        raise ValueError(
-            f"{label} required metadata parity is not matched and the restoring "
-            "beam mismatch has no bound scientific-equivalence reference"
+    if omission == "psf_unit":
+        return
+    if omission == "psf_unit_and_beam_roundoff" and _scientific_beam_reference(
+        suffix,
+        products,
+        tolerance_contract,
+    ) is not None:
+        return
+    if omission == "residual_unit_and_beam" and _scientific_left_beam_reference(
+        suffix,
+        products,
+        tolerance_contract,
+    ) is not None:
+        return
+
+    raise ValueError(
+        f"{label} required metadata parity is not matched and the restoring "
+        "beam mismatch has no bound scientific-equivalence reference"
+    )
+
+
+def _validate_shape_mismatch_product(
+    product: dict[str, Any],
+    *,
+    suffix: str,
+    legacy_operand_aliases: bool,
+) -> None:
+    label = f"image comparison product {suffix}"
+    left_shape = _positive_shape(product.get("left_shape"), label=f"{label} left_shape")
+    right_shape = _positive_shape(
+        product.get("right_shape"), label=f"{label} right_shape"
+    )
+    if left_shape == right_shape:
+        raise ValueError(f"{label} shape_mismatch has equal operand shapes")
+    aliases = {"rust_path", "casa_path", "rust_shape", "casa_shape"}
+    present_aliases = aliases & set(product)
+    if legacy_operand_aliases:
+        if present_aliases != aliases:
+            raise ValueError(f"{label} legacy shape aliases are incomplete")
+        if (
+            product["rust_path"] != product["left_path"]
+            or product["casa_path"] != product["right_path"]
+            or product["rust_shape"] != left_shape
+            or product["casa_shape"] != right_shape
+        ):
+            raise ValueError(f"{label} legacy shape aliases are not derived")
+    elif present_aliases:
+        raise ValueError(f"{label} has unrequested legacy shape aliases")
+
+
+def _positive_shape(value: Any, *, label: str) -> list[int]:
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(
+            isinstance(dimension, bool)
+            or not isinstance(dimension, int)
+            or dimension < 1
+            for dimension in value
         )
+    ):
+        raise ValueError(f"{label} must contain positive integer dimensions")
+    return value
+
+
+def _validate_product_direction_wcs(
+    product: dict[str, Any], *, suffix: str, required: bool
+) -> None:
+    label = f"image comparison product {suffix}"
+    if product.get("direction_wcs_parity_required") is not required:
+        raise ValueError(f"{label} direction-WCS policy does not match request")
+    result = product.get("direction_wcs")
+    if not isinstance(result, dict):
+        raise ValueError(f"{label} direction-WCS result is missing")
+    if result.get("status") == "unavailable":
+        if (
+            set(result) != {"status", "parity", "reason"}
+            or result.get("parity") is not False
+            or not isinstance(result.get("reason"), str)
+            or not result["reason"]
+        ):
+            raise ValueError(f"{label} unavailable direction-WCS result is invalid")
+        if product.get("status") != "direction_wcs_mismatch":
+            raise ValueError(f"{label} unavailable direction WCS did not fail closed")
+        return
+
+    expected_fields = {"status", "parity", "field_parity", "left", "right"}
+    if set(result) != expected_fields:
+        raise ValueError(f"{label} direction-WCS fields do not match protocol")
+    left = _validate_direction_wcs_operand(result.get("left"), label=f"{label} left")
+    right = _validate_direction_wcs_operand(result.get("right"), label=f"{label} right")
+    expected_parity = {
+        "shape": left["shape"] == right["shape"],
+        "direction": _coordinate_records_equivalent(
+            left["direction"], right["direction"]
+        ),
+        "axis_topology": left["axis_topology"] == right["axis_topology"],
+        "stokes": _coordinate_records_equivalent(left["stokes"], right["stokes"]),
+        "spectral_axis": left["spectral_axis"] == right["spectral_axis"],
+    }
+    parity = (
+        left["status"] == "complete"
+        and right["status"] == "complete"
+        and all(expected_parity.values())
+    )
+    expected_status = "matched" if parity else "mismatch"
+    if (
+        result.get("field_parity") != expected_parity
+        or result.get("parity") is not parity
+        or result.get("status") != expected_status
+    ):
+        raise ValueError(f"{label} direction-WCS parity is not derived from operands")
+    if parity:
+        if product.get("status") == "direction_wcs_mismatch":
+            raise ValueError(f"{label} matched direction WCS is reported as failed")
+    elif product.get("status") != "direction_wcs_mismatch":
+        raise ValueError(f"{label} required direction-WCS mismatch did not fail closed")
+
+
+def _validate_direction_wcs_operand(value: Any, *, label: str) -> dict[str, Any]:
+    fields = {
+        "status",
+        "shape",
+        "direction",
+        "axis_topology",
+        "stokes",
+        "spectral_axis",
+        "missing_fields",
+    }
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError(f"{label} direction-WCS operand fields do not match protocol")
+    shape = value.get("shape")
+    if shape is not None:
+        _positive_shape(shape, label=f"{label} shape")
+    nested_fields = {
+        "direction": DIRECTION_WCS_FIELDS,
+        "axis_topology": DIRECTION_AXIS_TOPOLOGY_FIELDS,
+        "stokes": STOKES_WCS_FIELDS,
+        "spectral_axis": (
+            "record",
+            "name",
+            "system",
+            "conversion_system",
+            "unit",
+            "wcs_type",
+        ),
+    }
+    missing = []
+    if shape is None:
+        missing.append("shape")
+    for section, section_fields in nested_fields.items():
+        details = value.get(section)
+        if not isinstance(details, dict) or set(details) != set(section_fields):
+            raise ValueError(f"{label} {section} fields do not match protocol")
+        for field in section_fields:
+            if details[field] is None:
+                missing.append(f"{section}.{field}")
+    expected_status = "complete" if not missing else "incomplete"
+    if value.get("missing_fields") != missing or value.get("status") != expected_status:
+        raise ValueError(f"{label} capture status is not derived")
+    return value
 
 
 def _coordinate_records_equivalent(left: Any, right: Any) -> bool:
@@ -676,6 +933,107 @@ def _scientific_beam_reference(
             and candidate_right.get("restoring_beam") == target_right
         ):
             return candidate_suffix
+    return None
+
+
+def _scientific_left_beam_reference(
+    suffix: str,
+    products: dict[str, Any],
+    contract: dict[str, Any] | None,
+) -> str | None:
+    product = products.get(suffix)
+    metadata = product.get("metadata") if isinstance(product, dict) else None
+    left = metadata.get("left") if isinstance(metadata, dict) else None
+    if not isinstance(left, dict):
+        return None
+    target_left = left.get("restoring_beam")
+    if not isinstance(target_left, dict) or not target_left:
+        return None
+
+    candidates = [suffix, *sorted(set(products) - {suffix})]
+    for candidate_suffix in candidates:
+        if not _has_scientific_beam_tolerance(contract, candidate_suffix):
+            continue
+        candidate = products.get(candidate_suffix)
+        candidate_metadata = (
+            candidate.get("metadata") if isinstance(candidate, dict) else None
+        )
+        candidate_left = (
+            candidate_metadata.get("left")
+            if isinstance(candidate_metadata, dict)
+            else None
+        )
+        candidate_right = (
+            candidate_metadata.get("right")
+            if isinstance(candidate_metadata, dict)
+            else None
+        )
+        if not isinstance(candidate_left, dict) or not isinstance(
+            candidate_right, dict
+        ):
+            continue
+        right_beam = candidate_right.get("restoring_beam")
+        if (
+            candidate_left.get("restoring_beam") == target_left
+            and isinstance(right_beam, dict)
+            and right_beam
+        ):
+            return candidate_suffix
+    return None
+
+
+def _documented_casa_metadata_omission_kind(
+    metadata: Any,
+    suffix: str,
+    left_label: str,
+    right_label: str,
+) -> str | None:
+    if (
+        left_label != "casa-rs"
+        or right_label != "CASA"
+        or not isinstance(metadata, dict)
+        or metadata.get("status") != "mismatch"
+    ):
+        return None
+    left = metadata.get("left")
+    right = metadata.get("right")
+    parity = metadata.get("field_parity")
+    if (
+        not isinstance(left, dict)
+        or not isinstance(right, dict)
+        or left.get("status") != "complete"
+        or right.get("status") != "complete"
+        or left.get("unit") != "Jy/beam"
+        or right.get("unit") != ""
+        or not isinstance(parity, dict)
+        or parity.get("shape") is not True
+        or parity.get("unit") is not False
+        or parity.get("coordinates") is not True
+        or parity.get("masks") is not True
+    ):
+        return None
+
+    left_beam = left.get("restoring_beam")
+    right_beam = right.get("restoring_beam")
+    if suffix == ".psf" or suffix.startswith(".psf."):
+        if not isinstance(left_beam, dict) or not left_beam:
+            return None
+        if not isinstance(right_beam, dict) or not right_beam:
+            return None
+        if parity.get("restoring_beam") is True:
+            return "psf_unit"
+        if parity.get("restoring_beam") is False:
+            return "psf_unit_and_beam_roundoff"
+        return None
+
+    if suffix == ".residual" or suffix.startswith(".residual."):
+        if (
+            isinstance(left_beam, dict)
+            and left_beam
+            and right_beam == {}
+            and parity.get("restoring_beam") is False
+        ):
+            return "residual_unit_and_beam"
     return None
 
 
@@ -762,7 +1120,16 @@ def _validate_product_source_regions(
     for expected, region in zip(requested_regions, observed):
         if not isinstance(region, dict):
             raise ValueError(f"{label} source-region result must be an object")
-        expected_fields = {"id", "products", "blc", "trc", "method", "left", "right"}
+        expected_fields = {
+            "id",
+            "products",
+            "blc",
+            "trc",
+            "method",
+            "left",
+            "right",
+            "difference",
+        }
         if set(region) != expected_fields:
             raise ValueError(f"{label} source-region fields do not match protocol")
         for field in ("id", "products", "blc", "trc"):
@@ -783,6 +1150,13 @@ def _validate_product_source_regions(
                 trc=expected["trc"],
                 requested_chunk_elements=requested_chunk_elements,
             )
+        _validate_source_region_difference(
+            region.get("difference"),
+            label=f"{label} source {expected['id']} difference",
+            blc=expected["blc"],
+            trc=expected["trc"],
+            requested_chunk_elements=requested_chunk_elements,
+        )
 
 
 def _validate_source_region_measurement(
@@ -833,18 +1207,6 @@ def _validate_source_region_measurement(
             integrated_flux, value_sum / beam_area
         ):
             raise ValueError(f"{label} integrated flux is not derived")
-    centroid = measurement.get("centroid_pixels")
-    if (
-        not isinstance(centroid, list)
-        or len(centroid) != 2
-        or any(
-            not _within_closed_interval(
-                _finite_number(value, label=f"{label} centroid"), start, end
-            )
-            for value, start, end in zip(centroid, blc, trc)
-        )
-    ):
-        raise ValueError(f"{label} centroid is outside the source box")
     peak = _validate_peak(
         measurement.get("peak_abs"),
         shape=[end + 1 for end in trc],
@@ -855,6 +1217,71 @@ def _validate_source_region_measurement(
         for location, start, end in zip(peak["location"], blc, trc)
     ):
         raise ValueError(f"{label} peak is outside the source box")
+    centroid = measurement.get("centroid_pixels")
+    if peak["abs_value"] == 0.0:
+        if centroid is not None:
+            raise ValueError(f"{label} exact-zero centroid must be null")
+    elif (
+        not isinstance(centroid, list)
+        or len(centroid) != 2
+        or any(
+            not _within_closed_interval(
+                _finite_number(value, label=f"{label} centroid"), start, end
+            )
+            for value, start, end in zip(centroid, blc, trc)
+        )
+    ):
+        raise ValueError(f"{label} centroid is outside the source box")
+    chunks = _nonnegative_integer(measurement.get("chunks"), label=f"{label} chunks")
+    chunk_elements = _nonnegative_integer(
+        measurement.get("max_chunk_elements"), label=f"{label} chunk budget"
+    )
+    if chunks < 1 or chunk_elements != requested_chunk_elements:
+        raise ValueError(f"{label} chunk evidence does not match request")
+
+
+def _validate_source_region_difference(
+    measurement: Any,
+    *,
+    label: str,
+    blc: list[int],
+    trc: list[int],
+    requested_chunk_elements: int,
+) -> None:
+    expected_fields = {
+        "status",
+        "finite_unmasked_count",
+        "right_rms",
+        "difference_rms",
+        "diff_rms_over_right_rms",
+        "chunks",
+        "max_chunk_elements",
+    }
+    if not isinstance(measurement, dict) or set(measurement) != expected_fields:
+        raise ValueError(f"{label} fields do not match protocol")
+    if measurement.get("status") != "measured":
+        raise ValueError(f"{label} did not complete")
+    count = _nonnegative_integer(
+        measurement.get("finite_unmasked_count"), label=f"{label} finite count"
+    )
+    region_pixels = math.prod(end - start + 1 for start, end in zip(blc, trc))
+    if count < 1 or count > region_pixels:
+        raise ValueError(f"{label} finite count is outside the source box")
+    right_rms = _finite_number(measurement.get("right_rms"), label=f"{label} right rms")
+    difference_rms = _finite_number(
+        measurement.get("difference_rms"), label=f"{label} difference rms"
+    )
+    if right_rms < 0.0 or difference_rms < 0.0:
+        raise ValueError(f"{label} RMS values must be nonnegative")
+    expected_ratio = _relative_ratio(difference_rms, right_rms)
+    observed_ratio = measurement.get("diff_rms_over_right_rms")
+    if expected_ratio is None:
+        if observed_ratio is not None:
+            raise ValueError(f"{label} ratio is not derived")
+    elif not _numbers_close(
+        _finite_number(observed_ratio, label=f"{label} rms ratio"), expected_ratio
+    ):
+        raise ValueError(f"{label} ratio is not derived")
     chunks = _nonnegative_integer(measurement.get("chunks"), label=f"{label} chunks")
     chunk_elements = _nonnegative_integer(
         measurement.get("max_chunk_elements"), label=f"{label} chunk budget"

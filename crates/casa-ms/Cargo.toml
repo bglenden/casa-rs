@@ -16,28 +16,32 @@ performance-tests = ["casa-test-support/performance-tests"]
 
 [dependencies]
 casa-coordinates = { path = "../casa-coordinates" }
-casa-imaging = { path = "../casa-imaging" }
+casa-imaging-model = { path = "../casa-imaging-model" }
 casa-logging = { path = "../casa-logging" }
 casa-measures-data = { path = "../casa-measures-data" }
+casa-numerics = { path = "../casa-numerics" }
 casa-provider-contracts = { path = "../casa-provider-contracts" }
 casa-task-runtime = { path = "../casa-task-runtime" }
+casa-simulation-synthesis = { path = "../casa-simulation-synthesis" }
 casa-tables = { path = "../casa-tables" }
 casa-types = { path = "../casa-types" }
+getrandom = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 libm = "0.2"
-nalgebra.workspace = true
 ndarray.workspace = true
 num-complex.workspace = true
 printpdf = { version = "0.9.1", default-features = false, features = ["png"] }
 schemars = { version = "0.8", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2.workspace = true
 sofars.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
 casa-test-support = { path = "../casa-test-support" }
 flate2 = "1"
 tar = "0.4"

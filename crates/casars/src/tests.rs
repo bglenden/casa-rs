@@ -99,7 +99,6 @@ fn launcher_lists_registered_apps_in_expected_order() {
             "exportfits",
             "mstransform",
             "split",
-            "uvcontsub",
             "applycal",
             "gaincal",
             "bandpass",
@@ -242,12 +241,26 @@ fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
         &profile,
     )
     .expect("resolve shared imager profile");
+    let invocation = crate::parameters_cli::project_task_invocation(&session)
+        .expect("project canonical imager request from TUI session");
+    let request: serde_json::Value = serde_json::from_str(
+        invocation
+            .stdin
+            .as_deref()
+            .expect("canonical imager request stdin"),
+    )
+    .expect("decode canonical imager request");
+    assert_eq!(request, expected["request"]);
     let temp = tempdir().expect("tempdir");
     let app_definition = imager_app();
     let schema = app_definition.load_schema().expect("imager UI schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(app_definition, schema, config);
     app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
+    let preflight = app
+        .execution_stdin_for_test()
+        .expect_err("unsupported fixture must surface owner diagnostics before execution");
+    assert!(preflight.contains("task/task.aw_projection"), "{preflight}");
 
     for name in ["vis", "imagename", "imsize", "cell", "niter"] {
         assert_eq!(
@@ -9395,8 +9408,14 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
 
     let fixture_temp = tempdir().expect("fixture tempdir");
     let ms_path = create_fixture_ms(fixture_temp.path());
+    casa_ms::initialize_measurement_set_owner_manifest(&ms_path)
+        .expect("initialize imaging owner manifest");
+    MeasurementSet::open(&ms_path)
+        .expect("reopen owned imaging fixture")
+        .save()
+        .expect("preserve owner manifest and production bindings");
     let temp = tempdir().expect("tempdir");
-    let imagename = temp.path().join("fixture-dirty-cube");
+    let imagename = temp.path().join("fixture-dirty-mfs");
     let schema = imager_app().load_schema().expect("load imager schema");
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(imager_app(), schema, config);
@@ -9406,9 +9425,7 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     app.set_text_value("cell", "20.0");
     app.set_text_value("field", "0");
     app.set_text_value("spw", "0");
-    app.set_text_value("specmode", "cube");
-    app.set_text_value("channel_start", "0");
-    app.set_text_value("channel_count", "1");
+    app.set_text_value("specmode", "mfs");
 
     start_run_with_default_imager_launcher(&mut app);
     assert!(app.wait_for_idle_for_test(Duration::from_secs(120)));
@@ -9435,16 +9452,7 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
         app.status_line_for_test()
     );
 
-    for suffix in [
-        "psf",
-        "residual",
-        "model",
-        "image",
-        "psf.png",
-        "residual.png",
-        "model.png",
-        "image.png",
-    ] {
+    for suffix in ["psf", "residual", "model", "image", "sumwt"] {
         let path = PathBuf::from(format!("{}.{}", imagename.display(), suffix));
         assert!(
             path.exists(),
@@ -9453,6 +9461,10 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
         );
     }
     assert!(
+        !PathBuf::from(format!("{}.image.png", imagename.display())).exists(),
+        "preview sidecars are opt-in"
+    );
+    assert!(
         !PathBuf::from(format!("{}.mask", imagename.display())).exists(),
         "dirty imaging must not write a clean-mask artifact"
     );
@@ -9460,7 +9472,7 @@ fn imager_workflow_runs_against_fixture_and_renders_diagnostics() {
     app.set_active_result_tab(ResultTab::Overview);
     let overview = render_app(&app, 140, 32);
     assert!(overview.contains("Imaging Run"));
-    assert!(overview.contains("Mode: cube"));
+    assert!(overview.contains("Mode: mfs"));
     assert!(overview.contains("W-term"));
 
     app.set_active_result_tab(ResultTab::Products);
@@ -10611,6 +10623,10 @@ fn start_run_with_default_calibrate_launcher(app: &mut AppState) {
 
 fn start_run_with_default_imager_launcher(app: &mut AppState) {
     with_test_env_lock(|| {
+        unsafe {
+            std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
+            std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
+        }
         if let Some(path) = test_workspace_binary("casars-imager") {
             set_imager_launcher_bin(&path);
         } else {
@@ -10618,6 +10634,10 @@ fn start_run_with_default_imager_launcher(app: &mut AppState) {
         }
         app.start_run_for_test();
         clear_imager_launcher_bin();
+        unsafe {
+            std::env::remove_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND");
+            std::env::remove_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND");
+        }
     });
 }
 
@@ -11877,8 +11897,7 @@ fn sample_index_for_pixel(pixel: usize, blc: usize, inc: usize) -> usize {
 
 fn create_fixture_ms(root: &Path) -> PathBuf {
     let ms_path = root.join("measurement_set_fixture.ms");
-    let mut ms = MeasurementSet::create(
-        &ms_path,
+    let mut ms = MeasurementSet::create_memory(
         MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data),
     )
     .expect("create MS");
@@ -11944,7 +11963,8 @@ fn create_fixture_ms(root: &Path) -> PathBuf {
         1,
         ArrayD::from_shape_vec(vec![2], vec![1.0, 1.0]).unwrap(),
     );
-    ms.save().expect("save MS");
+    ms.save_as(&ms_path)
+        .expect("persist MS with production tiled bindings");
     ms_path
 }
 
