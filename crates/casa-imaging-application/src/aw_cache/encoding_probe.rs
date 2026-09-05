@@ -12,6 +12,55 @@ const CHUNK_BYTES: usize = 64 * 1024;
 const REPEAT_PLANE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_COHORT_BYTES: usize = 64 * 1024 * 1024;
 
+#[test]
+#[ignore = "requires explicitly selected real CASA CF planes; read-only decoder baseline"]
+fn t51_cf_decoder_stage_baseline() {
+    use super::{adapt_kernel_from_plane, decode_complex32_plane};
+    let root = PathBuf::from(std::env::var_os("CASA_RS_VLASS_CF_CACHE").unwrap());
+    let names = std::env::var("CASA_RS_T51_CF_ENCODING_PLANES").unwrap();
+    let names = names.split(',').collect::<Vec<_>>();
+    assert!(!names.is_empty() && names.len() <= 6);
+    for name in names {
+        assert!(name.ends_with(".im") && !name.contains(['/', '\\']));
+        let (_, metadata) = read_metadata(&root.join(name)).unwrap();
+        assert!(metadata.shape[0] * metadata.shape[1] * 8 <= MAX_COHORT_BYTES);
+        let (payload, _, _, _) = bulk_reference(&metadata);
+        let payload_sha256 = format!("{:x}", Sha256::digest(&payload));
+        let expected = adapt_kernel_from_plane(
+            &metadata,
+            decode_complex32_plane(payload.clone(), &metadata).unwrap(),
+        )
+        .unwrap();
+        for trial in 0..5 {
+            let started = Instant::now();
+            let mut encoded = Vec::with_capacity(payload.len());
+            for chunk in payload.chunks(CHUNK_BYTES) {
+                encoded.extend_from_slice(std::hint::black_box(chunk));
+            }
+            let copy = started.elapsed();
+            let started = Instant::now();
+            let plane = decode_complex32_plane(encoded, &metadata).unwrap();
+            let parse = started.elapsed();
+            let started = Instant::now();
+            let kernel = adapt_kernel_from_plane(&metadata, plane).unwrap();
+            let widen_validate = started.elapsed();
+            assert_eq!(kernel, expected);
+            eprintln!(
+                "t51_cf_decoder_baseline {}",
+                serde_json::json!({
+                    "plane": name, "shape": metadata.shape, "trial": trial,
+                    "payload_bytes": payload.len(), "payload_sha256": payload_sha256,
+                    "copy_nanos": copy.as_nanos(), "parse_nanos": parse.as_nanos(),
+                    "widen_validate_nanos": widen_validate.as_nanos(),
+                    "kernel_equal": true,
+                    "scope": "existing decoder only; source read, checksum and reader finite scan excluded",
+                    "compiled_aw_cache_sha256": format!("{:x}", Sha256::digest(include_bytes!("../aw_cache.rs"))),
+                })
+            );
+        }
+    }
+}
+
 fn bulk_reference(metadata: &KernelMetadata) -> (Vec<u8>, f64, f64, f64) {
     let started = Instant::now();
     let image = PagedImage::<Complex32>::open(&metadata.path).unwrap();

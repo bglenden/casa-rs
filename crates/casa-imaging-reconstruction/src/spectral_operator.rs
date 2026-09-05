@@ -4086,6 +4086,7 @@ struct AwBlockProgress {
     owner: u64,
     started: Option<Instant>,
     last_reported: Option<Duration>,
+    checkpoint_block: Option<u64>,
 }
 
 impl AwBlockProgress {
@@ -4096,6 +4097,14 @@ impl AwBlockProgress {
             owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
             started: None,
             last_reported: None,
+            checkpoint_block: std::env::var("CASA_RS_TRACE_AW_CHECKPOINT_BLOCK").ok().map(
+                |value| {
+                    value
+                        .parse::<std::num::NonZeroU64>()
+                        .expect("AW checkpoint block must be a positive integer")
+                        .get()
+                },
+            ),
         }
     }
 
@@ -4103,14 +4112,22 @@ impl AwBlockProgress {
         self.started.get_or_insert_with(Instant::now);
     }
 
-    fn observe(progress: &mut Option<Self>, complete: bool, emit: impl FnOnce(u64, Duration)) {
+    fn observe(
+        progress: &mut Option<Self>,
+        complete: bool,
+        completed_blocks: u64,
+        emit: impl FnOnce(u64, Duration),
+    ) {
         let Some(progress) = progress else {
             return;
         };
         let elapsed = progress
             .started
             .map_or(Duration::ZERO, |start| start.elapsed());
-        if progress.report_at(elapsed, complete) {
+        if progress.report_at(
+            elapsed,
+            complete || progress.checkpoint_block == Some(completed_blocks),
+        ) {
             emit(progress.owner, elapsed);
         }
     }
@@ -5145,62 +5162,67 @@ impl CompleteDataOwnerState {
     }
 
     fn observe_aw_block_progress(&mut self, block: Option<&WeightingReplayChunk>, complete: bool) {
-        AwBlockProgress::observe(&mut self.aw_progress, complete, |owner, elapsed| {
-            let first = block
-                .and_then(|block| block.samples().first())
-                .map(|sample| sample.selected().address());
-            let last = block
-                .and_then(|block| block.samples().last())
-                .map(|sample| sample.selected().address());
-            for operator in &self.operators {
-                let Some(aw) = &operator.aw_projection else {
-                    continue;
-                };
-                let counters = match aw.lock() {
-                    Ok(aw) => {
-                        aw.emit_timing_checkpoint();
-                        aw.diagnostics()
-                    }
-                    Err(_) => {
-                        eprintln!(
-                            "imaging_aw_block_progress owner={} chart={} diagnostics_available=0",
-                            owner, operator.chart_ordinal
-                        );
+        AwBlockProgress::observe(
+            &mut self.aw_progress,
+            complete,
+            self.next_block_sequence,
+            |owner, elapsed| {
+                let first = block
+                    .and_then(|block| block.samples().first())
+                    .map(|sample| sample.selected().address());
+                let last = block
+                    .and_then(|block| block.samples().last())
+                    .map(|sample| sample.selected().address());
+                for operator in &self.operators {
+                    let Some(aw) = &operator.aw_projection else {
                         continue;
-                    }
-                };
-                eprintln!(
-                    "imaging_aw_block_progress owner={} chart={} pass={:?} complete={} elapsed_nanos={} completed_blocks={} completed_samples={} last_sequence={:?} problem={} weighting={:?} model={:?} first_row={:?} last_row={:?} first_ddid={:?} last_ddid={:?} first_spw={:?} last_spw={:?} selections={} degrid_passes={} grid_preparations={} evaluated_cfs_taps={} evaluated_wtcf_taps={} provider_hits={} provider_loads={} evicted_bytes={} copied_bytes={} resident_byte_ceiling={} diagnostics_available=1",
-                    owner,
-                    operator.chart_ordinal,
-                    operator.workload.pass,
-                    u8::from(complete),
-                    elapsed.as_nanos(),
-                    self.next_block_sequence,
-                    self.sample_count,
-                    self.next_block_sequence.checked_sub(1),
-                    self.problem,
-                    self.weighting_generation,
-                    self.model_binding,
-                    first.map(|address| address.physical_row),
-                    last.map(|address| address.physical_row),
-                    first.map(|address| address.data_description_id),
-                    last.map(|address| address.data_description_id),
-                    first.map(|address| address.spectral_window_id),
-                    last.map(|address| address.spectral_window_id),
-                    counters.selections,
-                    counters.degrid_passes,
-                    counters.grid_passes,
-                    counters.imaging_taps,
-                    counters.weight_taps,
-                    counters.provider_hits,
-                    counters.provider_loads,
-                    counters.evicted_bytes,
-                    counters.copied_bytes,
-                    counters.resident_byte_ceiling,
-                );
-            }
-        });
+                    };
+                    let counters = match aw.lock() {
+                        Ok(aw) => {
+                            aw.emit_timing_checkpoint();
+                            aw.diagnostics()
+                        }
+                        Err(_) => {
+                            eprintln!(
+                                "imaging_aw_block_progress owner={} chart={} diagnostics_available=0",
+                                owner, operator.chart_ordinal
+                            );
+                            continue;
+                        }
+                    };
+                    eprintln!(
+                        "imaging_aw_block_progress owner={} chart={} pass={:?} complete={} elapsed_nanos={} completed_blocks={} completed_samples={} last_sequence={:?} problem={} weighting={:?} model={:?} first_row={:?} last_row={:?} first_ddid={:?} last_ddid={:?} first_spw={:?} last_spw={:?} selections={} degrid_passes={} grid_preparations={} evaluated_cfs_taps={} evaluated_wtcf_taps={} provider_hits={} provider_loads={} evicted_bytes={} copied_bytes={} resident_byte_ceiling={} diagnostics_available=1",
+                        owner,
+                        operator.chart_ordinal,
+                        operator.workload.pass,
+                        u8::from(complete),
+                        elapsed.as_nanos(),
+                        self.next_block_sequence,
+                        self.sample_count,
+                        self.next_block_sequence.checked_sub(1),
+                        self.problem,
+                        self.weighting_generation,
+                        self.model_binding,
+                        first.map(|address| address.physical_row),
+                        last.map(|address| address.physical_row),
+                        first.map(|address| address.data_description_id),
+                        last.map(|address| address.data_description_id),
+                        first.map(|address| address.spectral_window_id),
+                        last.map(|address| address.spectral_window_id),
+                        counters.selections,
+                        counters.degrid_passes,
+                        counters.grid_passes,
+                        counters.imaging_taps,
+                        counters.weight_taps,
+                        counters.provider_hits,
+                        counters.provider_loads,
+                        counters.evicted_bytes,
+                        counters.copied_bytes,
+                        counters.resident_byte_ceiling,
+                    );
+                }
+            },
+        );
     }
 
     fn finish_casa_linear_rows(&mut self) -> Result<(), SpectralOperatorError> {
@@ -13409,11 +13431,26 @@ mod tests {
     fn t51_aw_block_progress_disabled_does_not_read_counters() {
         let mut disabled = None;
         for complete in [false, true] {
-            super::AwBlockProgress::observe(&mut disabled, complete, |_, _| {
+            super::AwBlockProgress::observe(&mut disabled, complete, 1, |_, _| {
                 panic!("disabled observer must not read counters or inspect block addresses")
             });
         }
         assert!(disabled.is_none());
+    }
+
+    #[test]
+    fn t51_aw_block_progress_reports_exact_requested_block() {
+        let mut observer = super::AwBlockProgress::new();
+        observer.checkpoint_block = Some(1024);
+        observer.begin();
+        let mut observer = Some(observer);
+        let mut emitted = Vec::new();
+        for block in [1, 1023, 1024, 1025] {
+            super::AwBlockProgress::observe(&mut observer, false, block, |_, _| {
+                emitted.push(block);
+            });
+        }
+        assert_eq!(emitted, [1, 1024]);
     }
 
     #[test]
@@ -13452,7 +13489,7 @@ mod tests {
                 .grid_compensated(&mut observed_grids[1], &mut observed_errors[1], value)
                 .unwrap();
             let before = observed.diagnostics();
-            super::AwBlockProgress::observe(&mut observer, index == 1, |_, _| {
+            super::AwBlockProgress::observe(&mut observer, index == 1, index as u64 + 1, |_, _| {
                 let snapshot = observed.diagnostics();
                 assert_eq!(snapshot, before);
                 assert_eq!(snapshot.imaging_taps, index as u64 + 1);
