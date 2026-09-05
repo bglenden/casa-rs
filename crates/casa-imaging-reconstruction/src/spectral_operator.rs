@@ -8751,6 +8751,7 @@ impl SpectralSlabOperator {
                         &self.mosaic_projectors,
                         grid,
                         taps,
+                        None,
                     )? * self.coefficient_basis[term];
                 }
                 predicted = predicted * sample.phase().conj() * sample.spectral_factor;
@@ -8794,6 +8795,7 @@ impl SpectralSlabOperator {
                         &self.mosaic_projectors,
                         grid,
                         taps,
+                        None,
                     )? * self.coefficient_basis[term];
                 }
                 predicted = predicted * sample.phase().conj() * sample.spectral_factor;
@@ -8821,6 +8823,7 @@ impl SpectralSlabOperator {
                         &self.mosaic_projectors,
                         grid,
                         taps,
+                        None,
                     )? * self.coefficient_basis[term];
                 }
                 predicted = predicted * sample.phase().conj() * sample.spectral_factor;
@@ -8845,6 +8848,7 @@ impl SpectralSlabOperator {
             &self.mosaic_projectors,
             &self.forward_grids[resident],
             taps,
+            None,
         )? * sample.phase().conj()
             * sample.spectral_factor;
         #[cfg(test)]
@@ -9088,13 +9092,14 @@ impl SpectralSlabOperator {
             };
         }
         let sample = self.aw_visibility_sample(prediction_coordinates, [0, 0], true)?;
-        let degrid = |grid: &Array2<Complex64>| {
+        let degrid = |grid: &Array2<Complex64>, replay_taylor_term| {
             degrid_operator(
                 &self.gridder,
                 &self.aw_projection,
                 &self.mosaic_projectors,
                 grid,
                 OperatorTaps::Aw(sample),
+                replay_taylor_term,
             )
         };
         let predicted = match self.basis {
@@ -9103,7 +9108,10 @@ impl SpectralSlabOperator {
                     .slab
                     .resident_index(output_channel)
                     .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-                degrid(&self.forward_grids[self.polarization_plane(resident, polarization)])?
+                degrid(
+                    &self.forward_grids[self.polarization_plane(resident, polarization)],
+                    None,
+                )?
             }
             SpectralBasisPlan::Polynomial(plan) => {
                 let coefficients = plan
@@ -9111,10 +9119,11 @@ impl SpectralSlabOperator {
                     .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?;
                 let mut value = Complex64::default();
                 for (term, coefficient) in coefficients.enumerate() {
-                    value +=
-                        degrid(&self.forward_grids[self.polarization_plane(term, polarization)])?
-                            * coefficient
-                                .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?;
+                    value += degrid(
+                        &self.forward_grids[self.polarization_plane(term, polarization)],
+                        Some(term),
+                    )? * coefficient
+                        .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?;
                 }
                 value
             }
@@ -9124,7 +9133,10 @@ impl SpectralSlabOperator {
                         .slab
                         .resident_index(output_channel)
                         .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-                    degrid(&self.forward_grids[self.polarization_plane(resident, polarization)])?
+                    degrid(
+                        &self.forward_grids[self.polarization_plane(resident, polarization)],
+                        None,
+                    )?
                 } else {
                     let frequency = *self
                         .output_channel_frequencies_hz
@@ -9137,6 +9149,7 @@ impl SpectralSlabOperator {
                     for term in 0..plan.coefficient_term_count() {
                         value += degrid(
                             &self.forward_grids[self.polarization_plane(term, polarization)],
+                            Some(term),
                         )? * x.powi(
                             i32::try_from(term)
                                 .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
@@ -10340,6 +10353,7 @@ fn degrid_operator(
     mosaic: &BTreeMap<MosaicProjectorKey, MosaicProjector>,
     grid: &Array2<Complex64>,
     taps: OperatorTaps,
+    replay_taylor_term: Option<usize>,
 ) -> Result<Complex64, SpectralOperatorError> {
     match taps {
         OperatorTaps::Standard(taps) => standard.degrid(grid, taps),
@@ -10348,11 +10362,12 @@ fn degrid_operator(
             let mut aw = aw
                 .lock()
                 .map_err(|_| SpectralOperatorError::ProblemMismatch)?;
-            aw.degrid(
+            aw.degrid_with_replay_term(
                 grid.as_slice()
                     .ok_or(SpectralOperatorError::ProblemMismatch)?,
                 [grid.nrows(), grid.ncols()],
                 sample,
+                replay_taylor_term,
             )
             .map_err(Into::into)
         }

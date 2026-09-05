@@ -6,7 +6,13 @@
 //! provider so cold CASA import and warm private reuse converge on the same
 //! typed cell without materializing the complete CF cache here.
 
-use std::{collections::BTreeSet, fmt, mem::size_of, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    fmt,
+    mem::size_of,
+    sync::{Arc, Mutex, OnceLock, PoisonError},
+    time::Instant,
+};
 
 use casa_imaging_model::{PreparedArtifactScientificIdentity, PreparedArtifactScientificKind};
 use num_complex::Complex64;
@@ -644,12 +650,167 @@ pub struct AwOperatorDiagnostics {
     pub resident_byte_ceiling: usize,
 }
 
+// Diagnostic sampling is deliberately coprime to the regular channel/hand
+// groups. These are raw sampled times, not exact aggregate stage measurements.
+const AW_TIMING_SAMPLE_INTERVAL: u64 = 257;
+const AW_TIMING_ROLES: [&str; 8] = [
+    "grid_footprint",
+    "prediction",
+    "replay_taylor_first",
+    "replay_taylor_second",
+    "replay_taylor_later",
+    "imaging_grid",
+    "paired_grid",
+    "sensitivity_grid",
+];
+
+#[derive(Clone, Copy, Default)]
+struct AwTimingTotals {
+    calls: u64,
+    sampled_calls: u64,
+    stage_samples: [u64; 4],
+    sampled_nanos: [u128; 4],
+    provider_loaded_calls: u64,
+    sampled_provider_loaded_calls: u64,
+    sampled_provider_loaded_nanos: u128,
+}
+
+struct AwReplayTiming {
+    owner: u64,
+    totals: Mutex<[AwTimingTotals; AW_TIMING_ROLES.len()]>,
+}
+
+impl AwReplayTiming {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
+        Self {
+            owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
+            totals: Mutex::new([AwTimingTotals::default(); AW_TIMING_ROLES.len()]),
+        }
+    }
+
+    fn from_environment() -> Option<Box<Self>> {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        ENABLED
+            .get_or_init(|| std::env::var_os("CASA_RS_TRACE_AW_REPLAY_TIMING").is_some())
+            .then(|| Box::new(Self::new()))
+    }
+
+    fn begin(probe: Option<&Self>, role: usize) -> Option<AwTimingCall<'_>> {
+        let probe = probe?;
+        let sampled = {
+            let mut totals = probe.totals.lock().unwrap_or_else(PoisonError::into_inner);
+            let totals = &mut totals[role];
+            let sampled = totals.calls % AW_TIMING_SAMPLE_INTERVAL == 0;
+            totals.calls = totals.calls.saturating_add(1);
+            totals.sampled_calls += u64::from(sampled);
+            sampled
+        };
+        Some(AwTimingCall {
+            probe,
+            role,
+            previous: sampled.then(Instant::now),
+            nanos: [None; 4],
+            provider_loaded: false,
+        })
+    }
+}
+
+impl Drop for AwReplayTiming {
+    fn drop(&mut self) {
+        for (role, totals) in AW_TIMING_ROLES.iter().zip(
+            self.totals
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner),
+        ) {
+            if totals.calls == 0 {
+                continue;
+            }
+            eprintln!(
+                "imaging_aw_replay_timing owner={} scope=operator_lifetime role={} sample_interval={} calls={} sampled_calls={} catalog_samples={} provider_samples={} fused_tap_samples={} dot_product_samples={} sampled_catalog_nanos={} sampled_provider_nanos={} sampled_fused_tap_nanos={} sampled_dot_product_envelope_nanos={} provider_loaded_calls={} sampled_provider_loaded_calls={} sampled_provider_loaded_nanos={}",
+                self.owner,
+                role,
+                AW_TIMING_SAMPLE_INTERVAL,
+                totals.calls,
+                totals.sampled_calls,
+                totals.stage_samples[0],
+                totals.stage_samples[1],
+                totals.stage_samples[2],
+                totals.stage_samples[3],
+                totals.sampled_nanos[0],
+                totals.sampled_nanos[1],
+                totals.sampled_nanos[2],
+                totals.sampled_nanos[3],
+                totals.provider_loaded_calls,
+                totals.sampled_provider_loaded_calls,
+                totals.sampled_provider_loaded_nanos,
+            );
+        }
+    }
+}
+
+struct AwTimingCall<'a> {
+    probe: &'a AwReplayTiming,
+    role: usize,
+    previous: Option<Instant>,
+    nanos: [Option<u128>; 4],
+    provider_loaded: bool,
+}
+
+impl AwTimingCall<'_> {
+    fn mark(call: &mut Option<Self>, stage: usize) {
+        if let Some(call) = call {
+            if let Some(previous) = call.previous {
+                let now = Instant::now();
+                call.nanos[stage] = Some(now.duration_since(previous).as_nanos());
+                call.previous = Some(now);
+            }
+        }
+    }
+
+    fn provider(call: &mut Option<Self>, lease: &AwPreparedCellLease) {
+        Self::mark(call, 1);
+        if let Some(call) = call {
+            call.provider_loaded = lease.disposition() == AwPreparedCellDisposition::Loaded;
+        }
+    }
+}
+
+impl Drop for AwTimingCall<'_> {
+    fn drop(&mut self) {
+        if self.previous.is_none() && !self.provider_loaded {
+            return;
+        }
+        let mut totals = self
+            .probe
+            .totals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let totals = &mut totals[self.role];
+        totals.provider_loaded_calls += u64::from(self.provider_loaded);
+        for (stage, nanos) in self.nanos.into_iter().enumerate() {
+            if let Some(nanos) = nanos {
+                totals.stage_samples[stage] += 1;
+                totals.sampled_nanos[stage] += nanos;
+            }
+        }
+        if self.provider_loaded {
+            if let Some(nanos) = self.nanos[1] {
+                totals.sampled_provider_loaded_calls += 1;
+                totals.sampled_provider_loaded_nanos += nanos;
+            }
+        }
+    }
+}
+
 /// A metadata catalog bound to one bounded prepared-cell provider.
 pub struct AwProjectionOperator<P> {
     catalog: AwPreparedCatalog,
     provider: P,
     conjugate_beams: bool,
     diagnostics: AwOperatorDiagnostics,
+    replay_timing: Option<Box<AwReplayTiming>>,
 }
 
 impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
@@ -671,6 +832,7 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
                 resident_byte_ceiling,
                 ..AwOperatorDiagnostics::default()
             },
+            replay_timing: AwReplayTiming::from_environment(),
         })
     }
     /// Return exact deterministic operator and provider counters.
@@ -686,7 +848,9 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         shape: [usize; 2],
         sample: AwVisibilitySample,
     ) -> Result<([usize; 2], usize), AwOperatorError> {
+        let mut timing = AwReplayTiming::begin(self.replay_timing.as_deref(), 0);
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        AwTimingCall::mark(&mut timing, 0);
         let (x, _) = fractional_bin(
             sample.grid_position[0],
             metadata.imaging_layout.oversampling,
@@ -718,10 +882,30 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         shape: [usize; 2],
         sample: AwVisibilitySample,
     ) -> Result<Complex64, AwOperatorError> {
+        self.degrid_with_replay_term(grid, shape, sample, None)
+    }
+
+    pub(crate) fn degrid_with_replay_term(
+        &mut self,
+        grid: &[Complex64],
+        shape: [usize; 2],
+        sample: AwVisibilitySample,
+        replay_taylor_term: Option<usize>,
+    ) -> Result<Complex64, AwOperatorError> {
         validate_grid(grid, shape)?;
+        let role = match replay_taylor_term {
+            None => 1,
+            Some(0) => 2,
+            Some(1) => 3,
+            Some(_) => 4,
+        };
+        let mut timing = AwReplayTiming::begin(self.replay_timing.as_deref(), role);
         let metadata = self.catalog.degrid_cell(sample)?;
+        AwTimingCall::mark(&mut timing, 0);
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        AwTimingCall::provider(&mut timing, &cell);
         let taps = fused_taps(&cell.cell().imaging, shape, sample, true)?;
+        AwTimingCall::mark(&mut timing, 2);
         add_measurement(&mut self.diagnostics.selections, 1)?;
         add_measurement(&mut self.diagnostics.degrid_passes, 1)?;
         add_measurement(&mut self.diagnostics.imaging_taps, taps.values.len() as u64)?;
@@ -730,6 +914,9 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
             .into_iter()
             .map(|tap| tap.coefficient.conj() * grid[tap.index])
             .sum::<Complex64>();
+        // This envelope includes the existing diagnostic increments above,
+        // but not the normalization division or prepared-cell release below.
+        AwTimingCall::mark(&mut timing, 3);
         Ok(prediction / taps.normalization.conj())
     }
     pub(crate) fn prepare_imaging_grid(
@@ -737,9 +924,13 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         shape: [usize; 2],
         sample: AwVisibilitySample,
     ) -> Result<AwGridPlan, AwOperatorError> {
+        let mut timing = AwReplayTiming::begin(self.replay_timing.as_deref(), 5);
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        AwTimingCall::mark(&mut timing, 0);
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        AwTimingCall::provider(&mut timing, &cell);
         let taps = fused_taps(&cell.cell().imaging, shape, sample, true)?;
+        AwTimingCall::mark(&mut timing, 2);
         add_measurement(&mut self.diagnostics.selections, 1)?;
         add_measurement(&mut self.diagnostics.grid_passes, 1)?;
         add_measurement(&mut self.diagnostics.imaging_taps, taps.values.len() as u64)?;
@@ -751,10 +942,14 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         shape: [usize; 2],
         sample: AwVisibilitySample,
     ) -> Result<(AwGridPlan, AwGridPlan), AwOperatorError> {
+        let mut timing = AwReplayTiming::begin(self.replay_timing.as_deref(), 6);
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        AwTimingCall::mark(&mut timing, 0);
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        AwTimingCall::provider(&mut timing, &cell);
         let imaging = fused_taps(&cell.cell().imaging, shape, sample, true)?;
         let normal = fused_taps(&cell.cell().weight, shape, sample, true)?;
+        AwTimingCall::mark(&mut timing, 2);
         add_measurement(&mut self.diagnostics.selections, 1)?;
         add_measurement(&mut self.diagnostics.grid_passes, 2)?;
         add_measurement(
@@ -776,12 +971,16 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
         shape: [usize; 2],
         sample: AwVisibilitySample,
     ) -> Result<(AwGridPlan, AwGridPlan, AwScienceProbePair), AwOperatorError> {
+        let mut timing = AwReplayTiming::begin(self.replay_timing.as_deref(), 6);
         let metadata = self.catalog.grid_cell(sample, self.conjugate_beams)?;
+        AwTimingCall::mark(&mut timing, 0);
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        AwTimingCall::provider(&mut timing, &cell);
         let (imaging, imaging_observed) =
             fused_taps_inner::<true>(&cell.cell().imaging, shape, sample, true)?;
         let (normal, normal_observed) =
             fused_taps_inner::<true>(&cell.cell().weight, shape, sample, true)?;
+        AwTimingCall::mark(&mut timing, 2);
         let probes = AwScienceProbePair {
             imaging: observed_science_probe(
                 metadata,
@@ -825,9 +1024,13 @@ impl<P: AwPreparedCellProvider> AwProjectionOperator<P> {
             grid_position: [shape[0] as f64 / 2.0, shape[1] as f64 / 2.0],
             ..sample
         };
+        let mut timing = AwReplayTiming::begin(self.replay_timing.as_deref(), 7);
         let metadata = self.catalog.grid_cell(centered, self.conjugate_beams)?;
+        AwTimingCall::mark(&mut timing, 0);
         let cell = load_cell(&mut self.provider, metadata, &mut self.diagnostics)?;
+        AwTimingCall::provider(&mut timing, &cell);
         let taps = fused_taps(&cell.cell().weight, shape, centered, true)?;
+        AwTimingCall::mark(&mut timing, 2);
         add_measurement(&mut self.diagnostics.selections, 1)?;
         add_measurement(&mut self.diagnostics.grid_passes, 1)?;
         add_measurement(&mut self.diagnostics.weight_taps, taps.values.len() as u64)?;
@@ -1313,6 +1516,75 @@ mod tests {
             taps[(2 * x + 2) * layout.shape[1] + layout.center[1]] = value;
         }
         AwConvolutionKernel::new(layout, taps).unwrap()
+    }
+
+    #[test]
+    fn t51_aw_replay_timing_is_opt_in_and_preserves_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AwProjectionOperator<Provider>>();
+        assert!(AwReplayTiming::begin(None, 0).is_none());
+        let mut disabled = None;
+        AwTimingCall::mark(&mut disabled, 0);
+        assert!(disabled.is_none());
+    }
+
+    #[test]
+    fn t51_aw_replay_timing_samples_terms_without_changing_science_or_counters() {
+        let entries = vec![metadata(10.0, 0.0, 0, 0.0), metadata(10.0, 0.0, 15, 0.0)];
+        let mut plain = operator(entries.clone());
+        plain.replay_timing = None;
+        let mut observed = operator(entries);
+        observed.replay_timing = Some(Box::new(AwReplayTiming::new()));
+        let sample = sample(10.0, 0.0, 0, 0.0);
+        let grids: [Vec<_>; 2] = std::array::from_fn(|term| {
+            (0..100)
+                .map(|index| Complex64::new((index + term) as f64 * 0.01, index as f64 * -0.02))
+                .collect()
+        });
+        for _ in 0..=AW_TIMING_SAMPLE_INTERVAL {
+            for (term, grid) in grids.iter().enumerate() {
+                let expected = plain.degrid(grid, [10, 10], sample).unwrap();
+                let actual = observed
+                    .degrid_with_replay_term(grid, [10, 10], sample, Some(term))
+                    .unwrap();
+                assert_eq!(actual.re.to_bits(), expected.re.to_bits());
+                assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+            }
+        }
+        assert_eq!(
+            observed.grid_footprint([10, 10], sample).unwrap(),
+            plain.grid_footprint([10, 10], sample).unwrap()
+        );
+        let plain_plan = plain.prepare_imaging_grid([10, 10], sample).unwrap();
+        let observed_plan = observed.prepare_imaging_grid([10, 10], sample).unwrap();
+        let apply = |plan: AwGridPlan| {
+            let mut grid = vec![Complex64::default(); 100];
+            let mut errors = grid.clone();
+            plan.grid_compensated(&mut grid, &mut errors, Complex64::new(2.0, -0.5))
+                .unwrap();
+            (grid, errors)
+        };
+        assert_eq!(apply(observed_plan), apply(plain_plan));
+        assert_eq!(observed.diagnostics(), plain.diagnostics());
+        let totals = observed
+            .replay_timing
+            .as_ref()
+            .unwrap()
+            .totals
+            .lock()
+            .unwrap();
+        assert_eq!(totals[0].calls, 1);
+        assert_eq!(totals[0].stage_samples, [1, 0, 0, 0]);
+        assert_eq!(totals[1].calls, 0);
+        for term in [2, 3] {
+            assert_eq!(totals[term].calls, AW_TIMING_SAMPLE_INTERVAL + 1);
+            assert_eq!(totals[term].sampled_calls, 2);
+            assert_eq!(totals[term].stage_samples, [2; 4]);
+        }
+        assert_eq!(totals[2].provider_loaded_calls, 1);
+        assert_eq!(totals[2].sampled_provider_loaded_calls, 1);
+        assert_eq!(totals[3].provider_loaded_calls, 0);
+        assert_eq!(totals[5].stage_samples, [1, 1, 1, 0]);
     }
 
     fn local_stencil_fixture(
