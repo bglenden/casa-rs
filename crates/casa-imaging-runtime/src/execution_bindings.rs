@@ -2830,38 +2830,20 @@ impl RecordedInfeasibility {
     /// proof that the candidate's resource region is infeasible.
     fn from_store(store: &crate::ExecutionReceiptStore) -> Result<Self, ReceiptError> {
         let mut regions = Vec::new();
-        for attempt in store.attempts()? {
-            let receipt = store.open(attempt)?;
-            let status = receipt.status();
-            if !matches!(
-                status,
-                ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
-            ) || receipt.failure_kind() != Some(ReceiptFailureKind::ResourceInfeasible)
-            {
-                continue;
-            }
-            let Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
-                resource_identity,
-                required,
-                available,
-                ..
-            }) = receipt.infeasibility_certificate()
-            else {
-                // Capability gaps and references to earlier receipts are not
-                // quantitative pressure regions and cannot constrain a later
-                // Resource Authority decision.
+        for summary in store.summaries()? {
+            let Some(infeasibility) = summary.infeasibility else {
                 continue;
             };
             regions.push(RegionFailure {
-                problem: receipt.problem_identity(),
-                physical_work: receipt.dag_identity(),
-                resource_policy: receipt.resource_policy_identity(),
-                alternative: receipt.selected_alternative_projection().id,
-                attempt,
-                status,
-                resource_identity,
-                required,
-                available,
+                problem: infeasibility.problem,
+                physical_work: infeasibility.physical_work,
+                resource_policy: infeasibility.resource_policy,
+                alternative: infeasibility.alternative,
+                attempt: summary.attempt,
+                status: summary.status,
+                resource_identity: infeasibility.resource_identity,
+                required: infeasibility.required,
+                available: infeasibility.available,
             });
         }
         Ok(Self {
@@ -3045,6 +3027,13 @@ pub struct CompiledWorkContext<'a> {
 }
 
 impl<'a> CompiledWorkContext<'a> {
+    pub(crate) fn prepared_artifact_dependency_id(
+        self,
+        kind: casa_imaging_model::PreparedArtifactScientificKind,
+    ) -> casa_imaging_model::LogicalIdentity {
+        self.problem.prepared_artifact_dependency_id(kind)
+    }
+
     /// Return the stable compiled-problem identity.
     #[must_use]
     pub const fn problem_id(self) -> CompiledProblemId {
@@ -3130,7 +3119,58 @@ pub struct WorkExecutionContext<'a> {
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
+#[cfg(test)]
+pub(crate) struct WorkExecutionTestBindings<'a> {
+    problem: &'a CompiledProblem,
+    implementation_registry: ImplementationRegistryId,
+    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+}
+
+#[cfg(test)]
+impl<'a> WorkExecutionTestBindings<'a> {
+    pub(crate) const fn new(
+        problem: &'a CompiledProblem,
+        implementation_registry: ImplementationRegistryId,
+        completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+    ) -> Self {
+        Self {
+            problem,
+            implementation_registry,
+            completed_observation_reads,
+        }
+    }
+}
+
 impl<'a> WorkExecutionContext<'a> {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        attempt_id: ExecutionAttemptId,
+        bindings: WorkExecutionTestBindings<'a>,
+        scheduled: &'a crate::execution::WorkExecutionContext,
+        planned_artifacts: &'a [PlannedArtifact],
+        stage_prediction: &'a StagePrediction,
+        resource_alternative: &'a crate::DemandAlternative,
+    ) -> Self {
+        Self {
+            attempt_id,
+            compiled: CompiledWorkContext {
+                problem: bindings.problem,
+            },
+            implementation_registry: bindings.implementation_registry,
+            scheduled,
+            planned_artifacts,
+            stage_prediction,
+            resource_alternative,
+            observation_consistency: None,
+            observation_reads: None,
+            visibility_writes: None,
+            publication: None,
+            publication_resources: None,
+            product_publication: None,
+            completed_observation_reads: bindings.completed_observation_reads,
+        }
+    }
+
     /// Return the execution attempt that dispatched this exact node call.
     #[must_use]
     pub const fn attempt_id(self) -> ExecutionAttemptId {

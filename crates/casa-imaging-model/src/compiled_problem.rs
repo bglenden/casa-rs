@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 21;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 23;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -456,6 +456,171 @@ pub enum InstrumentModel {
     /// CASA-compatible paired voltage response for heterogeneous ALMA 12 m
     /// and ACA 7 m interferometric baselines, version 1.
     CasaAlmaAcaHeterogeneousInterferometricResponseV1,
+    /// CASA-compatible EVLA wideband aperture, pointing, and conjugate-beam
+    /// response consumed through validated paired AW convolution functions.
+    CasaEvlaWidebandAwV1,
+}
+
+/// Science-owned A/W-projection controls compiled into one paired operator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AwProjectionContract {
+    maximum_abs_w_lambda_bits: u64,
+    planes: std::num::NonZeroUsize,
+    a_term: bool,
+    ps_term: bool,
+    wideband: bool,
+    conjugate_beams: bool,
+    use_pointing: bool,
+    pointing_group_threshold_arcsec_bits: u64,
+    pointing_refresh_threshold_arcsec_bits: u64,
+    compute_pa_step_deg_bits: u64,
+    rotate_pa_step_deg_bits: u64,
+}
+
+impl AwProjectionContract {
+    /// Construct one complete paired A/W request independent of cache state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        maximum_abs_w_lambda: f64,
+        planes: std::num::NonZeroUsize,
+        a_term: bool,
+        ps_term: bool,
+        wideband: bool,
+        conjugate_beams: bool,
+        use_pointing: bool,
+        pointing_offset_sigdev_arcsec: [f64; 2],
+        compute_pa_step_deg: f64,
+        rotate_pa_step_deg: f64,
+    ) -> Result<Self, AwProjectionContractError> {
+        if !maximum_abs_w_lambda.is_finite() || maximum_abs_w_lambda < 0.0 {
+            return Err(AwProjectionContractError::InvalidMaximumAbsWLambda);
+        }
+        if !compute_pa_step_deg.is_finite() || compute_pa_step_deg <= 0.0 {
+            return Err(AwProjectionContractError::InvalidComputePaStep);
+        }
+        if !rotate_pa_step_deg.is_finite() || rotate_pa_step_deg <= 0.0 {
+            return Err(AwProjectionContractError::InvalidRotatePaStep);
+        }
+        if pointing_offset_sigdev_arcsec
+            .into_iter()
+            .any(|threshold| !threshold.is_finite() || threshold < 0.0)
+        {
+            return Err(AwProjectionContractError::InvalidPointingOffsetSigdev);
+        }
+        let [
+            pointing_group_threshold_arcsec,
+            pointing_refresh_threshold_arcsec,
+        ] = pointing_offset_sigdev_arcsec;
+        Ok(Self {
+            maximum_abs_w_lambda_bits: maximum_abs_w_lambda.to_bits(),
+            planes,
+            a_term,
+            ps_term,
+            wideband,
+            conjugate_beams,
+            use_pointing,
+            pointing_group_threshold_arcsec_bits: pointing_group_threshold_arcsec.to_bits(),
+            pointing_refresh_threshold_arcsec_bits: pointing_refresh_threshold_arcsec.to_bits(),
+            compute_pa_step_deg_bits: compute_pa_step_deg.to_bits(),
+            rotate_pa_step_deg_bits: rotate_pa_step_deg.to_bits(),
+        })
+    }
+
+    /// Return the selected-observation W envelope in wavelengths.
+    #[must_use]
+    pub fn maximum_abs_w_lambda(self) -> f64 {
+        f64::from_bits(self.maximum_abs_w_lambda_bits)
+    }
+
+    /// Return the exact requested W-plane count.
+    #[must_use]
+    pub const fn planes(self) -> std::num::NonZeroUsize {
+        self.planes
+    }
+
+    /// Return whether the aperture term is required.
+    #[must_use]
+    pub const fn a_term(self) -> bool {
+        self.a_term
+    }
+
+    /// Return whether the prolate-spheroidal term is required.
+    #[must_use]
+    pub const fn ps_term(self) -> bool {
+        self.ps_term
+    }
+
+    /// Return whether frequency-dependent aperture cells are required.
+    #[must_use]
+    pub const fn wideband(self) -> bool {
+        self.wideband
+    }
+
+    /// Return whether conjugate-frequency beam cells are required.
+    #[must_use]
+    pub const fn conjugate_beams(self) -> bool {
+        self.conjugate_beams
+    }
+
+    /// Return whether row-local POINTING directions are required.
+    #[must_use]
+    pub const fn use_pointing(self) -> bool {
+        self.use_pointing
+    }
+
+    /// Return CASA's two effective pointing thresholds in arcseconds.
+    ///
+    /// The first threshold groups antenna pointing offsets that may share a
+    /// correction. The second is the time-dependent mean-shift threshold after
+    /// which those antenna groups must be refreshed.
+    #[must_use]
+    pub fn pointing_offset_sigdev_arcsec(self) -> [f64; 2] {
+        [
+            f64::from_bits(self.pointing_group_threshold_arcsec_bits),
+            f64::from_bits(self.pointing_refresh_threshold_arcsec_bits),
+        ]
+    }
+
+    /// Return the antenna pointing-offset grouping threshold in arcseconds.
+    #[must_use]
+    pub fn pointing_group_threshold_arcsec(self) -> f64 {
+        f64::from_bits(self.pointing_group_threshold_arcsec_bits)
+    }
+
+    /// Return the time-dependent antenna-group refresh threshold in arcseconds.
+    #[must_use]
+    pub fn pointing_refresh_threshold_arcsec(self) -> f64 {
+        f64::from_bits(self.pointing_refresh_threshold_arcsec_bits)
+    }
+
+    /// Return the CF computation parallactic-angle step in degrees.
+    #[must_use]
+    pub fn compute_pa_step_deg(self) -> f64 {
+        f64::from_bits(self.compute_pa_step_deg_bits)
+    }
+
+    /// Return the CF rotation parallactic-angle step in degrees.
+    #[must_use]
+    pub fn rotate_pa_step_deg(self) -> f64 {
+        f64::from_bits(self.rotate_pa_step_deg_bits)
+    }
+}
+
+/// Invalid paired A/W-projection science contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum AwProjectionContractError {
+    /// The selected-observation W envelope must be finite and non-negative.
+    #[error("maximum absolute W wavelength must be finite and non-negative")]
+    InvalidMaximumAbsWLambda,
+    /// The CF computation PA step must be finite and positive.
+    #[error("AW computation parallactic-angle step must be finite and positive")]
+    InvalidComputePaStep,
+    /// The CF rotation PA step must be finite and positive.
+    #[error("AW rotation parallactic-angle step must be finite and positive")]
+    InvalidRotatePaStep,
+    /// Both pointing grouping and refresh thresholds must be finite and non-negative.
+    #[error("AW pointing-offset thresholds must be finite and non-negative")]
+    InvalidPointingOffsetSigdev,
 }
 
 /// Science-owned W-projection envelope compiled into the paired measurement operator.
@@ -507,6 +672,7 @@ pub struct MeasurementEquationContract {
     instrument_response: InstrumentResponse,
     inner_products: DeclaredInnerProducts,
     w_projection: Option<WProjectionContract>,
+    aw_projection: Option<AwProjectionContract>,
 }
 
 impl MeasurementEquationContract {
@@ -520,6 +686,7 @@ impl MeasurementEquationContract {
             instrument_response,
             inner_products,
             w_projection: None,
+            aw_projection: None,
         }
     }
 
@@ -527,6 +694,13 @@ impl MeasurementEquationContract {
     #[must_use]
     pub const fn with_w_projection(mut self, contract: WProjectionContract) -> Self {
         self.w_projection = Some(contract);
+        self
+    }
+
+    /// Include one explicit paired A/W-projection transform.
+    #[must_use]
+    pub const fn with_aw_projection(mut self, contract: AwProjectionContract) -> Self {
+        self.aw_projection = Some(contract);
         self
     }
 
@@ -546,6 +720,12 @@ impl MeasurementEquationContract {
     #[must_use]
     pub const fn w_projection(self) -> Option<WProjectionContract> {
         self.w_projection
+    }
+
+    /// Return the paired A/W-projection contract, when requested.
+    #[must_use]
+    pub const fn aw_projection(self) -> Option<AwProjectionContract> {
+        self.aw_projection
     }
 }
 
@@ -1704,6 +1884,8 @@ pub enum RequiredCapability {
     FacetedGeometry,
     /// Paired W-projection convolution.
     WProjection,
+    /// Paired prepared-convolution-function A/W projection.
+    AwProjection,
     /// Spectral reference-frame transformation.
     SpectralFrameTransform,
     /// Non-identity paired spectral sampling.
@@ -1765,6 +1947,7 @@ impl RequiredCapability {
             Self::MultiDomainGeometry,
             Self::FacetedGeometry,
             Self::WProjection,
+            Self::AwProjection,
             Self::SpectralFrameTransform,
             Self::SpectralResampling,
             Self::SequentialContinuumTransform,
@@ -1807,6 +1990,7 @@ impl RequiredCapability {
             Self::MultiDomainGeometry => "multi_domain_geometry".to_string(),
             Self::FacetedGeometry => "faceted_geometry".to_string(),
             Self::WProjection => "w_projection".to_string(),
+            Self::AwProjection => "aw_projection".to_string(),
             Self::SpectralFrameTransform => "spectral_frame_transform".to_string(),
             Self::SpectralResampling => "spectral_resampling".to_string(),
             Self::SequentialContinuumTransform => "sequential_continuum_transform".to_string(),
@@ -1924,6 +2108,68 @@ impl CompiledProblem {
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem_id
+    }
+
+    /// Return the model-owned compatibility commitment for immutable preparation.
+    ///
+    /// Paired convolution functions retain observation, reference data, geometry,
+    /// numerics, visibility transforms, spectral/instrument response, basis,
+    /// polarization, and weighting semantics. Solver selection, stopping controls,
+    /// model lifecycle authorization, and product publication do not describe these
+    /// immutable cells and are excluded. The observation snapshot itself remains
+    /// exact, including any initial model generation committed by its owner.
+    /// Complete cell semantics and representation are committed separately by the
+    /// scientific owner and prepared-artifact store.
+    ///
+    /// Spectral maps and generic kernels remain scoped to the complete problem:
+    /// their current owner identities do not establish a narrower dependency set.
+    /// This value permits byte reuse, never execution under another problem.
+    #[must_use]
+    pub fn prepared_artifact_dependency_id(
+        &self,
+        kind: crate::PreparedArtifactScientificKind,
+    ) -> LogicalIdentity {
+        use crate::PreparedArtifactScientificKind;
+
+        let mut encoder = CanonicalEncoder::new();
+        encoder.bytes(b"casa-rs/prepared-artifact-dependencies");
+        encoder.u32(1);
+        encoder.u8(match kind {
+            PreparedArtifactScientificKind::ConvolutionFunction => 1,
+            PreparedArtifactScientificKind::SpectralMap => 2,
+            PreparedArtifactScientificKind::Kernel => 3,
+        });
+        match kind {
+            PreparedArtifactScientificKind::SpectralMap
+            | PreparedArtifactScientificKind::Kernel => {
+                encoder.digest(self.problem_id.as_bytes());
+            }
+            PreparedArtifactScientificKind::ConvolutionFunction => {
+                encoder.identity(self.inputs.observation().identity());
+                encoder.digest(self.geometry.geometry_id().as_bytes());
+                encoder.digest(self.numerics_id.as_bytes());
+                encoder.usize(self.inputs.reference_data().len());
+                for (kind, identity) in self.inputs.reference_data() {
+                    encoder.u8(reference_data_tag(*kind));
+                    encoder.identity(*identity);
+                }
+                match &self.visibility_transform {
+                    Some(transform) => {
+                        encoder.u8(1);
+                        encoder.digest(transform.contract_id().as_bytes());
+                    }
+                    None => encoder.u8(0),
+                }
+                encode_prepared_operator(&mut encoder, &self.science, &self.normal_equation);
+                encode_reconstruction_basis(&mut encoder, self.reconstruction.basis);
+                encoder.usize(self.reconstruction.polarization.coordinates.len());
+                for coordinate in &self.reconstruction.polarization.coordinates {
+                    encoder.u8(polarization_tag(*coordinate));
+                }
+                encode_prepared_weighting(&mut encoder, self.weighting());
+            }
+        }
+        LogicalIdentity::from_sha256(encoder.finish())
     }
 
     /// Return the compiler-owned identity beneath the explicit model/lifecycle layer.
@@ -2247,6 +2493,7 @@ fn validate_science(
                 Some(
                     InstrumentModel::CasaAca7mInterferometricDirectPbV1
                         | InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+                        | InstrumentModel::CasaEvlaWidebandAwV1
                 )
             )
     ) {
@@ -2262,6 +2509,20 @@ fn validate_science(
     {
         return Err(CompileProblemError::InvalidScientificContract {
             reason: "direction-dependent response requires bound instrument reference data",
+        });
+    }
+    if science.measurement_equation.w_projection.is_some()
+        && science.measurement_equation.aw_projection.is_some()
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "W projection and AW projection are distinct paired operators",
+        });
+    }
+    if science.measurement_equation.aw_projection.is_some()
+        && science.instrument_model != Some(InstrumentModel::CasaEvlaWidebandAwV1)
+    {
+        return Err(CompileProblemError::InvalidScientificContract {
+            reason: "the paired AW contract requires the exact EVLA wideband instrument model",
         });
     }
     Ok(())
@@ -2373,13 +2634,6 @@ fn validate_reconstruction(
     {
         return Err(CompileProblemError::InvalidCapabilityCombination {
             reason: "dirty reconstruction requires canonical inactive controls: gain 1 and threshold 0",
-        });
-    }
-    if !matches!(contract.algorithm, ReconstructionAlgorithm::Dirty)
-        && contract.controls.max_minor_iterations == 0
-    {
-        return Err(CompileProblemError::InvalidCapabilityCombination {
-            reason: "a minor-cycle algorithm requires a positive iteration budget",
         });
     }
     if !matches!(contract.algorithm, ReconstructionAlgorithm::Hogbom)
@@ -2646,6 +2900,7 @@ fn validate_products(
         products.normalization,
         ProductNormalization::FlatNoise | ProductNormalization::FlatSky
     ) && !products.contains(ProductKind::Sensitivity)
+        && science.measurement_equation.aw_projection.is_none()
     {
         return Err(CompileProblemError::InvalidNormalizationCombination {
             reason: "flat-noise and flat-sky normalization require sensitivity state",
@@ -2805,6 +3060,9 @@ fn derive_capabilities(
     if science.measurement_equation.w_projection.is_some() {
         capabilities.insert(RequiredCapability::WProjection);
     }
+    if science.measurement_equation.aw_projection.is_some() {
+        capabilities.insert(RequiredCapability::AwProjection);
+    }
     if science.spectral.coupling == SpectralCoupling::CommonRestoringBeam {
         capabilities.insert(RequiredCapability::CommonBeamSpectralCoupling);
     }
@@ -2913,127 +3171,8 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         encoder.u8(reference_data_tag(*kind));
         encoder.identity(*identity);
     }
-    encode_spectral_sampling_law(&mut encoder, science.spectral.sampling);
-    encoder.u8(match science.spectral.coupling {
-        SpectralCoupling::Independent => 0,
-        SpectralCoupling::CommonRestoringBeam => 1,
-    });
-    encoder.u8(match science.measurement_equation.instrument_response {
-        InstrumentResponse::Scalar => 0,
-        InstrumentResponse::PrimaryBeam => 1,
-        InstrumentResponse::FullMueller => 2,
-    });
-    match science.measurement_equation.w_projection {
-        Some(contract) => {
-            encoder.u8(1);
-            encoder.u64(contract.maximum_abs_w_lambda_bits);
-            match contract.planes {
-                Some(planes) => {
-                    encoder.u8(1);
-                    encoder.usize(planes.get());
-                }
-                None => encoder.u8(0),
-            }
-        }
-        None => encoder.u8(0),
-    }
-    encode_instrument_model(&mut encoder, science.instrument_model);
-    let inner_products = science.measurement_equation.inner_products;
-    encoder.u8(match inner_products.model() {
-        ModelInnerProduct::HermitianEuclidean => 0,
-    });
-    encoder.u8(match inner_products.visibility() {
-        VisibilityInnerProduct::HermitianEuclidean => 0,
-    });
-    let operator = normal_equation.measurement_operator();
-    encoder.digest(operator.domain().geometry().as_bytes());
-    encoder.u8(match operator.domain().basis() {
-        ReconstructionBasis::Constant => 0,
-        ReconstructionBasis::Taylor { .. } => 1,
-        ReconstructionBasis::TaylorViaChannelMajor { .. } => 4,
-        ReconstructionBasis::ChannelLocal { .. } => 2,
-        ReconstructionBasis::JointContinuumLine { .. } => 3,
-    });
-    encoder.usize(operator.domain().polarization().coordinates().len());
-    for coordinate in operator.domain().polarization().coordinates() {
-        encoder.u8(polarization_tag(*coordinate));
-    }
-    encoder.identity(operator.codomain().observation().identity());
-    encoder.usize(operator.transforms().len());
-    for transform in operator.transforms() {
-        match transform {
-            PairedMeasurementTransform::SpectralBasis { basis } => {
-                encoder.u8(0);
-                encode_reconstruction_basis(&mut encoder, *basis);
-            }
-            PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
-            PairedMeasurementTransform::FeedResponse => encoder.u8(6),
-            PairedMeasurementTransform::DirectionDependentResponse {
-                response,
-                instrument_model,
-            } => {
-                encoder.u8(2);
-                encoder.u8(match response {
-                    InstrumentResponse::Scalar => 0,
-                    InstrumentResponse::PrimaryBeam => 1,
-                    InstrumentResponse::FullMueller => 2,
-                });
-                encode_instrument_model(&mut encoder, *instrument_model);
-            }
-            PairedMeasurementTransform::PhaseRotation { convention } => {
-                encoder.u8(3);
-                encoder.u8(match convention {
-                    crate::geometry::VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay => 0,
-                });
-            }
-            PairedMeasurementTransform::SpectralResampling { sampling } => {
-                encoder.u8(4);
-                encoder.u8(match sampling.kernel() {
-                    SpectralKernel::Nearest => 0,
-                    SpectralKernel::Linear => 1,
-                    SpectralKernel::Cubic => 2,
-                    SpectralKernel::Identity | SpectralKernel::ChannelIntegration { .. } => {
-                        unreachable!("compiled spectral resampling is nearest or linear")
-                    }
-                });
-            }
-            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
-                encoder.u8(5);
-                encoder.usize(*channels_per_bin);
-            }
-            PairedMeasurementTransform::WProjection { contract } => {
-                encoder.u8(7);
-                encoder.u64(contract.maximum_abs_w_lambda_bits);
-                match contract.planes {
-                    Some(planes) => {
-                        encoder.u8(1);
-                        encoder.usize(planes.get());
-                    }
-                    None => encoder.u8(0),
-                }
-            }
-        }
-    }
+    encode_prepared_operator(&mut encoder, science, normal_equation);
     let compiled_weighting = normal_equation.weighting();
-    encoder.digest(compiled_weighting.commitment_id().as_bytes());
-    encoder.identity(compiled_weighting.snapshot().identity());
-    encoder.usize(compiled_weighting.sources().len());
-    for source in compiled_weighting.sources() {
-        encoder.identity(source.source().identity());
-        encoder.u8(match source.flags() {
-            FlagPolicy::FlagOrFlagRow => 0,
-        });
-        encoder.u8(match source.input_weights() {
-            WeightColumn::Weight => 0,
-            WeightColumn::WeightSpectrum => 1,
-        });
-        encoder.identity(source.flag_generation());
-        encoder.identity(source.flag_row_generation());
-        encoder.identity(source.input_weight_generation());
-    }
-    encoder.u8(match normal_equation.output().normalization() {
-        NormalStateNormalization::Unnormalized => 0,
-    });
     encode_reconstruction_basis(&mut encoder, reconstruction.basis);
     match &reconstruction.algorithm {
         ReconstructionAlgorithm::Dirty => encoder.u8(0),
@@ -3131,32 +3270,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     for coordinate in &reconstruction.polarization.coordinates {
         encoder.u8(polarization_tag(*coordinate));
     }
-    match compiled_weighting.scheme() {
-        WeightingScheme::Natural => encoder.u8(0),
-        WeightingScheme::Uniform => encoder.u8(1),
-        WeightingScheme::Briggs { robust } => {
-            encoder.u8(2);
-            encoder.f64(robust);
-        }
-        WeightingScheme::BriggsBandwidthTaper { robust } => {
-            encoder.u8(3);
-            encoder.f64(robust);
-        }
-    }
-    encoder.u8(match compiled_weighting.density_scope() {
-        WeightDensityScope::NotApplicable => 0,
-        WeightDensityScope::GlobalSelection => 1,
-        WeightDensityScope::PerOutputChannel => 2,
-    });
-    match compiled_weighting.uv_taper() {
-        None => encoder.u8(0),
-        Some(taper) => {
-            encoder.u8(1);
-            encoder.f64(taper.major_lambda());
-            encoder.f64(taper.minor_lambda());
-            encoder.f64(taper.position_angle_rad());
-        }
-    }
+    encode_prepared_weighting(&mut encoder, compiled_weighting);
     encoder.usize(products.products.len());
     for product in &products.products {
         encoder.u8(product_tag(*product));
@@ -3221,6 +3335,177 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     }
     encode_numerics(&mut encoder, numerics);
     LogicalIdentity::from_sha256(encoder.finish())
+}
+
+fn encode_prepared_operator(
+    encoder: &mut CanonicalEncoder,
+    science: &ScientificContract,
+    normal_equation: &NormalEquationContract,
+) {
+    encode_spectral_sampling_law(encoder, science.spectral.sampling);
+    encoder.u8(match science.spectral.coupling {
+        SpectralCoupling::Independent => 0,
+        SpectralCoupling::CommonRestoringBeam => 1,
+    });
+    encoder.u8(match science.measurement_equation.instrument_response {
+        InstrumentResponse::Scalar => 0,
+        InstrumentResponse::PrimaryBeam => 1,
+        InstrumentResponse::FullMueller => 2,
+    });
+    match science.measurement_equation.w_projection {
+        Some(contract) => {
+            encoder.u8(1);
+            encoder.u64(contract.maximum_abs_w_lambda_bits);
+            match contract.planes {
+                Some(planes) => {
+                    encoder.u8(1);
+                    encoder.usize(planes.get());
+                }
+                None => encoder.u8(0),
+            }
+        }
+        None => encoder.u8(0),
+    }
+    match science.measurement_equation.aw_projection {
+        Some(contract) => {
+            encoder.u8(1);
+            encode_aw_projection_contract(encoder, contract);
+        }
+        None => encoder.u8(0),
+    }
+    encode_instrument_model(encoder, science.instrument_model);
+    let inner_products = science.measurement_equation.inner_products;
+    encoder.u8(match inner_products.model() {
+        ModelInnerProduct::HermitianEuclidean => 0,
+    });
+    encoder.u8(match inner_products.visibility() {
+        VisibilityInnerProduct::HermitianEuclidean => 0,
+    });
+    let operator = normal_equation.measurement_operator();
+    encoder.digest(operator.domain().geometry().as_bytes());
+    encoder.u8(match operator.domain().basis() {
+        ReconstructionBasis::Constant => 0,
+        ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::TaylorViaChannelMajor { .. } => 4,
+        ReconstructionBasis::ChannelLocal { .. } => 2,
+        ReconstructionBasis::JointContinuumLine { .. } => 3,
+    });
+    encoder.usize(operator.domain().polarization().coordinates().len());
+    for coordinate in operator.domain().polarization().coordinates() {
+        encoder.u8(polarization_tag(*coordinate));
+    }
+    encoder.identity(operator.codomain().observation().identity());
+    encoder.usize(operator.transforms().len());
+    for transform in operator.transforms() {
+        match transform {
+            PairedMeasurementTransform::SpectralBasis { basis } => {
+                encoder.u8(0);
+                encode_reconstruction_basis(encoder, *basis);
+            }
+            PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
+            PairedMeasurementTransform::FeedResponse => encoder.u8(6),
+            PairedMeasurementTransform::DirectionDependentResponse {
+                response,
+                instrument_model,
+            } => {
+                encoder.u8(2);
+                encoder.u8(match response {
+                    InstrumentResponse::Scalar => 0,
+                    InstrumentResponse::PrimaryBeam => 1,
+                    InstrumentResponse::FullMueller => 2,
+                });
+                encode_instrument_model(encoder, *instrument_model);
+            }
+            PairedMeasurementTransform::PhaseRotation { convention } => {
+                encoder.u8(3);
+                encoder.u8(match convention {
+                    crate::geometry::VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay => 0,
+                });
+            }
+            PairedMeasurementTransform::SpectralResampling { sampling } => {
+                encoder.u8(4);
+                encoder.u8(match sampling.kernel() {
+                    SpectralKernel::Nearest => 0,
+                    SpectralKernel::Linear => 1,
+                    SpectralKernel::Cubic => 2,
+                    SpectralKernel::Identity | SpectralKernel::ChannelIntegration { .. } => {
+                        unreachable!("compiled spectral resampling is nearest or linear")
+                    }
+                });
+            }
+            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
+                encoder.u8(5);
+                encoder.usize(*channels_per_bin);
+            }
+            PairedMeasurementTransform::WProjection { contract } => {
+                encoder.u8(7);
+                encoder.u64(contract.maximum_abs_w_lambda_bits);
+                match contract.planes {
+                    Some(planes) => {
+                        encoder.u8(1);
+                        encoder.usize(planes.get());
+                    }
+                    None => encoder.u8(0),
+                }
+            }
+            PairedMeasurementTransform::AwProjection { contract } => {
+                encoder.u8(8);
+                encode_aw_projection_contract(encoder, *contract);
+            }
+        }
+    }
+    let compiled_weighting = normal_equation.weighting();
+    encoder.digest(compiled_weighting.commitment_id().as_bytes());
+    encoder.identity(compiled_weighting.snapshot().identity());
+    encoder.usize(compiled_weighting.sources().len());
+    for source in compiled_weighting.sources() {
+        encoder.identity(source.source().identity());
+        encoder.u8(match source.flags() {
+            FlagPolicy::FlagOrFlagRow => 0,
+        });
+        encoder.u8(match source.input_weights() {
+            WeightColumn::Weight => 0,
+            WeightColumn::WeightSpectrum => 1,
+        });
+        encoder.identity(source.flag_generation());
+        encoder.identity(source.flag_row_generation());
+        encoder.identity(source.input_weight_generation());
+    }
+    encoder.u8(match normal_equation.output().normalization() {
+        NormalStateNormalization::Unnormalized => 0,
+    });
+}
+
+fn encode_prepared_weighting(
+    encoder: &mut CanonicalEncoder,
+    compiled_weighting: &WeightingOperatorContract,
+) {
+    match compiled_weighting.scheme() {
+        WeightingScheme::Natural => encoder.u8(0),
+        WeightingScheme::Uniform => encoder.u8(1),
+        WeightingScheme::Briggs { robust } => {
+            encoder.u8(2);
+            encoder.f64(robust);
+        }
+        WeightingScheme::BriggsBandwidthTaper { robust } => {
+            encoder.u8(3);
+            encoder.f64(robust);
+        }
+    }
+    encoder.u8(match compiled_weighting.density_scope() {
+        WeightDensityScope::NotApplicable => 0,
+        WeightDensityScope::GlobalSelection => 1,
+        WeightDensityScope::PerOutputChannel => 2,
+    });
+    match compiled_weighting.uv_taper() {
+        None => encoder.u8(0),
+        Some(taper) => {
+            encoder.u8(1);
+            encoder.f64(taper.major_lambda());
+            encoder.f64(taper.minor_lambda());
+            encoder.f64(taper.position_angle_rad());
+        }
+    }
 }
 
 pub(crate) fn encode_spectral_sampling_law(
@@ -3433,7 +3718,22 @@ const fn instrument_model_tag(model: InstrumentModel) -> u8 {
         InstrumentModel::CasaAca7mInterferometricDirectPbV1 => 3,
         // Tag 1 is reserved for the retired homogeneous direct-PB v1 model.
         InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => 2,
+        InstrumentModel::CasaEvlaWidebandAwV1 => 4,
     }
+}
+
+fn encode_aw_projection_contract(encoder: &mut CanonicalEncoder, contract: AwProjectionContract) {
+    encoder.u64(contract.maximum_abs_w_lambda_bits);
+    encoder.usize(contract.planes.get());
+    encoder.u8(u8::from(contract.a_term));
+    encoder.u8(u8::from(contract.ps_term));
+    encoder.u8(u8::from(contract.wideband));
+    encoder.u8(u8::from(contract.conjugate_beams));
+    encoder.u8(u8::from(contract.use_pointing));
+    encoder.u64(contract.pointing_group_threshold_arcsec_bits);
+    encoder.u64(contract.pointing_refresh_threshold_arcsec_bits);
+    encoder.u64(contract.compute_pa_step_deg_bits);
+    encoder.u64(contract.rotate_pa_step_deg_bits);
 }
 
 fn product_tag(product: ProductKind) -> u8 {

@@ -86,6 +86,19 @@ weighting_identity!(
     "Identity of the exact weighted sample coverage emitted by one replay."
 );
 
+#[cfg(test)]
+pub(crate) fn native_normal_fixture_weighting_ids() -> (
+    WeightingGenerationId,
+    WeightingReplayId,
+    WeightingReplayCoverageId,
+) {
+    (
+        WeightingGenerationId(LogicalIdentity::from_sha256([1; 32])),
+        WeightingReplayId(LogicalIdentity::from_sha256([2; 32])),
+        WeightingReplayCoverageId(LogicalIdentity::from_sha256([3; 32])),
+    )
+}
+
 /// Physical choices for bounded density generation and weighted replay.
 ///
 /// These values affect residency and block scheduling but never the frozen
@@ -1195,6 +1208,7 @@ pub struct WeightingSelectedSample {
     output_frame_frequency_hz: f64,
     field_id: i32,
     pointing_directions: SelectedPointingDirections,
+    aw_pointing_pixel: Option<[f64; 2]>,
     antenna_responses: Option<SelectedAntennaResponses>,
     domain_projections: SelectedImageDomainProjections,
 }
@@ -1206,6 +1220,7 @@ impl WeightingSelectedSample {
     ) -> Self {
         let coordinates = sample.coordinates();
         let input_weight_group = sample.input_weight_group();
+        let domain_projections = sample.domain_projections().clone();
         Self {
             address: sample.address(),
             visibility: sample.visibility(),
@@ -1223,8 +1238,9 @@ impl WeightingSelectedSample {
             output_frame_frequency_hz,
             field_id: sample.metadata().field_id,
             pointing_directions: coordinates.pointing_directions,
+            aw_pointing_pixel: primary_aw_pointing_pixel(&domain_projections),
             antenna_responses: sample.metadata().antenna_responses,
-            domain_projections: sample.domain_projections().clone(),
+            domain_projections,
         }
     }
 
@@ -1282,6 +1298,12 @@ impl WeightingSelectedSample {
         self.pointing_directions
     }
 
+    /// Return the exact CASA chart-local baseline pointing pixel used by AW projection.
+    #[must_use]
+    pub const fn aw_pointing_pixel(&self) -> Option<[f64; 2]> {
+        self.aw_pointing_pixel
+    }
+
     /// Return the owner-derived paired aperture classes, when required.
     #[must_use]
     pub const fn antenna_responses(&self) -> Option<SelectedAntennaResponses> {
@@ -1329,6 +1351,41 @@ impl WeightingSelectedSample {
             .get(0)
             .expect("validated selected samples always contain the primary domain")
             .model()
+    }
+}
+
+fn primary_aw_pointing_pixel(projections: &SelectedImageDomainProjections) -> Option<[f64; 2]> {
+    projections
+        .get(0)
+        .and_then(|projection| projection.aw_pointing_pixel())
+}
+
+#[cfg(test)]
+mod selected_sample_tests {
+    use casa_imaging_model::{
+        SelectedImageDomainProjection, SelectedImageDomainProjections,
+        SelectedPhaseCentreProjection,
+    };
+
+    use super::primary_aw_pointing_pixel;
+
+    #[test]
+    fn weighting_selects_the_main_chart_exact_aw_pointing_pixel() {
+        let phase = SelectedPhaseCentreProjection::new([0.0; 3], 0.0)
+            .expect("finite phase-centre projection");
+        let main = SelectedImageDomainProjection::with_shared_psf(0, phase)
+            .with_aw_pointing_pixel([256.25, 255.75])
+            .expect("finite main pointing pixel");
+        let outlier = SelectedImageDomainProjection::with_shared_psf(1, phase)
+            .with_aw_pointing_pixel([17.0, 19.0])
+            .expect("finite outlier pointing pixel");
+        let projections = SelectedImageDomainProjections::new([main, outlier])
+            .expect("canonical domain projections");
+
+        assert_eq!(
+            primary_aw_pointing_pixel(&projections),
+            Some([256.25, 255.75])
+        );
     }
 }
 
@@ -2007,6 +2064,21 @@ fn robust_factors(
         } else {
             0.0
         };
+        if crate::imaging_science_trace_enabled() {
+            let density_nonzero = density[start..end]
+                .iter()
+                .filter(|value| **value > 0.0)
+                .count();
+            let density_max = density[start..end].iter().copied().fold(0.0_f64, f64::max);
+            eprintln!(
+                "imaging_science_probe_v1 boundary=weighting_density plane={plane} width={} height={} increment_u_rad={:.17e} increment_v_rad={:.17e} density_sum={density_sum:.17e} density_sum_sq={density_square_sum:.17e} density_max={density_max:.17e} density_nonzero={density_nonzero} robust_f2={:.17e}",
+                grid.width,
+                grid.height,
+                grid.increments()[0],
+                grid.increments()[1],
+                *factor,
+            );
+        }
     }
     factors.into_boxed_slice()
 }

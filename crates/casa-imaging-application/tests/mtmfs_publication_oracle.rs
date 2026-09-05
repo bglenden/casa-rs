@@ -122,6 +122,7 @@ fn t44_application_mtmfs_publishes_frozen_casa_product_contract() -> Result<(), 
         write_primary_beam: true,
         pbcor: true,
         w_projection_planes: None,
+        aw_projection: None,
         task_requirements: vec![TaskRequirement::SerialCpu],
         resource_policy: casa_imaging_runtime::ResourcePolicy::Explicit(
             casa_imaging_runtime::ResourceOverride {
@@ -355,6 +356,7 @@ fn representative_mtmfs_request(
         write_primary_beam: true,
         pbcor: true,
         w_projection_planes: None,
+        aw_projection: None,
         task_requirements: vec![TaskRequirement::SerialCpu],
         resource_policy: ResourcePolicy::Explicit(ResourceOverride {
             workers: Some(1),
@@ -459,10 +461,7 @@ fn assert_representative_products_match_casa(
         }
         let expected_units = if product.starts_with(".model.") {
             "Jy/pixel"
-        } else if product.starts_with(".psf.")
-            || product.starts_with(".residual.")
-            || product.starts_with(".image.")
-        {
+        } else if product.starts_with(".image.") {
             "Jy/beam"
         } else {
             ""
@@ -470,9 +469,7 @@ fn assert_representative_products_match_casa(
         if rust.units != expected_units {
             failures.push(format!("{product} Rust units {:?}", rust.units));
         }
-        let casa_omits_units = (product.starts_with(".psf.") || product.starts_with(".residual."))
-            && casa.units.is_empty();
-        if casa.units != expected_units && !casa_omits_units {
+        if casa.units != expected_units {
             failures.push(format!("{product} CASA units {:?}", casa.units));
         }
         let comparison_support = if matches!(product, ".alpha" | ".alpha.error") {
@@ -622,10 +619,7 @@ fn assert_persisted_metadata(prefix: &Path) -> Result<(), Box<dyn Error>> {
         assert_eq!(image.shape(), expected_shape, "{name} shape");
         let expected_unit = if name.starts_with(".model.") {
             "Jy/pixel"
-        } else if name.starts_with(".psf.")
-            || name.starts_with(".residual.")
-            || name.starts_with(".image.")
-        {
+        } else if name.starts_with(".image.") {
             "Jy/beam"
         } else {
             ""

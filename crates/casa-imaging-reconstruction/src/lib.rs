@@ -32,9 +32,11 @@ use num_complex::Complex64;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod aw_projection;
 mod block_normal;
 mod continuum_transform;
 mod gridded_normal_operator;
+mod image_response;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
@@ -47,6 +49,12 @@ mod spectral_operator;
 mod spectral_sampling;
 mod weighting;
 
+pub use aw_projection::{
+    AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorDiagnostics, AwOperatorError,
+    AwPreparedCatalog, AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,
+    AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, PreparedAwProjection,
+};
+pub use image_response::{ImageResponseError, MinorCycleImageResponse, MosaicSensitivity};
 pub use spectral_operator::{
     SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabPlan,
@@ -65,16 +73,17 @@ pub mod runtime_adapter {
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
         GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality, GriddedNormalWork,
-        SourceCardinalityObservation, gridded_normal_domain_execution_residency,
-        gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, standard_convolution_support,
+        SourceCardinalityObservation, gridded_normal_aw_domain_execution_residency,
+        gridded_normal_domain_execution_residency, gridded_normal_execution_residency,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        standard_convolution_support,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,
         CompleteDataOwnerState, FinalVisibilitySample, PreparedSpectralOperator,
-        PreparedSpectralOperatorRecycle, SpectralOperatorPass, SpectralOperatorWorkload,
-        SpectralSlabPlan, WProjectionDiagnostics, prepare_spectral_operator,
-        reprepare_spectral_operator, spectral_operator_workload,
+        PreparedSpectralOperatorRecycle, SpectralOperatorInitialPhaseResidency,
+        SpectralOperatorPass, SpectralOperatorWorkload, SpectralSlabPlan, WProjectionDiagnostics,
+        prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::weighting::{
         FusedWeightingPhase, WeightingReplayPhase, begin_natural_weighting_stream,
@@ -2410,7 +2419,10 @@ pub(crate) fn canonical_f64_bits(value: f64) -> u64 {
 
 pub(crate) fn imaging_science_trace_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some())
+    *ENABLED.get_or_init(|| {
+        std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some()
+            || std::env::var_os("CASA_RS_IMAGING_SCIENCE_PROBE").is_some()
+    })
 }
 
 pub(crate) struct ScienceTraceDigest {

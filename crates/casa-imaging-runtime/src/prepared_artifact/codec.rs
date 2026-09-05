@@ -8,6 +8,7 @@ pub(super) fn read_manifest_counted(
 ) -> Result<(ArtifactManifest, u64), PreparedArtifactError> {
     evidence.store_read_operation();
     let file = File::open(path).map_err(map_incomplete)?;
+    evidence.manifest_open();
     evidence.observe_file_descriptors(2);
     let bounded = BoundedFileReader {
         file,
@@ -71,6 +72,7 @@ pub(super) fn read_counted<R: Read + ?Sized>(
 ) -> Result<usize, PreparedArtifactError> {
     let bytes = input.read(output).map_err(map_incomplete)?;
     evidence.record(class, bytes as u64);
+    evidence.record_payload_read(bytes as u64);
     Ok(bytes)
 }
 
@@ -157,7 +159,7 @@ pub(super) fn validate_finite(
 }
 
 pub(super) fn validate_manifest_segments(
-    descriptor: &PreparedArtifactDescriptor,
+    descriptor: &PreparedArtifactCompatibility,
     integrity: &[ManifestSegmentIntegrity],
     payload_bytes: u64,
 ) -> Result<(), PreparedArtifactError> {
@@ -202,6 +204,9 @@ pub(super) fn validate_entry_inventory(
                 .ok_or_else(|| PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()))?;
             manifest |= name == MANIFEST_FILE;
             payload |= name == PAYLOAD_FILE;
+            if name == PAYLOAD_FILE {
+                evidence.payload_metadata_check();
+            }
         }
         if !manifest || !payload {
             return Err(PreparedArtifactError::IncompleteArtifact);

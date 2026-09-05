@@ -10,7 +10,7 @@ use std::{
         Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use sha2::{Digest, Sha256};
@@ -76,16 +76,16 @@ use casa_imaging_runtime::{
     PhysicalWorkBinding, PhysicalWorkBindingError, PlanError, PlanPrediction, PlannedArtifact,
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings,
     PredictionConfidence, PredictionUncertainty, PreparedArtifactBudget,
-    PreparedArtifactDescriptor, PreparedArtifactError, PreparedArtifactLoadSource,
-    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanFragment,
-    PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision, PreparedArtifactRegistration,
-    PreparedArtifactRejection, PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor,
-    PreparedArtifactSourceSegment, PreparedArtifactStore, PreparedArtifactUvAffine,
-    ProductMemberPublicationFailure, ProductPublicationPlan, ProductionStorageProfile,
-    PublicationLayoutLedger, PublicationMappedStaging, PublicationParticipant,
-    PublicationPhysicalLayout, PublicationResourceBounds, PublicationStaging, QueueDemand,
-    QueueResource, QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId,
-    RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
+    PreparedArtifactCatalogPlanFragment, PreparedArtifactDescriptor, PreparedArtifactError,
+    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
+    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
+    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReuseOutcome,
+    PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment, PreparedArtifactStore,
+    PreparedArtifactUvAffine, ProductMemberPublicationFailure, ProductPublicationPlan,
+    ProductionStorageProfile, PublicationLayoutLedger, PublicationMappedStaging,
+    PublicationParticipant, PublicationPhysicalLayout, PublicationResourceBounds,
+    PublicationStaging, QueueDemand, QueueResource, QueueResourceId, QuiescencePoint, RateDemand,
+    RateResource, RateResourceId, RateUnit, ReceiptFailureKind, ReceiptRetention, ReceiptStatus,
     ReconstructionCyclePhaseCompletion, RedactedPath, ResourceAuthority, ResourceClaim,
     ResourceError, ResourceHeadroom, ResourceMeasurement, ResourceOverride, ResourcePolicy,
     ResourceTopology, RunBindings, RunController, RunDirective, RunError, RunToCompletion,
@@ -160,6 +160,8 @@ mod common;
 
 mod cost_model_profile;
 mod imaging_plan_selection;
+#[path = "compile_plan_run/receipt_summary_cache.rs"]
+mod receipt_summary_cache;
 mod walking_skeleton;
 
 use common::{
@@ -1411,10 +1413,12 @@ struct PublicationPause {
 }
 
 impl PublicationPause {
-    fn wait_until_entered(&self) {
-        while !self.entered.load(Ordering::SeqCst) {
+    fn wait_until_entered(&self, timeout: Duration) -> bool {
+        let started = Instant::now();
+        while !self.entered.load(Ordering::SeqCst) && started.elapsed() < timeout {
             std::thread::yield_now();
         }
+        self.entered.load(Ordering::SeqCst)
     }
 
     fn release(&self) {
@@ -1930,6 +1934,15 @@ fn open_selected_observation(
     problem: &casa_imaging_model::CompiledProblem,
     residency: &SelectedObservationResidencyCertificate,
 ) -> io::Result<BoundSelectedObservation> {
+    deferred_selected_observation(problem, residency)?
+        .open(problem)
+        .map_err(io::Error::other)
+}
+
+fn deferred_selected_observation(
+    problem: &casa_imaging_model::CompiledProblem,
+    residency: &SelectedObservationResidencyCertificate,
+) -> io::Result<casa_ms::DeferredSelectedObservationAccess> {
     let sources = problem.inputs().observation_snapshot().sources();
     let mut budgets = Vec::with_capacity(sources.len());
     for source in sources {
@@ -1952,7 +1965,9 @@ fn open_selected_observation(
         ),
     )
     .map_err(io::Error::other)?;
-    BoundSelectedObservation::open(problem, measures, bindings).map_err(io::Error::other)
+    Ok(casa_ms::DeferredSelectedObservationAccess::new(
+        measures, bindings,
+    ))
 }
 
 impl WorkImplementation for RecordingExecutor {
@@ -2898,7 +2913,7 @@ fn managed_spill_requires_artifact_capacity_inside_the_selected_policy_reserve()
 }
 
 #[test]
-fn spectral_cycle_dirty_plan_omits_minor_cycle_work() {
+fn spectral_cycle_dirty_plan_omits_minor_cycle_and_gridded_normal_work() {
     let problem = compile(request_with_geometry(
         1,
         geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
@@ -2932,6 +2947,14 @@ fn spectral_cycle_dirty_plan_omits_minor_cycle_work() {
             .keys()
             .all(|node| node.as_str() != "spectral-cycle-minor-cycle")
     );
+    assert!(
+        plan.physical_work()
+            .execution_dag()
+            .logical_allocations()
+            .keys()
+            .all(|allocation| !allocation.as_str().starts_with("managed-spill-"))
+    );
+    assert!(plan.into_parts().gridded_normal.is_none());
 }
 
 #[test]
@@ -3210,7 +3233,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
         resources,
         pass,
         complete,
-        open_selected_observation(&problem, &residency).expect("selected owner"),
+        deferred_selected_observation(&problem, &residency).expect("deferred selected owner"),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
@@ -3499,9 +3522,6 @@ fn execute_spectral_cycle_with_weighting_mode(
     .expect("cross-plan frozen weighting reservation");
     let planned_gridded_normal =
         planned_gridded_normal.expect("initial plan binds gridded-normal compilation");
-    let selected = initial_access
-        .open(&problem)
-        .expect("owner-validated initial selected observation");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([73; 32]);
     let executor = SpectralCycleExecutor::new(
         implementation(73),
@@ -3510,7 +3530,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         resources,
         pass,
         complete,
-        selected,
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
@@ -4369,9 +4389,7 @@ fn execute_initial_reconstruction_cycle(
         resources,
         pass,
         complete,
-        initial_access
-            .open(problem)
-            .expect("owner-validated channel-cycle observation"),
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
@@ -4488,9 +4506,7 @@ fn execute_dirty_channel_local_slabs(
         source_resources,
         pass,
         complete_data,
-        initial_access
-            .open(problem)
-            .expect("owner-validated dirty-cube observation"),
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube model"),
         SpectralCyclePassInput::Initial,
     );
@@ -8702,7 +8718,11 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
     let max_bytes = 1_048_576;
     let receipts = execution_plan.receipt_store();
     let pause = Arc::new(PublicationPause::default());
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = product_publication_recording_executor(
+        &problem,
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicUsize::new(0)),
+    );
     executor.publication_pause = Some(Arc::clone(&pause));
     let registry = TestRegistry {
         id: registry(3),
@@ -8743,7 +8763,11 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
                 .expect("first run result receiver");
         });
 
-        pause.wait_until_entered();
+        assert!(
+            pause.wait_until_entered(Duration::from_secs(5)),
+            "first run exited before publication pause: {:?}",
+            first_rx.try_recv()
+        );
         let retained_bytes = fs::read_dir(receipts.root_path())
             .expect("receipt root")
             .map(|entry| {
@@ -8775,10 +8799,13 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
                 ))
                 .expect("second run result receiver");
         });
-        assert!(matches!(
-            second_rx.recv_timeout(Duration::from_millis(100)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-        ));
+        match second_rx.recv_timeout(Duration::from_millis(100)) {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            unexpected => {
+                pause.release();
+                panic!("second run bypassed the retained reservation: {unexpected:?}");
+            }
+        }
 
         pause.release();
         assert_eq!(
@@ -9856,12 +9883,12 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     assert_eq!(two.grid_bytes(), one.grid_bytes() * 2);
     assert_eq!(all.grid_bytes(), one.grid_bytes() * 8);
     assert_eq!(
-        residual_refresh.residency().grid_bytes() * 3,
+        residual_refresh.residency().grid_bytes() * 2,
         one.grid_bytes(),
-        "later major passes retain only residual plus compensation grids"
+        "empty initial passes retain dirty and PSF pairs; refresh retains only the residual pair"
     );
     let initial_only_chart_bytes =
-        8 * 8 * (4 * std::mem::size_of::<num_complex::Complex64>() + std::mem::size_of::<f64>());
+        8 * 8 * (2 * std::mem::size_of::<num_complex::Complex64>() + std::mem::size_of::<f64>());
     assert_eq!(
         one.primitive_output_bytes() - residual_refresh.residency().primitive_output_bytes(),
         initial_only_chart_bytes,
@@ -9976,6 +10003,41 @@ fn t47_runtime_residency_projects_all_bounded_mosaic_state() {
             + residency.mosaic_workspace_bytes()
             + residency.primitive_output_bytes()
             + residency.major_cycle_model_bytes()
+    );
+}
+
+#[test]
+fn t51_initial_empty_model_residency_excludes_unallocated_pending_delta() {
+    let problem = compile(channel_major_taylor_request_with_shape(
+        241,
+        8,
+        ImageShape::new(512, 512),
+    ))
+    .expect("empty initial Taylor problem");
+    let fragment = |pass| {
+        CompleteDataPlanFragment::new(&problem, 4096, WorkNodeId::new("t51-model-residency"), pass)
+            .expect("operator plan")
+    };
+    let model_samples = problem.model_lifecycle().target().sample_count();
+    let dense_bytes = model_samples * size_of::<casa_imaging_model::ModelSample>();
+    let delta_bytes = problem
+        .model_lifecycle()
+        .bounds()
+        .max_delta_terms()
+        .min(model_samples)
+        * size_of::<ModelDeltaTerm>();
+    assert!(delta_bytes > 0);
+    assert_eq!(
+        fragment(SpectralOperatorPass::InitialMajor)
+            .residency()
+            .major_cycle_model_bytes(),
+        dense_bytes,
+    );
+    assert_eq!(
+        fragment(SpectralOperatorPass::ResidualRefresh)
+            .residency()
+            .major_cycle_model_bytes(),
+        dense_bytes + delta_bytes,
     );
 }
 

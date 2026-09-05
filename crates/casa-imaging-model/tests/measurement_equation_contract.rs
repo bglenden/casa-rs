@@ -12,10 +12,10 @@
 use std::collections::BTreeSet;
 
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts, DelayCentreLaw,
-    DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy, FlagPolicy,
-    FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
-    ImagingRequest, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
+    AwProjectionContract, AxisOrder, CentreLaws, CompiledProblemId, DeclaredInnerProducts,
+    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, FiniteValuePolicy,
+    FlagPolicy, FrequencyFrame, GeometryInput, ImageAxis, ImageDomainRole, ImageDomainSpec,
+    ImageShape, ImagingRequest, InstrumentModel, InstrumentResponse, MeasurementEquationContract,
     ModelColumnWrite, ModelInnerProduct, ModelStateIdentity, NormalEquationForm,
     NormalStateNormalization, NumericPrecision, NumericalStage, NumericsContract,
     ObservationPointingLaw, ObservationTransactionRequirements, PairedMeasurementTransform,
@@ -132,6 +132,10 @@ fn matrix(transform: PairedMeasurementTransform) -> Matrix {
             [Complex::new(0.7, -0.2), Complex::new(0.0, 0.0)],
             [Complex::new(0.0, 0.0), Complex::new(0.7, 0.2)],
         ],
+        PairedMeasurementTransform::AwProjection { .. } => [
+            [Complex::new(0.55, -0.3), Complex::new(0.08, 0.04)],
+            [Complex::new(-0.02, 0.06), Complex::new(0.73, 0.15)],
+        ],
     }
 }
 
@@ -226,13 +230,14 @@ fn geometry() -> GeometryInput {
 }
 
 fn compile_contract(sampling: SpectralSamplingLaw) -> casa_imaging_model::CompiledProblem {
-    compile_contract_with_reduction(sampling, ReductionPolicy::Compensated, None)
+    compile_contract_with_reduction(sampling, ReductionPolicy::Compensated, None, None)
 }
 
 fn compile_contract_with_reduction(
     sampling: SpectralSamplingLaw,
     reduction: ReductionPolicy,
     w_projection: Option<casa_imaging_model::WProjectionContract>,
+    aw_projection: Option<AwProjectionContract>,
 ) -> casa_imaging_model::CompiledProblem {
     let inner_products = DeclaredInnerProducts::new(
         ModelInnerProduct::HermitianEuclidean,
@@ -243,11 +248,18 @@ fn compile_contract_with_reduction(
     let measurement_equation = w_projection.map_or(measurement_equation, |contract| {
         measurement_equation.with_w_projection(contract)
     });
+    let measurement_equation = aw_projection.map_or(measurement_equation, |contract| {
+        measurement_equation.with_aw_projection(contract)
+    });
     let science = ScientificContract::new(
         SpectralContract::new(sampling, SpectralCoupling::Independent),
         measurement_equation,
     )
-    .with_instrument_model(InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1);
+    .with_instrument_model(if aw_projection.is_some() {
+        InstrumentModel::CasaEvlaWidebandAwV1
+    } else {
+        InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+    });
     let reconstruction = ReconstructionContract::new(
         ReconstructionBasis::Constant,
         ReconstructionAlgorithm::Hogbom,
@@ -266,7 +278,11 @@ fn compile_contract_with_reduction(
             ProductKind::RestoredImage,
             ProductKind::SumWeights,
             ProductKind::PrimaryBeam,
-            ProductKind::Sensitivity,
+            if aw_projection.is_some() {
+                ProductKind::Weight
+            } else {
+                ProductKind::Sensitivity
+            },
             ProductKind::PbCorrectedImage,
             ProductKind::Beam,
         ],
@@ -312,6 +328,7 @@ fn weighting_commitment_binds_sampling_and_numerics() {
     let deterministic = compile_contract_with_reduction(
         SpectralSamplingLaw::LINEAR,
         ReductionPolicy::DeterministicPairwise,
+        None,
         None,
     );
 
@@ -480,7 +497,7 @@ fn paired_compositions_obey_linearity_and_weighted_adjointness() {
 fn problem_and_weighting_commitment_identities_are_pinned() {
     let problem = compile_contract(SpectralSamplingLaw::LINEAR);
 
-    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 21);
+    assert_eq!(CompiledProblemId::SCHEMA_VERSION, 23);
     assert_eq!(WeightingCommitmentId::SCHEMA_VERSION, 4);
     assert_eq!(
         (
@@ -492,7 +509,7 @@ fn problem_and_weighting_commitment_identities_are_pinned() {
                 .to_string(),
         ),
         (
-            "d82f0ce6e19dbda8467e08e950036d3825aa66aa81055db374d43106c9b89715".to_string(),
+            "fe799a3ce91ccdc40c546921b84a639bcf603681365c3d9f461dd2e18744aa66".to_string(),
             "fb3f6fbe9f427fbdad7ce317690019841393c10a10d2c48cb163179be78db6e5".to_string(),
         )
     );
@@ -507,6 +524,7 @@ fn w_projection_is_explicit_paired_and_identity_bound() {
         SpectralSamplingLaw::LINEAR,
         ReductionPolicy::Compensated,
         Some(contract),
+        None,
     );
     let standard = compile_contract(SpectralSamplingLaw::LINEAR);
 
@@ -522,4 +540,136 @@ fn w_projection_is_explicit_paired_and_identity_bound() {
         Some(&PairedMeasurementTransform::WProjection { contract })
     );
     assert_ne!(w.problem_id(), standard.problem_id());
+}
+
+#[test]
+fn aw_projection_is_distinct_paired_and_identity_bound() {
+    let contract = AwProjectionContract::new(
+        12_500.0,
+        std::num::NonZeroUsize::new(32).unwrap(),
+        true,
+        false,
+        true,
+        true,
+        true,
+        [300.0, 30.0],
+        5.0,
+        5.0,
+    )
+    .unwrap();
+    let aw = compile_contract_with_reduction(
+        SpectralSamplingLaw::LINEAR,
+        ReductionPolicy::Compensated,
+        None,
+        Some(contract),
+    );
+    let standard = compile_contract(SpectralSamplingLaw::LINEAR);
+
+    assert!(
+        aw.required_capabilities()
+            .contains(&casa_imaging_model::RequiredCapability::AwProjection)
+    );
+    assert!(
+        !aw.required_capabilities()
+            .contains(&casa_imaging_model::RequiredCapability::WProjection)
+    );
+    assert_eq!(
+        aw.products().normalization(),
+        ProductNormalization::FlatNoise
+    );
+    assert!(aw.products().products().contains(&ProductKind::Weight));
+    assert!(!aw.products().products().contains(&ProductKind::Sensitivity));
+    assert!(
+        aw.product_graph()
+            .nodes()
+            .iter()
+            .any(|node| node.name() == Some(".weight"))
+    );
+    assert!(
+        aw.product_graph()
+            .nodes()
+            .iter()
+            .all(|node| node.name() != Some(".sensitivity"))
+    );
+    assert_eq!(
+        aw.normal_equation()
+            .measurement_operator()
+            .transforms()
+            .last(),
+        Some(&PairedMeasurementTransform::AwProjection { contract })
+    );
+    assert_eq!(contract.pointing_offset_sigdev_arcsec(), [300.0, 30.0]);
+    assert_eq!(contract.pointing_group_threshold_arcsec(), 300.0);
+    assert_eq!(contract.pointing_refresh_threshold_arcsec(), 30.0);
+    assert_ne!(aw.problem_id(), standard.problem_id());
+
+    let changed_pointing_thresholds = AwProjectionContract::new(
+        12_500.0,
+        std::num::NonZeroUsize::new(32).unwrap(),
+        true,
+        false,
+        true,
+        true,
+        true,
+        [301.0, 30.0],
+        5.0,
+        5.0,
+    )
+    .unwrap();
+    let changed = compile_contract_with_reduction(
+        SpectralSamplingLaw::LINEAR,
+        ReductionPolicy::Compensated,
+        None,
+        Some(changed_pointing_thresholds),
+    );
+    assert_ne!(aw.problem_id(), changed.problem_id());
+}
+
+#[test]
+fn aw_projection_rejects_invalid_pointing_thresholds() {
+    let valid = || {
+        (
+            12_500.0,
+            std::num::NonZeroUsize::new(32).unwrap(),
+            true,
+            false,
+            true,
+            true,
+            true,
+            5.0,
+            5.0,
+        )
+    };
+    let (maximum_w, planes, a_term, ps_term, wideband, conjugate, pointing, compute_pa, rotate_pa) =
+        valid();
+    assert_eq!(
+        AwProjectionContract::new(
+            maximum_w,
+            planes,
+            a_term,
+            ps_term,
+            wideband,
+            conjugate,
+            pointing,
+            [f64::NAN, 30.0],
+            compute_pa,
+            rotate_pa,
+        ),
+        Err(casa_imaging_model::AwProjectionContractError::InvalidPointingOffsetSigdev)
+    );
+    assert_eq!(
+        AwProjectionContract::new(
+            maximum_w,
+            planes,
+            a_term,
+            ps_term,
+            wideband,
+            conjugate,
+            pointing,
+            [300.0, -1.0],
+            compute_pa,
+            rotate_pa,
+        ),
+        Err(casa_imaging_model::AwProjectionContractError::InvalidPointingOffsetSigdev)
+    );
 }

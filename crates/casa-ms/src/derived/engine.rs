@@ -1090,20 +1090,6 @@ impl MsCalEngine {
         )
     }
 
-    pub(crate) fn reproject_raw_uvw_for_density_between_j2000_directions(
-        &self,
-        raw_uvw_m: [f64; 3],
-        source_direction_rad: [f64; 2],
-        target_direction_rad: [f64; 2],
-    ) -> MsResult<[f64; 3]> {
-        self.reproject_raw_uvw_for_gridft_between_j2000_directions(
-            raw_uvw_m,
-            source_direction_rad,
-            target_direction_rad,
-        )
-        .map(|(uvw_m, _)| uvw_m)
-    }
-
     /// Reproject raw MS UVW coordinates to an explicit fixed J2000 direction
     /// using the CASA mosaic `girarUVW()` convention.
     pub fn reproject_raw_uvw_for_mosaic_to_direction(
@@ -1170,8 +1156,7 @@ fn casa_alma_aca_response_classes(
     let supported_observation = ms.observation().is_ok_and(|observation| {
         observation.row_count() > 0
             && (0..observation.row_count()).all(|row| {
-                observation
-                    .string(row, "TELESCOPE_NAME")
+                selected_string_value(observation.table(), row, "TELESCOPE_NAME")
                     .is_ok_and(|name| matches!(name.trim(), "ALMA" | "ACA"))
             })
     });
@@ -1180,7 +1165,7 @@ fn casa_alma_aca_response_classes(
     }
     (0..antenna.row_count())
         .map(|row| {
-            antenna.dish_diameter(row).map(|diameter| {
+            selected_f64_value(antenna.table(), row, "DISH_DIAMETER").map(|diameter| {
                 if (diameter - 12.0).abs() < 0.5 {
                     Some(AntennaResponseClass::CasaAlma12m)
                 } else if (diameter - 7.0).abs() < 1.0 {
@@ -2563,6 +2548,47 @@ mod tests {
             (phase_shift_m - -0.000_314_029_427_521_723_44).abs() < 1.0e-12,
             "phase_shift_m={phase_shift_m}"
         );
+    }
+
+    #[test]
+    fn awproject_offset_field_uses_girar_uvw_and_phase() {
+        let source = MDirection::from_angles(3.54, 0.29, DirectionRef::J2000);
+        let target_angles = [3.55, 0.293];
+        let target =
+            MDirection::from_angles(target_angles[0], target_angles[1], DirectionRef::J2000);
+        let engine = MsCalEngine::from_parts(
+            vec![MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z)],
+            vec![source],
+            MPosition::new_itrf(VLA_X, VLA_Y, VLA_Z),
+            casa_test_support::deterministic_measures_provider(),
+        );
+        // Synthetic widefield geometry; expected values captured with
+        // casacore UVWMachine and CASA FTMachine::girarUVW's row expressions,
+        // compiled with floating-point contraction disabled.
+        let raw_uvw = [-1_200.0, -2_000.0, 1_900.0];
+        let (uvw, casa_phase) = engine
+            .reproject_raw_uvw_for_mosaic_to_direction(raw_uvw, 0, &target)
+            .expect("AWProject girarUVW projection");
+        let expected = [
+            -1_205.658_949_685_163_6,
+            -1_996.516_890_818_620_8,
+            1_882.388_540_906_844_6,
+        ];
+        for (actual, expected) in uvw.into_iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 1.0e-10,
+                "{actual} != {expected}"
+            );
+        }
+        assert!((casa_phase - -17.514_874_069_400_992).abs() < 1.0e-10);
+
+        let (gridft_uvw, gridft_phase) = engine
+            .reproject_raw_uvw_for_gridft_to_j2000(raw_uvw, 0, target_angles)
+            .expect("GridFT comparison projection");
+        assert!((gridft_uvw[0] - -1_223.865_279_877_529_5).abs() < 1.0e-10);
+        assert!((gridft_phase - 17.611_459_093_155_094).abs() < 1.0e-10);
+        assert!((uvw[0] - gridft_uvw[0]).abs() > 18.0);
+        assert!((-casa_phase - gridft_phase).abs() > 0.09);
     }
 
     #[test]

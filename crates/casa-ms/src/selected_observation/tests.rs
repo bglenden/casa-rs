@@ -3,7 +3,8 @@
 use super::{
     BoundObservationSource, BoundSelectedObservation, ObservationSourceBinding,
     SelectedObservationContentBudget, SelectedObservationRow, SelectedObservationTraversalError,
-    access::validate_input_weight_group, bound_observation::consume_validated_stream,
+    access::{BoundObservationReferenceData, validate_input_weight_group},
+    bound_observation::consume_validated_stream,
 };
 use crate::derived::engine::MsCalEngine;
 use crate::subtables::SubTable;
@@ -61,6 +62,8 @@ use std::convert::Infallible;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
+#[cfg(unix)]
+mod content_requirements;
 mod t41_ephemeris_oracle;
 
 /// Canonical model-lifecycle commitment matching the compiled snapshot.
@@ -150,6 +153,14 @@ impl MeasuresProvider for AccountedTestMeasures {
             dy_mas: 0.0,
             is_predicted: false,
         }))
+    }
+
+    fn tai_minus_utc_seconds(&self, _utc_mjd: f64) -> Result<f64, String> {
+        Ok(32.0)
+    }
+
+    fn utc_from_tai_mjd(&self, tai_mjd: f64) -> Result<f64, String> {
+        Ok(tai_mjd - 32.0 / 86_400.0)
     }
 }
 
@@ -1294,7 +1305,7 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
         &expected_measures,
         expected_shared_bytes,
         expected_budget,
-        None,
+        BoundObservationReferenceData::new(None, None),
     )
     .expect("open independent frame-conversion oracle");
     let expected_output_frame = MeasFrame::new()
@@ -1497,7 +1508,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &baseline_measures,
         baseline_shared_bytes,
         baseline_budget,
-        None,
+        BoundObservationReferenceData::new(None, None),
     )
     .expect("bind baseline provider residency");
 
@@ -1518,7 +1529,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
             &large_measures,
             large_shared_bytes,
             baseline_budget,
-            None,
+            BoundObservationReferenceData::new(None, None),
         ),
         Err(super::BoundObservationSourceError::ContentPlan(
             super::content_plan::SelectedObservationContentPlanError::InsufficientRetainedBudget { .. }
@@ -1535,7 +1546,7 @@ fn measures_provider_residency_is_charged_once_and_rejected_under_a_tight_budget
         &large_measures,
         large_shared_bytes,
         large_budget,
-        None,
+        BoundObservationReferenceData::new(None, None),
     )
     .expect("bind admitted large provider residency");
     assert_eq!(
@@ -2095,11 +2106,13 @@ fn variable_pointing_reference_string_scratch_is_charged_once_per_peak() {
         expected_scratch,
         "one-at-a-time string scratch must not be multiplied by block rows"
     );
-    assert_eq!(
-        two_rows.content_plan().preparation_bytes_per_block(),
-        2 * one_row.content_plan().preparation_bytes_per_block(),
-        "the separately charged reference scratch must not leak into per-row payload"
-    );
+    for plan in [one_row.content_plan(), two_rows.content_plan()] {
+        assert_eq!(
+            plan.preparation_bytes_per_block(),
+            plan.rows_per_block() * plan.preparation_bytes_per_row(),
+            "the separately charged reference scratch must not leak into per-row payload"
+        );
+    }
     assert!(matches!(
         BoundObservationSource::open(
             &problem,
@@ -2389,6 +2402,7 @@ fn post_compile_selected_row_change_is_rejected_before_streaming() {
 
 #[test]
 fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
+    assert_eq!(SelectedObservationRow::STORAGE_BYTES_PER_ROW, 73);
     let directory = tempfile::tempdir().expect("temporary row-projection fixture");
     let path = directory.path().join("row-projection.ms");
     generate_fixture(&path);
@@ -2410,6 +2424,22 @@ fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
             |row| rows.push(row),
         )
         .expect("visit canonical selected rows");
+    let expected_time_centroids = (0..2)
+        .map(|row| {
+            match measurement_set
+                .main_table()
+                .cell_accessor(row, "TIME_CENTROID")
+                .and_then(|cell| cell.scalar())
+                .expect("stored MAIN.TIME_CENTROID")
+            {
+                ScalarValue::Float64(value) => *value,
+                other => panic!(
+                    "MAIN.TIME_CENTROID must be Float64, found {:?}",
+                    other.primitive_type()
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
 
     assert_eq!(rows.len(), 2);
     assert_eq!(
@@ -2420,6 +2450,12 @@ fn frontend_row_projection_uses_the_canonical_bounded_observation_evaluator() {
     );
     assert!(rows.iter().all(|row| !row.flag_row()));
     assert!(rows.iter().all(|row| row.observation_id() == 0));
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.time_centroid_mjd_seconds())
+            .collect::<Vec<_>>(),
+        expected_time_centroids
+    );
 }
 
 #[test]
@@ -3254,7 +3290,7 @@ fn retained_selected_samples_evaluate_fixed_centres_and_uvw_coordinates() {
             sample.coordinates.transformed_uvw_m,
             sample.coordinates.raw_uvw_m
         );
-        assert_ne!(
+        assert_eq!(
             sample.coordinates.density_uvw_m,
             sample.coordinates.raw_uvw_m
         );
@@ -4028,6 +4064,15 @@ fn owner_resolution_request(
     path: &std::path::Path,
     row_count: usize,
 ) -> SelectedObservationResolutionRequest {
+    owner_resolution_request_with_identity(path, row_count, identity(2))
+}
+
+#[cfg(unix)]
+fn owner_resolution_request_with_identity(
+    path: &std::path::Path,
+    row_count: usize,
+    selection_request: LogicalIdentity,
+) -> SelectedObservationResolutionRequest {
     let selected_rows = SelectedRows::from_ordered_main_rows(
         row_count as u64,
         (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
@@ -4035,7 +4080,7 @@ fn owner_resolution_request(
     .expect("owner selected-row manifest");
     SelectedObservationResolutionRequest::new(
         path.display().to_string(),
-        identity(2),
+        selection_request,
         fixture_selection(
             selected_rows,
             RowSelection::new(
@@ -4184,7 +4229,7 @@ fn content_budget_for_rows(
         selected_observation_shared_bytes(
             &measures,
             BoundObservationSource::retained_source_slot_bytes(),
-            0,
+            single_binding_graph_initialization_bytes(source),
         ),
         target_rows_per_block,
         maximum_live_blocks,
@@ -4273,15 +4318,36 @@ fn content_budget_for_rows_with_shared_bytes(
     let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())
         .expect("open retained fixture while deriving its exact content budget");
     let admitted = |available_bytes| {
-        super::content_plan::selected_content_plan(
-            &measurement_set,
-            problem,
-            source,
-            shared_bytes,
-            SelectedObservationContentBudget::new(available_bytes, maximum_live_blocks, 4),
-        )
-        .ok()
-        .is_some_and(|plan| plan.rows_per_block() >= target_rows_per_block)
+        let budget = SelectedObservationContentBudget::new(available_bytes, maximum_live_blocks, 4);
+        let planned = (|| {
+            let domain = if matches!(
+                problem.geometry().centres().pointing(),
+                PointingCentreLaw::Observation(_)
+            ) {
+                Some(
+                    crate::observation_owner::validate_test_physical_selection(
+                        &measurement_set,
+                        source.selection(),
+                        budget,
+                    )
+                    .ok()?,
+                )
+            } else {
+                None
+            };
+            BoundObservationSource::requirements_for_locked_source(
+                &measurement_set,
+                problem,
+                source,
+                shared_bytes,
+                budget.maximum_pointing_polynomial_terms(),
+                domain.as_ref(),
+            )
+            .ok()?
+            .plan(budget)
+            .ok()
+        })();
+        planned.is_some_and(|plan| plan.rows_per_block() >= target_rows_per_block)
     };
     let mut upper = 1_usize;
     while !admitted(upper) {

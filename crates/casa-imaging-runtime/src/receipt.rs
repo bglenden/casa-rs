@@ -1108,7 +1108,10 @@ impl Eq for ExecutionReceiptStore {}
 struct ReceiptRootState {
     retention: ReceiptRetention,
     mutation: Mutex<()>,
+    summaries: Mutex<summary::ReceiptSummaryCache>,
 }
+
+mod summary;
 
 /// Process-local, unforgeable identity of one canonical receipt root.
 #[derive(Clone, Debug)]
@@ -1143,6 +1146,7 @@ fn receipt_root_state(
     let state = Arc::new(ReceiptRootState {
         retention,
         mutation: Mutex::new(()),
+        summaries: Mutex::new(summary::ReceiptSummaryCache::default()),
     });
     states.insert(root.to_owned(), Arc::downgrade(&state));
     Ok(state)
@@ -1277,6 +1281,7 @@ impl ExecutionReceiptStore {
             active_nodes: BTreeMap::new(),
             active_fences: BTreeMap::new(),
             pending_publications: BTreeSet::new(),
+            publication_mutation: None,
             terminal: false,
         })
     }
@@ -1312,11 +1317,20 @@ impl ExecutionReceiptStore {
     }
 
     fn persist(&self, body: &ReceiptBody, is_new: bool) -> Result<(), ReceiptError> {
-        let _mutation = self
+        let mutation = self
             .state
             .mutation
             .lock()
             .map_err(|_| ReceiptError::InvalidStore)?;
+        self.persist_while_locked(body, is_new, &mutation)
+    }
+
+    fn persist_while_locked(
+        &self,
+        body: &ReceiptBody,
+        is_new: bool,
+        _mutation: &MutexGuard<'_, ()>,
+    ) -> Result<(), ReceiptError> {
         let bytes = encode_document(body)?;
         let actual_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
         let reserved_bytes = if body.status.is_terminal() {
@@ -1339,11 +1353,19 @@ impl ExecutionReceiptStore {
     }
 
     fn persist_checkpoint(&self, body: &ReceiptBody) -> Result<(), ReceiptError> {
-        let _mutation = self
+        let mutation = self
             .state
             .mutation
             .lock()
             .map_err(|_| ReceiptError::InvalidStore)?;
+        self.persist_checkpoint_while_locked(body, &mutation)
+    }
+
+    fn persist_checkpoint_while_locked(
+        &self,
+        body: &ReceiptBody,
+        _mutation: &MutexGuard<'_, ()>,
+    ) -> Result<(), ReceiptError> {
         let bytes = encode_document(body)?;
         atomic_write_checkpoint(&self.receipt_path(body.attempt()), &bytes)
     }
@@ -1416,27 +1438,14 @@ impl ExecutionReceiptStore {
             if path == current_path || !is_receipt_path(&path) {
                 continue;
             }
-            let file_bytes = entry
-                .metadata()
-                .map_err(|source| ReceiptError::Io {
-                    action: "inspect execution receipt",
-                    source,
-                })?
-                .len();
-            let receipt = read_receipt_body(&path)?;
-            let bytes = if receipt.status.is_terminal() {
-                file_bytes
-            } else {
-                file_bytes.max(worst_case_receipt_bytes(&receipt)?)
-            };
+            let receipt = self.validated_summary(&path)?;
+            let bytes = receipt.retention_bytes;
             total_bytes = total_bytes.saturating_add(bytes);
             retained.push((
                 path,
                 bytes,
                 receipt.status.is_terminal(),
-                receipt
-                    .finished_unix_millis
-                    .unwrap_or(receipt.started_unix_millis),
+                receipt.order_millis,
                 receipt.attempt_identity,
             ));
         }
@@ -1463,10 +1472,15 @@ impl ExecutionReceiptStore {
         }
         let pruned = !prune.is_empty();
         for path in prune {
-            fs::remove_file(path).map_err(|source| ReceiptError::Io {
+            fs::remove_file(&path).map_err(|source| ReceiptError::Io {
                 action: "prune retained execution receipt",
                 source,
             })?;
+            self.state
+                .summaries
+                .lock()
+                .map_err(|_| ReceiptError::InvalidStore)?
+                .remove(&path);
         }
         if pruned {
             sync_directory(&self.root)?;
@@ -3780,6 +3794,7 @@ pub(crate) struct ReceiptRecorder<'store> {
     active_nodes: BTreeMap<String, Instant>,
     active_fences: BTreeMap<(String, String), Instant>,
     pending_publications: BTreeSet<String>,
+    publication_mutation: Option<MutexGuard<'store, ()>>,
     terminal: bool,
 }
 
@@ -4014,8 +4029,14 @@ impl<'store> ReceiptRecorder<'store> {
         self.body.failure = failure.map(ReceiptFailure::projection);
         self.body.finished_unix_millis = Some(now_millis());
         self.body.revision = self.body.revision.saturating_add(1);
-        self.store.persist(&self.body, false)?;
+        if let Some(mutation) = &self.publication_mutation {
+            self.store
+                .persist_while_locked(&self.body, false, mutation)?;
+        } else {
+            self.store.persist(&self.body, false)?;
+        }
         self.terminal = true;
+        drop(self.publication_mutation.take());
         Ok(())
     }
 
@@ -4114,10 +4135,20 @@ impl<'store> ReceiptRecorder<'store> {
         if self.pending_publications != expected || prepared != expected {
             return Err(ReceiptError::IncompleteSuccess);
         }
+        let mutation = self
+            .store
+            .state
+            .mutation
+            .lock()
+            .map_err(|_| ReceiptError::InvalidStore)?;
         self.body.status = ReceiptStatus::PublicationPrepared;
         self.body.failure = None;
         self.body.finished_unix_millis = None;
-        self.checkpoint()
+        self.body.revision = self.body.revision.saturating_add(1);
+        self.store
+            .persist_checkpoint_while_locked(&self.body, &mutation)?;
+        self.publication_mutation = Some(mutation);
+        Ok(())
     }
 
     pub(crate) fn complete_independent_product_publication(&mut self) -> Result<(), ReceiptError> {
@@ -4147,7 +4178,12 @@ impl<'store> ReceiptRecorder<'store> {
 
     fn checkpoint(&mut self) -> Result<(), ReceiptError> {
         self.body.revision = self.body.revision.saturating_add(1);
-        self.store.persist_checkpoint(&self.body)
+        if let Some(mutation) = &self.publication_mutation {
+            self.store
+                .persist_checkpoint_while_locked(&self.body, mutation)
+        } else {
+            self.store.persist_checkpoint(&self.body)
+        }
     }
 
     fn finish_node(
@@ -5719,6 +5755,7 @@ fn prepared_publication_bytes(
         .ok_or(ReceiptError::RetentionExceeded)
 }
 
+#[cfg(test)]
 fn read_receipt_body(path: &Path) -> Result<ReceiptBody, ReceiptError> {
     let bytes = fs::read(path).map_err(|source| ReceiptError::Io {
         action: "read retained execution receipt",
@@ -5988,6 +6025,37 @@ fn project_science(fields: &mut BTreeMap<String, String>, problem: &CompiledProb
                 if let Some(planes) = contract.planes() {
                     evidence_field(fields, format!("{prefix}.planes"), planes.get());
                 }
+            }
+            PairedMeasurementTransform::AwProjection { contract } => {
+                evidence_field(
+                    fields,
+                    format!("{prefix}.maximum_abs_w_lambda"),
+                    contract.maximum_abs_w_lambda(),
+                );
+                evidence_field(fields, format!("{prefix}.planes"), contract.planes().get());
+                evidence_field(fields, format!("{prefix}.a_term"), contract.a_term());
+                evidence_field(fields, format!("{prefix}.ps_term"), contract.ps_term());
+                evidence_field(fields, format!("{prefix}.wideband"), contract.wideband());
+                evidence_field(
+                    fields,
+                    format!("{prefix}.conjugate_beams"),
+                    contract.conjugate_beams(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.use_pointing"),
+                    contract.use_pointing(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.compute_pa_step_deg"),
+                    contract.compute_pa_step_deg(),
+                );
+                evidence_field(
+                    fields,
+                    format!("{prefix}.rotate_pa_step_deg"),
+                    contract.rotate_pa_step_deg(),
+                );
             }
             PairedMeasurementTransform::PolarizationMapping
             | PairedMeasurementTransform::FeedResponse => {}
@@ -7509,6 +7577,7 @@ const fn instrument_model_name(value: InstrumentModel) -> &'static str {
         InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1 => {
             "casa-alma-aca-heterogeneous-interferometric-response-v1"
         }
+        InstrumentModel::CasaEvlaWidebandAwV1 => "casa-evla-wideband-aw-v1",
     }
 }
 
@@ -7534,6 +7603,7 @@ fn paired_transform_kind(value: PairedTransformKind) -> &'static str {
         PairedTransformKind::SpectralResampling => "spectral_resampling",
         PairedTransformKind::ChannelIntegration => "channel_integration",
         PairedTransformKind::WProjection => "w_projection",
+        PairedTransformKind::AwProjection => "aw_projection",
     }
 }
 
@@ -7815,6 +7885,7 @@ fn required_capability(value: RequiredCapability) -> String {
         RequiredCapability::MultiDomainGeometry => "multi_domain_geometry".to_string(),
         RequiredCapability::FacetedGeometry => "faceted_geometry".to_string(),
         RequiredCapability::WProjection => "w_projection".to_string(),
+        RequiredCapability::AwProjection => "aw_projection".to_string(),
         RequiredCapability::SpectralFrameTransform => "spectral_frame_transform".to_string(),
         RequiredCapability::SpectralResampling => "spectral_resampling".to_string(),
         RequiredCapability::SequentialContinuumTransform => {
@@ -8423,6 +8494,9 @@ fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod retention_probe;
 
 #[cfg(test)]
 mod tests {

@@ -7,6 +7,8 @@ import copy
 import math
 import unittest
 
+import numpy as np
+
 from perf_harness import casa_image_compare as comparator
 from perf_harness import image_compare as validator
 from perf_harness.image_compare import (
@@ -51,6 +53,100 @@ class FullArrayOutputValidationTests(unittest.TestCase):
         request = normalized_request()
 
         validate_comparison_output(comparison_output(request), request)
+
+    def test_centered_correlation_accepts_raw_roundoff_bound_but_rejects_forgery(
+        self,
+    ) -> None:
+        count = 4096
+        index = np.arange(count, dtype=np.float64)
+        left = 1.0e8 + (index % 2400.0)
+        right = left + 0.25 * ((index % 7.0) - 3.0)
+        masks = np.ones(count, dtype=bool)
+        reducer = comparator.FullArrayReducer([count], 512)
+        for start in range(0, count, 512):
+            end = start + 512
+            reducer.add(
+                left[start:end],
+                right[start:end],
+                masks[start:end],
+                masks[start:end],
+                [start],
+            )
+        full = reducer.result()
+
+        validator._validate_full_array_numerical_algebra(
+            full,
+            left=full["left"],
+            right=full["right"],
+            difference=full["difference"],
+            count=count,
+            chunks=full["chunks"],
+            max_chunk_elements=full["max_chunk_elements_observed"],
+            label=".synthetic",
+        )
+
+        forged = copy.deepcopy(full)
+        forged["correlation"] = 0.0
+        with self.assertRaisesRegex(ValueError, "correlation"):
+            validator._validate_full_array_numerical_algebra(
+                forged,
+                left=forged["left"],
+                right=forged["right"],
+                difference=forged["difference"],
+                count=count,
+                chunks=forged["chunks"],
+                max_chunk_elements=forged["max_chunk_elements_observed"],
+                label=".synthetic",
+            )
+
+    def test_unresolved_raw_variance_still_requires_bounded_centered_result(
+        self,
+    ) -> None:
+        count = 4096
+        index = np.arange(count, dtype=np.float64)
+        left = 1.0e12 + (index % 2400.0)
+        right = left + 0.25 * ((index % 7.0) - 3.0)
+        masks = np.ones(count, dtype=bool)
+        reducer = comparator.FullArrayReducer([count], 512)
+        for start in range(0, count, 512):
+            end = start + 512
+            reducer.add(
+                left[start:end],
+                right[start:end],
+                masks[start:end],
+                masks[start:end],
+                [start],
+            )
+        full = reducer.result()
+
+        self.assertEqual(
+            0.0,
+            full["left"]["sum_squares"] - full["left"]["sum"] ** 2 / count,
+        )
+        validator._validate_full_array_numerical_algebra(
+            full,
+            left=full["left"],
+            right=full["right"],
+            difference=full["difference"],
+            count=count,
+            chunks=full["chunks"],
+            max_chunk_elements=full["max_chunk_elements_observed"],
+            label=".synthetic",
+        )
+
+        forged = copy.deepcopy(full)
+        forged["correlation"] = 1.5
+        with self.assertRaisesRegex(ValueError, r"outside \[-1, 1\]"):
+            validator._validate_full_array_numerical_algebra(
+                forged,
+                left=forged["left"],
+                right=forged["right"],
+                difference=forged["difference"],
+                count=count,
+                chunks=forged["chunks"],
+                max_chunk_elements=forged["max_chunk_elements_observed"],
+                label=".synthetic",
+            )
 
     def test_coverage_chunk_topology_and_algebra_mutations_fail_closed(self) -> None:
         request = normalized_request()

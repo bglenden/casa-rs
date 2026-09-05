@@ -16,14 +16,15 @@ use casa_coordinates::{
 };
 use casa_images::AnyPagedImage;
 use casa_imaging_model::{
-    AxisOrder, CentreLaws, ContinuumChannelRole, ContinuumChannelUse, ContinuumFitRule,
-    CorrelationProduct, CorrelationSelection, CorrelationType, DeclaredInnerProducts,
-    DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame, DopplerConvention, Epoch, FacetLayout,
-    FiniteValuePolicy, FrequencyFrame, HogbomIterationAccounting, ImageAxis, ImageDomainRole,
-    ImageDomainSpec, ImageShape, InstrumentModel, InstrumentResponse, ItrfPosition,
-    LogicalIdentity, MeasurementEquationContract, MissingPointingPolicy, ModelBounds,
-    ModelColumnWrite, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
+    AwProjectionContract, AxisOrder, CentreLaws, ContinuumChannelRole, ContinuumChannelUse,
+    ContinuumFitRule, CorrelationProduct, CorrelationSelection, CorrelationType,
+    DeclaredInnerProducts, DelayCentreLaw, DirectionCoordinateSpec, DirectionFrame,
+    DopplerConvention, Epoch, FacetLayout, FiniteValuePolicy, FrequencyFrame,
+    HogbomIterationAccounting, ImageAxis, ImageDomainRole, ImageDomainSpec, ImageShape,
+    InstrumentModel, InstrumentResponse, ItrfPosition, LogicalIdentity,
+    MeasurementEquationContract, MissingPointingPolicy, ModelBounds, ModelColumnWrite,
+    ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements, ModelStateIdentity,
+    NumericPrecision, NumericalStage, NumericsContract, ObservationPointingLaw,
     ObservationSelection, ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw,
     PointingDirectionColumn, PointingDirectionSemantic, PointingExtrapolation,
     PointingInterpolation, PointingTimeSampling, PolarizationContract, PolarizationCoordinate,
@@ -40,12 +41,14 @@ use casa_imaging_model::{
     WeightingScheme,
 };
 use casa_imaging_reconstruction::{
-    ReconstructionMaskPlan, WeightingExecutionLimits, minor_cycle_workspace_bytes,
+    MinorCycleImageResponse, ReconstructionMaskPlan, WeightingExecutionLimits,
+    minor_cycle_workspace_bytes,
 };
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
     ManagedSpillStorage, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
-    ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    ResourceAuthority, ResourceOverride, ResourcePolicy, SelectedObservationSourceResources,
+    WorkImplementationId,
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
@@ -190,6 +193,44 @@ pub struct ContinuumAutoMaskControls {
     pub minimum_percent_change: f64,
 }
 
+/// Complete native AW-projection request retained through application preparation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContinuumAwProjection {
+    /// Read-only CASA `CFS_`/`WTCFS_` cache root.
+    pub casa_cache: PathBuf,
+    /// Hard ceiling for simultaneously resident paired convolution cells.
+    pub resident_bytes: usize,
+    /// Explicit W-plane count, when supplied by the task surface.
+    pub w_plane_count: Option<usize>,
+    /// Optional distinct PSF phase centre in radians.
+    pub psf_phase_center_direction_rad: Option<[f64; 2]>,
+    /// Optional voltage-pattern table.
+    pub vp_table: Option<PathBuf>,
+    /// Enable the EVLA aperture term.
+    pub a_term: bool,
+    /// Enable the prolate-spheroidal term.
+    pub ps_term: bool,
+    /// Enable wideband A-projection frequency selection.
+    pub wideband: bool,
+    /// Enable conjugate-frequency beam selection.
+    pub conjugate_beams: bool,
+    /// Use row-local POINTING-table offsets.
+    pub use_pointing: bool,
+    /// CASA pointing grouping and time-refresh thresholds in arcseconds.
+    ///
+    /// With `use_pointing`, CASA treats any cardinality other than exactly two
+    /// values as `[600, 600]`. The first effective value groups antenna
+    /// pointing offsets; the second controls when time-dependent mean drift
+    /// refreshes those groups.
+    pub pointing_offset_sigdev: Vec<f64>,
+    /// Enable mosaic weight-density behavior.
+    pub mosaic_weighting: bool,
+    /// Parallactic-angle computation step in degrees.
+    pub compute_pa_step_deg: f64,
+    /// Parallactic-angle rotation step in degrees.
+    pub rotate_pa_step_deg: f64,
+}
+
 /// Application projection of the native minor-cycle terminal reason.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContinuumStopReason {
@@ -331,6 +372,8 @@ pub struct ContinuumImagingRequest {
     pub pbcor: bool,
     /// Explicit W-projection plane count; `None` derives it from the selected W envelope.
     pub w_projection_planes: Option<usize>,
+    /// Complete AW-projection cache and term contract; mutually exclusive with W-projection.
+    pub aw_projection: Option<ContinuumAwProjection>,
     /// Capability constraints derived by the task surface. Unsupported
     /// capabilities are rejected by the installed implementation registry
     /// before physical execution.
@@ -1000,7 +1043,7 @@ fn prepare(
         request.uv_range.as_deref(),
         request.intent.as_deref(),
     )?;
-    let content_budget = SelectedObservationContentBudget::new(64 << 20, 2, 4);
+    let content_budget = SelectedObservationSourceResources::bootstrap_content_budget();
     let candidate_bindings = ddids
         .iter()
         .copied()
@@ -1499,6 +1542,10 @@ fn prepare(
     let mosaic = request
         .task_requirements
         .contains(&TaskRequirement::MosaicGridder);
+    let aw_use_pointing = request
+        .aw_projection
+        .as_ref()
+        .is_some_and(|controls| controls.use_pointing);
     let geometry = casa_imaging_model::GeometryInput::new(
         prepared_domains
             .iter()
@@ -1527,20 +1574,9 @@ fn prepare(
         CentreLaws::new(
             phase_centre_law,
             DelayCentreLaw::PhaseTrackingCentre,
-            if mosaic {
-                PointingCentreLaw::Observation(ObservationPointingLaw::new(
-                    PointingDirectionColumn::Direction,
-                    PointingDirectionSemantic::AntennaBoresight,
-                    PointingTimeSampling::VisibilityTimeCentroid,
-                    PointingInterpolation::GreatCircleShortestArc,
-                    PointingExtrapolation::Reject,
-                    MissingPointingPolicy::Reject,
-                ))
-            } else {
-                PointingCentreLaw::PhaseTrackingCentre
-            },
+            continuum_pointing_centre_law(mosaic, aw_use_pointing),
         ),
-        if mosaic {
+        if mosaic || request.aw_projection.is_some() {
             UvwCoordinateLaw::MosaicPhaseTrackingCentre
         } else {
             UvwCoordinateLaw::PhaseTrackingCentre
@@ -1554,7 +1590,7 @@ fn prepare(
             prepared_spectral.doppler,
         ),
     );
-    let primary_beam_model = if mosaic {
+    let primary_beam_model = if mosaic || request.aw_projection.is_some() {
         Some(casa_imaging_products::AnalyticPrimaryBeamModel::MosaicSensitivity)
     } else if request.write_primary_beam || request.pbcor {
         Some(standard_primary_beam_model(&ms)?)
@@ -1580,13 +1616,34 @@ fn prepare(
                 boxed("native continuum requires input and output on one filesystem")
             })
         })
-        .and_then(|profile| runtime(&request, &prepared_domains, &profile))
-        .map(|runtime| ApplicationNative {
-            runtime,
-            publication: ApplicationPublication {
-                controls: product_controls,
-                sink: product_sink,
-            },
+        .and_then(|profile| {
+            let runtime = runtime(&request, &prepared_domains, &profile)?;
+            let aw_preparation = request
+                .aw_projection
+                .as_ref()
+                .map(|controls| {
+                    let output_directory = request
+                        .image_name
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .canonicalize()?;
+                    Ok::<_, crate::ApplicationError>(crate::ApplicationAwPreparation {
+                        casa_cache: controls.casa_cache.clone(),
+                        private_root: output_directory.join(".casa-rs-aw-prepared"),
+                        storage_domain: profile.storage_domain(),
+                        resident_bytes: controls.resident_bytes,
+                        conjugate_beams: controls.conjugate_beams,
+                    })
+                })
+                .transpose()?;
+            Ok(ApplicationNative {
+                runtime,
+                publication: ApplicationPublication {
+                    controls: product_controls,
+                    sink: product_sink,
+                },
+                aw_preparation,
+            })
         });
     let digest = request_digest(&request, b"selection");
     let reconstruction_planes = match &request.algorithm {
@@ -1637,6 +1694,75 @@ fn prepare(
                 .map_err(|error| Box::new(error) as crate::ApplicationError)
         })
         .transpose()?;
+    let aw_projection = request
+        .aw_projection
+        .as_ref()
+        .map(|controls| {
+            let maximum_frequency_hz = spectral_windows
+                .iter()
+                .flat_map(|window| window.frequencies_hz.iter().copied())
+                .fold(0.0_f64, f64::max);
+            let maximum_abs_w_lambda =
+                maximum_selected_abs_w_m * maximum_frequency_hz / 299_792_458.0;
+            let planes = controls
+                .w_plane_count
+                .and_then(std::num::NonZeroUsize::new)
+                .ok_or_else(|| {
+                    boxed("AW projection requires an explicit positive W-plane count")
+                })?;
+            if controls.vp_table.is_some() {
+                return Err(boxed(
+                    "AW projection does not support a separate voltage-pattern table",
+                ));
+            }
+            if controls.mosaic_weighting {
+                return Err(boxed(
+                    "AW projection does not support mosaic weight-density mode",
+                ));
+            }
+            if !controls.a_term {
+                return Err(boxed("AW projection requires the EVLA aperture A term"));
+            }
+            if controls.ps_term {
+                return Err(boxed(
+                    "AW projection does not support a separate prolate-spheroidal term",
+                ));
+            }
+            if !controls.wideband || !controls.conjugate_beams {
+                return Err(boxed(
+                    "AW projection requires wideband and conjugate-beam selection",
+                ));
+            }
+            if planes.get() != 32 {
+                return Err(boxed(
+                    "AW projection currently requires the frozen 32-plane EVLA cache contract",
+                ));
+            }
+            if controls.compute_pa_step_deg.to_bits() != 360.0_f64.to_bits()
+                || controls.rotate_pa_step_deg.to_bits() != 360.0_f64.to_bits()
+            {
+                return Err(boxed(
+                    "AW projection cache currently requires 360-degree parallactic-angle steps",
+                ));
+            }
+            AwProjectionContract::new(
+                maximum_abs_w_lambda,
+                planes,
+                controls.a_term,
+                controls.ps_term,
+                controls.wideband,
+                controls.conjugate_beams,
+                controls.use_pointing,
+                effective_aw_pointing_offset_sigdev_arcsec(
+                    controls.use_pointing,
+                    &controls.pointing_offset_sigdev,
+                )?,
+                controls.compute_pa_step_deg,
+                controls.rotate_pa_step_deg,
+            )
+            .map_err(|error| Box::new(error) as crate::ApplicationError)
+        })
+        .transpose()?;
     let specification = match continuum_transform {
         Some(transform) => specification(
             &request,
@@ -1644,6 +1770,7 @@ fn prepare(
             instrument.map(|value| value.0),
             unit_response_validity,
             w_projection,
+            aw_projection,
         )?
         .with_visibility_transform(transform),
         None => specification(
@@ -1652,6 +1779,7 @@ fn prepare(
             instrument.map(|value| value.0),
             unit_response_validity,
             w_projection,
+            aw_projection,
         )?,
     };
     let masks = casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new(
@@ -1678,6 +1806,20 @@ fn prepare(
             ModelInputCommitment::Empty,
         ),
         masks,
+        minor_cycle_image_response: (request.aw_projection.is_some()
+            && matches!(request.algorithm, ContinuumAlgorithm::Mtmfs { .. }))
+        .then(|| {
+            MinorCycleImageResponse::new(
+                request.normalization,
+                PrimaryBeamValidityPolicy::new(
+                    request.primary_beam_cutoff,
+                    ProductSupportComparison::StrictlyGreater,
+                    ProductBlankingPolicy::ZeroAndFalseMask,
+                )?,
+            )
+            .map_err(|error| Box::new(error) as crate::ApplicationError)
+        })
+        .transpose()?,
         observation: SelectedObservationResolutionRequest::new(
             request.measurement_set.display().to_string(),
             LogicalIdentity::from_sha256(digest),
@@ -1701,6 +1843,51 @@ fn prepare(
         task_requirements: request.task_requirements,
         native,
     })
+}
+
+const CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC: [f64; 2] = [600.0, 600.0];
+
+fn effective_aw_pointing_offset_sigdev_arcsec(
+    use_pointing: bool,
+    requested: &[f64],
+) -> Result<[f64; 2], crate::ApplicationError> {
+    if requested
+        .iter()
+        .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        return Err(boxed(
+            "AW pointing-offset thresholds must be finite and non-negative",
+        ));
+    }
+    Ok(match requested {
+        [group_threshold, refresh_threshold] => [*group_threshold, *refresh_threshold],
+        _ if use_pointing => CASA_DEFAULT_AW_POINTING_OFFSET_SIGDEV_ARCSEC,
+        _ => [0.0, 0.0],
+    })
+}
+
+fn continuum_pointing_centre_law(mosaic: bool, aw_use_pointing: bool) -> PointingCentreLaw {
+    if aw_use_pointing {
+        PointingCentreLaw::Observation(ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTime,
+            PointingInterpolation::Nearest,
+            PointingExtrapolation::HoldNearest,
+            MissingPointingPolicy::UsePhaseTrackingCentre,
+        ))
+    } else if mosaic {
+        PointingCentreLaw::Observation(ObservationPointingLaw::new(
+            PointingDirectionColumn::Direction,
+            PointingDirectionSemantic::AntennaBoresight,
+            PointingTimeSampling::VisibilityTimeCentroid,
+            PointingInterpolation::GreatCircleShortestArc,
+            PointingExtrapolation::Reject,
+            MissingPointingPolicy::Reject,
+        ))
+    } else {
+        PointingCentreLaw::PhaseTrackingCentre
+    }
 }
 
 fn canonicalize_polarizations(polarizations: &mut Vec<PolarizationCoordinate>) {
@@ -1849,10 +2036,12 @@ fn scientific_instrument_model(
     request: &ContinuumImagingRequest,
     ms: &MeasurementSet,
 ) -> Result<Option<(InstrumentModel, LogicalIdentity)>, crate::ApplicationError> {
+    let aw_projection = request.aw_projection.is_some();
     let mosaic = request
         .task_requirements
         .contains(&TaskRequirement::MosaicGridder);
-    if !mosaic
+    if !aw_projection
+        && !mosaic
         && !matches!(
             request.spectral_mode,
             SpectralImagingMode::MtmfsViaCube { .. }
@@ -1869,7 +2058,12 @@ fn scientific_instrument_model(
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
     let telescope_names = telescopes.iter().map(String::as_str).collect::<Vec<_>>();
-    let supported_telescope = if mosaic {
+    let supported_telescope = if aw_projection {
+        !telescope_names.is_empty()
+            && telescope_names
+                .iter()
+                .all(|name| matches!(*name, "VLA" | "EVLA"))
+    } else if mosaic {
         !telescope_names.is_empty()
             && telescope_names
                 .iter()
@@ -1879,7 +2073,7 @@ fn scientific_instrument_model(
     };
     if !supported_telescope {
         return Err(boxed(format!(
-            "primary-beam response requires ALMA/ACA observation metadata; found {telescopes:?}"
+            "requested instrument response is unsupported for observation metadata {telescopes:?}"
         )));
     }
     let antenna = ms.antenna()?;
@@ -1889,7 +2083,10 @@ fn scientific_instrument_model(
         ));
     }
     let mut hasher = Sha256::new();
-    let instrument_model = if mosaic {
+    let instrument_model = if aw_projection {
+        hasher.update(b"casa-rs-instrument-reference/casa-evla-wideband-aw-v1");
+        InstrumentModel::CasaEvlaWidebandAwV1
+    } else if mosaic {
         hasher.update(b"casa-rs-instrument-reference/casa-alma-aca-heterogeneous-response-v1");
         InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
     } else {
@@ -1904,9 +2101,15 @@ fn scientific_instrument_model(
     hasher.update((antenna.row_count() as u64).to_le_bytes());
     for row in 0..antenna.row_count() {
         let diameter = antenna.dish_diameter(row)?;
-        let supported_diameter = instrument_model_supports_diameter(mosaic, diameter);
+        let supported_diameter = if aw_projection {
+            diameter.is_finite() && (diameter - 25.0).abs() < 1.0
+        } else {
+            instrument_model_supports_diameter(mosaic, diameter)
+        };
         if !supported_diameter {
-            let expected = if mosaic {
+            let expected = if aw_projection {
+                "one EVLA/VLA 25 m antenna class"
+            } else if mosaic {
                 "CASA 12 m or 7 m antenna classes"
             } else {
                 "one homogeneous ACA 7 m antenna class"
@@ -1983,12 +2186,10 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         ));
     }
     if request.w_projection_planes.is_some()
-        && !request
-            .task_requirements
-            .contains(&TaskRequirement::WProjection)
+        && !supports_projected_w_planes(&request.task_requirements)
     {
         return Err(boxed(
-            "w_projection_planes requires the explicit W-projection task capability",
+            "w_projection_planes requires the explicit W- or AW-projection task capability",
         ));
     }
     if request.save_continuum_residual && request.continuum_subtraction.is_none() {
@@ -2017,6 +2218,11 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         ));
     }
     Ok(())
+}
+
+fn supports_projected_w_planes(requirements: &[TaskRequirement]) -> bool {
+    requirements.contains(&TaskRequirement::WProjection)
+        || requirements.contains(&TaskRequirement::AwProjection)
 }
 
 fn prepare_continuum_transform(
@@ -2577,11 +2783,15 @@ fn specification(
     instrument_model: Option<InstrumentModel>,
     unit_response_validity: UnitResponseValidityPolicy,
     w_projection: Option<WProjectionContract>,
+    aw_projection: Option<AwProjectionContract>,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
     let mosaic = request
         .task_requirements
         .contains(&TaskRequirement::MosaicGridder);
     let algorithm = reconstruction_algorithm(&request.algorithm);
+    let minor_cycle_requested =
+        algorithm != ReconstructionAlgorithm::Dirty && request.iterations > 0;
+    let weight_image = mosaic || aw_projection.is_some();
     let basis = match (&request.spectral_mode, &request.algorithm) {
         (SpectralImagingMode::MtmfsViaCube { .. }, ContinuumAlgorithm::Mtmfs { terms, .. }) => {
             ReconstructionBasis::TaylorViaChannelMajor {
@@ -2672,6 +2882,9 @@ fn specification(
     let measurement_equation = w_projection.map_or(measurement_equation, |contract| {
         measurement_equation.with_w_projection(contract)
     });
+    let measurement_equation = aw_projection.map_or(measurement_equation, |contract| {
+        measurement_equation.with_aw_projection(contract)
+    });
     let mut science = ScientificContract::new(
         SpectralContract::new(
             spectral.sampling,
@@ -2696,8 +2909,10 @@ fn specification(
         ProductRequirements::new(
             requested_products(
                 &request.algorithm,
+                minor_cycle_requested,
                 request.normalization,
                 mosaic,
+                weight_image,
                 request.write_primary_beam,
                 request.pbcor,
             ),
@@ -2747,8 +2962,10 @@ fn specification(
 
 fn requested_products(
     algorithm: &ContinuumAlgorithm,
+    minor_cycle_requested: bool,
     normalization: ProductNormalization,
     mosaic: bool,
+    weight_image: bool,
     write_primary_beam: bool,
     pbcor: bool,
 ) -> Vec<ProductKind> {
@@ -2759,7 +2976,7 @@ fn requested_products(
         ProductKind::RestoredImage,
         ProductKind::SumWeights,
     ];
-    if !matches!(algorithm, ContinuumAlgorithm::Dirty) {
+    if minor_cycle_requested {
         products.push(ProductKind::Mask);
     }
     products.push(ProductKind::Beam);
@@ -2770,10 +2987,12 @@ fn requested_products(
             ProductKind::SpectralIndexError,
         ]);
     }
-    if mosaic {
+    if weight_image {
         products.push(ProductKind::Weight);
     }
-    if !matches!(normalization, ProductNormalization::UnitResponse) {
+    // AW keeps sensitivity internal and publishes its normalization as `.weight`.
+    let aw_weight_image = weight_image && !mosaic;
+    if !matches!(normalization, ProductNormalization::UnitResponse) && !aw_weight_image {
         products.push(ProductKind::Sensitivity);
     }
     if write_primary_beam || pbcor {
@@ -2888,12 +3107,15 @@ fn production_storage_profile(
     content_budget: SelectedObservationContentBudget,
 ) -> Result<Option<ProductionStorageProfile>, crate::ApplicationError> {
     let input_root = filesystem_root(&request.measurement_set.canonicalize()?)?;
+    let mut writable_directory = None;
     for domain in domains {
         let output_parent = domain.output.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(output_parent)?;
-        if filesystem_root(&output_parent.canonicalize()?)? != input_root {
+        let output_parent = output_parent.canonicalize()?;
+        if filesystem_root(&output_parent)? != input_root {
             return Ok(None);
         }
+        writable_directory.get_or_insert(output_parent);
     }
     let (capacity, available) = filesystem_capacity(&input_root)?;
     let read_rate = positive_environment("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND")?;
@@ -2901,8 +3123,9 @@ fn production_storage_profile(
     let queue_slots = u64::try_from(content_budget.maximum_live_blocks())
         .map_err(|_| boxed("selected source queue depth overflowed"))?
         .checked_add(1)
-        .ok_or_else(|| boxed("managed-spill queue depth overflowed"))?;
-    Ok(Some(ProductionStorageProfile::new(
+        .and_then(|slots| slots.checked_add(u64::from(request.aw_projection.is_some())))
+        .ok_or_else(|| boxed("managed-spill and prepared-reader queue depth overflowed"))?;
+    let profile = ProductionStorageProfile::new(
         input_root,
         capacity,
         available,
@@ -2910,7 +3133,17 @@ fn production_storage_profile(
         write_rate,
         queue_slots,
         2,
-    )?))
+    )?;
+    let profile = if request.aw_projection.is_some() {
+        profile.with_measured_operations_rate(
+            writable_directory
+                .as_deref()
+                .ok_or_else(|| boxed("AW preparation requires a writable output directory"))?,
+        )?
+    } else {
+        profile
+    };
+    Ok(Some(profile))
 }
 
 fn runtime(
@@ -2950,7 +3183,7 @@ fn runtime(
         cost_model: PlannerCostModelProfileId::from_sha256(hash(b"spectral-cycle-cost-v1"))
             .bootstrap(),
         authority,
-        receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(128, 64 << 20)?)?,
+        receipts: ExecutionReceiptStore::new(receipts, ReceiptRetention::new(512, 256 << 20)?)?,
         build: BuildIdentity::from_sha256(hash(env!("CARGO_PKG_VERSION").as_bytes())),
         attempts: [
             ExecutionAttemptId::from_sha256(scoped(digest, 0)),
@@ -3119,18 +3352,93 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    mod source_bind_probe;
+
     use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
-    use casa_imaging_model::PolarizationCoordinate;
+    use casa_imaging_model::{
+        MissingPointingPolicy, PointingCentreLaw, PointingExtrapolation, PointingInterpolation,
+        PointingTimeSampling, PolarizationCoordinate,
+    };
     use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
     use casa_types::measures::frequency::FrequencyRef;
 
     use super::{
         ContinuumAlgorithm, SourceSpectralWindow, TaskRequirement,
         analytic_primary_beam_model_for_telescopes, canonicalize_polarizations,
-        cube_rest_frequency_hz, image_coordinates, image_reference_pixel,
+        continuum_pointing_centre_law, cube_rest_frequency_hz,
+        effective_aw_pointing_offset_sigdev_arcsec, image_coordinates, image_reference_pixel,
         instrument_model_supports_diameter, model_plane_samples, parse_phase_center_direction,
         planned_minor_cycle_bytes, requested_products, resource_policy_for_task_requirements,
+        supports_projected_w_planes,
     };
+
+    #[test]
+    fn aw_pointing_compiles_casa_visibility_sampling_law() {
+        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(false, true) else {
+            panic!("AW usepointing must compile an observation pointing law");
+        };
+
+        assert_eq!(law.time_sampling(), PointingTimeSampling::VisibilityTime);
+        assert_eq!(law.interpolation(), PointingInterpolation::Nearest);
+        assert_eq!(law.extrapolation(), PointingExtrapolation::HoldNearest);
+        assert_eq!(law.missing(), MissingPointingPolicy::UsePhaseTrackingCentre);
+    }
+
+    #[test]
+    fn mosaic_only_retains_interpolated_pointing_law() {
+        let PointingCentreLaw::Observation(law) = continuum_pointing_centre_law(true, false) else {
+            panic!("mosaic imaging must compile an observation pointing law");
+        };
+
+        assert_eq!(
+            law.time_sampling(),
+            PointingTimeSampling::VisibilityTimeCentroid
+        );
+        assert_eq!(
+            law.interpolation(),
+            PointingInterpolation::GreatCircleShortestArc
+        );
+        assert_eq!(law.extrapolation(), PointingExtrapolation::Reject);
+        assert_eq!(law.missing(), MissingPointingPolicy::Reject);
+    }
+
+    #[test]
+    fn aw_pointing_thresholds_follow_casa_cardinality_default() {
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[]).unwrap(),
+            [600.0, 600.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[30.0]).unwrap(),
+            [600.0, 600.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[300.0, 30.0, 10.0]).unwrap(),
+            [600.0, 600.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(true, &[300.0, 30.0]).unwrap(),
+            [300.0, 30.0]
+        );
+        assert_eq!(
+            effective_aw_pointing_offset_sigdev_arcsec(false, &[]).unwrap(),
+            [0.0, 0.0]
+        );
+        assert!(effective_aw_pointing_offset_sigdev_arcsec(true, &[f64::NAN]).is_err());
+        assert!(effective_aw_pointing_offset_sigdev_arcsec(true, &[-1.0]).is_err());
+    }
+
+    #[test]
+    fn projected_w_planes_belong_to_w_and_aw_projection() {
+        assert!(supports_projected_w_planes(&[TaskRequirement::WProjection]));
+        assert!(supports_projected_w_planes(&[
+            TaskRequirement::AwProjection
+        ]));
+        assert!(!supports_projected_w_planes(&[
+            TaskRequirement::WProjectionPlanes,
+        ]));
+    }
 
     #[test]
     fn casa_direction_reference_pixel_uses_half_the_image_extent() {
@@ -3293,7 +3601,9 @@ mod tests {
     fn dirty_execution_does_not_request_a_clean_mask() {
         let dirty = requested_products(
             &ContinuumAlgorithm::Dirty,
+            false,
             casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
             false,
             true,
             false,
@@ -3303,12 +3613,50 @@ mod tests {
 
         let clean = requested_products(
             &ContinuumAlgorithm::Hogbom,
+            true,
             casa_imaging_model::ProductNormalization::UnitResponse,
+            false,
             false,
             true,
             false,
         );
         assert!(clean.contains(&casa_imaging_model::ProductKind::Mask));
+    }
+
+    #[test]
+    fn zero_iteration_aw_mtmfs_requests_taylor_weight_without_clean_only_products() {
+        let products = requested_products(
+            &ContinuumAlgorithm::Mtmfs {
+                terms: 2,
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            false,
+            casa_imaging_model::ProductNormalization::FlatNoise,
+            false,
+            true,
+            true,
+            false,
+        )
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(
+            products,
+            std::collections::BTreeSet::from([
+                casa_imaging_model::ProductKind::Psf,
+                casa_imaging_model::ProductKind::Residual,
+                casa_imaging_model::ProductKind::Model,
+                casa_imaging_model::ProductKind::RestoredImage,
+                casa_imaging_model::ProductKind::SumWeights,
+                casa_imaging_model::ProductKind::Beam,
+                casa_imaging_model::ProductKind::TaylorTerms,
+                casa_imaging_model::ProductKind::SpectralIndex,
+                casa_imaging_model::ProductKind::SpectralIndexError,
+                casa_imaging_model::ProductKind::Weight,
+                casa_imaging_model::ProductKind::PrimaryBeam,
+            ])
+        );
     }
 
     #[test]
@@ -3319,7 +3667,9 @@ mod tests {
                 scales_px: vec![0.0],
                 small_scale_bias: 0.0,
             },
+            true,
             casa_imaging_model::ProductNormalization::FlatNoise,
+            true,
             true,
             true,
             true,

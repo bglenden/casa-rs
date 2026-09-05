@@ -130,7 +130,7 @@ fn plan_with_receipts<E>(
     }
 }
 
-fn compiled_problem() -> casa_imaging_model::CompiledProblem {
+pub(crate) fn compiled_problem() -> casa_imaging_model::CompiledProblem {
     compiled_problem_with_reference_data(Vec::new())
 }
 
@@ -139,6 +139,19 @@ fn compiled_problem_with_reference_data(
         casa_imaging_model::ReferenceDataKind,
         casa_imaging_model::LogicalIdentity,
     )>,
+) -> casa_imaging_model::CompiledProblem {
+    compiled_problem_with_reference_data_and_controls(reference_data, ReconstructionControls::new(10, 0.1, 0.0))
+}
+
+pub(crate) fn compiled_problem_with_reconstruction_controls(
+    controls: ReconstructionControls,
+) -> casa_imaging_model::CompiledProblem {
+    compiled_problem_with_reference_data_and_controls(Vec::new(), controls)
+}
+
+fn compiled_problem_with_reference_data_and_controls(
+    reference_data: Vec<(casa_imaging_model::ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    controls: ReconstructionControls,
 ) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
@@ -195,7 +208,7 @@ fn compiled_problem_with_reference_data(
         ReconstructionContract::new(
             ReconstructionBasis::Constant,
             ReconstructionAlgorithm::Hogbom,
-            ReconstructionControls::new(10, 0.1, 0.0),
+            controls,
             PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
         ),
         WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),

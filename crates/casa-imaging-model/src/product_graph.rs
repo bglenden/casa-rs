@@ -642,7 +642,7 @@ impl<'a> GraphBuilder<'a> {
             }
             ProductKind::PrimaryBeam => {
                 let mut primary_beam = None;
-                for term in self.image_terms() {
+                for term in self.primary_beam_terms() {
                     let validity = if term == self.primary_beam_term() {
                         ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
                     } else {
@@ -1014,6 +1014,14 @@ impl<'a> GraphBuilder<'a> {
                 ProductTerm::Single
             }
             ReconstructionBasis::JointContinuumLine { .. } => ProductTerm::Total,
+        }
+    }
+
+    fn primary_beam_terms(&self) -> Vec<ProductTerm> {
+        if self.products.contains(ProductKind::Weight) {
+            vec![self.primary_beam_term()]
+        } else {
+            self.image_terms()
         }
     }
 

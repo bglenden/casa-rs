@@ -5,11 +5,14 @@
 use super::*;
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
-    AllocationUse, AlternativeId, CapacityDomainId, CapacityViewId, ClaimLifetime, CountDemand,
-    DemandAlternative, ExecutionDag, ExecutionDagSpecification, ExecutionError,
-    InitializationPolicy, IoBufferKind, IoPrediction, LeaseResource, LogicalAllocation,
-    MemoryDemand, PhysicalSlot, PhysicalSlotId, PhysicalWorkBinding, PhysicalWorkBindingError,
-    PlanPrediction, ResourceClaim, SlotCompatibility, StagePrediction, StorageDemand, StorageMode,
+    AllocationUse, AlternativeId, CacheDemand, CapabilityPredicate, CapacityDomainId,
+    CapacityViewId, ClaimLifetime, CountDemand, DemandAlternative, DemandEnvelope, ExecutionDag,
+    ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ImplementationContractCatalog,
+    InitializationPolicy, IoBufferDemand, IoBufferKind, IoPrediction, LeaseResource,
+    LogicalAllocation, MemoryDemand, ObservationTransactionWork, PhysicalSlot, PhysicalSlotId,
+    PhysicalWorkBinding, PhysicalWorkBindingError, PlanPrediction, PredictionConfidence,
+    PublicationLayoutLedger, ResourceClaim, ResourceHeadroom, RuntimeOverheadDemand,
+    ScalingMetadata, SlotCompatibility, StagePrediction, StorageDemand, StorageMode,
     WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode, WorkNodeId,
 };
 
@@ -21,10 +24,248 @@ pub struct PreparedArtifactPlanFragment<'a> {
     producer: WorkNodeId,
     publication_commit: WorkNodeId,
     release_implementation: WorkImplementationId,
-    load_source: Option<&'a PreparedArtifactLoadSource>,
+    source: Option<PreparedArtifactSourceBinding<'a>>,
+}
+
+/// Canonical composition of one ordered catalog warm-reuse transaction.
+pub struct PreparedArtifactCatalogPlanFragment<'a> {
+    descriptors: &'a [PreparedArtifactDescriptor],
+    store: &'a PreparedArtifactStore,
+    producer: WorkNodeId,
+    publication_commit: WorkNodeId,
+    release_implementation: WorkImplementationId,
 }
 
 impl<'a> PreparedArtifactPlanFragment<'a> {
+    /// Construct the source-free base used by an application-owned prepared
+    /// pre-phase. It performs no observation traversal and publishes no product;
+    /// the ordinary commit gate exists solely to close receipt evidence.
+    pub fn standalone_base<R: ImplementationRegistry>(
+        _problem: &CompiledProblem,
+        registry: &R,
+        implementation: WorkImplementationId,
+        descriptor: &PreparedArtifactDescriptor,
+        store: &PreparedArtifactStore,
+        stage_nanos: u64,
+        confidence_parts_per_million: u32,
+    ) -> Result<PhysicalWorkBinding, PreparedArtifactPlanError> {
+        let check = WorkNodeId::new("prepared-phase-check");
+        let producer = WorkNodeId::new("prepared-phase-producer");
+        let reconcile = WorkNodeId::new("prepared-phase-reconcile");
+        let commit = WorkNodeId::new("prepared-phase-commit");
+        let output_demand = store.storage_demand_id(descriptor);
+        let allocation_id = AllocationId::new("prepared-phase-commit-buffer");
+        let slot_id = PhysicalSlotId::new("prepared-phase-commit-slot");
+        let lifetime =
+            ClaimLifetime::through_fences([crate::FenceKind::Io, crate::FenceKind::Publication]);
+        let worker = || ResourceClaim {
+            resource: LeaseResource::Workers,
+            amount: 1,
+            lifetime: ClaimLifetime::Work,
+        };
+        let nodes = vec![
+            WorkNode {
+                id: check.clone(),
+                kind: WorkKind::DataCensus,
+                domain: WorkDomain::Cpu,
+                implementation: implementation.clone(),
+                dependencies: BTreeSet::new(),
+                claims: vec![worker()],
+                allocations: vec![],
+                fences: BTreeSet::new(),
+                quiescence_after: BTreeSet::new(),
+            },
+            WorkNode {
+                id: producer.clone(),
+                kind: WorkKind::Compute,
+                domain: WorkDomain::Cpu,
+                implementation: implementation.clone(),
+                dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
+                claims: vec![worker()],
+                allocations: vec![],
+                fences: BTreeSet::new(),
+                quiescence_after: BTreeSet::new(),
+            },
+            WorkNode {
+                id: reconcile.clone(),
+                kind: WorkKind::Compute,
+                domain: WorkDomain::Cpu,
+                implementation: implementation.clone(),
+                dependencies: BTreeSet::from([WorkDependency::Work(producer)]),
+                claims: vec![worker()],
+                allocations: vec![],
+                fences: BTreeSet::new(),
+                quiescence_after: BTreeSet::new(),
+            },
+            WorkNode {
+                id: commit.clone(),
+                kind: WorkKind::Publication,
+                domain: WorkDomain::Io,
+                implementation: implementation.clone(),
+                dependencies: BTreeSet::from([WorkDependency::Work(reconcile.clone())]),
+                claims: vec![
+                    ResourceClaim {
+                        resource: LeaseResource::Workers,
+                        amount: 1,
+                        lifetime: lifetime.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::Storage {
+                            demand_id: output_demand.clone(),
+                            use_kind: StorageUseKind::StagedOutput,
+                        },
+                        amount: 1,
+                        lifetime: lifetime.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::IoBuffer(IoBufferKind::Publication),
+                        amount: 1,
+                        lifetime: lifetime.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::StorageWriteRate {
+                            demand_id: output_demand.clone(),
+                        },
+                        amount: 1,
+                        lifetime: lifetime.clone(),
+                    },
+                    ResourceClaim {
+                        resource: LeaseResource::StorageQueue {
+                            demand_id: output_demand.clone(),
+                        },
+                        amount: 1,
+                        lifetime: lifetime.clone(),
+                    },
+                ],
+                allocations: vec![AllocationUse {
+                    allocation: allocation_id.clone(),
+                    lifetime,
+                }],
+                fences: BTreeSet::from([crate::FenceKind::Io, crate::FenceKind::Publication]),
+                quiescence_after: BTreeSet::new(),
+            },
+        ];
+        let compatibility = SlotCompatibility {
+            memory_domain: CapacityDomainId::new("host-memory"),
+            views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+            alignment_bytes: 1,
+            storage_mode: StorageMode::Host,
+            layout: AllocationLayout::new("prepared-phase-commit-buffer"),
+            initialization: InitializationPolicy::OverwriteBeforeRead,
+            access: AllocationAccess::ReadWrite,
+        };
+        let alternative = DemandAlternative {
+            id: AlternativeId::new("prepared-phase-serial"),
+            capabilities: CapabilityPredicate::default(),
+            demand: DemandEnvelope {
+                host_memory_view: CapacityViewId::new("host-memory"),
+                memory: vec![MemoryDemand {
+                    allocation_id: allocation_id.as_str().to_string(),
+                    hard_bytes: 1,
+                    preferred_bytes: 1,
+                    views: vec![CapacityViewId::new("host-memory")],
+                }],
+                workers: CountDemand::new(1, 1),
+                overhead: RuntimeOverheadDemand::zero(),
+                storage: vec![StorageDemand {
+                    demand_id: output_demand.clone(),
+                    domain: store.storage_domain().clone(),
+                    temporary_bytes: 0,
+                    staged_output_bytes: 1,
+                    final_output_bytes: 0,
+                    persistent_cache_bytes: 0,
+                    read_rate: CountDemand::zero(),
+                    write_rate: CountDemand::new(1, 1),
+                    operations_rate: CountDemand::zero(),
+                    queue_slots: CountDemand::new(1, 1),
+                }],
+                rates: vec![],
+                caches: CacheDemand::zero(),
+                locks: CountDemand::zero(),
+                file_descriptors: CountDemand::zero(),
+                queues: vec![],
+                transfers: vec![],
+                accelerators: vec![],
+                io_buffers: IoBufferDemand {
+                    publication_bytes: 1,
+                    ..IoBufferDemand::zero()
+                },
+            },
+            headroom: ResourceHeadroom::default(),
+            scaling: ScalingMetadata {
+                minimum_workers: 1,
+                maximum_workers: 1,
+                maximum_batch_size: 1,
+                maximum_tile_width: 1,
+                maximum_tile_height: 1,
+                maximum_slab_depth: 1,
+                memory_bytes_per_worker: BTreeMap::new(),
+            },
+            quiescence_points: BTreeSet::from([crate::QuiescencePoint::RunBoundary]),
+        };
+        let dag = ExecutionDag::new(ExecutionDagSpecification {
+            required_resource_capabilities: BTreeSet::new(),
+            resource_alternative: alternative,
+            nodes,
+            logical_allocations: vec![LogicalAllocation {
+                id: allocation_id.clone(),
+                bytes: 1,
+                purpose: AllocationPurpose::IoBuffer(IoBufferKind::Publication),
+                compatibility: compatibility.clone(),
+                physical_slot: slot_id.clone(),
+                lifetime: AllocationLifetime {
+                    acquire_at: commit.clone(),
+                    release_after: BTreeSet::from([
+                        WorkDependency::Fence(crate::FenceId::new(
+                            commit.clone(),
+                            crate::FenceKind::Io,
+                        )),
+                        WorkDependency::Fence(crate::FenceId::new(
+                            commit.clone(),
+                            crate::FenceKind::Publication,
+                        )),
+                    ]),
+                },
+            }],
+            physical_slots: vec![PhysicalSlot {
+                id: slot_id,
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: allocation_id.as_str().to_string(),
+                },
+                capacity_bytes: 1,
+                compatibility,
+            }],
+            initial_knobs: ExecutionKnobs::serial(),
+            adaptations: vec![],
+        })?;
+        let stages = dag
+            .nodes()
+            .keys()
+            .map(|node| {
+                let stage = StagePrediction::new(node.clone(), stage_nanos);
+                if node == &commit {
+                    stage.with_io(vec![IoPrediction::new(IoBufferKind::Publication, 1, 1)])
+                } else {
+                    stage
+                }
+            })
+            .collect::<Vec<_>>();
+        let prediction = PlanPrediction::new(
+            stage_nanos.saturating_mul(stages.len() as u64),
+            PredictionConfidence::new(confidence_parts_per_million)?,
+            vec![],
+            stages,
+        )?;
+        let catalog = ImplementationContractCatalog::from_registry(registry, [implementation])?;
+        Ok(PhysicalWorkBinding::new_reconstruction(
+            catalog,
+            dag,
+            prediction,
+            vec![],
+            ObservationTransactionWork::new_source_free_reconstruction(check, reconcile, commit),
+            PublicationLayoutLedger::empty(),
+        )?)
+    }
     /// Bind a prepared operation to its producer, terminal publication gate, and release owner.
     #[must_use]
     pub fn new(
@@ -42,14 +283,21 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             producer,
             publication_commit,
             release_implementation,
-            load_source: None,
+            source: None,
         }
     }
 
     /// Bind the exact predecessor-owned source for a cold load.
     #[must_use]
     pub const fn with_load_source(mut self, source: &'a PreparedArtifactLoadSource) -> Self {
-        self.load_source = Some(source);
+        self.source = Some(PreparedArtifactSourceBinding::Files(source));
+        self
+    }
+
+    /// Bind an exact predecessor-owned structured source for adapter import.
+    #[must_use]
+    pub const fn with_import_source(mut self, source: &'a PreparedArtifactImportSource) -> Self {
+        self.source = Some(PreparedArtifactSourceBinding::Import(source));
         self
     }
 
@@ -58,7 +306,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
         self,
         base: &PhysicalWorkBinding,
     ) -> Result<PhysicalWorkBinding, PreparedArtifactPlanError> {
-        if matches!(self.operation, PreparedArtifactOperation::Load) != self.load_source.is_some() {
+        if matches!(self.operation, PreparedArtifactOperation::Load) != self.source.is_some() {
             return Err(PreparedArtifactPlanError::InvalidSourceBinding);
         }
         let reservation = self.store.reservation(self.descriptor, self.operation)?;
@@ -66,6 +314,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             PreparedArtifactOperation::Generate => "generate",
             PreparedArtifactOperation::Load => "load",
             PreparedArtifactOperation::Reuse => "reuse",
+            PreparedArtifactOperation::Consume => "consume",
         };
         let cell_identity = self.descriptor.identity();
         let allocation_id =
@@ -81,7 +330,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             initialization: InitializationPolicy::OverwriteBeforeRead,
             access: AllocationAccess::ReadWrite,
         };
-        let demand_id = self.descriptor.storage_demand_id();
+        let demand_id = self.store.storage_demand_id(self.descriptor);
         let mut alternative: DemandAlternative =
             base.execution_dag().resource_alternative().clone();
         alternative.id = AlternativeId::new(format!(
@@ -139,8 +388,8 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
         }
 
         let source_demands = self
-            .load_source
-            .map(PreparedArtifactLoadSource::storage_demands)
+            .source
+            .map(PreparedArtifactSourceBinding::storage_demands)
             .unwrap_or_default();
         alternative.demand.storage.extend(source_demands.iter().map(
             |(source_demand_id, source_domain)| StorageDemand {
@@ -331,6 +580,11 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
                 .cloned()
                 .collect(),
         })?;
+        let source_operations = self
+            .source
+            .map(PreparedArtifactSourceBinding::import_operations)
+            .transpose()?
+            .unwrap_or(0);
         let prepared_stage =
             StagePrediction::new(prepared_node.id, 1_000).with_io(vec![IoPrediction::new(
                 IoBufferKind::StorageManager,
@@ -340,7 +594,9 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
                         .checked_add(reservation.source_read_bytes())
                         .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
                 ),
-                10_000,
+                10_000_u64
+                    .checked_add(source_operations)
+                    .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
             )]);
         let release_stage = StagePrediction::new(release_id, 100).with_io(vec![IoPrediction::new(
             IoBufferKind::StorageManager,
@@ -361,13 +617,310 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
                 .collect(),
         )?;
         let mut artifacts = base.artifacts().to_vec();
-        if let Some(source) = self.load_source {
+        if let Some(source) = self.source {
             artifacts.push(source.planned_artifact());
         }
         artifacts.extend([
             self.descriptor.planned_artifact(self.operation),
             self.descriptor.eviction_artifact(self.operation),
         ]);
+        Ok(PhysicalWorkBinding::with_implementation_contract(
+            base.implementation_contract().for_execution_dag(&dag)?,
+            dag,
+            prediction,
+            artifacts,
+            base.observation_transaction().clone(),
+            base.publication_layouts().clone(),
+            base.product_publication_authority(),
+        )?)
+    }
+}
+
+impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
+    /// Derive the registry key for the exact ordered catalog transaction.
+    pub fn implementation_id(
+        descriptors: &[PreparedArtifactDescriptor],
+    ) -> Result<WorkImplementationId, PreparedArtifactPlanError> {
+        Ok(catalog_work_implementation_id(descriptors)?)
+    }
+
+    /// Derive the cache-node identity for the exact ordered catalog transaction.
+    pub fn node_id(
+        descriptors: &[PreparedArtifactDescriptor],
+    ) -> Result<WorkNodeId, PreparedArtifactPlanError> {
+        Ok(catalog_work_node_id(descriptors)?)
+    }
+
+    /// Bind an exact ordered catalog to one cache node and one release node.
+    pub fn new(
+        descriptors: &'a [PreparedArtifactDescriptor],
+        store: &'a PreparedArtifactStore,
+        producer: WorkNodeId,
+        publication_commit: WorkNodeId,
+        release_implementation: WorkImplementationId,
+    ) -> Result<Self, PreparedArtifactPlanError> {
+        validate_catalog_descriptors(store, descriptors)?;
+        Ok(Self {
+            descriptors,
+            store,
+            producer,
+            publication_commit,
+            release_implementation,
+        })
+    }
+
+    /// Return the deterministic catalog cache-node identity.
+    pub fn work_node_id(&self) -> Result<WorkNodeId, PreparedArtifactPlanError> {
+        Self::node_id(self.descriptors)
+    }
+
+    /// Return the deterministic catalog implementation identity.
+    pub fn work_implementation_id(
+        &self,
+    ) -> Result<WorkImplementationId, PreparedArtifactPlanError> {
+        Self::implementation_id(self.descriptors)
+    }
+
+    /// Compose the catalog transaction with already validated physical work.
+    pub fn compose(
+        self,
+        base: &PhysicalWorkBinding,
+    ) -> Result<PhysicalWorkBinding, PreparedArtifactPlanError> {
+        validate_catalog_descriptors(self.store, self.descriptors)?;
+        let reservation = self.store.catalog_reuse_reservation(self.descriptors)?;
+        let node_id = catalog_work_node_id(self.descriptors)?;
+        let implementation = catalog_work_implementation_id(self.descriptors)?;
+        let identity = node_id
+            .as_str()
+            .strip_prefix("prepared-artifact-catalog-warm-reuse-")
+            .ok_or(PreparedArtifactError::InvalidDescriptor)?;
+        let allocation_id =
+            AllocationId::new(format!("prepared-catalog-resident-buffer-{identity}"));
+        let slot_id = PhysicalSlotId::new(format!("prepared-catalog-resident-slot-{identity}"));
+        let compatibility = SlotCompatibility {
+            memory_domain: CapacityDomainId::new("host-memory"),
+            views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+            alignment_bytes: 8,
+            storage_mode: StorageMode::Host,
+            layout: AllocationLayout::new("prepared-artifact-catalog-streaming-buffer"),
+            initialization: InitializationPolicy::OverwriteBeforeRead,
+            access: AllocationAccess::ReadWrite,
+        };
+        let first = self
+            .descriptors
+            .first()
+            .ok_or(PreparedArtifactError::InvalidDescriptor)?;
+        let demand_id = self.store.storage_demand_id(first);
+        let mut alternative = base.execution_dag().resource_alternative().clone();
+        alternative.id = AlternativeId::new(format!(
+            "{}-prepared-catalog-reuse-{identity}",
+            alternative.id.as_str()
+        ));
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: allocation_id.as_str().to_string(),
+            hard_bytes: reservation.resident_buffer_bytes(),
+            preferred_bytes: reservation.resident_buffer_bytes(),
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+        alternative.demand.locks = combine_count(alternative.demand.locks, 2);
+        alternative.demand.file_descriptors = combine_count(
+            alternative.demand.file_descriptors,
+            reservation.file_descriptors(),
+        );
+        alternative.demand.io_buffers.storage_manager_bytes = alternative
+            .demand
+            .io_buffers
+            .storage_manager_bytes
+            .max(reservation.resident_buffer_bytes());
+        if let Some(cache_demand) = alternative
+            .demand
+            .storage
+            .iter_mut()
+            .find(|demand| demand.demand_id == demand_id)
+        {
+            if cache_demand.domain != *self.store.storage_domain() {
+                return Err(PreparedArtifactError::CachePolicyMismatch.into());
+            }
+            cache_demand.persistent_cache_bytes = cache_demand
+                .persistent_cache_bytes
+                .max(reservation.persistent_cache_bytes());
+            cache_demand.read_rate = combine_count(cache_demand.read_rate, 1);
+            cache_demand.write_rate = combine_count(cache_demand.write_rate, 1);
+            cache_demand.operations_rate = combine_count(cache_demand.operations_rate, 1);
+            cache_demand.queue_slots = combine_count(cache_demand.queue_slots, 1);
+        } else {
+            alternative.demand.storage.push(StorageDemand {
+                demand_id: demand_id.clone(),
+                domain: self.store.storage_domain().clone(),
+                temporary_bytes: 0,
+                staged_output_bytes: 0,
+                final_output_bytes: 0,
+                persistent_cache_bytes: reservation.persistent_cache_bytes(),
+                read_rate: CountDemand::new(1, 1),
+                write_rate: CountDemand::new(1, 1),
+                operations_rate: CountDemand::new(1, 1),
+                queue_slots: CountDemand::new(1, 1),
+            });
+        }
+        let claims = vec![
+            claim(LeaseResource::Workers, 1),
+            claim(LeaseResource::Locks, 1),
+            claim(
+                LeaseResource::FileDescriptors,
+                reservation.file_descriptors(),
+            ),
+            claim(
+                LeaseResource::Storage {
+                    demand_id: demand_id.clone(),
+                    use_kind: StorageUseKind::PersistentCache,
+                },
+                reservation.persistent_cache_bytes(),
+            ),
+            claim(
+                LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                reservation.resident_buffer_bytes(),
+            ),
+            claim(
+                LeaseResource::StorageReadRate {
+                    demand_id: demand_id.clone(),
+                },
+                1,
+            ),
+            claim(
+                LeaseResource::StorageWriteRate {
+                    demand_id: demand_id.clone(),
+                },
+                1,
+            ),
+            claim(
+                LeaseResource::StorageOperationsRate {
+                    demand_id: demand_id.clone(),
+                },
+                1,
+            ),
+            claim(LeaseResource::StorageQueue { demand_id }, 1),
+        ];
+        let catalog_node = WorkNode {
+            id: node_id.clone(),
+            kind: WorkKind::Cache,
+            domain: WorkDomain::Cpu,
+            implementation,
+            dependencies: BTreeSet::from([WorkDependency::Work(self.producer)]),
+            claims,
+            allocations: vec![AllocationUse {
+                allocation: allocation_id.clone(),
+                lifetime: ClaimLifetime::Work,
+            }],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        };
+        let release_id = WorkNodeId::new(format!("prepared-release-catalog-reuse-{identity}"));
+        let release_node = WorkNode {
+            id: release_id.clone(),
+            kind: WorkKind::Release,
+            domain: WorkDomain::Cpu,
+            implementation: self.release_implementation,
+            dependencies: BTreeSet::from([WorkDependency::Work(node_id.clone())]),
+            claims: vec![
+                claim(LeaseResource::Workers, 1),
+                claim(
+                    LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                    reservation.resident_buffer_bytes(),
+                ),
+            ],
+            allocations: vec![AllocationUse {
+                allocation: allocation_id.clone(),
+                lifetime: ClaimLifetime::Work,
+            }],
+            fences: BTreeSet::new(),
+            quiescence_after: BTreeSet::new(),
+        };
+        let mut nodes = base
+            .execution_dag()
+            .nodes()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        nodes
+            .iter_mut()
+            .find(|node| node.id == self.publication_commit)
+            .ok_or(PreparedArtifactPlanError::MissingPublicationCommit)?
+            .dependencies
+            .insert(WorkDependency::Work(release_id.clone()));
+        nodes.extend([catalog_node, release_node]);
+        let allocation = LogicalAllocation {
+            id: allocation_id.clone(),
+            bytes: reservation.resident_buffer_bytes(),
+            purpose: AllocationPurpose::IoBuffer(IoBufferKind::StorageManager),
+            compatibility: compatibility.clone(),
+            physical_slot: slot_id.clone(),
+            lifetime: AllocationLifetime {
+                acquire_at: node_id.clone(),
+                release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
+            },
+        };
+        let slot = PhysicalSlot {
+            id: slot_id,
+            lease_resource: LeaseResource::Memory {
+                allocation_id: allocation_id.as_str().to_string(),
+            },
+            capacity_bytes: reservation.resident_buffer_bytes(),
+            compatibility,
+        };
+        let dag = ExecutionDag::new(ExecutionDagSpecification {
+            required_resource_capabilities: base
+                .execution_dag()
+                .required_resource_capabilities()
+                .clone(),
+            resource_alternative: alternative,
+            nodes,
+            logical_allocations: base
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .cloned()
+                .chain([allocation])
+                .collect(),
+            physical_slots: base
+                .execution_dag()
+                .physical_slots()
+                .values()
+                .cloned()
+                .chain([slot])
+                .collect(),
+            initial_knobs: base.execution_dag().initial_knobs().clone(),
+            adaptations: base
+                .execution_dag()
+                .adaptations()
+                .values()
+                .cloned()
+                .collect(),
+        })?;
+        let catalog_stage = StagePrediction::new(node_id, 1_000).with_io(vec![IoPrediction::new(
+            IoBufferKind::StorageManager,
+            reservation.persistent_cache_bytes(),
+            10_000_u64.saturating_add(self.descriptors.len() as u64),
+        )]);
+        let release_stage = StagePrediction::new(release_id, 100).with_io(vec![IoPrediction::new(
+            IoBufferKind::StorageManager,
+            reservation.resident_buffer_bytes(),
+            1,
+        )]);
+        let prediction = PlanPrediction::new(
+            base.prediction().elapsed_nanos()
+                + catalog_stage.elapsed_nanos()
+                + release_stage.elapsed_nanos(),
+            base.prediction().confidence(),
+            base.prediction().uncertainty().to_vec(),
+            base.prediction()
+                .stages()
+                .values()
+                .cloned()
+                .chain([catalog_stage, release_stage])
+                .collect(),
+        )?;
+        let mut artifacts = base.artifacts().to_vec();
+        artifacts.extend(catalog_planned_artifacts(self.descriptors)?);
         Ok(PhysicalWorkBinding::with_implementation_contract(
             base.implementation_contract().for_execution_dag(&dag)?,
             dag,

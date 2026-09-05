@@ -84,7 +84,8 @@ fn t42_real_ms_mtmfs_normal_matches_casa_oracle_inputs() -> Result<(), Box<dyn E
     copy_measurement_set(&source, &staged)?;
     initialize_measurement_set_owner_manifest(&staged)?;
 
-    let (problem, mut selected) = build_problem(&staged)?;
+    let (problem, access) = build_problem(&staged)?;
+    let mut selected = access.open(&problem)?;
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
     let mut lifecycle = ModelLifecycle::bind(
         executable,
@@ -315,7 +316,7 @@ pub(crate) fn build_problem(
 ) -> Result<
     (
         casa_imaging_model::CompiledProblem,
-        casa_ms::BoundSelectedObservation,
+        casa_ms::DeferredSelectedObservationAccess,
     ),
     Box<dyn Error>,
 > {
@@ -331,7 +332,7 @@ pub(crate) fn build_t44_problem(
 ) -> Result<
     (
         casa_imaging_model::CompiledProblem,
-        casa_ms::BoundSelectedObservation,
+        casa_ms::DeferredSelectedObservationAccess,
     ),
     Box<dyn Error>,
 > {
@@ -344,7 +345,7 @@ fn build_problem_with_specification(
 ) -> Result<
     (
         casa_imaging_model::CompiledProblem,
-        casa_ms::BoundSelectedObservation,
+        casa_ms::DeferredSelectedObservationAccess,
     ),
     Box<dyn Error>,
 > {
@@ -542,8 +543,7 @@ fn build_problem_with_specification(
         ),
     ))?;
     access.certify_residency(&problem)?;
-    let selected = access.open(&problem)?;
-    Ok((problem, selected))
+    Ok((problem, access.into_deferred()))
 }
 
 fn specification() -> Result<ProblemSpecification, Box<dyn Error>> {

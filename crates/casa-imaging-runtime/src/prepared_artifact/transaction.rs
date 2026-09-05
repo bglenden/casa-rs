@@ -2,6 +2,79 @@
 
 use super::*;
 
+#[cfg(test)]
+mod occupancy_probe;
+
+pub(super) struct PreparedArtifactSessionRead {
+    pub(super) content_identity: ArtifactIdentity,
+    pub(super) payload_bytes: u64,
+    pub(super) measurements: PreparedArtifactSessionMeasurements,
+}
+
+pub(super) struct PreparedArtifactSessionFailure {
+    pub(super) source: PreparedArtifactError,
+    pub(super) measurements: Option<Box<PreparedArtifactSessionMeasurements>>,
+}
+
+struct ManifestValidatedArtifact {
+    payload_sha256: [u8; 32],
+    payload_bytes: u64,
+    disk_bytes: u64,
+    path: PathBuf,
+    descriptor: PreparedArtifactCompatibility,
+    segment_integrity: Vec<ManifestSegmentIntegrity>,
+}
+
+pub(super) struct PreparedArtifactSessionMeasurements {
+    pub(super) read_bytes: u64,
+    pub(super) read_operations: u64,
+    pub(super) resident_buffer_bytes: u64,
+    pub(super) cache_bytes: u64,
+    pub(super) locks: u64,
+    pub(super) file_descriptors: u64,
+    pub(super) read_rate: u64,
+    pub(super) write_rate: u64,
+    pub(super) operations_rate: u64,
+    pub(super) queue_slots: u64,
+    pub(super) observations: ReaderSessionObservations,
+}
+
+pub(super) fn session_measurements(
+    evidence: &ValidationEvidence,
+    cache_bytes: u64,
+) -> Result<PreparedArtifactSessionMeasurements, PreparedArtifactError> {
+    let counter = evidence.exact_counter(IoBufferKind::StorageManager)?;
+    Ok(PreparedArtifactSessionMeasurements {
+        read_bytes: counter.bytes,
+        read_operations: counter.operations,
+        resident_buffer_bytes: evidence.resident_buffer_bytes,
+        cache_bytes,
+        locks: evidence.locks_peak,
+        file_descriptors: evidence.file_descriptors_peak,
+        read_rate: u64::from(evidence.cache_read.operations > 0),
+        write_rate: u64::from(evidence.cache_write.operations > 0),
+        operations_rate: u64::from(counter.operations > 0),
+        queue_slots: u64::from(counter.operations > 0),
+        observations: evidence.reader.clone(),
+    })
+}
+
+fn session_failure(
+    source: PreparedArtifactError,
+    evidence: Option<&ValidationEvidence>,
+    cache_bytes: u64,
+) -> PreparedArtifactSessionFailure {
+    let measurements = evidence.and_then(|evidence| {
+        session_measurements(evidence, cache_bytes)
+            .ok()
+            .map(Box::new)
+    });
+    PreparedArtifactSessionFailure {
+        source,
+        measurements,
+    }
+}
+
 impl PreparedArtifactStore {
     /// Open an explicitly configured private casa-rs cache root.
     ///
@@ -45,6 +118,7 @@ impl PreparedArtifactStore {
             budget,
             scope,
             storage_domain: storage_domain.id.clone(),
+            storage_operations_rate: storage_domain.operations_rate.clone(),
             state,
             #[cfg(test)]
             fail_after_evictions: None,
@@ -71,13 +145,17 @@ impl PreparedArtifactStore {
         &self.storage_domain
     }
 
+    pub(super) fn storage_demand_id(&self, descriptor: &PreparedArtifactDescriptor) -> String {
+        descriptor.storage_demand_id(self.storage_operations_rate.as_ref())
+    }
+
     /// Derive exact resource/storage bounds for one explicit cache operation.
     pub fn reservation(
         &self,
         descriptor: &PreparedArtifactDescriptor,
         operation: PreparedArtifactOperation,
     ) -> Result<PreparedArtifactReservation, PreparedArtifactError> {
-        if descriptor.cache_scope != self.scope {
+        if descriptor.compatibility.cache_scope != self.scope {
             return Err(PreparedArtifactError::CachePolicyMismatch);
         }
         let payload_bytes = descriptor.payload_bytes()?;
@@ -90,18 +168,21 @@ impl PreparedArtifactStore {
                 budget: self.budget.cache_bytes,
             });
         }
-        let streaming_buffer_bytes = u64::try_from(streaming_buffer_len(self.budget, descriptor)?)
-            .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+        let streaming_buffer_bytes = u64::try_from(streaming_buffer_len(
+            self.budget,
+            &descriptor.compatibility,
+        )?)
+        .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
         let inventory_resident_bytes = inventory_resident_reservation(&self.cache, self.budget)?;
         let source_descriptor_bytes = if operation == PreparedArtifactOperation::Load {
-            source_descriptor_reservation(descriptor.segments.len())?
+            source_descriptor_reservation(descriptor.compatibility.segments.len())?
         } else {
             0
         };
         let source_read_bytes = if operation == PreparedArtifactOperation::Load {
             payload_bytes
                 .checked_add(
-                    u64::try_from(descriptor.segments.len())
+                    u64::try_from(descriptor.compatibility.segments.len())
                         .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?,
                 )
                 .ok_or(PreparedArtifactError::ArtifactTooLarge)?
@@ -116,7 +197,10 @@ impl PreparedArtifactStore {
         Ok(PreparedArtifactReservation {
             persistent_cache_bytes: self.budget.cache_bytes,
             entry_bytes,
-            temporary_staging_bytes: if operation == PreparedArtifactOperation::Reuse {
+            temporary_staging_bytes: if matches!(
+                operation,
+                PreparedArtifactOperation::Reuse | PreparedArtifactOperation::Consume
+            ) {
                 0
             } else {
                 entry_bytes
@@ -124,12 +208,42 @@ impl PreparedArtifactStore {
             source_read_bytes,
             file_descriptors: match operation {
                 PreparedArtifactOperation::Load => 3,
-                PreparedArtifactOperation::Generate | PreparedArtifactOperation::Reuse => 2,
+                PreparedArtifactOperation::Generate
+                | PreparedArtifactOperation::Reuse
+                | PreparedArtifactOperation::Consume => 2,
             },
             source_descriptor_bytes,
             streaming_buffer_bytes,
             resident_buffer_bytes,
         })
+    }
+
+    pub(super) fn catalog_reuse_reservation(
+        &self,
+        descriptors: &[PreparedArtifactDescriptor],
+    ) -> Result<PreparedArtifactReservation, PreparedArtifactError> {
+        validate_catalog_descriptors(self, descriptors)?;
+        let mut reservation = self.reservation(
+            descriptors
+                .first()
+                .ok_or(PreparedArtifactError::InvalidDescriptor)?,
+            PreparedArtifactOperation::Reuse,
+        )?;
+        for descriptor in &descriptors[1..] {
+            let entry = self.reservation(descriptor, PreparedArtifactOperation::Reuse)?;
+            reservation.entry_bytes = reservation.entry_bytes.max(entry.entry_bytes);
+            reservation.streaming_buffer_bytes = reservation
+                .streaming_buffer_bytes
+                .max(entry.streaming_buffer_bytes);
+            reservation.resident_buffer_bytes = reservation
+                .resident_buffer_bytes
+                .max(entry.resident_buffer_bytes);
+        }
+        reservation.resident_buffer_bytes = reservation
+            .resident_buffer_bytes
+            .checked_add(catalog_outcome_resident_bytes(descriptors.len())?)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        Ok(reservation)
     }
 
     /// Generate, validate, and atomically publish exact cold bytes.
@@ -171,6 +285,33 @@ impl PreparedArtifactStore {
         )
     }
 
+    /// Translate, validate, and atomically publish one plan-listed structured source.
+    ///
+    /// The importer owns format-specific access while the store owns the bounded
+    /// output buffer, source accounting, private publication, and receipts.
+    pub fn import(
+        &self,
+        context: &WorkExecutionContext<'_>,
+        descriptor: &PreparedArtifactDescriptor,
+        source: &PreparedArtifactImportSource,
+        importer: &mut dyn PreparedArtifactImporter,
+    ) -> Result<(PreparedArtifact, WorkMeasurements), PreparedArtifactError> {
+        if source
+            .segments
+            .iter()
+            .any(|segment| segment.source.starts_with(&self.root))
+        {
+            return Err(PreparedArtifactError::InvalidSource);
+        }
+        self.publish(
+            context,
+            descriptor,
+            PreparedArtifactOperation::Load,
+            ArtifactDisposition::Loaded,
+            PreparedArtifactMaterialization::Import { source, importer },
+        )
+    }
+
     /// Revalidate and reuse the exact warm artifact selected by planning.
     ///
     /// A successful result exposes identity only; a rejection returns durable
@@ -189,6 +330,7 @@ impl PreparedArtifactStore {
             PreparedArtifactOperation::Reuse,
             reservation,
             None,
+            &self.storage_demand_id(descriptor),
         )?;
         let mut evidence =
             ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
@@ -269,13 +411,383 @@ impl PreparedArtifactStore {
         }
     }
 
+    /// Validate and reuse an ordered catalog under one plan-bound cache transaction.
+    ///
+    /// The cache root is enumerated once, payload validation reuses one bounded
+    /// streaming buffer at a time, and no result is returned until every listed
+    /// descriptor has reached a deterministic `Reused` or `Rejected` outcome.
+    pub fn reuse_catalog(
+        &self,
+        context: &WorkExecutionContext<'_>,
+        descriptors: &[PreparedArtifactDescriptor],
+    ) -> Result<(PreparedArtifactCatalogReuseOutcome, WorkMeasurements), PreparedArtifactError>
+    {
+        let reservation = self.catalog_reuse_reservation(descriptors)?;
+        validate_catalog_plan_binding(*context, self, descriptors, reservation)?;
+        let mut evidence =
+            ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
+        let outcomes_resident = catalog_outcome_resident_bytes(descriptors.len())?;
+        evidence.acquire_resident(outcomes_resident);
+        if let Err(error) = evidence.ensure_resident_budget() {
+            let measurements = failed_catalog_measurements(*context, self, descriptors, &evidence);
+            return Err(error.with_measurements(measurements));
+        }
+        let mut lock = match self.lock(&mut evidence) {
+            Ok(lock) => lock,
+            Err(error) => {
+                let measurements =
+                    failed_catalog_measurements(*context, self, descriptors, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let evaluation = self.reuse_catalog_locked(descriptors, &mut evidence);
+        let unlock = lock.release(&mut evidence);
+        let (outcomes, cache_bytes) = match (evaluation, unlock) {
+            (Ok(evaluation), Ok(())) => evaluation,
+            (Err(error), _) | (Ok(_), Err(error)) => {
+                let measurements =
+                    failed_catalog_measurements(*context, self, descriptors, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let measurements = catalog_measurements(
+            *context,
+            self,
+            descriptors,
+            &outcomes,
+            cache_bytes,
+            &evidence,
+        );
+        let entries = descriptors
+            .iter()
+            .zip(outcomes)
+            .map(
+                |(descriptor, evaluation)| PreparedArtifactCatalogEntryOutcome {
+                    identity: descriptor.compatibility.identity,
+                    outcome: match evaluation {
+                        ReuseEvaluation::Reused { validated, .. } => {
+                            PreparedArtifactReuseOutcome::Reused(validated.into_handle(descriptor))
+                        }
+                        ReuseEvaluation::Rejected { rejection, .. } => {
+                            PreparedArtifactReuseOutcome::Rejected(rejection)
+                        }
+                    },
+                },
+            )
+            .collect();
+        Ok((
+            PreparedArtifactCatalogReuseOutcome { entries },
+            measurements,
+        ))
+    }
+
+    /// Revalidate and stream one exact private artifact to a plan-bound consumer.
+    ///
+    /// The store retains path authority and bounds every delivered chunk by the
+    /// declared streaming-buffer reservation. The supplied handle must be the
+    /// exact validated artifact selected by the consume node.
+    pub fn consume(
+        &self,
+        context: &WorkExecutionContext<'_>,
+        descriptor: &PreparedArtifactDescriptor,
+        artifact: &PreparedArtifact,
+        consumer: &mut dyn PreparedArtifactConsumer,
+    ) -> Result<WorkMeasurements, PreparedArtifactError> {
+        let operation = PreparedArtifactOperation::Consume;
+        let reservation = self.reservation(descriptor, operation)?;
+        validate_plan_binding(
+            *context,
+            descriptor,
+            operation,
+            reservation,
+            None,
+            &self.storage_demand_id(descriptor),
+        )?;
+        if artifact.identity != descriptor.compatibility.identity
+            || artifact.cache_identity != descriptor.cache_identity()
+        {
+            return Err(PreparedArtifactError::IdentityMismatch);
+        }
+
+        let mut evidence =
+            ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
+        if let Err(error) = evidence.ensure_resident_budget() {
+            let measurements = failed_measurements(*context, descriptor, operation, &evidence);
+            return Err(error.with_measurements(measurements));
+        }
+        let mut lock = match self.lock(&mut evidence) {
+            Ok(lock) => lock,
+            Err(error) => {
+                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        let consumed = (|| {
+            let cache_bytes =
+                self.validate_raw_budget(descriptor.compatibility.identity, &mut evidence)?;
+            let validated = self.validate_entry_with_evidence(
+                descriptor.compatibility.identity,
+                Some(descriptor),
+                &mut evidence,
+            )?;
+            if artifact.integrity_identity
+                != derive_content_identity(descriptor, validated.payload_sha256)
+            {
+                return Err(PreparedArtifactError::IdentityMismatch);
+            }
+            let payload_path = validated.path.join(PAYLOAD_FILE);
+            evidence.store_read_operation();
+            let mut payload = File::open(payload_path).map_err(map_incomplete)?;
+            evidence.observe_file_descriptors(2);
+            let buffer_len = streaming_buffer_len(self.budget, &descriptor.compatibility)?;
+            let mut buffer = vec![0_u8; buffer_len];
+            evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
+                for segment in &descriptor.compatibility.segments {
+                    let mut remaining = segment.byte_len()?;
+                    let scalar_bytes = segment.precision.scalar_bytes();
+                    let mut byte_offset = 0_u64;
+                    while remaining > 0 {
+                        let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
+                            .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+                        limit -= limit % scalar_bytes;
+                        read_exact_counted(
+                            &mut payload,
+                            &mut buffer[..limit],
+                            evidence,
+                            CacheIoClass::Read,
+                        )?;
+                        consumer.consume_segment(segment, byte_offset, &buffer[..limit])?;
+                        remaining -= limit as u64;
+                        byte_offset += limit as u64;
+                    }
+                }
+                let mut extra = [0_u8; 1];
+                if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
+                    return Err(PreparedArtifactError::OversizedArtifact);
+                }
+                Ok(())
+            })?;
+            Ok((validated, cache_bytes))
+        })();
+        let unlock = lock.release(&mut evidence);
+        let (validated, cache_bytes) = match (consumed, unlock) {
+            (Ok(value), Ok(())) => value,
+            (Err(error), _) | (Ok(_), Err(error)) => {
+                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
+                return Err(error.with_measurements(measurements));
+            }
+        };
+        Ok(measurements(
+            *context,
+            descriptor,
+            ArtifactDisposition::Reused,
+            &validated,
+            MeasurementInput {
+                operation,
+                cache_bytes,
+                evidence,
+            },
+        ))
+    }
+
+    /// Lock and validate the complete immutable catalog once for one reader session.
+    pub(super) fn begin_reader_session(
+        &self,
+        entries: &[super::reader::ReaderEntry],
+    ) -> Result<
+        (
+            ReaderStoreLock,
+            Arc<super::reader::ReaderManifestSnapshot>,
+            PreparedArtifactSessionMeasurements,
+        ),
+        PreparedArtifactSessionFailure,
+    > {
+        if entries.is_empty() {
+            return Err(session_failure(
+                PreparedArtifactError::InvalidDescriptor,
+                None,
+                0,
+            ));
+        }
+        let snapshot_resident_bytes =
+            super::reader::reader_manifest_snapshot_resident_bytes(entries)
+                .map_err(|error| session_failure(error, None, 0))?;
+        let resident_limit = entries
+            .iter()
+            .try_fold(0_u64, |maximum, entry| {
+                self.reservation(&entry.descriptor, PreparedArtifactOperation::Consume)
+                    .map(|reservation| maximum.max(reservation.resident_buffer_bytes))
+            })
+            .map_err(|error| session_failure(error, None, 0))?
+            .checked_add(snapshot_resident_bytes)
+            .ok_or_else(|| session_failure(PreparedArtifactError::ArtifactTooLarge, None, 0))?;
+        let mut evidence = ValidationEvidence::for_reader(
+            self.budget,
+            resident_limit,
+            ReaderObservationPhase::Activation,
+        );
+        evidence.acquire_resident(snapshot_resident_bytes);
+        evidence.expect_reader_entries(entries.len());
+        evidence
+            .ensure_resident_budget()
+            .map_err(|error| session_failure(error, Some(&evidence), 0))?;
+        let lock_started = std::time::Instant::now();
+        let lock = self.lock_reader_session(&mut evidence);
+        evidence.observe_lock_wait(lock_started.elapsed());
+        let mut lock = lock.map_err(|error| session_failure(error, Some(&evidence), 0))?;
+        let metadata_started = std::time::Instant::now();
+        let validated = self.validate_reader_catalog(entries, &mut evidence);
+        evidence.observe_metadata_validation(metadata_started.elapsed());
+        let (cache_bytes, manifest_snapshot) = match validated {
+            Ok(validated) => validated,
+            Err(error) => {
+                let source = match lock.release(&mut evidence) {
+                    Ok(()) => error,
+                    Err(unlock) => unlock,
+                };
+                return Err(session_failure(source, Some(&evidence), 0));
+            }
+        };
+        let measurements = session_measurements(&evidence, cache_bytes)
+            .map_err(|error| session_failure(error, None, cache_bytes))?;
+        Ok((lock, Arc::new(manifest_snapshot), measurements))
+    }
+
+    /// Stream and checksum one cell while the session holds the validated store lock.
+    pub(super) fn read_for_reader(
+        &self,
+        descriptor: &PreparedArtifactDescriptor,
+        artifact: &PreparedArtifact,
+        expected_segment_digests: &[[u8; 32]],
+        snapshot_resident_bytes: u64,
+        consumer: &mut dyn PreparedArtifactConsumer,
+    ) -> Result<PreparedArtifactSessionRead, PreparedArtifactSessionFailure> {
+        let reservation = self
+            .reservation(descriptor, PreparedArtifactOperation::Consume)
+            .map_err(|error| session_failure(error, None, 0))?;
+        if artifact.identity != descriptor.compatibility.identity
+            || artifact.cache_identity != descriptor.cache_identity()
+        {
+            return Err(session_failure(
+                PreparedArtifactError::IdentityMismatch,
+                None,
+                0,
+            ));
+        }
+        let resident_limit = reservation
+            .resident_buffer_bytes
+            .checked_add(snapshot_resident_bytes)
+            .ok_or_else(|| session_failure(PreparedArtifactError::ArtifactTooLarge, None, 0))?;
+        let mut evidence = ValidationEvidence::for_reader(
+            self.budget,
+            resident_limit,
+            ReaderObservationPhase::Consume,
+        );
+        evidence.acquire_resident(snapshot_resident_bytes);
+        let payload_started = std::time::Instant::now();
+        let consumed = (|| -> Result<(ArtifactIdentity, u64), PreparedArtifactError> {
+            evidence.ensure_resident_budget()?;
+            evidence.observe_locks(1);
+            evidence.observe_file_descriptors(1);
+            let declared_bytes = descriptor.payload_bytes()?;
+            if expected_segment_digests.len() != descriptor.compatibility.segments.len() {
+                return Err(PreparedArtifactError::IdentityMismatch);
+            }
+            evidence.payload_declared(declared_bytes);
+            let payload_path = self
+                .entry_path(descriptor.compatibility.identity)
+                .join(PAYLOAD_FILE);
+            evidence.store_read_operation();
+            let mut payload = File::open(payload_path).map_err(map_incomplete)?;
+            evidence.payload_open();
+            evidence.observe_file_descriptors(2);
+            let buffer_len = streaming_buffer_len(self.budget, &descriptor.compatibility)?;
+            let mut buffer = vec![0_u8; buffer_len];
+            let mut payload_hasher = Sha256::new();
+            let mut payload_bytes = 0_u64;
+            evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
+                for (segment, expected_segment_digest) in descriptor
+                    .compatibility
+                    .segments
+                    .iter()
+                    .zip(expected_segment_digests)
+                {
+                    let mut remaining = segment.byte_len()?;
+                    let scalar_bytes = segment.precision.scalar_bytes();
+                    let mut byte_offset = 0_u64;
+                    let mut scalar = 0_u64;
+                    let mut segment_hasher = Sha256::new();
+                    while remaining > 0 {
+                        let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
+                            .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
+                        limit -= limit % scalar_bytes;
+                        read_exact_counted(
+                            &mut payload,
+                            &mut buffer[..limit],
+                            evidence,
+                            CacheIoClass::Read,
+                        )?;
+                        validate_finite(
+                            &buffer[..limit],
+                            segment.precision,
+                            &segment.name,
+                            scalar,
+                        )?;
+                        payload_hasher.update(&buffer[..limit]);
+                        segment_hasher.update(&buffer[..limit]);
+                        evidence.record_payload_hashed(limit as u64);
+                        evidence.store_validation();
+                        consumer.consume_segment(segment, byte_offset, &buffer[..limit])?;
+                        remaining -= limit as u64;
+                        byte_offset += limit as u64;
+                        scalar += (limit / scalar_bytes) as u64;
+                        payload_bytes = payload_bytes
+                            .checked_add(limit as u64)
+                            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+                    }
+                    if <[u8; 32]>::from(segment_hasher.finalize()) != *expected_segment_digest {
+                        return Err(PreparedArtifactError::CorruptArtifact);
+                    }
+                    evidence.store_validation();
+                }
+                let mut extra = [0_u8; 1];
+                if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
+                    return Err(PreparedArtifactError::OversizedArtifact);
+                }
+                Ok(())
+            })?;
+            let content_identity =
+                derive_content_identity(descriptor, payload_hasher.finalize().into());
+            evidence.store_validation();
+            if payload_bytes != declared_bytes || content_identity != artifact.integrity_identity {
+                return Err(PreparedArtifactError::CorruptArtifact);
+            }
+            Ok((content_identity, payload_bytes))
+        })();
+        evidence.observe_payload_consumption(payload_started.elapsed());
+        let (content_identity, payload_bytes) = match consumed {
+            Ok(consumed) => consumed,
+            Err(error) => {
+                evidence.record_reader_failure(descriptor.compatibility.identity, &error);
+                return Err(session_failure(error, Some(&evidence), 0));
+            }
+        };
+        let measurements =
+            session_measurements(&evidence, 0).map_err(|error| session_failure(error, None, 0))?;
+        Ok(PreparedArtifactSessionRead {
+            content_identity,
+            payload_bytes,
+            measurements,
+        })
+    }
+
     fn reuse_locked(
         &self,
         descriptor: &PreparedArtifactDescriptor,
         evidence: &mut ValidationEvidence,
     ) -> Result<ReuseEvaluation, PreparedArtifactError> {
-        let cache_bytes = self.validate_raw_budget(descriptor.identity, evidence)?;
-        let path = self.entry_path(descriptor.identity);
+        let cache_bytes = self.validate_raw_budget(descriptor.compatibility.identity, evidence)?;
+        let path = self.entry_path(descriptor.compatibility.identity);
         evidence.store_read_operation();
         match path.symlink_metadata() {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -287,7 +799,7 @@ impl PreparedArtifactStore {
             }
             Err(error) => Err(error.into()),
             Ok(_) => match self.validate_entry_with_evidence(
-                descriptor.identity,
+                descriptor.compatibility.identity,
                 Some(descriptor),
                 evidence,
             ) {
@@ -309,6 +821,158 @@ impl PreparedArtifactStore {
         }
     }
 
+    fn reuse_catalog_locked(
+        &self,
+        descriptors: &[PreparedArtifactDescriptor],
+        evidence: &mut ValidationEvidence,
+    ) -> Result<(Vec<ReuseEvaluation>, u64), PreparedArtifactError> {
+        let (cache_bytes, cache_entries) = with_directory_paths_counted(
+            &self.cache,
+            evidence,
+            root_inventory_limit(self.budget)?,
+            |evidence, paths| {
+                let mut total = 0_u64;
+                for path in paths {
+                    let name =
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .ok_or_else(|| {
+                                PreparedArtifactError::UnknownCacheEntry(path.to_path_buf())
+                            })?;
+                    if name.starts_with(STAGING_PREFIX) {
+                        return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
+                    }
+                    let digest = decode_digest(name)
+                        .filter(|digest| name == encode_hex(digest))
+                        .ok_or_else(|| {
+                            PreparedArtifactError::UnknownCacheEntry(path.to_path_buf())
+                        })?;
+                    let identity = ArtifactIdentity::from_owner_digest(digest);
+                    evidence.store_read_operation();
+                    if !path.symlink_metadata()?.file_type().is_dir() {
+                        return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
+                    }
+                    let requested = descriptors
+                        .binary_search_by_key(&identity, |descriptor| {
+                            descriptor.compatibility.identity
+                        })
+                        .is_ok();
+                    let entry_bytes = with_directory_paths_counted(
+                        path,
+                        evidence,
+                        MAX_ENTRY_FILES,
+                        |evidence, entry_paths| {
+                            let mut bytes = 0_u64;
+                            let mut manifest = false;
+                            let mut payload = false;
+                            for entry in entry_paths {
+                                evidence.store_read_operation();
+                                let metadata = entry.symlink_metadata()?;
+                                if !metadata.file_type().is_file() {
+                                    return Err(PreparedArtifactError::UnknownCacheEntry(
+                                        entry.to_path_buf(),
+                                    ));
+                                }
+                                let file_name = entry.file_name().ok_or_else(|| {
+                                    PreparedArtifactError::UnknownCacheEntry(entry.to_path_buf())
+                                })?;
+                                match file_name.to_str() {
+                                    Some(MANIFEST_FILE) => manifest = true,
+                                    Some(PAYLOAD_FILE) => {
+                                        payload = true;
+                                        evidence.payload_metadata_check();
+                                    }
+                                    _ => {
+                                        return Err(PreparedArtifactError::UnknownCacheEntry(
+                                            entry.to_path_buf(),
+                                        ));
+                                    }
+                                }
+                                bytes = bytes
+                                    .checked_add(metadata.len())
+                                    .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+                            }
+                            if !requested && (!manifest || !payload) {
+                                return Err(PreparedArtifactError::IncompleteArtifact);
+                            }
+                            Ok(bytes)
+                        },
+                    )?;
+                    total = total
+                        .checked_add(entry_bytes)
+                        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+                }
+                Ok((total, paths.len()))
+            },
+        )?;
+        evidence.observe_cache_bytes(cache_bytes);
+        if cache_bytes > self.budget.cache_bytes {
+            return Err(PreparedArtifactError::CacheBudgetExceeded {
+                required: cache_bytes,
+                budget: self.budget.cache_bytes,
+            });
+        }
+        if cache_entries > self.budget.entries {
+            return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
+                required: cache_entries,
+                budget: self.budget.entries,
+            });
+        }
+
+        let buffer_len = descriptors
+            .iter()
+            .try_fold(0_usize, |maximum, descriptor| {
+                streaming_buffer_len(self.budget, &descriptor.compatibility)
+                    .map(|bytes| maximum.max(bytes))
+            })?;
+        let mut buffer = vec![0_u8; buffer_len];
+        let buffer_resident = observed_vec_resident_bytes(&buffer);
+        evidence.acquire_resident(buffer_resident);
+        let evaluated = (|| {
+            let mut outcomes = Vec::with_capacity(descriptors.len());
+            for descriptor in descriptors {
+                let path = self.entry_path(descriptor.compatibility.identity);
+                evidence.store_read_operation();
+                let evaluation = match path.symlink_metadata() {
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                        ReuseEvaluation::Rejected {
+                            rejection: PreparedArtifactRejection::Missing,
+                            path,
+                            cache_bytes,
+                        }
+                    }
+                    Err(error) => return Err(error.into()),
+                    Ok(_) => match self.validate_entry_with_buffer(
+                        descriptor.compatibility.identity,
+                        descriptor,
+                        &mut buffer,
+                        evidence,
+                    ) {
+                        Ok(validated) => ReuseEvaluation::Reused {
+                            validated,
+                            cache_bytes,
+                        },
+                        Err(error) => {
+                            let Some(rejection) = rejection_for(&error) else {
+                                return Err(error);
+                            };
+                            ReuseEvaluation::Rejected {
+                                rejection,
+                                path,
+                                cache_bytes,
+                            }
+                        }
+                    },
+                };
+                outcomes.push(evaluation);
+            }
+            Ok(outcomes)
+        })();
+        evidence.release_resident(buffer_resident);
+        let outcomes = evaluated?;
+        Ok((outcomes, cache_bytes))
+    }
+
     fn publish(
         &self,
         context: &WorkExecutionContext<'_>,
@@ -320,9 +984,21 @@ impl PreparedArtifactStore {
         let reservation = self.reservation(descriptor, operation)?;
         let source = match &materialization {
             PreparedArtifactMaterialization::Generate(_) => None,
-            PreparedArtifactMaterialization::Load(source) => Some(*source),
+            PreparedArtifactMaterialization::Load(source) => {
+                Some(PreparedArtifactSourceBinding::Files(source))
+            }
+            PreparedArtifactMaterialization::Import { source, .. } => {
+                Some(PreparedArtifactSourceBinding::Import(source))
+            }
         };
-        validate_plan_binding(*context, descriptor, operation, reservation, source)?;
+        validate_plan_binding(
+            *context,
+            descriptor,
+            operation,
+            reservation,
+            source,
+            &self.storage_demand_id(descriptor),
+        )?;
         let mut evidence =
             ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
         if let Some(source) = source {
@@ -389,7 +1065,7 @@ impl PreparedArtifactStore {
         reservation: PreparedArtifactReservation,
         evidence: &mut ValidationEvidence,
     ) -> Result<(ValidatedArtifact, ArtifactDisposition, u64), PreparedArtifactError> {
-        self.validate_raw_budget(descriptor.identity, evidence)?;
+        self.validate_raw_budget(descriptor.compatibility.identity, evidence)?;
         self.remove_orphan_staging(evidence)?;
         evidence.store_write_operation();
         let staging = Builder::new()
@@ -410,13 +1086,13 @@ impl PreparedArtifactStore {
             let mut buffer = vec![0_u8; buffer_len];
             let mut payload_hasher = Sha256::new();
             let mut offset = 0_u64;
-            let mut manifest_segments = Vec::with_capacity(descriptor.segments.len());
+            let mut manifest_segments = Vec::with_capacity(descriptor.compatibility.segments.len());
             let mut manifest_resident =
                 observed_manifest_segments_resident_bytes(&manifest_segments);
             evidence.acquire_resident(manifest_resident);
             let streamed =
                 evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
-                    for (index, segment) in descriptor.segments.iter().enumerate() {
+                    for (index, segment) in descriptor.compatibility.segments.iter().enumerate() {
                         let bytes = segment.byte_len()?;
                         let digest = match &mut materialization {
                             PreparedArtifactMaterialization::Generate(generator) => {
@@ -452,6 +1128,20 @@ impl PreparedArtifactStore {
                                 }
                                 digest
                             }
+                            PreparedArtifactMaterialization::Import { source, importer } => {
+                                import_segment(
+                                    *importer,
+                                    &source.segments[index],
+                                    source.identity,
+                                    segment,
+                                    ImportStream {
+                                        output: &mut payload,
+                                        payload_hasher: &mut payload_hasher,
+                                        buffer: &mut buffer,
+                                        evidence,
+                                    },
+                                )?
+                            }
                         };
                         manifest_segments.push(ManifestSegment {
                             descriptor: segment.clone(),
@@ -482,8 +1172,8 @@ impl PreparedArtifactStore {
             let manifest = ArtifactManifest {
                 schema: CACHE_SCHEMA.to_string(),
                 schema_version: CACHE_SCHEMA_VERSION,
-                identity: descriptor.identity.to_string(),
-                cache_identity: descriptor.cache_identity.to_string(),
+                identity: descriptor.compatibility.identity.to_string(),
+                cache_identity: descriptor.compatibility.cache_identity.to_string(),
                 descriptor: ManifestDescriptor::from_descriptor(descriptor),
                 payload_sha256: encode_hex(&payload_sha256),
                 payload_bytes: offset,
@@ -545,19 +1235,19 @@ impl PreparedArtifactStore {
             }
             let mut staged = self.validate_entry_at_path(
                 staging_path.clone(),
-                descriptor.identity,
+                descriptor.compatibility.identity,
                 Some(descriptor),
                 evidence,
             )?;
             if staged.payload_sha256 != payload_sha256 {
                 return Err(PreparedArtifactError::CorruptArtifact);
             }
-            let target = self.entry_path(descriptor.identity);
+            let target = self.entry_path(descriptor.compatibility.identity);
             evidence.store_read_operation();
             match target.symlink_metadata() {
                 Ok(_) => {
                     let existing = self.validate_entry_with_evidence(
-                        descriptor.identity,
+                        descriptor.compatibility.identity,
                         Some(descriptor),
                         evidence,
                     )?;
@@ -568,9 +1258,9 @@ impl PreparedArtifactStore {
                     Ok((existing, disposition, cache_bytes))
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    self.evict_for(descriptor.identity, incoming_bytes, evidence)?;
+                    self.evict_for(descriptor.compatibility.identity, incoming_bytes, evidence)?;
                     let cache_bytes = self.validate_budget_with_incoming(
-                        descriptor.identity,
+                        descriptor.compatibility.identity,
                         incoming_bytes,
                         evidence,
                     )?;
@@ -792,6 +1482,128 @@ impl PreparedArtifactStore {
         })
     }
 
+    fn validate_reader_catalog(
+        &self,
+        entries: &[super::reader::ReaderEntry],
+        evidence: &mut ValidationEvidence,
+    ) -> Result<(u64, super::reader::ReaderManifestSnapshot), PreparedArtifactError> {
+        for pair in entries.windows(2) {
+            let left = pair[0].descriptor.compatibility.identity;
+            let right = pair[1].descriptor.compatibility.identity;
+            if left == right {
+                evidence.duplicate_reader_entry(right);
+                return Err(PreparedArtifactError::InvalidDescriptor);
+            }
+            if left > right {
+                return Err(PreparedArtifactError::InvalidDescriptor);
+            }
+        }
+        let (cache_bytes, discovered, segment_digests) = with_directory_paths_counted(
+            &self.cache,
+            evidence,
+            root_inventory_limit(self.budget)?,
+            |evidence, paths| {
+                evidence.discover_reader_entries(paths.len());
+                for path in paths {
+                    let name =
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .ok_or_else(|| {
+                                PreparedArtifactError::UnknownCacheEntry(path.to_path_buf())
+                            })?;
+                    if name.starts_with(STAGING_PREFIX) {
+                        return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
+                    }
+                    let digest = decode_digest(name)
+                        .filter(|digest| name == encode_hex(digest))
+                        .ok_or_else(|| {
+                            PreparedArtifactError::UnknownCacheEntry(path.to_path_buf())
+                        })?;
+                    let identity = ArtifactIdentity::from_owner_digest(digest);
+                    if entries
+                        .binary_search_by_key(&identity, |entry| {
+                            entry.descriptor.compatibility.identity
+                        })
+                        .is_err()
+                    {
+                        return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
+                    }
+                    evidence.store_read_operation();
+                    if !path.symlink_metadata()?.file_type().is_dir() {
+                        return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
+                    }
+                }
+                if paths.len() != entries.len() {
+                    return Err(PreparedArtifactError::IncompleteArtifact);
+                }
+
+                let mut cache_bytes = 0_u64;
+                let mut segment_digests = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    let identity = entry.descriptor.compatibility.identity;
+                    let validated = match self.validate_entry_manifest_with_evidence(
+                        identity,
+                        &entry.descriptor,
+                        evidence,
+                    ) {
+                        Ok(validated) => validated,
+                        Err(error) => {
+                            evidence.record_reader_failure(identity, &error);
+                            return Err(error);
+                        }
+                    };
+                    if validated.payload_bytes != entry.payload_bytes
+                        || derive_content_identity(&entry.descriptor, validated.payload_sha256)
+                            != entry.integrity_identity
+                    {
+                        let error = PreparedArtifactError::IdentityMismatch;
+                        evidence.record_reader_failure(identity, &error);
+                        return Err(error);
+                    }
+                    segment_digests.push(
+                        validated
+                            .segment_integrity
+                            .iter()
+                            .map(|segment| {
+                                decode_digest(&segment.sha256)
+                                    .ok_or(PreparedArtifactError::InvalidManifest)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?
+                            .into_boxed_slice(),
+                    );
+                    evidence.accept_reader_entry();
+                    cache_bytes = cache_bytes
+                        .checked_add(validated.disk_bytes)
+                        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+                }
+                Ok((cache_bytes, paths.len(), segment_digests))
+            },
+        )?;
+        evidence.observe_cache_bytes(cache_bytes);
+        if cache_bytes > self.budget.cache_bytes {
+            return Err(PreparedArtifactError::CacheBudgetExceeded {
+                required: cache_bytes,
+                budget: self.budget.cache_bytes,
+            });
+        }
+        if discovered > self.budget.entries {
+            return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
+                required: discovered,
+                budget: self.budget.entries,
+            });
+        }
+        let snapshot_resident_bytes =
+            super::reader::reader_manifest_snapshot_resident_bytes(entries)?;
+        Ok((
+            cache_bytes,
+            super::reader::ReaderManifestSnapshot::new(
+                entries,
+                segment_digests,
+                snapshot_resident_bytes,
+            )?,
+        ))
+    }
+
     pub(super) fn validate_raw_budget(
         &self,
         planned: ArtifactIdentity,
@@ -981,6 +1793,56 @@ impl PreparedArtifactStore {
         self.validate_entry_at_path(directory, identity, expected, evidence)
     }
 
+    fn validate_entry_with_buffer(
+        &self,
+        identity: ArtifactIdentity,
+        expected: &PreparedArtifactDescriptor,
+        buffer: &mut [u8],
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ValidatedArtifact, PreparedArtifactError> {
+        let directory = self.entry_path(identity);
+        let validated =
+            self.validate_manifest_at_path(directory, identity, Some(expected), evidence)?;
+        let required_buffer = streaming_buffer_len(self.budget, &validated.descriptor)?;
+        if buffer.len() < required_buffer {
+            return Err(PreparedArtifactError::ResidentBudgetExceeded {
+                required: required_buffer as u64,
+                budget: buffer.len() as u64,
+            });
+        }
+        let payload_path = validated.path.join(PAYLOAD_FILE);
+        evidence.store_read_operation();
+        let payload = File::open(&payload_path).map_err(map_incomplete)?;
+        evidence.observe_file_descriptors(2);
+        let (payload_sha256, payload_bytes) = validate_payload_buffered(
+            &payload,
+            &validated.descriptor.segments,
+            &validated.segment_integrity,
+            &mut buffer[..required_buffer],
+            evidence,
+        )?;
+        if payload_bytes != validated.payload_bytes || payload_sha256 != validated.payload_sha256 {
+            return Err(PreparedArtifactError::CorruptArtifact);
+        }
+        evidence.store_validation();
+        Ok(ValidatedArtifact {
+            payload_sha256,
+            payload_bytes,
+            disk_bytes: validated.disk_bytes,
+            path: validated.path,
+        })
+    }
+
+    fn validate_entry_manifest_with_evidence(
+        &self,
+        identity: ArtifactIdentity,
+        expected: &PreparedArtifactDescriptor,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ManifestValidatedArtifact, PreparedArtifactError> {
+        let directory = self.entry_path(identity);
+        self.validate_manifest_at_path(directory, identity, Some(expected), evidence)
+    }
+
     fn validate_entry_at_path(
         &self,
         directory: PathBuf,
@@ -988,6 +1850,38 @@ impl PreparedArtifactStore {
         expected: Option<&PreparedArtifactDescriptor>,
         evidence: &mut ValidationEvidence,
     ) -> Result<ValidatedArtifact, PreparedArtifactError> {
+        let validated = self.validate_manifest_at_path(directory, identity, expected, evidence)?;
+        let payload_path = validated.path.join(PAYLOAD_FILE);
+        evidence.store_read_operation();
+        let payload = File::open(&payload_path).map_err(map_incomplete)?;
+        evidence.observe_file_descriptors(2);
+        let buffer_len = streaming_buffer_len(self.budget, &validated.descriptor)?;
+        let (payload_sha256, payload_bytes) = validate_payload(
+            &payload,
+            &validated.descriptor.segments,
+            &validated.segment_integrity,
+            buffer_len,
+            evidence,
+        )?;
+        if payload_bytes != validated.payload_bytes || payload_sha256 != validated.payload_sha256 {
+            return Err(PreparedArtifactError::CorruptArtifact);
+        }
+        evidence.store_validation();
+        Ok(ValidatedArtifact {
+            payload_sha256,
+            payload_bytes,
+            disk_bytes: validated.disk_bytes,
+            path: validated.path,
+        })
+    }
+
+    fn validate_manifest_at_path(
+        &self,
+        directory: PathBuf,
+        identity: ArtifactIdentity,
+        expected: Option<&PreparedArtifactDescriptor>,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ManifestValidatedArtifact, PreparedArtifactError> {
         evidence.store_read_operation();
         let directory_type = directory
             .symlink_metadata()
@@ -1003,7 +1897,7 @@ impl PreparedArtifactStore {
             return Err(PreparedArtifactError::InvalidManifest);
         }
         let (manifest, mut manifest_resident) = read_manifest_counted(&manifest_path, evidence)?;
-        let validated = (|| -> Result<ValidatedArtifact, PreparedArtifactError> {
+        let validated = (|| -> Result<ManifestValidatedArtifact, PreparedArtifactError> {
             if manifest.schema != CACHE_SCHEMA || manifest.schema_version != CACHE_SCHEMA_VERSION {
                 return Err(PreparedArtifactError::UnknownSchema {
                     schema: manifest.schema,
@@ -1047,7 +1941,7 @@ impl PreparedArtifactStore {
                     sha256: segment.sha256,
                 });
             }
-            let descriptor = manifest_descriptor.into_descriptor(segment_descriptors)?;
+            let descriptor = manifest_descriptor.into_compatibility(segment_descriptors)?;
             evidence.resize_resident(
                 &mut manifest_resident,
                 observed_validation_state_resident_bytes(
@@ -1063,12 +1957,12 @@ impl PreparedArtifactStore {
             evidence.ensure_resident_budget()?;
             if descriptor.identity != identity
                 || manifest_identity != identity.to_string()
-                || manifest_cache_identity != descriptor.cache_identity().to_string()
+                || manifest_cache_identity != descriptor.cache_identity.to_string()
                 || descriptor.cache_scope.root_identity != self.scope.root_identity
             {
                 return Err(PreparedArtifactError::IdentityMismatch);
             }
-            if expected.is_some_and(|expected| expected != &descriptor) {
+            if expected.is_some_and(|expected| expected.compatibility != descriptor) {
                 return Err(PreparedArtifactError::StaleArtifact);
             }
             validate_manifest_segments(&descriptor, &segment_integrity, manifest_payload_bytes)?;
@@ -1078,26 +1972,21 @@ impl PreparedArtifactStore {
             let payload_path = directory.join(PAYLOAD_FILE);
             let disk_bytes = directory_size_counted(&directory, evidence)?;
             evidence.store_read_operation();
-            let payload = File::open(&payload_path).map_err(map_incomplete)?;
-            evidence.observe_file_descriptors(2);
-            let buffer_len = streaming_buffer_len(self.budget, &descriptor)?;
-            let (payload_sha256, payload_bytes) = validate_payload(
-                &payload,
-                &descriptor.segments,
-                &segment_integrity,
-                buffer_len,
-                evidence,
-            )?;
-            if payload_bytes != manifest_payload_bytes || payload_sha256 != expected_payload_digest
+            let payload_metadata = payload_path.symlink_metadata().map_err(map_incomplete)?;
+            evidence.payload_metadata(manifest_payload_bytes);
+            if !payload_metadata.file_type().is_file()
+                || payload_metadata.len() != manifest_payload_bytes
             {
-                return Err(PreparedArtifactError::CorruptArtifact);
+                return Err(PreparedArtifactError::IncompleteArtifact);
             }
             evidence.store_validation();
-            Ok(ValidatedArtifact {
-                payload_sha256,
-                payload_bytes,
+            Ok(ManifestValidatedArtifact {
+                payload_sha256: expected_payload_digest,
+                payload_bytes: manifest_payload_bytes,
                 disk_bytes,
                 path: directory,
+                descriptor,
+                segment_integrity,
             })
         })();
         evidence.release_resident(manifest_resident);
@@ -1112,11 +2001,18 @@ impl PreparedArtifactStore {
         &self,
         evidence: &mut ValidationEvidence,
     ) -> Result<StoreLock<'_>, PreparedArtifactError> {
-        let in_process = self
+        let mut in_process = self
             .state
-            .mutation
+            .access
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        while in_process.active_readers != 0 {
+            in_process = self
+                .state
+                .readers_released
+                .wait(in_process)
+                .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        }
         evidence.observe_locks(1);
         evidence.store_control_operation();
         let file = match OpenOptions::new()
@@ -1143,6 +2039,51 @@ impl PreparedArtifactStore {
         FileExt::lock_exclusive(&file)?;
         Ok(StoreLock {
             _in_process: in_process,
+            file,
+            locked: true,
+        })
+    }
+
+    fn lock_reader_session(
+        &self,
+        evidence: &mut ValidationEvidence,
+    ) -> Result<ReaderStoreLock, PreparedArtifactError> {
+        let mut access = self
+            .state
+            .access
+            .lock()
+            .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        evidence.observe_locks(1);
+        evidence.store_control_operation();
+        let file = match OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&self.lock_path)
+        {
+            Ok(file) => {
+                evidence.store_write_operation();
+                file
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                evidence.store_control_operation();
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&self.lock_path)?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        evidence.observe_file_descriptors(1);
+        evidence.store_control_operation();
+        FileExt::lock_shared(&file)?;
+        access.active_readers = access
+            .active_readers
+            .checked_add(1)
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+        drop(access);
+        Ok(ReaderStoreLock {
+            state: Arc::clone(&self.state),
             file,
             locked: true,
         })

@@ -36,8 +36,8 @@ use crate::{
 
 use casa_imaging_reconstruction::WeightingPlan;
 use casa_ms::{
-    BoundSelectedObservation, SelectedObservationCompletion, SelectedVisibilityWrite,
-    SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
+    BoundSelectedObservation, DeferredSelectedObservationAccess, SelectedObservationCompletion,
+    SelectedVisibilityWrite, SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
 };
 use sha2::{Digest, Sha256};
 
@@ -770,6 +770,7 @@ pub struct SpectralCycleExecutor {
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
     gridded_input_artifact: Option<crate::GriddedNormalReplayDescriptor>,
+    prepared_artifact_reader: Option<crate::PreparedArtifactExecutionBinding>,
     mode: SpectralCycleExecutionMode,
     state: Mutex<SpectralCycleExecutorState>,
 }
@@ -929,7 +930,7 @@ enum SpectralCycleExecutionMode {
 struct SpectralCycleExecutorState {
     executable: Option<ExecutableModelProblem>,
     pass_input: Option<SpectralCyclePassInput>,
-    selected: Option<BoundSelectedObservation>,
+    selected: Option<DeferredSelectedObservationAccess>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
     gridded_storage: Option<crate::ManagedSpillStorage>,
@@ -1160,7 +1161,9 @@ impl SpectralCycleExecutor {
         })
     }
 
-    /// Bind exact selected-observation and model owners to a composed pass.
+    /// Bind unopened selected-observation and model owners to a composed pass.
+    /// The admitted source-read node validates the source allocation before
+    /// opening the deferred access; construction acquires no source buffers.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
@@ -1170,7 +1173,7 @@ impl SpectralCycleExecutor {
         source_resources: SelectedObservationSourceResources,
         pass: SpectralPassIdentity,
         complete_data: CompleteDataPlanFragment,
-        selected: BoundSelectedObservation,
+        selected: DeferredSelectedObservationAccess,
         executable: ExecutableModelProblem,
         pass_input: SpectralCyclePassInput,
     ) -> Self {
@@ -1194,6 +1197,7 @@ impl SpectralCycleExecutor {
             final_visibility_sink: None,
             phase_input_artifact,
             gridded_input_artifact: None,
+            prepared_artifact_reader: None,
             mode: SpectralCycleExecutionMode::Science,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: Some(executable),
@@ -1259,6 +1263,7 @@ impl SpectralCycleExecutor {
             final_visibility_sink: None,
             phase_input_artifact,
             gridded_input_artifact: Some(planned_replay),
+            prepared_artifact_reader: None,
             mode: SpectralCycleExecutionMode::Science,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: Some(executable),
@@ -1290,6 +1295,7 @@ impl SpectralCycleExecutor {
 
     /// Bind a terminal selected-output traversal. This mode may predict and
     /// write selected visibilities, but cannot accumulate residual science.
+    /// The frozen proof is rebound only at the admitted source-read node.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new_selected_output(
@@ -1299,7 +1305,7 @@ impl SpectralCycleExecutor {
         source_resources: SelectedObservationSourceResources,
         pass: SpectralPassIdentity,
         complete_data: CompleteDataPlanFragment,
-        selected: BoundSelectedObservation,
+        selected: DeferredSelectedObservationAccess,
         completion: MajorCycleCompletion,
         frozen_weighting: FrozenWeightingArtifact,
     ) -> Self {
@@ -1314,6 +1320,7 @@ impl SpectralCycleExecutor {
             final_visibility_sink: None,
             phase_input_artifact: None,
             gridded_input_artifact: None,
+            prepared_artifact_reader: None,
             mode: SpectralCycleExecutionMode::SelectedOutputOnly,
             state: Mutex::new(SpectralCycleExecutorState {
                 executable: None,
@@ -1363,6 +1370,23 @@ impl SpectralCycleExecutor {
             })?;
         state.gridded_storage = Some(storage);
         state.gridded_storage_ceiling = Some(maximum_bytes);
+        Ok(self)
+    }
+
+    /// Attach the sole attempt-local prepared-artifact reader selected by this plan.
+    pub fn with_prepared_artifact_reader(
+        mut self,
+        reader: crate::PreparedArtifactExecutionBinding,
+    ) -> io::Result<Self> {
+        if self.complete_data.prepared_artifact_reader() != Some(reader.plan())
+            || reader.plan().execution_problem() != self.problem.problem_id()
+            || self.prepared_artifact_reader.is_some()
+        {
+            return Err(io::Error::other(
+                "prepared-artifact reader does not match the complete-data plan",
+            ));
+        }
+        self.prepared_artifact_reader = Some(reader);
         Ok(self)
     }
 
@@ -1463,17 +1487,20 @@ impl SpectralCycleExecutor {
                 },
             },
         };
-        Some(WeightingPlanFragment::streaming_for_pass(
-            &self.weighting_plan,
-            crate::spectral_cycle_plan::pass_node("transaction-read", self.pass),
-            source_resources,
-            self.id.clone(),
-            self.pass,
-            mode,
-            crate::plan_continuum_transform_row(&self.problem)
-                .expect("compiled transform row plan remains valid")
-                .map(|plan| u64::try_from(plan.bytes()).expect("transform bytes fit u64")),
-        ))
+        Some(
+            WeightingPlanFragment::streaming_for_pass(
+                &self.weighting_plan,
+                crate::spectral_cycle_plan::pass_node("transaction-read", self.pass),
+                source_resources,
+                self.id.clone(),
+                self.pass,
+                mode,
+                crate::plan_continuum_transform_row(&self.problem)
+                    .expect("compiled transform row plan remains valid")
+                    .map(|plan| u64::try_from(plan.bytes()).expect("transform bytes fit u64")),
+            )
+            .with_initial_working_set(self.complete_data.initial_working_set()),
+        )
     }
 
     fn select_adaptation_route(
@@ -2491,6 +2518,25 @@ impl WorkImplementation for SpectralCycleExecutor {
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
         let result = (|| -> Result<WorkMeasurements, io::Error> {
+            if let Some(reader) = &self.prepared_artifact_reader {
+                if context.node().id == *reader.plan().node() {
+                    return reader.activate(context).map_err(io::Error::other);
+                }
+                if context.node().id == *reader.plan().release_node() {
+                    return reader.release(context).map_err(io::Error::other);
+                }
+            }
+            if self
+                .complete_data
+                .prepared_artifact_reader()
+                .is_some_and(|plan| {
+                    context.node().id == *plan.node() || context.node().id == *plan.release_node()
+                })
+            {
+                return Err(io::Error::other(
+                    "prepared-artifact reader execution binding is missing",
+                ));
+            }
             let fragment = self.fragment();
             let mut state = self
                 .state
@@ -2586,6 +2632,21 @@ impl WorkImplementation for SpectralCycleExecutor {
                     .selected
                     .take()
                     .ok_or_else(|| io::Error::other("selected observation already consumed"))?;
+                let residency = selected
+                    .certify_residency(&self.problem)
+                    .map_err(io::Error::other)?;
+                fragment
+                    .authorize_source_observation(context, &self.problem, &residency)
+                    .map_err(io::Error::other)?;
+                let selected = match self.mode {
+                    SpectralCycleExecutionMode::Science => selected.open(&self.problem),
+                    SpectralCycleExecutionMode::SelectedOutputOnly => state
+                        .frozen_weighting
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("selected-output frozen proof missing"))?
+                        .rebind_selected(selected, &self.problem),
+                }
+                .map_err(io::Error::other)?;
                 match fragment.streaming_mode() {
                     Some(crate::WeightingStreamingMode::NaturalInitial) => {
                         self.run_stream(&mut state, context, fragment, Some(selected))?;
@@ -2743,9 +2804,19 @@ impl WorkImplementation for SpectralCycleExecutor {
 
     fn wait_for_fence(
         &self,
-        _context: WorkExecutionContext<'_>,
-        _fence: FenceKind,
+        context: WorkExecutionContext<'_>,
+        fence: FenceKind,
     ) -> Result<WorkMeasurements, Self::Error> {
+        if let Some(reader) = &self.prepared_artifact_reader
+            && context.node().id == *reader.plan().node()
+        {
+            if fence != FenceKind::Io {
+                return Err(io::Error::other(
+                    "prepared-artifact reader received the wrong fence",
+                ));
+            }
+            return reader.close(context).map_err(io::Error::other);
+        }
         Ok(WorkMeasurements::default())
     }
 
@@ -2903,6 +2974,11 @@ impl WorkImplementation for SpectralCycleExecutor {
     }
 
     fn abort_node_io(&self, owner_node: &WorkNodeId) -> Result<(), Self::Error> {
+        if let Some(reader) = &self.prepared_artifact_reader
+            && owner_node == reader.plan().node()
+        {
+            reader.abort();
+        }
         let owns_streaming_read = self
             .fragment()
             .as_ref()

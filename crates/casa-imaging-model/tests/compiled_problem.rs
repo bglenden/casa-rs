@@ -394,6 +394,210 @@ fn weighting() -> WeightingContract {
     )
 }
 
+#[test]
+fn prepared_cf_dependencies_exclude_solve_controls_but_retain_operator_science() {
+    use casa_imaging_model::PreparedArtifactScientificKind::{
+        ConvolutionFunction, Kernel, SpectralMap,
+    };
+
+    let make = |reconstruction, science, weighting, products, numerics, inputs| {
+        compile_request(
+            ProblemSpecification::new(
+                science,
+                reconstruction,
+                weighting,
+                products,
+                read_only_transaction(),
+                numerics,
+            ),
+            inputs,
+        )
+        .expect("prepared dependency fixture")
+    };
+    let baseline = make(
+        reconstruction(),
+        science(),
+        weighting(),
+        products(false),
+        numerics(false),
+        inputs(false),
+    );
+    let dependency = baseline.prepared_artifact_dependency_id(ConvolutionFunction);
+    for (algorithm, controls) in [
+        (
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(0, 0.1, 0.0),
+        ),
+        (
+            ReconstructionAlgorithm::Mtmfs {
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            },
+            ReconstructionControls::new(30, 0.2, 0.001),
+        ),
+    ] {
+        let other = make(
+            ReconstructionContract::new(
+                ReconstructionBasis::Taylor { terms: 2 },
+                algorithm,
+                controls,
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            science(),
+            weighting(),
+            products(false),
+            numerics(false),
+            inputs(false),
+        );
+        assert_ne!(baseline.problem_id(), other.problem_id());
+        assert_eq!(
+            dependency,
+            other.prepared_artifact_dependency_id(ConvolutionFunction)
+        );
+        for kind in [SpectralMap, Kernel] {
+            assert_ne!(
+                baseline.prepared_artifact_dependency_id(kind),
+                other.prepared_artifact_dependency_id(kind)
+            );
+        }
+    }
+    let selected_products = ProductRequirements::new(
+        vec![ProductKind::Psf],
+        ProductNormalization::UnitResponse,
+        RestoringBeamPolicy::None,
+        product_validity(),
+    );
+    let publication = make(
+        reconstruction(),
+        science(),
+        weighting(),
+        selected_products,
+        numerics(false),
+        inputs(false),
+    );
+    assert_ne!(baseline.problem_id(), publication.problem_id());
+    assert_eq!(
+        dependency,
+        publication.prepared_artifact_dependency_id(ConvolutionFunction)
+    );
+
+    let variants = [
+        make(
+            reconstruction(),
+            ScientificContract::new(
+                SpectralContract::new(SpectralSamplingLaw::LINEAR, SpectralCoupling::Independent),
+                MeasurementEquationContract::new(InstrumentResponse::Scalar, inner_products()),
+            ),
+            weighting(),
+            products(false),
+            numerics(false),
+            inputs(false),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            WeightingContract::new(
+                WeightingScheme::Briggs { robust: -0.5 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            products(false),
+            numerics(false),
+            inputs(false),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            weighting(),
+            products(false),
+            NumericsContract::new(
+                vec![NumericPrecision::F32, NumericPrecision::F64],
+                ReductionPolicy::Compensated,
+                FiniteValuePolicy::FlagInputRejectGenerated,
+                NumericalStage::ALL
+                    .into_iter()
+                    .map(|stage| (stage, StageErrorBudget::new(2.0e-7, 1.0e-3)))
+                    .collect(),
+            ),
+            inputs(false),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            weighting(),
+            products(false),
+            numerics(false),
+            problem_inputs(
+                2,
+                vec![
+                    (ReferenceDataKind::Measures, identity(3)),
+                    (ReferenceDataKind::Ephemeris, identity(4)),
+                ],
+                ModelStateIdentity::Seed(identity(5)),
+            ),
+        ),
+        make(
+            reconstruction(),
+            science(),
+            weighting(),
+            products(false),
+            numerics(false),
+            problem_inputs(
+                1,
+                vec![
+                    (ReferenceDataKind::Measures, identity(8)),
+                    (ReferenceDataKind::Ephemeris, identity(4)),
+                ],
+                ModelStateIdentity::Seed(identity(5)),
+            ),
+        ),
+        compile_with_geometry(
+            specification(false),
+            geometry().with_domains(vec![geometry().domains()[0].clone().with_facets(
+                FacetLayout::Regular {
+                    columns: 2,
+                    rows: 2,
+                },
+            )]),
+            inputs(false),
+        )
+        .expect("changed geometry"),
+    ];
+    for other in variants {
+        assert_ne!(
+            dependency,
+            other.prepared_artifact_dependency_id(ConvolutionFunction)
+        );
+    }
+    let model = make(
+        reconstruction(),
+        science(),
+        weighting(),
+        products(false),
+        numerics(false),
+        problem_inputs(
+            1,
+            vec![
+                (ReferenceDataKind::Measures, identity(3)),
+                (ReferenceDataKind::Ephemeris, identity(4)),
+            ],
+            ModelStateIdentity::Seed(identity(9)),
+        ),
+    );
+    assert_ne!(baseline.problem_id(), model.problem_id());
+    assert_ne!(
+        baseline.inputs().observation(),
+        model.inputs().observation()
+    );
+    assert_ne!(
+        dependency,
+        model.prepared_artifact_dependency_id(ConvolutionFunction),
+        "the retained observation snapshot includes its initial model generation"
+    );
+}
+
 fn inputs(reverse: bool) -> ProblemInputIdentities {
     let mut references = vec![
         (ReferenceDataKind::Measures, identity(3)),
@@ -1349,7 +1553,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 21);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 23);
 }
 
 #[test]
@@ -1661,6 +1865,14 @@ fn sequential_continuum_transform_is_a_compiled_capability_and_identity_input() 
             .contains(&RequiredCapability::SequentialContinuumTransform)
     );
     assert_ne!(plain.problem_id(), transformed.problem_id());
+    assert_ne!(
+        plain.prepared_artifact_dependency_id(
+            casa_imaging_model::PreparedArtifactScientificKind::ConvolutionFunction
+        ),
+        transformed.prepared_artifact_dependency_id(
+            casa_imaging_model::PreparedArtifactScientificKind::ConvolutionFunction
+        ),
+    );
 }
 
 #[test]
@@ -1808,10 +2020,10 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 fn compiled_problem_identity_has_a_pinned_schema_twenty_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 21);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 23);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "8a660e2eaeef8cb12d4f3a19ad35016e53f670e627dc412a8f603bf935300548"
+        "ead5796690bd3ce87c2f86634c5fc896f4dcf8abbc7cb49387985c1162ed525a"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

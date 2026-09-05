@@ -5,11 +5,11 @@
 use std::time::Instant;
 
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting,
-    HogbomIterationAccounting, ImagingCapabilityRequirement, PolarizationCoordinate,
-    ProductNormalization, ResourcePolicy, SpectralImagingMode, TaskRequirement,
-    UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
+    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    ContinuumWeighting, HogbomIterationAccounting, ImagingCapabilityRequirement,
+    PolarizationCoordinate, ProductNormalization, ResourcePolicy, SpectralImagingMode,
+    TaskRequirement, UnsupportedRequirement, VisibilityContinuumSubtraction, execute_continuum,
     installed_imaging_capability_catalog, resource_policy_for_task_requirements,
 };
 
@@ -104,36 +104,33 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
             }
         }
     };
-    let algorithm = if config.dirty_only || config.niter == 0 {
-        ContinuumAlgorithm::Dirty
-    } else {
-        match config.deconvolver {
-            Deconvolver::Hogbom => ContinuumAlgorithm::Hogbom,
-            Deconvolver::Clark => ContinuumAlgorithm::Clark,
-            Deconvolver::Multiscale => ContinuumAlgorithm::Multiscale {
-                scales_px: config
+    let algorithm = match config.deconvolver {
+        Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
+            terms: config.nterms,
+            scales_px: if config.multiscale_scales.is_empty() {
+                vec![0.0]
+            } else {
+                config
                     .multiscale_scales
                     .iter()
                     .copied()
                     .map(f64::from)
-                    .collect(),
-                small_scale_bias: f64::from(config.small_scale_bias),
+                    .collect()
             },
-            Deconvolver::Mtmfs => ContinuumAlgorithm::Mtmfs {
-                terms: config.nterms,
-                scales_px: if config.multiscale_scales.is_empty() {
-                    vec![0.0]
-                } else {
-                    config
-                        .multiscale_scales
-                        .iter()
-                        .copied()
-                        .map(f64::from)
-                        .collect()
-                },
-                small_scale_bias: f64::from(config.small_scale_bias),
-            },
-        }
+            small_scale_bias: f64::from(config.small_scale_bias),
+        },
+        _ if config.dirty_only || config.niter == 0 => ContinuumAlgorithm::Dirty,
+        Deconvolver::Hogbom => ContinuumAlgorithm::Hogbom,
+        Deconvolver::Clark => ContinuumAlgorithm::Clark,
+        Deconvolver::Multiscale => ContinuumAlgorithm::Multiscale {
+            scales_px: config
+                .multiscale_scales
+                .iter()
+                .copied()
+                .map(f64::from)
+                .collect(),
+            small_scale_bias: f64::from(config.small_scale_bias),
+        },
     };
     let hogbom_iteration_accounting = if matches!(&algorithm, ContinuumAlgorithm::Hogbom) {
         match config.hogbom_iteration_mode {
@@ -143,10 +140,11 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
     } else {
         HogbomIterationAccounting::Strict
     };
-    let iterations = config.niter;
+    let iterations = if config.dirty_only { 0 } else { config.niter };
     let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
     let task_requirements = task_requirements(config);
-    let mosaic = task_requirements.contains(&TaskRequirement::MosaicGridder);
+    let direction_dependent = task_requirements.contains(&TaskRequirement::MosaicGridder)
+        || task_requirements.contains(&TaskRequirement::AwProjection);
     let resource_policy = if config.parallel == Some(true) {
         ResourcePolicy::Balanced
     } else {
@@ -201,7 +199,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
         primary_beam_cutoff: config.mosaic_pb_limit.abs(),
-        normalization: if mosaic {
+        normalization: if direction_dependent {
             match config.normalization {
                 AwProjectNormalization::FlatNoise => ProductNormalization::FlatNoise,
                 AwProjectNormalization::FlatSky => ProductNormalization::FlatSky,
@@ -250,6 +248,25 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         write_primary_beam: config.write_pb,
         pbcor: config.pbcor,
         w_projection_planes: config.w_project_planes,
+        aw_projection: config
+            .aw_project
+            .as_ref()
+            .map(|controls| ContinuumAwProjection {
+                casa_cache: controls.cf_cache.clone(),
+                resident_bytes: controls.cf_resident_bytes,
+                w_plane_count: controls.w_plane_count,
+                psf_phase_center_direction_rad: controls.psf_phase_center_direction_rad,
+                vp_table: controls.vp_table.clone(),
+                a_term: controls.a_term,
+                ps_term: controls.ps_term,
+                wideband: controls.wb_awp,
+                conjugate_beams: controls.conjugate_beams,
+                use_pointing: controls.use_pointing,
+                pointing_offset_sigdev: controls.pointing_offset_sigdev.clone(),
+                mosaic_weighting: controls.mosaic_weighting,
+                compute_pa_step_deg: controls.compute_pa_step_deg,
+                rotate_pa_step_deg: controls.rotate_pa_step_deg,
+            }),
         task_requirements,
         resource_policy,
     })
@@ -444,8 +461,8 @@ mod tests {
     use std::ffi::OsString;
 
     use casa_imaging_application::{
-        ImagingCapabilityRequirement, PolarizationCoordinate, ProductNormalization, ResourcePolicy,
-        installed_imaging_capability_catalog,
+        ContinuumAlgorithm, ImagingCapabilityRequirement, PolarizationCoordinate,
+        ProductNormalization, ResourcePolicy, installed_imaging_capability_catalog,
     };
 
     use super::{
@@ -498,7 +515,46 @@ mod tests {
     }
 
     #[test]
-    fn product_normalization_is_mosaic_specific() {
+    fn zero_iteration_mtmfs_preserves_the_requested_taylor_family() {
+        let request = application_request(&config(&[
+            "--deconvolver",
+            "mtmfs",
+            "--nterms",
+            "2",
+            "--niter",
+            "0",
+            "--dirty-only",
+        ]))
+        .expect("zero-iteration MT-MFS request");
+
+        assert_eq!(
+            request.algorithm,
+            ContinuumAlgorithm::Mtmfs {
+                terms: 2,
+                scales_px: vec![0.0],
+                small_scale_bias: 0.0,
+            }
+        );
+        assert_eq!(request.iterations, 0);
+    }
+
+    #[test]
+    fn dirty_only_hogbom_retains_the_scalar_dirty_contract() {
+        let request = application_request(&config(&[
+            "--deconvolver",
+            "hogbom",
+            "--niter",
+            "100",
+            "--dirty-only",
+        ]))
+        .expect("scalar dirty request");
+
+        assert_eq!(request.algorithm, ContinuumAlgorithm::Dirty);
+        assert_eq!(request.iterations, 0);
+    }
+
+    #[test]
+    fn product_normalization_is_direction_dependent() {
         assert_eq!(
             application_request(&config(&[])).unwrap().normalization,
             ProductNormalization::UnitResponse
@@ -520,6 +576,31 @@ mod tests {
             .unwrap()
             .normalization,
             ProductNormalization::FlatSky
+        );
+    }
+
+    #[test]
+    fn aw_product_normalization_preserves_the_requested_normtype() {
+        for (normtype, expected) in [
+            ("flatnoise", ProductNormalization::FlatNoise),
+            ("flatsky", ProductNormalization::FlatSky),
+        ] {
+            assert_eq!(
+                application_request(&config(&["--gridder", "awproject", "--normtype", normtype]))
+                    .expect("AW request")
+                    .normalization,
+                expected,
+            );
+        }
+        assert!(
+            application_request(&config(&[
+                "--gridder",
+                "awproject",
+                "--normtype",
+                "pbsquare"
+            ]))
+            .expect_err("unimplemented AW normalization must not become unit response")
+            .contains("pbsquare normalization")
         );
     }
 

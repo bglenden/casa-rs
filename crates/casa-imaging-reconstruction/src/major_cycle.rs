@@ -15,6 +15,9 @@
 
 use std::fmt;
 
+#[cfg(test)]
+pub(crate) mod native_minor_fixture;
+
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblemId, ContinuumTransformGenerationId, ImageDomainRole,
     LogicalIdentity, NumericsContractId, SelectedObservationGenerationId, WeightingCommitmentId,

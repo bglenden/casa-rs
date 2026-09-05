@@ -12,6 +12,30 @@ import time
 from typing import Callable
 
 
+def run_with_terminal_usage(argv: list[str]) -> int:
+    """Run one command and report its kernel high-water RSS after it exits."""
+    if sys.platform not in {"darwin", "linux"} or not hasattr(os, "wait4"):
+        raise RuntimeError("terminal command RSS requires Darwin or Linux wait4")
+    process = subprocess.Popen(argv)
+    try:
+        _, status, usage = os.wait4(process.pid, 0)
+        process.returncode = os.waitstatus_to_exitcode(status)
+    except BaseException:
+        process.kill()
+        process.wait()
+        raise
+    peak_rss_bytes = int(usage.ru_maxrss) * (1 if sys.platform == "darwin" else 1024)
+    print(
+        "imager_bench_process_resource "
+        f"command={pathlib.Path(argv[0]).name} pid={process.pid} "
+        f"exit_code={process.returncode} peak_rss_bytes={peak_rss_bytes} "
+        "source=wait4 scope=terminal_child",
+        file=sys.stderr,
+        flush=True,
+    )
+    return process.returncode if process.returncode >= 0 else 128 - process.returncode
+
+
 def run_command(
     argv: list[str],
     *,
@@ -172,3 +196,9 @@ def _wait_for_posix_exit_without_reap(
         if deadline is not None and time.monotonic() >= deadline:
             raise subprocess.TimeoutExpired(process.args, timeout_seconds)
         time.sleep(0.02)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3 or sys.argv[1] != "--":
+        raise SystemExit("usage: subprocesses.py -- command [arguments...]")
+    raise SystemExit(run_with_terminal_usage(sys.argv[2:]))

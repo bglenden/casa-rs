@@ -37,7 +37,7 @@ use crate::{
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 8;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 9;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
 ///
@@ -209,6 +209,8 @@ pub struct MinorCycleProgram {
     fixed_cycle_threshold: Option<f64>,
     component_sequence_limit: Option<usize>,
     maximum_condition_number: Option<f64>,
+    image_response: Option<crate::MinorCycleImageResponse>,
+    requires_image_response: bool,
 }
 
 /// Validity of the reconstruction-owned normal-state view used by one solve.
@@ -302,7 +304,21 @@ impl MinorCycleProgram {
             .reconstruction()
             .joint_continuum_line()
             .map(|contract| contract.maximum_condition_number());
+        program.requires_image_response =
+            matches!(program.algorithm, ReconstructionAlgorithm::Mtmfs { .. })
+                && problem
+                    .science()
+                    .measurement_equation()
+                    .aw_projection()
+                    .is_some();
         Ok(program)
+    }
+
+    /// Bind the scientific image coordinates independently of product publication.
+    #[must_use]
+    pub const fn with_image_response(mut self, response: crate::MinorCycleImageResponse) -> Self {
+        self.image_response = Some(response);
+        self
     }
 
     fn for_contract(
@@ -439,6 +455,8 @@ impl MinorCycleProgram {
             fixed_cycle_threshold: None,
             component_sequence_limit: None,
             maximum_condition_number: None,
+            image_response: None,
+            requires_image_response: false,
         })
     }
 
@@ -666,7 +684,11 @@ impl MinorCycleController {
     }
 }
 
-/// One accepted Högbom component in canonical typed model coordinates.
+/// One accepted component in canonical typed image coordinates.
+///
+/// Direction-dependent Taylor components report the solve's apparent flux.
+/// Their expanded Model Delta is separately converted pixelwise to physical
+/// prediction coordinates; a scale component cannot represent that varying PB.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MinorCycleComponent {
     cell: ModelCell,
@@ -681,7 +703,7 @@ impl MinorCycleComponent {
         self.cell
     }
 
-    /// Return the signed component flux in model units.
+    /// Return signed flux in the bound solve coordinates.
     #[must_use]
     pub const fn flux(&self) -> f64 {
         self.flux
@@ -1176,6 +1198,15 @@ pub enum MinorCycleError {
     /// The selected model-space plane does not match the normal-state geometry.
     #[error("selected model plane does not match the normal-state plane")]
     ModelShapeMismatch,
+    /// Direction-dependent Taylor reconstruction has no scientific image-coordinate binding.
+    #[error("AW Taylor minor cycle requires an explicit image-response binding")]
+    MissingImageResponse,
+    /// A physical starting model violates the PB support used for prediction.
+    #[error("physical starting model contains nonzero values outside its bound PB support")]
+    InvalidPhysicalModelSupport,
+    /// Shared image-response arithmetic or support validation failed.
+    #[error(transparent)]
+    ImageResponse(#[from] crate::ImageResponseError),
     /// A multi-channel state must execute through the shared reconstruction cycle.
     #[error("multi-channel normal state requires ReconstructionCycle")]
     ChannelCycleRequired,
@@ -1880,6 +1911,7 @@ fn run_joint_block_minor_cycle(
             psf_peak_pixel,
             base,
             &model_terms,
+            TaylorSolveResponse::new(view, None)?,
         )?;
     }
     let final_peak = select_joint_candidate(
@@ -1952,6 +1984,10 @@ fn run_taylor_minor_cycle(
         return Err(MinorCycleError::InvalidNormalStateCatalog);
     };
     let shape = view.shape();
+    if controls.requires_image_response && controls.image_response.is_none() {
+        return Err(MinorCycleError::MissingImageResponse);
+    }
+    let response = TaylorSolveResponse::new(view, controls.image_response)?;
     let cells = shape[0] * shape[1];
     let terms_count = view.coefficient_term_count();
     let primary = controls.model_plane();
@@ -1983,6 +2019,7 @@ fn run_taylor_minor_cycle(
     {
         return Err(MinorCycleError::ForeignMask);
     }
+    response.validate_physical_base(base, primary)?;
 
     let moment_zero = view
         .normal_moment(0)
@@ -2008,7 +2045,8 @@ fn run_taylor_minor_cycle(
     let psf_peak_pixel = plane_pixel(psf_peak_index, shape);
     let psf_support = taylor_psf_support(shape, effective_scales.last().copied().unwrap_or(0.0));
     let kernels = build_scale_kernels(&effective_scales, *small_scale_bias);
-    let scale_systems = build_taylor_scale_systems(view, shape, psf_peak_pixel, &kernels)?;
+    let scale_systems =
+        build_taylor_scale_systems(view, shape, psf_peak_pixel, &kernels, response.normal_scale)?;
 
     let mut residuals = (0..terms_count)
         .map(|term| {
@@ -2016,17 +2054,20 @@ fn run_taylor_minor_cycle(
                 .ok_or(MinorCycleError::ModelShapeMismatch)?
                 .residual()
                 .iter()
-                .map(|value| {
-                    value
-                        .re
-                        .is_finite()
-                        .then_some(value.re)
-                        .ok_or(MinorCycleError::GeneratedNonfinite)
-                })
+                .enumerate()
+                .map(|(index, value)| response.residual(value.re, index))
                 .collect::<Result<Vec<_>, _>>()
         })
         .collect::<Result<Vec<_>, MinorCycleError>>()?;
     if imaging_science_trace_enabled() {
+        eprintln!(
+            "imaging_minor_response S_W={:.17e} S_C={:.17e} raw_h00={:.17e} normalized_h00={:.17e} normal_scale={:.17e}",
+            moment_zero.sum_weight(),
+            view.published_sum_weights()[0],
+            psf_peak,
+            scale_systems[0].h00,
+            response.normal_scale,
+        );
         for (term, residual) in residuals.iter().enumerate() {
             let label = match term {
                 0 => "minor_residual_tt0_enter",
@@ -2089,7 +2130,7 @@ fn run_taylor_minor_cycle(
         let psf = moment_zero
             .normal_approximation()
             .iter()
-            .map(|v| v.re as f32)
+            .map(|v| (v.re * response.normal_scale) as f32)
             .collect::<Vec<_>>();
         let sidelobe = crate::fitted_psf_sidelobe_fraction(&psf, shape)?;
         controls.cycle_threshold_for(initial_peak, sidelobe)
@@ -2155,7 +2196,7 @@ fn run_taylor_minor_cycle(
                     pixel,
                     psf_peak_pixel,
                     kernel,
-                    *update,
+                    *update * response.normal_scale,
                 )?;
             }
         }
@@ -2194,6 +2235,7 @@ fn run_taylor_minor_cycle(
             psf_peak_pixel,
             base,
             &model_terms,
+            response,
         )?;
     }
     let final_peak = principal_taylor_peak(
@@ -2206,6 +2248,14 @@ fn run_taylor_minor_cycle(
         &kernels[0],
     ) / scale_systems[0].h00;
     let (iterations, total_flux, stop_reason) = controller.finish();
+    for (flat, value) in &mut model_terms {
+        let cell = base
+            .shape()
+            .cell_at(*flat)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        let pixel = cell.pixel();
+        *value = response.physical_delta(*value, pixel[0] * shape[1] + pixel[1])?;
+    }
     finish_taylor_minor_cycle(
         lifecycle,
         base,
@@ -2965,6 +3015,116 @@ struct TaylorSearchWindow {
     end_exclusive: [usize; 2],
 }
 
+#[derive(Clone, Copy)]
+struct TaylorSolveResponse<'a> {
+    directional: Option<(crate::MosaicSensitivity<'a>, crate::MinorCycleImageResponse)>,
+    normal_scale: f64,
+    published_sum_weight: f64,
+}
+
+impl<'a> TaylorSolveResponse<'a> {
+    fn new(
+        view: &'a FinalNormalState,
+        binding: Option<crate::MinorCycleImageResponse>,
+    ) -> Result<Self, MinorCycleError> {
+        let Some(binding) = binding else {
+            return Ok(Self {
+                directional: None,
+                normal_scale: 1.0,
+                published_sum_weight: 1.0,
+            });
+        };
+        let principal = view
+            .normal_moment(0)
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        let normal_weight = principal.sum_weight();
+        let published_weight = *view
+            .published_sum_weights()
+            .first()
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        if !normal_weight.is_finite()
+            || normal_weight <= 0.0
+            || !published_weight.is_finite()
+            || published_weight <= 0.0
+        {
+            return Err(MinorCycleError::InvalidPsfPeak);
+        }
+        Ok(Self {
+            directional: Some((
+                crate::MosaicSensitivity::new(principal.sensitivity())?
+                    .with_normal_sum_weight(normal_weight)?,
+                binding,
+            )),
+            normal_scale: 1.0 / normal_weight,
+            published_sum_weight: published_weight,
+        })
+    }
+
+    fn residual(self, value: f64, index: usize) -> Result<f64, MinorCycleError> {
+        let normalized = if let Some((response, binding)) = self.directional {
+            response.normalize_weighted_residual_sample(
+                value,
+                index,
+                binding.normalization(),
+                self.published_sum_weight,
+                binding.policy(),
+            )?
+        } else {
+            value
+        };
+        normalized
+            .is_finite()
+            .then_some(normalized)
+            .ok_or(MinorCycleError::GeneratedNonfinite)
+    }
+
+    fn physical_delta(self, value: f64, index: usize) -> Result<f64, MinorCycleError> {
+        if let Some((response, binding)) = self.directional {
+            Ok(response.apparent_to_physical(
+                value,
+                index,
+                binding.normalization(),
+                binding.policy(),
+            )?)
+        } else {
+            Ok(value)
+        }
+    }
+
+    fn validate_physical_base(
+        self,
+        base: &ModelGeneration,
+        plane: MinorCycleModelPlane,
+    ) -> Result<(), MinorCycleError> {
+        let Some((response, binding)) = self.directional else {
+            return Ok(());
+        };
+        if binding.normalization() != casa_imaging_model::ProductNormalization::FlatNoise {
+            return Ok(());
+        }
+        let shape = base.shape().domains()[plane.domain()].pixels();
+        for (index, sample) in base.samples().iter().enumerate() {
+            if sample.support() != casa_imaging_model::ModelSupport::Valid
+                || sample.value().value() == 0.0
+            {
+                continue;
+            }
+            let cell = base
+                .shape()
+                .cell_at(index)
+                .ok_or(MinorCycleError::ModelShapeMismatch)?;
+            if cell.domain() != plane.domain() || cell.polarization() != plane.polarization() {
+                continue;
+            }
+            let pixel = cell.pixel();
+            if !response.model_valid_at(pixel[0] * shape[1] + pixel[1], binding.policy())? {
+                return Err(MinorCycleError::InvalidPhysicalModelSupport);
+            }
+        }
+        Ok(())
+    }
+}
+
 impl TaylorSearchWindow {
     fn around(position: [usize; 2], support: usize, shape: [usize; 2]) -> Self {
         let axis = |position: usize, extent: usize| {
@@ -2993,6 +3153,7 @@ fn build_taylor_scale_systems(
     shape: [usize; 2],
     psf_peak: [usize; 2],
     kernels: &[ScaleKernel],
+    normal_scale: f64,
 ) -> Result<Vec<TaylorScaleSystem>, MinorCycleError> {
     let count = view.coefficient_term_count();
     kernels
@@ -3009,7 +3170,7 @@ fn build_taylor_scale_systems(
                         shape,
                         psf_peak,
                         kernel,
-                    );
+                    ) * normal_scale;
                 }
             }
             let h00 = normal[0];
@@ -3491,13 +3652,14 @@ fn refresh_taylor_residuals(
     psf_peak: [usize; 2],
     base: &ModelGeneration,
     model_terms: &BTreeMap<usize, f64>,
+    response: TaylorSolveResponse<'_>,
 ) -> Result<(), MinorCycleError> {
     for (term, residual) in residuals.iter_mut().enumerate() {
         let original = view
             .coefficient_term(term)
             .ok_or(MinorCycleError::ModelShapeMismatch)?;
-        for (target, source) in residual.iter_mut().zip(original.residual()) {
-            *target = source.re;
+        for (index, (target, source)) in residual.iter_mut().zip(original.residual()).enumerate() {
+            *target = response.residual(source.re, index)?;
         }
     }
     for (flat, flux) in model_terms {
@@ -3515,7 +3677,7 @@ fn refresh_taylor_residuals(
                 shape,
                 cell.pixel(),
                 psf_peak,
-                *flux,
+                *flux * response.normal_scale,
             )?;
         }
     }
@@ -3981,6 +4143,26 @@ fn minor_cycle_evidence_id(
         }
         None => encoder.u8(0),
     }
+    encoder.u8(u8::from(controls.requires_image_response));
+    match controls.image_response {
+        None => encoder.u8(0),
+        Some(response) => {
+            encoder.u8(1);
+            encoder.u8(match response.normalization() {
+                casa_imaging_model::ProductNormalization::UnitResponse => {
+                    unreachable!("binding rejects unit response")
+                }
+                casa_imaging_model::ProductNormalization::FlatNoise => 1,
+                casa_imaging_model::ProductNormalization::FlatSky => 2,
+            });
+            encoder.u64(crate::canonical_f64_bits(f64::from(
+                response.policy().cutoff(),
+            )));
+            encoder.u8(match response.policy().comparison() {
+                casa_imaging_model::ProductSupportComparison::StrictlyGreater => 0,
+            });
+        }
+    }
     encoder.usize(iterations);
     encoder.usize(controller_iterations);
     encoder.u64(crate::canonical_f64_bits(total_flux));
@@ -4049,6 +4231,293 @@ fn minor_cycle_evidence_id(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+
+    #[test]
+    #[ignore = "requires externally captured native 512x512 MT-MFS first-minor arrays"]
+    fn t51_native_normalized_three_step_minor_matches_production_solver() {
+        compare_native_three_step_minor(false);
+    }
+
+    #[test]
+    #[ignore = "requires native 512x512 minor arrays and native physical-model conversion fixture"]
+    fn t51_native_raw_response_three_step_minor_matches_production_solver() {
+        compare_native_three_step_minor(true);
+    }
+
+    fn compare_native_three_step_minor(raw_response: bool) {
+        let directory = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_T51_NATIVE_MINOR_FIXTURE")
+                .expect("CASA_RS_T51_NATIVE_MINOR_FIXTURE names the native fixture"),
+        );
+        let shape = [512, 512];
+        let cells = shape[0] * shape[1];
+        let load = |name: &str| {
+            let bytes = std::fs::read(directory.join(name)).expect("native float plane");
+            assert_eq!(bytes.len(), cells * 4, "native plane shape: {name}");
+            bytes
+                .chunks_exact(4)
+                .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
+                .inspect(|value| assert!(value.is_finite(), "finite native plane: {name}"))
+                .collect::<Vec<_>>()
+        };
+        let native_residuals = [load("residual0.f32le"), load("residual1.f32le")];
+        let mut residuals = native_residuals
+            .iter()
+            .flatten()
+            .map(|value| Complex64::new(*value, 0.0))
+            .collect::<Vec<_>>();
+        let mut psfs = (0..3)
+            .flat_map(|term| load(&format!("psf{term}.f32le")))
+            .map(|value| Complex64::new(value, 0.0))
+            .collect::<Vec<_>>();
+        let raw_state = raw_response.then(|| {
+            // Deliberately distinct synthetic sum weights make each owner
+            // conversion observable. This is an algebra/wiring regression,
+            // not a measurement of the retained observation's raw scalars.
+            let normal_weight = 17.0;
+            let published_weight = 5.0;
+            let weight = load("weight0.f32le");
+            let peak = weight.iter().copied().fold(0.0_f64, f64::max);
+            for (index, residual) in residuals.iter_mut().enumerate() {
+                *residual *= published_weight * (weight[index % cells] * peak).sqrt();
+            }
+            for psf in &mut psfs {
+                *psf *= normal_weight;
+            }
+            (
+                weight
+                    .into_iter()
+                    .map(|value| value * normal_weight)
+                    .collect(),
+                normal_weight,
+                published_weight,
+            )
+        });
+        let (problem, lifecycle, base, normal) = crate::major_cycle::native_minor_fixture::build(
+            residuals.into_boxed_slice(),
+            psfs.into_boxed_slice(),
+            raw_state,
+        );
+        for term in 0..2 {
+            assert_eq!(
+                normal
+                    .coefficient_term(term)
+                    .expect("native residual term")
+                    .residual()
+                    .len(),
+                cells
+            );
+        }
+        for moment in 0..3 {
+            assert_eq!(
+                normal
+                    .normal_moment(moment)
+                    .expect("complete native normal moment")
+                    .normal_approximation()
+                    .len(),
+                cells
+            );
+        }
+        let mask_values = load("mask.f32le");
+        assert!(
+            mask_values
+                .iter()
+                .all(|value| *value == 0.0 || *value == 1.0)
+        );
+        let support = mask_values
+            .iter()
+            .map(|value| *value == 1.0)
+            .collect::<Vec<_>>();
+        assert_eq!(support.iter().filter(|value| **value).count(), 4096);
+        let direction = problem.geometry().domains()[0].direction();
+        let mask = crate::ReconstructionMask::from_reprojected_support(
+            problem.problem_id(),
+            base.generation_id(),
+            direction,
+            shape,
+            &support,
+            direction,
+            shape,
+        )
+        .expect("native mask with synthetic matching coordinates");
+        let mut controls = MinorCycleProgram::for_problem(&problem)
+            .expect("native MT-MFS controls")
+            .with_fixed_cycle_threshold(Some(0.028_467_236_086_726_19))
+            .record_component_sequence(30)
+            .expect("bounded native step trace");
+        let binding = raw_response.then(|| {
+            crate::MinorCycleImageResponse::new(
+                casa_imaging_model::ProductNormalization::FlatNoise,
+                casa_imaging_model::PrimaryBeamValidityPolicy::new(
+                    0.0001,
+                    casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+                    casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        });
+        if let Some(binding) = binding {
+            controls = controls.with_image_response(binding);
+        }
+        let response = super::TaylorSolveResponse::new(&normal, binding).unwrap();
+        let raw_identity = normal.content_identity();
+        if raw_response {
+            let mut missing_binding = controls.clone();
+            missing_binding.requires_image_response = true;
+            missing_binding.image_response = None;
+            assert_eq!(
+                super::run_taylor_minor_cycle(&lifecycle, &base, &normal, &mask, missing_binding)
+                    .unwrap_err(),
+                super::MinorCycleError::MissingImageResponse
+            );
+            let principal = normal.normal_moment(0).unwrap();
+            eprintln!(
+                "native_minor3 synthetic_raw normal_sum={} published_sum={} raw_h00={} normalized_h00={}",
+                principal.sum_weight(),
+                normal.published_sum_weights()[0],
+                principal.normal_approximation()[256 * 512 + 256].re,
+                principal.normal_approximation()[256 * 512 + 256].re * response.normal_scale
+            );
+            assert!(
+                (principal.normal_approximation()[256 * 512 + 256].re * response.normal_scale
+                    - 1.0)
+                    .abs()
+                    < 1.0e-12
+            );
+            let evidence_id = |program: &MinorCycleProgram| {
+                super::minor_cycle_evidence_id(
+                    lifecycle.authority(),
+                    lifecycle.attempt(),
+                    lifecycle.epoch(),
+                    base.generation_id(),
+                    normal.completion_id(),
+                    normal.content_identity(),
+                    &[mask.generation_id()],
+                    program,
+                    0,
+                    0,
+                    0.0,
+                    0.0,
+                    None,
+                    0.0,
+                    MinorCycleStopReason::ThresholdReached,
+                    None,
+                    0,
+                    None,
+                )
+            };
+            let mut unbound = controls.clone();
+            unbound.image_response = None;
+            let flat_sky = controls.clone().with_image_response(
+                crate::MinorCycleImageResponse::new(
+                    casa_imaging_model::ProductNormalization::FlatSky,
+                    binding.unwrap().policy(),
+                )
+                .unwrap(),
+            );
+            assert_ne!(evidence_id(&controls), evidence_id(&unbound));
+            assert_ne!(evidence_id(&controls), evidence_id(&flat_sky));
+            eprintln!("native_minor3 missing_binding_rejected=true response_binding_hashed=true");
+        }
+        let started = std::time::Instant::now();
+        let result = super::run_taylor_minor_cycle(&lifecycle, &base, &normal, &mask, controls)
+            .expect("production minor cycle on native normalized inputs");
+        let evidence = result.evidence();
+        assert_eq!(
+            normal.content_identity(),
+            raw_identity,
+            "solve only borrows raw normal state"
+        );
+        eprintln!(
+            "native_minor3 iterations={} initial_peak={:.17e} final_peak={:.17e} elapsed_s={:.6}",
+            evidence.iterations(),
+            evidence.initial_peak_flux(),
+            evidence.final_peak_flux(),
+            started.elapsed().as_secs_f64(),
+        );
+        let mut model_planes = [vec![0.0; cells], vec![0.0; cells]];
+        let mut model_terms = BTreeMap::new();
+        for term in result
+            .delta()
+            .expect("three steps produce a model delta")
+            .terms()
+        {
+            let cell = term.cell();
+            let pixel = cell.pixel();
+            let value = term.increment().value();
+            model_planes[cell.coefficient()][pixel[0] * shape[1] + pixel[1]] = value;
+            let solve_value = if let Some((sensitivity, binding)) = response.directional {
+                sensitivity
+                    .physical_to_apparent(
+                        value,
+                        pixel[0] * shape[1] + pixel[1],
+                        binding.normalization(),
+                        binding.policy(),
+                    )
+                    .unwrap()
+            } else {
+                value
+            };
+            model_terms.insert(
+                base.shape().flat_index(cell).expect("model cell"),
+                solve_value,
+            );
+        }
+        let mut residual_planes = native_residuals.to_vec();
+        super::refresh_taylor_residuals(
+            &mut residual_planes,
+            &normal,
+            shape,
+            [256, 256],
+            &base,
+            &model_terms,
+            response,
+        )
+        .expect("same production terminal residual refresh");
+        let nrms = |actual: &[f64], expected: &[f64]| {
+            let error = actual
+                .iter()
+                .zip(expected)
+                .map(|(a, b)| (a - b).powi(2))
+                .sum::<f64>();
+            let reference = expected.iter().map(|value| value.powi(2)).sum::<f64>();
+            (error / reference).sqrt()
+        };
+        let mut metrics = Vec::new();
+        for term in 0..2 {
+            for (kind, actual) in [
+                ("model", &model_planes[term]),
+                ("residual", &residual_planes[term]),
+            ] {
+                let expected = if raw_response && kind == "model" {
+                    let root = std::path::PathBuf::from(
+                        std::env::var_os("CASA_RS_T51_NATIVE_MODEL_WEIGHT_FIXTURE")
+                            .expect("native physical model fixture"),
+                    );
+                    let bytes =
+                        std::fs::read(root.join(format!("native_first3_physical{term}.f32le")))
+                            .unwrap();
+                    assert_eq!(bytes.len(), cells * 4);
+                    bytes
+                        .chunks_exact(4)
+                        .map(|bytes| f64::from(f32::from_le_bytes(bytes.try_into().unwrap())))
+                        .collect()
+                } else {
+                    load(&format!("native_{kind}{term}.f32le"))
+                };
+                let error = nrms(actual, &expected);
+                eprintln!("native_minor3 {kind}{term} nrms={error:.17e}");
+                metrics.push((format!("{kind}{term}"), error));
+            }
+        }
+        assert_eq!(evidence.iterations(), 3);
+        assert!((evidence.initial_peak_flux() / 0.035_584_043_711_423_874 - 1.0).abs() <= 1.0e-3);
+        assert!((evidence.final_peak_flux() / 0.025_940_770_283_341_408 - 1.0).abs() <= 1.0e-3);
+        for (name, error) in metrics {
+            assert!(error <= 1.0e-3, "native first-minor {name} NRMS {error}");
+        }
+    }
 
     use casa_imaging_model::{
         HogbomIterationAccounting, ModelCell, ReconstructionAlgorithm, ReconstructionBasis,
