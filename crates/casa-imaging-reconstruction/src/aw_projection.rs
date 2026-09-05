@@ -15,7 +15,7 @@ use std::{
 };
 
 use casa_imaging_model::{PreparedArtifactScientificIdentity, PreparedArtifactScientificKind};
-use num_complex::Complex64;
+use num_complex::{Complex32, Complex64};
 use thiserror::Error;
 
 const MUELLER_ELEMENTS: u32 = 16;
@@ -122,7 +122,46 @@ impl AwKernelLayout {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AwConvolutionKernel {
     layout: AwKernelLayout,
-    taps: Box<[Complex64]>,
+    taps: AwKernelTaps,
+}
+
+#[derive(Clone, Debug)]
+enum AwKernelTaps {
+    Complex32(Box<[Complex32]>),
+    Complex64(Box<[Complex64]>),
+}
+
+impl AwKernelTaps {
+    fn len(&self) -> usize {
+        match self {
+            Self::Complex32(taps) => taps.len(),
+            Self::Complex64(taps) => taps.len(),
+        }
+    }
+
+    fn value(&self, index: usize) -> Complex64 {
+        match self {
+            Self::Complex32(taps) => {
+                let value = taps[index];
+                Complex64::new(f64::from(value.re), f64::from(value.im))
+            }
+            Self::Complex64(taps) => taps[index],
+        }
+    }
+
+    fn resident_bytes(&self) -> usize {
+        match self {
+            Self::Complex32(taps) => taps.len() * size_of::<Complex32>(),
+            Self::Complex64(taps) => taps.len() * size_of::<Complex64>(),
+        }
+    }
+}
+
+impl PartialEq for AwKernelTaps {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len()
+            && (0..self.len()).all(|index| self.value(index) == other.value(index))
+    }
 }
 
 impl AwConvolutionKernel {
@@ -135,7 +174,29 @@ impl AwConvolutionKernel {
         }
         Ok(Self {
             layout,
-            taps: taps.into_boxed_slice(),
+            taps: AwKernelTaps::Complex64(taps.into_boxed_slice()),
+        })
+    }
+
+    /// Retain a native single-precision plane without pre-normalizing it.
+    ///
+    /// Values are widened exactly to `Complex64` when accessed, before any
+    /// convolution arithmetic. Residency counts the retained `Complex32`
+    /// payload; the double-precision constructor never narrows its input.
+    pub fn new_complex32(
+        layout: AwKernelLayout,
+        taps: Vec<Complex32>,
+    ) -> Result<Self, AwOperatorError> {
+        if layout.shape[0].checked_mul(layout.shape[1]) != Some(taps.len())
+            || taps
+                .iter()
+                .any(|tap| !tap.re.is_finite() || !tap.im.is_finite())
+        {
+            return Err(AwOperatorError::InvalidKernelLayout);
+        }
+        Ok(Self {
+            layout,
+            taps: AwKernelTaps::Complex32(taps.into_boxed_slice()),
         })
     }
 
@@ -158,11 +219,11 @@ impl AwConvolutionKernel {
             .ok()
             .filter(|y| *y < self.layout.shape[1])
             .ok_or(AwOperatorError::InvalidKernelLayout)?;
-        Ok(self.taps[x * self.layout.shape[1] + y])
+        Ok(self.taps.value(x * self.layout.shape[1] + y))
     }
 
     fn resident_bytes(&self) -> usize {
-        self.taps.len() * size_of::<Complex64>()
+        self.taps.resident_bytes()
     }
 }
 
@@ -1844,6 +1905,232 @@ mod tests {
             taps[(2 * x + 2) * layout.shape[1] + layout.center[1]] = value;
         }
         AwConvolutionKernel::new(layout, taps).unwrap()
+    }
+
+    #[test]
+    fn t51_native_complex32_storage_preserves_values_and_exact_residency() {
+        let layout = layout([0, 0], 1);
+        let values = [
+            0.0_f32,
+            -0.0,
+            f32::from_bits(1),
+            -f32::from_bits(1),
+            f32::MIN_POSITIVE,
+            f32::MAX,
+            -f32::MAX,
+            0.1,
+            -0.7,
+        ]
+        .map(|value| Complex32::new(value, -value));
+        let native = AwConvolutionKernel::new_complex32(layout, values.to_vec()).unwrap();
+        let widened = AwConvolutionKernel::new(
+            layout,
+            values
+                .iter()
+                .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                .collect(),
+        )
+        .unwrap();
+        assert_eq!(native, widened);
+        assert_eq!(widened, native);
+        assert_eq!(native.resident_bytes(), 9 * size_of::<Complex32>());
+        assert_eq!(widened.resident_bytes(), 9 * size_of::<Complex64>());
+        for x in 0..3 {
+            for y in 0..3 {
+                let offset = [x - 1, y - 1];
+                let actual = native.tap(offset, [0, 0]).unwrap();
+                let expected = widened.tap(offset, [0, 0]).unwrap();
+                assert_eq!(actual.re.to_bits(), expected.re.to_bits());
+                assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+            }
+        }
+        let native_zero =
+            AwConvolutionKernel::new_complex32(layout, vec![Complex32::new(0.0, -0.0); 9]).unwrap();
+        let wide_zero =
+            AwConvolutionKernel::new(layout, vec![Complex64::new(-0.0, 0.0); 9]).unwrap();
+        assert_eq!(native_zero, wide_zero);
+        let mixed = AwConvolutionCell::new(identity(10.0, 1.0, 0, 0.0), native, widened).unwrap();
+        assert_eq!(
+            mixed.resident_bytes(),
+            9 * (size_of::<Complex32>() + size_of::<Complex64>())
+        );
+    }
+
+    #[test]
+    fn t51_native_complex32_storage_keeps_double_precision_and_validation() {
+        let layout = layout([0, 0], 1);
+        for value in [
+            0.1_f64,
+            f64::from_bits(1.0_f64.to_bits() + 1),
+            f64::from_bits(1),
+            f64::MAX,
+        ] {
+            let expected = Complex64::new(value, -value);
+            let kernel = AwConvolutionKernel::new(layout, vec![expected; 9]).unwrap();
+            let actual = kernel.tap([0, 0], [0, 0]).unwrap();
+            assert_eq!(actual.re.to_bits(), expected.re.to_bits());
+            assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+        }
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for tap in [Complex32::new(value, 0.0), Complex32::new(0.0, value)] {
+                assert_eq!(
+                    AwConvolutionKernel::new_complex32(layout, vec![tap; 9]),
+                    Err(AwOperatorError::InvalidKernelLayout)
+                );
+            }
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            for tap in [Complex64::new(value, 0.0), Complex64::new(0.0, value)] {
+                assert_eq!(
+                    AwConvolutionKernel::new(layout, vec![tap; 9]),
+                    Err(AwOperatorError::InvalidKernelLayout)
+                );
+            }
+        }
+        assert_eq!(
+            AwConvolutionKernel::new_complex32(layout, Vec::new()),
+            Err(AwOperatorError::InvalidKernelLayout)
+        );
+        assert_eq!(
+            AwConvolutionKernel::new(layout, Vec::new()),
+            Err(AwOperatorError::InvalidKernelLayout)
+        );
+    }
+
+    #[test]
+    fn t51_native_complex32_storage_is_bitwise_identical_through_aw_arithmetic() {
+        let imaging_layout = AwKernelLayout::new([1, 2], 2, [7, 11], [3, 5]).unwrap();
+        let weight_layout = AwKernelLayout::new([2, 1], 2, [11, 7], [5, 3]).unwrap();
+        let kernels = |layout: AwKernelLayout, scale: f32| {
+            let values = (0..layout.shape[0] * layout.shape[1])
+                .map(|index| {
+                    let x = (index / layout.shape[1]) as f32;
+                    let y = (index % layout.shape[1]) as f32;
+                    Complex32::new(
+                        scale * (1.0 + x * 0.125 - y * 0.03125),
+                        scale * (0.5 + y * 0.0625 - x * 0.015625),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let widened = values
+                .iter()
+                .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
+                .collect();
+            (
+                AwConvolutionKernel::new_complex32(layout, values).unwrap(),
+                AwConvolutionKernel::new(layout, widened).unwrap(),
+            )
+        };
+        let (native_imaging, wide_imaging) = kernels(imaging_layout, 1.0);
+        let (native_weight, wide_weight) = kernels(weight_layout, 0.375);
+        let make_operator = |imaging: AwConvolutionKernel, weight: AwConvolutionKernel| {
+            let entries = [0, 15].map(|mueller| {
+                AwPreparedCellMetadata::new(
+                    identity(10.0, 1.0, mueller, 0.0),
+                    10.0,
+                    1.0,
+                    1.0,
+                    mueller,
+                    0.0,
+                    imaging_layout,
+                    weight_layout,
+                )
+                .unwrap()
+            });
+            let cells = entries
+                .iter()
+                .map(|metadata| {
+                    (
+                        metadata.identity.as_bytes(),
+                        Arc::new(
+                            AwConvolutionCell::new(
+                                metadata.identity,
+                                imaging.clone(),
+                                weight.clone(),
+                            )
+                            .unwrap(),
+                        ),
+                    )
+                })
+                .collect();
+            AwProjectionOperator::new(
+                AwPreparedCatalog::new(entries.to_vec()).unwrap(),
+                Provider {
+                    cells,
+                    seen: BTreeSet::new(),
+                },
+                false,
+                64 * 1024,
+            )
+            .unwrap()
+        };
+        let mut native = make_operator(native_imaging, native_weight);
+        let mut widened = make_operator(wide_imaging, wide_weight);
+        let shape = [32, 24];
+        let model = (0..shape[0] * shape[1])
+            .map(|index| Complex64::new(index as f64 * 0.13, (index % 17) as f64 * -0.19))
+            .collect::<Vec<_>>();
+        let bits = |value: Complex64| [value.re.to_bits(), value.im.to_bits()];
+        for w in [-1.0, 0.0, 1.0] {
+            for position in [[10.25, 12.75], [10.5, 12.49], [10.7, 12.2]] {
+                for pointing in [[0.0, 0.0], [0.017, -0.031]] {
+                    let sample =
+                        AwVisibilitySample::new(10.0, 10.0, w, 0, 0.0, position, pointing).unwrap();
+                    assert_eq!(
+                        bits(native.degrid(&model, shape, sample).unwrap()),
+                        bits(widened.degrid(&model, shape, sample).unwrap())
+                    );
+                    let (native_imaging, native_normal) = native
+                        .prepare_imaging_and_normal_grid(shape, sample)
+                        .unwrap();
+                    let (wide_imaging, wide_normal) = widened
+                        .prepare_imaging_and_normal_grid(shape, sample)
+                        .unwrap();
+                    let native_sensitivity =
+                        native.prepare_sensitivity_grid(shape, sample).unwrap();
+                    let wide_sensitivity = widened.prepare_sensitivity_grid(shape, sample).unwrap();
+                    for (actual, expected) in [native_imaging, native_normal, native_sensitivity]
+                        .into_iter()
+                        .zip([wide_imaging, wide_normal, wide_sensitivity])
+                    {
+                        assert_eq!(bits(actual.normalization), bits(expected.normalization));
+                        assert_eq!(
+                            actual.normalization().to_bits(),
+                            expected.normalization().to_bits()
+                        );
+                        assert_eq!(actual.taps.len(), expected.taps.len());
+                        for (actual, expected) in actual.taps.iter().zip(&expected.taps) {
+                            assert_eq!(actual.index, expected.index);
+                            assert_eq!(bits(actual.coefficient), bits(expected.coefficient));
+                        }
+                        let mut actual_grid = vec![Complex64::default(); model.len()];
+                        let mut expected_grid = actual_grid.clone();
+                        let mut actual_error = actual_grid.clone();
+                        let mut expected_error = actual_grid.clone();
+                        for value in [
+                            Complex64::new(1e8, -2e8),
+                            Complex64::new(0.3, -0.7),
+                            Complex64::new(-1e8, 2e8),
+                        ] {
+                            actual
+                                .grid_compensated(&mut actual_grid, &mut actual_error, value)
+                                .unwrap();
+                            expected
+                                .grid_compensated(&mut expected_grid, &mut expected_error, value)
+                                .unwrap();
+                        }
+                        for (actual, expected) in actual_grid
+                            .into_iter()
+                            .chain(actual_error)
+                            .zip(expected_grid.into_iter().chain(expected_error))
+                        {
+                            assert_eq!(bits(actual), bits(expected));
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(native.diagnostics(), widened.diagnostics());
     }
 
     #[test]

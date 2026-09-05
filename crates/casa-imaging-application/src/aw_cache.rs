@@ -31,7 +31,9 @@ use casa_imaging_runtime::{
 };
 use casa_types::{RecordValue, ScalarValue, Value};
 use ndarray::Array2;
-use num_complex::{Complex32, Complex64};
+use num_complex::Complex32;
+#[cfg(test)]
+use num_complex::Complex64;
 
 const IMAGING_PREFIX: &str = "CFS_";
 const WEIGHT_PREFIX: &str = "WTCFS_";
@@ -174,7 +176,7 @@ impl CasaAwPreparedCell {
     pub fn decoded_resident_bytes(&self) -> Option<usize> {
         decoded_count(&self.imaging)
             .and_then(|left| decoded_count(&self.weight).and_then(|right| left.checked_add(right)))
-            .and_then(|count| count.checked_mul(std::mem::size_of::<Complex64>()))
+            .and_then(|count| count.checked_mul(std::mem::size_of::<Complex32>()))
     }
 
     /// Conservative encoded workspace required while producing the decoded cell.
@@ -1153,11 +1155,9 @@ fn adapt_kernel_from_plane(
     plane: Array2<Complex32>,
 ) -> Result<AwConvolutionKernel, CasaAwCacheError> {
     let layout = kernel_layout(metadata)?;
-    let taps = plane
-        .iter()
-        .map(|value| Complex64::new(f64::from(value.re), f64::from(value.im)))
-        .collect();
-    AwConvolutionKernel::new(layout, taps).map_err(|error| fail(&metadata.path, error.to_string()))
+    let taps = plane.iter().copied().collect();
+    AwConvolutionKernel::new_complex32(layout, taps)
+        .map_err(|error| fail(&metadata.path, error.to_string()))
 }
 
 fn kernel_layout(metadata: &KernelMetadata) -> Result<AwKernelLayout, CasaAwCacheError> {
@@ -1645,6 +1645,36 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(metadata.identity(), expected_identity);
         drop(catalog);
+    }
+
+    #[test]
+    fn t51_native_complex32_adapter_matches_eager_widening_at_half_residency() {
+        let root = TempDir::new().unwrap();
+        write_test_cache(root.path());
+        let cache = CasaAwCache::open(root.path()).unwrap();
+        let entry = cache.entries.values().next().unwrap();
+        let native = AwConvolutionCell::new(
+            entry.identity,
+            stream_cold_kernel(&entry.imaging).unwrap(),
+            stream_cold_kernel(&entry.weight).unwrap(),
+        )
+        .unwrap();
+        let eager = |metadata: &KernelMetadata, value| {
+            AwConvolutionKernel::new(
+                kernel_layout(metadata).unwrap(),
+                vec![value; metadata.shape[0] * metadata.shape[1]],
+            )
+            .unwrap()
+        };
+        let reference = AwConvolutionCell::new(
+            entry.identity,
+            eager(&entry.imaging, Complex64::new(3.0, -1.0)),
+            eager(&entry.weight, Complex64::new(7.0, 2.0)),
+        )
+        .unwrap();
+        assert_eq!(native, reference);
+        assert_eq!(native.resident_bytes() * 2, reference.resident_bytes());
+        assert_eq!(native.resident_bytes(), (16 * 16 + 32 * 32) * 8);
     }
 
     #[test]
