@@ -521,6 +521,52 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
             manifest.write_text('{"identity":"mutated"}\n', encoding="utf-8")
             self.assertNotEqual(cold, GATE.prepared_store_snapshot(root))
 
+    def test_cold_checkpoint_survives_clean_failure(self) -> None:
+        import json
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            output = root / "receipts"
+            snapshot = {"cell/manifest.json": {"sha256": "cold", "size": 3}}
+            argv = [str(SCRIPT)]
+            for flag, path in {
+                "dirty-casa-prefix": root / "dirty",
+                "clean-casa-prefix": root / "clean",
+                "output-dir": output,
+                "artifact-root": root / "artifacts",
+                "cf-cache-root": root / "oracle",
+                "prepared-aw-casa-cache": root,
+                "prepared-aw-shared-parent": root / "shared",
+            }.items():
+                argv.extend(["--" + flag, str(path)])
+
+            def run_workload(**kwargs):
+                if kwargs["workload_path"] == GATE.CLEAN_WORKLOAD:
+                    self.assertEqual(
+                        snapshot,
+                        json.loads((output / "t51-cold-store-checkpoint.json").read_text()),
+                    )
+                    raise GATE.GateError("injected CLEAN failure")
+                return output / "dirty.json"
+
+            with (
+                mock.patch("sys.argv", argv),
+                mock.patch.object(GATE, "validate_storage_profile_environment"),
+                mock.patch.object(GATE, "validate_manifest_contract"),
+                mock.patch.object(GATE, "_load_json", return_value={}),
+                mock.patch.object(GATE, "validate_receipt", return_value={}),
+                mock.patch.object(GATE, "EXPECTED_PREPARED_AW_CELLS", 1),
+                mock.patch.object(GATE, "prepared_store_snapshot", return_value=snapshot),
+                mock.patch.object(GATE, "run_workload", side_effect=run_workload),
+            ):
+                with self.assertRaisesRegex(GATE.GateError, "injected CLEAN failure"):
+                    GATE.main()
+            self.assertEqual(
+                snapshot,
+                json.loads((output / "t51-cold-store-checkpoint.json").read_text()),
+            )
+
     def test_missing_measured_rss_fails_closed(self) -> None:
         candidate = receipt()
         candidate["benchmark_features"]["resources"]["peak_rss_bytes"] = None

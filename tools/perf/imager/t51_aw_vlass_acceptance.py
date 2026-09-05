@@ -876,6 +876,12 @@ def main() -> None:
                 )
             if cold_snapshot is None:
                 cold_snapshot = snapshot
+                checkpoint = args.output_dir / "t51-cold-store-checkpoint.json"
+                with checkpoint.open("x", encoding="utf-8") as output:
+                    json.dump(cold_snapshot, output, sort_keys=True)
+                    output.write("\n")
+                    output.flush()
+                    os.fsync(output.fileno())
                 row["prepared_aw_operation"] = "cold-load-read"
             elif snapshot != cold_snapshot:
                 raise GateError(
