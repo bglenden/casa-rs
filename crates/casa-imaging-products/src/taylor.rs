@@ -166,6 +166,12 @@ impl TaylorProducts {
             return Err(ProductsError::SourceLineageMismatch);
         }
         let normalization = inputs.problem().products().normalization();
+        let aw_projection = inputs
+            .problem()
+            .science()
+            .measurement_equation()
+            .aw_projection()
+            .is_some();
         let mosaic_sensitivity =
             if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
                 Some(MosaicSensitivity::new(principal_normal.sensitivity())?)
@@ -249,6 +255,25 @@ impl TaylorProducts {
                 let source = state
                     .coefficient_term(term)
                     .ok_or(ProductsError::SourceLineageMismatch)?;
+                if aw_projection {
+                    let response = mosaic_sensitivity
+                        .ok_or(ProductsError::SourceLineageMismatch)?
+                        .with_normal_sum_weight(principal_sum_weight)?;
+                    return source
+                        .residual()
+                        .iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            Ok(response.normalize_weighted_residual_sample(
+                                value.re,
+                                index,
+                                normalization,
+                                residual_sum_weight,
+                                inputs.problem().products().validity().primary_beam(),
+                            )? as f32)
+                        })
+                        .collect::<Result<Vec<_>, ProductsError>>();
+                }
                 normalize_taylor_plane(
                     &source
                         .residual()
@@ -265,13 +290,7 @@ impl TaylorProducts {
         let mut model = (0..terms)
             .map(|term| model_term(inputs, term, shape))
             .collect::<Result<Vec<_>, _>>()?;
-        if inputs
-            .problem()
-            .science()
-            .measurement_equation()
-            .aw_projection()
-            .is_some()
-        {
+        if aw_projection {
             let response = mosaic_sensitivity
                 .ok_or(ProductsError::SourceLineageMismatch)?
                 .with_normal_sum_weight(principal_sum_weight)?;
@@ -391,7 +410,16 @@ impl TaylorProducts {
                 analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
             }
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-                MosaicSensitivity::primary_beam_from_weight(&weight[0])?
+                if aw_projection {
+                    mosaic_sensitivity
+                        .ok_or(ProductsError::SourceLineageMismatch)?
+                        .with_normal_sum_weight(principal_sum_weight)?
+                        .weighted_primary_beam(
+                            inputs.problem().products().validity().primary_beam(),
+                        )?
+                } else {
+                    MosaicSensitivity::primary_beam_from_weight(&weight[0])?
+                }
             }
             None if requests_primary_beam => return Err(ProductsError::UnsupportedProblem),
             None => MosaicSensitivity::primary_beam_from_weight(&weight[0])?,

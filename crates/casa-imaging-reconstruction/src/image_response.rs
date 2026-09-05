@@ -97,8 +97,8 @@ pub struct MosaicSensitivity<'a> {
 impl<'a> MosaicSensitivity<'a> {
     /// Bind finite sensitivity with positive support.
     ///
-    /// Negative FFT ringing remains in the source plane but never supplies PB
-    /// support. Empty, non-finite, or wholly unsupported state is rejected.
+    /// Negative FFT ringing remains available for each operation's native
+    /// support law. Empty, non-finite, or wholly unsupported state is rejected.
     pub fn new(values: &'a [f64]) -> Result<Self, ImageResponseError> {
         if values.is_empty() || values.iter().any(|value| !value.is_finite()) {
             return Err(ImageResponseError::GeneratedNonfinite);
@@ -231,6 +231,75 @@ impl<'a> MosaicSensitivity<'a> {
         } else {
             Ok(0.0)
         }
+    }
+
+    /// Normalize a residual through CASA's Float sum-weight and weight-image stages.
+    ///
+    /// The normal sum weight is bound by [`Self::with_normal_sum_weight`]. All
+    /// Taylor terms divide by the supplied principal publication sum weight.
+    /// Flat-noise uses `sqrt(abs(weight)) * PBScale`; flat-sky uses `weight`.
+    /// Both compare that denominator strictly against `cutoff * PBScale^2`.
+    /// This numeric support is separate from any published PB mask.
+    pub fn normalize_weighted_residual_sample(
+        self,
+        value: f64,
+        index: usize,
+        normalization: ProductNormalization,
+        published_sum_weight: f64,
+        policy: PrimaryBeamValidityPolicy,
+    ) -> Result<f64, ImageResponseError> {
+        let mut residual = value as f32;
+        let sum_weight = published_sum_weight as f32;
+        if !residual.is_finite() || !sum_weight.is_finite() {
+            return Err(ImageResponseError::GeneratedNonfinite);
+        }
+        if sum_weight != 1.0 {
+            residual = if f64::from(sum_weight) > 1.0e-7 {
+                residual / sum_weight
+            } else {
+                0.0
+            };
+        }
+        let weight = (self.value(index)? / self.normal_sum_weight) as f32;
+        if !weight.is_finite() {
+            return Err(ImageResponseError::GeneratedNonfinite);
+        }
+        let denominator = match normalization {
+            ProductNormalization::FlatNoise => weight.abs().sqrt() * self.model_pb_scale,
+            ProductNormalization::FlatSky => weight,
+            ProductNormalization::UnitResponse => {
+                return Err(ImageResponseError::UnsupportedNormalization);
+            }
+        };
+        let pb_scale = f64::from(self.model_pb_scale);
+        let cutoff = (f64::from(policy.cutoff().abs()) * pb_scale * pb_scale) as f32;
+        let normalized = if denominator > cutoff {
+            residual / denominator
+        } else {
+            0.0
+        };
+        Self::finite(f64::from(normalized))
+    }
+
+    /// Form CASA's cutoff-blanked Float PB from the bound normalized weight.
+    ///
+    /// This weight-image route takes the absolute value before its square root,
+    /// matching native model conversion. General scalar mosaic products may
+    /// instead use the unnormalized positive-sensitivity [`Self::primary_beam`].
+    pub fn weighted_primary_beam(
+        self,
+        policy: PrimaryBeamValidityPolicy,
+    ) -> Result<Vec<f32>, ImageResponseError> {
+        (0..self.values.len())
+            .map(|index| {
+                let pb = self.model_primary_beam_at(index)?;
+                Ok(if Self::supported(pb, policy) {
+                    pb as f32
+                } else {
+                    0.0
+                })
+            })
+            .collect()
     }
 
     /// Normalize a complete raw plane without changing its separate PB mask.
@@ -405,6 +474,50 @@ mod tests {
     }
 
     #[test]
+    fn t51_weighted_residual_support_is_not_the_published_pb_mask() {
+        let response = MosaicSensitivity::new(&[4.0, 0.2, 0.4, 0.5, -0.5]).unwrap();
+        let pb = policy(0.1);
+        assert!(
+            response
+                .weighted_primary_beam(pb)
+                .unwrap()
+                .iter()
+                .all(|value| *value > 0.0)
+        );
+        let flat_sky = (0..5)
+            .map(|index| {
+                response
+                    .normalize_weighted_residual_sample(
+                        2.0,
+                        index,
+                        ProductNormalization::FlatSky,
+                        2.0,
+                        pb,
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(flat_sky, [0.25, 0.0, 0.0, 2.0, 0.0]);
+        let flat_noise = response
+            .normalize_weighted_residual_sample(2.0, 4, ProductNormalization::FlatNoise, 2.0, pb)
+            .unwrap();
+        assert!((flat_noise - 1.0 / 2.0_f64.sqrt()).abs() < 1.0e-7);
+        assert_eq!(
+            MosaicSensitivity::new(&[1.0])
+                .unwrap()
+                .normalize_weighted_residual_sample(
+                    1.0,
+                    0,
+                    ProductNormalization::FlatNoise,
+                    f64::from(1.0e-7_f32),
+                    pb
+                )
+                .unwrap(),
+            10_000_000.0
+        );
+    }
+
+    #[test]
     #[ignore = "requires actual native first-three-step and nonzero-baseline scale12 model conversions"]
     fn t51_native_model_weight_conversion_matches_shared_response() {
         let root = std::path::PathBuf::from(
@@ -563,6 +676,93 @@ mod tests {
                 }
                 let nrms = (difference / reference).sqrt();
                 eprintln!("native_model_weight_edges term={term} divide={divide} nrms={nrms:.17e}");
+                assert!(nrms <= 1.0e-3);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires native residual normalization and PB cutoff-edge capture"]
+    fn t51_native_residual_and_pb_edges_match_shared_response() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_T51_NATIVE_RESIDUAL_WEIGHT_FIXTURE")
+                .expect("native residual/PB fixture"),
+        );
+        let read = |name: &str, length: usize| {
+            let bytes = std::fs::read(root.join(name)).expect("native Float fixture");
+            assert_eq!(bytes.len(), length * 4);
+            bytes
+                .chunks_exact(4)
+                .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+                .collect::<Vec<_>>()
+        };
+        let cells = 512 * 512;
+        let scalars = read("scalars.f32le", 4);
+        let policy = policy(scalars[0]);
+        let weights = read("weight0.f32le", cells);
+        let raw = weights
+            .iter()
+            .map(|value| f64::from(*value) * 17.0)
+            .collect::<Vec<_>>();
+        let response = MosaicSensitivity::new(&raw)
+            .unwrap()
+            .with_normal_sum_weight(17.0)
+            .unwrap();
+        assert_eq!(response.model_pb_scale, scalars[1]);
+        let native_pb = read("native_pb0.f32le", cells);
+        let native_pb_mask = read("native_pb_mask.f32le", cells);
+        let pb = response.weighted_primary_beam(policy).unwrap();
+        assert_eq!(
+            pb, native_pb,
+            "native Float PB payload including negative weight and cutoff edges"
+        );
+        for (index, expected) in native_pb_mask.iter().enumerate() {
+            assert_eq!(
+                pb[index] > 0.0,
+                *expected != 0.0,
+                "native PB mask at pixel {index}"
+            );
+        }
+        for term in 0..2 {
+            let input = read(&format!("residual_input{term}.f32le"), cells);
+            for (name, normalization) in [
+                ("flatnoise", ProductNormalization::FlatNoise),
+                ("flatsky", ProductNormalization::FlatSky),
+            ] {
+                let expected = read(&format!("{name}_residual{term}.f32le"), cells);
+                let support = read(&format!("{name}_support{term}.f32le"), cells);
+                let pixel_mask = read(&format!("{name}_pixel_mask{term}.f32le"), cells);
+                let mut difference = 0.0;
+                let mut reference = 0.0;
+                for index in 0..cells {
+                    // The native tt1 sum weight is signed and different, but
+                    // divideImageByWeightVal uses tt0 for every Taylor term.
+                    let actual = response
+                        .normalize_weighted_residual_sample(
+                            f64::from(input[index]),
+                            index,
+                            normalization,
+                            f64::from(scalars[2]),
+                            policy,
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        actual != 0.0,
+                        support[index] != 0.0,
+                        "{name} tt{term} numeric support at pixel {index}"
+                    );
+                    assert_eq!(
+                        pb[index] > 0.0,
+                        pixel_mask[index] != 0.0,
+                        "{name} tt{term} independent PB pixel mask at {index}"
+                    );
+                    difference += (actual - f64::from(expected[index])).powi(2);
+                    reference += f64::from(expected[index]).powi(2);
+                }
+                let nrms = (difference / reference).sqrt();
+                eprintln!(
+                    "native_residual_weight {name} tt{term} nrms={nrms:.17e} exact_support=true exact_pb_mask=true"
+                );
                 assert!(nrms <= 1.0e-3);
             }
         }

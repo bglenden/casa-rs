@@ -2060,6 +2060,14 @@ fn run_taylor_minor_cycle(
         })
         .collect::<Result<Vec<_>, MinorCycleError>>()?;
     if imaging_science_trace_enabled() {
+        eprintln!(
+            "imaging_minor_response S_W={:.17e} S_C={:.17e} raw_h00={:.17e} normalized_h00={:.17e} normal_scale={:.17e}",
+            moment_zero.sum_weight(),
+            view.published_sum_weights()[0],
+            psf_peak,
+            scale_systems[0].h00,
+            response.normal_scale,
+        );
         for (term, residual) in residuals.iter().enumerate() {
             let label = match term {
                 0 => "minor_residual_tt0_enter",
@@ -3011,7 +3019,7 @@ struct TaylorSearchWindow {
 struct TaylorSolveResponse<'a> {
     directional: Option<(crate::MosaicSensitivity<'a>, crate::MinorCycleImageResponse)>,
     normal_scale: f64,
-    residual_scale: f64,
+    published_sum_weight: f64,
 }
 
 impl<'a> TaylorSolveResponse<'a> {
@@ -3023,7 +3031,7 @@ impl<'a> TaylorSolveResponse<'a> {
             return Ok(Self {
                 directional: None,
                 normal_scale: 1.0,
-                residual_scale: 1.0,
+                published_sum_weight: 1.0,
             });
         };
         let principal = view
@@ -3048,16 +3056,19 @@ impl<'a> TaylorSolveResponse<'a> {
                 binding,
             )),
             normal_scale: 1.0 / normal_weight,
-            residual_scale: normal_weight / published_weight,
+            published_sum_weight: published_weight,
         })
     }
 
     fn residual(self, value: f64, index: usize) -> Result<f64, MinorCycleError> {
         let normalized = if let Some((response, binding)) = self.directional {
-            if !response.valid_at(index, binding.policy())? {
-                return Ok(0.0);
-            }
-            response.normalize_sample(value, index, binding.normalization())? * self.residual_scale
+            response.normalize_weighted_residual_sample(
+                value,
+                index,
+                binding.normalization(),
+                self.published_sum_weight,
+                binding.policy(),
+            )?
         } else {
             value
         };
