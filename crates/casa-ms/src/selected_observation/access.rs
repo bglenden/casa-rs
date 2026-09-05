@@ -3103,10 +3103,7 @@ mod aw_pointing_tests {
             .iter()
             .find(|r| r[0] == "selected_baseline")
             .unwrap();
-        let midpoint = records
-            .iter()
-            .find(|r| r[0] == "grouped_midpoint")
-            .unwrap();
+        let midpoint = records.iter().find(|r| r[0] == "grouped_midpoint").unwrap();
         let native_midpoint = [
             midpoint[1].parse::<f64>().unwrap(),
             midpoint[2].parse::<f64>().unwrap(),
