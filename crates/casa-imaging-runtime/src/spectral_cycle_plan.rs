@@ -685,7 +685,27 @@ impl SpectralCyclePlan {
             }
         };
         let complete_data = bind_aw_projection(complete_data, &policy)?;
+        if imaging_plan_diagnostics_enabled() {
+            eprintln!(
+                "imaging_operator_residency_summary phase={:?} residency={:?}",
+                pass.phase(),
+                complete_data.residency(),
+            );
+        }
         let (mut physical, complete_data) = complete_data.compose(&physical)?;
+        if imaging_plan_diagnostics_enabled() {
+            let alternative = physical.execution_dag().resource_alternative();
+            for allocation in &alternative.demand.memory {
+                eprintln!(
+                    "imaging_operator_memory_demand allocation={} hard_bytes={} preferred_bytes={}",
+                    allocation.allocation_id, allocation.hard_bytes, allocation.preferred_bytes,
+                );
+            }
+            eprintln!(
+                "imaging_operator_fixed_demand caches={:?} overhead={:?} headroom={:?}",
+                alternative.demand.caches, alternative.demand.overhead, alternative.headroom,
+            );
+        }
         if let Some(bounds) = policy.visibility_write {
             if problem
                 .observation_transaction()
