@@ -4292,6 +4292,48 @@ struct SpectralScienceSample {
 }
 
 impl SpectralScienceProbe {
+    fn emit_actual_aw_accumulator(
+        operator: &SpectralSlabOperator,
+    ) -> Result<(), SpectralOperatorError> {
+        let grid = operator
+            .psf_grids
+            .as_ref()
+            .and_then(|grids| grids.first())
+            .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?;
+        if grid.len() > 1_048_576 {
+            return Err(SpectralOperatorError::DiagnosticConfiguration);
+        }
+        let sum_weight = operator
+            .sum_weights
+            .first()
+            .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?;
+        let published = operator
+            .aw_published_sum_weights
+            .as_ref()
+            .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?;
+        eprintln!("actual_psf_grid_scope\tcumulative_prefix\ttaylor_0");
+        eprintln!("actual_psf_grid_shape\t{}\t{}", grid.nrows(), grid.ncols());
+        eprintln!("actual_psf_sum_weight\t{sum_weight:.17e}");
+        for (lane, values) in published.normal.iter().enumerate() {
+            let value = values
+                .first()
+                .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?;
+            eprintln!("actual_published_cfs_sum_weight\t{lane}\t{value:.17e}");
+        }
+        let mut nonzero = 0;
+        for ((x, y), value) in grid.indexed_iter() {
+            if *value != Complex64::default() {
+                eprintln!(
+                    "actual_psf_grid\t{x}\t{y}\t{:.17e}\t{:.17e}",
+                    value.re, value.im
+                );
+                nonzero += 1;
+            }
+        }
+        eprintln!("actual_psf_grid_complete\t{nonzero}");
+        Ok(())
+    }
+
     fn configured(
         enabled: bool,
         config: impl FnOnce() -> Result<Option<CumulativeAwProbeConfig>, SpectralOperatorError>,
@@ -4927,6 +4969,11 @@ impl CompleteDataOwnerState {
                     .and_then(|probe| probe.cumulative.as_ref())
                     .is_some_and(CumulativeAwScienceProbe::complete)
             {
+                SpectralScienceProbe::emit_actual_aw_accumulator(
+                    self.operators
+                        .first()
+                        .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?,
+                )?;
                 self.science_probe
                     .take()
                     .expect("complete diagnostic exists")
@@ -12771,6 +12818,18 @@ mod tests {
             .unwrap();
         assert!(observer.cumulative.is_none());
         assert_eq!(observer.finish(), Ok(()));
+    }
+
+    #[test]
+    fn t51_actual_aw_accumulator_observation_is_read_only() {
+        let mut operator = operator();
+        operator.aw_published_sum_weights = Some(AwPublishedSumWeights::new(3, 0));
+        operator.push(samples(&[[0.4, -0.7]])[0]).unwrap();
+        let grid = operator.psf_grids.clone();
+        let sums = operator.sum_weights.clone();
+        SpectralScienceProbe::emit_actual_aw_accumulator(&operator).unwrap();
+        assert_eq!(operator.psf_grids, grid);
+        assert_eq!(operator.sum_weights, sums);
     }
 
     #[test]
