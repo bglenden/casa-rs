@@ -11313,6 +11313,59 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires retained native 512-square AW grid and completion traces"]
+    fn t51_native_aw_completion_matches_production_fft_and_normalization() {
+        let grid_path = std::env::var("CASA_RS_T51_NATIVE_GRID").expect("native grid trace");
+        let completion_path =
+            std::env::var("CASA_RS_T51_NATIVE_COMPLETION").expect("native completion trace");
+        let mut grid = Array2::zeros((512, 512));
+        let mut seen = std::collections::BTreeSet::new();
+        for line in std::fs::read_to_string(grid_path).unwrap().lines() {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.first() != Some(&"actual_psf_grid") {
+                continue;
+            }
+            let x = fields[1].parse::<usize>().unwrap();
+            let y = fields[2].parse::<usize>().unwrap();
+            assert!(seen.insert((x, y)), "duplicate grid coordinate");
+            grid[(x, y)] = Complex64::new(fields[3].parse().unwrap(), fields[4].parse().unwrap());
+        }
+        assert!(!seen.is_empty());
+        let mut geometry = geometry();
+        geometry.image_shape = [512, 512];
+        geometry.grid_shape = [512, 512];
+        geometry.image_blc = [0, 0];
+        let reserved = super::fft_resident_complex_values_for_shape([512, 512]).unwrap();
+        PreparedFft::new([512, 512], reserved)
+            .unwrap()
+            .transform(&mut grid, true);
+        let gridder = ConvolutionOperator::new(&geometry, None).unwrap();
+        let mut image = collect_image_planes(Some(&[grid]), &geometry, &gridder, Some(20))
+            .unwrap()
+            .unwrap();
+        normalize_direction_dependent_psf(&mut image, 512 * 512, &[1.0]).unwrap();
+        let mut squared_error = 0.0;
+        let mut squared_reference = 0.0;
+        seen.clear();
+        for line in std::fs::read_to_string(completion_path).unwrap().lines() {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            if fields.first() != Some(&"completed_psf") {
+                continue;
+            }
+            let x = fields[1].parse::<usize>().unwrap();
+            let y = fields[2].parse::<usize>().unwrap();
+            assert!(x < 512 && y < 512 && seen.insert((x, y)));
+            let reference = fields[5].parse::<f64>().unwrap();
+            squared_error += (image[x * 512 + y].re - reference).powi(2);
+            squared_reference += reference.powi(2);
+        }
+        assert_eq!(seen.len(), 512 * 512);
+        let nrms = (squared_error / squared_reference).sqrt();
+        eprintln!("native AW completion NRMS: {nrms:.12e}");
+        assert!(nrms <= 1.0e-3);
+    }
+
+    #[test]
     fn direction_dependent_psf_normalizes_by_real_peak_without_phase_rotation() {
         let original = [
             Complex64::new(1.0, 8.0),
