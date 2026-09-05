@@ -2974,7 +2974,9 @@ fn requested_products(
     if weight_image {
         products.push(ProductKind::Weight);
     }
-    if !matches!(normalization, ProductNormalization::UnitResponse) {
+    // AW keeps sensitivity internal and publishes its normalization as `.weight`.
+    let aw_weight_image = weight_image && !mosaic;
+    if !matches!(normalization, ProductNormalization::UnitResponse) && !aw_weight_image {
         products.push(ProductKind::Sensitivity);
     }
     if write_primary_beam || pbcor {
@@ -3610,7 +3612,7 @@ mod tests {
                 small_scale_bias: 0.0,
             },
             false,
-            casa_imaging_model::ProductNormalization::UnitResponse,
+            casa_imaging_model::ProductNormalization::FlatNoise,
             false,
             true,
             true,
