@@ -1317,9 +1317,10 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
     let measurement_set = four_spw_vla_measurement_set(root.path());
     let cache = root.path().join("aw-cache");
     write_aw_test_cache(&cache);
+    let image_name = root.path().join("clean-mtmfs");
     let mut imaging = request(
         measurement_set,
-        root.path().join("clean-mtmfs"),
+        image_name.clone(),
         ContinuumAlgorithm::Mtmfs {
             terms: 2,
             scales_px: vec![0.0],
@@ -1329,6 +1330,10 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
     imaging.data_description = None;
     imaging.channel_count = Some(8);
     imaging.iterations = 1;
+    imaging.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
+        blc: [3, 4],
+        trc: [11, 12],
+    }]);
     imaging.aw_projection = Some(aw_projection(cache, false));
     imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::AwProjection];
     imaging.resource_policy = resource_policy_for_task_requirements(&imaging.task_requirements);
@@ -1339,6 +1344,16 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
+    let published_mask = product_plane(&image_name, ".mask");
+    for y in 0..16 {
+        for x in 0..16 {
+            let selected = (3..=11).contains(&x) && (4..=12).contains(&y);
+            for cycle in &result.outcome.output.minor_cycles {
+                assert_eq!(cycle.mask_support[x * 16 + y], selected);
+            }
+            assert_eq!(published_mask[[x, y, 0, 0]], f32::from(selected));
+        }
+    }
 }
 
 #[test]

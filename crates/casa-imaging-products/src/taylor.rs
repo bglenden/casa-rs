@@ -441,13 +441,13 @@ impl TaylorProducts {
         } else {
             vec![0.0; cells]
         };
+        let reconstruction_mask =
+            crate::authority::reconstruction_mask_for_domain(inputs, domain_role)?;
         let clean_mask = weight[0]
             .iter()
             .enumerate()
             .map(|(index, value)| {
-                let selected = inputs
-                    .reconstruction_mask()
-                    .is_none_or(|mask| mask.support()[index]);
+                let selected = reconstruction_mask.is_none_or(|mask| mask.support()[index]);
                 (selected && value.is_finite() && *value > 0.0) as u8 as f32
             })
             .collect();
