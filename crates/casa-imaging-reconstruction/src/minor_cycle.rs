@@ -4342,7 +4342,7 @@ mod tests {
         .expect("native mask with synthetic matching coordinates");
         let mut controls = MinorCycleProgram::for_problem(&problem)
             .expect("native MT-MFS controls")
-            .with_fixed_cycle_threshold(Some(0.028_467_236_086_726_189))
+            .with_fixed_cycle_threshold(Some(0.028_467_236_086_726_19))
             .record_component_sequence(30)
             .expect("bounded native step trace");
         let binding = raw_response.then(|| {

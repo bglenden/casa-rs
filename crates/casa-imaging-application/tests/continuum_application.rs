@@ -1619,7 +1619,8 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
             "{suffix} explicit CASA mask"
         );
     }
-    for suffix in [".pb.tt0"] {
+    {
+        let suffix = ".pb.tt0";
         let product = open(suffix);
         let shape = product.shape().to_vec();
         let valid = product

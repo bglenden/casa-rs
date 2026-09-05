@@ -11,6 +11,7 @@ use std::{fs, os::unix::fs::MetadataExt, path::PathBuf, process::Command, time::
 
 #[test]
 #[ignore = "requires retained full CF cache and fresh external store; release only with a 55s external timeout"]
+#[allow(clippy::assertions_on_constants)]
 fn t51_paired_cf_cold_load_discriminator() {
     assert!(
         !cfg!(debug_assertions),

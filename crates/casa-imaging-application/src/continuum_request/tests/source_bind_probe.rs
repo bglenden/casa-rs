@@ -7,6 +7,7 @@ use std::{fs, os::unix::fs::MetadataExt, process::Command, time::Instant};
 
 #[test]
 #[ignore = "requires the owner-initialized T51 MS, full CF path, and external scratch; release only under a 60s external timeout"]
+#[allow(clippy::assertions_on_constants)]
 fn t51_full_aw_source_bind_only() {
     assert!(!cfg!(debug_assertions), "use a release test binary");
     let started = Instant::now();

@@ -1709,7 +1709,7 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     let delta_id = delta.delta_id();
     let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, Some(delta));
     // The data-side dirty plane remains T19 evidence beside the exact residual.
-    let data_side_content = evidence.normal_state_content_identity();
+    let data_side_content = evidence.primitives().normal_state_content_identity();
     let sample_count = evidence.completion().sample_count();
     let block_count = evidence.completion().block_count();
     let weighting_generation = evidence.completion().weighting_generation();
@@ -1774,7 +1774,7 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     let named = lifecycle.initial_empty().expect("empty named generation");
     let input_id = named.generation_id();
     let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, None);
-    let data_side_content = evidence.normal_state_content_identity();
+    let data_side_content = evidence.primitives().normal_state_content_identity();
     let data_side_dirty = evidence.primitives().dirty().to_vec();
 
     let owner =

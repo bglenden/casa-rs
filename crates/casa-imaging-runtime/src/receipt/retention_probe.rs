@@ -13,6 +13,7 @@ use std::{
 
 #[test]
 #[ignore = "requires retained T51 receipts; release binary with an external 60s timeout"]
+#[allow(clippy::assertions_on_constants)]
 fn t51_retained_receipt_decode_cost() {
     assert!(!cfg!(debug_assertions));
     let root = PathBuf::from(std::env::var_os("CASA_RS_T51_RETAINED_RECEIPTS").unwrap())
