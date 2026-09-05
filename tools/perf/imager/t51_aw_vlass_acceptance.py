@@ -13,6 +13,9 @@ import subprocess
 import sys
 from typing import Any
 
+from perf_harness.image_compare import _validate_product_metadata
+from perf_harness.tolerances import evaluate_comparison_tolerances
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "tools/perf/imager/run_workload.py"
@@ -413,7 +416,31 @@ def validate_receipt(
             raise GateError(f"{workload_id}: {suffix} was not compared")
         metadata = _object(product.get("metadata"), f"{suffix}.metadata")
         if metadata.get("status") != "matched":
-            raise GateError(f"{workload_id}: {suffix} metadata differs")
+            if metadata.get("field_parity") != {
+                "shape": True,
+                "unit": True,
+                "coordinates": True,
+                "restoring_beam": False,
+                "masks": True,
+            }:
+                raise GateError(f"{workload_id}: {suffix} non-beam metadata differs")
+            try:
+                _validate_product_metadata(
+                    product,
+                    suffix=suffix,
+                    required=True,
+                    products=products,
+                    tolerance_contract=expected_workload["comparison"].get(
+                        "tolerances"
+                    ),
+                    metadata_contract=None,
+                    left_label="casa-rs",
+                    right_label="CASA",
+                )
+            except ValueError as error:
+                raise GateError(
+                    f"{workload_id}: {suffix} metadata differs: {error}"
+                ) from error
         if product.get("topology_parity") is not True:
             raise GateError(f"{workload_id}: {suffix} validity topology differs")
         full = _object(product.get("full_array"), f"{suffix}.full_array")
@@ -436,6 +463,11 @@ def validate_receipt(
     tolerance = _object(comparison.get("tolerance_evaluation"), "tolerance_evaluation")
     if tolerance.get("status") != "passed":
         raise GateError(f"{workload_id}: frozen tolerance contract did not pass")
+    contract = expected_workload["comparison"].get("tolerances")
+    if contract is not None:
+        evaluated = evaluate_comparison_tolerances(comparison, contract)
+        if evaluated.get("status") != "passed":
+            raise GateError(f"{workload_id}: measured frozen tolerances did not pass")
 
     return {
         "workload": workload_id,

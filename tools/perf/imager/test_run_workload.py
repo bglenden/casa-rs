@@ -621,6 +621,50 @@ class CompletedRecipeReceiptRecoveryTests(unittest.TestCase):
             self.assertEqual(0, recovered["exit_code"])
 
 
+class RetainedProductBindingTests(unittest.TestCase):
+    def test_shell_reports_explicit_prefix_without_keep_root(self) -> None:
+        script = (
+            run_workload.REPO_ROOT / "scripts/bench-imager-vs-casa.sh"
+        ).read_text()
+        start = script.rfind(
+            "\nif ", 0, script.index('  echo "Kept benchmark products:"')
+        )
+        end = script.index('\nif [[ "$phase_probe_enabled"', start)
+        for root, rust, reused, expected in (
+            (
+                "",
+                "/native/dirty",
+                "/frozen/casa",
+                {"rust_prefix": "/native/dirty", "casa_prefix": "/frozen/casa"},
+            ),
+            (
+                "/retained",
+                "/retained/rust",
+                "",
+                {"product_root": "/retained", "rust_prefix": "/retained/rust"},
+            ),
+            ("", "", "", {}),
+        ):
+            with self.subTest(root=root, rust=rust):
+                result = subprocess.run(
+                    ["bash", "-eu", "-c", script[start:end]],
+                    env={
+                        **os.environ,
+                        "keep_output_root": root,
+                        "rust_keep_prefix": rust,
+                        "reuse_rust_prefix": "",
+                        "reuse_casa_prefix": reused,
+                        "casa_keep_prefix": "",
+                    },
+                    check=True,
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(
+                    expected, run_workload.parse_product_paths(result.stdout)
+                )
+
+
 class StageBreakdownTests(unittest.TestCase):
     def test_continuum_residual_comparison_is_bound_to_the_run_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

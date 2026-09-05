@@ -1180,17 +1180,19 @@ if [[ -n "$fitspw" && "$save_continuum_residual" != "0" && "$save_continuum_resi
   echo
 fi
 
-if [[ -n "$keep_output_root" ]]; then
+if [[ -n "$keep_output_root" || -n "$reuse_rust_prefix" || -n "$rust_keep_prefix" || -n "$reuse_casa_prefix" || -n "$casa_keep_prefix" ]]; then
   echo "Kept benchmark products:"
-  echo "  product_root=$keep_output_root"
+  if [[ -n "$keep_output_root" ]]; then
+    echo "  product_root=$keep_output_root"
+  fi
   if [[ -n "$reuse_rust_prefix" ]]; then
     echo "  rust_prefix=$reuse_rust_prefix"
-  else
+  elif [[ -n "$rust_keep_prefix" ]]; then
     echo "  rust_prefix=$rust_keep_prefix"
   fi
   if [[ -n "$reuse_casa_prefix" ]]; then
     echo "  casa_prefix=$reuse_casa_prefix"
-  else
+  elif [[ -n "$casa_keep_prefix" ]]; then
     echo "  casa_prefix=$casa_keep_prefix"
   fi
   echo

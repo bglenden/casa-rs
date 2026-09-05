@@ -272,6 +272,90 @@ class T51AwVlassAcceptanceTests(unittest.TestCase):
         self.assertEqual(1024, result["prepared_aw"]["inventory"]["paired_cells"])
         self.assertEqual(4, result["prepared_aw"]["reader_sessions"][0]["reads"])
 
+    def test_scientific_beam_roundoff_uses_frozen_contract(self) -> None:
+        expected = workload()
+        expected["comparison"]["tolerances"] = {
+            "contract_version": 2,
+            "require_full_array": False,
+            "default": {"require_topology_parity": True},
+            "products": {
+                ".image.tt0": {
+                    "beam_kernel_nrmse": 0.001,
+                    "beam_area_relative": 0.001,
+                }
+            },
+        }
+        candidate = receipt()
+        products = candidate["results"]["product_comparison"]["products"]
+        for product in products.values():
+            product["shape"] = [4096, 4096]
+            product["metadata_parity_required"] = True
+            left = {
+                "status": "complete",
+                "shape": [4096, 4096],
+                "unit": "Jy/beam",
+                "coordinates": {},
+                "masks": [],
+                "errors": [],
+                "restoring_beam": {
+                    "major": {"value": 2.9601199626922607, "unit": "arcsec"},
+                    "minor": {"value": 2.088184356689453, "unit": "arcsec"},
+                    "positionangle": {"value": 71.21408081054688, "unit": "deg"},
+                },
+            }
+            right = copy.deepcopy(left)
+            right["restoring_beam"]["major"]["value"] = 2.960120439529419
+            product["metadata"] = {
+                "status": "mismatch",
+                "parity": False,
+                "left": left,
+                "right": right,
+                "field_parity": {
+                    "shape": True,
+                    "unit": True,
+                    "coordinates": True,
+                    "restoring_beam": False,
+                    "masks": True,
+                },
+            }
+        GATE.validate_receipt(
+            candidate, expected_workload=expected, expected_casa_prefix=PREFIX
+        )
+
+        for defect in (
+            "coordinates",
+            "unlinked_beam",
+            "missing_beam",
+            "failed_beam",
+            "no_contract",
+        ):
+            with self.subTest(defect=defect):
+                broken = copy.deepcopy(candidate)
+                contract = copy.deepcopy(expected)
+                metadata = broken["results"]["product_comparison"]["products"][
+                    ".psf.tt0"
+                ]["metadata"]
+                if defect == "coordinates":
+                    metadata["left"]["coordinates"] = {"wrong": 1}
+                    metadata["field_parity"]["coordinates"] = False
+                elif defect == "unlinked_beam":
+                    metadata["left"]["restoring_beam"]["major"]["value"] += 0.01
+                elif defect == "missing_beam":
+                    metadata["left"]["restoring_beam"] = {}
+                elif defect == "failed_beam":
+                    for product in broken["results"]["product_comparison"][
+                        "products"
+                    ].values():
+                        product["metadata"]["left"]["restoring_beam"]["major"][
+                            "value"
+                        ] = 5.0
+                else:
+                    del contract["comparison"]["tolerances"]
+                with self.assertRaises(GATE.GateError):
+                    GATE.validate_receipt(
+                        broken, expected_workload=contract, expected_casa_prefix=PREFIX
+                    )
+
     def test_missing_aw_inventory_receipt_fails_closed(self) -> None:
         candidate = receipt()
         candidate["results"]["backend_plan_logs"]["aw_cache_inventory"] = []
