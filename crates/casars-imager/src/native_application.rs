@@ -143,7 +143,8 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
     let iterations = if config.dirty_only { 0 } else { config.niter };
     let cycle_iterations = config.minor_cycle_length.min(iterations.max(1));
     let task_requirements = task_requirements(config);
-    let mosaic = task_requirements.contains(&TaskRequirement::MosaicGridder);
+    let direction_dependent = task_requirements.contains(&TaskRequirement::MosaicGridder)
+        || task_requirements.contains(&TaskRequirement::AwProjection);
     let resource_policy = if config.parallel == Some(true) {
         ResourcePolicy::Balanced
     } else {
@@ -198,7 +199,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
         primary_beam_cutoff: config.mosaic_pb_limit.abs(),
-        normalization: if mosaic {
+        normalization: if direction_dependent {
             match config.normalization {
                 AwProjectNormalization::FlatNoise => ProductNormalization::FlatNoise,
                 AwProjectNormalization::FlatSky => ProductNormalization::FlatSky,
@@ -553,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn product_normalization_is_mosaic_specific() {
+    fn product_normalization_is_direction_dependent() {
         assert_eq!(
             application_request(&config(&[])).unwrap().normalization,
             ProductNormalization::UnitResponse
@@ -575,6 +576,31 @@ mod tests {
             .unwrap()
             .normalization,
             ProductNormalization::FlatSky
+        );
+    }
+
+    #[test]
+    fn aw_product_normalization_preserves_the_requested_normtype() {
+        for (normtype, expected) in [
+            ("flatnoise", ProductNormalization::FlatNoise),
+            ("flatsky", ProductNormalization::FlatSky),
+        ] {
+            assert_eq!(
+                application_request(&config(&["--gridder", "awproject", "--normtype", normtype]))
+                    .expect("AW request")
+                    .normalization,
+                expected,
+            );
+        }
+        assert!(
+            application_request(&config(&[
+                "--gridder",
+                "awproject",
+                "--normtype",
+                "pbsquare"
+            ]))
+            .expect_err("unimplemented AW normalization must not become unit response")
+            .contains("pbsquare normalization")
         );
     }
 

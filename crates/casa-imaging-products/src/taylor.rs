@@ -51,14 +51,25 @@ fn normalize_channel_major_sum_weight(
 fn normalize_taylor_plane(
     values: &[f32],
     normalization: ProductNormalization,
-    principal_sum_weight: f64,
+    normal_sum_weight: f64,
+    residual_sum_weight: f64,
     mosaic_sensitivity: Option<MosaicSensitivity<'_>>,
 ) -> Result<Vec<f32>, ProductsError> {
     match (mosaic_sensitivity, normalization) {
         (Some(sensitivity), ProductNormalization::FlatNoise | ProductNormalization::FlatSky) => {
-            sensitivity.normalize(values, normalization)
+            let mut normalized = sensitivity.normalize(values, normalization)?;
+            // CASA normalizes weight by the normal sum and residual by the
+            // publication sum before applying the PB denominator.
+            let scale = normal_sum_weight / residual_sum_weight;
+            for value in &mut normalized {
+                *value = (f64::from(*value) * scale) as f32;
+                if !value.is_finite() {
+                    return Err(ProductsError::GeneratedNonfinite);
+                }
+            }
+            Ok(normalized)
         }
-        _ => normalize_plane(values, normalization, principal_sum_weight),
+        _ => normalize_plane(values, normalization, residual_sum_weight),
     }
 }
 
@@ -245,6 +256,7 @@ impl TaylorProducts {
                         .map(|value| value.re as f32)
                         .collect::<Vec<_>>(),
                     normalization,
+                    principal_sum_weight,
                     residual_sum_weight,
                     mosaic_sensitivity,
                 )
@@ -904,6 +916,7 @@ mod tests {
                 &raw,
                 ProductNormalization::FlatNoise,
                 8.0,
+                8.0,
                 Some(sensitivity),
             )
             .expect("flat-noise Taylor normalization"),
@@ -914,11 +927,48 @@ mod tests {
                 &raw,
                 ProductNormalization::FlatSky,
                 8.0,
+                8.0,
                 Some(sensitivity),
             )
             .expect("flat-sky Taylor normalization"),
             [2.0, 4.0, 8.0, 0.0]
         );
+    }
+
+    #[test]
+    fn aw_taylor_normalization_keeps_residual_and_sensitivity_sum_weights_distinct() {
+        let sensitivity =
+            crate::MosaicSensitivity::new(&[16.0, 4.0, 1.0, 0.0]).expect("AW sensitivity");
+        let raw = [32.0, 16.0, 8.0, 4.0];
+        // CASA divides residuals by CFS sumwt=4, then uses weight=S/WTCF_sumwt
+        // with WTCF_sumwt=8 for its direction-dependent denominator.
+        for (normalization, expected) in [
+            (ProductNormalization::FlatNoise, [4.0, 4.0, 4.0, 0.0]),
+            (ProductNormalization::FlatSky, [4.0, 8.0, 16.0, 0.0]),
+            (ProductNormalization::UnitResponse, [8.0, 4.0, 2.0, 1.0]),
+        ] {
+            assert_eq!(
+                super::normalize_taylor_plane(&raw, normalization, 8.0, 4.0, Some(sensitivity))
+                    .expect("separate AW normalization sums"),
+                expected,
+                "{normalization:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn aw_taylor_normalization_rejects_nonfinite_scaled_products() {
+        let sensitivity = crate::MosaicSensitivity::new(&[1.0]).expect("AW sensitivity");
+        assert!(matches!(
+            super::normalize_taylor_plane(
+                &[1.0],
+                ProductNormalization::FlatNoise,
+                1.0e100,
+                1.0,
+                Some(sensitivity),
+            ),
+            Err(crate::ProductsError::GeneratedNonfinite)
+        ));
     }
 
     #[test]
