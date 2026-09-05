@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[path = "prepared_artifact/aw_metadata_residency.rs"]
+mod aw_metadata_residency;
+
 const PREPARED_PAYLOAD_BYTES: u64 = (3 * 3 + 5 * 5) * 8;
 
 fn prepared_storage_domain() -> &'static StorageDomain {
@@ -96,6 +99,7 @@ struct PreparedOperationAdapter {
     sources: Option<PreparedSourceFiles>,
     bound_source: Option<PreparedArtifactLoadSource>,
     observed: Mutex<Option<PreparedObserved>>,
+    retained_artifact: Mutex<Option<casa_imaging_runtime::PreparedArtifact>>,
 }
 
 struct PreparedSourceFiles {
@@ -192,6 +196,7 @@ impl PreparedOperationAdapter {
             sources: (operation == PreparedArtifactOperation::Load).then(PreparedSourceFiles::new),
             bound_source: None,
             observed: Mutex::new(None),
+            retained_artifact: Mutex::new(None),
         }
     }
 }
@@ -340,13 +345,15 @@ impl WorkImplementation for PreparedOperationAdapter {
                     .store
                     .generate(&context, &self.descriptor, &mut generator)
                     .map_err(prepared_io_error)?;
-                (
-                    PreparedObserved::Materialized {
-                        identity: artifact.identity(),
-                        integrity: artifact.integrity_identity(),
-                    },
-                    measurements,
-                )
+                let observed = PreparedObserved::Materialized {
+                    identity: artifact.identity(),
+                    integrity: artifact.integrity_identity(),
+                };
+                *self
+                    .retained_artifact
+                    .lock()
+                    .expect("retained prepared handle") = Some(artifact);
+                (observed, measurements)
             }
             PreparedArtifactOperation::Load => {
                 let (artifact, measurements) = self

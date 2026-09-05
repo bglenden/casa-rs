@@ -1612,6 +1612,7 @@ pub struct CompleteDataResidency {
     gridded_route_bytes: usize,
     gridded_replay_schedule_bytes: usize,
     aw_prepared_pool_bytes: usize,
+    aw_catalog_metadata_bytes: usize,
     primitive_output_bytes: usize,
     sequential_fold_accumulator_bytes: usize,
     major_cycle_model_bytes: usize,
@@ -1693,6 +1694,12 @@ impl CompleteDataResidency {
     #[must_use]
     pub const fn aw_prepared_pool_bytes(self) -> usize {
         self.aw_prepared_pool_bytes
+    }
+
+    /// Bytes retained by the shared immutable AW catalog and lookup axes.
+    #[must_use]
+    pub const fn aw_catalog_metadata_bytes(self) -> usize {
+        self.aw_catalog_metadata_bytes
     }
 
     /// Bytes covering retained prior state plus newly produced normal-state primitives.
@@ -2023,6 +2030,7 @@ impl CompleteDataPlanFragment {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
         let pool_bytes = projection.resident_byte_ceiling();
+        let catalog_bytes = projection.catalog_resident_bytes();
         let grid_bytes = if self.execution_role == CompleteDataExecutionRole::GriddedArtifact {
             let projected = gridded_normal_aw_domain_execution_residency(
                 self.specification.chart_grid_shapes(),
@@ -2043,9 +2051,11 @@ impl CompleteDataPlanFragment {
             .checked_sub(self.residency.grid_bytes)
             .and_then(|bytes| bytes.checked_add(grid_bytes))
             .and_then(|bytes| bytes.checked_add(pool_bytes))
+            .and_then(|bytes| bytes.checked_add(catalog_bytes))
             .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
         self.residency.grid_bytes = grid_bytes;
         self.residency.aw_prepared_pool_bytes = pool_bytes;
+        self.residency.aw_catalog_metadata_bytes = catalog_bytes;
         self.aw_projection = Some(projection);
         Ok(self)
     }
@@ -2154,6 +2164,7 @@ impl CompleteDataPlanFragment {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
         self.validate_fft_capability(context)?;
+        self.validate_aw_catalog_capability(context)?;
         let mut owner = prepare_spectral_operator(self.specification.clone(), self.workload)?;
         if let Some(projection) = self.aw_projection.clone() {
             owner = owner.with_aw_projection(projection)?;
@@ -2221,6 +2232,7 @@ impl CompleteDataPlanFragment {
         {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
+        self.validate_aw_catalog_capability(context)?;
         let mut owner = reprepare_spectral_operator(specification, workload, recycle)?;
         if let Some(projection) = self.aw_projection.clone() {
             owner = owner.with_aw_projection(projection)?;
@@ -2289,6 +2301,7 @@ impl CompleteDataPlanFragment {
         &self,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), CompleteDataPlanError> {
+        self.validate_aw_catalog_capability(context)?;
         let suffix = operator_allocation_suffix(self.workload, self.execution_role);
         let residency = self.residency;
         let mut required = vec![
@@ -2372,6 +2385,34 @@ impl CompleteDataPlanFragment {
         Ok(())
     }
 
+    fn validate_aw_catalog_capability(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<(), CompleteDataPlanError> {
+        let bytes = self.residency.aw_catalog_metadata_bytes();
+        if bytes == 0 {
+            return Ok(());
+        }
+        let allocation = format!(
+            "spectral-operator-aw-catalog-metadata-{}",
+            operator_allocation_suffix(self.workload, self.execution_role)
+        );
+        let bytes = u64::try_from(bytes).map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+        if context
+            .allocations()
+            .iter()
+            .filter(|capability| {
+                capability.allocation().as_str() == allocation
+                    && capability.capacity_bytes() == bytes
+            })
+            .count()
+            != 1
+        {
+            return Err(CompleteDataPlanError::MissingAllocationCapability);
+        }
+        Ok(())
+    }
+
     fn validate_fft_capability(
         &self,
         context: WorkExecutionContext<'_>,
@@ -2442,6 +2483,13 @@ impl CompleteDataPlanFragment {
             specs.len()
         };
         let (operator_specs, trailing_specs) = specs.split_at(operator_spec_count);
+        let catalog_id = format!(
+            "spectral-operator-aw-catalog-metadata-{}",
+            operator_allocation_suffix(self.workload, self.execution_role)
+        );
+        let catalog_spec = operator_specs
+            .iter()
+            .find(|spec| spec.allocation.as_str() == catalog_id);
         let aw_spec = reader
             .as_ref()
             .map(|_| {
@@ -2475,7 +2523,7 @@ impl CompleteDataPlanFragment {
                 return Err(CompleteDataPlanError::PlanMismatch);
             }
         }
-        let preparation = WorkNode {
+        let mut preparation = WorkNode {
             id: self.preparation_node.clone(),
             kind: WorkKind::FftPlanning,
             domain: WorkDomain::Cpu,
@@ -2507,6 +2555,11 @@ impl CompleteDataPlanFragment {
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
+        if let Some(catalog) = catalog_spec {
+            preparation
+                .allocations
+                .push(catalog.usage(ClaimLifetime::Work));
+        }
         replay
             .dependencies
             .insert(WorkDependency::Work(self.preparation_node.clone()));
@@ -2647,6 +2700,11 @@ impl CompleteDataPlanFragment {
             specs[4].usage(ClaimLifetime::Work),
             specs[5].usage(ClaimLifetime::Work),
         ]);
+        if let Some(catalog) = catalog_spec {
+            planned_reconciliation
+                .allocations
+                .push(catalog.usage(ClaimLifetime::Work));
+        }
         self.reconciliation_node = Some(reconciliation.clone());
 
         let mut alternative = base.execution_dag().resource_alternative().clone();
@@ -2949,6 +3007,16 @@ impl CompleteDataPlanFragment {
             &suffix,
             &self.replay_node,
         )?);
+        if residency.aw_catalog_metadata_bytes() > 0 {
+            allocations.push(CompleteDataAllocation::new(
+                format!("spectral-operator-aw-catalog-metadata-{suffix}"),
+                residency.aw_catalog_metadata_bytes(),
+                "spectral-operator-shared-aw-catalog-and-lookup-axes",
+                InitializationPolicy::OverwriteBeforeRead,
+                self.preparation_node.clone(),
+                BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
+            )?);
+        }
         if let Some(reader) = &self.aw_reader {
             allocations.push(CompleteDataAllocation::storage_manager(
                 format!("spectral-operator-aw-prepared-pool-{suffix}"),
@@ -3144,6 +3212,7 @@ fn project_residency(
         gridded_route_bytes,
         gridded_replay_schedule_bytes,
         aw_prepared_pool_bytes: 0,
+        aw_catalog_metadata_bytes: 0,
         primitive_output_bytes,
         sequential_fold_accumulator_bytes: 0,
         major_cycle_model_bytes,
@@ -4018,6 +4087,7 @@ mod tests {
             gridded_route_bytes: 0,
             gridded_replay_schedule_bytes: 0,
             aw_prepared_pool_bytes: 0,
+            aw_catalog_metadata_bytes: 0,
             primitive_output_bytes: 0,
             sequential_fold_accumulator_bytes: 0,
             major_cycle_model_bytes: 0,

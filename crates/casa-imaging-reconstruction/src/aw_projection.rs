@@ -261,8 +261,23 @@ impl AwConvolutionCell {
 /// Immutable metadata-only catalog of paired prepared-CF cells.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AwPreparedCatalog {
+    storage: Arc<AwCatalogStorage>,
+}
+
+#[derive(Debug, PartialEq)]
+struct AwCatalogStorage {
     cells: Box<[AwPreparedCellMetadata]>,
     w_increment: f64,
+    mueller_axes: [Option<AwMuellerAxes>; MUELLER_ELEMENTS as usize],
+    resident_bytes: usize,
+}
+
+#[derive(Debug, PartialEq)]
+struct AwMuellerAxes {
+    cells: std::ops::Range<usize>,
+    frequencies: Box<[f64]>,
+    w_values: Box<[f64]>,
+    parallactic_angles: Box<[f64]>,
 }
 
 impl AwPreparedCatalog {
@@ -281,16 +296,64 @@ impl AwPreparedCatalog {
         if cells.windows(2).any(|pair| same_key(&pair[0], &pair[1])) {
             return Err(AwOperatorError::InvalidCatalogLayout);
         }
+        let mueller_axes = std::array::from_fn(|mueller| {
+            let start = cells.partition_point(|cell| cell.mueller_element < mueller as u32);
+            let end = cells.partition_point(|cell| cell.mueller_element <= mueller as u32);
+            (start != end).then(|| {
+                let selected = &cells[start..end];
+                AwMuellerAxes {
+                    cells: start..end,
+                    frequencies: unique_sorted(selected.iter().map(|cell| cell.frequency_hz))
+                        .into_boxed_slice(),
+                    w_values: unique_sorted(selected.iter().map(|cell| cell.w_value_lambda))
+                        .into_boxed_slice(),
+                    parallactic_angles: unique_sorted(
+                        selected.iter().map(|cell| cell.parallactic_angle_deg),
+                    )
+                    .into_boxed_slice(),
+                }
+            })
+        });
+        // The shared backing includes all index headers. Four words cover the
+        // Arc reference counts and their alignment without charging CF pixels.
+        let resident_bytes = size_of::<AwCatalogStorage>()
+            .checked_add(4 * size_of::<usize>())
+            .and_then(|bytes| {
+                cells
+                    .len()
+                    .checked_mul(size_of::<AwPreparedCellMetadata>())
+                    .and_then(|payload| bytes.checked_add(payload))
+            })
+            .and_then(|bytes| {
+                mueller_axes
+                    .iter()
+                    .flatten()
+                    .try_fold(bytes, |bytes, axes| {
+                        [&axes.frequencies, &axes.w_values, &axes.parallactic_angles]
+                            .into_iter()
+                            .try_fold(bytes, |bytes, axis| {
+                                axis.len()
+                                    .checked_mul(size_of::<f64>())
+                                    .and_then(|payload| bytes.checked_add(payload))
+                            })
+                    })
+            })
+            .ok_or(AwOperatorError::MeasurementOverflow)?;
         Ok(Self {
-            cells: cells.into_boxed_slice(),
-            w_increment,
+            storage: Arc::new(AwCatalogStorage {
+                cells: cells.into_boxed_slice(),
+                w_increment,
+                mueller_axes,
+                resident_bytes,
+            }),
         })
     }
 
     /// Maximum integral imaging-CF support radius represented by this catalog.
     #[must_use]
     pub fn maximum_imaging_support(&self) -> usize {
-        self.cells
+        self.storage
+            .cells
             .iter()
             .flat_map(|cell| cell.imaging_layout.support)
             .max()
@@ -298,11 +361,11 @@ impl AwPreparedCatalog {
     }
 
     fn imaging_oversampling(&self) -> usize {
-        self.cells[0].imaging_layout.oversampling
+        self.storage.cells[0].imaging_layout.oversampling
     }
 
     fn weight_oversampling(&self) -> usize {
-        self.cells[0].weight_layout.oversampling
+        self.storage.cells[0].weight_layout.oversampling
     }
 
     fn grid_cell(
@@ -352,22 +415,18 @@ impl AwPreparedCatalog {
         mueller: u32,
         pa: f64,
     ) -> Result<&AwPreparedCellMetadata, AwOperatorError> {
-        let mueller_cells = self
-            .cells
-            .iter()
-            .filter(|cell| cell.mueller_element == mueller)
-            .collect::<Vec<_>>();
-        if mueller_cells.is_empty() {
-            return Err(AwOperatorError::UnsupportedMueller);
-        }
-        let frequencies = unique_sorted(mueller_cells.iter().map(|cell| cell.frequency_hz));
-        let selected_frequency = nearest_linear(&frequencies, frequency);
-        let w_values = unique_sorted(mueller_cells.iter().map(|cell| cell.w_value_lambda));
-        let w_index =
-            ((self.w_increment * w.abs()).sqrt().round() as usize).min(w_values.len() - 1);
-        let selected_w = w_values[w_index];
-        let pa_values = unique_sorted(mueller_cells.iter().map(|cell| cell.parallactic_angle_deg));
-        let selected_pa = pa_values
+        let axes = self
+            .storage
+            .mueller_axes
+            .get(mueller as usize)
+            .and_then(Option::as_ref)
+            .ok_or(AwOperatorError::UnsupportedMueller)?;
+        let selected_frequency = nearest_linear(&axes.frequencies, frequency);
+        let w_index = ((self.storage.w_increment * w.abs()).sqrt().round() as usize)
+            .min(axes.w_values.len() - 1);
+        let selected_w = axes.w_values[w_index];
+        let selected_pa = axes
+            .parallactic_angles
             .iter()
             .copied()
             .min_by(|left, right| {
@@ -377,14 +436,16 @@ impl AwPreparedCatalog {
                     .then_with(|| left.total_cmp(right))
             })
             .ok_or(AwOperatorError::UnsupportedParallacticAngle)?;
-        mueller_cells
-            .into_iter()
-            .find(|cell| {
-                cell.frequency_hz.to_bits() == selected_frequency.to_bits()
-                    && cell.w_value_lambda.to_bits() == selected_w.to_bits()
-                    && cell.parallactic_angle_deg.to_bits() == selected_pa.to_bits()
+        let cells = &self.storage.cells[axes.cells.clone()];
+        cells
+            .binary_search_by(|cell| {
+                cell.w_value_lambda
+                    .total_cmp(&selected_w)
+                    .then_with(|| cell.frequency_hz.total_cmp(&selected_frequency))
+                    .then_with(|| cell.parallactic_angle_deg.total_cmp(&selected_pa))
             })
-            .ok_or(AwOperatorError::MissingCell)
+            .map(|index| &cells[index])
+            .map_err(|_| AwOperatorError::MissingCell)
     }
 }
 
@@ -545,6 +606,16 @@ impl PreparedAwProjection {
     #[must_use]
     pub const fn resident_byte_ceiling(&self) -> usize {
         self.resident_byte_ceiling
+    }
+
+    /// Checked resident-byte bound for the shared immutable metadata catalog.
+    ///
+    /// This includes cell metadata, selection axes, the backing structure, and
+    /// an Arc-header allowance. Cloned bindings and instantiated operators share
+    /// this allocation. Decoded CF pixels and provider workspace are separate.
+    #[must_use]
+    pub fn catalog_resident_bytes(&self) -> usize {
+        self.catalog.storage.resident_bytes
     }
 
     /// Maximum imaging-CF support radius needed by bounded tile replay.
@@ -1410,6 +1481,253 @@ mod tests {
             layout([2, 1], 1),
         )
         .unwrap()
+    }
+
+    // Frozen pre-index selector from 6e87cd43644b. This is a test oracle, never
+    // a production alternative or a fallback for an absent tuple.
+    fn scanned_selection(
+        cells: &[AwPreparedCellMetadata],
+        w_increment: f64,
+        frequency: f64,
+        w: f64,
+        mueller: u32,
+        pa: f64,
+    ) -> Result<&AwPreparedCellMetadata, AwOperatorError> {
+        let cells = cells
+            .iter()
+            .filter(|cell| cell.mueller_element == mueller)
+            .collect::<Vec<_>>();
+        if cells.is_empty() {
+            return Err(AwOperatorError::UnsupportedMueller);
+        }
+        let frequencies = unique_sorted(cells.iter().map(|cell| cell.frequency_hz));
+        let selected_frequency = nearest_linear(&frequencies, frequency);
+        let w_values = unique_sorted(cells.iter().map(|cell| cell.w_value_lambda));
+        let w_index = ((w_increment * w.abs()).sqrt().round() as usize).min(w_values.len() - 1);
+        let selected_w = w_values[w_index];
+        let pa_values = unique_sorted(cells.iter().map(|cell| cell.parallactic_angle_deg));
+        let selected_pa = pa_values
+            .iter()
+            .copied()
+            .min_by(|left, right| {
+                circular_degrees(*left - pa)
+                    .abs()
+                    .total_cmp(&circular_degrees(*right - pa).abs())
+                    .then_with(|| left.total_cmp(right))
+            })
+            .ok_or(AwOperatorError::UnsupportedParallacticAngle)?;
+        cells
+            .into_iter()
+            .find(|cell| {
+                cell.frequency_hz.to_bits() == selected_frequency.to_bits()
+                    && cell.w_value_lambda.to_bits() == selected_w.to_bits()
+                    && cell.parallactic_angle_deg.to_bits() == selected_pa.to_bits()
+            })
+            .ok_or(AwOperatorError::MissingCell)
+    }
+
+    fn catalog_discriminator_entries(frequencies: usize) -> Vec<AwPreparedCellMetadata> {
+        [0, 15]
+            .into_iter()
+            .flat_map(|mueller| {
+                (0..32).flat_map(move |w| {
+                    (0..frequencies).map(move |channel| {
+                        metadata(
+                            2_091_000_000.0
+                                + 1_920_000_000.0 * channel as f64 / (frequencies - 1) as f64,
+                            (w as f64).powi(2),
+                            mueller,
+                            0.0,
+                        )
+                    })
+                })
+            })
+            .collect()
+    }
+
+    fn catalog_discriminator_queries() -> Vec<(f64, f64, u32, f64)> {
+        (0..8192)
+            .map(|index| {
+                (
+                    1_965_000_000.0 + 2_080_000_000.0 * (index % 1024) as f64 / 1023.0,
+                    ((index * 17 % 64) as f64 * 0.75).powi(2)
+                        * if index % 2 == 0 { 1.0 } else { -1.0 },
+                    if index % 2 == 0 { 0 } else { 15 },
+                    (index % 361) as f64 - 180.0,
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn t51_catalog_lookup_preserves_ties_signed_zero_and_sparse_selection() {
+        let mut cells = Vec::new();
+        for frequency in [10.0, 12.0] {
+            for w in [-0.0, 0.0, 1.0] {
+                for pa in [-90.0, 90.0] {
+                    cells.push(metadata(frequency, w, 3, pa));
+                }
+            }
+        }
+        let catalog = AwPreparedCatalog::new(cells.clone()).unwrap();
+        let selected = catalog.select(11.0, 0.0, 3, 0.0).unwrap();
+        assert_eq!(selected.frequency_hz, 10.0);
+        assert_eq!(selected.w_value_lambda.to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(selected.parallactic_angle_deg, -90.0);
+        assert_eq!(
+            catalog
+                .select(11.0, 0.3, 3, 0.0)
+                .unwrap()
+                .w_value_lambda
+                .to_bits(),
+            0.0_f64.to_bits()
+        );
+        for frequency in [1.0, 10.0, 11.0, 12.0, 20.0] {
+            for w in [-100.0, -0.3, -0.0, 0.0, 0.3, 100.0] {
+                for pa in [-540.0, -180.0, -90.0, 0.0, 90.0, 180.0, 540.0] {
+                    assert_eq!(
+                        catalog.select(frequency, w, 3, pa),
+                        scanned_selection(&cells, 1.0, frequency, w, 3, pa)
+                    );
+                }
+            }
+        }
+        let wrap = AwPreparedCatalog::new(vec![
+            metadata(10.0, 0.0, 3, -179.0),
+            metadata(10.0, 0.0, 3, 179.0),
+        ])
+        .unwrap();
+        assert_eq!(
+            wrap.select(10.0, 0.0, 3, 180.0)
+                .unwrap()
+                .parallactic_angle_deg,
+            -179.0
+        );
+        let quadratic = AwPreparedCatalog::new(vec![
+            metadata(10.0, 0.0, 3, 0.0),
+            metadata(10.0, 16.0, 3, 0.0),
+            metadata(10.0, 25.0, 3, 0.0),
+        ])
+        .unwrap();
+        assert_eq!(
+            quadratic.select(10.0, 3.0, 3, 0.0).unwrap().w_value_lambda,
+            25.0
+        );
+        let sparse = AwPreparedCatalog::new(vec![
+            metadata(10.0, 0.0, 3, 0.0),
+            metadata(12.0, 1.0, 3, 20.0),
+        ])
+        .unwrap();
+        assert_eq!(
+            sparse.select(11.8, 0.0, 3, 18.0),
+            Err(AwOperatorError::MissingCell)
+        );
+        assert_eq!(
+            sparse.select(10.0, 0.0, 0, 0.0),
+            Err(AwOperatorError::UnsupportedMueller)
+        );
+    }
+
+    #[test]
+    fn t51_catalog_lookup_matches_frozen_selector_for_vlass_catalog_shapes() {
+        for frequencies in [4, 16] {
+            let cells = catalog_discriminator_entries(frequencies);
+            let catalog = AwPreparedCatalog::new(cells.clone()).unwrap();
+            for (frequency, w, mueller, pa) in catalog_discriminator_queries() {
+                assert_eq!(
+                    catalog
+                        .select(frequency, w, mueller, pa)
+                        .map(|cell| cell.identity),
+                    scanned_selection(&cells, 1.0, frequency, w, mueller, pa)
+                        .map(|cell| cell.identity),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn t51_catalog_lookup_accounts_one_shared_immutable_backing() {
+        for frequencies in [4, 16] {
+            let entries = catalog_discriminator_entries(frequencies);
+            let expected = size_of::<AwCatalogStorage>()
+                + 4 * size_of::<usize>()
+                + entries.len() * size_of::<AwPreparedCellMetadata>()
+                + 2 * (frequencies + 32 + 1) * size_of::<f64>();
+            let catalog = AwPreparedCatalog::new(entries).unwrap();
+            let clone = catalog.clone();
+            assert!(Arc::ptr_eq(&catalog.storage, &clone.storage));
+            let projection = PreparedAwProjection::new(
+                catalog,
+                Provider {
+                    cells: BTreeMap::new(),
+                    seen: BTreeSet::new(),
+                },
+                false,
+                64 * 1024,
+            )
+            .unwrap();
+            assert_eq!(projection.catalog_resident_bytes(), expected);
+            assert_eq!(projection.clone().catalog_resident_bytes(), expected);
+            let first = projection.instantiate().unwrap();
+            let second = projection.instantiate().unwrap();
+            assert!(Arc::ptr_eq(&first.catalog.storage, &second.catalog.storage));
+            assert!(Arc::ptr_eq(&first.catalog.storage, &clone.storage));
+            assert_eq!(projection.resident_byte_ceiling(), 64 * 1024);
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded release-mode selector discriminator; not end-to-end performance evidence"]
+    fn t51_catalog_lookup_discriminator() {
+        use sha2::{Digest, Sha256};
+        use std::hint::black_box;
+        for frequencies in [4, 16] {
+            let cells = catalog_discriminator_entries(frequencies);
+            let catalog = AwPreparedCatalog::new(cells.clone()).unwrap();
+            let queries = catalog_discriminator_queries();
+            let mut identities = vec![[0; 32]; queries.len()];
+            let mut totals = [0_u128; 2];
+            let mut expected_digest = None;
+            for repeat in 0..5 {
+                for variant in [repeat % 2, 1 - repeat % 2] {
+                    let started = Instant::now();
+                    for (&(frequency, w, mueller, pa), identity) in
+                        queries.iter().zip(&mut identities)
+                    {
+                        let selected = if variant == 0 {
+                            scanned_selection(black_box(&cells), 1.0, frequency, w, mueller, pa)
+                        } else {
+                            black_box(&catalog).select(frequency, w, mueller, pa)
+                        }
+                        .unwrap();
+                        *identity = selected.identity.as_bytes();
+                    }
+                    let nanos = started.elapsed().as_nanos();
+                    totals[variant] += nanos;
+                    let mut digest = Sha256::new();
+                    for identity in &identities {
+                        digest.update(identity);
+                    }
+                    let digest = digest.finalize();
+                    assert_eq!(*expected_digest.get_or_insert(digest), digest);
+                    eprintln!(
+                        "t51_catalog_lookup_discriminator cells={} queries={} repeat={} variant={} elapsed_nanos={} identity_sha256={:x}",
+                        cells.len(),
+                        queries.len(),
+                        repeat,
+                        ["scanned", "canonical"][variant],
+                        nanos,
+                        digest
+                    );
+                }
+            }
+            assert!(
+                totals[1] * 2 < totals[0],
+                "canonical selector must remove at least half the stage cost: scanned={} canonical={}",
+                totals[0],
+                totals[1]
+            );
+        }
     }
     fn resident(meta: &AwPreparedCellMetadata) -> Arc<AwConvolutionCell> {
         let make = |layout: AwKernelLayout, scale: f64| {
