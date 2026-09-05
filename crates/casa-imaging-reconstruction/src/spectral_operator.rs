@@ -5148,14 +5148,19 @@ impl CompleteDataOwnerState {
                         return Err(SpectralOperatorError::InvalidSample);
                     }
                     let active = !flags[row];
+                    let input_row = if active {
+                        aw_gridding_input_index(&correlations, row, uvw_m[2])?
+                    } else {
+                        row
+                    };
                     let weight = if active { raw_weight } else { 0.0 };
                     let observed = if active {
-                        visibilities[row]
+                        visibilities[input_row]
                     } else {
                         Complex64::default()
                     };
                     let predicted = if active {
-                        predicted_correlations[row]
+                        predicted_correlations[input_row]
                     } else {
                         Complex64::default()
                     };
@@ -5760,14 +5765,19 @@ impl CompleteDataOwnerState {
                     return Err(SpectralOperatorError::InvalidSample);
                 }
                 let active = !flags[row];
+                let input_row = if active {
+                    aw_gridding_input_index(&resampled.correlations, row, uvw_m[2])?
+                } else {
+                    row
+                };
                 let weight = if active { raw_weight } else { 0.0 };
                 let observed = if active {
-                    resampled.observed[row]
+                    resampled.observed[input_row]
                 } else {
                     Complex64::default()
                 };
                 let predicted = if active {
-                    resampled.predicted[row]
+                    resampled.predicted[input_row]
                 } else {
                     Complex64::default()
                 };
@@ -6280,6 +6290,27 @@ pub(crate) fn aw_stokes_i_mueller(
         CorrelationType::CircularRl | CorrelationType::CircularLr => Ok(None),
         _ => Err(SpectralOperatorError::UnsupportedProblem),
     }
+}
+
+fn aw_gridding_input_index(
+    correlations: &[CorrelationType],
+    row: usize,
+    w_m: f64,
+) -> Result<usize, SpectralOperatorError> {
+    if w_m > 0.0 {
+        return Ok(row);
+    }
+    // DataToGrid binds the visibility to the selected CF Mueller column, which
+    // exchanges the circular parallel hands for non-positive W.
+    let selected = match correlations[row] {
+        CorrelationType::CircularRr => CorrelationType::CircularLl,
+        CorrelationType::CircularLl => CorrelationType::CircularRr,
+        _ => return Err(SpectralOperatorError::UnsupportedProblem),
+    };
+    correlations
+        .iter()
+        .position(|correlation| *correlation == selected)
+        .ok_or(SpectralOperatorError::InvalidSample)
 }
 
 pub(crate) fn aw_replay_coordinates(
@@ -11156,6 +11187,59 @@ mod tests {
             aw_stokes_i_mueller(CorrelationType::LinearXx),
             Err(SpectralOperatorError::UnsupportedProblem)
         );
+    }
+
+    #[test]
+    fn t51_aw_gridding_binds_asymmetric_parallel_hands_after_mueller_selection() {
+        use CorrelationType::{CircularLl, CircularLr, CircularRl, CircularRr};
+
+        let correlations = [CircularLl, CircularRl, CircularRr, CircularLr];
+        let observed = [
+            Complex64::new(-5.0, 7.0),
+            Complex64::new(99.0, 99.0),
+            Complex64::new(2.0, 3.0),
+            Complex64::new(99.0, 99.0),
+        ];
+        let predicted = [
+            Complex64::new(-2.0, 1.0),
+            Complex64::default(),
+            Complex64::new(0.5, -0.25),
+            Complex64::default(),
+        ];
+        let kernels = [Complex64::new(2.0, 1.0), Complex64::new(3.0, -2.0)];
+        for w_m in [1.0, -1.0, 0.0, -0.0] {
+            let mut dirty = Complex64::default();
+            let mut residual = Complex64::default();
+            let mut psf = Complex64::default();
+            for (hand, row) in [2, 0].into_iter().enumerate() {
+                let input = super::aw_gridding_input_index(&correlations, row, w_m).unwrap();
+                let selected = if w_m > 0.0 { hand } else { 1 - hand };
+                let kernel = if w_m > 0.0 {
+                    kernels[selected].conj()
+                } else {
+                    kernels[selected]
+                };
+                dirty += kernel * observed[input];
+                residual += kernel * (observed[input] - predicted[input]);
+                psf += kernel;
+            }
+            let [rr_kernel, ll_kernel] = if w_m > 0.0 {
+                kernels.map(|value| value.conj())
+            } else {
+                kernels
+            };
+            assert_eq!(
+                dirty,
+                rr_kernel * observed[2] + ll_kernel * observed[0],
+                "W={w_m}"
+            );
+            assert_eq!(
+                residual,
+                rr_kernel * (observed[2] - predicted[2]) + ll_kernel * (observed[0] - predicted[0]),
+                "W={w_m}",
+            );
+            assert_eq!(psf, rr_kernel + ll_kernel, "PSF is visibility independent");
+        }
     }
 
     #[test]
