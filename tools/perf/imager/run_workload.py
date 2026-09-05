@@ -1339,6 +1339,7 @@ def parse_continuum_residual_comparison(text: str) -> dict[str, Any]:
 
 def parse_backend_plan_logs(text: str) -> dict[str, Any]:
     """Extract compact backend/source-stream diagnostics from benchmark logs."""
+    terminal_peak_rss_bytes = None
     buckets = {
         "single_plane_execution_plan": [],
         "standard_mfs_runtime_plan": [],
@@ -1413,6 +1414,26 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["frontend_progress"].append(parsed)
         elif name == "standard_mfs_profile_run":
             buckets["profile_runs"].append(parsed)
+        elif name == "imager_bench_process_resource":
+            fields = parsed["fields"]
+            if (
+                set(fields) == {
+                    "command", "pid", "exit_code", "peak_rss_bytes", "source", "scope"
+                }
+                and len(line.split()) == 7
+                and fields["command"] == "casars-imager"
+                and fields["source"] == "wait4"
+                and fields["scope"] == "terminal_child"
+                and type(fields["exit_code"]) is int
+                and fields["exit_code"] == 0
+                and type(fields["pid"]) is int
+                and fields["pid"] > 0
+                and type(fields["peak_rss_bytes"]) is int
+                and fields["peak_rss_bytes"] > 0
+            ):
+                terminal_peak_rss_bytes = max(
+                    terminal_peak_rss_bytes or 0, fields["peak_rss_bytes"]
+                )
         elif name == "spectral_slab_event":
             buckets["spectral_slab_events"].append(parsed)
         elif name == "spectral_slab_memory":
@@ -1486,7 +1507,9 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["worker_diagnostics"].append(parsed)
         elif "metal" in name:
             buckets["metal_diagnostics"].append(parsed)
-    summary = summarize_backend_plan_logs(buckets)
+    summary = summarize_backend_plan_logs(
+        buckets, terminal_peak_rss_bytes=terminal_peak_rss_bytes
+    )
     retained_buckets: dict[str, list[dict[str, Any]]] = {}
     collection_stats: dict[str, dict[str, Any]] = {}
     for name, entries in buckets.items():
@@ -1560,12 +1583,15 @@ def parse_scalar_value(value: str) -> Any:
 
 def summarize_backend_plan_logs(
     buckets: dict[str, list[dict[str, Any]]],
+    *,
+    terminal_peak_rss_bytes: int | None = None,
 ) -> dict[str, Any]:
     runtime = last_fields(buckets.get("standard_mfs_runtime_plan", []))
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
     source_read_ahead_entries = unique_entries_by_raw(
         buckets.get("imaging_source_read_ahead", [])
     )
+    selection = canonical_source_selection(source_read_ahead_entries)
     source_read_ahead = aggregate_source_read_ahead_fields(source_read_ahead_entries)
     source_read_ahead_modes = [
         entry.get("fields", {}).get("mode")
@@ -1883,8 +1909,13 @@ def summarize_backend_plan_logs(
             mosaic_cube_slab_executor_summaries, "product_write_ms"
         ),
         "row_block_rows": memory.get("row_block_rows"),
-        "selected_channels": memory.get("selected_channels"),
-        "active_rows": memory.get("rows_total"),
+        "canonical_source_selection": selection,
+        "selected_channels": selection["selected_channels"]
+        if selection is not None
+        else memory.get("selected_channels"),
+        "active_rows": selection["selected_rows"]
+        if selection is not None
+        else memory.get("rows_total"),
         "memory_target_bytes": memory.get("memory_target_bytes"),
         "planned_active_bytes": memory.get("planned_active_bytes"),
         "source_stream_buffer_bytes": memory.get("source_stream_buffer_bytes"),
@@ -1929,7 +1960,7 @@ def summarize_backend_plan_logs(
             "visibility_row_cache_overhead_bytes"
         ),
         "modeled_source_read_bytes": memory.get("modeled_source_read_bytes"),
-        "peak_rss_bytes": profile.get("peak_rss_bytes"),
+        "peak_rss_bytes": terminal_peak_rss_bytes,
         "frontend_io_time_ms": profile.get("io_time_ms"),
         "frontend_wall_to_io_ratio": profile.get("wall_to_io_ratio"),
         "gridded_samples": profile.get("gridded_samples"),
@@ -2353,6 +2384,73 @@ def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def canonical_source_selection(
+    entries: list[dict[str, Any]],
+) -> dict[str, int | None] | None:
+    """Use full density/replay evidence; partial-only diagnostics leave totals unknown."""
+    counts = None
+    canonical_seen = False
+    for entry in entries:
+        fields = entry.get("fields", {})
+        if fields.get("mode") != "bounded_spectral":
+            continue
+        canonical_seen = True
+        if fields.get("stage") in {"weighted-replay-channel-slab", "selected-output"}:
+            continue
+        label = "canonical selected-observation traversal"
+        if (
+            fields.get("stage") not in {"density", "weighted-replay"}
+            or fields.get("phase") not in {"initial-major", "final-major"}
+            or type(fields.get("ordinal")) is not int
+            or fields["ordinal"] < 0
+            or fields.get("measurement_state") == "missing"
+        ):
+            raise HarnessError(f"{label}: incomplete stage/pass evidence")
+        for name in (
+            "pass_count",
+            "row_blocks",
+            "stored_rows",
+            "stored_samples",
+            "selected_channel_runs",
+            "streamed_samples",
+        ):
+            if type(fields.get(name)) is not int or fields[name] <= 0:
+                raise HarnessError(f"{label}: {name} must be a positive integer")
+        current = (
+            fields["pass_count"],
+            fields["stored_rows"],
+            fields["stored_samples"],
+            fields["selected_channel_runs"],
+            fields["streamed_samples"],
+        )
+        _, rows, stored_samples, channel_runs, selected_samples = current
+        if not rows <= channel_runs <= selected_samples <= stored_samples:
+            raise HarnessError(f"{label}: inconsistent row/channel/correlation counters")
+        if counts is not None and current != counts:
+            raise HarnessError(f"{label}: selection counters disagree across traversals")
+        counts = current
+    if counts is None:
+        if canonical_seen:
+            return {
+                "selected_rows": None,
+                "selected_channels": None,
+                "correlations": None,
+                "visibility_work": None,
+            }
+        return None
+    _, rows, _, channel_runs, selected_samples = counts
+    return {
+        "selected_rows": rows,
+        "selected_channels": channel_runs // rows
+        if channel_runs % rows == 0
+        else None,
+        "correlations": selected_samples // channel_runs
+        if selected_samples % channel_runs == 0
+        else None,
+        "visibility_work": selected_samples,
+    }
+
+
 def aggregate_source_read_ahead_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
     fields = dict(last_fields(entries))
     if not fields:
@@ -2539,33 +2637,47 @@ def build_benchmark_feature_summary(
         if len(image_shape) > 1 and image_shape[1] is not None
         else imsize_x
     )
-    selected_channels = first_int(
-        backend_summary.get("selected_channels"),
-        source_channel_width(mode),
-        mode.get("channel_count"),
-    )
-    selected_rows = first_int(backend_summary.get("active_rows"))
-    gridded_samples = first_int(backend_summary.get("gridded_samples"))
-    correlations = planned_correlation_count(plan)
+    selection = backend_summary.get("canonical_source_selection")
     flagged_fraction = None
-    if (
-        gridded_samples is not None
-        and selected_rows
-        and selected_channels
-        and correlations
-    ):
-        denominator = selected_rows * selected_channels * correlations
-        if denominator > 0:
-            flagged_fraction = max(0.0, min(1.0, 1.0 - (gridded_samples / denominator)))
-    visibility_work = None
-    if (
-        selected_rows is not None
-        and selected_channels is not None
-        and correlations is not None
-    ):
-        visibility_work = selected_rows * selected_channels * correlations
-        if flagged_fraction is not None:
-            visibility_work = int(round(visibility_work * (1.0 - flagged_fraction)))
+    if selection is not None:
+        selected_rows = selection["selected_rows"]
+        selected_channels = selection["selected_channels"]
+        correlations = selection["correlations"]
+        visibility_work = selection["visibility_work"]
+        correlation_source = "selected-observation-traversal"
+        gridded_samples = None
+    else:
+        if "bounded_spectral" in backend_summary.get("source_read_ahead_modes", []):
+            raise HarnessError("canonical selected-observation summary is missing")
+        selected_channels = first_int(
+            backend_summary.get("selected_channels"),
+            source_channel_width(mode),
+            mode.get("channel_count"),
+        )
+        selected_rows = first_int(backend_summary.get("active_rows"))
+        gridded_samples = first_int(backend_summary.get("gridded_samples"))
+        correlations = planned_correlation_count(plan)
+        correlation_source = "scalar-plane-after-polarization-collapse"
+        if (
+            gridded_samples is not None
+            and selected_rows
+            and selected_channels
+            and correlations
+        ):
+            denominator = selected_rows * selected_channels * correlations
+            if denominator > 0:
+                flagged_fraction = max(
+                    0.0, min(1.0, 1.0 - (gridded_samples / denominator))
+                )
+        visibility_work = None
+        if (
+            selected_rows is not None
+            and selected_channels is not None
+            and correlations is not None
+        ):
+            visibility_work = selected_rows * selected_channels * correlations
+            if flagged_fraction is not None:
+                visibility_work = int(round(visibility_work * (1.0 - flagged_fraction)))
     product_count = len(comparison.get("products") or [])
     output_planes = planned_output_planes(mode)
     image_work = None
@@ -2587,7 +2699,7 @@ def build_benchmark_feature_summary(
             "selected_rows": selected_rows,
             "selected_channels": selected_channels,
             "correlations": correlations,
-            "correlation_source": "scalar-plane-after-polarization-collapse",
+            "correlation_source": correlation_source,
             "flagged_fraction": finite_float(flagged_fraction),
             "visibility_work": visibility_work,
             "gridded_samples": gridded_samples,

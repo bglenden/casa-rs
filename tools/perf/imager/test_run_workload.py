@@ -3814,5 +3814,308 @@ CASA tclean timings (seconds):
             )
 
 
+class CanonicalSelectionTelemetryTests(unittest.TestCase):
+    def source_line(self, **changes: object) -> str:
+        fields = {
+            "mode": "bounded_spectral",
+            "stage": "weighted-replay",
+            "phase": "initial-major",
+            "ordinal": 0,
+            "pass_count": 1,
+            "row_blocks": 36,
+            "stored_rows": 23_400,
+            "stored_samples": 5_990_400,
+            "selected_channel_runs": 1_497_600,
+            "streamed_samples": 5_990_400,
+        }
+        fields.update(changes)
+        return "imaging_source_read_ahead_summary " + " ".join(
+            f"{name}={value}" for name, value in fields.items() if value is not None
+        )
+
+    def features(self, lines: list[str]) -> tuple[dict, dict]:
+        logs = run_workload.parse_backend_plan_logs("\n".join(lines))
+        plan = {
+            "mode": {
+                "specmode": "mfs",
+                "gridder": "awproject",
+                "deconvolver": "mtmfs",
+                "weighting": "briggs",
+                "channel_count": 64,
+                "nterms": 2,
+                "niter": 30,
+            },
+            "command": {"env": {"IMAGER_BENCH_STOKES": "I"}},
+        }
+        features = run_workload.build_benchmark_feature_summary(
+            plan, {"backend_plan_logs": logs}
+        )
+        return features, logs
+
+    def test_canonical_only_counts_four_input_correlations_not_one_stokes(self) -> None:
+        features, logs = self.features([self.source_line()])
+
+        self.assertEqual(23_400, features["visibility"]["selected_rows"])
+        self.assertEqual(64, features["visibility"]["selected_channels"])
+        self.assertEqual(4, features["visibility"]["correlations"])
+        self.assertEqual(5_990_400, features["visibility"]["visibility_work"])
+        self.assertEqual(
+            "selected-observation-traversal",
+            features["visibility"]["correlation_source"],
+        )
+        self.assertIsNone(features["visibility"]["flagged_fraction"])
+        self.assertIsNone(features["visibility"]["gridded_samples"])
+        self.assertIsNone(features["resources"]["peak_rss_bytes"])
+        self.assertEqual(23_400, logs["summary"]["active_rows"])
+        self.assertEqual(64, logs["summary"]["selected_channels"])
+        receipt = canonical_workload_result(
+            extra_results={"backend_plan_logs": logs, "benchmark_features": features}
+        )
+        receipt["benchmark_features"] = features
+        run_workload.validate_run_result(receipt, source="canonical selection telemetry")
+
+    def test_canonical_evidence_is_authoritative_over_legacy_scalar_features(self) -> None:
+        features, _ = self.features(
+            [
+                self.source_line(),
+                "standard_mfs_memory_plan_actual rows_total=100 selected_channels=1",
+                "standard_mfs_profile_run gridded_samples=10",
+            ]
+        )
+
+        self.assertEqual(23_400, features["visibility"]["selected_rows"])
+        self.assertEqual(64, features["visibility"]["selected_channels"])
+        self.assertEqual(4, features["visibility"]["correlations"])
+        self.assertEqual(5_990_400, features["visibility"]["visibility_work"])
+        self.assertIsNone(features["visibility"]["flagged_fraction"])
+        self.assertIsNone(features["visibility"]["gridded_samples"])
+
+    def test_duplicates_and_multiple_passes_do_not_inflate_selected_work(self) -> None:
+        lines = [
+            self.source_line(stage="density"),
+            self.source_line(),
+            self.source_line(stage="weighted-replay-channel-slab"),
+            self.source_line(stage="selected-output", phase="final-major", ordinal=3),
+        ]
+        features, logs = self.features(lines * 3)
+
+        self.assertEqual(5_990_400, features["visibility"]["visibility_work"])
+        self.assertGreater(
+            logs["summary"]["source_read_ahead_streamed_samples"], 5_990_400
+        )
+
+    def test_inconsistent_duplicate_complete_pass_fails_closed(self) -> None:
+        with self.assertRaisesRegex(run_workload.HarnessError, "disagree across traversals"):
+            self.features([self.source_line(), self.source_line(streamed_samples=2_995_200)])
+
+    def test_inconsistent_complete_stages_fail_closed(self) -> None:
+        with self.assertRaisesRegex(run_workload.HarnessError, "disagree across traversals"):
+            self.features(
+                [self.source_line(stage="density"), self.source_line(stored_rows=23_401)]
+            )
+
+    def test_conflicting_evidence_cannot_be_hidden_by_log_compaction(self) -> None:
+        lines = [self.source_line()] * (run_workload.MAX_BACKEND_LOG_ENTRIES_PER_BUCKET + 1)
+        lines[len(lines) // 2] = self.source_line(stored_samples=5_990_401)
+        with self.assertRaisesRegex(run_workload.HarnessError, "disagree across traversals"):
+            self.features(lines)
+
+    def test_complete_selection_survives_compaction_of_its_only_raw_record(self) -> None:
+        lines = [self.source_line(stage="weighted-replay-channel-slab")] * 129
+        lines[64] = self.source_line(stage="density")
+        features, logs = self.features(lines)
+
+        self.assertEqual(128, len(logs["imaging_source_read_ahead"]))
+        self.assertTrue(all(
+            entry["fields"]["stage"] == "weighted-replay-channel-slab"
+            for entry in logs["imaging_source_read_ahead"]
+        ))
+        self.assertEqual(23_400, features["visibility"]["selected_rows"])
+        self.assertEqual(64, features["visibility"]["selected_channels"])
+        self.assertEqual(4, features["visibility"]["correlations"])
+        self.assertEqual(5_990_400, features["visibility"]["visibility_work"])
+
+    def test_malformed_canonical_evidence_never_uses_legacy_factors(self) -> None:
+        malformed = [
+            {"stage": None},
+            {"phase": None},
+            {"ordinal": None},
+            {"ordinal": -1},
+            {"measurement_state": "missing"},
+            {"pass_count": 0},
+            {"row_blocks": None},
+            {"stored_rows": -1},
+            {"stored_samples": None},
+            {"selected_channel_runs": 0},
+            {"streamed_samples": True},
+            {"streamed_samples": 5_990_400.0},
+            {"streamed_samples": 5_990_401},
+        ]
+        for changes in malformed:
+            with self.subTest(changes=changes), self.assertRaisesRegex(
+                run_workload.HarnessError, "canonical selected-observation traversal"
+            ):
+                self.features(
+                    [
+                        "standard_mfs_memory_plan_actual rows_total=23400 selected_channels=64",
+                        self.source_line(**changes),
+                    ]
+                )
+
+    def test_nonuniform_channels_keep_exact_work_and_unknown_channel_factor(self) -> None:
+        features, _ = self.features(
+            [self.source_line(stored_rows=3, stored_samples=20, selected_channel_runs=5,
+                              streamed_samples=20, row_blocks=1)]
+        )
+
+        self.assertEqual(3, features["visibility"]["selected_rows"])
+        self.assertIsNone(features["visibility"]["selected_channels"])
+        self.assertEqual(4, features["visibility"]["correlations"])
+        self.assertEqual(20, features["visibility"]["visibility_work"])
+
+    def test_nonuniform_correlations_keep_exact_work_and_unknown_correlation_factor(self) -> None:
+        features, _ = self.features(
+            [self.source_line(stored_rows=2, stored_samples=8, selected_channel_runs=4,
+                              streamed_samples=6, row_blocks=1)]
+        )
+
+        self.assertEqual(2, features["visibility"]["selected_channels"])
+        self.assertIsNone(features["visibility"]["correlations"])
+        self.assertEqual(6, features["visibility"]["visibility_work"])
+
+    def test_selected_samples_need_not_equal_physically_stored_samples(self) -> None:
+        features, _ = self.features([self.source_line(streamed_samples=2_995_200)])
+
+        self.assertEqual(2, features["visibility"]["correlations"])
+        self.assertEqual(2_995_200, features["visibility"]["visibility_work"])
+
+    def test_full_selection_does_not_require_partial_traversals_to_match(self) -> None:
+        features, logs = self.features(
+            [
+                self.source_line(stage="density"),
+                self.source_line(),
+                self.source_line(
+                    stage="weighted-replay-channel-slab",
+                    stored_samples=1_497_600,
+                    selected_channel_runs=374_400,
+                    streamed_samples=1_497_600,
+                ),
+                self.source_line(
+                    stage="selected-output",
+                    phase="final-major",
+                    ordinal=3,
+                    stored_samples=2_995_200,
+                    selected_channel_runs=748_800,
+                    streamed_samples=2_995_200,
+                ),
+            ]
+        )
+
+        self.assertEqual(23_400, features["visibility"]["selected_rows"])
+        self.assertEqual(64, features["visibility"]["selected_channels"])
+        self.assertEqual(4, features["visibility"]["correlations"])
+        self.assertEqual(5_990_400, features["visibility"]["visibility_work"])
+        self.assertEqual(4, len(logs["imaging_source_read_ahead"]))
+
+    def test_partial_only_canonical_evidence_keeps_full_selection_unknown(self) -> None:
+        for stage in ("weighted-replay-channel-slab", "selected-output"):
+            with self.subTest(stage=stage):
+                features, logs = self.features(
+                    [
+                        "standard_mfs_memory_plan_actual rows_total=23400 selected_channels=64",
+                        "standard_mfs_profile_run gridded_samples=5990400",
+                        self.source_line(stage=stage),
+                    ]
+                )
+
+                for field in ("selected_rows", "selected_channels", "correlations", "visibility_work"):
+                    self.assertIsNone(features["visibility"][field], field)
+                self.assertEqual(
+                    "selected-observation-traversal",
+                    features["visibility"]["correlation_source"],
+                )
+                self.assertIsNone(features["visibility"]["gridded_samples"])
+                self.assertIsNone(logs["summary"]["active_rows"])
+                self.assertIsNone(logs["summary"]["selected_channels"])
+
+
+class TerminalRustResourceTelemetryTests(unittest.TestCase):
+    def resource_line(self, **changes: object) -> str:
+        fields = {
+            "command": "casars-imager",
+            "pid": 1234,
+            "exit_code": 0,
+            "peak_rss_bytes": 64 * 1024**2,
+            "source": "wait4",
+            "scope": "terminal_child",
+        }
+        fields.update(changes)
+        return "imager_bench_process_resource " + " ".join(
+            f"{key}={value}" for key, value in fields.items() if value is not None
+        )
+
+    def measured_peak(self, lines: list[str]) -> int | None:
+        logs = run_workload.parse_backend_plan_logs("\n".join(lines))
+        features = run_workload.build_benchmark_feature_summary(
+            {}, {"backend_plan_logs": logs}
+        )
+        self.assertEqual(
+            logs["summary"]["peak_rss_bytes"], features["resources"]["peak_rss_bytes"]
+        )
+        return features["resources"]["peak_rss_bytes"]
+
+    def test_terminal_rust_peak_is_maximum_across_runs_not_sum_of_duplicates(self) -> None:
+        smaller = self.resource_line()
+        larger = self.resource_line(pid=1235, peak_rss_bytes=128 * 1024**2)
+        self.assertEqual(
+            128 * 1024**2,
+            self.measured_peak([smaller, larger, smaller, larger, smaller]),
+        )
+
+    def test_foreign_failed_and_malformed_records_do_not_supply_rss(self) -> None:
+        rejected = [
+            {"command": "python3"},
+            {"command": None},
+            {"exit_code": 1},
+            {"exit_code": -15},
+            {"exit_code": None},
+            {"exit_code": 0.0},
+            {"pid": 0},
+            {"pid": None},
+            {"pid": "unknown"},
+            {"source": "getrusage"},
+            {"source": None},
+            {"scope": "stream_boundary"},
+            {"scope": None},
+            {"peak_rss_bytes": None},
+            {"peak_rss_bytes": 0},
+            {"peak_rss_bytes": -1},
+            {"peak_rss_bytes": 1024.0},
+            {"peak_rss_bytes": True},
+        ]
+        for changes in rejected:
+            with self.subTest(changes=changes):
+                self.assertIsNone(self.measured_peak([self.resource_line(**changes)]))
+
+    def test_terminal_rss_ignores_foreign_peaks_and_never_uses_phase_fallback(self) -> None:
+        phase_logs = [
+            "imaging_source_read_ahead_summary mode=cube_slab process_peak_rss_bytes=99999999999",
+            "imaging_gridded_replay_summary process_peak_rss_bytes=99999999999",
+            "standard_mfs_profile_run peak_rss_bytes=99999999999",
+        ]
+        self.assertIsNone(self.measured_peak(phase_logs))
+        self.assertEqual(
+            64 * 1024**2,
+            self.measured_peak(phase_logs + [
+                self.resource_line(),
+                self.resource_line(command="python3", peak_rss_bytes=99999999999),
+                self.resource_line(exit_code=1, peak_rss_bytes=99999999999),
+            ]),
+        )
+
+    def test_missing_terminal_resource_record_keeps_rss_unknown(self) -> None:
+        self.assertIsNone(self.measured_peak([]))
+
+
 if __name__ == "__main__":
     unittest.main()
