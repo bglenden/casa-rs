@@ -5,11 +5,11 @@ use std::{
     mem::size_of,
     ops::{Deref, DerefMut},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use rayon::prelude::*;
@@ -998,6 +998,7 @@ enum InfallibleSource {}
 enum ReadyMessage<S, E, C> {
     Block {
         identity: BlockIdentity,
+        logical_units: usize,
         lease: StorageLease<S>,
     },
     Exhausted,
@@ -1074,6 +1075,65 @@ struct OverlapState {
     overlap_nanos: u128,
 }
 
+// Opt-in block telemetry; never used for execution accounting or admission.
+struct StreamProgress {
+    stream: u64,
+    source: &'static str,
+    started: Instant,
+    last_reported: Option<Duration>,
+    completed_blocks: u64,
+    completed_logical_units: u64,
+}
+
+impl StreamProgress {
+    fn enabled<S>(started: Instant) -> Option<Self> {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
+        ENABLED
+            .get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some())
+            .then(|| Self {
+                stream: NEXT_STREAM.fetch_add(1, Ordering::Relaxed),
+                source: std::any::type_name::<S>(),
+                started,
+                last_reported: None,
+                completed_blocks: 0,
+                completed_logical_units: 0,
+            })
+    }
+
+    fn report_due(&mut self, elapsed: Duration) -> bool {
+        if self
+            .last_reported
+            .is_some_and(|previous| elapsed.saturating_sub(previous) < Duration::from_secs(30))
+        {
+            return false;
+        }
+        self.last_reported = Some(elapsed);
+        true
+    }
+
+    fn completed(&mut self, block: BlockIdentity, logical_units: usize, commits: u64) {
+        self.completed_blocks = block.block_ordinal.saturating_add(1);
+        self.completed_logical_units = self
+            .completed_logical_units
+            .saturating_add(logical_units as u64);
+        let elapsed = self.started.elapsed();
+        if self.report_due(elapsed) {
+            eprintln!(
+                "imaging_bounded_stream_progress stream={} source={} pass_ordinal={} source_ordinal={} completed_blocks={} completed_logical_units={} commits_completed={} elapsed_nanos={}",
+                self.stream,
+                self.source,
+                block.pass_ordinal,
+                block.source_ordinal,
+                self.completed_blocks,
+                self.completed_logical_units,
+                commits,
+                elapsed.as_nanos(),
+            );
+        }
+    }
+}
+
 impl OverlapState {
     fn set_producer(&mut self, active: bool) {
         self.set_active(active, true);
@@ -1116,6 +1176,7 @@ where
     K: PartitionedKernel<S::Storage>,
 {
     let started = Instant::now();
+    let mut progress = StreamProgress::enabled::<S>(started);
     let worker_team = match FixedWorkerTeam::new(plan.workers) {
         Ok(worker_team) => worker_team,
         Err(_) => {
@@ -1129,9 +1190,23 @@ where
     };
     let mut result = worker_team.install(|| {
         if plan.source_slots == 1 {
-            execute_inline(plan, pass_ordinal, source, kernel, &worker_team)
+            execute_inline(
+                plan,
+                pass_ordinal,
+                source,
+                kernel,
+                &worker_team,
+                &mut progress,
+            )
         } else {
-            execute_overlapped(plan, pass_ordinal, source, kernel, &worker_team)
+            execute_overlapped(
+                plan,
+                pass_ordinal,
+                source,
+                kernel,
+                &worker_team,
+                &mut progress,
+            )
         }
     });
     #[cfg(test)]
@@ -1200,6 +1275,7 @@ fn execute_inline<S, K>(
     mut source: S,
     mut kernel: K,
     worker_team: &FixedWorkerTeam,
+    progress: &mut Option<StreamProgress>,
 ) -> BoundedStreamResult<S::Completion, K::Completion, S::Error, K::Error>
 where
     S: OrderedBlockSource,
@@ -1285,6 +1361,17 @@ where
                     measurements
                         .record_process(process)
                         .ok_or(BoundedStreamError::MeasurementOverflow)?;
+                    if let Some(progress) = progress.as_mut() {
+                        progress.completed(
+                            BlockIdentity {
+                                pass_ordinal,
+                                source_ordinal,
+                                block_ordinal,
+                            },
+                            logical_units,
+                            measurements.commits_completed,
+                        );
+                    }
                     block_ordinal = block_ordinal
                         .checked_add(1)
                         .ok_or(BoundedStreamError::MeasurementOverflow)?;
@@ -1319,6 +1406,7 @@ fn execute_overlapped<S, K>(
     source: S,
     mut kernel: K,
     worker_team: &FixedWorkerTeam,
+    progress: &mut Option<StreamProgress>,
 ) -> BoundedStreamResult<S::Completion, K::Completion, S::Error, K::Error>
 where
     S: OrderedBlockSource,
@@ -1564,6 +1652,7 @@ where
                                     source_ordinal,
                                     block_ordinal,
                                 },
+                                logical_units,
                                 lease,
                             })
                             .is_err()
@@ -1688,6 +1777,7 @@ where
             match message {
                 Ok(ReadyMessage::Block {
                     identity,
+                    logical_units,
                     mut lease,
                 }) => {
                     if ready_queue_capacity > 0 {
@@ -1734,6 +1824,13 @@ where
                                 returned_tx.take();
                                 drop(ready_rx);
                                 return Err(BoundedStreamError::MeasurementOverflow);
+                            }
+                            if let Some(progress) = progress.as_mut() {
+                                progress.completed(
+                                    identity,
+                                    logical_units,
+                                    measurements.commits_completed,
+                                );
                             }
                             lease.returned_at = Some(Instant::now());
                             if returned_tx
@@ -1890,6 +1987,62 @@ mod tests {
         },
         time::{Duration, Instant},
     };
+
+    fn test_progress() -> StreamProgress {
+        StreamProgress {
+            stream: 0,
+            source: "test-source",
+            started: Instant::now(),
+            last_reported: None,
+            completed_blocks: 0,
+            completed_logical_units: 0,
+        }
+    }
+
+    #[test]
+    fn t51_progress_reports_first_completion_then_throttles_for_thirty_seconds() {
+        let mut progress = test_progress();
+        assert!(progress.report_due(Duration::from_secs(1)));
+        assert!(!progress.report_due(Duration::from_secs(30)));
+        assert!(progress.report_due(Duration::from_secs(31)));
+        assert!(!progress.report_due(Duration::from_secs(31)));
+        assert!(progress.report_due(Duration::from_secs(61)));
+    }
+
+    #[test]
+    fn t51_progress_observes_completed_units_in_both_source_lifecycles() {
+        for slots in [1, 2] {
+            let mut outcomes = Vec::new();
+            for observed in [false, true] {
+                let plan = BoundedStreamPlan::new::<usize, u64>(slots, 1, 16, 1, 0)
+                    .unwrap()
+                    .with_maximum_logical_units_per_block(2)
+                    .unwrap();
+                let source = LogicalUnitSource {
+                    logical_units: 2,
+                    emitted: false,
+                };
+                let mut progress = observed.then(test_progress);
+                let team = FixedWorkerTeam::new(1).unwrap();
+                let outcome = if slots == 1 {
+                    execute_inline(plan, 7, source, SumKernel::default(), &team, &mut progress)
+                } else {
+                    execute_overlapped(plan, 7, source, SumKernel::default(), &team, &mut progress)
+                }
+                .unwrap();
+                assert_eq!(outcome.measurements.blocks_filled, 1);
+                assert_eq!(outcome.measurements.logical_units_filled, 2);
+                assert_eq!(outcome.measurements.commits_completed, 1);
+                if let Some(progress) = progress {
+                    assert_eq!(progress.completed_blocks, 1);
+                    assert_eq!(progress.completed_logical_units, 2);
+                    assert!(progress.last_reported.is_some());
+                }
+                outcomes.push(outcome.kernel_completion);
+            }
+            assert_eq!(outcomes[0], outcomes[1]);
+        }
+    }
 
     struct NumberSource {
         blocks: Vec<Vec<u64>>,
