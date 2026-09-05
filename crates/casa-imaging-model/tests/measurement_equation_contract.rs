@@ -278,7 +278,11 @@ fn compile_contract_with_reduction(
             ProductKind::RestoredImage,
             ProductKind::SumWeights,
             ProductKind::PrimaryBeam,
-            ProductKind::Sensitivity,
+            if aw_projection.is_some() {
+                ProductKind::Weight
+            } else {
+                ProductKind::Sensitivity
+            },
             ProductKind::PbCorrectedImage,
             ProductKind::Beam,
         ],
@@ -568,6 +572,21 @@ fn aw_projection_is_distinct_paired_and_identity_bound() {
     assert!(
         !aw.required_capabilities()
             .contains(&casa_imaging_model::RequiredCapability::WProjection)
+    );
+    assert_eq!(aw.products().normalization(), ProductNormalization::FlatNoise);
+    assert!(aw.products().products().contains(&ProductKind::Weight));
+    assert!(!aw.products().products().contains(&ProductKind::Sensitivity));
+    assert!(
+        aw.product_graph()
+            .nodes()
+            .iter()
+            .any(|node| node.name() == Some(".weight"))
+    );
+    assert!(
+        aw.product_graph()
+            .nodes()
+            .iter()
+            .all(|node| node.name() != Some(".sensitivity"))
     );
     assert_eq!(
         aw.normal_equation()

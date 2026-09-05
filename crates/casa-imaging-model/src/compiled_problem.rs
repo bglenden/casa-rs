@@ -2838,6 +2838,7 @@ fn validate_products(
         products.normalization,
         ProductNormalization::FlatNoise | ProductNormalization::FlatSky
     ) && !products.contains(ProductKind::Sensitivity)
+        && science.measurement_equation.aw_projection.is_none()
     {
         return Err(CompileProblemError::InvalidNormalizationCombination {
             reason: "flat-noise and flat-sky normalization require sensitivity state",
