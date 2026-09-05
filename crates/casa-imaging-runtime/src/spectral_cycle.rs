@@ -1486,17 +1486,20 @@ impl SpectralCycleExecutor {
                 },
             },
         };
-        Some(WeightingPlanFragment::streaming_for_pass(
-            &self.weighting_plan,
-            crate::spectral_cycle_plan::pass_node("transaction-read", self.pass),
-            source_resources,
-            self.id.clone(),
-            self.pass,
-            mode,
-            crate::plan_continuum_transform_row(&self.problem)
-                .expect("compiled transform row plan remains valid")
-                .map(|plan| u64::try_from(plan.bytes()).expect("transform bytes fit u64")),
-        ))
+        Some(
+            WeightingPlanFragment::streaming_for_pass(
+                &self.weighting_plan,
+                crate::spectral_cycle_plan::pass_node("transaction-read", self.pass),
+                source_resources,
+                self.id.clone(),
+                self.pass,
+                mode,
+                crate::plan_continuum_transform_row(&self.problem)
+                    .expect("compiled transform row plan remains valid")
+                    .map(|plan| u64::try_from(plan.bytes()).expect("transform bytes fit u64")),
+            )
+            .with_initial_working_set(self.complete_data.initial_working_set()),
+        )
     }
 
     fn select_adaptation_route(

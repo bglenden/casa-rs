@@ -1604,6 +1604,9 @@ struct SpectralOperatorMeasurements {
     inverse_dirty_fft_planes: u64,
     inverse_residual_fft_planes: u64,
     inverse_psf_fft_planes: u64,
+    initial_formation_buffer_bytes: usize,
+    initial_sensitivity_capacity_bytes: usize,
+    initial_sensitivity_box_bytes: usize,
 }
 
 #[cfg(test)]
@@ -1638,9 +1641,57 @@ pub struct SpectralOperatorWorkload {
     resident_model_terms: usize,
     total_model_terms: usize,
     max_replay_block_samples: usize,
+    initial_phase_residency: Option<SpectralOperatorInitialPhaseResidency>,
+}
+
+/// Owner-certified grid and primitive lifetimes for one initial AW chart.
+///
+/// This certificate covers only science grids, their compensated accumulators,
+/// and local/parent primitive arrays. FFT state, prediction workspaces, models,
+/// source state, and prepared-cell pools retain their separate reservations.
+/// Density generation must finish before completion begins. The certificate is
+/// unavailable for pass/basis/chart combinations whose lifetimes are not proved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpectralOperatorInitialPhaseResidency {
+    accumulation_bytes: usize,
+    completion_bytes: usize,
+    retained_bytes: usize,
+}
+
+impl SpectralOperatorInitialPhaseResidency {
+    /// Science grids and compensated accumulators retained during source replay.
+    #[must_use]
+    pub const fn accumulation_bytes(self) -> usize {
+        self.accumulation_bytes
+    }
+
+    /// Peak from completed replay through local FFT/formation and parent copying.
+    ///
+    /// This includes simultaneous old/new sensitivity storage during conversion
+    /// or boxing. The consumed chart's grids are gone before parent arrays exist.
+    #[must_use]
+    pub const fn completion_bytes(self) -> usize {
+        self.completion_bytes
+    }
+
+    /// Completed parent primitives retained after the chart has been consumed.
+    #[must_use]
+    pub const fn retained_bytes(self) -> usize {
+        self.retained_bytes
+    }
 }
 
 impl SpectralOperatorWorkload {
+    /// Return the owner-certified initial grid/primitive phase envelope, if proved.
+    ///
+    /// Callers must establish that density generation has finished before using
+    /// its completion peak without density scratch, and retain all separately
+    /// projected workspaces. Certified owners reject prior normal-state retention.
+    #[must_use]
+    pub const fn initial_phase_residency(self) -> Option<SpectralOperatorInitialPhaseResidency> {
+        self.initial_phase_residency
+    }
+
     /// Return the scientific major-pass role that fixes required state residency.
     #[must_use]
     pub const fn pass(self) -> SpectralOperatorPass {
@@ -2053,6 +2104,8 @@ pub fn spectral_operator_workload(
         .checked_mul(polarizations)
         .and_then(|values| values.checked_mul(domain_count))
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let initial_phase_residency =
+        project_initial_phase_residency(specification, pass, grid_complex_values)?;
     Ok(SpectralOperatorWorkload {
         pass,
         slab: specification.slab,
@@ -2145,7 +2198,105 @@ pub fn spectral_operator_workload(
             .checked_mul(polarizations)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         max_replay_block_samples,
+        initial_phase_residency,
     })
+}
+
+fn project_initial_phase_residency(
+    specification: &SpectralOperatorSpecification,
+    pass: SpectralOperatorPass,
+    grid_complex_values: usize,
+) -> Result<Option<SpectralOperatorInitialPhaseResidency>, SpectralOperatorError> {
+    let [chart] = specification.charts.as_ref() else {
+        return Ok(None);
+    };
+    let [domain] = specification.domains.as_ref() else {
+        return Ok(None);
+    };
+    if !specification.is_initial_certified_zero(pass)
+        || specification.aw_projection.is_none()
+        || specification.instrument_model != Some(InstrumentModel::CasaEvlaWidebandAwV1)
+        || specification.mosaic
+        || !matches!(specification.basis, SpectralBasisPlan::Polynomial(_))
+        || chart.geometry.image_shape != domain.image_shape
+        || chart.window.origin() != [0, 0]
+    {
+        return Ok(None);
+    }
+    let overflow = || SpectralOperatorError::ResidencyOverflow;
+    let cells = checked_cells(chart.geometry.image_shape)?;
+    let polarizations = specification.polarization_count();
+    let coefficients = specification
+        .coefficient_terms()
+        .checked_mul(polarizations)
+        .ok_or_else(overflow)?;
+    let moments = specification
+        .normal_moments()
+        .checked_mul(polarizations)
+        .ok_or_else(overflow)?;
+    let complex_plane = cells
+        .checked_mul(size_of::<Complex64>())
+        .ok_or_else(overflow)?;
+    let real_plane = cells.checked_mul(size_of::<f64>()).ok_or_else(overflow)?;
+    let metadata = moments
+        .checked_mul(2 * size_of::<f64>())
+        .and_then(|bytes| {
+            specification
+                .basis
+                .validity_entries(specification.slab)
+                .checked_mul(polarizations)
+                .and_then(|values| values.checked_mul(size_of::<SpectralChannelValidity>()))
+                .and_then(|validity| bytes.checked_add(validity))
+        })
+        .ok_or_else(overflow)?;
+    let bytes = |complex_planes: usize, real_planes: usize| {
+        complex_planes
+            .checked_mul(complex_plane)
+            .and_then(|complex| {
+                real_planes
+                    .checked_mul(real_plane)
+                    .and_then(|real| complex.checked_add(real))
+            })
+            .and_then(|bytes| bytes.checked_add(metadata))
+            .ok_or_else(overflow)
+    };
+    let doubled_coefficients = coefficients.checked_mul(2).ok_or_else(overflow)?;
+    let doubled_moments = moments.checked_mul(2).ok_or_else(overflow)?;
+    let retained_bytes = bytes(
+        doubled_coefficients
+            .checked_add(moments)
+            .ok_or_else(overflow)?,
+        moments,
+    )?;
+    // In-place Complex64 -> f64 collection may retain the larger allocation.
+    // Boxing may overlap that entire allocation with the final real slice.
+    let local_formation_bytes = bytes(
+        doubled_coefficients
+            .checked_add(doubled_moments)
+            .ok_or_else(overflow)?,
+        moments,
+    )?;
+    // Parent dirty is cloned only after local dirty/invariant/PSF arrays drop.
+    let parent_copy_bytes = bytes(
+        coefficients
+            .checked_mul(3)
+            .and_then(|planes| planes.checked_add(doubled_moments))
+            .ok_or_else(overflow)?,
+        doubled_moments,
+    )?;
+    let accumulation_bytes = grid_complex_values
+        .checked_mul(size_of::<Complex64>())
+        .ok_or_else(overflow)?;
+    let completion_bytes = accumulation_bytes
+        .checked_add(local_formation_bytes)
+        .ok_or_else(overflow)?
+        .max(parent_copy_bytes)
+        .max(retained_bytes);
+    Ok(Some(SpectralOperatorInitialPhaseResidency {
+        accumulation_bytes,
+        completion_bytes,
+        retained_bytes,
+    }))
 }
 
 pub(crate) fn fft_planning_words_for_shape(
@@ -5037,6 +5188,14 @@ impl CompleteDataOwnerState {
     ) -> Result<(), SpectralOperatorError> {
         if self.sample_count != 0 || self.next_block_sequence != 0 || self.model_binding.is_some() {
             return Err(SpectralOperatorError::MajorCycleAlreadyBound);
+        }
+        if prior_normal_state.is_some()
+            && self
+                .operators
+                .iter()
+                .any(|operator| operator.workload.initial_phase_residency().is_some())
+        {
+            return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
         let prior = prior_normal_state
             .map(crate::FinalNormalState::into_reusable_domains)
@@ -10117,6 +10276,17 @@ impl SpectralSlabOperator {
         let invariant_dirty = Some(dirty.clone());
         let common_residual = common_residual.map(Vec::into_boxed_slice);
         let invariant_common_dirty = common_residual.clone();
+        #[cfg(test)]
+        if self.workload.initial_phase_residency().is_some() {
+            self.measurements.initial_formation_buffer_bytes = (dirty.len()
+                + invariant_dirty.as_ref().map_or(0, |values| values.len())
+                + psf.capacity())
+                * size_of::<Complex64>()
+                + sensitivity.capacity() * size_of::<f64>();
+            self.measurements.initial_sensitivity_capacity_bytes =
+                sensitivity.capacity() * size_of::<f64>();
+            self.measurements.initial_sensitivity_box_bytes = sensitivity.len() * size_of::<f64>();
+        }
         let mut primitives = SpectralOperatorPrimitives {
             shape: self.geometry.image_shape,
             slab: self.slab,
@@ -11377,6 +11547,7 @@ pub enum SpectralOperatorError {
 #[cfg(test)]
 mod tests {
     mod initial_model_residency;
+    mod initial_phase_residency;
     use std::fs::File;
     use std::io::{BufReader, Read};
     use std::time::Instant;
@@ -12040,6 +12211,7 @@ mod tests {
             resident_model_terms,
             total_model_terms,
             max_replay_block_samples: 3,
+            initial_phase_residency: None,
         }
     }
 
@@ -12438,6 +12610,7 @@ mod tests {
             resident_model_terms,
             total_model_terms,
             max_replay_block_samples: 4,
+            initial_phase_residency: None,
         };
         let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)
             .expect("reserved FFT workspace");

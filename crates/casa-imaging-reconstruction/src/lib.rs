@@ -81,9 +81,9 @@ pub mod runtime_adapter {
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,
         CompleteDataOwnerState, FinalVisibilitySample, PreparedSpectralOperator,
-        PreparedSpectralOperatorRecycle, SpectralOperatorPass, SpectralOperatorWorkload,
-        SpectralSlabPlan, WProjectionDiagnostics, prepare_spectral_operator,
-        reprepare_spectral_operator, spectral_operator_workload,
+        PreparedSpectralOperatorRecycle, SpectralOperatorInitialPhaseResidency,
+        SpectralOperatorPass, SpectralOperatorWorkload, SpectralSlabPlan, WProjectionDiagnostics,
+        prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::weighting::{
         FusedWeightingPhase, WeightingReplayPhase, begin_natural_weighting_stream,

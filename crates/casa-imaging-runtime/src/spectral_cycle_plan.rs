@@ -520,7 +520,7 @@ impl SpectralCyclePlan {
             }
             None => None,
         };
-        let (physical, source_resources, replay) = match pass.phase() {
+        let (physical, source_resources, replay, weighting_fragment) = match pass.phase() {
             SpectralPassPhase::InitialMajor => {
                 let (base, source_resources) =
                     base_physical(problem, registry, &policy, pass, phase_input)?;
@@ -559,7 +559,7 @@ impl SpectralCyclePlan {
                         ManagedSpillMode::Write,
                     )?;
                 }
-                (physical, source_resources, replay)
+                (physical, source_resources, replay, Some(fragment))
             }
             SpectralPassPhase::FinalMajor => {
                 if policy.visibility_write.is_some() {
@@ -595,7 +595,7 @@ impl SpectralCyclePlan {
                             .ok_or(SpectralCyclePlanError::Overflow)?,
                     ),
                 )?;
-                (physical, source_resources, replay)
+                (physical, source_resources, replay, None)
             }
         };
         let preparation_node = pass_node("spectral-operator-fft-plan", pass);
@@ -692,7 +692,13 @@ impl SpectralCyclePlan {
                 complete_data.residency(),
             );
         }
-        let (mut physical, complete_data) = complete_data.compose(&physical)?;
+        let (mut physical, complete_data) = match weighting_fragment.as_ref() {
+            Some(weighting_fragment) => {
+                complete_data.compose_initial_weighting(problem, &physical, weighting_fragment)?
+            }
+            None => complete_data.compose(&physical)?,
+        };
+        drop(weighting_fragment);
         if imaging_plan_diagnostics_enabled() {
             let alternative = physical.execution_dag().resource_alternative();
             for allocation in &alternative.demand.memory {

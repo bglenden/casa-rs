@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::*;
-use casa_imaging_model::AwProjectionContract;
+use casa_imaging_model::{
+    AwProjectionContract, ModelBounds, ModelInputCommitment, ModelLifecycleRequirements,
+};
 use casa_imaging_reconstruction::{
     AwKernelLayout, AwOperatorError, AwPreparedCatalog, AwPreparedCellLease,
     AwPreparedCellMetadata, AwPreparedCellProvider, PreparedAwProjection,
@@ -91,6 +93,72 @@ fn projection() -> PreparedAwProjection {
         DECODED_BYTES,
     )
     .expect("bounded AW projection")
+}
+
+#[test]
+fn t51_initial_phase_residency_accepts_compiled_full_geometry_aw() {
+    // Planning-only coverage: no visibility traversal or image allocation.
+    let base = aw_problem();
+    let problem = compile(ImagingRequest::new(
+        ProblemSpecification::new(
+            base.science().clone(),
+            ReconstructionContract::new(
+                ReconstructionBasis::Taylor { terms: 2 },
+                ReconstructionAlgorithm::Mtmfs {
+                    scales_px: vec![0.0, 5.0, 12.0],
+                    small_scale_bias: 0.0,
+                },
+                ReconstructionControls::new(0, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            WeightingContract::new(
+                WeightingScheme::Briggs { robust: 1.0 },
+                WeightDensityScope::GlobalSelection,
+            ),
+            ProductRequirements::new(
+                vec![ProductKind::Psf, ProductKind::Residual, ProductKind::Model],
+                ProductNormalization::UnitResponse,
+                RestoringBeamPolicy::None,
+                product_validity(),
+            ),
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+            base.numerics().clone(),
+        ),
+        geometry_with_shape_and_increment(
+            [2048.0, 2048.0],
+            ImageShape::new(4096, 4096),
+            [-2.908_882_086_657_216e-6, 2.908_882_086_657_216e-6],
+        ),
+        base.inputs().clone(),
+        ModelLifecycleRequirements::new(
+            ModelBounds::new(
+                100_000_000,
+                100_000_000,
+                100_000_000,
+                100_000_000,
+                1.0e30,
+                1.0e30,
+            )
+            .unwrap(),
+            NumericPrecision::F64,
+            ModelInputCommitment::Empty,
+        ),
+    ))
+    .expect("compiled full-geometry initial AW problem");
+    let specification =
+        casa_imaging_reconstruction::SpectralOperatorSpecification::new(&problem).unwrap();
+    let workload = casa_imaging_reconstruction::runtime_adapter::spectral_operator_workload(
+        &specification,
+        4096,
+        SpectralOperatorPass::InitialMajor,
+    )
+    .unwrap();
+    let phases = workload
+        .initial_phase_residency()
+        .expect("compiled AW geometry receives the owner certificate");
+    assert_eq!(phases.accumulation_bytes(), 4_294_967_296);
+    assert_eq!(phases.completion_bytes(), 7_381_975_089);
+    assert_eq!(phases.retained_bytes(), 2_281_701_425);
 }
 
 fn fragment(problem: &casa_imaging_model::CompiledProblem) -> CompleteDataPlanFragment {

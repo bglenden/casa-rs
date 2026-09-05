@@ -1720,7 +1720,10 @@ impl CompleteDataResidency {
         self.major_cycle_model_bytes
     }
 
-    /// Conservative peak of all runtime-owned T19 allocations.
+    /// Conservative peak of runtime-owned allocations after phase composition.
+    ///
+    /// A certified initial working set includes overlapping density scratch,
+    /// grids, and primitive formation; its peak need not equal the component sum.
     #[must_use]
     pub const fn peak_bytes(self) -> usize {
         self.peak_bytes
@@ -1755,6 +1758,17 @@ pub struct CompleteDataPlanFragment {
     reconciliation_node: Option<WorkNodeId>,
     aw_projection: Option<PreparedAwProjection>,
     aw_reader: Option<PreparedArtifactReaderPlan>,
+    initial_working_set: Option<InitialPhaseWorkingSetBinding>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct InitialPhaseWorkingSetBinding {
+    pub(crate) problem: CompiledProblemId,
+    pub(crate) allocation: CompleteDataAllocation,
+    pub(crate) density: LogicalAllocation,
+    pub(crate) density_slot: PhysicalSlot,
+    pub(crate) source_read: WorkNodeId,
+    pub(crate) replay_node: WorkNodeId,
 }
 
 impl CompleteDataPlanFragment {
@@ -1942,6 +1956,7 @@ impl CompleteDataPlanFragment {
             reconciliation_node: None,
             aw_projection: None,
             aw_reader: None,
+            initial_working_set: None,
         })
     }
 
@@ -2018,6 +2033,7 @@ impl CompleteDataPlanFragment {
             reconciliation_node: None,
             aw_projection: None,
             aw_reader: None,
+            initial_working_set: None,
         })
     }
 
@@ -2098,6 +2114,10 @@ impl CompleteDataPlanFragment {
 
     pub(crate) const fn replay_node(&self) -> &WorkNodeId {
         &self.replay_node
+    }
+
+    pub(crate) fn initial_working_set(&self) -> Option<&InitialPhaseWorkingSetBinding> {
+        self.initial_working_set.as_ref()
     }
 
     /// Return the final-reconciliation node after composition.
@@ -2306,10 +2326,6 @@ impl CompleteDataPlanFragment {
         let residency = self.residency;
         let mut required = vec![
             (
-                format!("spectral-operator-grids-{suffix}"),
-                residency.grid_bytes(),
-            ),
-            (
                 format!("spectral-operator-convolution-cache-{suffix}"),
                 residency.convolution_cache_bytes(),
             ),
@@ -2322,14 +2338,38 @@ impl CompleteDataPlanFragment {
                 residency.forward_workspace_bytes(),
             ),
             (
-                format!("spectral-operator-primitives-{suffix}"),
-                residency.primitive_output_bytes(),
-            ),
-            (
                 format!("spectral-operator-major-cycle-model-{suffix}"),
                 residency.major_cycle_model_bytes(),
             ),
         ];
+        if let Some(binding) = &self.initial_working_set {
+            let allocation = &binding.allocation;
+            if context
+                .allocations()
+                .iter()
+                .filter(|capability| {
+                    capability.allocation() == &allocation.allocation
+                        && capability.physical_slot() == &allocation.slot
+                        && capability.capacity_bytes() == allocation.bytes
+                        && capability.lifetime() == &ClaimLifetime::through_fence(FenceKind::Io)
+                })
+                .count()
+                != 1
+            {
+                return Err(CompleteDataPlanError::MissingAllocationCapability);
+            }
+        } else {
+            required.extend([
+                (
+                    format!("spectral-operator-grids-{suffix}"),
+                    residency.grid_bytes(),
+                ),
+                (
+                    format!("spectral-operator-primitives-{suffix}"),
+                    residency.primitive_output_bytes(),
+                ),
+            ]);
+        }
         if residency.response_workspace_bytes() > 0 {
             required.push((
                 format!("spectral-operator-response-workspace-{suffix}"),
@@ -2452,6 +2492,51 @@ impl CompleteDataPlanFragment {
         Ok(())
     }
 
+    pub(crate) fn compose_initial_weighting(
+        mut self,
+        problem: &CompiledProblem,
+        base: &PhysicalWorkBinding,
+        weighting: &crate::WeightingPlanFragment<'_>,
+    ) -> Result<(PhysicalWorkBinding, Self), CompleteDataPlanError> {
+        if let Some(phase) = self.workload.initial_phase_residency() {
+            if self.specification.problem_id() != problem.problem_id()
+                || self.sequential_channel_major
+                || self.initial_working_set.is_some()
+            {
+                return Err(CompleteDataPlanError::PlanMismatch);
+            }
+            let reconciliation = base
+                .observation_transaction()
+                .post_replay_reconciliation()
+                .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
+            let binding = weighting.initial_phase_working_set(
+                problem,
+                phase,
+                format!(
+                    "spectral-operator-initial-working-set-{}",
+                    operator_allocation_suffix(self.workload, self.execution_role)
+                ),
+                reconciliation,
+            )?;
+            if let Some(binding) = binding {
+                if binding.replay_node != self.replay_node {
+                    return Err(CompleteDataPlanError::PlanMismatch);
+                }
+                self.residency.peak_bytes = self
+                    .residency
+                    .peak_bytes
+                    .checked_sub(self.residency.grid_bytes)
+                    .and_then(|bytes| bytes.checked_sub(self.residency.primitive_output_bytes))
+                    .and_then(|bytes| {
+                        bytes.checked_add(usize::try_from(binding.allocation.bytes).ok()?)
+                    })
+                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+                self.initial_working_set = Some(binding);
+            }
+        }
+        self.compose(base)
+    }
+
     /// Add shared grids, FFT scratch, and primitive outputs to physical work.
     ///
     /// Composition also binds this fragment to the sealed observation
@@ -2472,6 +2557,37 @@ impl CompleteDataPlanFragment {
         if !base.execution_dag().nodes().contains_key(&self.replay_node) {
             return Err(CompleteDataPlanError::MissingReplayNode);
         }
+        if let Some(binding) = &self.initial_working_set {
+            if base
+                .execution_dag()
+                .logical_allocations()
+                .get(&binding.density.id)
+                != Some(&binding.density)
+                || base
+                    .execution_dag()
+                    .physical_slots()
+                    .get(&binding.density_slot.id)
+                    != Some(&binding.density_slot)
+                || base
+                    .execution_dag()
+                    .resource_alternative()
+                    .demand
+                    .memory
+                    .iter()
+                    .filter(|demand| {
+                        demand.allocation_id == binding.density.id.as_str()
+                            && demand.hard_bytes == binding.density.bytes
+                            && demand.preferred_bytes == binding.density.bytes
+                            && demand.views == vec![CapacityViewId::new("host-memory")]
+                    })
+                    .count()
+                    != 1
+                || binding.allocation.release_after
+                    != BTreeSet::from([WorkDependency::Work(reconciliation.clone())])
+            {
+                return Err(CompleteDataPlanError::PlanMismatch);
+            }
+        }
         let specs = self.allocation_specs(reconciliation)?;
         let reader = self.aw_reader.clone();
         let operator_spec_count = if reader.is_some() {
@@ -2483,13 +2599,6 @@ impl CompleteDataPlanFragment {
             specs.len()
         };
         let (operator_specs, trailing_specs) = specs.split_at(operator_spec_count);
-        let catalog_id = format!(
-            "spectral-operator-aw-catalog-metadata-{}",
-            operator_allocation_suffix(self.workload, self.execution_role)
-        );
-        let catalog_spec = operator_specs
-            .iter()
-            .find(|spec| spec.allocation.as_str() == catalog_id);
         let aw_spec = reader
             .as_ref()
             .map(|_| {
@@ -2511,6 +2620,30 @@ impl CompleteDataPlanFragment {
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        if let Some(binding) = &self.initial_working_set {
+            for node in &mut nodes {
+                for usage in &mut node.allocations {
+                    if usage.allocation == binding.density.id {
+                        usage.allocation = binding.allocation.allocation.clone();
+                    }
+                }
+            }
+            let source = nodes
+                .iter_mut()
+                .find(|node| node.id == binding.source_read)
+                .ok_or(CompleteDataPlanError::PlanMismatch)?;
+            if !source
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == binding.allocation.allocation)
+            {
+                source.allocations.push(
+                    binding
+                        .allocation
+                        .usage(ClaimLifetime::through_fence(FenceKind::Io)),
+                );
+            }
+        }
         let replay = nodes
             .iter_mut()
             .find(|node| node.id == self.replay_node)
@@ -2523,7 +2656,7 @@ impl CompleteDataPlanFragment {
                 return Err(CompleteDataPlanError::PlanMismatch);
             }
         }
-        let mut preparation = WorkNode {
+        let preparation = WorkNode {
             id: self.preparation_node.clone(),
             kind: WorkKind::FftPlanning,
             domain: WorkDomain::Cpu,
@@ -2543,23 +2676,14 @@ impl CompleteDataPlanFragment {
                     lifetime: ClaimLifetime::Work,
                 },
             ],
-            allocations: [
-                Some(specs[2].usage(ClaimLifetime::Work)),
-                (self.workload.pass() == SpectralOperatorPass::ResidualRefresh)
-                    .then(|| specs[4].usage(ClaimLifetime::Work)),
-                Some(specs[5].usage(ClaimLifetime::Work)),
-            ]
-            .into_iter()
-            .flatten()
-            .collect(),
+            allocations: operator_specs
+                .iter()
+                .filter(|spec| spec.acquire_at == self.preparation_node)
+                .map(|spec| spec.usage(ClaimLifetime::Work))
+                .collect(),
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
-        if let Some(catalog) = catalog_spec {
-            preparation
-                .allocations
-                .push(catalog.usage(ClaimLifetime::Work));
-        }
         replay
             .dependencies
             .insert(WorkDependency::Work(self.preparation_node.clone()));
@@ -2568,18 +2692,14 @@ impl CompleteDataPlanFragment {
                 .dependencies
                 .insert(WorkDependency::Work(reader.node().clone()));
         }
-        replay.allocations.extend([
-            specs[0].usage(replay_fence.clone()),
-            specs[1].usage(replay_fence.clone()),
-            specs[2].usage(replay_fence.clone()),
-            specs[3].usage(replay_fence.clone()),
-            specs[4].usage(replay_fence.clone()),
-            specs[5].usage(replay_fence),
-        ]);
-        for replay_state in &operator_specs[6..] {
-            replay
+        for spec in operator_specs {
+            if !replay
                 .allocations
-                .push(replay_state.usage(ClaimLifetime::through_fence(FenceKind::Io)));
+                .iter()
+                .any(|usage| usage.allocation == spec.allocation)
+            {
+                replay.allocations.push(spec.usage(replay_fence.clone()));
+            }
         }
         for spec in gridded_specs.iter().flatten() {
             replay
@@ -2696,20 +2816,26 @@ impl CompleteDataPlanFragment {
                 WorkDependency::Work(reader.release_node().clone()),
             ]);
         }
-        planned_reconciliation.allocations.extend([
-            specs[4].usage(ClaimLifetime::Work),
-            specs[5].usage(ClaimLifetime::Work),
-        ]);
-        if let Some(catalog) = catalog_spec {
-            planned_reconciliation
-                .allocations
-                .push(catalog.usage(ClaimLifetime::Work));
-        }
+        planned_reconciliation.allocations.extend(
+            operator_specs
+                .iter()
+                .filter(|spec| {
+                    spec.release_after
+                        .contains(&WorkDependency::Work(reconciliation.clone()))
+                })
+                .map(|spec| spec.usage(ClaimLifetime::Work)),
+        );
         self.reconciliation_node = Some(reconciliation.clone());
 
         let mut alternative = base.execution_dag().resource_alternative().clone();
         alternative.id =
             AlternativeId::new(format!("{}-spectral-operator", alternative.id.as_str()));
+        if let Some(binding) = &self.initial_working_set {
+            alternative
+                .demand
+                .memory
+                .retain(|demand| demand.allocation_id != binding.density.id.as_str());
+        }
         alternative.demand.memory.extend(
             specs
                 .iter()
@@ -2840,6 +2966,11 @@ impl CompleteDataPlanFragment {
                 .execution_dag()
                 .logical_allocations()
                 .values()
+                .filter(|allocation| {
+                    self.initial_working_set
+                        .as_ref()
+                        .is_none_or(|binding| allocation.id != binding.density.id)
+                })
                 .cloned()
                 .chain(
                     specs
@@ -2852,6 +2983,11 @@ impl CompleteDataPlanFragment {
                 .execution_dag()
                 .physical_slots()
                 .values()
+                .filter(|slot| {
+                    self.initial_working_set
+                        .as_ref()
+                        .is_none_or(|binding| slot.id != binding.density_slot.id)
+                })
                 .cloned()
                 .chain(
                     specs
@@ -2931,8 +3067,11 @@ impl CompleteDataPlanFragment {
         ))]);
         let reconciled = BTreeSet::from([WorkDependency::Work(reconciliation.clone())]);
         let residual_refresh = self.workload.pass() == SpectralOperatorPass::ResidualRefresh;
-        let mut allocations = vec![
-            CompleteDataAllocation::new(
+        let mut allocations = Vec::new();
+        if let Some(binding) = &self.initial_working_set {
+            allocations.push(binding.allocation.clone());
+        } else {
+            allocations.push(CompleteDataAllocation::new(
                 format!("spectral-operator-grids-{suffix}"),
                 residency.grid_bytes(),
                 if residual_refresh {
@@ -2943,7 +3082,21 @@ impl CompleteDataPlanFragment {
                 InitializationPolicy::ZeroBeforeRead,
                 self.replay_node.clone(),
                 replay_done.clone(),
-            )?,
+            )?);
+            allocations.push(CompleteDataAllocation::new(
+                format!("spectral-operator-primitives-{suffix}"),
+                residency.primitive_output_bytes(),
+                "spectral-operator-unnormalized-dirty-psf-residual-primitives",
+                InitializationPolicy::OverwriteBeforeRead,
+                if residual_refresh {
+                    self.preparation_node.clone()
+                } else {
+                    self.replay_node.clone()
+                },
+                reconciled,
+            )?);
+        }
+        allocations.extend([
             CompleteDataAllocation::new(
                 format!("spectral-operator-convolution-cache-{suffix}"),
                 residency.convolution_cache_bytes(),
@@ -2969,18 +3122,6 @@ impl CompleteDataPlanFragment {
                 replay_done,
             )?,
             CompleteDataAllocation::new(
-                format!("spectral-operator-primitives-{suffix}"),
-                residency.primitive_output_bytes(),
-                "spectral-operator-unnormalized-dirty-psf-residual-primitives",
-                InitializationPolicy::OverwriteBeforeRead,
-                if residual_refresh {
-                    self.preparation_node.clone()
-                } else {
-                    self.replay_node.clone()
-                },
-                reconciled,
-            )?,
-            CompleteDataAllocation::new(
                 format!("spectral-operator-major-cycle-model-{suffix}"),
                 residency.major_cycle_model_bytes(),
                 "spectral-operator-current-final-model-and-pending-delta",
@@ -2988,7 +3129,7 @@ impl CompleteDataPlanFragment {
                 self.preparation_node.clone(),
                 BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
             )?,
-        ];
+        ]);
         if residency.response_workspace_bytes() > 0 {
             allocations.push(CompleteDataAllocation::new(
                 format!("spectral-operator-response-workspace-{suffix}"),
@@ -3276,18 +3417,19 @@ fn mosaic_allocation_specs(
     Ok(allocations)
 }
 
-struct CompleteDataAllocation {
-    allocation: AllocationId,
-    slot: PhysicalSlotId,
-    bytes: u64,
-    compatibility: SlotCompatibility,
+#[derive(Debug, Clone)]
+pub(crate) struct CompleteDataAllocation {
+    pub(crate) allocation: AllocationId,
+    pub(crate) slot: PhysicalSlotId,
+    pub(crate) bytes: u64,
+    pub(crate) compatibility: SlotCompatibility,
     purpose: AllocationPurpose,
-    acquire_at: WorkNodeId,
-    release_after: BTreeSet<WorkDependency>,
+    pub(crate) acquire_at: WorkNodeId,
+    pub(crate) release_after: BTreeSet<WorkDependency>,
 }
 
 impl CompleteDataAllocation {
-    fn new(
+    pub(crate) fn new(
         id: String,
         bytes: usize,
         layout: &str,
@@ -4065,6 +4207,133 @@ mod tests {
 
     const TEST_RECORD_BYTES: usize = 32;
     const TEST_PREDICTION_WIDTH: usize = 1;
+
+    #[test]
+    fn t51_recorded_phase_demand_fixture_has_exact_admission_boundary() {
+        use crate::{
+            AlternativeId, CacheDemand, CapabilityPredicate, CapacityDomainId, CapacityViewId,
+            CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives, DemandEnvelope,
+            ExternalPressure, HostInventory, InitializationPolicy, IoBufferDemand,
+            MemoryCapacityDomain, MemoryCapacityKind, MemoryView, MemoryViewKind, QuiescencePoint,
+            ResourceAuthority, ResourceError, ResourceHeadroom, ResourcePolicy, ResourceTopology,
+            RuntimeOverheadDemand, ScalingMetadata, WorkDependency, WorkNodeId,
+        };
+        use std::collections::{BTreeMap, BTreeSet};
+
+        // T51's recorded 4096 demand fixture. Compiler/owner tests establish the
+        // phase projection separately; this is not a full production-plan test.
+        const COMBINED: usize = 7_381_975_089;
+        const FIXED: usize = 3_458_262_840;
+        const REQUIRED: u64 = (COMBINED + FIXED) as u64;
+        let source = WorkNodeId::new("source");
+        let reconciled = BTreeSet::from([WorkDependency::Work(WorkNodeId::new("reconcile"))]);
+        let allocation = super::CompleteDataAllocation::new(
+            "spectral-operator-initial-working-set-recorded".to_string(),
+            COMBINED,
+            "spectral-operator-initial-density-grid-primitive-working-set",
+            InitializationPolicy::OverwriteBeforeRead,
+            source.clone(),
+            reconciled.clone(),
+        )
+        .unwrap();
+        let fixed = super::CompleteDataAllocation::new(
+            "unchanged-recorded-reservations".to_string(),
+            FIXED,
+            "recorded-fixed-reservations",
+            InitializationPolicy::OverwriteBeforeRead,
+            source.clone(),
+            reconciled.clone(),
+        )
+        .unwrap();
+        assert_eq!(allocation.logical_allocation().lifetime.acquire_at, source);
+        assert_eq!(
+            allocation.logical_allocation().lifetime.release_after,
+            reconciled
+        );
+        assert_eq!(allocation.physical_slot().capacity_bytes, COMBINED as u64);
+        let domain = CapacityDomainId::new("host-memory");
+        let view = CapacityViewId::new("host-memory");
+        let alternatives = DemandAlternatives {
+            required_capabilities: BTreeSet::new(),
+            alternatives: vec![DemandAlternative {
+                id: AlternativeId::new("recorded-phase-envelope"),
+                capabilities: CapabilityPredicate::default(),
+                demand: DemandEnvelope {
+                    host_memory_view: view.clone(),
+                    memory: vec![allocation.memory_demand(), fixed.memory_demand()],
+                    workers: CountDemand::new(1, 1),
+                    overhead: RuntimeOverheadDemand::zero(),
+                    storage: Vec::new(),
+                    rates: Vec::new(),
+                    caches: CacheDemand::zero(),
+                    locks: CountDemand::zero(),
+                    file_descriptors: CountDemand::zero(),
+                    queues: Vec::new(),
+                    transfers: Vec::new(),
+                    accelerators: Vec::new(),
+                    io_buffers: IoBufferDemand::zero(),
+                },
+                headroom: ResourceHeadroom::default(),
+                scaling: ScalingMetadata {
+                    minimum_workers: 1,
+                    maximum_workers: 1,
+                    maximum_batch_size: 1,
+                    maximum_tile_width: 1,
+                    maximum_tile_height: 1,
+                    maximum_slab_depth: 1,
+                    memory_bytes_per_worker: BTreeMap::new(),
+                },
+                quiescence_points: BTreeSet::from([QuiescencePoint::MajorCycle]),
+            }],
+        };
+        for available in [11_500_000_000, REQUIRED, REQUIRED - 1] {
+            let authority = ResourceAuthority::with_inventory(HostInventory {
+                topology: ResourceTopology {
+                    memory_domains: vec![MemoryCapacityDomain {
+                        id: domain.clone(),
+                        kind: MemoryCapacityKind::Host,
+                        capacity_bytes: available,
+                    }],
+                    memory_views: vec![MemoryView {
+                        id: view.clone(),
+                        domain: domain.clone(),
+                        kind: MemoryViewKind::Host,
+                    }],
+                    accelerators: Vec::new(),
+                    transfer_links: Vec::new(),
+                    storage_domains: Vec::new(),
+                    rate_resources: Vec::new(),
+                    queue_resources: Vec::new(),
+                    logical_cpu_threads: 1,
+                    performance_cpu_cores: CpuClassCapacity::Known(1),
+                    cache_capacity_bytes: available,
+                    lock_capacity: 1,
+                    file_descriptor_capacity: 1,
+                },
+                pressure: ExternalPressure {
+                    memory_available_bytes: BTreeMap::from([(domain.clone(), available)]),
+                    available_cpu_threads: 1,
+                    storage_available_bytes: BTreeMap::new(),
+                    rate_available_per_second: BTreeMap::new(),
+                    queue_available_slots: BTreeMap::new(),
+                    accelerator_available_slots: BTreeMap::new(),
+                    cache_available_bytes: available,
+                    available_locks: 1,
+                    available_file_descriptors: 1,
+                },
+            })
+            .unwrap();
+            let admission = authority.acquire(ResourcePolicy::Exclusive, alternatives.clone());
+            if available >= REQUIRED {
+                admission.expect("recorded owner-phase reservations fit");
+            } else {
+                let error = admission.expect_err("one byte below the demand must be refused");
+                assert!(matches!(error, ResourceError::NoFeasibleAlternative(_)));
+                assert_eq!(error.required(), Some(REQUIRED));
+                assert_eq!(error.available(), Some(available));
+            }
+        }
+    }
 
     fn exact_working_set(source_slot_bytes: u64, route_capacity_bytes: u64) -> u64 {
         source_slot_bytes
