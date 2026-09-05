@@ -159,7 +159,7 @@ pub(super) fn validate_finite(
 }
 
 pub(super) fn validate_manifest_segments(
-    descriptor: &PreparedArtifactDescriptor,
+    descriptor: &PreparedArtifactCompatibility,
     integrity: &[ManifestSegmentIntegrity],
     payload_bytes: u64,
 ) -> Result<(), PreparedArtifactError> {

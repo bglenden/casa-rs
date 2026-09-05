@@ -1379,6 +1379,7 @@ impl SpectralCycleExecutor {
         reader: crate::PreparedArtifactExecutionBinding,
     ) -> io::Result<Self> {
         if self.complete_data.prepared_artifact_reader() != Some(reader.plan())
+            || reader.plan().execution_problem() != self.problem.problem_id()
             || self.prepared_artifact_reader.is_some()
         {
             return Err(io::Error::other(

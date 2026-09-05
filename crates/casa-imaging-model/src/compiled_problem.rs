@@ -2110,6 +2110,68 @@ impl CompiledProblem {
         self.problem_id
     }
 
+    /// Return the model-owned compatibility commitment for immutable preparation.
+    ///
+    /// Paired convolution functions retain observation, reference data, geometry,
+    /// numerics, visibility transforms, spectral/instrument response, basis,
+    /// polarization, and weighting semantics. Solver selection, stopping controls,
+    /// model lifecycle authorization, and product publication do not describe these
+    /// immutable cells and are excluded. The observation snapshot itself remains
+    /// exact, including any initial model generation committed by its owner.
+    /// Complete cell semantics and representation are committed separately by the
+    /// scientific owner and prepared-artifact store.
+    ///
+    /// Spectral maps and generic kernels remain scoped to the complete problem:
+    /// their current owner identities do not establish a narrower dependency set.
+    /// This value permits byte reuse, never execution under another problem.
+    #[must_use]
+    pub fn prepared_artifact_dependency_id(
+        &self,
+        kind: crate::PreparedArtifactScientificKind,
+    ) -> LogicalIdentity {
+        use crate::PreparedArtifactScientificKind;
+
+        let mut encoder = CanonicalEncoder::new();
+        encoder.bytes(b"casa-rs/prepared-artifact-dependencies");
+        encoder.u32(1);
+        encoder.u8(match kind {
+            PreparedArtifactScientificKind::ConvolutionFunction => 1,
+            PreparedArtifactScientificKind::SpectralMap => 2,
+            PreparedArtifactScientificKind::Kernel => 3,
+        });
+        match kind {
+            PreparedArtifactScientificKind::SpectralMap
+            | PreparedArtifactScientificKind::Kernel => {
+                encoder.digest(self.problem_id.as_bytes());
+            }
+            PreparedArtifactScientificKind::ConvolutionFunction => {
+                encoder.identity(self.inputs.observation().identity());
+                encoder.digest(self.geometry.geometry_id().as_bytes());
+                encoder.digest(self.numerics_id.as_bytes());
+                encoder.usize(self.inputs.reference_data().len());
+                for (kind, identity) in self.inputs.reference_data() {
+                    encoder.u8(reference_data_tag(*kind));
+                    encoder.identity(*identity);
+                }
+                match &self.visibility_transform {
+                    Some(transform) => {
+                        encoder.u8(1);
+                        encoder.digest(transform.contract_id().as_bytes());
+                    }
+                    None => encoder.u8(0),
+                }
+                encode_prepared_operator(&mut encoder, &self.science, &self.normal_equation);
+                encode_reconstruction_basis(&mut encoder, self.reconstruction.basis);
+                encoder.usize(self.reconstruction.polarization.coordinates.len());
+                for coordinate in &self.reconstruction.polarization.coordinates {
+                    encoder.u8(polarization_tag(*coordinate));
+                }
+                encode_prepared_weighting(&mut encoder, self.weighting());
+            }
+        }
+        LogicalIdentity::from_sha256(encoder.finish())
+    }
+
     /// Return the compiler-owned identity beneath the explicit model/lifecycle layer.
     ///
     /// Receipt readers combine this basis with the typed initial model and
@@ -3109,138 +3171,8 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         encoder.u8(reference_data_tag(*kind));
         encoder.identity(*identity);
     }
-    encode_spectral_sampling_law(&mut encoder, science.spectral.sampling);
-    encoder.u8(match science.spectral.coupling {
-        SpectralCoupling::Independent => 0,
-        SpectralCoupling::CommonRestoringBeam => 1,
-    });
-    encoder.u8(match science.measurement_equation.instrument_response {
-        InstrumentResponse::Scalar => 0,
-        InstrumentResponse::PrimaryBeam => 1,
-        InstrumentResponse::FullMueller => 2,
-    });
-    match science.measurement_equation.w_projection {
-        Some(contract) => {
-            encoder.u8(1);
-            encoder.u64(contract.maximum_abs_w_lambda_bits);
-            match contract.planes {
-                Some(planes) => {
-                    encoder.u8(1);
-                    encoder.usize(planes.get());
-                }
-                None => encoder.u8(0),
-            }
-        }
-        None => encoder.u8(0),
-    }
-    match science.measurement_equation.aw_projection {
-        Some(contract) => {
-            encoder.u8(1);
-            encode_aw_projection_contract(&mut encoder, contract);
-        }
-        None => encoder.u8(0),
-    }
-    encode_instrument_model(&mut encoder, science.instrument_model);
-    let inner_products = science.measurement_equation.inner_products;
-    encoder.u8(match inner_products.model() {
-        ModelInnerProduct::HermitianEuclidean => 0,
-    });
-    encoder.u8(match inner_products.visibility() {
-        VisibilityInnerProduct::HermitianEuclidean => 0,
-    });
-    let operator = normal_equation.measurement_operator();
-    encoder.digest(operator.domain().geometry().as_bytes());
-    encoder.u8(match operator.domain().basis() {
-        ReconstructionBasis::Constant => 0,
-        ReconstructionBasis::Taylor { .. } => 1,
-        ReconstructionBasis::TaylorViaChannelMajor { .. } => 4,
-        ReconstructionBasis::ChannelLocal { .. } => 2,
-        ReconstructionBasis::JointContinuumLine { .. } => 3,
-    });
-    encoder.usize(operator.domain().polarization().coordinates().len());
-    for coordinate in operator.domain().polarization().coordinates() {
-        encoder.u8(polarization_tag(*coordinate));
-    }
-    encoder.identity(operator.codomain().observation().identity());
-    encoder.usize(operator.transforms().len());
-    for transform in operator.transforms() {
-        match transform {
-            PairedMeasurementTransform::SpectralBasis { basis } => {
-                encoder.u8(0);
-                encode_reconstruction_basis(&mut encoder, *basis);
-            }
-            PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
-            PairedMeasurementTransform::FeedResponse => encoder.u8(6),
-            PairedMeasurementTransform::DirectionDependentResponse {
-                response,
-                instrument_model,
-            } => {
-                encoder.u8(2);
-                encoder.u8(match response {
-                    InstrumentResponse::Scalar => 0,
-                    InstrumentResponse::PrimaryBeam => 1,
-                    InstrumentResponse::FullMueller => 2,
-                });
-                encode_instrument_model(&mut encoder, *instrument_model);
-            }
-            PairedMeasurementTransform::PhaseRotation { convention } => {
-                encoder.u8(3);
-                encoder.u8(match convention {
-                    crate::geometry::VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay => 0,
-                });
-            }
-            PairedMeasurementTransform::SpectralResampling { sampling } => {
-                encoder.u8(4);
-                encoder.u8(match sampling.kernel() {
-                    SpectralKernel::Nearest => 0,
-                    SpectralKernel::Linear => 1,
-                    SpectralKernel::Cubic => 2,
-                    SpectralKernel::Identity | SpectralKernel::ChannelIntegration { .. } => {
-                        unreachable!("compiled spectral resampling is nearest or linear")
-                    }
-                });
-            }
-            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
-                encoder.u8(5);
-                encoder.usize(*channels_per_bin);
-            }
-            PairedMeasurementTransform::WProjection { contract } => {
-                encoder.u8(7);
-                encoder.u64(contract.maximum_abs_w_lambda_bits);
-                match contract.planes {
-                    Some(planes) => {
-                        encoder.u8(1);
-                        encoder.usize(planes.get());
-                    }
-                    None => encoder.u8(0),
-                }
-            }
-            PairedMeasurementTransform::AwProjection { contract } => {
-                encoder.u8(8);
-                encode_aw_projection_contract(&mut encoder, *contract);
-            }
-        }
-    }
+    encode_prepared_operator(&mut encoder, science, normal_equation);
     let compiled_weighting = normal_equation.weighting();
-    encoder.digest(compiled_weighting.commitment_id().as_bytes());
-    encoder.identity(compiled_weighting.snapshot().identity());
-    encoder.usize(compiled_weighting.sources().len());
-    for source in compiled_weighting.sources() {
-        encoder.identity(source.source().identity());
-        encoder.u8(match source.flags() {
-            FlagPolicy::FlagOrFlagRow => 0,
-        });
-        encoder.u8(match source.input_weights() {
-            WeightColumn::Weight => 0,
-            WeightColumn::WeightSpectrum => 1,
-        });
-        encoder.identity(source.flag_generation());
-        encoder.identity(source.flag_row_generation());
-        encoder.identity(source.input_weight_generation());
-    }
-    encoder.u8(match normal_equation.output().normalization() {
-        NormalStateNormalization::Unnormalized => 0,
-    });
     encode_reconstruction_basis(&mut encoder, reconstruction.basis);
     match &reconstruction.algorithm {
         ReconstructionAlgorithm::Dirty => encoder.u8(0),
@@ -3338,32 +3270,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     for coordinate in &reconstruction.polarization.coordinates {
         encoder.u8(polarization_tag(*coordinate));
     }
-    match compiled_weighting.scheme() {
-        WeightingScheme::Natural => encoder.u8(0),
-        WeightingScheme::Uniform => encoder.u8(1),
-        WeightingScheme::Briggs { robust } => {
-            encoder.u8(2);
-            encoder.f64(robust);
-        }
-        WeightingScheme::BriggsBandwidthTaper { robust } => {
-            encoder.u8(3);
-            encoder.f64(robust);
-        }
-    }
-    encoder.u8(match compiled_weighting.density_scope() {
-        WeightDensityScope::NotApplicable => 0,
-        WeightDensityScope::GlobalSelection => 1,
-        WeightDensityScope::PerOutputChannel => 2,
-    });
-    match compiled_weighting.uv_taper() {
-        None => encoder.u8(0),
-        Some(taper) => {
-            encoder.u8(1);
-            encoder.f64(taper.major_lambda());
-            encoder.f64(taper.minor_lambda());
-            encoder.f64(taper.position_angle_rad());
-        }
-    }
+    encode_prepared_weighting(&mut encoder, compiled_weighting);
     encoder.usize(products.products.len());
     for product in &products.products {
         encoder.u8(product_tag(*product));
@@ -3428,6 +3335,177 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
     }
     encode_numerics(&mut encoder, numerics);
     LogicalIdentity::from_sha256(encoder.finish())
+}
+
+fn encode_prepared_operator(
+    encoder: &mut CanonicalEncoder,
+    science: &ScientificContract,
+    normal_equation: &NormalEquationContract,
+) {
+    encode_spectral_sampling_law(encoder, science.spectral.sampling);
+    encoder.u8(match science.spectral.coupling {
+        SpectralCoupling::Independent => 0,
+        SpectralCoupling::CommonRestoringBeam => 1,
+    });
+    encoder.u8(match science.measurement_equation.instrument_response {
+        InstrumentResponse::Scalar => 0,
+        InstrumentResponse::PrimaryBeam => 1,
+        InstrumentResponse::FullMueller => 2,
+    });
+    match science.measurement_equation.w_projection {
+        Some(contract) => {
+            encoder.u8(1);
+            encoder.u64(contract.maximum_abs_w_lambda_bits);
+            match contract.planes {
+                Some(planes) => {
+                    encoder.u8(1);
+                    encoder.usize(planes.get());
+                }
+                None => encoder.u8(0),
+            }
+        }
+        None => encoder.u8(0),
+    }
+    match science.measurement_equation.aw_projection {
+        Some(contract) => {
+            encoder.u8(1);
+            encode_aw_projection_contract(encoder, contract);
+        }
+        None => encoder.u8(0),
+    }
+    encode_instrument_model(encoder, science.instrument_model);
+    let inner_products = science.measurement_equation.inner_products;
+    encoder.u8(match inner_products.model() {
+        ModelInnerProduct::HermitianEuclidean => 0,
+    });
+    encoder.u8(match inner_products.visibility() {
+        VisibilityInnerProduct::HermitianEuclidean => 0,
+    });
+    let operator = normal_equation.measurement_operator();
+    encoder.digest(operator.domain().geometry().as_bytes());
+    encoder.u8(match operator.domain().basis() {
+        ReconstructionBasis::Constant => 0,
+        ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::TaylorViaChannelMajor { .. } => 4,
+        ReconstructionBasis::ChannelLocal { .. } => 2,
+        ReconstructionBasis::JointContinuumLine { .. } => 3,
+    });
+    encoder.usize(operator.domain().polarization().coordinates().len());
+    for coordinate in operator.domain().polarization().coordinates() {
+        encoder.u8(polarization_tag(*coordinate));
+    }
+    encoder.identity(operator.codomain().observation().identity());
+    encoder.usize(operator.transforms().len());
+    for transform in operator.transforms() {
+        match transform {
+            PairedMeasurementTransform::SpectralBasis { basis } => {
+                encoder.u8(0);
+                encode_reconstruction_basis(encoder, *basis);
+            }
+            PairedMeasurementTransform::PolarizationMapping => encoder.u8(1),
+            PairedMeasurementTransform::FeedResponse => encoder.u8(6),
+            PairedMeasurementTransform::DirectionDependentResponse {
+                response,
+                instrument_model,
+            } => {
+                encoder.u8(2);
+                encoder.u8(match response {
+                    InstrumentResponse::Scalar => 0,
+                    InstrumentResponse::PrimaryBeam => 1,
+                    InstrumentResponse::FullMueller => 2,
+                });
+                encode_instrument_model(encoder, *instrument_model);
+            }
+            PairedMeasurementTransform::PhaseRotation { convention } => {
+                encoder.u8(3);
+                encoder.u8(match convention {
+                    crate::geometry::VisibilityPhaseConvention::NegativeTwoPiFrequencyDelay => 0,
+                });
+            }
+            PairedMeasurementTransform::SpectralResampling { sampling } => {
+                encoder.u8(4);
+                encoder.u8(match sampling.kernel() {
+                    SpectralKernel::Nearest => 0,
+                    SpectralKernel::Linear => 1,
+                    SpectralKernel::Cubic => 2,
+                    SpectralKernel::Identity | SpectralKernel::ChannelIntegration { .. } => {
+                        unreachable!("compiled spectral resampling is nearest or linear")
+                    }
+                });
+            }
+            PairedMeasurementTransform::ChannelIntegration { channels_per_bin } => {
+                encoder.u8(5);
+                encoder.usize(*channels_per_bin);
+            }
+            PairedMeasurementTransform::WProjection { contract } => {
+                encoder.u8(7);
+                encoder.u64(contract.maximum_abs_w_lambda_bits);
+                match contract.planes {
+                    Some(planes) => {
+                        encoder.u8(1);
+                        encoder.usize(planes.get());
+                    }
+                    None => encoder.u8(0),
+                }
+            }
+            PairedMeasurementTransform::AwProjection { contract } => {
+                encoder.u8(8);
+                encode_aw_projection_contract(encoder, *contract);
+            }
+        }
+    }
+    let compiled_weighting = normal_equation.weighting();
+    encoder.digest(compiled_weighting.commitment_id().as_bytes());
+    encoder.identity(compiled_weighting.snapshot().identity());
+    encoder.usize(compiled_weighting.sources().len());
+    for source in compiled_weighting.sources() {
+        encoder.identity(source.source().identity());
+        encoder.u8(match source.flags() {
+            FlagPolicy::FlagOrFlagRow => 0,
+        });
+        encoder.u8(match source.input_weights() {
+            WeightColumn::Weight => 0,
+            WeightColumn::WeightSpectrum => 1,
+        });
+        encoder.identity(source.flag_generation());
+        encoder.identity(source.flag_row_generation());
+        encoder.identity(source.input_weight_generation());
+    }
+    encoder.u8(match normal_equation.output().normalization() {
+        NormalStateNormalization::Unnormalized => 0,
+    });
+}
+
+fn encode_prepared_weighting(
+    encoder: &mut CanonicalEncoder,
+    compiled_weighting: &WeightingOperatorContract,
+) {
+    match compiled_weighting.scheme() {
+        WeightingScheme::Natural => encoder.u8(0),
+        WeightingScheme::Uniform => encoder.u8(1),
+        WeightingScheme::Briggs { robust } => {
+            encoder.u8(2);
+            encoder.f64(robust);
+        }
+        WeightingScheme::BriggsBandwidthTaper { robust } => {
+            encoder.u8(3);
+            encoder.f64(robust);
+        }
+    }
+    encoder.u8(match compiled_weighting.density_scope() {
+        WeightDensityScope::NotApplicable => 0,
+        WeightDensityScope::GlobalSelection => 1,
+        WeightDensityScope::PerOutputChannel => 2,
+    });
+    match compiled_weighting.uv_taper() {
+        None => encoder.u8(0),
+        Some(taper) => {
+            encoder.u8(1);
+            encoder.f64(taper.major_lambda());
+            encoder.f64(taper.minor_lambda());
+            encoder.f64(taper.position_angle_rad());
+        }
+    }
 }
 
 pub(crate) fn encode_spectral_sampling_law(

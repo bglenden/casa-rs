@@ -50,7 +50,7 @@ fn forged_rejection_identity(
     };
     let mut hasher = Sha256::new();
     hasher.update(b"casa-rs/private-prepared-artifact/rejection\0");
-    hasher.update(6_u32.to_le_bytes());
+    hasher.update(7_u32.to_le_bytes());
     hasher.update(planned.as_bytes());
     hasher.update([tag]);
     ArtifactIdentity::from_sha256(hasher.finalize().into())
@@ -59,7 +59,7 @@ fn forged_rejection_identity(
 fn expected_orphan_staging_identity(name: &str, bytes: u64) -> ArtifactIdentity {
     let mut hasher = Sha256::new();
     hasher.update(b"casa-rs/private-prepared-artifact/orphan-staging-evidence\0");
-    hasher.update(6_u32.to_le_bytes());
+    hasher.update(7_u32.to_le_bytes());
     hasher.update((name.len() as u64).to_le_bytes());
     hasher.update(name.as_bytes());
     hasher.update(bytes.to_le_bytes());
@@ -72,7 +72,7 @@ fn expected_eviction_observed_identity(
 ) -> ArtifactIdentity {
     let mut hasher = Sha256::new();
     hasher.update(b"casa-rs/private-prepared-artifact/eviction-observed\0");
-    hasher.update(6_u32.to_le_bytes());
+    hasher.update(7_u32.to_le_bytes());
     hasher.update(ledger.as_bytes());
     hasher.update((evictions.len() as u64).to_le_bytes());
     for (identity, bytes) in evictions {
@@ -2609,6 +2609,289 @@ fn prepared_operation_identity_cannot_authorize_a_different_operation() {
         0,
         "the rejected operation cannot publish"
     );
+}
+
+#[test]
+fn reusable_cf_identity_does_not_authorize_another_compiled_problem() {
+    let first = compile(request(1)).expect("first prepared problem");
+    let second = compile(ImagingRequest::new(
+        ProblemSpecification::new(
+            first.science().clone(),
+            ReconstructionContract::new(
+                ReconstructionBasis::Constant,
+                ReconstructionAlgorithm::Hogbom,
+                ReconstructionControls::new(30, 0.2, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+            WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+            first.products().clone(),
+            ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
+            first.numerics().clone(),
+        ),
+        geometry(255.0),
+        first.inputs().clone(),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("second prepared problem");
+    assert_ne!(first.problem_id(), second.problem_id());
+    let directory = prepared_tempdir();
+    let receipts_directory = prepared_tempdir();
+    let receipts = ExecutionReceiptStore::new(
+        receipts_directory.path(),
+        ReceiptRetention::new(32, 8_000_000).expect("retention"),
+    )
+    .expect("receipts");
+    let open = || {
+        PreparedArtifactStore::open(
+            directory.path(),
+            prepared_storage_domain(),
+            prepared_budget(),
+        )
+        .expect("store")
+    };
+    let first_descriptor = prepared_descriptor(&open(), &first);
+    let second_descriptor = prepared_descriptor(&open(), &second);
+    assert_eq!(first_descriptor.identity(), second_descriptor.identity());
+    assert_eq!(
+        first_descriptor.cache_identity(),
+        second_descriptor.cache_identity()
+    );
+    assert_ne!(
+        first_descriptor, second_descriptor,
+        "descriptor equality retains execution authorization"
+    );
+    let setup = |problem: &casa_imaging_model::CompiledProblem,
+                 planned: &PreparedArtifactDescriptor,
+                 supplied: &PreparedArtifactDescriptor,
+                 operation: PreparedArtifactOperation,
+                 catalog: bool| {
+        let store = open();
+        let (mut suite, id) = if catalog {
+            catalog_registry(problem, open(), vec![supplied.clone()])
+        } else {
+            let adapter = PreparedOperationAdapter::new(operation, open(), supplied.clone());
+            let id = adapter.id.clone();
+            (
+                PreparedSuiteRegistry {
+                    id: registry(3),
+                    metadata: Some(super::implementation_metadata(problem)),
+                    implementations: BTreeMap::from([
+                        (
+                            implementation(6),
+                            PreparedSuiteImplementation::Base(Box::new(recording_executor(
+                                6, None, None,
+                            ))),
+                        ),
+                        (
+                            id.clone(),
+                            PreparedSuiteImplementation::Prepared(Box::new(adapter)),
+                        ),
+                    ]),
+                    prepared: BTreeMap::from([(
+                        prepared_registration().implementation().clone(),
+                        prepared_registration(),
+                    )]),
+                },
+                id,
+            )
+        };
+        let physical = if catalog {
+            catalog_physical_work(problem, &suite, &store, std::slice::from_ref(planned))
+        } else {
+            let base = PreparedArtifactPlanFragment::standalone_base(
+                problem,
+                &suite,
+                implementation(6),
+                planned,
+                &store,
+                1_000,
+                900_000,
+            )
+            .expect("source-free prepared base");
+            PreparedArtifactPlanFragment::new(
+                planned,
+                &store,
+                operation,
+                WorkNodeId::new("prepared-phase-producer"),
+                WorkNodeId::new("prepared-phase-commit"),
+                implementation(6),
+            )
+            .compose(&base)
+            .expect("source-free prepared operation")
+        };
+        let PreparedSuiteImplementation::Base(base) =
+            suite.implementations.get_mut(&implementation(6)).unwrap()
+        else {
+            panic!("source-free base executor");
+        };
+        for node in physical
+            .execution_dag()
+            .nodes()
+            .values()
+            .filter(|node| node.implementation == implementation(6))
+        {
+            let io = match node.kind {
+                WorkKind::Publication => vec![IoMeasurement::new(IoBufferKind::Publication, 0, 0)],
+                WorkKind::Release => vec![IoMeasurement::new(IoBufferKind::StorageManager, 0, 0)],
+                _ => Vec::new(),
+            };
+            base.measurements.insert(node.id.clone(), (io, Vec::new()));
+        }
+        let plan = runtime_plan(
+            problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            authority(),
+            &suite,
+            &receipts,
+            move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
+        )
+        .expect("current-problem prepared plan");
+        (suite, id, plan)
+    };
+    let execute = |problem: &casa_imaging_model::CompiledProblem,
+                   suite: &PreparedSuiteRegistry,
+                   plan: &casa_imaging_runtime::ExecutionPlan,
+                   byte: u8| {
+        run_prepared(
+            problem,
+            plan,
+            suite,
+            receipts.bind(execution_provenance(
+                casa_imaging_runtime::ExecutionAttemptId::from_sha256([byte; 32]),
+                BuildIdentity::from_sha256([152; 32]),
+            )),
+        )
+    };
+    let (suite, id, plan) = setup(
+        &first,
+        &first_descriptor,
+        &first_descriptor,
+        PreparedArtifactOperation::Generate,
+        false,
+    );
+    execute(&first, &suite, &plan, 151).expect("cold generation");
+    let cold = prepared_adapter_observed(&suite, &id);
+    let entry = directory
+        .path()
+        .join("objects-v3")
+        .join(first_descriptor.identity().to_string());
+    let before = ["manifest.json", "payload.bin"]
+        .map(|name| fs::read(entry.join(name)).expect("cache bytes"));
+    let before_modified = ["manifest.json", "payload.bin"].map(|name| {
+        fs::metadata(entry.join(name))
+            .expect("cache metadata")
+            .modified()
+            .expect("cache modification time")
+    });
+    use std::os::unix::fs::MetadataExt;
+    let before_inodes =
+        ["manifest.json", "payload.bin"].map(|name| fs::metadata(entry.join(name)).unwrap().ino());
+    let before_root = directory_entry_names(directory.path());
+    let before_objects = directory_entry_names(&directory.path().join("objects-v3"));
+    for (index, (problem, current, foreign)) in [
+        (&second, &second_descriptor, &first_descriptor),
+        (&first, &first_descriptor, &second_descriptor),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for catalog in [false, true] {
+            let byte = 160 + index as u8 * 4 + u8::from(catalog) * 2;
+            let (valid_suite, valid_id, valid_plan) = setup(
+                problem,
+                current,
+                current,
+                PreparedArtifactOperation::Reuse,
+                catalog,
+            );
+            execute(problem, &valid_suite, &valid_plan, byte)
+                .expect("current descriptor positive control");
+            if catalog {
+                assert_eq!(
+                    catalog_adapter_observed(&valid_suite, &valid_id),
+                    Some(vec![cold])
+                );
+            } else {
+                assert_eq!(prepared_adapter_observed(&valid_suite, &valid_id), cold);
+            }
+            let (execution_registry, id, plan) = setup(
+                problem,
+                current,
+                foreign,
+                PreparedArtifactOperation::Reuse,
+                catalog,
+            );
+            assert_eq!(id, valid_id, "only the execution seal differs");
+            let expected_node = plan
+                .execution_dag()
+                .nodes()
+                .values()
+                .find(|node| node.implementation == id)
+                .unwrap()
+                .id
+                .clone();
+            let error = execute(problem, &execution_registry, &plan, byte + 1)
+                .expect_err("foreign execution descriptor must be rejected");
+            match error {
+                RunError::Execution { node, source } => {
+                    assert_eq!(node, expected_node);
+                    assert!(matches!(
+                        source
+                            .get_ref()
+                            .and_then(|error| error.downcast_ref::<PreparedArtifactError>()),
+                        Some(PreparedArtifactError::ScientificBindingMismatch)
+                    ));
+                }
+                other => panic!("unexpected foreign-descriptor rejection: {other}"),
+            }
+            match &execution_registry.implementations[&id] {
+                PreparedSuiteImplementation::Prepared(adapter) => {
+                    assert!(adapter.observed.lock().unwrap().is_none());
+                    assert!(adapter.retained_artifact.lock().unwrap().is_none());
+                }
+                PreparedSuiteImplementation::Catalog(adapter) => {
+                    assert!(adapter.observed.lock().unwrap().is_none())
+                }
+                _ => panic!("cache adapter"),
+            }
+            let failed = receipts
+                .open(casa_imaging_runtime::ExecutionAttemptId::from_sha256(
+                    [byte + 1; 32],
+                ))
+                .expect("failure receipt");
+            assert_eq!(failed.status(), ReceiptStatus::Failed);
+            assert_eq!(failed.failure_node(), Some(expected_node.clone()));
+            assert_eq!(failed.artifact_disposition(current.identity()), None);
+            assert_eq!(
+                failed.stage_actual_io(&expected_node, IoBufferKind::StorageManager),
+                None
+            );
+            assert_eq!(
+                ["manifest.json", "payload.bin"]
+                    .map(|name| fs::read(entry.join(name)).expect("unchanged cache")),
+                before
+            );
+            assert_eq!(
+                ["manifest.json", "payload.bin"].map(|name| {
+                    fs::metadata(entry.join(name))
+                        .expect("unchanged cache metadata")
+                        .modified()
+                        .expect("unchanged cache modification time")
+                }),
+                before_modified
+            );
+            assert_eq!(directory_entry_names(directory.path()), before_root);
+            assert_eq!(
+                ["manifest.json", "payload.bin"]
+                    .map(|name| fs::metadata(entry.join(name)).unwrap().ino()),
+                before_inodes
+            );
+            assert_eq!(
+                directory_entry_names(&directory.path().join("objects-v3")),
+                before_objects
+            );
+        }
+    }
 }
 
 #[test]

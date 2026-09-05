@@ -10,10 +10,12 @@ pub(super) fn validate_plan_binding(
     source: Option<PreparedArtifactSourceBinding<'_>>,
     cache_demand_id: &str,
 ) -> Result<(), PreparedArtifactError> {
-    if descriptor.owner.implementation_registry != context.implementation_registry_id() {
+    if descriptor.compatibility.owner.implementation_registry
+        != context.implementation_registry_id()
+    {
         return Err(PreparedArtifactError::ImplementationRegistryMismatch);
     }
-    if !descriptor.scientific.matches_context(context) {
+    if !descriptor.matches_context(context) {
         return Err(PreparedArtifactError::ScientificBindingMismatch);
     }
     match (operation, source) {
@@ -54,10 +56,12 @@ pub(super) fn validate_catalog_plan_binding(
 ) -> Result<(), PreparedArtifactError> {
     validate_catalog_descriptors(store, descriptors)?;
     for descriptor in descriptors {
-        if descriptor.owner.implementation_registry != context.implementation_registry_id() {
+        if descriptor.compatibility.owner.implementation_registry
+            != context.implementation_registry_id()
+        {
             return Err(PreparedArtifactError::ImplementationRegistryMismatch);
         }
-        if !descriptor.scientific.matches_context(context) {
+        if !descriptor.matches_context(context) {
             return Err(PreparedArtifactError::ScientificBindingMismatch);
         }
     }
@@ -538,7 +542,7 @@ pub(super) fn measurements(
         .sum();
     let artifacts = vec![
         ArtifactMeasurement::new_store_owned(
-            descriptor.identity,
+            descriptor.compatibility.identity,
             Some(derive_content_identity(
                 descriptor,
                 validated.payload_sha256,
@@ -592,7 +596,7 @@ pub(super) fn catalog_measurements(
         match outcome {
             ReuseEvaluation::Reused { validated, .. } => {
                 artifacts.push(ArtifactMeasurement::new_store_owned(
-                    descriptor.identity,
+                    descriptor.compatibility.identity,
                     Some(derive_content_identity(
                         descriptor,
                         validated.payload_sha256,
@@ -606,8 +610,8 @@ pub(super) fn catalog_measurements(
                 rejection, path, ..
             } => {
                 artifacts.push(ArtifactMeasurement::new_store_owned(
-                    descriptor.identity,
-                    Some(rejection.evidence_identity(descriptor.identity)),
+                    descriptor.compatibility.identity,
+                    Some(rejection.evidence_identity(descriptor.compatibility.identity)),
                     ArtifactDisposition::RejectedStale,
                     0,
                     Some(RedactedPath::from_path(path)),
@@ -681,8 +685,8 @@ pub(super) fn rejected_measurements(
     let evicted_bytes = evidence.evictions.iter().map(|(_, bytes)| *bytes).sum();
     let artifacts = vec![
         ArtifactMeasurement::new_store_owned(
-            descriptor.identity,
-            Some(rejection.evidence_identity(descriptor.identity)),
+            descriptor.compatibility.identity,
+            Some(rejection.evidence_identity(descriptor.compatibility.identity)),
             ArtifactDisposition::RejectedStale,
             evidence.inspected_bytes(),
             Some(RedactedPath::from_path(path)),
@@ -726,7 +730,7 @@ pub(super) fn failed_measurements(
     let mut artifacts = Vec::with_capacity(2);
     if let Some(materialized) = &evidence.materialized {
         artifacts.push(ArtifactMeasurement::new_store_owned(
-            descriptor.identity,
+            descriptor.compatibility.identity,
             Some(derive_content_identity(
                 descriptor,
                 materialized.payload_sha256,

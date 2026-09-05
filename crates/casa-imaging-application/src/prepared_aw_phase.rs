@@ -788,6 +788,108 @@ mod tests {
     }
 
     #[test]
+    fn t51_dirty_to_clean_reuses_identical_prepared_cells_without_mutation() {
+        use std::{collections::BTreeMap, os::unix::fs::MetadataExt};
+
+        let snapshot = |root: &Path| {
+            let mut files = BTreeMap::new();
+            let mut pending = vec![root.to_path_buf()];
+            while let Some(directory) = pending.pop() {
+                for entry in std::fs::read_dir(directory).expect("read prepared cache") {
+                    let path = entry.expect("cache entry").path();
+                    let metadata = path.metadata().expect("cache metadata");
+                    if metadata.is_dir() {
+                        pending.push(path);
+                    } else if matches!(
+                        path.file_name().and_then(|name| name.to_str()),
+                        Some("manifest.json" | "payload.bin")
+                    ) {
+                        files.insert(
+                            path.strip_prefix(root)
+                                .expect("relative cache path")
+                                .to_path_buf(),
+                            (
+                                metadata.ino(),
+                                metadata.mtime(),
+                                metadata.mtime_nsec(),
+                                std::fs::read(path).expect("immutable cache bytes"),
+                            ),
+                        );
+                    }
+                }
+            }
+            files
+        };
+        for cell_count in [1, 2] {
+            let root = TempDir::new().expect("temporary preparation root");
+            let casa = root.path().join("casa-cache");
+            std::fs::create_dir(&casa).expect("create CASA cache root");
+            if cell_count == 1 {
+                crate::aw_cache::tests::write_test_cache(&casa);
+            } else {
+                crate::aw_cache::tests::write_two_cell_test_cache(&casa);
+            }
+            let profile = ProductionStorageProfile::new(
+                root.path(),
+                1 << 30,
+                1 << 30,
+                100 << 20,
+                100 << 20,
+                2,
+                4,
+            )
+            .expect("test storage profile")
+            .with_measured_operations_rate(root.path())
+            .expect("measured test storage operations");
+            let deployment = ApplicationAwPreparation {
+                casa_cache: casa,
+                private_root: root.path().join("prepared"),
+                storage_domain: profile.storage_domain(),
+                resident_bytes: 1 << 20,
+                conjugate_beams: true,
+            };
+            let dirty = problem();
+            let clean = problem_for(ReconstructionAlgorithm::Hogbom, 30);
+            assert_ne!(dirty.problem_id(), clean.problem_id());
+            assert_eq!(
+                dirty.geometry().geometry_id(),
+                clean.geometry().geometry_id()
+            );
+            let cold =
+                prepare_aw_projection(&dirty, deployment.clone(), &runtime(root.path(), &profile))
+                    .expect("cold DIRTY preparation");
+            assert_eq!(cold.receipts.len(), cell_count + 1);
+            drop(cold.bind_plan().expect("bind DIRTY reader"));
+            let before = snapshot(&deployment.private_root);
+            assert_eq!(
+                before.len(),
+                cell_count * 2,
+                "each paired cell has one manifest and payload"
+            );
+            let private_root = deployment.private_root.clone();
+            let mut clean_runtime = runtime(root.path(), &profile);
+            clean_runtime.attempts = [
+                ExecutionAttemptId::from_sha256([7; 32]),
+                ExecutionAttemptId::from_sha256([8; 32]),
+                ExecutionAttemptId::from_sha256([9; 32]),
+            ];
+            let warm = prepare_aw_projection(&clean, deployment, &clean_runtime)
+                .expect("warm CLEAN preparation");
+            assert_eq!(
+                warm.receipts.len(),
+                1,
+                "CLEAN must reuse, not cold-load, DIRTY's identical cells"
+            );
+            drop(warm.bind_plan().expect("bind CLEAN reader"));
+            assert_eq!(
+                snapshot(&private_root),
+                before,
+                "warm reuse must not rewrite or replace cache files"
+            );
+        }
+    }
+
+    #[test]
     fn two_cell_cold_load_keeps_every_plan_within_two_queue_slots() {
         let root = TempDir::new().expect("temporary preparation root");
         let casa = root.path().join("casa-cache");
@@ -889,6 +991,10 @@ mod tests {
     }
 
     fn problem() -> CompiledProblem {
+        problem_for(ReconstructionAlgorithm::Dirty, 0)
+    }
+
+    fn problem_for(algorithm: ReconstructionAlgorithm, iterations: usize) -> CompiledProblem {
         let direction = DirectionCoordinateSpec::new(
             Projection::Sin,
             SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -943,8 +1049,8 @@ mod tests {
             ),
             ReconstructionContract::new(
                 ReconstructionBasis::Constant,
-                ReconstructionAlgorithm::Dirty,
-                ReconstructionControls::new(0, 1.0, 0.0),
+                algorithm,
+                ReconstructionControls::new(iterations, 1.0, 0.0),
                 PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
             ),
             WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),

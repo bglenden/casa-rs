@@ -35,7 +35,8 @@ use std::{
 };
 
 use casa_imaging_model::{
-    CompiledProblem, PreparedArtifactScientificIdentity, PreparedArtifactScientificKind,
+    CompiledProblem, CompiledProblemId, PreparedArtifactScientificIdentity,
+    PreparedArtifactScientificKind,
 };
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
@@ -67,9 +68,9 @@ const EVICTION_LEDGER_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/evicti
 const EVICTION_OBSERVED_DOMAIN: &[u8] = b"casa-rs/private-prepared-artifact/eviction-observed\0";
 const ORPHAN_STAGING_EVIDENCE_DOMAIN: &[u8] =
     b"casa-rs/private-prepared-artifact/orphan-staging-evidence\0";
-const IDENTITY_VERSION: u32 = 6;
+const IDENTITY_VERSION: u32 = 7;
 const CACHE_SCHEMA: &str = "casa-rs-private-prepared-artifact";
-const CACHE_SCHEMA_VERSION: u32 = 6;
+const CACHE_SCHEMA_VERSION: u32 = 7;
 const EVICTION_POLICY: &str = "lexicographic-existing-artifact-identity-v1";
 const CACHE_DIRECTORY: &str = "objects-v3";
 const LOCK_FILE: &str = ".casa-rs-prepared-artifact.lock";
@@ -554,7 +555,7 @@ impl PreparedArtifactOwner {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ScientificCommitments {
-    compiled_problem: String,
+    preparation_dependencies: String,
     observation_snapshot: String,
     compiled_geometry: String,
     numerics_contract: String,
@@ -567,7 +568,11 @@ impl ScientificCommitments {
         owner_scientific_identity: PreparedArtifactScientificIdentity,
     ) -> Self {
         Self {
-            compiled_problem: encode_hex(&problem.problem_id().as_bytes()),
+            preparation_dependencies: encode_hex(
+                &problem
+                    .prepared_artifact_dependency_id(owner_scientific_identity.kind())
+                    .as_bytes(),
+            ),
             observation_snapshot: encode_hex(&problem.inputs().observation().as_bytes()),
             compiled_geometry: encode_hex(&problem.geometry().geometry_id().as_bytes()),
             numerics_contract: encode_hex(&problem.numerics_id().as_bytes()),
@@ -577,7 +582,7 @@ impl ScientificCommitments {
 
     fn validate(&self) -> Result<(), PreparedArtifactError> {
         for identity in [
-            &self.compiled_problem,
+            &self.preparation_dependencies,
             &self.observation_snapshot,
             &self.compiled_geometry,
             &self.numerics_contract,
@@ -592,8 +597,25 @@ impl ScientificCommitments {
         Ok(())
     }
 
-    fn matches_context(&self, context: WorkExecutionContext<'_>) -> bool {
-        self.compiled_problem == encode_hex(&context.compiled().problem_id().as_bytes())
+    fn matches_context(
+        &self,
+        kind: PreparedArtifactKind,
+        context: WorkExecutionContext<'_>,
+    ) -> bool {
+        let kind = match kind {
+            PreparedArtifactKind::ConvolutionFunction => {
+                PreparedArtifactScientificKind::ConvolutionFunction
+            }
+            PreparedArtifactKind::SpectralMap => PreparedArtifactScientificKind::SpectralMap,
+            PreparedArtifactKind::Kernel => PreparedArtifactScientificKind::Kernel,
+        };
+        self.preparation_dependencies
+            == encode_hex(
+                &context
+                    .compiled()
+                    .prepared_artifact_dependency_id(kind)
+                    .as_bytes(),
+            )
             && self.observation_snapshot
                 == encode_hex(&context.compiled().observation_snapshot_id().as_bytes())
             && self.compiled_geometry
@@ -645,9 +667,18 @@ impl CacheScope {
     }
 }
 
-/// Owner-derived immutable compatibility descriptor.
+/// Immutable compatibility paired with authority for one exact compiled problem.
+///
+/// Equivalent problems may share artifact bytes. This descriptor is nevertheless
+/// execution-specific and is never reconstructed from a persisted manifest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedArtifactDescriptor {
+    compatibility: PreparedArtifactCompatibility,
+    execution_problem: CompiledProblemId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PreparedArtifactCompatibility {
     identity: ArtifactIdentity,
     cache_identity: CacheIdentity,
     owner: PreparedArtifactOwner,
@@ -659,7 +690,10 @@ pub struct PreparedArtifactDescriptor {
 
 impl PreparedArtifactDescriptor {
     fn storage_demand_id(&self, operations_rate: Option<&RateResourceId>) -> String {
-        let base = format!("private-prepared-cache-{}", self.cache_identity);
+        let base = format!(
+            "private-prepared-cache-{}",
+            self.compatibility.cache_identity
+        );
         match operations_rate {
             Some(rate) => format!("{base}-operations-{}", rate.as_str()),
             None => base,
@@ -667,7 +701,7 @@ impl PreparedArtifactDescriptor {
     }
 
     fn storage_domain_id(&self) -> StorageDomainId {
-        StorageDomainId::new(self.cache_scope.storage_domain.clone())
+        StorageDomainId::new(self.compatibility.cache_scope.storage_domain.clone())
     }
 
     /// Describe an asymmetric named imaging/weight CF pair.
@@ -696,6 +730,7 @@ impl PreparedArtifactDescriptor {
                 imaging.into_segment("imaging"),
                 weight.into_segment("weight"),
             ],
+            problem.problem_id(),
         )
     }
 
@@ -717,9 +752,46 @@ impl PreparedArtifactDescriptor {
             PreparedArtifactScientificKind::Kernel => PreparedArtifactKind::Kernel,
         };
         let scientific = ScientificCommitments::from_problem(problem, scientific_identity);
-        Self::from_commitments(owner, kind, scientific, store.scope.clone(), segments)
+        Self::from_commitments(
+            owner,
+            kind,
+            scientific,
+            store.scope.clone(),
+            segments,
+            problem.problem_id(),
+        )
     }
 
+    fn from_commitments(
+        owner: PreparedArtifactOwner,
+        kind: PreparedArtifactKind,
+        scientific: ScientificCommitments,
+        cache_scope: CacheScope,
+        segments: Vec<PreparedArtifactSegmentDescriptor>,
+        execution_problem: CompiledProblemId,
+    ) -> Result<Self, PreparedArtifactError> {
+        Ok(Self {
+            compatibility: PreparedArtifactCompatibility::from_commitments(
+                owner,
+                kind,
+                scientific,
+                cache_scope,
+                segments,
+            )?,
+            execution_problem,
+        })
+    }
+
+    fn matches_context(&self, context: WorkExecutionContext<'_>) -> bool {
+        self.execution_problem == context.compiled().problem_id()
+            && self
+                .compatibility
+                .scientific
+                .matches_context(self.compatibility.kind, context)
+    }
+}
+
+impl PreparedArtifactCompatibility {
     fn from_commitments(
         owner: PreparedArtifactOwner,
         kind: PreparedArtifactKind,
@@ -757,28 +829,38 @@ impl PreparedArtifactDescriptor {
         Ok(descriptor)
     }
 
+    fn payload_bytes(&self) -> Result<u64, PreparedArtifactError> {
+        self.segments.iter().try_fold(0_u64, |total, segment| {
+            total
+                .checked_add(segment.byte_len()?)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)
+        })
+    }
+}
+
+impl PreparedArtifactDescriptor {
     /// Return the domain-separated canonical artifact identity.
     #[must_use]
     pub const fn identity(&self) -> ArtifactIdentity {
-        self.identity
+        self.compatibility.identity
     }
 
     /// Return the owner-derived canonical cache identity.
     #[must_use]
     pub const fn cache_identity(&self) -> CacheIdentity {
-        self.cache_identity
+        self.compatibility.cache_identity
     }
 
     /// Return the implementation-preparation family.
     #[must_use]
     pub const fn kind(&self) -> PreparedArtifactKind {
-        self.kind
+        self.compatibility.kind
     }
 
     /// Return every private named segment in canonical name order.
     #[must_use]
     pub fn segments(&self) -> &[PreparedArtifactSegmentDescriptor] {
-        &self.segments
+        &self.compatibility.segments
     }
 
     /// Return the separately described imaging plane for a CF artifact.
@@ -796,10 +878,11 @@ impl PreparedArtifactDescriptor {
     /// Return one exact private segment by name.
     #[must_use]
     pub fn segment(&self, name: &str) -> Option<&PreparedArtifactSegmentDescriptor> {
-        self.segments
+        self.compatibility
+            .segments
             .binary_search_by(|segment| segment.name.as_str().cmp(name))
             .ok()
-            .map(|index| &self.segments[index])
+            .map(|index| &self.compatibility.segments[index])
     }
 
     /// Bind this descriptor to one canonical plan node and artifact role.
@@ -812,10 +895,10 @@ impl PreparedArtifactDescriptor {
             PreparedArtifactOperation::Consume => ArtifactRole::Cache,
         };
         PlannedArtifact::new(
-            self.identity,
+            self.compatibility.identity,
             self.work_node_id(operation),
             role,
-            Some(self.cache_identity),
+            Some(self.compatibility.cache_identity),
         )
     }
 
@@ -857,22 +940,38 @@ impl PreparedArtifactDescriptor {
         let mut hasher = Sha256::new();
         hasher.update(WORK_IMPLEMENTATION_ID_DOMAIN);
         hasher.update(IDENTITY_VERSION.to_le_bytes());
-        hasher.update(self.owner.implementation_registry.as_bytes());
+        hasher.update(self.compatibility.owner.implementation_registry.as_bytes());
         hash_bytes(
             &mut hasher,
-            self.owner.registration.provider_catalog.as_bytes(),
+            self.compatibility
+                .owner
+                .registration
+                .provider_catalog
+                .as_bytes(),
         )
         .expect("validated provider catalog identity length");
-        hash_bytes(&mut hasher, self.owner.registration.provider.as_bytes())
-            .expect("validated provider identity length");
         hash_bytes(
             &mut hasher,
-            self.owner.registration.provider_version.as_bytes(),
+            self.compatibility.owner.registration.provider.as_bytes(),
+        )
+        .expect("validated provider identity length");
+        hash_bytes(
+            &mut hasher,
+            self.compatibility
+                .owner
+                .registration
+                .provider_version
+                .as_bytes(),
         )
         .expect("validated provider version identity length");
         hash_bytes(
             &mut hasher,
-            self.owner.registration.implementation.as_str().as_bytes(),
+            self.compatibility
+                .owner
+                .registration
+                .implementation
+                .as_str()
+                .as_bytes(),
         )
         .expect("validated implementation identity length");
         hasher.update([operation_tag(operation)]);
@@ -885,11 +984,7 @@ impl PreparedArtifactDescriptor {
     }
 
     fn payload_bytes(&self) -> Result<u64, PreparedArtifactError> {
-        self.segments.iter().try_fold(0_u64, |total, segment| {
-            total
-                .checked_add(segment.byte_len()?)
-                .ok_or(PreparedArtifactError::ArtifactTooLarge)
-        })
+        self.compatibility.payload_bytes()
     }
 }
 
@@ -900,20 +995,21 @@ fn validate_catalog_descriptors(
     let Some(first) = descriptors.first() else {
         return Err(PreparedArtifactError::InvalidDescriptor);
     };
-    if first.cache_scope != store.scope {
+    if first.compatibility.cache_scope != store.scope {
         return Err(PreparedArtifactError::CachePolicyMismatch);
     }
     for descriptor in descriptors {
-        if descriptor.cache_scope != store.scope
-            || descriptor.owner != first.owner
-            || descriptor.kind != first.kind
+        if descriptor.compatibility.cache_scope != store.scope
+            || descriptor.compatibility.owner != first.compatibility.owner
+            || descriptor.compatibility.kind != first.compatibility.kind
+            || descriptor.execution_problem != first.execution_problem
         {
             return Err(PreparedArtifactError::InvalidDescriptor);
         }
     }
     if descriptors
         .windows(2)
-        .any(|pair| pair[0].identity >= pair[1].identity)
+        .any(|pair| pair[0].identity() >= pair[1].identity())
     {
         return Err(PreparedArtifactError::InvalidDescriptor);
     }
@@ -929,8 +1025,8 @@ fn catalog_work_node_id(
     hasher.update(IDENTITY_VERSION.to_le_bytes());
     hash_len(&mut hasher, descriptors.len())?;
     for descriptor in descriptors {
-        hasher.update(descriptor.identity.as_bytes());
-        hasher.update(descriptor.cache_identity.as_bytes());
+        hasher.update(descriptor.compatibility.identity.as_bytes());
+        hasher.update(descriptor.compatibility.cache_identity.as_bytes());
     }
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(WorkNodeId::new(format!(
@@ -948,8 +1044,8 @@ fn catalog_work_implementation_id(
     hasher.update(IDENTITY_VERSION.to_le_bytes());
     hash_len(&mut hasher, descriptors.len())?;
     for descriptor in descriptors {
-        hasher.update(descriptor.identity.as_bytes());
-        hasher.update(descriptor.cache_identity.as_bytes());
+        hasher.update(descriptor.compatibility.identity.as_bytes());
+        hasher.update(descriptor.compatibility.cache_identity.as_bytes());
     }
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(WorkImplementationId::new(format!(
@@ -964,7 +1060,7 @@ fn validate_catalog_identity_input(
     if descriptors.is_empty()
         || descriptors
             .windows(2)
-            .any(|pair| pair[0].identity >= pair[1].identity)
+            .any(|pair| pair[0].identity() >= pair[1].identity())
     {
         return Err(PreparedArtifactError::InvalidDescriptor);
     }
@@ -984,10 +1080,10 @@ fn catalog_planned_artifacts(
         .flat_map(|descriptor| {
             [
                 PlannedArtifact::new(
-                    descriptor.identity,
+                    descriptor.compatibility.identity,
                     node.clone(),
                     ArtifactRole::Cache,
-                    Some(descriptor.cache_identity),
+                    Some(descriptor.compatibility.cache_identity),
                 ),
                 PlannedArtifact::new(
                     derive_eviction_ledger_identity(descriptor, PreparedArtifactOperation::Reuse),
@@ -1856,26 +1952,41 @@ struct ManifestDescriptor {
 impl ManifestDescriptor {
     fn from_descriptor(descriptor: &PreparedArtifactDescriptor) -> Self {
         Self {
-            implementation_registry: descriptor.owner.implementation_registry.to_string(),
-            provider_catalog: descriptor.owner.registration.provider_catalog.clone(),
-            provider: descriptor.owner.registration.provider.clone(),
-            provider_version: descriptor.owner.registration.provider_version.clone(),
+            implementation_registry: descriptor
+                .compatibility
+                .owner
+                .implementation_registry
+                .to_string(),
+            provider_catalog: descriptor
+                .compatibility
+                .owner
+                .registration
+                .provider_catalog
+                .clone(),
+            provider: descriptor.compatibility.owner.registration.provider.clone(),
+            provider_version: descriptor
+                .compatibility
+                .owner
+                .registration
+                .provider_version
+                .clone(),
             implementation: descriptor
+                .compatibility
                 .owner
                 .registration
                 .implementation
                 .as_str()
                 .to_string(),
-            kind: descriptor.kind,
-            scientific: descriptor.scientific.clone(),
-            cache_scope: descriptor.cache_scope.clone(),
+            kind: descriptor.compatibility.kind,
+            scientific: descriptor.compatibility.scientific.clone(),
+            cache_scope: descriptor.compatibility.cache_scope.clone(),
         }
     }
 
-    fn into_descriptor(
+    fn into_compatibility(
         self,
         segments: Vec<PreparedArtifactSegmentDescriptor>,
-    ) -> Result<PreparedArtifactDescriptor, PreparedArtifactError> {
+    ) -> Result<PreparedArtifactCompatibility, PreparedArtifactError> {
         let registry = decode_digest(&self.implementation_registry)
             .map(ImplementationRegistryId::from_sha256)
             .ok_or(PreparedArtifactError::InvalidManifest)?;
@@ -1886,7 +1997,7 @@ impl ManifestDescriptor {
             WorkImplementationId::new(self.implementation),
         )?;
         let owner = PreparedArtifactOwner::from_manifest(registry, registration);
-        PreparedArtifactDescriptor::from_commitments(
+        PreparedArtifactCompatibility::from_commitments(
             owner,
             self.kind,
             self.scientific,
@@ -1941,7 +2052,7 @@ enum ReuseEvaluation {
 impl ValidatedArtifact {
     fn into_handle(self, descriptor: &PreparedArtifactDescriptor) -> PreparedArtifact {
         PreparedArtifact {
-            identity: descriptor.identity,
+            identity: descriptor.compatibility.identity,
             integrity_identity: derive_content_identity(descriptor, self.payload_sha256),
             cache_identity: descriptor.cache_identity(),
         }
@@ -2360,7 +2471,7 @@ fn derive_cache_identity(
 }
 
 fn derive_artifact_identity(
-    descriptor: &PreparedArtifactDescriptor,
+    descriptor: &PreparedArtifactCompatibility,
 ) -> Result<ArtifactIdentity, PreparedArtifactError> {
     let mut hasher = Sha256::new();
     hasher.update(ARTIFACT_IDENTITY_DOMAIN);
@@ -2389,7 +2500,7 @@ fn derive_artifact_identity(
     )?;
     hasher.update([kind_tag(descriptor.kind)]);
     for identity in [
-        &descriptor.scientific.compiled_problem,
+        &descriptor.scientific.preparation_dependencies,
         &descriptor.scientific.observation_snapshot,
         &descriptor.scientific.compiled_geometry,
         &descriptor.scientific.numerics_contract,
@@ -2448,8 +2559,8 @@ fn derive_work_node_identity(
     let mut hasher = Sha256::new();
     hasher.update(WORK_NODE_IDENTITY_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
-    hasher.update(descriptor.identity.as_bytes());
-    hasher.update(descriptor.cache_identity.as_bytes());
+    hasher.update(descriptor.compatibility.identity.as_bytes());
+    hasher.update(descriptor.compatibility.cache_identity.as_bytes());
     hasher.update([operation_tag(operation)]);
     hasher.finalize().into()
 }
@@ -2461,8 +2572,8 @@ fn derive_eviction_ledger_identity(
     let mut hasher = Sha256::new();
     hasher.update(EVICTION_LEDGER_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
-    hasher.update(descriptor.identity.as_bytes());
-    hasher.update(descriptor.cache_identity.as_bytes());
+    hasher.update(descriptor.compatibility.identity.as_bytes());
+    hasher.update(descriptor.compatibility.cache_identity.as_bytes());
     hasher.update([operation_tag(operation)]);
     ArtifactIdentity::from_owner_digest(hasher.finalize().into())
 }
@@ -2507,7 +2618,7 @@ fn derive_content_identity(
     let mut hasher = Sha256::new();
     hasher.update(CONTENT_IDENTITY_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
-    hasher.update(descriptor.identity.as_bytes());
+    hasher.update(descriptor.compatibility.identity.as_bytes());
     hasher.update(payload_sha256);
     ArtifactIdentity::from_owner_digest(hasher.finalize().into())
 }
@@ -2519,7 +2630,7 @@ fn derive_load_source_identity(
     let mut hasher = Sha256::new();
     hasher.update(LOAD_SOURCE_IDENTITY_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
-    hasher.update(descriptor.identity.as_bytes());
+    hasher.update(descriptor.compatibility.identity.as_bytes());
     hash_len(&mut hasher, segments.len())?;
     for segment in segments {
         hash_bytes(&mut hasher, segment.name.as_bytes())?;
@@ -2542,7 +2653,7 @@ fn derive_import_source_identity(
     let mut hasher = Sha256::new();
     hasher.update(IMPORT_SOURCE_IDENTITY_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
-    hasher.update(descriptor.identity.as_bytes());
+    hasher.update(descriptor.compatibility.identity.as_bytes());
     hash_len(&mut hasher, segments.len())?;
     for segment in segments {
         hash_bytes(&mut hasher, segment.name.as_bytes())?;
@@ -2572,8 +2683,9 @@ fn validate_source_segments(
     descriptor: &PreparedArtifactDescriptor,
     inputs: &[PreparedArtifactSourceSegment],
 ) -> Result<(), PreparedArtifactError> {
-    if inputs.len() != descriptor.segments.len()
+    if inputs.len() != descriptor.compatibility.segments.len()
         || descriptor
+            .compatibility
             .segments
             .iter()
             .zip(inputs)
@@ -2589,10 +2701,10 @@ fn validate_import_segments(
     descriptor: &PreparedArtifactDescriptor,
     inputs: &[PreparedArtifactImportSegment],
 ) -> Result<(), PreparedArtifactError> {
-    if inputs.len() != descriptor.segments.len() {
+    if inputs.len() != descriptor.compatibility.segments.len() {
         return Err(PreparedArtifactError::SegmentMismatch);
     }
-    for (segment, input) in descriptor.segments.iter().zip(inputs) {
+    for (segment, input) in descriptor.compatibility.segments.iter().zip(inputs) {
         if segment.name != input.name.as_ref() || segment.byte_len()? != input.source_bytes {
             return Err(PreparedArtifactError::SegmentMismatch);
         }
@@ -2682,7 +2794,7 @@ fn import_segment(
 
 fn streaming_buffer_len(
     budget: PreparedArtifactBudget,
-    descriptor: &PreparedArtifactDescriptor,
+    descriptor: &PreparedArtifactCompatibility,
 ) -> Result<usize, PreparedArtifactError> {
     let scalar = descriptor
         .segments
@@ -3527,17 +3639,17 @@ fn observed_manifest_resident_bytes(manifest: &ArtifactManifest) -> u64 {
 }
 
 fn observed_validation_state_resident_bytes(
-    descriptor: &PreparedArtifactDescriptor,
+    descriptor: &PreparedArtifactCompatibility,
     integrity: &Vec<ManifestSegmentIntegrity>,
     manifest_identities: [&String; 3],
 ) -> u64 {
-    let bytes = size_of::<PreparedArtifactDescriptor>()
+    let bytes = size_of::<PreparedArtifactCompatibility>()
         .saturating_add(3_usize.saturating_mul(size_of::<String>()))
         .saturating_add(descriptor.owner.registration.provider_catalog.capacity())
         .saturating_add(descriptor.owner.registration.provider.capacity())
         .saturating_add(descriptor.owner.registration.provider_version.capacity())
         .saturating_add(descriptor.owner.registration.implementation.as_str().len())
-        .saturating_add(descriptor.scientific.compiled_problem.capacity())
+        .saturating_add(descriptor.scientific.preparation_dependencies.capacity())
         .saturating_add(descriptor.scientific.observation_snapshot.capacity())
         .saturating_add(descriptor.scientific.compiled_geometry.capacity())
         .saturating_add(descriptor.scientific.numerics_contract.capacity())
@@ -3606,7 +3718,7 @@ fn observed_manifest_descriptor_heap_bytes(descriptor: &ManifestDescriptor) -> u
         .saturating_add(descriptor.provider.capacity())
         .saturating_add(descriptor.provider_version.capacity())
         .saturating_add(descriptor.implementation.capacity())
-        .saturating_add(descriptor.scientific.compiled_problem.capacity())
+        .saturating_add(descriptor.scientific.preparation_dependencies.capacity())
         .saturating_add(descriptor.scientific.observation_snapshot.capacity())
         .saturating_add(descriptor.scientific.compiled_geometry.capacity())
         .saturating_add(descriptor.scientific.numerics_contract.capacity())

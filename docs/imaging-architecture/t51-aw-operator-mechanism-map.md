@@ -25,6 +25,38 @@ its environment-controlled process/bucket policy is rejected. CASA's known
 diagonal-dominance shortcuts are not generalized: unsupported Mueller layouts,
 telescopes, disabled required terms, or absent CF coverage fail specifically.
 
+## Immutable reuse and execution binding
+
+The model owns a kind-tagged preparation-dependency identity. For paired CFs it
+retains the exact observation snapshot, geometry, numerics, reference data,
+visibility transform, spectral/instrument/W/AW response, operator basis and
+polarization, and weighting laws and source generations. Solver algorithms and
+stopping controls, model-lifecycle authorization, and product publication do not
+key immutable CF bytes. Spectral maps and generic kernels remain fully
+problem-scoped until their owners establish a narrower dependency contract.
+
+The runtime combines that dependency identity with the existing exact paired-cell
+semantics and representation into immutable compatibility. A separately bound
+descriptor always retains the full current `CompiledProblemId`; manifest decoding
+cannot mint that execution authority. Catalog operations and reader activation,
+attachment, close, and release require the current problem binding even when two
+problems share artifact/content identities. A new CLEAN descriptor and reader may
+reuse DIRTY bytes; a DIRTY-bound descriptor or reader cannot execute as CLEAN.
+
+Private cache schema/identity version 7 rejects previous manifests without a
+migration reader. The cold/warm acceptance starts with a fresh private store and
+requires unchanged payload and manifest bytes, inodes, and modification times.
+All existing integrity, resource, decoded-pool, and decoder-workspace checks remain
+in force; execution-seal metadata is charged beside the retained reader snapshot.
+
+The cross-problem regression uses the canonical source-free prepared prephase for
+both single and catalog operations. It supplies current-problem plans and registry
+metadata, then injects only a foreign bound descriptor. Both directions require
+the typed scientific-binding failure at the cache node, with no successful cache
+outcome or mutation. The unrelated general publication fixture currently applies
+a nonzero model delta to a certified-zero initial major pass; this regression does
+not change that fixture or weaken the production model check.
+
 ## Campaign record
 
 Single candidate: current-owner paired AW consumption of validated CASA-imported

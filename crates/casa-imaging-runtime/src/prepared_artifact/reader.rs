@@ -33,7 +33,9 @@ impl ReaderManifestSnapshot {
             || entries
                 .iter()
                 .zip(&segment_digests)
-                .any(|(entry, digests)| entry.descriptor.segments.len() != digests.len())
+                .any(|(entry, digests)| {
+                    entry.descriptor.compatibility.segments.len() != digests.len()
+                })
         {
             return Err(PreparedArtifactError::IdentityMismatch);
         }
@@ -58,6 +60,16 @@ pub(super) fn reader_manifest_snapshot_resident_bytes(
     let fixed = size_of::<ReaderManifestSnapshot>()
         .checked_add(size_of::<Arc<ReaderManifestSnapshot>>())
         .and_then(|bytes| {
+            // Each retained descriptor, the session plan, and its active binding
+            // carry an execution seal independently of the immutable digest snapshot.
+            bytes.checked_add(
+                entries
+                    .len()
+                    .checked_add(2)?
+                    .checked_mul(size_of::<CompiledProblemId>())?,
+            )
+        })
+        .and_then(|bytes| {
             bytes.checked_add(entries.len().checked_mul(size_of::<Box<[[u8; 32]]>>())?)
         })
         .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
@@ -68,6 +80,7 @@ pub(super) fn reader_manifest_snapshot_resident_bytes(
                 .checked_add(
                     entry
                         .descriptor
+                        .compatibility
                         .segments
                         .len()
                         .checked_mul(size_of::<[u8; 32]>())
@@ -81,6 +94,7 @@ pub(super) fn reader_manifest_snapshot_resident_bytes(
 /// Cloneable, payload-free plan declaration for one lazy prepared catalog.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PreparedArtifactReaderPlan {
+    execution_problem: CompiledProblemId,
     catalog_identity: ArtifactIdentity,
     cache_identity: CacheIdentity,
     node: WorkNodeId,
@@ -97,6 +111,10 @@ pub struct PreparedArtifactReaderPlan {
 }
 
 impl PreparedArtifactReaderPlan {
+    pub(crate) const fn execution_problem(&self) -> CompiledProblemId {
+        self.execution_problem
+    }
+
     /// Identity of the immutable prepared catalog owned by this reader.
     #[must_use]
     pub const fn catalog_identity(&self) -> ArtifactIdentity {
@@ -194,6 +212,13 @@ impl PreparedArtifactReaderFactory {
         if artifacts.is_empty() || decoded_resident_bytes == 0 || decoder_workspace_bytes == 0 {
             return Err(PreparedArtifactError::InvalidDescriptor);
         }
+        let execution_problem = artifacts[0].0.execution_problem;
+        if artifacts
+            .iter()
+            .any(|(descriptor, _)| descriptor.execution_problem != execution_problem)
+        {
+            return Err(PreparedArtifactError::ReaderBindingMismatch);
+        }
         artifacts.sort_unstable_by_key(|(descriptor, _)| descriptor.identity());
         let mut entries = Vec::with_capacity(artifacts.len());
         let mut logical_bytes = 0_u64;
@@ -204,8 +229,8 @@ impl PreparedArtifactReaderFactory {
         hasher.update(READER_CATALOG_DOMAIN);
         hasher.update(IDENTITY_VERSION.to_le_bytes());
         for (descriptor, artifact) in artifacts {
-            if descriptor.cache_scope != store.scope
-                || descriptor.owner.registration.implementation() != &implementation
+            if descriptor.compatibility.cache_scope != store.scope
+                || descriptor.compatibility.owner.registration.implementation() != &implementation
                 || artifact.identity != descriptor.identity()
                 || artifact.cache_identity != descriptor.cache_identity()
             {
@@ -266,6 +291,7 @@ impl PreparedArtifactReaderFactory {
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         let suffix = catalog_identity.to_string();
         let plan = PreparedArtifactReaderPlan {
+            execution_problem,
             catalog_identity,
             cache_identity,
             node: WorkNodeId::new(format!("prepared-artifact-reader-{suffix}")),
@@ -308,6 +334,7 @@ impl PreparedArtifactReaderFactory {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReaderBinding {
+    problem: CompiledProblemId,
     attempt: crate::ExecutionAttemptId,
     registry: crate::ImplementationRegistryId,
     lease_epoch: u64,
@@ -437,6 +464,7 @@ impl PreparedArtifactReader {
             return Err(PreparedArtifactError::ReaderAlreadyActivated);
         }
         state.binding = Some(ReaderBinding {
+            problem: context.compiled().problem_id(),
             attempt: context.attempt_id(),
             registry: context.implementation_registry_id(),
             lease_epoch: context.lease_epoch(),
@@ -624,7 +652,8 @@ impl PreparedArtifactReader {
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
         let binding = state.binding.ok_or(PreparedArtifactError::ReaderInactive)?;
-        if binding.attempt != context.attempt_id()
+        if binding.problem != context.compiled().problem_id()
+            || binding.attempt != context.attempt_id()
             || binding.registry != context.implementation_registry_id()
             || binding.lease_epoch != context.lease_epoch()
         {
@@ -745,7 +774,10 @@ impl PreparedArtifactReader {
         &self,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), PreparedArtifactError> {
-        if context.node().id != self.plan.node || context.node().kind != WorkKind::Cache {
+        if context.compiled().problem_id() != self.plan.execution_problem
+            || context.node().id != self.plan.node
+            || context.node().kind != WorkKind::Cache
+        {
             return Err(PreparedArtifactError::ReaderBindingMismatch);
         }
         let state = self
@@ -753,7 +785,8 @@ impl PreparedArtifactReader {
             .lock()
             .map_err(|_| PreparedArtifactError::PoisonedStore)?;
         let binding = state.binding.ok_or(PreparedArtifactError::ReaderInactive)?;
-        if binding.attempt != context.attempt_id()
+        if binding.problem != context.compiled().problem_id()
+            || binding.attempt != context.attempt_id()
             || binding.registry != context.implementation_registry_id()
             || binding.lease_epoch != context.lease_epoch()
         {
@@ -821,7 +854,10 @@ impl PreparedArtifactReader {
         &self,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), PreparedArtifactError> {
-        if context.node().id != self.plan.release_node || context.node().kind != WorkKind::Release {
+        if context.compiled().problem_id() != self.plan.execution_problem
+            || context.node().id != self.plan.release_node
+            || context.node().kind != WorkKind::Release
+        {
             return Err(PreparedArtifactError::ReaderBindingMismatch);
         }
         let state = self
@@ -832,7 +868,8 @@ impl PreparedArtifactReader {
             return Err(PreparedArtifactError::ReaderClosed);
         }
         if state.binding.is_some_and(|binding| {
-            binding.attempt != context.attempt_id()
+            binding.problem != context.compiled().problem_id()
+                || binding.attempt != context.attempt_id()
                 || binding.registry != context.implementation_registry_id()
                 || binding.lease_epoch != context.lease_epoch()
         }) {
@@ -901,17 +938,22 @@ impl PreparedArtifactReader {
         context: WorkExecutionContext<'_>,
     ) -> Result<(), PreparedArtifactError> {
         let node = context.node();
-        if node.id != self.plan.node
+        if context.compiled().problem_id() != self.plan.execution_problem
+            || node.id != self.plan.node
             || node.kind != WorkKind::Cache
             || node.domain != WorkDomain::Io
             || node.implementation != self.plan.implementation
             || node.fences != BTreeSet::from([FenceKind::Io])
             || context.implementation_registry_id()
-                != self.entries[0].descriptor.owner.implementation_registry
+                != self.entries[0]
+                    .descriptor
+                    .compatibility
+                    .owner
+                    .implementation_registry
             || self
                 .entries
                 .iter()
-                .any(|entry| !entry.descriptor.scientific.matches_context(context))
+                .any(|entry| !entry.descriptor.matches_context(context))
         {
             return Err(PreparedArtifactError::ReaderBindingMismatch);
         }
@@ -1216,6 +1258,7 @@ mod tests {
                     scientific,
                     store.scope.clone(),
                     vec![segment.clone()],
+                    problem.problem_id(),
                 )
                 .expect("reader test descriptor");
                 let manifest = ArtifactManifest {
@@ -1266,6 +1309,319 @@ mod tests {
     }
 
     #[test]
+    fn shared_cf_bytes_require_fresh_problem_bound_readers_and_terminal_guards() {
+        let mut fixture = ReaderFixture::new();
+        let first_problem = fixture.problem.clone();
+        let second_problem = crate::execution::tests::compiled_problem_with_reconstruction_controls(
+            casa_imaging_model::ReconstructionControls::new(30, 0.2, 0.0),
+        );
+        assert_ne!(first_problem.problem_id(), second_problem.problem_id());
+        let owner = fixture.factory.entries[0]
+            .descriptor
+            .compatibility
+            .owner
+            .clone();
+        let store = Arc::clone(&fixture.factory.store);
+        fs::remove_dir_all(store.entry_path(fixture.artifact_identity))
+            .expect("replace test-only dummy kernel fixture");
+        let cell = PreparedArtifactScientificIdentity::convolution_function(
+            casa_imaging_model::PreparedArtifactCellSemantics::new(
+                1.4e9,
+                0.0,
+                0,
+                0,
+                0.0,
+                1.4e9,
+                0,
+                "vla",
+                "l-band",
+                25.0,
+                1.0,
+                casa_imaging_model::PreparedArtifactAwInterpretation::Wavelength,
+                false,
+                "flatnoise",
+            )
+            .expect("paired cell semantics"),
+        )
+        .expect("paired identity");
+        let plane = PreparedArtifactPlaneDescriptor::new(
+            [3, 3],
+            [1, 1],
+            1,
+            PreparedArtifactUvAffine::new([0.0; 2], [0.0; 2], [1.0; 2], [[1.0, 0.0], [0.0, 1.0]])
+                .expect("UV"),
+            PreparedArtifactPrecision::ComplexF32,
+            PreparedArtifactOrder::Axis0ContiguousLittleEndian,
+        )
+        .expect("plane");
+        let describe = |problem: &CompiledProblem| {
+            PreparedArtifactDescriptor::from_commitments(
+                owner.clone(),
+                PreparedArtifactKind::ConvolutionFunction,
+                ScientificCommitments::from_problem(problem, cell),
+                store.scope.clone(),
+                vec![
+                    plane.clone().into_segment("imaging"),
+                    plane.clone().into_segment("weight"),
+                ],
+                problem.problem_id(),
+            )
+            .expect("bound CF descriptor")
+        };
+        let first = describe(&first_problem);
+        let second = describe(&second_problem);
+        assert_eq!(first.compatibility, second.compatibility);
+        assert_ne!(first, second);
+        let planes = [1.0_f32, 2.0].map(|value| {
+            (0..9)
+                .flat_map(|_| [value, 0.0].into_iter().flat_map(f32::to_le_bytes))
+                .collect::<Vec<_>>()
+        });
+        let plane_bytes = planes[0].len();
+        let payload = planes.concat();
+        let digest: [u8; 32] = Sha256::digest(&payload).into();
+        let artifact_identity = first.identity();
+        let cache_identity = first.cache_identity();
+        let integrity_identity = derive_content_identity(&first, digest);
+        let artifact = || PreparedArtifact {
+            identity: artifact_identity,
+            cache_identity,
+            integrity_identity,
+        };
+        let manifest = ArtifactManifest {
+            schema: CACHE_SCHEMA.to_string(),
+            schema_version: CACHE_SCHEMA_VERSION,
+            identity: first.identity().to_string(),
+            cache_identity: first.cache_identity().to_string(),
+            descriptor: ManifestDescriptor::from_descriptor(&first),
+            payload_sha256: encode_hex(&digest),
+            payload_bytes: payload.len() as u64,
+            segments: first
+                .segments()
+                .iter()
+                .enumerate()
+                .map(|(index, descriptor)| ManifestSegment {
+                    descriptor: descriptor.clone(),
+                    offset: (index * plane_bytes) as u64,
+                    bytes: plane_bytes as u64,
+                    sha256: encode_hex(&Sha256::digest(&planes[index]).into()),
+                })
+                .collect(),
+        };
+        let entry = store.entry_path(first.identity());
+        fs::create_dir(&entry).expect("CF entry");
+        let manifest_bytes = serde_json::to_vec(&manifest).expect("CF manifest");
+        fs::write(entry.join(MANIFEST_FILE), &manifest_bytes).expect("manifest");
+        fs::write(entry.join(PAYLOAD_FILE), &payload).expect("payload");
+        let factory = |entries| {
+            PreparedArtifactReaderFactory::new(
+                Arc::clone(&store),
+                entries,
+                owner.registration.implementation.clone(),
+                payload.len() as u64,
+                plane_bytes as u64,
+            )
+        };
+        assert!(matches!(
+            factory(vec![
+                (first.clone(), artifact()),
+                (second.clone(), artifact())
+            ]),
+            Err(PreparedArtifactError::ReaderBindingMismatch)
+        ));
+        let first_factory = factory(vec![(first, artifact())]).expect("first factory");
+        let second_factory = factory(vec![(second, artifact())]).expect("second factory");
+        assert_eq!(
+            first_factory.plan().catalog_identity(),
+            second_factory.plan().catalog_identity()
+        );
+        assert_ne!(first_factory.plan(), second_factory.plan());
+        let reader = first_factory.session();
+        let cf_residency = || RecordingResidency {
+            events: Arc::new(Mutex::new(Vec::new())),
+            close: PreparedArtifactResidencyMeasurements {
+                peak_resident_bytes: payload.len() as u64,
+                peak_decoder_workspace_bytes: plane_bytes as u64,
+                peak_pinned_bytes: plane_bytes as u64,
+                loads: 1,
+                copied_bytes: payload.len() as u64,
+                released_bytes: payload.len() as u64,
+                ..PreparedArtifactResidencyMeasurements::default()
+            },
+            release: PreparedArtifactResidencyMeasurements {
+                released_bytes: payload.len() as u64,
+                ..PreparedArtifactResidencyMeasurements::default()
+            },
+        };
+        let residency = cf_residency();
+        let events = Arc::clone(&residency.events);
+        let binding = PreparedArtifactExecutionBinding::new(Arc::clone(&reader), residency);
+        let plan = binding.plan();
+        let cache = scheduled(cache_node(plan), plan, 7, false);
+        let fence = cache.for_fence(FenceKind::Io);
+        let release = scheduled(release_node(plan), plan, 7, false);
+        let cleanup = scheduled(release_node(plan), plan, 7, true);
+        let planned = [plan.planned_artifact()];
+        let prediction =
+            StagePrediction::new(plan.node().clone(), 1).with_io(vec![IoPrediction::new(
+                IoBufferKind::StorageManager,
+                u64::MAX,
+                u64::MAX,
+            )]);
+        let release_prediction = StagePrediction::new(plan.release_node().clone(), 1)
+            .with_io(vec![IoPrediction::new(IoBufferKind::StorageManager, 0, 0)]);
+        let alternative = alternative(plan);
+        let completed = BTreeMap::new();
+        fixture.problem = second_problem.clone();
+        assert!(matches!(
+            binding.activate(context(
+                &fixture,
+                &cache,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                1
+            )),
+            Err(PreparedArtifactError::ReaderBindingMismatch)
+        ));
+        assert!(matches!(
+            binding.release(context(
+                &fixture,
+                &cleanup,
+                &planned,
+                &release_prediction,
+                &alternative,
+                &completed,
+                1
+            )),
+            Err(PreparedArtifactError::ReaderBindingMismatch)
+        ));
+        assert!(events.lock().expect("events").is_empty());
+        fixture.problem = first_problem;
+        binding
+            .activate(context(
+                &fixture,
+                &cache,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                1,
+            ))
+            .expect("first activation");
+        fixture.problem = second_problem.clone();
+        assert!(matches!(
+            binding.close(context(
+                &fixture,
+                &fence,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                1
+            )),
+            Err(PreparedArtifactError::ReaderBindingMismatch)
+        ));
+        assert!(matches!(
+            binding.release(context(
+                &fixture,
+                &release,
+                &planned,
+                &release_prediction,
+                &alternative,
+                &completed,
+                1
+            )),
+            Err(PreparedArtifactError::ReaderBindingMismatch)
+        ));
+        assert!(events.lock().expect("events").is_empty());
+        fixture.problem = crate::execution::tests::compiled_problem();
+        binding
+            .close(context(
+                &fixture,
+                &fence,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                1,
+            ))
+            .expect("first close");
+        binding
+            .release(context(
+                &fixture,
+                &release,
+                &planned,
+                &release_prediction,
+                &alternative,
+                &completed,
+                1,
+            ))
+            .expect("first release");
+        let second_reader = second_factory.session();
+        let second_binding =
+            PreparedArtifactExecutionBinding::new(Arc::clone(&second_reader), cf_residency());
+        fixture.problem = second_problem;
+        second_binding
+            .activate(context(
+                &fixture,
+                &cache,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                2,
+            ))
+            .expect("fresh second-problem activation");
+        let mut consumed = CollectingConsumer::default();
+        second_reader
+            .read(
+                second_factory.entries[0].descriptor.identity(),
+                &mut consumed,
+            )
+            .expect("consume shared CF from new execution");
+        assert_eq!(consumed.bytes, payload);
+        assert_eq!(
+            consumed.segment_bytes,
+            BTreeMap::from([
+                ("imaging".to_string(), planes[0].clone()),
+                ("weight".to_string(), planes[1].clone()),
+            ])
+        );
+        second_binding
+            .close(context(
+                &fixture,
+                &fence,
+                &planned,
+                &prediction,
+                &alternative,
+                &completed,
+                2,
+            ))
+            .expect("second close");
+        second_binding
+            .release(context(
+                &fixture,
+                &release,
+                &planned,
+                &release_prediction,
+                &alternative,
+                &completed,
+                2,
+            ))
+            .expect("second release");
+        assert_eq!(
+            fs::read(entry.join(MANIFEST_FILE)).expect("unchanged manifest"),
+            manifest_bytes
+        );
+        assert_eq!(
+            fs::read(entry.join(PAYLOAD_FILE)).expect("unchanged payload"),
+            payload
+        );
+    }
+
+    #[test]
     fn reader_reserves_the_full_store_ceiling_for_differently_sized_catalog_entries() {
         let fixture = ReaderFixture::new();
         let first = &fixture.factory.entries[0];
@@ -1296,11 +1652,12 @@ mod tests {
         )
         .expect("larger reader scientific identity");
         let larger_descriptor = PreparedArtifactDescriptor::from_commitments(
-            first_descriptor.owner.clone(),
-            first_descriptor.kind,
+            first_descriptor.compatibility.owner.clone(),
+            first_descriptor.compatibility.kind,
             ScientificCommitments::from_problem(&fixture.problem, larger_scientific_identity),
-            first_descriptor.cache_scope.clone(),
+            first_descriptor.compatibility.cache_scope.clone(),
             vec![larger_segment],
+            fixture.problem.problem_id(),
         )
         .expect("larger reader test descriptor");
         let larger_artifact = PreparedArtifact {
@@ -1618,6 +1975,7 @@ mod tests {
     #[derive(Default)]
     struct CollectingConsumer {
         bytes: Vec<u8>,
+        segment_bytes: BTreeMap<String, Vec<u8>>,
         require_science_segment: bool,
     }
 
@@ -1631,9 +1989,14 @@ mod tests {
             if self.require_science_segment && segment.name() != "science" {
                 return Err(PreparedArtifactError::SegmentMismatch);
             }
-            if byte_offset as usize != self.bytes.len() {
+            let segment_bytes = self
+                .segment_bytes
+                .entry(segment.name().to_string())
+                .or_default();
+            if byte_offset as usize != segment_bytes.len() {
                 return Err(PreparedArtifactError::SegmentMismatch);
             }
+            segment_bytes.extend_from_slice(input);
             self.bytes.extend_from_slice(input);
             Ok(())
         }
@@ -1825,7 +2188,11 @@ mod tests {
         let mut prior_bytes = reader.state.lock().expect("reader state").read_bytes;
         let mut prior_operations = reader.state.lock().expect("reader state").read_operations;
         let expected_operations = (PAYLOAD.len() as u64).div_ceil(STREAMING_BUFFER_BYTES) * 2
-            + fixture.factory.entries[0].descriptor.segments.len() as u64
+            + fixture.factory.entries[0]
+                .descriptor
+                .compatibility
+                .segments
+                .len() as u64
             + 3;
         for read in 1..=2 {
             reader
@@ -2172,6 +2539,41 @@ mod tests {
         assert!(rendered.contains("payload_consumption_nanos=5"));
         assert!(rendered.contains("session_wall_nanos=7"));
         assert!(rendered.ends_with("first_failure_identity=none"));
+    }
+
+    #[test]
+    fn reader_activation_rejects_legacy_schema_and_execution_binding_fields() {
+        let fixture = ReaderFixture::new();
+        rewrite_manifest(&fixture, |manifest| manifest.schema_version = 6);
+        let reader = fixture.factory.session();
+        assert!(matches!(
+            activate_reader(&fixture, &reader),
+            Err(PreparedArtifactError::UnknownSchema { version: 6, .. })
+        ));
+        assert_metadata_only_activation(&reader);
+
+        let fixture = ReaderFixture::new();
+        let path = fixture
+            .factory
+            .store
+            .entry_path(fixture.artifact_identity)
+            .join(MANIFEST_FILE);
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).expect("current manifest"))
+                .expect("manifest value");
+        manifest["descriptor"]["scientific"]["compiled_problem"] =
+            serde_json::Value::String(encode_hex(&fixture.problem.problem_id().as_bytes()));
+        fs::write(
+            path,
+            serde_json::to_vec(&manifest).expect("legacy binding manifest"),
+        )
+        .expect("legacy binding field");
+        let reader = fixture.factory.session();
+        assert!(matches!(
+            activate_reader(&fixture, &reader),
+            Err(PreparedArtifactError::Json(error)) if error.to_string().contains("unknown field `compiled_problem`")
+        ));
+        assert_metadata_only_activation(&reader);
     }
 
     #[test]

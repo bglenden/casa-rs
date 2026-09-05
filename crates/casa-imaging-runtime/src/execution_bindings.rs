@@ -3027,6 +3027,13 @@ pub struct CompiledWorkContext<'a> {
 }
 
 impl<'a> CompiledWorkContext<'a> {
+    pub(crate) fn prepared_artifact_dependency_id(
+        self,
+        kind: casa_imaging_model::PreparedArtifactScientificKind,
+    ) -> casa_imaging_model::LogicalIdentity {
+        self.problem.prepared_artifact_dependency_id(kind)
+    }
+
     /// Return the stable compiled-problem identity.
     #[must_use]
     pub const fn problem_id(self) -> CompiledProblemId {
