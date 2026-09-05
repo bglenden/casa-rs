@@ -676,6 +676,8 @@ fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
 
 #[cfg(test)]
 mod tests {
+    mod cold_load_probe;
+
     use std::{collections::BTreeSet, path::Path};
 
     use casa_imaging_model::{

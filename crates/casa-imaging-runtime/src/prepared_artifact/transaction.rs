@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(test)]
+mod occupancy_probe;
+
 pub(super) struct PreparedArtifactSessionRead {
     pub(super) content_identity: ArtifactIdentity,
     pub(super) payload_bytes: u64,

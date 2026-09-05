@@ -8,7 +8,8 @@ use super::{
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, process::Command, time::Instant};
 
-const CHUNK_BYTES: usize = 8 * 1024 * 1024;
+const CHUNK_BYTES: usize = 64 * 1024;
+const REPEAT_PLANE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_COHORT_BYTES: usize = 64 * 1024 * 1024;
 
 fn bulk_reference(metadata: &KernelMetadata) -> (Vec<u8>, f64, f64, f64) {
@@ -89,7 +90,7 @@ fn t51_cf_encoding_discriminator() {
         .iter()
         .map(|metadata| {
             let bytes = plane_bytes(metadata);
-            bytes * if bytes <= CHUNK_BYTES { 2 } else { 1 }
+            bytes * if bytes <= REPEAT_PLANE_BYTES { 2 } else { 1 }
         })
         .sum::<usize>();
     assert!(cohort_bytes <= MAX_COHORT_BYTES);
@@ -115,7 +116,7 @@ fn t51_cf_encoding_discriminator() {
     );
     let mut verified_bytes = 0;
     for metadata in &planes {
-        let trials = if plane_bytes(metadata) <= CHUNK_BYTES {
+        let trials = if plane_bytes(metadata) <= REPEAT_PLANE_BYTES {
             2
         } else {
             1

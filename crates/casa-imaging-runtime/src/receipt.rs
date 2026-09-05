@@ -8499,6 +8499,9 @@ fn write_hex(formatter: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
 }
 
 #[cfg(test)]
+mod retention_probe;
+
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 

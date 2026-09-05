@@ -106,7 +106,7 @@
     "repo://crates/casa-imaging-runtime/src/execution.rs": "b4877d6d24cdb7c3291d485f96bf62e1b25eec184200668fe1470cd75183446b",
     "repo://crates/casa-imaging-runtime/src/execution_bindings.rs": "4d9d5f46ca3a1b4e04f08e70d85b974d8b1aaa739f73c431c356a7141ea35922",
     "repo://crates/casa-imaging-runtime/src/observation_transaction.rs": "a54a8be54c260fc1a47efe07c2b9289af6039ef0800640ea04694875de73b45f",
-    "repo://crates/casa-imaging-runtime/src/receipt.rs": "4c0e5e7acfadca7a009210868001c727478247e52429d32d0e2b22dd6de55c0a",
+    "repo://crates/casa-imaging-runtime/src/receipt.rs": "1302d794ce240abd6aafa3fc321e867a8b93a4dbdda0e247ab53c5decb279b22",
     "repo://crates/casa-imaging-runtime/src/resource_authority.rs": "367d1f079464f0be2277f4c411722820e9c5440bfe962c7665297ad2d8ab99bf",
     "repo://crates/casa-imaging-runtime/src/weighting.rs": "b47a5bade622b42536439fca63a71dc89aaaf648c6fc370a710dccfc75b7105e",
     "repo://crates/casa-imaging-runtime/src/complete_data_operator.rs": "c36e66b2acb5d37b3f990495ff72d0f28a58f5b3deeb33733a7de7b18933ad00",
