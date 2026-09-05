@@ -4094,6 +4094,7 @@ struct CumulativeAwScienceProbe {
     measurement_set: Option<MeasurementSetIdentity>,
     seen: Vec<bool>,
     groups: usize,
+    prefix_samples: u64,
     channels: Vec<CumulativeAwChannel>,
 }
 
@@ -4104,6 +4105,7 @@ impl CumulativeAwScienceProbe {
             measurement_set: None,
             seen: vec![false; (config.row_end - config.row_start) as usize * config.channels],
             groups: 0,
+            prefix_samples: 0,
             channels: vec![CumulativeAwChannel::default(); config.channels],
         }
     }
@@ -4134,6 +4136,10 @@ impl CumulativeAwScienceProbe {
         &mut self,
         group: &[crate::weighting::WeightingSampleValue],
     ) -> Result<(), SpectralOperatorError> {
+        self.prefix_samples = self
+            .prefix_samples
+            .checked_add(group.len() as u64)
+            .ok_or(SpectralOperatorError::DiagnosticCoverageMismatch)?;
         let first = group.first().ok_or(SpectralOperatorError::InvalidSample)?;
         let selected = first.selected();
         if self.config.slot(selected.address())?.is_none() {
@@ -4226,6 +4232,7 @@ impl CumulativeAwScienceProbe {
     }
 
     fn emit(&self) {
+        eprintln!("cumulative_prefix_samples\t{}", self.prefix_samples);
         eprintln!(
             "cumulative_coverage\t{}\t{}\t{}\t{:?}",
             self.groups,
@@ -5195,9 +5202,18 @@ impl CompleteDataOwnerState {
                                     < selected_address_key(current.address)
                             })
                         });
+                        let in_probe_scope = self
+                            .science_probe
+                            .as_ref()
+                            .and_then(|probe| probe.cumulative.as_ref())
+                            .is_none_or(|probe| {
+                                (probe.config.row_start..probe.config.row_end)
+                                    .contains(&selected.address().physical_row)
+                            });
                         let polynomial = match self.specification.basis {
                             SpectralBasisPlan::Polynomial(plan)
                                 if chart_ordinal == 0
+                                    && in_probe_scope
                                     && self.operators[chart_ordinal]
                                         .slab
                                         .owns(sample.output_channel) =>
