@@ -3351,6 +3351,9 @@ fn boxed(message: impl Into<String>) -> crate::ApplicationError {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    mod source_bind_probe;
+
     use casa_coordinates::{CoordinateModel, CoordinateType, StokesType};
     use casa_imaging_model::{
         MissingPointingPolicy, PointingCentreLaw, PointingExtrapolation, PointingInterpolation,
