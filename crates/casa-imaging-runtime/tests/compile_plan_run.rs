@@ -9883,12 +9883,12 @@ fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     assert_eq!(two.grid_bytes(), one.grid_bytes() * 2);
     assert_eq!(all.grid_bytes(), one.grid_bytes() * 8);
     assert_eq!(
-        residual_refresh.residency().grid_bytes() * 3,
+        residual_refresh.residency().grid_bytes() * 2,
         one.grid_bytes(),
-        "later major passes retain only residual plus compensation grids"
+        "empty initial passes retain dirty and PSF pairs; refresh retains only the residual pair"
     );
     let initial_only_chart_bytes =
-        8 * 8 * (4 * std::mem::size_of::<num_complex::Complex64>() + std::mem::size_of::<f64>());
+        8 * 8 * (2 * std::mem::size_of::<num_complex::Complex64>() + std::mem::size_of::<f64>());
     assert_eq!(
         one.primitive_output_bytes() - residual_refresh.residency().primitive_output_bytes(),
         initial_only_chart_bytes,
@@ -10003,6 +10003,41 @@ fn t47_runtime_residency_projects_all_bounded_mosaic_state() {
             + residency.mosaic_workspace_bytes()
             + residency.primitive_output_bytes()
             + residency.major_cycle_model_bytes()
+    );
+}
+
+#[test]
+fn t51_initial_empty_model_residency_excludes_unallocated_pending_delta() {
+    let problem = compile(channel_major_taylor_request_with_shape(
+        241,
+        8,
+        ImageShape::new(512, 512),
+    ))
+    .expect("empty initial Taylor problem");
+    let fragment = |pass| {
+        CompleteDataPlanFragment::new(&problem, 4096, WorkNodeId::new("t51-model-residency"), pass)
+            .expect("operator plan")
+    };
+    let model_samples = problem.model_lifecycle().target().sample_count();
+    let dense_bytes = model_samples * size_of::<casa_imaging_model::ModelSample>();
+    let delta_bytes = problem
+        .model_lifecycle()
+        .bounds()
+        .max_delta_terms()
+        .min(model_samples)
+        * size_of::<ModelDeltaTerm>();
+    assert!(delta_bytes > 0);
+    assert_eq!(
+        fragment(SpectralOperatorPass::InitialMajor)
+            .residency()
+            .major_cycle_model_bytes(),
+        dense_bytes,
+    );
+    assert_eq!(
+        fragment(SpectralOperatorPass::ResidualRefresh)
+            .residency()
+            .major_cycle_model_bytes(),
+        dense_bytes + delta_bytes,
     );
 }
 

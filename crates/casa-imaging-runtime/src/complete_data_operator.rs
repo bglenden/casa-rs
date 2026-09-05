@@ -3106,13 +3106,15 @@ fn project_residency(
         .checked_div(workload.total_model_terms())
         .and_then(|plane_samples| plane_samples.checked_mul(workload.resident_model_terms()))
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+    let pending_delta_terms = if specification.is_initial_certified_zero(workload.pass()) {
+        0
+    } else {
+        model.bounds().max_delta_terms().min(model_samples)
+    };
     let major_cycle_model_bytes = model_samples
         .checked_mul(size_of::<ModelSample>())
         .and_then(|bytes| {
-            model
-                .bounds()
-                .max_delta_terms()
-                .min(model_samples)
+            pending_delta_terms
                 .checked_mul(size_of::<ModelDeltaTerm>())
                 .and_then(|delta_bytes| bytes.checked_add(delta_bytes))
         })

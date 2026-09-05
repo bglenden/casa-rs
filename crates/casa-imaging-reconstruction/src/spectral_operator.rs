@@ -13,12 +13,12 @@ use std::{
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
     CorrelationType, FacetWindow, FiniteValuePolicy, ImageDomainRole, InstrumentModel,
-    InstrumentResponse, LogicalIdentity, MeasurementSetIdentity, NumericPrecision,
-    NumericsContractId, PointingCentreLaw, PolarizationCoordinate, Projection, ReconstructionBasis,
-    ReductionPolicy, SelectedAntennaResponses, SelectedObservationGenerationId,
-    SelectedPointingDirections, SelectedSampleAddress, SelectedVisibilitySample, SpectralKernel,
-    SpectralWcs, SpectralWindowCoordinateCatalog, UvwCoordinateLaw, WProjectionContract,
-    WeightingCommitmentId,
+    InstrumentResponse, LogicalIdentity, MeasurementSetIdentity, ModelInputCommitment,
+    NumericPrecision, NumericsContractId, PointingCentreLaw, PolarizationCoordinate, Projection,
+    ReconstructionBasis, ReductionPolicy, SelectedAntennaResponses,
+    SelectedObservationGenerationId, SelectedPointingDirections, SelectedSampleAddress,
+    SelectedVisibilitySample, SpectralKernel, SpectralWcs, SpectralWindowCoordinateCatalog,
+    UvwCoordinateLaw, WProjectionContract, WeightingCommitmentId,
 };
 use ndarray::{Array2, Axis};
 use num_complex::{Complex32, Complex64};
@@ -514,6 +514,7 @@ impl SpectralSlabPlan {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralOperatorSpecification {
     problem: CompiledProblemId,
+    initial_model: InitialModelClassification,
     geometry: CompiledGeometryId,
     numerics: NumericsContractId,
     weighting_commitment: WeightingCommitmentId,
@@ -539,6 +540,12 @@ pub struct SpectralOperatorSpecification {
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
     output_channel_frequencies_hz: Box<[f64]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitialModelClassification {
+    Empty,
+    Evaluated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -890,6 +897,21 @@ pub(crate) struct SpectralOperatorGeometry {
 }
 
 impl SpectralOperatorSpecification {
+    /// Whether this pass is certified to start from the compiler's empty model.
+    ///
+    /// A later residual refresh always evaluates its named model, even when the
+    /// original compiled input was empty. Seeded initial models are also evaluated.
+    #[must_use]
+    pub const fn is_initial_certified_zero(&self, pass: SpectralOperatorPass) -> bool {
+        matches!(
+            (pass, self.initial_model),
+            (
+                SpectralOperatorPass::InitialMajor,
+                InitialModelClassification::Empty
+            )
+        )
+    }
+
     /// Compile one full-depth spectral specification.
     pub fn new(problem: &CompiledProblem) -> Result<Self, SpectralOperatorError> {
         let channels = output_channel_count(problem)?;
@@ -1115,6 +1137,10 @@ impl SpectralOperatorSpecification {
         }
         Ok(Self {
             problem: problem.problem_id(),
+            initial_model: match problem.model_lifecycle().input() {
+                ModelInputCommitment::Empty => InitialModelClassification::Empty,
+                _ => InitialModelClassification::Evaluated,
+            },
             geometry: problem.geometry().geometry_id(),
             numerics: problem.numerics_id(),
             weighting_commitment: problem.weighting().commitment_id(),
@@ -1751,6 +1777,7 @@ pub fn spectral_operator_workload(
         .major_coefficient_planes(specification.slab);
     let major_normal_planes = specification.basis.major_normal_planes(specification.slab);
     let polarizations = specification.polarization_count();
+    let initial_certified_zero = specification.is_initial_certified_zero(pass);
     let joint_channels = usize::from(matches!(
         specification.basis,
         SpectralBasisPlan::Joint { .. }
@@ -1758,8 +1785,9 @@ pub fn spectral_operator_workload(
     .checked_mul(specification.slab.total_channels())
     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let grid_planes = match pass {
-        SpectralOperatorPass::InitialMajor => {
-            major_coefficient_planes.checked_mul(4).and_then(|values| {
+        SpectralOperatorPass::InitialMajor => major_coefficient_planes
+            .checked_mul(if initial_certified_zero { 2 } else { 4 })
+            .and_then(|values| {
                 major_normal_planes
                     .checked_mul(2)
                     .and_then(|moments| values.checked_add(moments))
@@ -1774,8 +1802,7 @@ pub fn spectral_operator_workload(
                             .checked_mul(2)
                             .and_then(|common| planes.checked_add(common))
                     })
-            })
-        }
+            }),
         SpectralOperatorPass::ResidualRefresh => {
             major_coefficient_planes.checked_mul(2).and_then(|planes| {
                 joint_channels
@@ -1969,6 +1996,7 @@ pub fn spectral_operator_workload(
     };
     let parent_spectral_planes = coefficient_terms
         .checked_mul(match pass {
+            SpectralOperatorPass::InitialMajor if initial_certified_zero => 2,
             SpectralOperatorPass::InitialMajor => 3,
             SpectralOperatorPass::ResidualRefresh => 2,
         })
@@ -7983,6 +8011,12 @@ impl SpectralSlabOperator {
         reused_normal_state: Option<ReusableNormalState>,
     ) -> Result<ReconstructionModelBinding, SpectralOperatorError> {
         self.validate_model_generation(generation)?;
+        if self.specification.as_ref().is_some_and(|specification| {
+            specification.is_initial_certified_zero(self.workload.pass)
+        }) && !matches!(generation.origin(), ModelGenerationOrigin::Empty)
+        {
+            return Err(SpectralOperatorError::ModelMismatch);
+        }
         match (self.workload.pass, reused_normal_state.as_ref()) {
             (SpectralOperatorPass::InitialMajor, None) => {}
             (SpectralOperatorPass::ResidualRefresh, None) => {}
@@ -11302,6 +11336,7 @@ pub enum SpectralOperatorError {
 
 #[cfg(test)]
 mod tests {
+    mod initial_model_residency;
     use std::fs::File;
     use std::io::{BufReader, Read};
     use std::time::Instant;
