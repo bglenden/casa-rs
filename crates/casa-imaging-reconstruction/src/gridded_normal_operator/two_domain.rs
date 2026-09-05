@@ -434,20 +434,6 @@ pub(super) fn domain_execution_residency_for_projection(
 }
 
 impl GriddedNormalTileCatalog {
-    pub(super) fn tile_count(grid_shape: [usize; 2], support: usize) -> Option<usize> {
-        Self::key_bounds(grid_shape, support)
-            .ok()
-            .and_then(|(minimum, maximum)| {
-                let x = i64::from(maximum.x)
-                    .checked_sub(i64::from(minimum.x))?
-                    .checked_add(1)?;
-                let y = i64::from(maximum.y)
-                    .checked_sub(i64::from(minimum.y))?
-                    .checked_add(1)?;
-                usize::try_from(x.checked_mul(y)?).ok()
-            })
-    }
-
     #[cfg(test)]
     pub(super) fn new(
         grid_shape: [usize; 2],
@@ -463,9 +449,12 @@ impl GriddedNormalTileCatalog {
     ) -> Result<Self, SpectralOperatorError> {
         let (minimum_key, maximum_key) =
             Self::key_bounds_for_projection(grid_shape, support, aw_projection)?;
+        let tiles_x = usize::try_from(i64::from(maximum_key.x) - i64::from(minimum_key.x) + 1)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
         let tiles_y = usize::try_from(i64::from(maximum_key.y) - i64::from(minimum_key.y) + 1)
             .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        let tile_count = Self::tile_count(grid_shape, support)
+        let tile_count = tiles_x
+            .checked_mul(tiles_y)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let mut geometries = Vec::new();
         geometries
@@ -490,13 +479,6 @@ impl GriddedNormalTileCatalog {
             geometries,
             support,
         })
-    }
-
-    fn key_bounds(
-        grid_shape: [usize; 2],
-        support: usize,
-    ) -> Result<(GriddedNormalTileKey, GriddedNormalTileKey), SpectralOperatorError> {
-        Self::key_bounds_for_projection(grid_shape, support, false)
     }
 
     fn key_bounds_for_projection(
@@ -1971,66 +1953,106 @@ mod tests {
 
     #[test]
     fn execution_metadata_projection_matches_all_retained_heap_descriptors() {
-        let shape = [128, 128];
-        let depth = 3;
-        let catalogs = GriddedNormalDomainTileCatalogs::new([shape], SUPPORT).unwrap();
-        let prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
-            &[1],
-            catalogs.tile_count(),
-            GriddedNormalRecordLayout::Scalar,
-        )
-        .unwrap();
-        let accumulators = catalogs.accumulators(depth).unwrap();
-        let plane_shape = (shape[0], shape[1]);
-        let domain_planes = || {
-            vec![
-                (0..depth)
-                    .map(|_| Array2::<Complex64>::zeros(plane_shape))
-                    .collect::<Vec<_>>(),
-            ]
-        };
-        let normal_grids = domain_planes();
-        let normal_compensations = domain_planes();
+        for (support, aw_projection) in [(SUPPORT, false), (50, true)] {
+            let shape = [128, 128];
+            let depth = 3;
+            let catalogs = GriddedNormalDomainTileCatalogs::new_for_projection(
+                [shape],
+                support,
+                aw_projection,
+            )
+            .unwrap();
+            let prepared = PreparedGriddedNormalTwoDomainWindow::with_projection_record_capacities(
+                &[1],
+                catalogs.tile_count(),
+                GriddedNormalRecordLayout::Scalar,
+                aw_projection,
+            )
+            .unwrap();
+            let accumulators = catalogs.accumulators(depth).unwrap();
+            let plane_shape = (shape[0], shape[1]);
+            let domain_planes = || {
+                vec![
+                    (0..depth)
+                        .map(|_| Array2::<Complex64>::zeros(plane_shape))
+                        .collect::<Vec<_>>(),
+                ]
+            };
+            let normal_grids = domain_planes();
+            let normal_compensations = domain_planes();
 
-        let tile_plane_descriptors = accumulators
-            .iter()
-            .map(|accumulator| {
-                let accumulator = accumulator.lock().unwrap();
-                (accumulator.grids.capacity() + accumulator.compensations.capacity())
-                    * size_of::<Array2<Complex64>>()
-            })
-            .sum::<usize>();
-        let catalog_metadata_bytes = catalogs.catalogs.capacity()
-            * size_of::<GriddedNormalTileCatalog>()
-            + catalogs.offsets.capacity() * size_of::<usize>()
-            + catalogs
-                .catalogs
+            let tile_plane_descriptors = accumulators
                 .iter()
-                .map(|catalog| {
-                    catalog.geometries.capacity() * size_of::<GriddedNormalTileGeometry>()
+                .map(|accumulator| {
+                    let accumulator = accumulator.lock().unwrap();
+                    (accumulator.grids.capacity() + accumulator.compensations.capacity())
+                        * size_of::<Array2<Complex64>>()
                 })
                 .sum::<usize>();
-        let merge_descriptor_bytes = (normal_grids.capacity() + normal_compensations.capacity())
-            * size_of::<Vec<Array2<Complex64>>>()
-            + normal_grids
-                .iter()
-                .chain(&normal_compensations)
-                .map(|planes| planes.capacity() * size_of::<Array2<Complex64>>())
-                .sum::<usize>();
-        let actual_metadata_bytes = catalog_metadata_bytes
-            + prepared.tile_counts.capacity() * size_of::<u32>()
-            + prepared.tile_cursors.capacity() * size_of::<u32>()
-            + prepared.tile_offsets.capacity() * size_of::<u32>()
-            + prepared.tasks.capacity() * size_of::<GriddedNormalTileTask>()
-            + accumulators.capacity() * size_of::<Mutex<GriddedNormalTileAccumulator>>()
-            + tile_plane_descriptors
-            + merge_descriptor_bytes;
-        assert_eq!(
-            gridded_normal_execution_residency(shape, depth, SUPPORT)
-                .unwrap()
-                .metadata_bytes(),
-            actual_metadata_bytes
-        );
+            let catalog_metadata_bytes = catalogs.catalogs.capacity()
+                * size_of::<GriddedNormalTileCatalog>()
+                + catalogs.offsets.capacity() * size_of::<usize>()
+                + catalogs
+                    .catalogs
+                    .iter()
+                    .map(|catalog| {
+                        catalog.geometries.capacity() * size_of::<GriddedNormalTileGeometry>()
+                    })
+                    .sum::<usize>();
+            let merge_descriptor_bytes = (normal_grids.capacity()
+                + normal_compensations.capacity())
+                * size_of::<Vec<Array2<Complex64>>>()
+                + normal_grids
+                    .iter()
+                    .chain(&normal_compensations)
+                    .map(|planes| planes.capacity() * size_of::<Array2<Complex64>>())
+                    .sum::<usize>();
+            let actual_metadata_bytes = catalog_metadata_bytes
+                + prepared.tile_counts.capacity() * size_of::<u32>()
+                + prepared.tile_cursors.capacity() * size_of::<u32>()
+                + prepared.tile_offsets.capacity() * size_of::<u32>()
+                + prepared.tasks.capacity() * size_of::<GriddedNormalTileTask>()
+                + accumulators.capacity() * size_of::<Mutex<GriddedNormalTileAccumulator>>()
+                + tile_plane_descriptors
+                + merge_descriptor_bytes;
+            assert_eq!(
+                domain_execution_residency_for_projection([shape], depth, support, aw_projection)
+                    .unwrap()
+                    .metadata_bytes(),
+                actual_metadata_bytes
+            );
+        }
+    }
+
+    #[test]
+    fn t51_aw_catalog_reserves_and_routes_every_edge_tile() {
+        for (shape, support, expected_tiles) in [
+            ([65, 65], 32, 9),
+            ([65, 97], 32, 12),
+            ([4096, 4096], 50, 16_384),
+        ] {
+            let catalog = GriddedNormalTileCatalog::new_for_projection(shape, support, true)
+                .expect("AW catalog with support spanning tiles");
+            assert_eq!(catalog.geometries.len(), expected_tiles);
+            assert_eq!(catalog.geometries.capacity(), expected_tiles);
+            let corners = [
+                [0, 0],
+                [0, shape[1] - 1],
+                [shape[0] - 1, 0],
+                [shape[0] - 1, shape[1] - 1],
+            ];
+            let mut corner_tiles = std::collections::BTreeSet::new();
+            for center in corners {
+                let ordinal = catalog.tile_ordinal_center(center).expect("AW edge tile");
+                let geometry = catalog.geometries[ordinal];
+                for (axis, coordinate) in center.into_iter().enumerate() {
+                    assert!(coordinate >= geometry.origin[axis]);
+                    assert!(coordinate < geometry.origin[axis] + geometry.shape[axis]);
+                }
+                corner_tiles.insert(ordinal);
+            }
+            assert_eq!(corner_tiles.len(), 4);
+        }
     }
 
     #[test]

@@ -4457,6 +4457,15 @@ mod tests {
     }
 
     #[test]
+    fn t51_aw_residual_residency_accepts_support_spanning_tiles() {
+        for (shape, terms, support) in [([4096, 4096], 2, 50), ([65, 65], 1, 32)] {
+            let projected = gridded_normal_aw_domain_execution_residency([shape], terms, support)
+                .expect("AW residual planning must accept a support spanning tile boundaries");
+            assert!(projected.peak_complex_values() > projected.merge_complex_values());
+        }
+    }
+
+    #[test]
     fn image_domain_residency_formula_is_exact_and_worker_independent() {
         let shapes = [[10, 10], [14, 12]];
         let depth = 3;
