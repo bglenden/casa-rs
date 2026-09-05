@@ -1555,6 +1555,9 @@ fn fail(path: impl AsRef<Path>, detail: impl Into<String>) -> CasaAwCacheError {
 }
 
 #[cfg(test)]
+mod encoding_probe;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use casa_coordinates::{LinearCoordinate, SpectralCoordinate, StokesCoordinate, StokesType};
