@@ -384,7 +384,7 @@ struct TutorialNotebookPrototypeView: View {
         HStack(spacing: 8) {
             switch dataset.phase {
             case .missing, .approvalRequired:
-                Button("Review acquisition") {
+                Button("Download dataset…") {
                     store.showTutorialPrototypeApproval()
                 }
                 .accessibilityIdentifier("tutorialPrototype.dataset.review.\(dataset.id)")
@@ -537,7 +537,7 @@ struct TutorialNotebookPrototypeView: View {
                 Button("Cancel") { store.dismissTutorialPrototypeApproval() }
                     .accessibilityIdentifier("tutorialPrototype.approval.cancel")
                 Spacer()
-                Button("Approve and download") {
+                Button("Download") {
                     store.approveTutorialPrototypeAcquisition()
                 }
                 .buttonStyle(.borderedProminent)

@@ -398,7 +398,7 @@ struct PersistentScientificNotebookView: View {
     private func tutorialDatasetActions(_ dataset: TutorialDatasetState) -> some View {
         switch dataset.phase {
         case .missing:
-            Button("Review") {
+            Button("Download dataset…") {
                 let source = tutorialSourceOverrides[dataset.id]
                 store.reviewTutorialAcquisition(
                     datasetID: dataset.id,
@@ -472,7 +472,7 @@ struct PersistentScientificNotebookView: View {
                     HStack {
                         Button("Cancel") { store.dismissTutorialAcquisitionApproval() }
                         Spacer()
-                        Button("Approve and Download") {
+                        Button("Download") {
                             store.approveTutorialAcquisition(
                                 skippedCheckIDs: Array(skippedTutorialChecks).sorted()
                             )

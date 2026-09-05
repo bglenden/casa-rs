@@ -26,14 +26,14 @@ Run yourself. Task runs and products are recorded in this notebook.
 ## 1. Acquire the calibrated observation
 
 The source archive is about 416 MB and expands to roughly 1 GB. In the tutorial
-status card above, choose **Review**. Confirm that the approval sheet shows:
+status card above, choose **Download dataset…**. Confirm that the approval sheet shows:
 
 - the NRAO `FirstLook_TWHya_Band7_6.6.1/twhya_calibrated.ms.tar` source;
 - destination `data/twhya_calibrated.ms`;
 - expected SHA-256 ending in `a97b2`;
 - enough free space for the bounded extraction plan.
 
-Choose **Approve and Download** only after reviewing those facts. CASA-RS
+Choose **Download** only after reviewing those facts. CASA-RS
 downloads into this project, verifies the digest, checks the MeasurementSet,
 and publishes it atomically. Wait for the dataset state to become **Ready**.
 
