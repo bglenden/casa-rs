@@ -2498,8 +2498,8 @@ mod tests {
         // grid footprints even though floor-based positive bins alias them.
         let lower = fractional_bin(4.30, 2).unwrap();
         let upper = fractional_bin(4.70, 2).unwrap();
-        assert_eq!((lower.0, lower.1 as isize), (4, -1));
-        assert_eq!((upper.0, upper.1 as isize), (5, 1));
+        assert_eq!((lower.0, lower.1), (4, -1));
+        assert_eq!((upper.0, upper.1), (5, 1));
         assert_eq!(casa_nint(-0.5), 0.0);
         assert_eq!(casa_nint(0.5), 1.0);
     }
