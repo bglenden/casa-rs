@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import unittest
 from unittest import mock
@@ -18,6 +19,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_workload
+from perf_harness import casa_tclean
 from perf_harness.image_compare import CASA_IMAGE_COMPARATOR
 from test_support import canonical_test_environment, canonical_workload_result
 
@@ -217,6 +219,10 @@ class FrozenCasaRecipeExecutionTests(unittest.TestCase):
             ),
             mock.patch.object(run_workload, "human_review_gate", return_value={}),
             mock.patch.object(
+                run_workload.casa_tclean_workflow,
+                "validate_reused_casa_prefix",
+            ) as validate_reuse,
+            mock.patch.object(
                 run_workload.casa_tclean_workflow, "run_recipe_plan"
             ) as casa_protocol,
         ):
@@ -225,6 +231,7 @@ class FrozenCasaRecipeExecutionTests(unittest.TestCase):
             )
 
         execute.assert_called_once()
+        validate_reuse.assert_called_once_with(plan, frozen)
         self.assertEqual(str(run_workload.BENCH_SCRIPT), execute.call_args.args[0][0])
         self.assertEqual("1", execute.call_args.kwargs["env"]["IMAGER_BENCH_SKIP_CASA"])
         self.assertEqual(
@@ -237,6 +244,181 @@ class FrozenCasaRecipeExecutionTests(unittest.TestCase):
         self.assertEqual("ran", result["results"]["rust"]["status"])
         self.assertEqual("reused", result["results"]["casa"]["status"])
         self.assertIs(compared, result["results"]["product_comparison"])
+
+    def test_reuse_accepts_matching_protocol_sidecars(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan, prefix = self._reused_bundle(Path(directory))
+            run_workload.casa_tclean_workflow.validate_reused_casa_prefix(plan, prefix)
+
+    def test_reuse_missing_result_sidecar_fails_before_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan, prefix = self._reused_bundle(Path(directory))
+            (prefix.parent.parent.parent / "protocol" / "measured-001" / "result.json").unlink()
+            with mock.patch.object(run_workload, "run_benchmark_command") as execute:
+                with self.assertRaisesRegex(run_workload.HarnessError, "result sidecar is missing"):
+                    run_workload.run_casa_recipe_plan(plan, Path(directory) / "run.log")
+            execute.assert_not_called()
+
+    def test_reuse_tampered_result_fails_before_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan, prefix = self._reused_bundle(Path(directory))
+            result_path = prefix.parent.parent.parent / "protocol" / "measured-001" / "result.json"
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["effective_kwargs"]["conjbeams"] = False
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+            with mock.patch.object(run_workload, "run_benchmark_command") as execute:
+                with self.assertRaisesRegex(run_workload.HarnessError, "effective_kwargs_sha256"):
+                    run_workload.run_casa_recipe_plan(plan, Path(directory) / "run.log")
+            execute.assert_not_called()
+
+    def test_reuse_tampered_recipe_identity_fails_before_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan, prefix = self._reused_bundle(Path(directory))
+            result_path = (
+                prefix.parent.parent.parent
+                / "protocol"
+                / "measured-001"
+                / "result.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["recipe"]["sha256"] = "0" * 64
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+            with mock.patch.object(run_workload, "run_benchmark_command") as execute:
+                with self.assertRaisesRegex(
+                    run_workload.HarnessError, "result.recipe does not match"
+                ):
+                    run_workload.run_casa_recipe_plan(plan, Path(directory) / "run.log")
+            execute.assert_not_called()
+
+    def test_reuse_tampered_cache_plan_fails_before_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan, prefix = self._reused_bundle(Path(directory))
+            result_path = (
+                prefix.parent.parent.parent
+                / "protocol"
+                / "measured-001"
+                / "result.json"
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["cache"]["plan"]["recipe_sha256"] = "0" * 64
+            result_path.write_text(json.dumps(result), encoding="utf-8")
+            with mock.patch.object(run_workload, "run_benchmark_command") as execute:
+                with self.assertRaisesRegex(
+                    run_workload.HarnessError, "result.cache.plan does not match"
+                ):
+                    run_workload.run_casa_recipe_plan(plan, Path(directory) / "run.log")
+            execute.assert_not_called()
+
+    def test_reuse_effective_parameter_mismatch_fails_before_benchmark(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            plan, prefix = self._reused_bundle(Path(directory))
+            plan["command"]["casa"]["base_overrides"]["niter"] = 0
+            with mock.patch.object(run_workload, "run_benchmark_command") as execute:
+                with self.assertRaisesRegex(
+                    run_workload.HarnessError, "effective parameters do not match"
+                ):
+                    run_workload.run_casa_recipe_plan(plan, Path(directory) / "run.log")
+            execute.assert_not_called()
+
+    @staticmethod
+    def _reused_bundle(root: Path) -> tuple[dict[str, object], Path]:
+        recipe_path = (
+            run_workload.REPO_ROOT / "tools/perf/imager/recipes/vlass-fragment-tclean.last"
+        )
+        recipe_text = recipe_path.read_text(encoding="utf-8")
+        parsed = casa_tclean.parse_literal_assignment_recipe(recipe_text)
+        recipe = {
+            "path": str(recipe_path),
+            "sha256": hashlib.sha256(recipe_text.encode("utf-8")).hexdigest(),
+            "task": "tclean",
+            "parameter_names": sorted(name for name in parsed if name != "taskname"),
+        }
+        historical_prefix = root / "partial" / "casa" / "measured-001" / "casa"
+        retained_prefix = root / "casa" / "measured-001" / "casa"
+        overrides = {
+            "vis": str(root / "input.ms"),
+            "field": "1525",
+            "phasecenter": 1525,
+            "datacolumn": "data",
+            "interactive": False,
+            "parallel": False,
+            "restart": False,
+            "niter": 2000,
+            "imsize": [4096, 4096],
+            "spw": "2~17",
+            "imagename": str(historical_prefix),
+            "cfcache": str(root / "cf-cache"),
+        }
+        effective, _, _ = casa_tclean.normalize_archived_parameters(
+            {name: value for name, value in parsed.items() if name != "taskname"},
+            overrides,
+        )
+        cache_plan = {
+            "schema_version": 1,
+            "kind": "casa_tclean_cf_plan",
+            "casa_version": "6.7.5.9",
+            "dataset": {"key": "fixture", "path": str(root / "input.ms")},
+            "recipe_sha256": recipe["sha256"],
+            "cf_parameters": casa_tclean.cf_cache_parameter_identity(effective),
+        }
+        request = {
+            "schema_version": casa_tclean.REQUEST_SCHEMA_VERSION,
+            "kind": casa_tclean.REQUEST_KIND,
+            "request_id": "reused-fixture",
+            "action": "run",
+            "expected_casa_version": "6.7.5.9",
+            "recipe": recipe,
+            "overrides": overrides,
+            "cache": {
+                "role": "cold",
+                "path": str(root / "cf-cache"),
+                "plan": cache_plan,
+                "plan_sha256": casa_tclean.canonical_sha256(cache_plan),
+                "receipt_path": str(root / "cf-cache-receipt.json"),
+            },
+            "mask_identity": None,
+        }
+        def fake_tclean(**kwargs: object) -> None:
+            cache = Path(str(kwargs["cfcache"]))
+            (cache / "CFS0").mkdir(parents=True)
+            (cache / "CFS0" / "table.dat").write_bytes(b"cache")
+            product = Path(str(kwargs["imagename"]) + ".image.tt0")
+            product.mkdir(parents=True)
+            (product / "table.dat").write_bytes(b"image")
+
+        result = casa_tclean.process_request(
+            request, tclean_task=fake_tclean, casa_version="6.7.5.9"
+        )
+        call_root = root / "protocol" / "measured-001"
+        call_root.mkdir(parents=True)
+        (call_root / "request.json").write_text(
+            json.dumps(request), encoding="utf-8"
+        )
+        (call_root / "result.json").write_text(
+            json.dumps(result), encoding="utf-8"
+        )
+        retained_product = Path(str(retained_prefix) + ".image.tt0")
+        retained_product.mkdir(parents=True)
+        (retained_product / "table.dat").write_bytes(b"image")
+        plan = {
+            "command": {
+                "kind": "casa_tclean_protocol",
+                "argv": [str(run_workload.BENCH_SCRIPT), str(root / "input.ms")],
+                "env": {},
+                "casa": {
+                    "expected_version": "6.7.5.9",
+                    "recipe": recipe,
+                    "base_overrides": {
+                        **overrides,
+                        "imagename": str(root / "current" / "casa"),
+                    },
+                },
+            },
+            "run": {"skip_casa": "1", "reuse_casa_prefix": str(retained_prefix)},
+            "products": {"rust_prefix": str(root / "rust"), "casa_prefix": None},
+            "comparison": {"tolerances": None},
+        }
+        return plan, retained_prefix
 
 
 class EmbeddedCasaBenchmarkTests(unittest.TestCase):

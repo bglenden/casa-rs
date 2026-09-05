@@ -1113,6 +1113,9 @@ def run_casa_recipe_plan(
             raise HarnessError(
                 "recipe run.skip_casa requires an exact run.reuse_casa_prefix"
             )
+        casa_tclean_workflow.validate_reused_casa_prefix(
+            plan, reused_casa_prefix
+        )
         plan["products"]["casa_prefix"] = reused_casa_prefix
         return run_benchmark_plan(plan, log_path, reused_casa_prefix=reused_casa_prefix)
     return casa_tclean_workflow.run_recipe_plan(
