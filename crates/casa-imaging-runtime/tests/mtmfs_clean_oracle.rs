@@ -86,7 +86,7 @@ fn open_fixture(
     (
         tempfile::TempDir,
         casa_imaging_model::CompiledProblem,
-        casa_ms::BoundSelectedObservation,
+        casa_ms::DeferredSelectedObservationAccess,
     ),
     Box<dyn Error>,
 > {
@@ -128,7 +128,7 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     fs::create_dir_all(&gridded_normal_directory)?;
     let storage =
         ManagedSpillStorage::bind(authority, artifact_storage_io(), gridded_normal_directory)?;
-    let residency = selected.residency_certificate().clone();
+    let residency = selected.certify_residency(&problem)?;
     let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
         workers: Some(1),
         ..ResourceOverride::default()

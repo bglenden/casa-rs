@@ -840,6 +840,86 @@ fn t51_explicit_serial_queue_capacity_does_not_remove_balanced_headroom() {
 }
 
 #[test]
+fn t51_source_memory_quote_obeys_policy_pressure_and_active_headroom_without_a_lease() {
+    let domain = CapacityDomainId::new("unified-memory");
+    let view = CapacityViewId::new("declared-cpu-view");
+    let inventory = inventory_with_views(vec![MemoryView {
+        id: view.clone(),
+        domain: domain.clone(),
+        kind: MemoryViewKind::Host,
+    }]);
+    let authority = ResourceAuthority::with_inventory(inventory.clone()).unwrap();
+    let quote = |policy| {
+        authority
+            .remaining_selected_source_memory_bytes(policy)
+            .unwrap()
+    };
+    let capped = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(domain.clone(), 300)]),
+        ..ResourceOverride::default()
+    });
+    assert_eq!(quote(&ResourcePolicy::Interactive), 500);
+    assert_eq!(quote(&ResourcePolicy::Balanced), 750);
+    assert_eq!(quote(&ResourcePolicy::Exclusive), 1_000);
+    assert_eq!(quote(&capped), 300);
+    assert!(authority.inner.state.lock().unwrap().leases.is_empty());
+
+    let demand = |bytes| {
+        single_alternative(DemandEnvelope {
+            host_memory_view: view.clone(),
+            memory: vec![MemoryDemand {
+                allocation_id: "already-live".to_string(),
+                hard_bytes: bytes,
+                preferred_bytes: bytes,
+                views: vec![view.clone()],
+            }],
+            workers: CountDemand::new(1, 1),
+            overhead: RuntimeOverheadDemand::zero(),
+            storage: Vec::new(),
+            rates: Vec::new(),
+            caches: CacheDemand::zero(),
+            locks: CountDemand::zero(),
+            file_descriptors: CountDemand::zero(),
+            queues: Vec::new(),
+            transfers: Vec::new(),
+            accelerators: Vec::new(),
+            io_buffers: IoBufferDemand::zero(),
+        })
+    };
+    let mut reserved = demand(200);
+    reserved.alternatives[0]
+        .headroom
+        .memory_bytes
+        .insert(domain.clone(), 50);
+    let lease = authority
+        .acquire(ResourcePolicy::Balanced, reserved)
+        .unwrap();
+    assert_eq!(quote(&ResourcePolicy::Exclusive), 500);
+    assert_eq!(quote(&capped), 50);
+    assert_eq!(authority.inner.state.lock().unwrap().leases.len(), 1);
+
+    let mut pressure = inventory.pressure;
+    pressure.memory_available_bytes.insert(domain, 600);
+    authority.update_external_pressure(pressure).unwrap();
+    assert_eq!(quote(&ResourcePolicy::Exclusive), 200);
+    let mut complete_plan = demand(200);
+    complete_plan.alternatives[0]
+        .headroom
+        .memory_bytes
+        .insert(CapacityDomainId::new("unified-memory"), 1);
+    assert_eq!(
+        authority
+            .acquire(ResourcePolicy::Exclusive, complete_plan)
+            .expect_err("a source-only quote does not admit the complete plan's extra headroom")
+            .available(),
+        Some(200)
+    );
+    drop(lease);
+    assert_eq!(quote(&ResourcePolicy::Balanced), 450);
+    assert_eq!(quote(&capped), 300);
+}
+
+#[test]
 fn concurrent_admission_is_atomic_at_the_process_policy_ceiling() {
     use std::sync::{Arc, Barrier};
 

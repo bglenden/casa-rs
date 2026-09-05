@@ -47,7 +47,8 @@ use super::{
     SelectedObservationContentPlanError, SelectedObservationMeasures,
     SelectedObservationMeasuresError,
     content_plan::{
-        SelectedObservationSharedBytes, selected_content_plan_with_pointing_catalog,
+        SelectedObservationContentRequirements, SelectedObservationSharedBytes,
+        selected_content_plan_with_pointing_catalog, selected_content_requirements,
         selected_pointing_catalog_budget,
     },
     row_selection::{CompiledRowPredicate, RowSelectionEvaluationError, StoredMainRow},
@@ -245,6 +246,44 @@ impl BoundObservationSource {
         content_budget: SelectedObservationContentBudget,
         reference_data: BoundObservationReferenceData<'_>,
     ) -> Result<Self, BoundObservationSourceError> {
+        let (measurement_set, fresh_state, fresh_pointing_query_domain) =
+            Self::validated_owner_measurement_set(
+                problem,
+                source,
+                current_state,
+                measures,
+                content_budget,
+                reference_data.pointing_query_domain,
+            )?;
+        Self::from_locked_measurement_set(
+            problem,
+            source,
+            fresh_state,
+            measures,
+            shared_bytes,
+            content_budget,
+            measurement_set,
+            reference_data.ephemeris,
+            Some(&fresh_pointing_query_domain),
+        )
+    }
+
+    #[cfg(unix)]
+    fn validated_owner_measurement_set(
+        problem: &CompiledProblem,
+        source: &ObservationSource,
+        current_state: &ObservationSourceState,
+        measures: &SelectedObservationMeasures,
+        content_budget: SelectedObservationContentBudget,
+        pointing_query_domain: Option<&SelectedPointingQueryDomain>,
+    ) -> Result<
+        (
+            MeasurementSet,
+            ObservationSourceState,
+            SelectedPointingQueryDomain,
+        ),
+        BoundObservationSourceError,
+    > {
         measures.validate_problem(problem)?;
         validate_current_state(source, current_state)?;
         let measurement_set = MeasurementSet::open_retained_read(source.provenance().locator())?;
@@ -257,21 +296,71 @@ impl BoundObservationSource {
             .map_err(|error| BoundObservationSourceError::OwnerState(Box::new(error)))?;
         validate_current_state(source, &fresh_state)?;
         validate_rebound_state(current_state, &fresh_state)?;
-        validate_pointing_query_domain(
-            reference_data.pointing_query_domain,
-            &fresh_pointing_query_domain,
-        )?;
-        Self::from_locked_measurement_set(
+        validate_pointing_query_domain(pointing_query_domain, &fresh_pointing_query_domain)?;
+        Ok((measurement_set, fresh_state, fresh_pointing_query_domain))
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn content_requirements(
+        problem: &CompiledProblem,
+        source: &ObservationSource,
+        binding: &super::ObservationSourceBinding,
+        measures: &SelectedObservationMeasures,
+        shared_bytes: SelectedObservationSharedBytes,
+    ) -> Result<SelectedObservationContentRequirements, BoundObservationSourceError> {
+        let (measurement_set, _, domain) = Self::validated_owner_measurement_set(
             problem,
             source,
-            fresh_state,
+            binding.current_state(),
             measures,
+            binding.content_budget(),
+            binding.pointing_query_domain(),
+        )?;
+        let requirements = Self::requirements_for_locked_source(
+            &measurement_set,
+            problem,
+            source,
             shared_bytes,
-            content_budget,
+            binding.content_budget().maximum_pointing_polynomial_terms(),
+            Some(&domain),
+        )?;
+        measures.verify_state()?;
+        Ok(requirements)
+    }
+
+    pub(super) fn requirements_for_locked_source(
+        measurement_set: &MeasurementSet,
+        problem: &CompiledProblem,
+        source: &ObservationSource,
+        shared_bytes: SelectedObservationSharedBytes,
+        maximum_pointing_polynomial_terms: usize,
+        pointing_query_domain: Option<&SelectedPointingQueryDomain>,
+    ) -> Result<SelectedObservationContentRequirements, BoundObservationSourceError> {
+        let (catalog, scan_bytes_per_row) = if matches!(
+            problem.geometry().centres().pointing(),
+            PointingCentreLaw::Observation(_)
+        ) {
+            let domain = pointing_query_domain
+                .ok_or(BoundObservationSourceError::MissingPointingQueryDomain)?;
+            let (catalog, scan) = measurement_set.selected_pointing_catalog_requirements(
+                domain,
+                maximum_pointing_polynomial_terms,
+            )?;
+            (Some(catalog), scan)
+        } else {
+            (None, 0)
+        };
+        Ok(selected_content_requirements(
             measurement_set,
-            reference_data.ephemeris,
-            Some(&fresh_pointing_query_domain),
-        )
+            problem,
+            source,
+            shared_bytes.with_source_plan_retained_bytes(aw_pointing_plan_retained_byte_ceiling(
+                problem, source,
+            )?),
+            maximum_pointing_polynomial_terms,
+            catalog,
+            scan_bytes_per_row,
+        )?)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -288,14 +377,15 @@ impl BoundObservationSource {
     ) -> Result<Self, BoundObservationSourceError> {
         let aw_pointing_plan_ceiling = aw_pointing_plan_retained_byte_ceiling(problem, source)?;
         let shared_bytes = shared_bytes.with_source_plan_retained_bytes(aw_pointing_plan_ceiling);
-        let preliminary_content_plan = selected_content_plan_with_pointing_catalog(
+        let preliminary_content_plan = Self::requirements_for_locked_source(
             &measurement_set,
             problem,
             source,
             shared_bytes,
-            content_budget,
-            None,
-        )?;
+            content_budget.maximum_pointing_polynomial_terms(),
+            pointing_query_domain,
+        )?
+        .plan(content_budget)?;
         let pointing_catalog = if let PointingCentreLaw::Observation(law) =
             problem.geometry().centres().pointing()
         {

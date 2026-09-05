@@ -147,9 +147,11 @@ pub use schema::SubtableId;
 pub use schema::main_table::{OptionalMainColumn, VisibilityDataColumn};
 pub use selected_observation::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    ObservationSourceBinding, SelectedObservationBlock, SelectedObservationBlockConsumer,
-    SelectedObservationBlockSource, SelectedObservationCompletion,
-    SelectedObservationContentBudget, SelectedObservationMeasures,
+    DeferredSelectedObservationAccess, ObservationSourceBinding, SelectedObservationBlock,
+    SelectedObservationBlockConsumer, SelectedObservationBlockSource,
+    SelectedObservationCompletion, SelectedObservationContentBudget,
+    SelectedObservationContentPlan, SelectedObservationContentPlanError,
+    SelectedObservationContentRequirements, SelectedObservationMeasures,
     SelectedObservationMeasuresError, SelectedObservationReferenceDataBudget,
     SelectedObservationReplayAuthorization, SelectedObservationReplayProof,
     SelectedObservationResidencyCertificate, SelectedObservationRow,

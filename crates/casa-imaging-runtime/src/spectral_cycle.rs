@@ -36,8 +36,8 @@ use crate::{
 
 use casa_imaging_reconstruction::WeightingPlan;
 use casa_ms::{
-    BoundSelectedObservation, SelectedObservationCompletion, SelectedVisibilityWrite,
-    SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
+    BoundSelectedObservation, DeferredSelectedObservationAccess, SelectedObservationCompletion,
+    SelectedVisibilityWrite, SelectedVisibilityWriteGenerations, SelectedVisibilityWriteTargets,
 };
 use sha2::{Digest, Sha256};
 
@@ -930,7 +930,7 @@ enum SpectralCycleExecutionMode {
 struct SpectralCycleExecutorState {
     executable: Option<ExecutableModelProblem>,
     pass_input: Option<SpectralCyclePassInput>,
-    selected: Option<BoundSelectedObservation>,
+    selected: Option<DeferredSelectedObservationAccess>,
     selected_completion: Option<SelectedObservationCompletion>,
     weighting: WeightingExecutionState,
     gridded_storage: Option<crate::ManagedSpillStorage>,
@@ -1161,7 +1161,9 @@ impl SpectralCycleExecutor {
         })
     }
 
-    /// Bind exact selected-observation and model owners to a composed pass.
+    /// Bind unopened selected-observation and model owners to a composed pass.
+    /// The admitted source-read node validates the source allocation before
+    /// opening the deferred access; construction acquires no source buffers.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new(
@@ -1171,7 +1173,7 @@ impl SpectralCycleExecutor {
         source_resources: SelectedObservationSourceResources,
         pass: SpectralPassIdentity,
         complete_data: CompleteDataPlanFragment,
-        selected: BoundSelectedObservation,
+        selected: DeferredSelectedObservationAccess,
         executable: ExecutableModelProblem,
         pass_input: SpectralCyclePassInput,
     ) -> Self {
@@ -1293,6 +1295,7 @@ impl SpectralCycleExecutor {
 
     /// Bind a terminal selected-output traversal. This mode may predict and
     /// write selected visibilities, but cannot accumulate residual science.
+    /// The frozen proof is rebound only at the admitted source-read node.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
     pub fn new_selected_output(
@@ -1302,7 +1305,7 @@ impl SpectralCycleExecutor {
         source_resources: SelectedObservationSourceResources,
         pass: SpectralPassIdentity,
         complete_data: CompleteDataPlanFragment,
-        selected: BoundSelectedObservation,
+        selected: DeferredSelectedObservationAccess,
         completion: MajorCycleCompletion,
         frozen_weighting: FrozenWeightingArtifact,
     ) -> Self {
@@ -2625,6 +2628,21 @@ impl WorkImplementation for SpectralCycleExecutor {
                     .selected
                     .take()
                     .ok_or_else(|| io::Error::other("selected observation already consumed"))?;
+                let residency = selected
+                    .certify_residency(&self.problem)
+                    .map_err(io::Error::other)?;
+                fragment
+                    .authorize_source_observation(context, &self.problem, &residency)
+                    .map_err(io::Error::other)?;
+                let selected = match self.mode {
+                    SpectralCycleExecutionMode::Science => selected.open(&self.problem),
+                    SpectralCycleExecutionMode::SelectedOutputOnly => state
+                        .frozen_weighting
+                        .as_ref()
+                        .ok_or_else(|| io::Error::other("selected-output frozen proof missing"))?
+                        .rebind_selected(selected, &self.problem),
+                }
+                .map_err(io::Error::other)?;
                 match fragment.streaming_mode() {
                     Some(crate::WeightingStreamingMode::NaturalInitial) => {
                         self.run_stream(&mut state, context, fragment, Some(selected))?;

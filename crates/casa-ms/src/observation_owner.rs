@@ -147,6 +147,13 @@ pub struct SelectedObservationResolutionRequest {
 }
 
 impl SelectedObservationResolutionRequest {
+    /// Use a finalized physical content budget for subsequent owner resolutions.
+    #[must_use]
+    pub fn with_content_budget(mut self, budget: SelectedObservationContentBudget) -> Self {
+        self.content_budget = budget;
+        self
+    }
+
     /// Construct one single-source production observation resolution.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
@@ -604,6 +611,49 @@ struct SelectedVisibilityStoragePlanner {
 }
 
 impl ResolvedSelectedObservationAccess {
+    /// Inspect source requirements under short-lived, freshly validated read locks.
+    ///
+    /// The result retains only a checked sizing curve, bound to this compiled
+    /// problem and source. No catalog or source-specific execution plan is built.
+    #[cfg(unix)]
+    pub fn content_requirements(
+        &self,
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<crate::SelectedObservationContentRequirements, BoundSelectedObservationError> {
+        BoundSelectedObservation::single_source_content_requirements(
+            problem,
+            &self.measures,
+            &self.binding,
+        )
+    }
+
+    /// Finalize both source-read and selected-output storage budgets from one quote.
+    pub fn with_content_budget(
+        mut self,
+        problem: &casa_imaging_model::CompiledProblem,
+        requirements: &crate::SelectedObservationContentRequirements,
+        budget: SelectedObservationContentBudget,
+    ) -> Result<Self, BoundSelectedObservationError> {
+        if !requirements.matches(problem, self.binding.measurement_set()) {
+            return Err(BoundSelectedObservationError::ProblemMismatch);
+        }
+        requirements
+            .plan(budget)
+            .map_err(|error| BoundSelectedObservationError::Source {
+                measurement_set: self.binding.measurement_set(),
+                error: Box::new(crate::BoundObservationSourceError::ContentPlan(error)),
+            })?;
+        self.binding.set_content_budget(budget);
+        self.visibility_storage.content_budget = budget;
+        Ok(self)
+    }
+
+    /// Transfer this owner-resolved state into the deferred execution capability.
+    #[must_use]
+    pub fn into_deferred(self) -> crate::DeferredSelectedObservationAccess {
+        crate::DeferredSelectedObservationAccess::owner_validated(self.measures, vec![self.binding])
+    }
+
     /// Return the exact current source state captured with the compiler input.
     #[must_use]
     pub const fn source_state(&self) -> &ObservationSourceState {
@@ -706,7 +756,7 @@ impl ResolvedSelectedObservationAccess {
         self,
         problem: &casa_imaging_model::CompiledProblem,
     ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
-        BoundSelectedObservation::open_owner_validated(problem, self.measures, vec![self.binding])
+        self.into_deferred().open(problem)
     }
 
     /// Consume this fresh owner probe and authorize a prior exhaustive proof
@@ -717,7 +767,7 @@ impl ResolvedSelectedObservationAccess {
         problem: &casa_imaging_model::CompiledProblem,
         proof: &crate::SelectedObservationReplayProof,
     ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
-        BoundSelectedObservation::rebind(problem, self.measures, vec![self.binding], proof)
+        self.into_deferred().rebind(problem, proof)
     }
 }
 

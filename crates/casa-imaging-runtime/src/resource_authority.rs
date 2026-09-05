@@ -2119,20 +2119,47 @@ impl ResourceAuthority {
             &base.demand.host_memory_view,
         )?;
         add_grant(&mut reserved, &headroom)?;
+        self.remaining_memory_bytes(policy, &base.demand.host_memory_view, reserved)
+    }
+
+    /// Quote current host capacity for an unopened selected source, preserving
+    /// policy reserves and active leases including their headroom. This is
+    /// source-only feasibility: the complete plan's demand and additional
+    /// headroom are checked by its later admission, not reserved by this quote.
+    pub(crate) fn remaining_selected_source_memory_bytes(
+        &self,
+        policy: &ResourcePolicy,
+    ) -> Result<u64, ResourceError> {
+        validate_policy(&self.inner.topology, policy)?;
+        let host_view = self
+            .inner
+            .topology
+            .memory_views
+            .iter()
+            .find(|view| view.kind == MemoryViewKind::Host)
+            .ok_or_else(|| ResourceError::Invalid("host memory view is missing".to_string()))?;
+        self.remaining_memory_bytes(policy, &host_view.id, ResourceGrant::default())
+    }
+
+    fn remaining_memory_bytes(
+        &self,
+        policy: &ResourcePolicy,
+        host_memory_view: &CapacityViewId,
+        reserved: ResourceGrant,
+    ) -> Result<u64, ResourceError> {
         let domain = self
             .inner
             .topology
             .memory_views
             .iter()
             .find(|candidate| {
-                candidate.id == base.demand.host_memory_view
-                    && candidate.kind == MemoryViewKind::Host
+                candidate.id == *host_memory_view && candidate.kind == MemoryViewKind::Host
             })
             .map(|candidate| candidate.domain.clone())
             .ok_or_else(|| {
                 ResourceError::Invalid(format!(
                     "planning memory view {} is not host-visible",
-                    base.demand.host_memory_view.as_str()
+                    host_memory_view.as_str()
                 ))
             })?;
         let state = self

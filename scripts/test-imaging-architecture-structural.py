@@ -177,8 +177,8 @@ class SelectedObservationResourceTests(unittest.TestCase):
     def test_missing_pointing_resource_charges_are_rejected(self) -> None:
         replacements = {
             "source_plan": (
-                ".and_then(|bytes| bytes.checked_add(shared_bytes.shared_source_plan_retained_bytes))",
-                ".and_then(|bytes| bytes.checked_add(0))",
+                ".checked_add(shared_bytes.shared_source_plan_retained_bytes)",
+                ".checked_add(0)",
             ),
             "catalog_retained": (
                 ".checked_add(pointing_catalog.map_or(0, |catalog| catalog.retained_bytes()))",

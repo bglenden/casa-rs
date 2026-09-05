@@ -140,7 +140,8 @@ fn t51_full_aw_source_bind_only() {
         "t51_source_bind_stage name=prepare seconds={:.9}",
         stage.elapsed().as_secs_f64()
     );
-    let _native = prepared.native.expect("production runtime preparation");
+    let mut native = prepared.native.expect("production runtime preparation");
+    let runtime = native.runtime.clone();
     assert!(!scratch.path().join(".casa-rs-aw-prepared").exists());
     let stage = Instant::now();
     let resolved = casa_ms::resolve_selected_observation(prepared.observation.clone())
@@ -165,6 +166,7 @@ fn t51_full_aw_source_bind_only() {
         stage.elapsed().as_secs_f64()
     );
     let source = &problem.inputs().observation_snapshot().sources()[0];
+    assert_eq!(source.selection().rows().selected_row_count(), 655_200);
     let budget = initial_access.source_binding().content_budget();
     eprintln!(
         "t51_source_bind_input {}",
@@ -175,6 +177,63 @@ fn t51_full_aw_source_bind_only() {
             "maximum_live_blocks": budget.maximum_live_blocks(),
             "maximum_pointing_polynomial_terms": budget.maximum_pointing_polynomial_terms(),
         })
+    );
+    let requirements = initial_access
+        .content_requirements(&problem)
+        .expect("derive full source requirements without opening traversal");
+    assert!(
+        requirements.plan(budget).is_err(),
+        "bootstrap remains insufficient for full execution"
+    );
+    let (_, small_access) = casa_ms::resolve_selected_observation(prepared.observation.clone())
+        .expect("resolve small-cap control")
+        .into_parts();
+    let small_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: native
+            .runtime
+            .authority
+            .topology()
+            .memory_domains
+            .iter()
+            .map(|domain| (domain.id.clone(), 64 << 20))
+            .collect(),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
+    native.runtime.resource_policy = small_policy;
+    let failure = match crate::run_native(
+        &problem,
+        crate::NativeInput {
+            observation: prepared.observation.clone(),
+            initial_access: small_access,
+            write_model_column: prepared.write_model_column,
+            write_corrected_data: prepared.write_corrected_data,
+            masks: prepared.masks,
+            minor_cycle_image_response: prepared.minor_cycle_image_response,
+            native: Ok(native),
+        },
+    ) {
+        Ok(_) => panic!("an insufficient runtime cap must reject before CF preparation"),
+        Err(error) => error,
+    };
+    assert!(
+        failure
+            .to_string()
+            .contains("selected-observation host memory")
+    );
+    assert!(!scratch.path().join(".casa-rs-aw-prepared").exists());
+    let stage = Instant::now();
+    let initial_access = SelectedObservationSourceResources::finalize_access(
+        &problem,
+        initial_access,
+        &runtime.authority,
+        &runtime.resource_policy,
+    )
+    .expect("select the production source envelope before CF preparation");
+    eprintln!(
+        "t51_source_bind_stage name=finalize seconds={:.9} budget={:?}",
+        stage.elapsed().as_secs_f64(),
+        initial_access.source_binding().content_budget(),
     );
     let stage = Instant::now();
     let residency = initial_access.certify_residency(&problem);

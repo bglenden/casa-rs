@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "a4d249956119376f37d70329ab724a82bdd8ff7b26e68a04cd32493f92a9c4ed"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "4fffa67968231294f58f3a1554545155a8d186f63948efbabb00e851f5540bd3"
+    "044ace68ef2fb0fcb895286c91b8ffbf57f3c86868d2dbafd220480942d1d296"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 85
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2876,12 +2876,13 @@ def validate_t17_selected_observation_resource_sources(
         )
 
     bound_fields = rust_struct_fields(bound, "BoundSelectedObservation", bound_path)
-    bound_open = re.sub(r"\s+", "", rust_function_body(bound, "open", bound_path))
+    bound_owner = bound[bound.index("impl BoundSelectedObservation {"):]
+    bound_open = re.sub(r"\s+", "", rust_function_body(bound_owner, "open", bound_path))
     bound_open_internal = re.sub(
         r"\s+", "", rust_function_body(bound, "open_internal", bound_path)
     )
     bound_rebind = re.sub(
-        r"\s+", "", rust_function_body(bound, "rebind", bound_path)
+        r"\s+", "", rust_function_body(bound_owner, "rebind", bound_path)
     )
     bound_shared_bytes = re.sub(
         r"\s+", "", rust_function_body(bound, "shared_bytes", bound_path)
@@ -2909,6 +2910,9 @@ def validate_t17_selected_observation_resource_sources(
         "",
         rust_function_body(access, "rebind_with_measures", access_path),
     )
+    owner_validation = re.sub(
+        r"\s+", "", rust_function_body(access, "validated_owner_measurement_set", access_path)
+    )
     access_from_locked = re.sub(
         r"\s+",
         "",
@@ -2925,8 +2929,19 @@ def validate_t17_selected_observation_resource_sources(
         r"\s+",
         "",
         rust_function_body(
-            content_plan, "selected_content_plan_with_pointing_catalog", content_plan_path
+            content_plan, "selected_content_requirements", content_plan_path
         ),
+    )
+    source_retention = re.sub(
+        r"\s+", "", rust_function_body(content_plan, "retained_source_bytes", content_plan_path)
+    )
+    requirements_path = content_plan_path.parent / "content_plan/requirements.rs"
+    requirements_source = requirements_path.read_text(encoding="utf-8")
+    requirement_plan = re.sub(
+        r"\s+", "", rust_function_body(requirements_source, "plan", requirements_path)
+    )
+    requirement_envelope = re.sub(
+        r"\s+", "", rust_function_body(requirements_source, "bytes_for_rows", requirements_path)
     )
     catalog_admission = re.sub(
         r"\s+",
@@ -3009,7 +3024,7 @@ def validate_t17_selected_observation_resource_sources(
         not in access_from_locked
         or "constfnwith_source_plan_retained_bytes(mutself,bytes:usize)->Self{self.shared_source_plan_retained_bytes=bytes;self}"
         not in compact_content_plan
-        or "letpreliminary_content_plan=selected_content_plan_with_pointing_catalog(&measurement_set,problem,source,shared_bytes,content_budget,None,)?;"
+        or "letpreliminary_content_plan=Self::requirements_for_locked_source(&measurement_set,problem,source,shared_bytes,content_budget.maximum_pointing_polynomial_terms(),pointing_query_domain,)?.plan(content_budget)?;"
         not in access_from_locked
         or "letcatalog_budget=selected_pointing_catalog_budget(&measurement_set,problem,source,shared_bytes,content_budget,)?;"
         not in access_from_locked
@@ -3017,7 +3032,7 @@ def validate_t17_selected_observation_resource_sources(
         not in access_from_locked
         or "letcontent_plan=selected_content_plan_with_pointing_catalog(&measurement_set,problem,source,shared_bytes,content_budget,pointing_catalog.as_ref().map(|catalog|catalog.measurements()),)?;"
         not in access_from_locked
-        or access_from_locked.count("selected_content_plan_with_pointing_catalog(") != 2
+        or access_from_locked.count("selected_content_plan_with_pointing_catalog(") != 1
         or "Self::from_planned_locked_measurement_set(source,selected_read_state,measures,content_plan,measurement_set,ephemeris,pointing_catalog,)?"
         not in access_from_locked
         or "letplan=build_aw_pointing_epoch_plan(problem,source,&bound)?;"
@@ -3025,18 +3040,22 @@ def validate_t17_selected_observation_resource_sources(
         or "ifplan.retained_byte_ceiling>aw_pointing_plan_ceiling{returnErr(BoundObservationSourceError::MeasurementOverflow);}"
         not in access_from_locked
         or "validate_reopened_selected_observation_source(&measurement_set,source,content_budget,)"
+        not in owner_validation
+        or "Self::validated_owner_measurement_set(problem,source,current_state,measures,content_budget,reference_data.pointing_query_domain,)?"
         not in access_owner_open
         or "validate_reopened_selected_observation_source(&measurement_set,source,content_budget,)"
         not in access_rebind
         or "validate_rebound_state(current_state,&fresh_state)?;"
-        not in access_owner_open
+        not in owner_validation
         or "validate_rebound_state(prior_state,&fresh_state)?;"
         not in access_rebind
         or "MsCalEngine::new_selected_observation(&measurement_set,measures.provider(),measures.provider_state(),ephemeris.cloned(),)?"
         not in access_from_planned
         or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_reference_data_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
+        not in source_retention
+        or "retained_source_bytes(measurement_set,problem,source,shared_bytes)?"
         not in plan_admission
-        or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_reference_data_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
+        or "retained_source_bytes(measurement_set,problem,source,shared_bytes)?"
         not in catalog_admission
         or "budget.available_bytes.checked_sub(retained_bytes).and_then(|bytes|bytes.checked_sub(pointing_reference_scratch_bytes))"
         not in catalog_admission
@@ -3051,17 +3070,20 @@ def validate_t17_selected_observation_resource_sources(
             "shared_bytes.shared_binding_graph_initialization_bytes"
         )
         != 1
-        or "letretained_bytes=noncatalog_retained_bytes.checked_add(pointing_catalog.map_or(0,|catalog|catalog.retained_bytes())).and_then(|bytes|bytes.checked_add(shared_bytes.shared_source_plan_retained_bytes))"
+        or "letretained_bytes=noncatalog_retained_bytes.checked_add(pointing_catalog.map_or(0,|catalog|catalog.retained_bytes()))"
         not in plan_admission
-        or plan_admission.count("shared_bytes.shared_source_plan_retained_bytes") != 1
+        or source_retention.count("shared_bytes.shared_source_plan_retained_bytes") != 1
+        or "retained.checked_add(shared_bytes.shared_source_plan_retained_bytes)"
+        not in source_retention
         or "catalog.construction_peak_bytes().checked_sub(catalog.retained_bytes()).and_then(|bytes|bytes.checked_add(pointing_reference_scratch_bytes))"
         not in plan_admission
         or "letinitialization_scratch_bytes=noncatalog_initialization_scratch_bytes.max(catalog_initialization_scratch_bytes);"
         not in plan_admission
-        or "letinitialization_peak_bytes=retained_bytes.checked_add(initialization_scratch_bytes)"
-        not in plan_admission
-        or "ifinitialization_peak_bytes>budget.available_bytes{returnErr(SelectedObservationContentPlanError::InsufficientRetainedBudget{required_bytes:initialization_peak_bytes,available_bytes:budget.available_bytes,},);}"
-        not in plan_admission
+        or "letinitialization=rows.checked_mul(self.initialization_scan_bytes_per_row).and_then(|bytes|bytes.checked_add(self.initialization_scratch_bytes)).and_then(|bytes|bytes.checked_add(self.retained_bytes))"
+        not in requirement_envelope
+        or "Ok(initialization.max(fill).max(prepare))" not in requirement_envelope
+        or "ifminimum>budget.available_bytes(){returnErr(SelectedObservationContentPlanError::InsufficientBudget{required_bytes:minimum,available_bytes:budget.available_bytes(),});}"
+        not in requirement_plan
         or "validation_scratch_bytes" in plan_admission
         or "current_state" in plan_admission
     ):

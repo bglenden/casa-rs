@@ -23,6 +23,9 @@ use super::access::{
 use super::maximum_selected_correlations;
 use super::row_selection::CompiledRowPredicate;
 
+mod requirements;
+pub use requirements::SelectedObservationContentRequirements;
+
 /// Once-only allocations shared by one bound selected-observation owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SelectedObservationSharedBytes {
@@ -206,7 +209,6 @@ impl SelectedObservationContentPlan {
 
     /// Maximum modeled owner-resident bytes across initialization and traversal.
     #[must_use]
-    #[cfg(test)]
     pub const fn maximum_resident_bytes(self) -> usize {
         self.maximum_resident_bytes
     }
@@ -286,14 +288,8 @@ pub(crate) fn selected_pointing_catalog_budget(
     shared_bytes: SelectedObservationSharedBytes,
     budget: SelectedObservationContentBudget,
 ) -> Result<usize, SelectedObservationContentPlanError> {
-    let (retained_bytes, _, pointing_reference_scratch_bytes) = retained_metadata_bytes(
-        measurement_set,
-        problem,
-        source,
-        shared_bytes.shared_measures_retained_bytes,
-        shared_bytes.shared_reference_data_retained_bytes,
-        shared_bytes.shared_source_slots_retained_bytes,
-    )?;
+    let (retained_bytes, _, pointing_reference_scratch_bytes) =
+        retained_source_bytes(measurement_set, problem, source, shared_bytes)?;
     budget
         .available_bytes
         .checked_sub(retained_bytes)
@@ -316,27 +312,37 @@ pub(crate) fn selected_content_plan_with_pointing_catalog(
     budget: SelectedObservationContentBudget,
     pointing_catalog: Option<SelectedPointingCatalogMeasurements>,
 ) -> Result<SelectedObservationContentPlan, SelectedObservationContentPlanError> {
-    if budget.available_bytes == 0
-        || budget.maximum_live_blocks == 0
-        || budget.maximum_pointing_polynomial_terms == 0
-    {
+    selected_content_requirements(
+        measurement_set,
+        problem,
+        source,
+        shared_bytes,
+        budget.maximum_pointing_polynomial_terms,
+        pointing_catalog,
+        0,
+    )?
+    .plan(budget)
+}
+
+pub(crate) fn selected_content_requirements(
+    measurement_set: &MeasurementSet,
+    problem: &CompiledProblem,
+    source: &ObservationSource,
+    shared_bytes: SelectedObservationSharedBytes,
+    maximum_pointing_polynomial_terms: usize,
+    pointing_catalog: Option<SelectedPointingCatalogMeasurements>,
+    initialization_scan_bytes_per_row: usize,
+) -> Result<SelectedObservationContentRequirements, SelectedObservationContentPlanError> {
+    if maximum_pointing_polynomial_terms == 0 {
         return Err(SelectedObservationContentPlanError::InvalidBudget);
     }
     let (
         noncatalog_retained_bytes,
         coordinate_construction_scratch_bytes,
         pointing_reference_scratch_bytes,
-    ) = retained_metadata_bytes(
-        measurement_set,
-        problem,
-        source,
-        shared_bytes.shared_measures_retained_bytes,
-        shared_bytes.shared_reference_data_retained_bytes,
-        shared_bytes.shared_source_slots_retained_bytes,
-    )?;
+    ) = retained_source_bytes(measurement_set, problem, source, shared_bytes)?;
     let retained_bytes = noncatalog_retained_bytes
         .checked_add(pointing_catalog.map_or(0, |catalog| catalog.retained_bytes()))
-        .and_then(|bytes| bytes.checked_add(shared_bytes.shared_source_plan_retained_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let noncatalog_initialization_scratch_bytes = coordinate_construction_scratch_bytes
         .checked_add(shared_bytes.shared_binding_graph_initialization_bytes)
@@ -353,17 +359,6 @@ pub(crate) fn selected_content_plan_with_pointing_catalog(
         .unwrap_or(0);
     let initialization_scratch_bytes =
         noncatalog_initialization_scratch_bytes.max(catalog_initialization_scratch_bytes);
-    let initialization_peak_bytes = retained_bytes
-        .checked_add(initialization_scratch_bytes)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    if initialization_peak_bytes > budget.available_bytes {
-        return Err(
-            SelectedObservationContentPlanError::InsufficientRetainedBudget {
-                required_bytes: initialization_peak_bytes,
-                available_bytes: budget.available_bytes,
-            },
-        );
-    }
     let inspection_bytes = problem
         .selected_observation()
         .inspection_scratch_bytes()
@@ -391,30 +386,14 @@ pub(crate) fn selected_content_plan_with_pointing_catalog(
         source.selection().data_descriptions().len(),
     )
     .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    // VecDeque retains storage for every ready block while Option retains the
-    // active block inline. Heap payloads are charged separately below.
-    let block_container_bytes = budget
-        .maximum_live_blocks
-        .checked_add(1)
-        .and_then(|blocks| blocks.checked_mul(size_of::<BufferedObservationBlock>()))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
     let traversal_base_bytes = retained_bytes
         .checked_add(inspection_bytes)
         // The generation encoder may retain the final row's shared projection
         // payload while its source block is recycled.
         .and_then(|bytes| bytes.checked_add(domain_projection_payload_bytes))
         .and_then(|bytes| bytes.checked_add(run_scratch_bytes))
-        .and_then(|bytes| bytes.checked_add(block_container_bytes))
         .and_then(|bytes| bytes.checked_add(row_replay_fixed_bytes))
         .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    if traversal_base_bytes >= budget.available_bytes {
-        return Err(
-            SelectedObservationContentPlanError::InsufficientRetainedBudget {
-                required_bytes: traversal_base_bytes,
-                available_bytes: budget.available_bytes,
-            },
-        );
-    }
     let polarization = measurement_set.polarization()?;
     let mut resident_bytes_per_row = 0_usize;
     let mut fill_bytes_per_row = 0_usize;
@@ -516,7 +495,7 @@ pub(crate) fn selected_content_plan_with_pointing_catalog(
                 selected_pointing_preparation_peak_bytes(
                     1,
                     1,
-                    budget.maximum_pointing_polynomial_terms,
+                    maximum_pointing_polynomial_terms,
                     direction_column,
                 )
                 .ok_or(SelectedObservationContentPlanError::ByteOverflow)?
@@ -541,80 +520,54 @@ pub(crate) fn selected_content_plan_with_pointing_catalog(
     }
     let selected_rows = usize::try_from(source.selection().rows().selected_row_count())
         .map_err(|_| SelectedObservationContentPlanError::ByteOverflow)?;
-    let prior_live_blocks = budget.maximum_live_blocks - 1;
-    let prior_resident_bytes_per_row = resident_bytes_per_row
-        .checked_mul(prior_live_blocks)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let traversal_bytes = budget.available_bytes - traversal_base_bytes;
-    let fill_denominator = prior_resident_bytes_per_row
-        .checked_add(fill_bytes_per_row)
-        .and_then(|bytes| bytes.checked_add(BoundObservationSource::row_replay_bytes_per_row()))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let preparation_denominator = prior_resident_bytes_per_row
-        .checked_add(preparation_bytes_per_row)
-        .and_then(|bytes| bytes.checked_add(BoundObservationSource::row_replay_bytes_per_row()))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let rows_by_fill = traversal_bytes
-        .checked_sub(fill_fixed_bytes)
-        .map_or(0, |bytes| bytes / fill_denominator);
+    if selected_rows == 0 {
+        return Err(SelectedObservationContentPlanError::InvalidCoordinateShape);
+    }
     let traversal_pointing_reference_scratch_bytes = if pointing_catalog.is_some() {
         0
     } else {
         pointing_reference_scratch_bytes
     };
-    let rows_by_preparation = traversal_bytes
-        .checked_sub(traversal_pointing_reference_scratch_bytes)
-        .map_or(0, |bytes| bytes / preparation_denominator);
-    let rows_per_block = rows_by_fill.min(rows_by_preparation).min(selected_rows);
-    if rows_per_block == 0 {
-        return Err(SelectedObservationContentPlanError::InsufficientBudget {
-            required_bytes: fill_fixed_bytes
-                .checked_add(fill_denominator)
-                .and_then(|fill| {
-                    traversal_pointing_reference_scratch_bytes
-                        .checked_add(preparation_denominator)
-                        .map(|preparation| fill.max(preparation))
-                })
-                .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
-            available_bytes: traversal_bytes,
-        });
-    }
-    let resident_bytes_per_block = rows_per_block
-        .checked_mul(resident_bytes_per_row)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let preparation_bytes_per_block = rows_per_block
-        .checked_mul(preparation_bytes_per_row)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let prior_blocks = resident_bytes_per_block
-        .checked_mul(prior_live_blocks)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let fill_payload = rows_per_block
-        .checked_mul(fill_bytes_per_row)
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let fill_peak = traversal_base_bytes
-        .checked_add(prior_blocks)
-        .and_then(|bytes| bytes.checked_add(fill_fixed_bytes))
-        .and_then(|bytes| bytes.checked_add(fill_payload))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let preparation_peak = traversal_base_bytes
-        .checked_add(prior_blocks)
-        .and_then(|bytes| bytes.checked_add(preparation_bytes_per_block))
-        .and_then(|bytes| bytes.checked_add(traversal_pointing_reference_scratch_bytes))
-        .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-    let traversal_peak_bytes = fill_peak.max(preparation_peak);
-    Ok(SelectedObservationContentPlan {
+    Ok(SelectedObservationContentRequirements {
+        problem: problem.problem_id(),
+        provenance: problem.inputs().observation_snapshot().provenance_id(),
+        source: source.identity(),
         retained_bytes,
         initialization_scratch_bytes,
+        initialization_scan_bytes_per_row,
         pointing_reference_scratch_bytes,
+        traversal_base_bytes,
+        traversal_pointing_reference_scratch_bytes,
         resident_bytes_per_row,
+        fill_bytes_per_row,
         preparation_bytes_per_row,
-        rows_per_block,
-        resident_bytes_per_block,
-        preparation_bytes_per_block,
-        maximum_resident_bytes: initialization_peak_bytes.max(traversal_peak_bytes),
-        maximum_live_blocks: budget.maximum_live_blocks,
-        maximum_pointing_polynomial_terms: budget.maximum_pointing_polynomial_terms,
+        fill_fixed_bytes,
+        selected_rows,
+        maximum_pointing_polynomial_terms,
     })
+}
+
+fn retained_source_bytes(
+    measurement_set: &MeasurementSet,
+    problem: &CompiledProblem,
+    source: &ObservationSource,
+    shared_bytes: SelectedObservationSharedBytes,
+) -> Result<(usize, usize, usize), SelectedObservationContentPlanError> {
+    let (retained, construction, pointing) = retained_metadata_bytes(
+        measurement_set,
+        problem,
+        source,
+        shared_bytes.shared_measures_retained_bytes,
+        shared_bytes.shared_reference_data_retained_bytes,
+        shared_bytes.shared_source_slots_retained_bytes,
+    )?;
+    Ok((
+        retained
+            .checked_add(shared_bytes.shared_source_plan_retained_bytes)
+            .ok_or(SelectedObservationContentPlanError::ByteOverflow)?,
+        construction,
+        pointing,
+    ))
 }
 
 fn retained_metadata_bytes(

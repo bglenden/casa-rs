@@ -47,7 +47,8 @@ use casa_imaging_reconstruction::{
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
     ManagedSpillStorage, PlannerCostModelProfileId, ProductionStorageProfile, ReceiptRetention,
-    ResourceAuthority, ResourceOverride, ResourcePolicy, WorkImplementationId,
+    ResourceAuthority, ResourceOverride, ResourcePolicy, SelectedObservationSourceResources,
+    WorkImplementationId,
 };
 use casa_ms::{
     CubeAxisConfig, CubeInterpolation, CubeSpectralSetup, MeasurementSet, MsSelectionIoBudget,
@@ -1042,7 +1043,7 @@ fn prepare(
         request.uv_range.as_deref(),
         request.intent.as_deref(),
     )?;
-    let content_budget = SelectedObservationContentBudget::new(64 << 20, 2, 4);
+    let content_budget = SelectedObservationSourceResources::bootstrap_content_budget();
     let candidate_bindings = ddids
         .iter()
         .copied()

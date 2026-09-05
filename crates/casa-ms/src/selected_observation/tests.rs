@@ -62,6 +62,8 @@ use std::convert::Infallible;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 
+#[cfg(unix)]
+mod content_requirements;
 mod t41_ephemeris_oracle;
 
 /// Canonical model-lifecycle commitment matching the compiled snapshot.
@@ -4062,6 +4064,15 @@ fn owner_resolution_request(
     path: &std::path::Path,
     row_count: usize,
 ) -> SelectedObservationResolutionRequest {
+    owner_resolution_request_with_identity(path, row_count, identity(2))
+}
+
+#[cfg(unix)]
+fn owner_resolution_request_with_identity(
+    path: &std::path::Path,
+    row_count: usize,
+    selection_request: LogicalIdentity,
+) -> SelectedObservationResolutionRequest {
     let selected_rows = SelectedRows::from_ordered_main_rows(
         row_count as u64,
         (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
@@ -4069,7 +4080,7 @@ fn owner_resolution_request(
     .expect("owner selected-row manifest");
     SelectedObservationResolutionRequest::new(
         path.display().to_string(),
-        identity(2),
+        selection_request,
         fixture_selection(
             selected_rows,
             RowSelection::new(
@@ -4309,63 +4320,31 @@ fn content_budget_for_rows_with_shared_bytes(
     let admitted = |available_bytes| {
         let budget = SelectedObservationContentBudget::new(available_bytes, maximum_live_blocks, 4);
         let planned = (|| {
-            let preliminary = super::content_plan::selected_content_plan_with_pointing_catalog(
-                &measurement_set,
-                problem,
-                source,
-                shared_bytes,
-                budget,
-                None,
-            )
-            .ok()?;
-            let catalog_measurements = if let PointingCentreLaw::Observation(law) =
-                problem.geometry().centres().pointing()
-            {
-                let domain = crate::observation_owner::validate_test_physical_selection(
-                    &measurement_set,
-                    source.selection(),
-                    budget,
-                )
-                .ok()?;
-                let column = match law.direction_column() {
-                    PointingDirectionColumn::Direction => crate::PointingDirectionColumn::Direction,
-                    PointingDirectionColumn::Target => crate::PointingDirectionColumn::Target,
-                };
-                let catalog_budget = super::content_plan::selected_pointing_catalog_budget(
-                    &measurement_set,
-                    problem,
-                    source,
-                    shared_bytes,
-                    budget,
-                )
-                .ok()?;
+            let domain = if matches!(
+                problem.geometry().centres().pointing(),
+                PointingCentreLaw::Observation(_)
+            ) {
                 Some(
-                    measurement_set
-                        .prepare_selected_pointing_catalog(
-                            column,
-                            &domain,
-                            law.time_sampling(),
-                            crate::PointingReadPlan::new(
-                                preliminary.rows_per_block(),
-                                preliminary.maximum_pointing_polynomial_terms(),
-                                catalog_budget,
-                            )
-                            .ok()?,
-                        )
-                        .ok()?
-                        .measurements(),
+                    crate::observation_owner::validate_test_physical_selection(
+                        &measurement_set,
+                        source.selection(),
+                        budget,
+                    )
+                    .ok()?,
                 )
             } else {
                 None
             };
-            super::content_plan::selected_content_plan_with_pointing_catalog(
+            BoundObservationSource::requirements_for_locked_source(
                 &measurement_set,
                 problem,
                 source,
                 shared_bytes,
-                budget,
-                catalog_measurements,
+                budget.maximum_pointing_polynomial_terms(),
+                domain.as_ref(),
             )
+            .ok()?
+            .plan(budget)
             .ok()
         })();
         planned.is_some_and(|plan| plan.rows_per_block() >= target_rows_per_block)

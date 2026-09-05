@@ -58,7 +58,8 @@ use casa_imaging_runtime::{
     FrozenWeightingReservation, ImplementationContractMetadata, ImplementationRegistry,
     ImplementationRegistryId, ManagedSpillStorage, ObservationReadCompletionContext,
     PlannerCostModelProfileBootstrap, PlanningBindings, PreparedArtifactRegistration,
-    ResourceAuthority, RunBindings, RunController, RunDirective, SerialProductPublicationExecutor,
+    ResourceAuthority, RunBindings, RunController, RunDirective,
+    SelectedObservationSourceResources, SerialProductPublicationExecutor,
     SerialProductPublicationPlan, SerialProductPublicationPolicy, SerialProductPublicationRegistry,
     SerialProductPublicationSink, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
     SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
@@ -360,7 +361,7 @@ struct NativeInput<S> {
 
 fn run_native<S>(
     problem: &CompiledProblem,
-    input: NativeInput<S>,
+    mut input: NativeInput<S>,
 ) -> Result<NativeApplicationOutcome, ApplicationError>
 where
     S: SerialProductPublicationSink + Send + 'static,
@@ -371,6 +372,15 @@ where
         publication,
         aw_preparation,
     } = input.native?;
+    let initial_access = SelectedObservationSourceResources::finalize_access(
+        problem,
+        input.initial_access,
+        &runtime.authority,
+        &runtime.resource_policy,
+    )?;
+    input.observation = input
+        .observation
+        .with_content_budget(initial_access.source_binding().content_budget());
     let minor_cycle_requested = problem.reconstruction().controls().max_minor_iterations() > 0;
     let prepared_aw = aw_preparation
         .map(|deployment| prepared_aw_phase::prepare_aw_projection(problem, deployment, &runtime))
@@ -379,7 +389,6 @@ where
         .as_ref()
         .map(prepared_aw_phase::PreparedAwPhase::bind_plan)
         .transpose()?;
-    let initial_access = input.initial_access;
     let residency = initial_access.certify_residency(problem)?;
     let write_targets =
         SelectedVisibilityWriteTargets::new(input.write_model_column, input.write_corrected_data);
@@ -419,7 +428,6 @@ where
         })
         .transpose()?;
     let initial_source_state = initial_access.source_state().clone();
-    let selected = initial_access.open(problem)?;
     let mut executor = SpectralCycleExecutor::new(
         runtime.implementation.clone(),
         problem.clone(),
@@ -427,7 +435,7 @@ where
         resources,
         pass,
         complete,
-        selected,
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone())?,
         SpectralCyclePassInput::Initial,
     );
@@ -803,7 +811,6 @@ where
                     pass: output_pass,
                     ..
                 } = output_planned.into_parts();
-                let selected = frozen_weighting.rebind_selected(access, problem)?;
                 let (visibility_replay, sink) = FinalVisibilityReplay::with_visibility_write(
                     std::path::PathBuf::from(input.observation.locator()),
                     source_state,
@@ -817,7 +824,7 @@ where
                     output_resources,
                     output_pass,
                     output_complete,
-                    selected,
+                    access.into_deferred(),
                     completion,
                     frozen_weighting,
                 )

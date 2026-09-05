@@ -1934,6 +1934,15 @@ fn open_selected_observation(
     problem: &casa_imaging_model::CompiledProblem,
     residency: &SelectedObservationResidencyCertificate,
 ) -> io::Result<BoundSelectedObservation> {
+    deferred_selected_observation(problem, residency)?
+        .open(problem)
+        .map_err(io::Error::other)
+}
+
+fn deferred_selected_observation(
+    problem: &casa_imaging_model::CompiledProblem,
+    residency: &SelectedObservationResidencyCertificate,
+) -> io::Result<casa_ms::DeferredSelectedObservationAccess> {
     let sources = problem.inputs().observation_snapshot().sources();
     let mut budgets = Vec::with_capacity(sources.len());
     for source in sources {
@@ -1956,7 +1965,9 @@ fn open_selected_observation(
         ),
     )
     .map_err(io::Error::other)?;
-    BoundSelectedObservation::open(problem, measures, bindings).map_err(io::Error::other)
+    Ok(casa_ms::DeferredSelectedObservationAccess::new(
+        measures, bindings,
+    ))
 }
 
 impl WorkImplementation for RecordingExecutor {
@@ -3222,7 +3233,7 @@ fn failed_density_generation_receipt_uses_current_partial_stream_measurements() 
         resources,
         pass,
         complete,
-        open_selected_observation(&problem, &residency).expect("selected owner"),
+        deferred_selected_observation(&problem, &residency).expect("deferred selected owner"),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
@@ -3511,9 +3522,6 @@ fn execute_spectral_cycle_with_weighting_mode(
     .expect("cross-plan frozen weighting reservation");
     let planned_gridded_normal =
         planned_gridded_normal.expect("initial plan binds gridded-normal compilation");
-    let selected = initial_access
-        .open(&problem)
-        .expect("owner-validated initial selected observation");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([73; 32]);
     let executor = SpectralCycleExecutor::new(
         implementation(73),
@@ -3522,7 +3530,7 @@ fn execute_spectral_cycle_with_weighting_mode(
         resources,
         pass,
         complete,
-        selected,
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
@@ -4381,9 +4389,7 @@ fn execute_initial_reconstruction_cycle(
         resources,
         pass,
         complete,
-        initial_access
-            .open(problem)
-            .expect("owner-validated channel-cycle observation"),
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
         SpectralCyclePassInput::Initial,
     )
@@ -4500,9 +4506,7 @@ fn execute_dirty_channel_local_slabs(
         source_resources,
         pass,
         complete_data,
-        initial_access
-            .open(problem)
-            .expect("owner-validated dirty-cube observation"),
+        initial_access.into_deferred(),
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube model"),
         SpectralCyclePassInput::Initial,
     );

@@ -260,6 +260,8 @@ struct CatalogRow {
     source_ref: DirectionRef,
 }
 
+const SCALAR_SCAN_BYTES_PER_ROW: usize = size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>();
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SelectedPointingCatalogMeasurements {
     retained_bytes: usize,
@@ -370,6 +372,68 @@ impl PreparedSelectedPointingCatalog {
 }
 
 impl MeasurementSet {
+    /// Bound POINTING preparation from row-count metadata without reading its cells.
+    ///
+    /// All POINTING rows are conservatively treated as retained candidates at the
+    /// planned polynomial bound. The measurements contain byte/count ceilings,
+    /// with a zero build time; the construction ceiling excludes scalar scan row
+    /// storage. The second result charges that storage per scan-block row. A
+    /// missing POINTING table requires neither catalog nor scan storage.
+    pub(crate) fn selected_pointing_catalog_requirements(
+        &self,
+        domain: &SelectedPointingQueryDomain,
+        maximum_polynomial_terms: usize,
+    ) -> MsResult<(SelectedPointingCatalogMeasurements, usize)> {
+        if maximum_polynomial_terms == 0 {
+            return Err(MsError::InvalidInput(
+                "POINTING requirements need a positive polynomial bound".to_string(),
+            ));
+        }
+        let rows = match self.pointing() {
+            Ok(pointing) => pointing.row_count(),
+            Err(MsError::MissingSubtable(_)) => {
+                return Ok((SelectedPointingCatalogMeasurements::default(), 0));
+            }
+            Err(error) => return Err(error),
+        };
+        let endpoint_count = domain.antenna_ids().len();
+        let endpoint_bytes = endpoint_count
+            .checked_mul(size_of::<[Option<CandidateMetadata>; 2]>())
+            .ok_or_else(byte_overflow)?;
+        let prechecked_rows = endpoint_count
+            .checked_mul(2)
+            .and_then(|endpoints| rows.checked_add(endpoints))
+            .ok_or_else(byte_overflow)?;
+        let scan_fixed_bytes =
+            catalog_upper_bound_bytes(prechecked_rows, maximum_polynomial_terms)?
+                .checked_add(endpoint_bytes)
+                .ok_or_else(byte_overflow)?;
+        let retained_bytes = catalog_upper_bound_bytes(rows, maximum_polynomial_terms)?;
+        // The catalog bound already includes one coefficient copy and array
+        // dimensions. Direction cells coexist with the final coefficient copy.
+        let copy_bytes_per_row = maximum_polynomial_terms
+            .checked_mul(2)
+            .and_then(|terms| terms.checked_mul(size_of::<f64>()))
+            .and_then(|bytes| bytes.checked_add(size_of::<CandidateMetadata>()))
+            .and_then(|bytes| bytes.checked_add(size_of::<usize>()))
+            .and_then(|bytes| bytes.checked_add(size_of::<Option<ArrayValue>>()))
+            .ok_or_else(byte_overflow)?;
+        let copy_peak_bytes = rows
+            .checked_mul(copy_bytes_per_row)
+            .and_then(|bytes| bytes.checked_add(retained_bytes))
+            .ok_or_else(byte_overflow)?;
+        Ok((
+            SelectedPointingCatalogMeasurements {
+                retained_bytes,
+                construction_peak_bytes: scan_fixed_bytes.max(copy_peak_bytes),
+                source_rows_scanned: rows,
+                retained_rows: rows,
+                build_nanos: 0,
+            },
+            SCALAR_SCAN_BYTES_PER_ROW,
+        ))
+    }
+
     /// Scan POINTING scalar metadata once, then retain and read only selected candidates.
     pub(crate) fn prepare_selected_pointing_catalog(
         &self,
@@ -402,7 +466,7 @@ impl MeasurementSet {
             .ok_or_else(byte_overflow)?;
         let maximum_scan_bytes = plan
             .scan_rows_per_block
-            .checked_mul(size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>())
+            .checked_mul(SCALAR_SCAN_BYTES_PER_ROW)
             .and_then(|bytes| bytes.checked_add(endpoint_bytes))
             .ok_or_else(byte_overflow)?;
         ensure_budget(maximum_scan_bytes, plan.maximum_catalog_bytes)?;
@@ -786,8 +850,10 @@ fn retain_earlier(current: &mut Option<CandidateMetadata>, candidate: CandidateM
 }
 
 fn catalog_upper_bound_bytes(rows: usize, maximum_polynomial_terms: usize) -> MsResult<usize> {
-    let bytes_per_row = size_of::<CatalogRow>()
-        .checked_add(2 * maximum_polynomial_terms * size_of::<f64>())
+    let bytes_per_row = maximum_polynomial_terms
+        .checked_mul(2)
+        .and_then(|terms| terms.checked_mul(size_of::<f64>()))
+        .and_then(|bytes| bytes.checked_add(size_of::<CatalogRow>()))
         .and_then(|bytes| bytes.checked_add(4 * size_of::<usize>()))
         .ok_or_else(byte_overflow)?;
     rows.checked_mul(bytes_per_row).ok_or_else(byte_overflow)
@@ -850,14 +916,94 @@ pub(crate) fn selected_pointing_preparation_peak_bytes(
     let candidate_rows = selected_rows.checked_mul(2)?.checked_add(2)?;
     catalog_upper_bound_bytes(candidate_rows, maximum_polynomial_terms)
         .ok()?
-        .checked_add(
-            scan_rows.checked_mul(size_of::<usize>() + 5 * size_of::<Option<ScalarValue>>())?,
-        )
+        .checked_add(scan_rows.checked_mul(SCALAR_SCAN_BYTES_PER_ROW)?)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalog_requirements_bound_prechecks_and_actual_construction() {
+        use casa_types::{RecordField, RecordValue, Value};
+
+        let mut builder = SelectedPointingQueryDomain::builder();
+        builder.observe_row(0, 1, 0.0, 0.0).unwrap();
+        builder.observe_row(0, 1, 100.0, 100.0).unwrap();
+        let domain = builder.finish().unwrap().unwrap();
+        for row_count in [0, 1, 19] {
+            for terms in [1, 4] {
+                let mut ms =
+                    MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
+                for row in 0..row_count {
+                    let mut record = RecordValue::new(
+                        crate::schema::pointing::REQUIRED_COLUMNS
+                            .iter()
+                            .map(|column| {
+                                RecordField::new(
+                                    column.name,
+                                    crate::test_helpers::default_value_for_def(column),
+                                )
+                            })
+                            .collect(),
+                    );
+                    record.upsert("TIME", Value::Scalar(ScalarValue::Float64(row as f64)));
+                    record.upsert(
+                        "NUM_POLY",
+                        Value::Scalar(ScalarValue::Int32(terms as i32 - 1)),
+                    );
+                    record.upsert(
+                        "DIRECTION",
+                        Value::Array(ArrayValue::Float64(ndarray::ArrayD::zeros(vec![2, terms]))),
+                    );
+                    ms.pointing_mut()
+                        .unwrap()
+                        .table_mut()
+                        .add_row(record)
+                        .unwrap();
+                }
+                let (requirements, scan_bytes_per_row) = ms
+                    .selected_pointing_catalog_requirements(&domain, terms)
+                    .unwrap();
+                assert_eq!(requirements.source_rows_scanned(), row_count);
+                assert_eq!(requirements.retained_rows(), row_count);
+                assert_eq!(requirements.build_nanos(), 0);
+                assert_eq!(scan_bytes_per_row, SCALAR_SCAN_BYTES_PER_ROW);
+                for scan_rows in [1, 7] {
+                    let catalog_budget =
+                        requirements.construction_peak_bytes() + scan_rows * scan_bytes_per_row;
+                    let catalog = ms
+                        .prepare_selected_pointing_catalog(
+                            PointingDirectionColumn::Direction,
+                            &domain,
+                            PointingTimeSampling::VisibilityTime,
+                            PointingReadPlan::new(scan_rows, terms, catalog_budget).unwrap(),
+                        )
+                        .unwrap();
+                    assert_eq!(catalog.measurements().retained_rows(), row_count);
+                    assert!(
+                        catalog.measurements().retained_bytes() <= requirements.retained_bytes()
+                    );
+                    assert!(catalog.measurements().construction_peak_bytes() <= catalog_budget);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_requirements_reject_zero_and_overflowing_polynomial_bounds() {
+        let ms = MeasurementSet::create_memory(crate::MeasurementSetBuilder::new()).unwrap();
+        let mut builder = SelectedPointingQueryDomain::builder();
+        builder.observe_row(0, 1, 0.0, 0.0).unwrap();
+        let domain = builder.finish().unwrap().unwrap();
+        for terms in [0, usize::MAX] {
+            assert!(matches!(
+                ms.selected_pointing_catalog_requirements(&domain, terms),
+                Err(MsError::InvalidInput(_))
+            ));
+        }
+        assert!(catalog_upper_bound_bytes(usize::MAX, 1).is_err());
+    }
 
     #[test]
     fn selected_domain_uses_requested_time_sampling_and_sorted_antennas() {

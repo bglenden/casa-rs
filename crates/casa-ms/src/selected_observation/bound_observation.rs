@@ -31,7 +31,8 @@ use super::access::{
 };
 use super::{
     BoundObservationSamples, BoundObservationSource, BoundObservationSourceError,
-    SelectedObservationBlock, SelectedObservationContentBudget, SelectedObservationMeasures,
+    SelectedObservationBlock, SelectedObservationContentBudget,
+    SelectedObservationContentRequirements, SelectedObservationMeasures,
     SelectedObservationMeasuresError,
     content_plan::SelectedObservationSharedBytes,
     maximum_selected_correlations,
@@ -399,6 +400,10 @@ impl ObservationSourceBinding {
         self.content_budget
     }
 
+    pub(crate) fn set_content_budget(&mut self, budget: SelectedObservationContentBudget) {
+        self.content_budget = budget;
+    }
+
     fn ephemeris_identity(&self) -> Option<LogicalIdentity> {
         self.ephemeris
             .as_deref()
@@ -431,6 +436,79 @@ impl ObservationSourceBinding {
     }
 }
 
+/// An unopened selected-observation capability for an admitted source-read operation.
+///
+/// It retains the source states and Measures capability, but no MeasurementSet
+/// locks, prepared POINTING catalogs, or selected-content blocks. Multi-source
+/// bindings keep the same canonical ordering and validation as
+/// [`BoundSelectedObservation::open`].
+pub struct DeferredSelectedObservationAccess {
+    measures: SelectedObservationMeasures,
+    bindings: Vec<ObservationSourceBinding>,
+    owner_validated: bool,
+}
+
+impl DeferredSelectedObservationAccess {
+    /// Defer ordinary multi-source binding until its source-read allocation exists.
+    #[must_use]
+    pub fn new(
+        measures: SelectedObservationMeasures,
+        bindings: Vec<ObservationSourceBinding>,
+    ) -> Self {
+        Self {
+            measures,
+            bindings,
+            owner_validated: false,
+        }
+    }
+
+    pub(crate) fn owner_validated(
+        measures: SelectedObservationMeasures,
+        bindings: Vec<ObservationSourceBinding>,
+    ) -> Self {
+        Self {
+            measures,
+            bindings,
+            owner_validated: true,
+        }
+    }
+
+    /// Derive the unchanged aggregate source-residency certificate without opening tables.
+    pub fn certify_residency(
+        &self,
+        problem: &CompiledProblem,
+    ) -> Result<SelectedObservationResidencyCertificate, BoundSelectedObservationError> {
+        BoundSelectedObservation::certify_residency(problem, &self.bindings)
+    }
+
+    /// Open under fresh read locks only when execution admits this source owner.
+    #[cfg(unix)]
+    pub fn open(
+        self,
+        problem: &CompiledProblem,
+    ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
+        BoundSelectedObservation::open_internal(
+            problem,
+            self.measures,
+            self.bindings,
+            self.owner_validated,
+        )
+    }
+
+    /// Reopen an owner-resolved source set and validate its exhaustive replay proof.
+    #[cfg(unix)]
+    pub fn rebind(
+        self,
+        problem: &CompiledProblem,
+        proof: &SelectedObservationReplayProof,
+    ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
+        if !self.owner_validated {
+            return Err(BoundSelectedObservationError::ReplayProofMismatch);
+        }
+        BoundSelectedObservation::rebind(problem, self.measures, self.bindings, proof)
+    }
+}
+
 /// Retained read-locked access to every source in one compiled selected observation.
 ///
 /// Storage buffers and POINTING lookup primitives are owner-internal; callers
@@ -453,6 +531,31 @@ pub struct BoundSelectedObservation {
 }
 
 impl BoundSelectedObservation {
+    #[cfg(unix)]
+    pub(crate) fn single_source_content_requirements(
+        problem: &CompiledProblem,
+        measures: &SelectedObservationMeasures,
+        binding: &ObservationSourceBinding,
+    ) -> Result<SelectedObservationContentRequirements, BoundSelectedObservationError> {
+        let expected = problem.inputs().observation_snapshot().sources();
+        if expected.len() != 1 {
+            return Err(BoundSelectedObservationError::BindingSetMismatch);
+        }
+        let source = &expected[0];
+        if source.identity() != binding.measurement_set() {
+            return Err(BoundSelectedObservationError::MissingSourceBinding {
+                measurement_set: source.identity(),
+            });
+        }
+        // Resolved access opens with vec![binding] and one prospective source slot.
+        let shared = Self::shared_bytes(problem, measures, std::slice::from_ref(binding), 1, 1)?;
+        BoundObservationSource::content_requirements(problem, source, binding, measures, shared)
+            .map_err(|error| BoundSelectedObservationError::Source {
+                measurement_set: source.identity(),
+                error: Box::new(error),
+            })
+    }
+
     /// Mint the opaque aggregate residency contract for a complete source-binding set.
     ///
     /// The same canonical derivation is repeated and retained by [`Self::open`],
@@ -554,17 +657,6 @@ impl BoundSelectedObservation {
         bindings: Vec<ObservationSourceBinding>,
     ) -> Result<Self, BoundSelectedObservationError> {
         Self::open_internal(problem, measures, bindings, false)
-    }
-
-    /// Open a proof-eligible owner after rederiving every source state under
-    /// fresh retained locks.
-    #[cfg(unix)]
-    pub(crate) fn open_owner_validated(
-        problem: &CompiledProblem,
-        measures: SelectedObservationMeasures,
-        bindings: Vec<ObservationSourceBinding>,
-    ) -> Result<Self, BoundSelectedObservationError> {
-        Self::open_internal(problem, measures, bindings, true)
     }
 
     #[cfg(unix)]
