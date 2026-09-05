@@ -49,7 +49,8 @@ use casa_imaging_products::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
-    MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet, WeightingExecutionLimits,
+    MinorCycleImageResponse, MinorCycleProgram, MinorCycleStopReason, ReconstructionMaskSet,
+    WeightingExecutionLimits,
 };
 use casa_imaging_runtime::{
     AttemptBoundObservationCompletion, BuildIdentity, ExecutionAttemptId, ExecutionProvenance,
@@ -117,6 +118,8 @@ pub struct ApplicationRequest<S> {
     pub model_lifecycle: ModelLifecycleRequirements,
     /// Deferred reconstruction-mask owner input.
     pub masks: ImageDomainReconstructionMaskPlans,
+    /// Scientific image-coordinate normalization bound independently of output selection.
+    pub minor_cycle_image_response: Option<MinorCycleImageResponse>,
     /// Storage-owner request for the single selected MeasurementSet.
     pub observation: SelectedObservationResolutionRequest,
     /// Whether final paired-operator predictions are committed to `MODEL_DATA`.
@@ -336,6 +339,7 @@ where
         write_model_column: request.write_model_column,
         write_corrected_data: request.write_corrected_data,
         masks: request.masks,
+        minor_cycle_image_response: request.minor_cycle_image_response,
         native: request.native,
     };
     let output = run_native(&problem, input).map_err(ApplicationDispatchError::Native)?;
@@ -350,6 +354,7 @@ struct NativeInput<S> {
     write_model_column: bool,
     write_corrected_data: bool,
     masks: ImageDomainReconstructionMaskPlans,
+    minor_cycle_image_response: Option<MinorCycleImageResponse>,
     native: Result<ApplicationNative<S>, ApplicationError>,
 }
 
@@ -437,7 +442,10 @@ where
             .with_planned_gridded_normal_binding(planned_gridded_normal.ok_or_else(|| {
                 boxed("minor-cycle initial plan omitted gridded replay binding")
             })?)?;
-        let program = MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
+        let mut program = MinorCycleProgram::for_problem(problem)?.record_component_sequence(64)?;
+        if let Some(response) = input.minor_cycle_image_response {
+            program = program.with_image_response(response);
+        }
         executor = executor.with_reconstruction_cycle(
             minor_node.ok_or_else(|| boxed("initial plan omitted its minor-cycle node"))?,
             input.masks.clone(),
@@ -699,9 +707,12 @@ where
                     let remaining = controls
                         .max_minor_iterations()
                         .saturating_sub(total_iterations);
-                    let program = MinorCycleProgram::for_problem(problem)?
+                    let mut program = MinorCycleProgram::for_problem(problem)?
                         .record_component_sequence(64)?
                         .limit_iterations(remaining)?;
+                    if let Some(response) = input.minor_cycle_image_response {
+                        program = program.with_image_response(response);
+                    }
                     executor = executor.with_reconstruction_cycle(
                         minor_node.ok_or_else(|| boxed("continuing plan omitted minor node"))?,
                         next_masks.clone(),

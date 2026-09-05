@@ -262,9 +262,31 @@ impl TaylorProducts {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let model = (0..terms)
+        let mut model = (0..terms)
             .map(|term| model_term(inputs, term, shape))
             .collect::<Result<Vec<_>, _>>()?;
+        if inputs
+            .problem()
+            .science()
+            .measurement_equation()
+            .aw_projection()
+            .is_some()
+        {
+            let response = mosaic_sensitivity
+                .ok_or(ProductsError::SourceLineageMismatch)?
+                .with_normal_sum_weight(principal_sum_weight)?;
+            let policy = inputs.problem().products().validity().primary_beam();
+            for plane in &mut model {
+                for (index, value) in plane.iter_mut().enumerate() {
+                    *value = response.physical_to_apparent(
+                        f64::from(*value),
+                        index,
+                        normalization,
+                        policy,
+                    )? as f32;
+                }
+            }
+        }
 
         let peak = psf[0]
             .iter()
@@ -369,10 +391,10 @@ impl TaylorProducts {
                 analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
             }
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-                primary_beam_from_weight(&weight[0])?
+                MosaicSensitivity::primary_beam_from_weight(&weight[0])?
             }
             None if requests_primary_beam => return Err(ProductsError::UnsupportedProblem),
-            None => primary_beam_from_weight(&weight[0])?,
+            None => MosaicSensitivity::primary_beam_from_weight(&weight[0])?,
         };
         let mut primary_beam = vec![vec![0.0; cells]; terms];
         primary_beam[0] = pb0.clone();
@@ -575,19 +597,6 @@ fn taylor_alpha_products(
         validity[cell] = true;
     }
     (alpha, alpha_error, validity)
-}
-
-fn primary_beam_from_weight(weight: &[f32]) -> Result<Vec<f32>, ProductsError> {
-    // Retained only for product graphs that do not publish PB: CASA
-    // SIImageStore::makePBFromWeight normalizes the principal weight image.
-    let scale = weight.iter().copied().fold(0.0_f32, f32::max).sqrt();
-    if !(scale.is_finite() && scale > 0.0) {
-        return Err(ProductsError::GeneratedNonfinite);
-    }
-    Ok(weight
-        .iter()
-        .map(|value| value.max(0.0).sqrt() / scale)
-        .collect())
 }
 
 pub(crate) fn analytic_evla_primary_beam(
@@ -901,7 +910,7 @@ mod tests {
 
     #[test]
     fn mosaic_primary_beam_excludes_negative_fft_ringing() {
-        let beam = super::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
+        let beam = super::MosaicSensitivity::primary_beam_from_weight(&[-0.25, 0.0, 1.0, 0.25])
             .expect("positive mosaic support");
         assert_eq!(beam, vec![0.0, 0.0, 1.0, 0.5]);
     }

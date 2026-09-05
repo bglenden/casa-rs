@@ -41,7 +41,8 @@ use casa_imaging_model::{
     WeightingScheme,
 };
 use casa_imaging_reconstruction::{
-    ReconstructionMaskPlan, WeightingExecutionLimits, minor_cycle_workspace_bytes,
+    MinorCycleImageResponse, ReconstructionMaskPlan, WeightingExecutionLimits,
+    minor_cycle_workspace_bytes,
 };
 use casa_imaging_runtime::{
     BuildIdentity, ExecutionAttemptId, ExecutionReceiptStore, ImplementationRegistryId,
@@ -1804,6 +1805,20 @@ fn prepare(
             ModelInputCommitment::Empty,
         ),
         masks,
+        minor_cycle_image_response: (request.aw_projection.is_some()
+            && matches!(request.algorithm, ContinuumAlgorithm::Mtmfs { .. }))
+        .then(|| {
+            MinorCycleImageResponse::new(
+                request.normalization,
+                PrimaryBeamValidityPolicy::new(
+                    request.primary_beam_cutoff,
+                    ProductSupportComparison::StrictlyGreater,
+                    ProductBlankingPolicy::ZeroAndFalseMask,
+                )?,
+            )
+            .map_err(|error| Box::new(error) as crate::ApplicationError)
+        })
+        .transpose()?,
         observation: SelectedObservationResolutionRequest::new(
             request.measurement_set.display().to_string(),
             LogicalIdentity::from_sha256(digest),

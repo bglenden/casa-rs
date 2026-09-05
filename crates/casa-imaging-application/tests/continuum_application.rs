@@ -1330,6 +1330,7 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
     imaging.data_description = None;
     imaging.channel_count = Some(8);
     imaging.iterations = 1;
+    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
     imaging.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
         blc: [3, 4],
         trc: [11, 12],
@@ -1344,6 +1345,41 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
+    let response = casa_imaging_reconstruction::MosaicSensitivity::new(
+        normal
+            .normal_moment(0)
+            .expect("principal normal")
+            .sensitivity(),
+    )
+    .expect("AW image response")
+    .with_normal_sum_weight(normal.normal_moment(0).expect("principal normal").sum_weight())
+    .expect("normal response scale");
+    let model = result.outcome.output.scientific.final_model();
+    let policy = casa_imaging_model::PrimaryBeamValidityPolicy::new(
+        0.2,
+        casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+        casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+    )
+    .expect("PB support");
+    for term in 0..2 {
+        let published_model = product_plane(&image_name, &format!(".model.tt{term}"));
+        for x in 0..16 {
+            for y in 0..16 {
+                let cell = casa_imaging_model::ModelCell::new(0, term, 0, [x, y]);
+                let index = model.shape().flat_index(cell).expect("model cell");
+                let physical = model.samples()[index].value().value();
+                let apparent = response
+                    .physical_to_apparent(
+                        f64::from(physical as f32),
+                        x * 16 + y,
+                        casa_imaging_model::ProductNormalization::FlatNoise,
+                        policy,
+                    )
+                    .expect("apparent model") as f32;
+                assert_eq!(published_model[[x, y, 0, 0]], apparent);
+            }
+        }
+    }
     let published_mask = product_plane(&image_name, ".mask");
     for y in 0..16 {
         for x in 0..16 {
@@ -1377,6 +1413,7 @@ fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products()
     imaging.data_description = None;
     imaging.channel_count = Some(8);
     imaging.iterations = 0;
+    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
     imaging.aw_projection = Some(aw_projection(cache, false));
     imaging.task_requirements = vec![TaskRequirement::AwProjection];
 

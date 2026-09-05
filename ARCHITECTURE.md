@@ -42,6 +42,10 @@ product schemas and commitments introduced by ADR-0009.
 `casa-imaging-reconstruction` owns model-state algorithms and opaque
 reconstruction completions and depends only inward on the model and the
 domain-neutral `casa-numerics` algorithms.
+Its image-response view owns the scientific mapping between raw normal state,
+minor-cycle image coordinates, and physical model increments. Applications bind
+the requested normalization explicitly; products reuse this mapping before
+model publication and restoration without changing the raw normal state.
 `casa-imaging-products` owns continuum product algorithms and may use the same
 domain-neutral `casa-numerics` algorithms directly; numerical helpers do not
 become reconstruction-owned merely because both owners require them.

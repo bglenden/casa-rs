@@ -86,6 +86,19 @@ weighting_identity!(
     "Identity of the exact weighted sample coverage emitted by one replay."
 );
 
+#[cfg(test)]
+pub(crate) fn native_normal_fixture_weighting_ids() -> (
+    WeightingGenerationId,
+    WeightingReplayId,
+    WeightingReplayCoverageId,
+) {
+    (
+        WeightingGenerationId(LogicalIdentity::from_sha256([1; 32])),
+        WeightingReplayId(LogicalIdentity::from_sha256([2; 32])),
+        WeightingReplayCoverageId(LogicalIdentity::from_sha256([3; 32])),
+    )
+}
+
 /// Physical choices for bounded density generation and weighted replay.
 ///
 /// These values affect residency and block scheduling but never the frozen

@@ -36,6 +36,7 @@ mod aw_projection;
 mod block_normal;
 mod continuum_transform;
 mod gridded_normal_operator;
+mod image_response;
 mod major_cycle;
 mod mask;
 mod minor_cycle;
@@ -53,6 +54,7 @@ pub use aw_projection::{
     AwPreparedCatalog, AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,
     AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, PreparedAwProjection,
 };
+pub use image_response::{ImageResponseError, MinorCycleImageResponse, MosaicSensitivity};
 pub use spectral_operator::{
     SpectralChannelValidity, SpectralOperatorError, SpectralOperatorPrimitives,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabPlan,

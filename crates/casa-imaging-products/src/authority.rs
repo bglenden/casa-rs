@@ -1578,7 +1578,7 @@ fn normalize_domain_plane(
             normalize_plane(values, normalization, plane.sum_weight)
         }
         ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-            MosaicSensitivity::new(plane.sensitivity)?.normalize(values, normalization)
+            Ok(MosaicSensitivity::new(plane.sensitivity)?.normalize(values, normalization)?)
         }
     }
 }

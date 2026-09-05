@@ -2306,6 +2306,49 @@ pub struct SpectralOperatorPrimitives {
 }
 
 impl SpectralOperatorPrimitives {
+    #[cfg(test)]
+    pub(crate) fn native_taylor_fixture(
+        problem: &CompiledProblem,
+        residual_model: ModelGenerationId,
+        dirty: Box<[Complex64]>,
+        psf: Box<[Complex64]>,
+        response: Option<(Vec<f64>, f64, f64)>,
+    ) -> Self {
+        let specification = SpectralOperatorSpecification::new(problem).expect("fixture operator");
+        let shape = specification.domains()[0].image_shape();
+        let cells = shape[0] * shape[1];
+        assert_eq!(dirty.len(), specification.coefficient_terms() * cells);
+        assert_eq!(psf.len(), specification.normal_moments() * cells);
+        let (sensitivity, normal_weight, published_weight) =
+            response.unwrap_or_else(|| (vec![1.0; cells], 1.0, 1.0));
+        assert_eq!(sensitivity.len(), cells);
+        Self {
+            shape,
+            slab: specification.slab,
+            basis: specification.basis,
+            polarizations: 1,
+            joint_line_term_by_channel: Box::new([]),
+            dirty,
+            invariant_dirty: None,
+            common_residual: None,
+            invariant_common_dirty: None,
+            psf,
+            sensitivity: sensitivity
+                .repeat(specification.normal_moments())
+                .into_boxed_slice(),
+            primary_beam_weighted_sum: None,
+            sum_weights: vec![normal_weight; specification.normal_moments()].into_boxed_slice(),
+            published_sum_weights: vec![published_weight; specification.normal_moments()]
+                .into_boxed_slice(),
+            channel_sum_weights: vec![1.0].into_boxed_slice(),
+            validity: vec![SpectralChannelValidity::Valid].into_boxed_slice(),
+            major_cycle_residual: None,
+            major_cycle_residual_promoted: true,
+            residual_model: Some(residual_model),
+            measurements: SpectralOperatorMeasurements::default(),
+        }
+    }
+
     /// Return `[width, height]` shared by every plane.
     #[must_use]
     pub const fn shape(&self) -> [usize; 2] {
