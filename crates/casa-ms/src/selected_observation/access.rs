@@ -3038,10 +3038,9 @@ mod aw_pointing_tests {
             .iter()
             .find(|r| r[0] == "native_measures_root")
             .unwrap()[1];
-        let runtime =
-            casa_measures_data::MeasuresRuntime::open(measures_root, Default::default()).unwrap();
+        let runtime = crate::test_helpers::production_measures_runtime_at(measures_root).unwrap();
         eprintln!("rust_measures_root\t{}", runtime.root().display());
-        let measures: std::sync::Arc<dyn MeasuresProvider> = std::sync::Arc::new(runtime);
+        let measures: std::sync::Arc<dyn MeasuresProvider> = runtime;
         let state = measures.prepare_bounded_state().unwrap().unwrap();
         eprintln!("rust_measures_identity\t{:?}", state.identity_sha256());
         eprintln!(

@@ -54,10 +54,10 @@ ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
     "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "e8a165ba7b03f46195b5ca300518c44f1613cc4f4fa2baf36ef93fc7d216f92d"
+    "a4d249956119376f37d70329ab724a82bdd8ff7b26e68a04cd32493f92a9c4ed"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "b791428bbded8bd6c392ae8ae467bb88656fa487aec9d5498c73d84df91798a3"
+    "e872eaa4b73c7897966e4641bb8e5e95959969677f4dfebcffafceaf9c7e0abf"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 85
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -2243,6 +2243,7 @@ def validate_t18_global_weighting_sources(
             "output_frame_frequency_hz": "f64",
             "field_id": "i32",
             "pointing_directions": "SelectedPointingDirections",
+            "aw_pointing_pixel": "Option<[f64;2]>",
             "antenna_responses": "Option<SelectedAntennaResponses>",
             "domain_projections": "SelectedImageDomainProjections",
         }
@@ -2923,8 +2924,16 @@ def validate_t17_selected_observation_resource_sources(
     plan_admission = re.sub(
         r"\s+",
         "",
-        rust_function_body(content_plan, "selected_content_plan", content_plan_path),
+        rust_function_body(
+            content_plan, "selected_content_plan_with_pointing_catalog", content_plan_path
+        ),
     )
+    catalog_admission = re.sub(
+        r"\s+",
+        "",
+        rust_function_body(content_plan, "selected_pointing_catalog_budget", content_plan_path),
+    )
+    compact_content_plan = re.sub(r"\s+", "", content_plan)
     retained_metadata = re.sub(
         r"\s+",
         "",
@@ -2942,6 +2951,7 @@ def validate_t17_selected_observation_resource_sources(
             "shared_reference_data_retained_bytes": "usize",
             "shared_source_slots_retained_bytes": "usize",
             "shared_binding_graph_initialization_bytes": "usize",
+            "shared_source_plan_retained_bytes": "usize",
         }
         or bound_open
         != "Self::open_internal(problem,measures,bindings,false)"
@@ -2987,14 +2997,33 @@ def validate_t17_selected_observation_resource_sources(
         or "constfnretained_source_slot_bytes()->usize{size_of::<Self>()}"
         not in compact_access
         or "measures.validate_problem(problem)?;" not in access_open
-        or "Self::from_locked_measurement_set(problem,source,current_state.clone(),measures,shared_bytes,content_budget,measurement_set,ephemeris,)"
+        or "Self::from_locked_measurement_set(problem,source,current_state.clone(),measures,shared_bytes,content_budget,measurement_set,reference_data.ephemeris,reference_data.pointing_query_domain,)"
         not in access_open
-        or "selected_content_plan(&measurement_set,problem,source,shared_bytes,content_budget,)?"
-        not in access_from_locked
-        or "selected_content_plan(&measurement_set,problem,source,shared_bytes,content_budget,)?"
+        or "Self::from_locked_measurement_set(problem,source,fresh_state,measures,shared_bytes,content_budget,measurement_set,reference_data.ephemeris,Some(&fresh_pointing_query_domain),)"
         not in access_owner_open
-        or "selected_content_plan(&measurement_set,problem,source,shared_bytes,content_budget,)?"
+        or "Self::from_locked_measurement_set(problem,source,fresh_state,measures,shared_bytes,content_budget,measurement_set,reference_data.ephemeris,Some(&fresh_pointing_query_domain),)"
         not in access_rebind
+        or "letaw_pointing_plan_ceiling=aw_pointing_plan_retained_byte_ceiling(problem,source)?;"
+        not in access_from_locked
+        or "letshared_bytes=shared_bytes.with_source_plan_retained_bytes(aw_pointing_plan_ceiling);"
+        not in access_from_locked
+        or "constfnwith_source_plan_retained_bytes(mutself,bytes:usize)->Self{self.shared_source_plan_retained_bytes=bytes;self}"
+        not in compact_content_plan
+        or "letpreliminary_content_plan=selected_content_plan_with_pointing_catalog(&measurement_set,problem,source,shared_bytes,content_budget,None,)?;"
+        not in access_from_locked
+        or "letcatalog_budget=selected_pointing_catalog_budget(&measurement_set,problem,source,shared_bytes,content_budget,)?;"
+        not in access_from_locked
+        or "measurement_set.prepare_selected_pointing_catalog(column,domain,law.time_sampling(),PointingReadPlan::new(preliminary_content_plan.rows_per_block(),preliminary_content_plan.maximum_pointing_polynomial_terms(),catalog_budget,)?,)?"
+        not in access_from_locked
+        or "letcontent_plan=selected_content_plan_with_pointing_catalog(&measurement_set,problem,source,shared_bytes,content_budget,pointing_catalog.as_ref().map(|catalog|catalog.measurements()),)?;"
+        not in access_from_locked
+        or access_from_locked.count("selected_content_plan_with_pointing_catalog(") != 2
+        or "Self::from_planned_locked_measurement_set(source,selected_read_state,measures,content_plan,measurement_set,ephemeris,pointing_catalog,)?"
+        not in access_from_locked
+        or "letplan=build_aw_pointing_epoch_plan(problem,source,&bound)?;"
+        not in access_from_locked
+        or "ifplan.retained_byte_ceiling>aw_pointing_plan_ceiling{returnErr(BoundObservationSourceError::MeasurementOverflow);}"
+        not in access_from_locked
         or "validate_reopened_selected_observation_source(&measurement_set,source,content_budget,)"
         not in access_owner_open
         or "validate_reopened_selected_observation_source(&measurement_set,source,content_budget,)"
@@ -3007,6 +3036,10 @@ def validate_t17_selected_observation_resource_sources(
         not in access_from_planned
         or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_reference_data_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
         not in plan_admission
+        or "retained_metadata_bytes(measurement_set,problem,source,shared_bytes.shared_measures_retained_bytes,shared_bytes.shared_reference_data_retained_bytes,shared_bytes.shared_source_slots_retained_bytes,)?"
+        not in catalog_admission
+        or "budget.available_bytes.checked_sub(retained_bytes).and_then(|bytes|bytes.checked_sub(pointing_reference_scratch_bytes))"
+        not in catalog_admission
         or retained_metadata.count("shared_source_slots_retained_bytes") != 1
         or retained_metadata.count("shared_measures_retained_bytes") != 1
         or retained_metadata.count("shared_reference_data_retained_bytes") != 1
@@ -3018,6 +3051,17 @@ def validate_t17_selected_observation_resource_sources(
             "shared_bytes.shared_binding_graph_initialization_bytes"
         )
         != 1
+        or "letretained_bytes=noncatalog_retained_bytes.checked_add(pointing_catalog.map_or(0,|catalog|catalog.retained_bytes())).and_then(|bytes|bytes.checked_add(shared_bytes.shared_source_plan_retained_bytes))"
+        not in plan_admission
+        or plan_admission.count("shared_bytes.shared_source_plan_retained_bytes") != 1
+        or "catalog.construction_peak_bytes().checked_sub(catalog.retained_bytes()).and_then(|bytes|bytes.checked_add(pointing_reference_scratch_bytes))"
+        not in plan_admission
+        or "letinitialization_scratch_bytes=noncatalog_initialization_scratch_bytes.max(catalog_initialization_scratch_bytes);"
+        not in plan_admission
+        or "letinitialization_peak_bytes=retained_bytes.checked_add(initialization_scratch_bytes)"
+        not in plan_admission
+        or "ifinitialization_peak_bytes>budget.available_bytes{returnErr(SelectedObservationContentPlanError::InsufficientRetainedBudget{required_bytes:initialization_peak_bytes,available_bytes:budget.available_bytes,},);}"
+        not in plan_admission
         or "validation_scratch_bytes" in plan_admission
         or "current_state" in plan_admission
     ):
