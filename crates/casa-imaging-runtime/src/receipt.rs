@@ -1108,7 +1108,10 @@ impl Eq for ExecutionReceiptStore {}
 struct ReceiptRootState {
     retention: ReceiptRetention,
     mutation: Mutex<()>,
+    summaries: Mutex<summary::ReceiptSummaryCache>,
 }
+
+mod summary;
 
 /// Process-local, unforgeable identity of one canonical receipt root.
 #[derive(Clone, Debug)]
@@ -1143,6 +1146,7 @@ fn receipt_root_state(
     let state = Arc::new(ReceiptRootState {
         retention,
         mutation: Mutex::new(()),
+        summaries: Mutex::new(summary::ReceiptSummaryCache::default()),
     });
     states.insert(root.to_owned(), Arc::downgrade(&state));
     Ok(state)
@@ -1434,27 +1438,14 @@ impl ExecutionReceiptStore {
             if path == current_path || !is_receipt_path(&path) {
                 continue;
             }
-            let file_bytes = entry
-                .metadata()
-                .map_err(|source| ReceiptError::Io {
-                    action: "inspect execution receipt",
-                    source,
-                })?
-                .len();
-            let receipt = read_receipt_body(&path)?;
-            let bytes = if receipt.status.is_terminal() {
-                file_bytes
-            } else {
-                file_bytes.max(worst_case_receipt_bytes(&receipt)?)
-            };
+            let receipt = self.validated_summary(&path)?;
+            let bytes = receipt.retention_bytes;
             total_bytes = total_bytes.saturating_add(bytes);
             retained.push((
                 path,
                 bytes,
                 receipt.status.is_terminal(),
-                receipt
-                    .finished_unix_millis
-                    .unwrap_or(receipt.started_unix_millis),
+                receipt.order_millis,
                 receipt.attempt_identity,
             ));
         }
@@ -1481,10 +1472,15 @@ impl ExecutionReceiptStore {
         }
         let pruned = !prune.is_empty();
         for path in prune {
-            fs::remove_file(path).map_err(|source| ReceiptError::Io {
+            fs::remove_file(&path).map_err(|source| ReceiptError::Io {
                 action: "prune retained execution receipt",
                 source,
             })?;
+            self.state
+                .summaries
+                .lock()
+                .map_err(|_| ReceiptError::InvalidStore)?
+                .remove(&path);
         }
         if pruned {
             sync_directory(&self.root)?;
@@ -5759,6 +5755,7 @@ fn prepared_publication_bytes(
         .ok_or(ReceiptError::RetentionExceeded)
 }
 
+#[cfg(test)]
 fn read_receipt_body(path: &Path) -> Result<ReceiptBody, ReceiptError> {
     let bytes = fs::read(path).map_err(|source| ReceiptError::Io {
         action: "read retained execution receipt",

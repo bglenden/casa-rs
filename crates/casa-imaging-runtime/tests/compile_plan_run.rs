@@ -160,6 +160,8 @@ mod common;
 
 mod cost_model_profile;
 mod imaging_plan_selection;
+#[path = "compile_plan_run/receipt_summary_cache.rs"]
+mod receipt_summary_cache;
 mod walking_skeleton;
 
 use common::{

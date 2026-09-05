@@ -2830,38 +2830,20 @@ impl RecordedInfeasibility {
     /// proof that the candidate's resource region is infeasible.
     fn from_store(store: &crate::ExecutionReceiptStore) -> Result<Self, ReceiptError> {
         let mut regions = Vec::new();
-        for attempt in store.attempts()? {
-            let receipt = store.open(attempt)?;
-            let status = receipt.status();
-            if !matches!(
-                status,
-                ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
-            ) || receipt.failure_kind() != Some(ReceiptFailureKind::ResourceInfeasible)
-            {
-                continue;
-            }
-            let Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
-                resource_identity,
-                required,
-                available,
-                ..
-            }) = receipt.infeasibility_certificate()
-            else {
-                // Capability gaps and references to earlier receipts are not
-                // quantitative pressure regions and cannot constrain a later
-                // Resource Authority decision.
+        for summary in store.summaries()? {
+            let Some(infeasibility) = summary.infeasibility else {
                 continue;
             };
             regions.push(RegionFailure {
-                problem: receipt.problem_identity(),
-                physical_work: receipt.dag_identity(),
-                resource_policy: receipt.resource_policy_identity(),
-                alternative: receipt.selected_alternative_projection().id,
-                attempt,
-                status,
-                resource_identity,
-                required,
-                available,
+                problem: infeasibility.problem,
+                physical_work: infeasibility.physical_work,
+                resource_policy: infeasibility.resource_policy,
+                alternative: infeasibility.alternative,
+                attempt: summary.attempt,
+                status: summary.status,
+                resource_identity: infeasibility.resource_identity,
+                required: infeasibility.required,
+                available: infeasibility.available,
             });
         }
         Ok(Self {
