@@ -1352,7 +1352,12 @@ fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
             .sensitivity(),
     )
     .expect("AW image response")
-    .with_normal_sum_weight(normal.normal_moment(0).expect("principal normal").sum_weight())
+    .with_normal_sum_weight(
+        normal
+            .normal_moment(0)
+            .expect("principal normal")
+            .sum_weight(),
+    )
     .expect("normal response scale");
     let model = result.outcome.output.scientific.final_model();
     let policy = casa_imaging_model::PrimaryBeamValidityPolicy::new(
