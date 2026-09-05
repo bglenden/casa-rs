@@ -14,7 +14,7 @@ use casa_imaging_application::{
     ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
     ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
     ContinuumWeighting, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
-    execute_continuum,
+    execute_continuum, resource_policy_for_task_requirements,
 };
 use casa_imaging_model::{
     ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
@@ -1307,6 +1307,38 @@ fn t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients() {
     assert_ne!(first_pointing_peak, phase_centre_peak);
     assert_ne!(second_pointing_peak, phase_centre_peak);
     assert_ne!(first_pointing_peak, second_pointing_peak);
+}
+
+#[test]
+fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = four_spw_vla_measurement_set(root.path());
+    let cache = root.path().join("aw-cache");
+    write_aw_test_cache(&cache);
+    let mut imaging = request(
+        measurement_set,
+        root.path().join("clean-mtmfs"),
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.channel_count = Some(8);
+    imaging.iterations = 1;
+    imaging.aw_projection = Some(aw_projection(cache, false));
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::AwProjection];
+    imaging.resource_policy = resource_policy_for_task_requirements(&imaging.task_requirements);
+
+    let result = execute_continuum(imaging).expect("direct Taylor AW CLEAN execution");
+    assert_eq!(result.actual_minor_iterations, 1);
+    assert!(result.outcome.output.final_major_receipt.is_some());
+    let normal = result.outcome.output.scientific.normal_state();
+    assert_eq!(normal.coefficient_term_count(), 2);
+    assert_eq!(normal.normal_moment_count(), 3);
 }
 
 #[test]

@@ -3107,7 +3107,8 @@ fn production_storage_profile(
     let queue_slots = u64::try_from(content_budget.maximum_live_blocks())
         .map_err(|_| boxed("selected source queue depth overflowed"))?
         .checked_add(1)
-        .ok_or_else(|| boxed("managed-spill queue depth overflowed"))?;
+        .and_then(|slots| slots.checked_add(u64::from(request.aw_projection.is_some())))
+        .ok_or_else(|| boxed("managed-spill and prepared-reader queue depth overflowed"))?;
     let profile = ProductionStorageProfile::new(
         input_root,
         capacity,

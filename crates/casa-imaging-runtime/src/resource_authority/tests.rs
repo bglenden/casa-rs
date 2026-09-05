@@ -805,6 +805,41 @@ fn host_use_policies_apply_distinct_aggregate_hard_admission_caps() {
 }
 
 #[test]
+fn t51_explicit_serial_queue_capacity_does_not_remove_balanced_headroom() {
+    let topology = inventory_with_views(Vec::new()).topology;
+    let queue = QueueResourceId::new("source-spill-aw-reader");
+    let capacity = ResourceGrant {
+        workers: 4,
+        queue_slots: BTreeMap::from([(queue.clone(), 4)]),
+        ..ResourceGrant::default()
+    };
+    let balanced = apply_policy(&topology, &ResourcePolicy::Balanced, capacity.clone());
+    assert_eq!(balanced.hard.queue_slots(&queue), 3);
+    assert!(matches!(
+        require_fit(
+            "source-spill-aw-reader".to_string(),
+            4,
+            balanced.hard.queue_slots(&queue)
+        ),
+        Err(ResourceError::Infeasible {
+            required: 4,
+            available: 3,
+            ..
+        })
+    ));
+    let serial = apply_policy(
+        &topology,
+        &ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(1),
+            ..ResourceOverride::default()
+        }),
+        capacity,
+    );
+    assert_eq!(serial.hard.workers, 1);
+    assert_eq!(serial.hard.queue_slots(&queue), 4);
+}
+
+#[test]
 fn concurrent_admission_is_atomic_at_the_process_policy_ceiling() {
     use std::sync::{Arc, Barrier};
 
