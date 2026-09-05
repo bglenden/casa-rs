@@ -9925,13 +9925,13 @@ fn normalize_direction_dependent_psf(
     let principal = &psf[..cells];
     let peak = principal
         .iter()
-        .max_by(|left, right| left.norm().total_cmp(&right.norm()))
+        .max_by(|left, right| left.re.total_cmp(&right.re))
         .copied()
         .ok_or(SpectralOperatorError::ProblemMismatch)?;
-    if !peak.re.is_finite() || !peak.im.is_finite() || peak.norm() <= f64::MIN_POSITIVE {
+    if !peak.re.is_finite() || !peak.im.is_finite() || peak.re <= f64::MIN_POSITIVE {
         return Err(SpectralOperatorError::GeneratedNonfinite);
     }
-    let scale = Complex64::new(principal_sum_weight, 0.0) / peak;
+    let scale = principal_sum_weight / peak.re;
     psf.iter_mut().for_each(|value| *value *= scale);
     Ok(())
 }
@@ -11310,6 +11310,22 @@ mod tests {
             "a nonzero-W plane must carry a complex phase screen"
         );
         assert_eq!(operator.taps([0.0, 0.0, f64::NAN]), None);
+    }
+
+    #[test]
+    fn direction_dependent_psf_normalizes_by_real_peak_without_phase_rotation() {
+        let original = [
+            Complex64::new(1.0, 8.0),
+            Complex64::new(4.0, 0.5),
+            Complex64::new(-6.0, 0.0),
+            Complex64::new(2.0, -3.0),
+            Complex64::new(10.0, 1.0),
+            Complex64::new(0.0, 2.0),
+        ];
+        let mut psf = original;
+        normalize_direction_dependent_psf(&mut psf, 3, &[20.0, 999.0])
+            .expect("finite complex Taylor PSF");
+        assert_eq!(psf, original.map(|value| value * 5.0));
     }
 
     #[test]
