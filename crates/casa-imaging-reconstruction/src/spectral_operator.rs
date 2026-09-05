@@ -7,7 +7,7 @@ use std::{
     fmt,
     mem::size_of,
     sync::{Arc, Mutex, OnceLock},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use casa_imaging_model::{
@@ -4050,6 +4050,55 @@ pub struct CompleteDataOwnerState {
     linear_rows: CasaLinearRowResampler,
     aw_projection: Option<PreparedAwProjection>,
     science_probe: Option<SpectralScienceProbe>,
+    aw_progress: Option<AwBlockProgress>,
+}
+
+#[derive(Debug)]
+struct AwBlockProgress {
+    owner: u64,
+    started: Option<Instant>,
+    last_reported: Option<Duration>,
+}
+
+impl AwBlockProgress {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
+        Self {
+            owner: NEXT_OWNER.fetch_add(1, Ordering::Relaxed),
+            started: None,
+            last_reported: None,
+        }
+    }
+
+    fn begin(&mut self) {
+        self.started.get_or_insert_with(Instant::now);
+    }
+
+    fn observe(progress: &mut Option<Self>, complete: bool, emit: impl FnOnce(u64, Duration)) {
+        let Some(progress) = progress else {
+            return;
+        };
+        let elapsed = progress
+            .started
+            .map_or(Duration::ZERO, |start| start.elapsed());
+        if progress.report_at(elapsed, complete) {
+            emit(progress.owner, elapsed);
+        }
+    }
+
+    fn report_at(&mut self, elapsed: Duration, complete: bool) -> bool {
+        if complete
+            || self
+                .last_reported
+                .is_none_or(|previous| elapsed.saturating_sub(previous) >= Duration::from_secs(30))
+        {
+            self.last_reported = Some(elapsed);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -4824,6 +4873,10 @@ impl CompleteDataOwnerState {
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         let science_probe = SpectralScienceProbe::from_environment(&specification)?;
+        let aw_progress = aw_projection
+            .as_ref()
+            .and_then(|_| imaging_stage_timing_started())
+            .map(|_| AwBlockProgress::new());
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -4844,6 +4897,7 @@ impl CompleteDataOwnerState {
             linear_rows,
             aw_projection,
             science_probe,
+            aw_progress,
         })
     }
 
@@ -4884,6 +4938,10 @@ impl CompleteDataOwnerState {
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         let science_probe = SpectralScienceProbe::from_environment(&specification)?;
+        let aw_progress = aw_projection
+            .as_ref()
+            .and_then(|_| imaging_stage_timing_started())
+            .map(|_| AwBlockProgress::new());
         Ok(Self {
             problem: specification.problem,
             geometry: specification.geometry,
@@ -4904,6 +4962,7 @@ impl CompleteDataOwnerState {
             linear_rows,
             aw_projection,
             science_probe,
+            aw_progress,
         })
     }
 
@@ -4994,6 +5053,9 @@ impl CompleteDataOwnerState {
         &mut self,
         block: &WeightingReplayChunk,
     ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
+        if let Some(progress) = &mut self.aw_progress {
+            progress.begin();
+        }
         if self.science_probe.is_some() {
             self.consume_block_inner::<true>(block)
         } else {
@@ -5050,7 +5112,64 @@ impl CompleteDataOwnerState {
             .next_block_sequence
             .checked_add(1)
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        self.observe_aw_block_progress(Some(block), false);
         Ok(&self.predicted_selected)
+    }
+
+    fn observe_aw_block_progress(&mut self, block: Option<&WeightingReplayChunk>, complete: bool) {
+        AwBlockProgress::observe(&mut self.aw_progress, complete, |owner, elapsed| {
+            let first = block
+                .and_then(|block| block.samples().first())
+                .map(|sample| sample.selected().address());
+            let last = block
+                .and_then(|block| block.samples().last())
+                .map(|sample| sample.selected().address());
+            for operator in &self.operators {
+                let Some(aw) = &operator.aw_projection else {
+                    continue;
+                };
+                let counters = match aw.lock() {
+                    Ok(aw) => aw.diagnostics(),
+                    Err(_) => {
+                        eprintln!(
+                            "imaging_aw_block_progress owner={} chart={} diagnostics_available=0",
+                            owner, operator.chart_ordinal
+                        );
+                        continue;
+                    }
+                };
+                eprintln!(
+                    "imaging_aw_block_progress owner={} chart={} pass={:?} complete={} elapsed_nanos={} completed_blocks={} completed_samples={} last_sequence={:?} problem={} weighting={:?} model={:?} first_row={:?} last_row={:?} first_ddid={:?} last_ddid={:?} first_spw={:?} last_spw={:?} selections={} degrid_passes={} grid_preparations={} evaluated_cfs_taps={} evaluated_wtcf_taps={} provider_hits={} provider_loads={} evicted_bytes={} copied_bytes={} resident_byte_ceiling={} diagnostics_available=1",
+                    owner,
+                    operator.chart_ordinal,
+                    operator.workload.pass,
+                    u8::from(complete),
+                    elapsed.as_nanos(),
+                    self.next_block_sequence,
+                    self.sample_count,
+                    self.next_block_sequence.checked_sub(1),
+                    self.problem,
+                    self.weighting_generation,
+                    self.model_binding,
+                    first.map(|address| address.physical_row),
+                    last.map(|address| address.physical_row),
+                    first.map(|address| address.data_description_id),
+                    last.map(|address| address.data_description_id),
+                    first.map(|address| address.spectral_window_id),
+                    last.map(|address| address.spectral_window_id),
+                    counters.selections,
+                    counters.degrid_passes,
+                    counters.grid_passes,
+                    counters.imaging_taps,
+                    counters.weight_taps,
+                    counters.provider_hits,
+                    counters.provider_loads,
+                    counters.evicted_bytes,
+                    counters.copied_bytes,
+                    counters.resident_byte_ceiling,
+                );
+            }
+        });
     }
 
     fn finish_casa_linear_rows(&mut self) -> Result<(), SpectralOperatorError> {
@@ -5877,6 +5996,9 @@ impl CompleteDataOwnerState {
         &mut self,
         block: &WeightingReplayChunk,
     ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
+        if let Some(progress) = &mut self.aw_progress {
+            progress.begin();
+        }
         if self.model_binding.is_none() {
             return Err(SpectralOperatorError::MissingMajorCycleResidual);
         }
@@ -6017,6 +6139,7 @@ impl CompleteDataOwnerState {
             .next_block_sequence
             .checked_add(1)
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        self.observe_aw_block_progress(Some(block), false);
         Ok(&self.predicted_selected)
     }
 
@@ -6115,6 +6238,7 @@ impl CompleteDataOwnerState {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
+        self.observe_aw_block_progress(None, true);
         let (coverage, coverage_proof_work) = self
             .coverage
             .finish(replay.weighting_generation(), self.sample_count);
@@ -6220,6 +6344,7 @@ impl CompleteDataOwnerState {
         {
             return Err(SpectralOperatorError::IncompleteCoverage);
         }
+        self.observe_aw_block_progress(None, true);
         let (coverage, coverage_proof_work) = self
             .coverage
             .finish(replay.weighting_generation(), self.sample_count);
@@ -13202,6 +13327,105 @@ mod tests {
         assert_eq!(one.psf(), split.psf());
         assert_eq!(one.sensitivity(), split.sensitivity());
         assert_eq!(one.sum_weight(), split.sum_weight());
+    }
+
+    #[test]
+    fn t51_aw_block_progress_reports_first_throttled_and_terminal_snapshots() {
+        use std::time::Duration;
+
+        let mut observer = super::AwBlockProgress::new();
+        assert!(
+            observer.started.is_none(),
+            "construction does not start the source clock"
+        );
+        observer.begin();
+        let started = observer.started;
+        observer.begin();
+        assert_eq!(
+            observer.started, started,
+            "later blocks do not reset the clock"
+        );
+        assert!(observer.report_at(Duration::from_secs(1), false));
+        assert!(!observer.report_at(Duration::from_secs(30), false));
+        assert!(observer.report_at(Duration::from_secs(31), false));
+        assert!(!observer.report_at(Duration::from_secs(32), false));
+        assert!(observer.report_at(Duration::from_secs(32), true));
+    }
+
+    #[test]
+    fn t51_aw_block_progress_disabled_does_not_read_counters() {
+        let mut disabled = None;
+        for complete in [false, true] {
+            super::AwBlockProgress::observe(&mut disabled, complete, |_, _| {
+                panic!("disabled observer must not read counters or inspect block addresses")
+            });
+        }
+        assert!(disabled.is_none());
+    }
+
+    #[test]
+    fn t51_aw_block_progress_snapshot_preserves_operator_counters_and_grid_bits() {
+        let (mut plain, mut observed, sample) = observed_aw_operators();
+        let mut observer = Some(super::AwBlockProgress::new());
+        observer.as_mut().unwrap().begin();
+        let mut plain_grids = [
+            vec![Complex64::default(); 100],
+            vec![Complex64::default(); 100],
+        ];
+        let mut observed_grids = plain_grids.clone();
+        let mut plain_errors = plain_grids.clone();
+        let mut observed_errors = plain_grids.clone();
+        let mut snapshots = 0;
+        for (index, value) in [Complex64::new(0.4, -0.7), Complex64::new(-1.2, 0.3)]
+            .into_iter()
+            .enumerate()
+        {
+            let (imaging, normal) = plain
+                .prepare_imaging_and_normal_grid([10, 10], sample)
+                .unwrap();
+            imaging
+                .grid_compensated(&mut plain_grids[0], &mut plain_errors[0], value)
+                .unwrap();
+            normal
+                .grid_compensated(&mut plain_grids[1], &mut plain_errors[1], value)
+                .unwrap();
+            let (imaging, normal) = observed
+                .prepare_imaging_and_normal_grid([10, 10], sample)
+                .unwrap();
+            imaging
+                .grid_compensated(&mut observed_grids[0], &mut observed_errors[0], value)
+                .unwrap();
+            normal
+                .grid_compensated(&mut observed_grids[1], &mut observed_errors[1], value)
+                .unwrap();
+            let before = observed.diagnostics();
+            super::AwBlockProgress::observe(&mut observer, index == 1, |_, _| {
+                let snapshot = observed.diagnostics();
+                assert_eq!(snapshot, before);
+                assert_eq!(snapshot.imaging_taps, index as u64 + 1);
+                assert_eq!(snapshot.weight_taps, index as u64 + 1);
+                assert_eq!(snapshot.provider_loads, index as u64 + 1);
+                snapshots += 1;
+            });
+            assert_eq!(observed.diagnostics(), plain.diagnostics());
+        }
+        assert_eq!(snapshots, 2);
+        for (plain, observed) in plain_grids
+            .iter()
+            .flatten()
+            .chain(plain_errors.iter().flatten())
+            .zip(
+                observed_grids
+                    .iter()
+                    .flatten()
+                    .chain(observed_errors.iter().flatten()),
+            )
+        {
+            assert_eq!(
+                [plain.re.to_bits(), plain.im.to_bits()],
+                [observed.re.to_bits(), observed.im.to_bits()]
+            );
+        }
     }
 
     #[test]
