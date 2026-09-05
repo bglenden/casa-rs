@@ -494,7 +494,7 @@ impl SpectralCyclePlan {
                     problem,
                     weighting.limits().max_block_samples(),
                 )
-                .map_err(|_| SpectralCyclePlanError::Overflow)?,
+                .map_err(SpectralCyclePlanError::ManagedSpillBudget)?,
             )
         };
         let gridded_replay_descriptor = gridded_replay
@@ -2751,6 +2751,8 @@ pub enum SpectralCyclePlanError {
     VisibilityWriteCount,
     /// A byte, row, or elapsed-time projection overflowed its identity domain.
     Overflow,
+    /// Reconstruction rejected the replay layout or its managed-spill projection.
+    ManagedSpillBudget(std::io::Error),
     /// Scientific weighting planning rejected the compiled problem or limits.
     Weighting(casa_imaging_reconstruction::WeightingError),
     /// T18 physical composition rejected the base transaction authority.
@@ -2771,7 +2773,14 @@ impl fmt::Display for SpectralCyclePlanError {
         write!(f, "spectral cycle planning failed: {self:?}")
     }
 }
-impl Error for SpectralCyclePlanError {}
+impl Error for SpectralCyclePlanError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ManagedSpillBudget(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 impl From<casa_imaging_reconstruction::WeightingError> for SpectralCyclePlanError {
     fn from(v: casa_imaging_reconstruction::WeightingError) -> Self {
         Self::Weighting(v)
@@ -2811,6 +2820,22 @@ impl From<PhysicalWorkBindingError> for SpectralCyclePlanError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn managed_spill_rejection_retains_reconstruction_cause() {
+        let cause = casa_imaging_reconstruction::SpectralOperatorError::UnsupportedGriddedReplay;
+        let error = SpectralCyclePlanError::ManagedSpillBudget(std::io::Error::other(cause));
+        assert!(error.to_string().contains("UnsupportedGriddedReplay"));
+        assert!(!error.to_string().contains("Overflow"));
+        let cause = error
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap()
+            .get_ref()
+            .unwrap();
+        assert!(cause.is::<casa_imaging_reconstruction::SpectralOperatorError>());
+    }
 
     #[test]
     fn gridded_normal_strategy_prefers_reuse_and_rejects_source_free_recomputation() {
