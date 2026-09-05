@@ -645,7 +645,6 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
             .pool
             .prepared
             .get(&identity)
-            .cloned()
             .ok_or(AwOperatorError::PreparedCellUnavailable)?;
         let bytes = prepared
             .decoded_resident_bytes()
@@ -778,12 +777,12 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
             drop(state);
 
             let decoded = (|| {
-                let mut decoder = PreparedCellDecoder::new(&prepared)?;
+                let mut decoder = PreparedCellDecoder::new(prepared)?;
                 self.pool
                     .reader
                     .read(prepared.descriptor().identity(), &mut decoder)?;
                 let cell = decoder
-                    .finish(&prepared)
+                    .finish(prepared)
                     .map_err(|_| PreparedArtifactError::InvalidLayout)?;
                 if cell.resident_bytes() != bytes {
                     return Err(PreparedArtifactError::InvalidLayout);

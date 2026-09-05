@@ -43,7 +43,7 @@ fn t51_cf_decoder_stage_baseline() {
             let parse = started.elapsed();
             let started = Instant::now();
             let kernel = adapt_kernel_from_plane(&metadata, plane).unwrap();
-            let widen_validate = started.elapsed();
+            let adapt_validate = started.elapsed();
             assert_eq!(kernel, expected);
             eprintln!(
                 "t51_cf_decoder_baseline {}",
@@ -51,7 +51,7 @@ fn t51_cf_decoder_stage_baseline() {
                     "plane": name, "shape": metadata.shape, "trial": trial,
                     "payload_bytes": payload.len(), "payload_sha256": payload_sha256,
                     "copy_nanos": copy.as_nanos(), "parse_nanos": parse.as_nanos(),
-                    "widen_validate_nanos": widen_validate.as_nanos(),
+                    "adapt_validate_nanos": adapt_validate.as_nanos(),
                     "kernel_equal": true,
                     "scope": "existing decoder only; source read, checksum and reader finite scan excluded",
                     "compiled_aw_cache_sha256": format!("{:x}", Sha256::digest(include_bytes!("../aw_cache.rs"))),
