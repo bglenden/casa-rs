@@ -1090,7 +1090,10 @@ impl StreamProgress {
         static ENABLED: OnceLock<bool> = OnceLock::new();
         static NEXT_STREAM: AtomicU64 = AtomicU64::new(1);
         ENABLED
-            .get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some())
+            .get_or_init(|| {
+                std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some()
+                    || std::env::var_os("CASA_RS_TRACE_IMAGING_SCIENCE").is_some()
+            })
             .then(|| Self {
                 stream: NEXT_STREAM.fetch_add(1, Ordering::Relaxed),
                 source: std::any::type_name::<S>(),
@@ -1996,6 +1999,56 @@ mod tests {
             last_reported: None,
             completed_blocks: 0,
             completed_logical_units: 0,
+        }
+    }
+
+    #[test]
+    fn t51_stage_timing_emits_bounded_progress_without_science_tracing() {
+        const CHILD: &str = "CASA_RS_T51_PROGRESS_TEST_CHILD";
+        if env::var_os(CHILD).is_some() {
+            for slots in [1, 2] {
+                let plan = BoundedStreamPlan::new::<usize, u64>(slots, 1, 16, 1, 0)
+                    .unwrap()
+                    .with_maximum_logical_units_per_block(2)
+                    .unwrap();
+                let outcome = execute_bounded(
+                    plan,
+                    7,
+                    LogicalUnitSource {
+                        logical_units: 2,
+                        emitted: false,
+                    },
+                    SumKernel::default(),
+                )
+                .unwrap();
+                assert_eq!(outcome.measurements.commits_completed, 1);
+            }
+            return;
+        }
+        for enabled in [false, true] {
+            let mut command = std::process::Command::new(env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "bounded_stream::tests::t51_stage_timing_emits_bounded_progress_without_science_tracing",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env_remove("CASA_RS_TRACE_IMAGING_SCIENCE")
+                .env_remove("CASA_RS_IMAGING_SCIENCE_PROBE")
+                .env_remove("CASA_RS_TRACE_IMAGING_STAGE_TIMING");
+            if enabled {
+                command.env("CASA_RS_TRACE_IMAGING_STAGE_TIMING", "1");
+            }
+            let output = command.output().unwrap();
+            assert!(output.status.success(), "{output:?}");
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                stderr.matches("imaging_bounded_stream_progress ").count(),
+                if enabled { 2 } else { 0 },
+                "stage timing enabled={enabled}: {stderr}",
+            );
         }
     }
 
