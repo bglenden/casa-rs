@@ -51,7 +51,7 @@ use casa_imaging_reconstruction::{
     WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk, WeightingReplaySummary,
     begin_weighting_generation, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, SpectralOperatorPass, gridded_normal_execution_residency,
+        CompleteDataOwnerResult, GriddedNormalStorageLayout, SpectralOperatorPass,
         gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
     },
 };
@@ -4120,11 +4120,19 @@ fn execute_spectral_cycle_with_weighting_mode(
         .expect("gridded residual-refresh grid allocation");
     let final_specification =
         SpectralOperatorSpecification::new(&problem).expect("final spectral specification");
-    let execution_residency = gridded_normal_execution_residency(
-        final_specification.grid_shape(),
+    let execution_residency = GriddedNormalStorageLayout::new(
+        [final_specification.grid_shape()],
         final_complete.slab().core_depth(),
         casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
+        false,
     )
+    .and_then(|layout| {
+        layout.residency(
+            final_complete
+                .gridded_replay_record_bound()
+                .expect("planned replay record bound"),
+        )
+    })
     .expect("gridded two-domain residency");
     let expected_grid_bytes = execution_residency.peak_complex_values()
         * std::mem::size_of::<num_complex::Complex64>()

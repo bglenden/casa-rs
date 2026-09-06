@@ -25,13 +25,13 @@ use casa_imaging_reconstruction::{
     WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerSlabFold, CompleteDataOwnerState,
-        GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalOperatorApply,
-        GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
-        GriddedNormalOperatorProgram, GriddedNormalPartial, GriddedNormalRoutingMeasurements,
-        GriddedNormalSourceCardinality, GriddedNormalWork, PreparedSpectralOperator,
-        PreparedSpectralOperatorRecycle, SourceCardinalityObservation, SpectralOperatorPass,
-        SpectralOperatorWorkload, gridded_normal_aw_domain_execution_residency,
-        gridded_normal_domain_execution_residency, gridded_normal_operator_record_bytes,
+        GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
+        GriddedNormalOperatorApply, GriddedNormalOperatorBlockMeasurements,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram, GriddedNormalPartial,
+        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality,
+        GriddedNormalStorageLayout, GriddedNormalStoragePlan, GriddedNormalWork,
+        PreparedSpectralOperator, PreparedSpectralOperatorRecycle, SourceCardinalityObservation,
+        SpectralOperatorPass, SpectralOperatorWorkload, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, prepare_spectral_operator,
         reprepare_spectral_operator, spectral_operator_workload,
     },
@@ -96,7 +96,9 @@ impl GriddedNormalReplayPlanningCapacity {
                 let useful_lane_bytes = minimum_working_set_bytes
                     .checked_mul(useful_lanes)
                     .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
-                Ok(cpu_data_working_set_bytes.min(useful_lane_bytes))
+                Ok(cpu_data_working_set_bytes
+                    .min(useful_lane_bytes)
+                    .max(minimum_working_set_bytes))
             }
         }
     }
@@ -106,7 +108,6 @@ impl GriddedNormalReplayPlanningCapacity {
 pub(crate) struct GriddedNormalReplayWindowPlan {
     frame_counts: Arc<[usize]>,
     batch_schedules: Box<[GriddedNormalReplayBatchSchedule]>,
-    route_slot_record_capacities: Box<[usize]>,
     source_slot_bytes: u64,
     route_capacity_bytes: u64,
     maximum_frames: usize,
@@ -120,12 +121,15 @@ struct GriddedNormalReplayBatchSchedule {
     maximum_frames: usize,
     frame_counts: Arc<[usize]>,
     source_slot_bytes: u64,
+    storage: GriddedNormalStoragePlan,
 }
 
 impl GriddedNormalReplayWindowPlan {
     fn for_program(
         program: &GriddedNormalOperatorProgram,
         capacity: GriddedNormalReplayPlanningCapacity,
+        convolution_support: usize,
+        working_set_limit: Option<u64>,
     ) -> Result<Self, CompleteDataPlanError> {
         let record_bytes = u64::try_from(program.record_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
@@ -148,15 +152,18 @@ impl GriddedNormalReplayWindowPlan {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let minimum_working_set_bytes = Self::minimum_working_set_bytes(&frames, prediction_width)?;
-        Self::for_frame_payloads(
+        Self::plan_frame_payloads(
             &frames,
-            capacity.working_set_bytes(minimum_working_set_bytes)?,
+            capacity
+                .working_set_bytes(minimum_working_set_bytes)?
+                .min(working_set_limit.unwrap_or(u64::MAX)),
             usize::try_from(record_bytes).map_err(|_| CompleteDataPlanError::ResidencyOverflow)?,
             prediction_width,
+            program.storage_layout(convolution_support)?,
         )
     }
 
-    fn minimum_working_set_bytes(
+    pub(crate) fn minimum_working_set_bytes(
         frames: &[(u64, u64)],
         prediction_width: usize,
     ) -> Result<u64, CompleteDataPlanError> {
@@ -183,11 +190,34 @@ impl GriddedNormalReplayWindowPlan {
             .ok_or(CompleteDataPlanError::ResidencyOverflow)
     }
 
+    #[cfg(test)]
     fn for_frame_payloads(
         frames: &[(u64, u64)],
         working_set_bytes: u64,
         record_bytes: usize,
         prediction_width: usize,
+        accumulation_width: usize,
+    ) -> Result<Self, CompleteDataPlanError> {
+        Self::plan_frame_payloads(
+            frames,
+            working_set_bytes,
+            record_bytes,
+            prediction_width,
+            GriddedNormalStorageLayout::new(
+                [[8, 8]],
+                accumulation_width,
+                casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
+                false,
+            )?,
+        )
+    }
+
+    pub(crate) fn plan_frame_payloads(
+        frames: &[(u64, u64)],
+        working_set_bytes: u64,
+        record_bytes: usize,
+        prediction_width: usize,
+        layout: GriddedNormalStorageLayout,
     ) -> Result<Self, CompleteDataPlanError> {
         if record_bytes == 0
             || prediction_width == 0
@@ -331,12 +361,27 @@ impl GriddedNormalReplayWindowPlan {
                 let mut bounded_counts = Vec::new();
                 let mut frame_offset = 0_usize;
                 let mut maximum_source_bytes = 0_u64;
+                let mut ordinal_capacities = vec![0_usize; maximum_frames];
+                let mut maximum_records = 0_usize;
                 for &planned in &frame_counts {
                     let window_end = frame_offset
                         .checked_add(planned)
                         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
                     while frame_offset < window_end {
                         let count = (window_end - frame_offset).min(maximum_frames);
+                        let mut window_records = 0_usize;
+                        for (ordinal, &(_, records)) in frames[frame_offset..frame_offset + count]
+                            .iter()
+                            .enumerate()
+                        {
+                            let records = usize::try_from(records)
+                                .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
+                            ordinal_capacities[ordinal] = ordinal_capacities[ordinal].max(records);
+                            window_records = window_records
+                                .checked_add(records)
+                                .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+                        }
+                        maximum_records = maximum_records.max(window_records);
                         let source_bytes = frames[frame_offset..frame_offset + count]
                             .iter()
                             .try_fold(0_u64, |total, (payload, _)| {
@@ -357,28 +402,49 @@ impl GriddedNormalReplayWindowPlan {
                     maximum_frames,
                     frame_counts: Arc::from(bounded_counts),
                     source_slot_bytes: maximum_source_bytes,
+                    storage: layout.plan(&ordinal_capacities, maximum_records)?,
                 })
             })
             .collect::<Result<Box<[_]>, _>>()?;
-        let schedule_elements = batch_schedules.iter().try_fold(
-            frame_counts.len() + route_slot_record_capacities.len(),
+        let schedule_metadata_capacity_bytes = batch_schedules.iter().try_fold(
+            frame_counts
+                .len()
+                .checked_mul(size_of::<usize>())
+                .and_then(|bytes| {
+                    bytes.checked_add(
+                        batch_schedules
+                            .len()
+                            .checked_mul(size_of::<GriddedNormalReplayBatchSchedule>())?,
+                    )
+                })
+                .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
             |total, schedule| {
                 total
-                    .checked_add(schedule.frame_counts.len())
-                    .and_then(|elements| elements.checked_add(1))
+                    .checked_add(
+                        schedule
+                            .frame_counts
+                            .len()
+                            .checked_mul(size_of::<usize>())
+                            .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
+                    )
+                    .and_then(|bytes| {
+                        bytes.checked_add(
+                            schedule
+                                .storage
+                                .route_slot_record_capacities()
+                                .len()
+                                .checked_mul(size_of::<usize>())?,
+                        )
+                    })
                     .ok_or(CompleteDataPlanError::ResidencyOverflow)
             },
         )?;
-        let schedule_metadata_capacity_bytes = schedule_elements
-            .checked_mul(size_of::<usize>())
-            .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
         if planned_working_set > working_set_bytes {
             return Err(CompleteDataPlanError::ResidencyOverflow);
         }
         Ok(Self {
             frame_counts: Arc::from(frame_counts),
             batch_schedules,
-            route_slot_record_capacities: route_slot_record_capacities.into_boxed_slice(),
             source_slot_bytes: maximum_source_bytes,
             route_capacity_bytes: maximum_route_bytes,
             maximum_frames: maximum_window_frames,
@@ -392,8 +458,17 @@ impl GriddedNormalReplayWindowPlan {
         &self.frame_counts
     }
 
+    #[cfg(test)]
     pub(crate) fn route_slot_record_capacities(&self) -> &[usize] {
-        &self.route_slot_record_capacities
+        self.storage_plan().route_slot_record_capacities()
+    }
+
+    pub(crate) fn storage_plan(&self) -> &GriddedNormalStoragePlan {
+        &self
+            .batch_schedules
+            .last()
+            .expect("complete window plan has a batch schedule")
+            .storage
     }
 
     pub(crate) const fn source_slot_bytes(&self) -> u64 {
@@ -498,6 +573,14 @@ pub struct GriddedNormalReplayDescriptor {
 }
 
 impl GriddedNormalReplayDescriptor {
+    #[cfg(test)]
+    pub(crate) const fn planning_fixture(bytes: u64) -> Self {
+        Self {
+            identity: crate::ArtifactIdentity::from_owner_digest([53; 32]),
+            bytes,
+        }
+    }
+
     /// Exact reconstruction-minted identity of the encoded operator program.
     #[must_use]
     pub const fn identity(self) -> crate::ArtifactIdentity {
@@ -933,12 +1016,49 @@ impl FrozenGriddedNormalReplay {
         self.spill.seal()
     }
 
-    pub(crate) fn plan_windows(
-        &mut self,
+    pub(crate) fn preview_windows(
+        &self,
         capacity: GriddedNormalReplayPlanningCapacity,
+        convolution_support: usize,
+        working_set_limit: Option<u64>,
     ) -> Result<GriddedNormalReplayWindowPlan, CompleteDataPlanError> {
-        let plan = GriddedNormalReplayWindowPlan::for_program(&self.program, capacity)?;
-        bind_gridded_replay_window_plan(&mut self.window_plan, plan)
+        GriddedNormalReplayWindowPlan::for_program(
+            &self.program,
+            capacity,
+            convolution_support,
+            working_set_limit,
+        )
+    }
+
+    pub(crate) fn bind_window_plan(
+        &mut self,
+        plan: GriddedNormalReplayWindowPlan,
+    ) -> Result<(), CompleteDataPlanError> {
+        if self.prepared_source.is_some() || self.prepared_batch_size.is_some() {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        bind_gridded_replay_window_plan(&mut self.window_plan, plan)?;
+        self.latest_read = None;
+        self.latest_stream = None;
+        self.latest_routing = None;
+        self.latest_prefetch = None;
+        self.latest_cache_load = None;
+        self.latest_cache_resident_bytes = None;
+        Ok(())
+    }
+
+    pub(crate) fn release_completed_window_plan(&mut self) -> Result<(), CompleteDataPlanError> {
+        if self.window_plan.is_none()
+            || self.prepared_batch_size.is_none()
+            || self.prepared_source.is_some()
+            || self.latest_read.is_none()
+            || self.latest_stream.is_none()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        self.window_plan = None;
+        self.prepared_batch_size = None;
+        Ok(())
     }
 
     pub(crate) fn retain_plan_storage(
@@ -1409,6 +1529,8 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
 /// multiplied by the worker count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct GriddedNormalRouteResidency {
+    storage_layout: GriddedNormalStorageLayout,
+    grid_residency: GriddedNormalExecutionResidency,
     maximum_window_records: usize,
     maximum_frame_groups: usize,
     maximum_frames: usize,
@@ -1422,6 +1544,8 @@ impl GriddedNormalRouteResidency {
         let peak_bytes = usize::try_from(window_plan.route_capacity_bytes())
             .map_err(|_| CompleteDataPlanError::ResidencyOverflow)?;
         Ok(Self {
+            storage_layout: window_plan.storage_plan().layout(),
+            grid_residency: window_plan.storage_plan().residency(),
             maximum_window_records: window_plan.maximum_records(),
             maximum_frame_groups: window_plan.maximum_records(),
             maximum_frames: window_plan.maximum_frames(),
@@ -2047,29 +2171,22 @@ impl CompleteDataPlanFragment {
         }
         let pool_bytes = projection.resident_byte_ceiling();
         let catalog_bytes = projection.catalog_resident_bytes();
-        let grid_bytes = if self.execution_role == CompleteDataExecutionRole::GriddedArtifact {
-            let projected = gridded_normal_aw_domain_execution_residency(
-                self.specification.chart_grid_shapes(),
-                self.workload.coefficient_terms(),
-                projection.maximum_imaging_support(),
-            )?;
-            projected
-                .peak_complex_values()
-                .checked_mul(size_of::<num_complex::Complex64>())
-                .and_then(|bytes| bytes.checked_add(projected.metadata_bytes()))
-                .ok_or(CompleteDataPlanError::ResidencyOverflow)?
-        } else {
-            self.residency.grid_bytes
-        };
+        if self.execution_role == CompleteDataExecutionRole::GriddedArtifact
+            && self
+                .gridded_route_residency
+                .ok_or(CompleteDataPlanError::PlanMismatch)?
+                .storage_layout
+                .convolution_support()
+                != projection.maximum_imaging_support()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
         self.residency.peak_bytes = self
             .residency
             .peak_bytes
-            .checked_sub(self.residency.grid_bytes)
-            .and_then(|bytes| bytes.checked_add(grid_bytes))
-            .and_then(|bytes| bytes.checked_add(pool_bytes))
+            .checked_add(pool_bytes)
             .and_then(|bytes| bytes.checked_add(catalog_bytes))
             .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
-        self.residency.grid_bytes = grid_bytes;
         self.residency.aw_prepared_pool_bytes = pool_bytes;
         self.residency.aw_catalog_metadata_bytes = catalog_bytes;
         self.aw_projection = Some(projection);
@@ -2136,6 +2253,14 @@ impl CompleteDataPlanFragment {
     #[must_use]
     pub const fn residency(&self) -> CompleteDataResidency {
         self.residency
+    }
+
+    /// Return the schedule-certified record bound used to size shared replay storage.
+    /// Selected-observation phases have no gridded replay window.
+    #[must_use]
+    pub fn gridded_replay_record_bound(&self) -> Option<usize> {
+        self.gridded_route_residency
+            .map(GriddedNormalRouteResidency::maximum_window_records)
     }
 
     /// Return route bounds only for opaque gridded-artifact replay.
@@ -3249,18 +3374,9 @@ fn project_residency(
             .checked_mul(complex_bytes)
             .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
         CompleteDataExecutionRole::GriddedArtifact => {
-            let accumulation_terms = match problem.reconstruction().basis() {
-                ReconstructionBasis::JointContinuumLine { .. } => workload
-                    .coefficient_terms()
-                    .checked_add(problem.geometry().spectral().output_channels())
-                    .ok_or(CompleteDataPlanError::ResidencyOverflow)?,
-                _ => workload.coefficient_terms(),
-            };
-            let residency = gridded_normal_domain_execution_residency(
-                specification.chart_grid_shapes(),
-                accumulation_terms,
-                specification.maximum_convolution_support(),
-            )?;
+            let residency = gridded_route_residency
+                .ok_or(CompleteDataPlanError::PlanMismatch)?
+                .grid_residency;
             residency
                 .peak_complex_values()
                 .checked_mul(complex_bytes)
@@ -3715,17 +3831,22 @@ impl CompleteDataPreparedState {
         let reconciliation_node = self
             .reconciliation_node
             .ok_or(CompleteDataPlanError::MissingReconciliationNode)?;
+        let schedule = artifact
+            .window_plan()
+            .ok_or(CompleteDataPlanError::PlanMismatch)?
+            .batch_schedule(
+                usize::try_from(context.knobs().batch_size)
+                    .map_err(|_| CompleteDataPlanError::PlanMismatch)?,
+            )
+            .map_err(|_| CompleteDataPlanError::PlanMismatch)?;
         let state = artifact
             .program
-            .begin_apply_with_route_capacities(
+            .begin_apply_with_storage_plan(
                 problem,
                 preparation.final_model(),
                 prior,
                 self.owner,
-                artifact
-                    .window_plan()
-                    .ok_or(CompleteDataPlanError::PlanMismatch)?
-                    .route_slot_record_capacities(),
+                &schedule.storage,
             )
             .map_err(|error| {
                 CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
@@ -4429,6 +4550,7 @@ mod tests {
             working_set,
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
         .expect("heterogeneous byte plan");
         let route = GriddedNormalRouteResidency::from_window_plan(&plan)
@@ -4444,7 +4566,7 @@ mod tests {
         assert_eq!(plan.working_set_bytes(), working_set);
         assert_eq!(
             plan.schedule_metadata_capacity_bytes(),
-            23 * size_of::<usize>()
+            25 * size_of::<usize>() + 4 * size_of::<super::GriddedNormalReplayBatchSchedule>()
         );
     }
 
@@ -4456,6 +4578,7 @@ mod tests {
             1_030,
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
         .expect("heterogeneous byte plan");
 
@@ -4473,7 +4596,7 @@ mod tests {
         );
         assert_eq!(
             plan.schedule_metadata_capacity_bytes(),
-            11 * size_of::<usize>()
+            10 * size_of::<usize>() + 2 * size_of::<super::GriddedNormalReplayBatchSchedule>()
         );
     }
 
@@ -4490,6 +4613,7 @@ mod tests {
             minimum,
             record_bytes,
             prediction_width,
+            3,
         )
         .expect("dynamic-width plan");
         let route_capacity =
@@ -4512,6 +4636,7 @@ mod tests {
                 minimum,
                 record_bytes,
                 prediction_width,
+                3,
             ),
             Err(CompleteDataPlanError::PlanMismatch)
         ));
@@ -4528,6 +4653,7 @@ mod tests {
             working_set,
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
         .expect("future-safe heterogeneous plan");
 
@@ -4535,6 +4661,34 @@ mod tests {
         assert_eq!(plan.route_slot_record_capacities(), &[100, 1, 1, 1]);
         assert_eq!(plan.route_capacity_bytes(), route_capacity);
         assert_eq!(plan.working_set_bytes(), working_set);
+    }
+
+    #[test]
+    fn rebatching_preserves_each_frame_ordinal_capacity() {
+        let frames = [(32, 1), (96, 3), (32, 1)];
+        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(
+            &frames,
+            1_030,
+            TEST_RECORD_BYTES,
+            TEST_PREDICTION_WIDTH,
+            1,
+        )
+        .expect("heterogeneous plan");
+        assert_eq!(plan.frame_counts(), &[2, 1]);
+        let schedule = plan
+            .batch_schedule(1)
+            .expect("singleton execution schedule");
+        let mut offset = 0;
+        for &count in schedule.frame_counts.iter() {
+            for (ordinal, &(_, records)) in frames[offset..offset + count].iter().enumerate() {
+                assert!(
+                    records as usize <= schedule.storage.route_slot_record_capacities()[ordinal],
+                    "rebatched frame requires {records} records at ordinal {ordinal}"
+                );
+            }
+            offset += count;
+        }
+        assert_eq!(offset, frames.len());
     }
 
     #[test]
@@ -4548,6 +4702,7 @@ mod tests {
             working_set,
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
         .expect("future-safe heterogeneous plan");
 
@@ -4581,6 +4736,7 @@ mod tests {
             minimum - 1,
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
         .expect_err("one byte below the minimum must fail");
 
@@ -4659,7 +4815,7 @@ mod tests {
     }
 
     #[test]
-    fn replay_window_budget_fails_below_the_singleton_minimum() {
+    fn cache_preference_does_not_reject_a_complete_singleton() {
         let frames = [(65_536, 2_048)];
         let minimum = GriddedNormalReplayWindowPlan::minimum_working_set_bytes(
             &frames,
@@ -4670,15 +4826,17 @@ mod tests {
             cpu_data_working_set_bytes: minimum - 1,
             performance_cpu_cores: 4,
         };
-        let error = GriddedNormalReplayWindowPlan::for_frame_payloads(
+        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(
             &frames,
             capacity.working_set_bytes(minimum).unwrap(),
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
-        .expect_err("topology below the exact singleton must fail");
+        .expect("a cache target is not a physical-memory ceiling");
 
-        assert!(matches!(error, CompleteDataPlanError::PlanMismatch));
+        assert_eq!(plan.frame_counts(), &[1]);
+        assert_eq!(plan.working_set_bytes(), minimum);
     }
 
     #[test]
@@ -4689,6 +4847,7 @@ mod tests {
             1_030,
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
         .expect("first window plan");
         let singleton_minimum = GriddedNormalReplayWindowPlan::minimum_working_set_bytes(
@@ -4701,6 +4860,7 @@ mod tests {
             singleton_minimum,
             TEST_RECORD_BYTES,
             TEST_PREDICTION_WIDTH,
+            1,
         )
         .expect("changed window plan");
         let mut binding = None;

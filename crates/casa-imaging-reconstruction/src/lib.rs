@@ -72,11 +72,10 @@ pub mod runtime_adapter {
         GriddedNormalOperatorApply, GriddedNormalOperatorBlock,
         GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
-        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality, GriddedNormalWork,
-        SourceCardinalityObservation, gridded_normal_aw_domain_execution_residency,
-        gridded_normal_domain_execution_residency, gridded_normal_execution_residency,
-        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
-        standard_convolution_support,
+        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality,
+        GriddedNormalStorageLayout, GriddedNormalStoragePlan, GriddedNormalWork,
+        SourceCardinalityObservation, gridded_normal_operator_record_bytes,
+        gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,

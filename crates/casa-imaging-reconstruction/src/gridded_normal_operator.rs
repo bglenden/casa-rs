@@ -286,6 +286,150 @@ pub struct GriddedNormalExecutionResidency {
     metadata_bytes: usize,
 }
 
+/// Reconstruction-owned physical dimensions shared by all replay window plans.
+///
+/// The layout is independent of worker count. Replay bounds select the number
+/// of task slots; image charts, support and the actual accumulation width select
+/// the payload and descriptor capacity of each slot.
+///
+/// For a window containing at most `R` encoded records, the pool has
+/// `min(R, tile_count + 3)` slots: every nonempty task consumes a record, and
+/// canonical hot-tile partitioning introduces at most three extra shards.
+/// Each slot reserves the largest tile's cell count but is rebound to the
+/// exact logical tile shape before use. The compensated global merge grids
+/// remain shared and fully resident; neither storage owner is per worker.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GriddedNormalStorageLayout {
+    tile_count: usize,
+    maximum_tile_cells: usize,
+    accumulation_width: usize,
+    convolution_support: usize,
+    aw_projection: bool,
+    merge_complex_values: usize,
+    fixed_metadata_bytes: usize,
+    slot_metadata_bytes: usize,
+}
+
+/// Immutable allocation certificate for one executable replay-window schedule.
+///
+/// The maximum simultaneous record count sizes the tile pool. Separate maxima
+/// for each frame ordinal size routing scratch: their sum can exceed the
+/// maximum simultaneous count when different windows dominate each ordinal.
+/// Rebatching must derive a new certificate from its own frame grouping.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GriddedNormalStoragePlan {
+    layout: GriddedNormalStorageLayout,
+    route_slot_record_capacities: Box<[usize]>,
+    maximum_window_records: usize,
+    residency: GriddedNormalExecutionResidency,
+}
+
+impl GriddedNormalStorageLayout {
+    /// Return the support radius accounted for by this layout.
+    #[must_use]
+    pub const fn convolution_support(self) -> usize {
+        self.convolution_support
+    }
+
+    /// Derive physical tile dimensions without allocating any image payloads.
+    pub fn new(
+        grid_shapes: impl IntoIterator<Item = [usize; 2]>,
+        accumulation_width: usize,
+        convolution_support: usize,
+        aw_projection: bool,
+    ) -> Result<Self, SpectralOperatorError> {
+        two_domain::storage_layout_for_projection(
+            grid_shapes,
+            accumulation_width,
+            convolution_support,
+            aw_projection,
+        )
+    }
+
+    /// Price the complete tile pool and merge storage for a certified record bound.
+    pub fn residency(
+        self,
+        maximum_window_records: usize,
+    ) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
+        let slots = two_domain::task_capacity(self.tile_count, maximum_window_records)?;
+        let tile_accumulator_complex_values = self
+            .maximum_tile_cells
+            .checked_mul(slots)
+            .and_then(|cells| cells.checked_mul(self.accumulation_width))
+            .and_then(|values| values.checked_mul(2))
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        Ok(GriddedNormalExecutionResidency {
+            tile_accumulator_complex_values,
+            merge_complex_values: self.merge_complex_values,
+            peak_complex_values: tile_accumulator_complex_values
+                .checked_add(self.merge_complex_values)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+            metadata_bytes: slots
+                .checked_mul(self.slot_metadata_bytes)
+                .and_then(|bytes| bytes.checked_add(self.fixed_metadata_bytes))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+        })
+    }
+
+    /// Bind the distinct schedule-wide record and per-frame-ordinal bounds.
+    pub fn plan(
+        self,
+        route_slot_record_capacities: &[usize],
+        maximum_window_records: usize,
+    ) -> Result<GriddedNormalStoragePlan, SpectralOperatorError> {
+        let capacity_sum =
+            route_slot_record_capacities
+                .iter()
+                .try_fold(0_usize, |total, count| {
+                    total
+                        .checked_add(*count)
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)
+                })?;
+        if route_slot_record_capacities.is_empty()
+            || maximum_window_records > capacity_sum
+            || route_slot_record_capacities
+                .iter()
+                .any(|count| *count > maximum_window_records)
+        {
+            return Err(SpectralOperatorError::ResidencyOverflow);
+        }
+        Ok(GriddedNormalStoragePlan {
+            layout: self,
+            route_slot_record_capacities: route_slot_record_capacities.into(),
+            maximum_window_records,
+            residency: self.residency(maximum_window_records)?,
+        })
+    }
+}
+
+impl GriddedNormalStoragePlan {
+    /// Return the exact allocated tile-pool and merge-grid projection.
+    #[must_use]
+    pub const fn residency(&self) -> GriddedNormalExecutionResidency {
+        self.residency
+    }
+
+    /// Return the capacities required at each ordinal in an executable window.
+    #[must_use]
+    pub fn route_slot_record_capacities(&self) -> &[usize] {
+        &self.route_slot_record_capacities
+    }
+
+    /// Return the certified maximum record count in one complete window.
+    #[must_use]
+    pub const fn maximum_window_records(&self) -> usize {
+        self.maximum_window_records
+    }
+
+    /// Return the reconstruction-owned physical layout.
+    #[must_use]
+    pub const fn layout(&self) -> GriddedNormalStorageLayout {
+        self.layout
+    }
+}
+
 impl GriddedNormalExecutionResidency {
     /// Return persistent tile/shard grid plus compensation values.
     #[must_use]
@@ -312,46 +456,11 @@ impl GriddedNormalExecutionResidency {
     }
 }
 
-/// Project exact worker-independent tile/shard and global-merge residency.
-#[doc(hidden)]
-pub fn gridded_normal_execution_residency(
-    grid_shape: [usize; 2],
-    coefficient_terms: usize,
-    convolution_support: usize,
-) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
-    gridded_normal_domain_execution_residency([grid_shape], coefficient_terms, convolution_support)
-}
-
 /// Return the support radius of the canonical standard convolution kernel.
 #[doc(hidden)]
 #[must_use]
 pub const fn standard_convolution_support() -> usize {
     SUPPORT
-}
-
-/// Project exact tiled accumulation and merge residency for all image domains.
-#[doc(hidden)]
-pub fn gridded_normal_domain_execution_residency(
-    grid_shapes: impl IntoIterator<Item = [usize; 2]>,
-    coefficient_terms: usize,
-    convolution_support: usize,
-) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
-    two_domain::domain_execution_residency(grid_shapes, coefficient_terms, convolution_support)
-}
-
-/// Project exact AW tiled accumulation and merge residency for all image domains.
-#[doc(hidden)]
-pub fn gridded_normal_aw_domain_execution_residency(
-    grid_shapes: impl IntoIterator<Item = [usize; 2]>,
-    coefficient_terms: usize,
-    convolution_support: usize,
-) -> Result<GriddedNormalExecutionResidency, SpectralOperatorError> {
-    two_domain::domain_execution_residency_for_projection(
-        grid_shapes,
-        coefficient_terms,
-        convolution_support,
-        true,
-    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1439,6 +1548,19 @@ pub struct GriddedNormalOperatorProgram {
 }
 
 impl GriddedNormalOperatorProgram {
+    /// Derive the shared physical storage layout from this program's science dimensions.
+    pub fn storage_layout(
+        &self,
+        convolution_support: usize,
+    ) -> Result<GriddedNormalStorageLayout, SpectralOperatorError> {
+        GriddedNormalStorageLayout::new(
+            self.manifest.specification.chart_grid_shapes(),
+            self.accumulation_width(),
+            convolution_support,
+            self.manifest.aw_projection,
+        )
+    }
+
     /// Return the reconstruction-minted identity of this exact framed program.
     #[must_use]
     pub fn identity(&self) -> LogicalIdentity {
@@ -1530,20 +1652,26 @@ impl GriddedNormalOperatorProgram {
             .and_then(|records| {
                 usize::try_from(records).map_err(|_| SpectralOperatorError::ResidencyOverflow)
             })?;
-        self.begin_apply_with_route_capacities(problem, model, prior, prepared, &[maximum_records])
+        let storage = self
+            .storage_layout(prepared.convolution_maximum_support())?
+            .plan(&[maximum_records], maximum_records)?;
+        self.begin_apply_with_storage_plan(problem, model, prior, prepared, &storage)
     }
 
-    /// Bind the runtime-planned retained route slots to the existing apply owner.
+    /// Construct exactly the admitted task pool and retained route-slot capacities.
     #[doc(hidden)]
-    pub fn begin_apply_with_route_capacities(
+    pub fn begin_apply_with_storage_plan(
         &self,
         problem: &CompiledProblem,
         model: &ModelGeneration,
         prior: FinalNormalState,
         prepared: PreparedSpectralOperator,
-        route_slot_record_capacities: &[usize],
+        storage: &GriddedNormalStoragePlan,
     ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
         require_supported_basis(&problem.reconstruction().basis())?;
+        if storage.layout != self.storage_layout(prepared.convolution_maximum_support())? {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
         let (prepared_specification, workload, mut ffts, aw_projection) = prepared.into_parts();
         if prepared_specification.aw_projection().is_some() != aw_projection.is_some() {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
@@ -1628,12 +1756,14 @@ impl GriddedNormalOperatorProgram {
             self.manifest.aw_projection,
         )?;
         let two_domain = PreparedGriddedNormalTwoDomainWindow::with_projection_record_capacities(
-            route_slot_record_capacities,
+            storage.route_slot_record_capacities(),
             tile_catalogs.tile_count(),
             self.manifest.record_layout,
             self.manifest.aw_projection,
+            storage.maximum_window_records(),
         )?;
-        let tile_accumulators = tile_catalogs.accumulators(core_depth)?;
+        let tile_accumulators =
+            tile_catalogs.accumulators(core_depth, storage.maximum_window_records())?;
         let domain_planes = || {
             self.manifest
                 .specification
@@ -1667,7 +1797,7 @@ impl GriddedNormalOperatorProgram {
             next_sector_commit: 0,
             #[cfg(test)]
             prepared: RwLock::new(PreparedGriddedNormalWindow::with_record_capacities(
-                route_slot_record_capacities,
+                storage.route_slot_record_capacities(),
             )?),
             #[cfg(test)]
             sectors: std::array::from_fn(|sector_id| {
@@ -4459,21 +4589,38 @@ mod tests {
     #[test]
     fn t51_aw_residual_residency_accepts_support_spanning_tiles() {
         for (shape, terms, support) in [([4096, 4096], 2, 50), ([65, 65], 1, 32)] {
-            let projected = gridded_normal_aw_domain_execution_residency([shape], terms, support)
+            let projected = GriddedNormalStorageLayout::new([shape], terms, support, true)
+                .and_then(|layout| layout.residency(6364))
                 .expect("AW residual planning must accept a support spanning tile boundaries");
             assert!(projected.peak_complex_values() > projected.merge_complex_values());
         }
     }
 
     #[test]
+    fn t51_aw_full_geometry_residual_grid_fits_observed_memory_budget() {
+        // #537: the failed residual plan had this allowance after its other owners.
+        let available_grid_bytes = 17_728_272_996_u64 - (26_150_840_270 - 19_061_088_832);
+        let projected = GriddedNormalStorageLayout::new([[4096, 4096]], 2, 50, true)
+            .and_then(|layout| layout.residency(6364))
+            .expect("full-geometry AW residual projection");
+        let grid_bytes =
+            projected.peak_complex_values() * size_of::<Complex64>() + projected.metadata_bytes();
+        assert!(
+            grid_bytes as u64 <= available_grid_bytes,
+            "AW residual grid requires {grid_bytes} bytes, available {available_grid_bytes}"
+        );
+    }
+
+    #[test]
     fn image_domain_residency_formula_is_exact_and_worker_independent() {
         let shapes = [[10, 10], [14, 12]];
         let depth = 3;
-        let projected = gridded_normal_domain_execution_residency(shapes, depth, SUPPORT)
+        let projected = GriddedNormalStorageLayout::new(shapes, depth, SUPPORT, false)
+            .and_then(|layout| layout.residency(7))
             .expect("project domain residency");
         let catalogs =
             GriddedNormalDomainTileCatalogs::new(shapes, SUPPORT).expect("domain tile catalogs");
-        let accumulators = catalogs.accumulators(depth).expect("tile accumulators");
+        let accumulators = catalogs.accumulators(depth, 7).expect("tile accumulators");
         let actual_tile_values = accumulators.iter().fold(0, |total, accumulator| {
             let accumulator = accumulator.lock().expect("tile owner");
             total
@@ -4502,7 +4649,8 @@ mod tests {
             projected.tile_accumulator_complex_values() + projected.merge_complex_values()
         );
 
-        let production = gridded_normal_execution_residency([1024, 1024], 1, SUPPORT)
+        let production = GriddedNormalStorageLayout::new([[1024, 1024]], 1, SUPPORT, false)
+            .and_then(|layout| layout.residency(6364))
             .expect("project 1024 grid");
         assert!(
             production.tile_accumulator_complex_values() < 3 * production.merge_complex_values(),

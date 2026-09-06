@@ -111,6 +111,36 @@ pub struct PreparedArtifactReaderPlan {
 }
 
 impl PreparedArtifactReaderPlan {
+    #[cfg(test)]
+    pub(crate) fn planning_fixture(
+        execution_problem: CompiledProblemId,
+        implementation: WorkImplementationId,
+        storage_domain: StorageDomainId,
+        decoded_resident_bytes: u64,
+        decoder_workspace_bytes: u64,
+        store_resident_bytes: u64,
+        logical_bytes: u64,
+    ) -> Self {
+        Self {
+            execution_problem,
+            catalog_identity: ArtifactIdentity::from_owner_digest([51; 32]),
+            cache_identity: CacheIdentity::from_owner_digest([52; 32]),
+            node: WorkNodeId::new("fixture-aw-reader"),
+            release_node: WorkNodeId::new("fixture-aw-reader-release"),
+            implementation,
+            storage_domain,
+            storage_demand_id: "fixture-aw-storage".to_string(),
+            persistent_cache_bytes: logical_bytes,
+            decoded_resident_bytes,
+            decoder_workspace_bytes,
+            store_resident_bytes,
+            total_resident_bytes: decoded_resident_bytes
+                + decoder_workspace_bytes
+                + store_resident_bytes,
+            logical_bytes,
+        }
+    }
+
     pub(crate) const fn execution_problem(&self) -> CompiledProblemId {
         self.execution_problem
     }

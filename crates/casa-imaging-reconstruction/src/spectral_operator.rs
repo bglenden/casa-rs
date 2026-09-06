@@ -2355,6 +2355,13 @@ impl fmt::Debug for PreparedSpectralOperator {
 }
 
 impl PreparedSpectralOperator {
+    pub(crate) fn convolution_maximum_support(&self) -> usize {
+        self.aw_projection.as_ref().map_or_else(
+            || self.specification.maximum_convolution_support(),
+            PreparedAwProjection::maximum_imaging_support,
+        )
+    }
+
     /// Bind the application-validated paired AW cache to this exact prepared operator.
     pub fn with_aw_projection(
         mut self,

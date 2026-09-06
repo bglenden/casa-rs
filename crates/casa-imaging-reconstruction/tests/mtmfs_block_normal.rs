@@ -49,9 +49,8 @@ use casa_imaging_reconstruction::{
         GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
         GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
         GriddedNormalRoutingMeasurements, SourceCardinalityObservation, SpectralOperatorPass,
-        gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
-        standard_convolution_support,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        prepare_spectral_operator, spectral_operator_workload, standard_convolution_support,
     },
 };
 
@@ -1537,12 +1536,18 @@ fn execute_compact_taylor(
     workers: usize,
 ) -> CompactTaylorResult {
     let specification = SpectralOperatorSpecification::new(problem).expect("Taylor operator");
-    let grid_residency = gridded_normal_execution_residency(
-        specification.grid_shape(),
-        program.accumulation_width(),
-        standard_convolution_support(),
-    )
-    .expect("exact Taylor compact grid residency");
+    let grid_residency = program
+        .storage_layout(standard_convolution_support())
+        .expect("storage layout")
+        .residency(
+            blocks
+                .iter()
+                .map(|block| {
+                    usize::try_from(block.record_count()).expect("record capacity fits usize")
+                })
+                .sum(),
+        )
+        .expect("exact Taylor compact grid residency");
     let workload = spectral_operator_workload(
         &specification,
         frozen.plan.limits().max_block_samples(),
@@ -1555,12 +1560,16 @@ fn execute_compact_taylor(
         .map(|block| usize::try_from(block.record_count()).expect("record capacity fits usize"))
         .collect::<Vec<_>>();
     let mut apply = program
-        .begin_apply_with_route_capacities(
+        .begin_apply_with_storage_plan(
             problem,
             preparation.final_model(),
             prior,
             prepared,
-            &capacities,
+            &program
+                .storage_layout(standard_convolution_support())
+                .expect("storage layout")
+                .plan(&capacities, capacities.iter().sum())
+                .expect("complete window storage"),
         )
         .expect("begin compact Taylor apply");
     assert_eq!(
@@ -2537,14 +2546,14 @@ fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel
 }
 
 #[test]
-fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
+fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     let problem = problem();
     let samples = samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &samples);
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.schema_version(), 7);
+    assert_eq!(program.schema_version(), 8);
     assert_eq!(
         gridded_normal_operator_record_bytes(&problem).expect("Taylor record width"),
         32,

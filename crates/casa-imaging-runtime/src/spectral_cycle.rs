@@ -1978,6 +1978,9 @@ impl SpectralCycleExecutor {
             route_capacity_bytes,
         )?);
         self.log_gridded_replay_measurements(replay);
+        replay
+            .release_completed_window_plan()
+            .map_err(io::Error::other)?;
         Ok(())
     }
 

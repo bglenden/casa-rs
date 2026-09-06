@@ -46,7 +46,7 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, SpectralOperatorSpecification, WeightingExecutionLimits,
-    runtime_adapter::{gridded_normal_execution_residency, gridded_normal_route_capacity_bytes},
+    runtime_adapter::{GriddedNormalStorageLayout, gridded_normal_route_capacity_bytes},
 };
 use casa_ms::{
     SelectedObservationContentBudget, SelectedObservationResolutionRequest,
@@ -520,15 +520,18 @@ fn execute_complete_data_mfs_with_policy(
     .expect("compile constant-basis MFS problem");
     let spectral_specification =
         SpectralOperatorSpecification::new(&problem).expect("fixture spectral specification");
-    let execution_residency = gridded_normal_execution_residency(
-        spectral_specification.grid_shape(),
-        spectral_specification.slab().core_depth(),
-        casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
-    )
-    .expect("fixture two-domain residency");
-    let expected_replay_grid_bytes = execution_residency.peak_complex_values()
-        * std::mem::size_of::<Complex64>()
-        + execution_residency.metadata_bytes();
+    let expected_replay_grid_bytes = |record_bound| {
+        let execution_residency = GriddedNormalStorageLayout::new(
+            [spectral_specification.grid_shape()],
+            spectral_specification.slab().core_depth(),
+            casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
+            false,
+        )
+        .and_then(|layout| layout.residency(record_bound))
+        .expect("fixture two-domain residency");
+        execution_residency.peak_complex_values() * std::mem::size_of::<Complex64>()
+            + execution_residency.metadata_bytes()
+    };
     let residency = initial_access
         .certify_residency(&problem)
         .expect("certify selected-content residency");
@@ -681,6 +684,11 @@ fn execute_complete_data_mfs_with_policy(
         gridded_normal: final_gridded_normal,
         ..
     } = final_planned.into_parts();
+    let expected_replay_grid_bytes = expected_replay_grid_bytes(
+        final_complete_data
+            .gridded_replay_record_bound()
+            .expect("planned replay record bound"),
+    );
     let final_executor = SpectralCycleExecutor::new_gridded(
         implementation_id(),
         problem.clone(),
@@ -726,6 +734,28 @@ fn execute_complete_data_mfs_with_policy(
         .latest_complete_data_stream_evidence()
         .expect("final stream evidence")
         .into();
+    let mut completed_replay = final_registry
+        .implementation()
+        .take_gridded_normal_replay()
+        .expect("completed replay remains available for another cycle");
+    assert!(completed_replay.window_plan().is_none());
+    assert!(completed_replay.latest_read_measurements().is_some());
+    assert!(completed_replay.latest_stream_measurements().is_some());
+    assert!(completed_replay.release_completed_window_plan().is_err());
+    let next_window = completed_replay
+        .preview_windows(
+            crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Unknown,
+            casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
+            None,
+        )
+        .unwrap();
+    completed_replay.bind_window_plan(next_window).unwrap();
+    assert!(completed_replay.latest_read_measurements().is_none());
+    assert!(completed_replay.latest_stream_measurements().is_none());
+    assert!(
+        completed_replay.release_completed_window_plan().is_err(),
+        "the preceding cycle cannot authorize release of an unexecuted binding"
+    );
     let completion = final_registry
         .implementation()
         .take_completion()
@@ -782,7 +812,7 @@ fn observation_resolution() -> SelectedObservationResolutionRequest {
     )
 }
 
-fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
+pub(super) fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -833,7 +863,7 @@ fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
     )
 }
 
-fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
+pub(super) fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -980,6 +1010,16 @@ fn artifact_storage(authority: &ResourceAuthority, worker_count: u64) -> Managed
 }
 
 fn runtime_inventory() -> HostInventory {
+    runtime_inventory_with_roots(
+        fixture().storage_root.clone(),
+        fixture().measurement_set.clone(),
+    )
+}
+
+pub(super) fn runtime_inventory_with_roots(
+    storage_root: PathBuf,
+    source_root: PathBuf,
+) -> HostInventory {
     let memory_domain = CapacityDomainId::new("host-memory");
     let memory_view = CapacityViewId::new("host-memory");
     let io_rate = RateResourceId::new("io-rate");
@@ -1006,7 +1046,7 @@ fn runtime_inventory() -> HostInventory {
             storage_domains: vec![
                 StorageDomain {
                     id: storage.clone(),
-                    root: fixture().storage_root.clone(),
+                    root: storage_root,
                     capacity_bytes: STORAGE_BYTES,
                     read_rate: io_rate.clone(),
                     write_rate: io_rate.clone(),
@@ -1015,7 +1055,7 @@ fn runtime_inventory() -> HostInventory {
                 },
                 StorageDomain {
                     id: source_storage.clone(),
-                    root: fixture().measurement_set.clone(),
+                    root: source_root,
                     capacity_bytes: STORAGE_BYTES,
                     read_rate: io_rate.clone(),
                     write_rate: io_rate.clone(),
@@ -1063,7 +1103,7 @@ fn runtime_inventory() -> HostInventory {
     }
 }
 
-fn storage_io() -> StorageIoResourceBinding {
+pub(super) fn storage_io() -> StorageIoResourceBinding {
     StorageIoResourceBinding::new(
         StorageDomainId::new("atomic-output"),
         RateResourceId::new("transaction-io-rate"),
@@ -1072,7 +1112,7 @@ fn storage_io() -> StorageIoResourceBinding {
     )
 }
 
-fn artifact_storage_io() -> StorageIoResourceBinding {
+pub(super) fn artifact_storage_io() -> StorageIoResourceBinding {
     StorageIoResourceBinding::new(
         StorageDomainId::new("atomic-output"),
         RateResourceId::new("io-rate"),
@@ -1085,7 +1125,7 @@ fn registry_id() -> ImplementationRegistryId {
     ImplementationRegistryId::from_sha256([TEST_IMPLEMENTATION_BYTE; 32])
 }
 
-fn implementation_id() -> WorkImplementationId {
+pub(super) fn implementation_id() -> WorkImplementationId {
     WorkImplementationId::new("issue-581-complete-data-mfs")
 }
 
@@ -1098,7 +1138,7 @@ fn attempt_id(worker_count: u64, phase: u8) -> ExecutionAttemptId {
     ExecutionAttemptId::from_sha256([86_u8.wrapping_add(worker).wrapping_add(phase); 32])
 }
 
-struct PlanningImplementation {
+pub(super) struct PlanningImplementation {
     id: WorkImplementationId,
 }
 
@@ -1140,14 +1180,14 @@ impl WorkImplementation for PlanningImplementation {
     }
 }
 
-struct PlanningRegistry {
+pub(super) struct PlanningRegistry {
     id: ImplementationRegistryId,
     metadata: ImplementationContractMetadata,
     implementation: PlanningImplementation,
 }
 
 impl PlanningRegistry {
-    fn new(problem: &casa_imaging_model::CompiledProblem) -> Self {
+    pub(super) fn new(problem: &casa_imaging_model::CompiledProblem) -> Self {
         Self {
             id: registry_id(),
             metadata: ImplementationContractMetadata::new(
