@@ -148,8 +148,15 @@ pub(crate) struct PlainColumnEntry {
 // Read path
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static CONTROL_FILE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Read table.dat and dispatch based on the table type marker.
 pub(crate) fn read_table_dat_dispatch(path: &Path) -> Result<TableDatResult, StorageError> {
+    #[cfg(test)]
+    CONTROL_FILE_READS.with(|reads| reads.set(reads.get() + 1));
     let mut io = AipsIo::open(path, AipsOpenOption::Old)?;
     let table_version = io.getstart("Table")?;
 

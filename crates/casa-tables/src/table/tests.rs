@@ -2455,6 +2455,63 @@ fn incremental_selected_array_cell_writes_retain_at_most_one_cell_and_no_rows() 
 }
 
 #[test]
+fn selected_row_reads_reuse_open_control_metadata_without_retaining_payloads() {
+    use crate::storage::table_control::CONTROL_FILE_READS;
+
+    let schema = TableSchema::new(vec![
+        ColumnSchema::scalar("id", PrimitiveType::Int32),
+        ColumnSchema::array_fixed("data", PrimitiveType::Int32, vec![2]),
+        ColumnSchema::array_fixed("other", PrimitiveType::Int32, vec![2]),
+    ])
+    .unwrap();
+    for dm in [DataManagerKind::StManAipsIO, DataManagerKind::StandardStMan] {
+        let root = unique_test_dir(&format!("selected_rows_retained_metadata_{dm:?}"));
+        let mut table = Table::with_schema(schema.clone());
+        for row in 0..6 {
+            table
+                .add_row(row_with_fixed_arrays(row, &[row, row + 10], &[0, 1]))
+                .unwrap();
+        }
+        table
+            .save(TableOptions::new(&root).with_data_manager(dm))
+            .unwrap();
+        let reopened = Table::open(TableOptions::new(&root)).unwrap();
+        let metadata_bytes = reopened.retained_read_metadata_bytes().unwrap();
+        let initial_reads = CONTROL_FILE_READS.get();
+        for rows in [&[5, 2, 5][..], &[0][..], &[][..]] {
+            let arrays = reopened
+                .column_accessor("data")
+                .unwrap()
+                .array_cells_owned_uncached(rows)
+                .unwrap();
+            let scalars = reopened
+                .column_accessor("id")
+                .unwrap()
+                .scalar_cells_owned_for_rows(rows)
+                .unwrap();
+            assert_eq!(
+                arrays,
+                rows.iter()
+                    .map(|&row| Some(ArrayValue::from_i32_vec(vec![row as i32, row as i32 + 10])))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                scalars,
+                rows.iter()
+                    .map(|&row| Some(ScalarValue::Int32(row as i32)))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(CONTROL_FILE_READS.get(), initial_reads);
+        assert_eq!(
+            reopened.retained_read_metadata_bytes(),
+            Some(metadata_bytes)
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[test]
 fn lazy_disk_open_reads_selected_array_cells_without_loading_full_tiled_column() {
     let schema = TableSchema::new(vec![ColumnSchema::array_fixed(
         "data",

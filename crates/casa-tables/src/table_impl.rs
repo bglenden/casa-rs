@@ -526,19 +526,27 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
-        let values = storage
-            .load_array_column_rows_with_row_hint(
+        let values = match source.read_metadata.get() {
+            Some(metadata) => storage.load_plain_array_column_rows(
+                &source.path,
+                &metadata.table_dat,
+                column,
+                row_indices,
+                Some(source.row_count_hint as u64),
+            ),
+            None => storage.load_array_column_rows_with_row_hint(
                 &source.path,
                 column,
                 row_indices,
                 Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load selected rows for array column '{column}' from table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
+            ),
+        }
+        .map_err(|err| {
+            TableError::Storage(format!(
+                "failed to load selected rows for array column '{column}' from table {}: {err}",
+                source.path.display()
+            ))
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
                 "storage_load_complete",
@@ -701,19 +709,27 @@ impl TableImpl {
             source.path.display()
         ));
         let storage = CompositeStorage;
-        let values = storage
-            .load_scalar_column_rows_with_row_hint(
+        let values = match source.read_metadata.get() {
+            Some(metadata) => storage.load_plain_scalar_column_rows(
+                &source.path,
+                &metadata.table_dat,
+                column,
+                row_indices,
+                Some(source.row_count_hint as u64),
+            ),
+            None => storage.load_scalar_column_rows_with_row_hint(
                 &source.path,
                 column,
                 row_indices,
                 Some(source.row_count_hint as u64),
-            )
-            .map_err(|err| {
-                TableError::Storage(format!(
-                    "failed to load selected rows for scalar column '{column}' from table {}: {err}",
-                    source.path.display()
-                ))
-            })?;
+            ),
+        }
+        .map_err(|err| {
+            TableError::Storage(format!(
+                "failed to load selected rows for scalar column '{column}' from table {}: {err}",
+                source.path.display()
+            ))
+        })?;
         if let Some(profiler) = profiler.as_mut() {
             profiler.mark_with_detail(
                 "storage_load_complete",

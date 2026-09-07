@@ -186,6 +186,97 @@ fn t51_aw_subset_binding_only() {
 
 #[test]
 #[ignore = "requires T51 MS/full CF source/external scratch and an explicitly bounded supervisor"]
+#[allow(clippy::assertions_on_constants)]
+fn t51_aw_subset_source_open_only() {
+    assert!(!cfg!(debug_assertions), "use a release test binary");
+    let started = Instant::now();
+    let required = |name| {
+        PathBuf::from(std::env::var_os(name).unwrap())
+            .canonicalize()
+            .unwrap()
+    };
+    let ms = required("CASA_RS_T51_SOURCE_BIND_MS");
+    let cache = required("CASA_RS_T51_SOURCE_BIND_CF_CACHE");
+    let external = required("CASA_RS_T51_SOURCE_BIND_SCRATCH_PARENT");
+    assert_eq!(
+        fs::metadata(&ms).unwrap().dev(),
+        fs::metadata(&external).unwrap().dev()
+    );
+    assert_eq!(
+        fs::metadata(&cache).unwrap().dev(),
+        fs::metadata(&external).unwrap().dev()
+    );
+    let scratch = tempfile::Builder::new()
+        .prefix("t51-subset-source-open-")
+        .tempdir_in(external)
+        .unwrap();
+    let prepared =
+        subset_aw_request(full_aw_request(ms, cache, scratch.path().join("probe"))).unwrap();
+    eprintln!(
+        "t51_source_open_probe stage=prepare seconds={:.9}",
+        started.elapsed().as_secs_f64()
+    );
+    let stage = Instant::now();
+    let (input, initial_access) = casa_ms::resolve_selected_observation(prepared.observation)
+        .unwrap()
+        .into_parts();
+    let observation = casa_imaging_model::compile_observation(input).unwrap();
+    let problem = casa_imaging_model::compile(casa_imaging_model::ImagingRequest::new(
+        prepared.specification,
+        prepared.geometry,
+        casa_imaging_model::ProblemInputIdentities::new(observation),
+        prepared.model_lifecycle,
+    ))
+    .unwrap();
+    assert_eq!(
+        problem.inputs().observation_snapshot().sources()[0]
+            .selection()
+            .rows()
+            .selected_row_count(),
+        10_080
+    );
+    eprintln!(
+        "t51_source_open_probe stage=resolve_compile seconds={:.9}",
+        stage.elapsed().as_secs_f64()
+    );
+    let runtime = prepared.native.unwrap().runtime;
+    let policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: runtime
+            .authority
+            .topology()
+            .memory_domains
+            .iter()
+            .map(|domain| (domain.id.clone(), 16 << 30))
+            .collect(),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
+    let stage = Instant::now();
+    let initial_access = SelectedObservationSourceResources::finalize_access(
+        &problem,
+        initial_access,
+        &runtime.authority,
+        &policy,
+    )
+    .unwrap();
+    eprintln!(
+        "t51_source_open_probe stage=finalize seconds={:.9}",
+        stage.elapsed().as_secs_f64()
+    );
+    let stage = Instant::now();
+    let selected = initial_access.open(&problem).unwrap();
+    eprintln!(
+        "t51_source_open_probe stage=open seconds={:.9} total_seconds={:.9}",
+        stage.elapsed().as_secs_f64(),
+        started.elapsed().as_secs_f64()
+    );
+    drop(selected);
+    assert!(!scratch.path().join(".casa-rs-aw-prepared").exists());
+    assert!(started.elapsed().as_secs_f64() < 60.0);
+}
+
+#[test]
+#[ignore = "requires T51 MS/full CF source/external scratch and an explicitly bounded supervisor"]
 fn t51_aw_subset_cache_preparation() {
     let started = Instant::now();
     let required = |name| {
