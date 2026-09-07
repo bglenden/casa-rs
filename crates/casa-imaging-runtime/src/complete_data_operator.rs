@@ -7,7 +7,11 @@ use std::{
     error::Error,
     fmt, io,
     mem::{align_of, size_of},
-    sync::Arc,
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Instant,
 };
 
 #[cfg(test)]
@@ -1354,6 +1358,7 @@ impl FrozenGriddedNormalReplay {
             GriddedNormalReplayKernel {
                 state,
                 record_bytes,
+                timings: GriddedNormalReplayTimings::new(pass_ordinal, workers),
             },
         )
         .map_err(|failure| match *failure.cause {
@@ -1406,6 +1411,60 @@ fn bind_gridded_replay_window_plan(
 struct GriddedNormalReplayKernel {
     state: GriddedNormalOperatorState,
     record_bytes: usize,
+    timings: GriddedNormalReplayTimings,
+}
+
+#[derive(Default)]
+struct GriddedNormalPhaseTiming {
+    partitions: AtomicU64,
+    records: AtomicU64,
+    elapsed_nanos: AtomicU64,
+}
+
+struct GriddedNormalReplayTimings {
+    enabled: bool,
+    pass_ordinal: u32,
+    workers: usize,
+    phases: [GriddedNormalPhaseTiming; 2],
+}
+
+impl GriddedNormalReplayTimings {
+    fn new(pass_ordinal: u32, workers: usize) -> Self {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        Self {
+            enabled: *ENABLED
+                .get_or_init(|| std::env::var_os("CASA_RS_TRACE_IMAGING_STAGE_TIMING").is_some()),
+            pass_ordinal,
+            workers,
+            phases: Default::default(),
+        }
+    }
+
+    fn record(&self, phase: u8, records: u64, elapsed_nanos: u64) {
+        let timing = &self.phases[usize::from(phase)];
+        timing.partitions.fetch_add(1, Ordering::Relaxed);
+        timing.records.fetch_add(records, Ordering::Relaxed);
+        timing
+            .elapsed_nanos
+            .fetch_add(elapsed_nanos, Ordering::Relaxed);
+    }
+
+    fn emit(&self) {
+        if !self.enabled {
+            return;
+        }
+        for (phase, timing) in ["prediction", "accumulation"].into_iter().zip(&self.phases) {
+            eprintln!(
+                "imaging_gridded_replay_phase_timing pass_ordinal={} phase={} workers={} partitions={} records={} partition_elapsed_nanos={} timing_scope=successful_partition_calls aggregation=sum_not_parallel_wall",
+                self.pass_ordinal,
+                phase,
+                self.workers,
+                timing.partitions.load(Ordering::Relaxed),
+                timing.records.load(Ordering::Relaxed),
+                timing.elapsed_nanos.load(Ordering::Relaxed),
+            );
+        }
+    }
 }
 
 impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel {
@@ -1486,7 +1545,11 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
         storage: &ManagedSpillWindowStorage,
         partition: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error> {
-        self.state
+        let _reload_role =
+            crate::reload_probe::RoleScope::enter(self.timings.pass_ordinal, partition.phase());
+        let started = self.timings.enabled.then(Instant::now);
+        let result = self
+            .state
             .state
             .execute_two_domain_window(
                 |ordinal| {
@@ -1497,7 +1560,15 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
                 },
                 *partition,
             )
-            .map_err(CompleteDataOperatorError::Owner)
+            .map_err(CompleteDataOperatorError::Owner);
+        if let Some(started) = started.filter(|_| result.is_ok()) {
+            self.timings.record(
+                partition.phase(),
+                partition.routed_record_count(),
+                u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            );
+        }
+        result
     }
 
     fn partial_dynamic_capacity_bytes(&self, _partial: &Self::Partial) -> u64 {
@@ -1517,6 +1588,7 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
     }
 
     fn complete(self) -> Result<Self::Completion, Self::Error> {
+        self.timings.emit();
         self.state.complete()
     }
 }
@@ -2300,29 +2372,7 @@ impl CompleteDataPlanFragment {
         {
             return Err(CompleteDataPlanError::WrongExecutionNode);
         }
-        if context.compiled().problem_id() != self.specification.problem_id() {
-            return Err(CompleteDataPlanError::PlanMismatch);
-        }
-        if self.specification.aw_projection().is_some() != self.aw_projection.is_some()
-            || self.aw_projection.is_some() != self.aw_reader.is_some()
-        {
-            return Err(CompleteDataPlanError::PlanMismatch);
-        }
-        self.validate_fft_capability(context)?;
-        self.validate_aw_catalog_capability(context)?;
-        let mut owner = prepare_spectral_operator(self.specification.clone(), self.workload)?;
-        if let Some(projection) = self.aw_projection.clone() {
-            owner = owner.with_aw_projection(projection)?;
-        }
-        Ok(CompleteDataPreparedState {
-            owner,
-            problem: self.specification.problem_id(),
-            attempt: context.attempt_id(),
-            preparation_node: self.preparation_node.clone(),
-            replay_node: self.replay_node.clone(),
-            reconciliation_node: self.reconciliation_node.clone(),
-            lease_epoch: context.lease_epoch(),
-        })
+        self.prepare_operator_state(context)
     }
 
     /// Rebuild the same immutable FFT/operator preparation through a
@@ -2341,12 +2391,29 @@ impl CompleteDataPlanFragment {
         {
             return Err(CompleteDataPlanError::WrongExecutionNode);
         }
+        self.prepare_operator_state(context)
+    }
+
+    fn prepare_operator_state(
+        &self,
+        context: WorkExecutionContext<'_>,
+    ) -> Result<CompleteDataPreparedState, CompleteDataPlanError> {
         if context.compiled().problem_id() != self.specification.problem_id() {
             return Err(CompleteDataPlanError::PlanMismatch);
         }
+        if self.specification.aw_projection().is_some() != self.aw_projection.is_some()
+            || self.aw_projection.is_some() != self.aw_reader.is_some()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
         self.validate_fft_capability(context)?;
+        self.validate_aw_catalog_capability(context)?;
+        let mut owner = prepare_spectral_operator(self.specification.clone(), self.workload)?;
+        if let Some(projection) = self.aw_projection.clone() {
+            owner = owner.with_aw_projection(projection)?;
+        }
         Ok(CompleteDataPreparedState {
-            owner: prepare_spectral_operator(self.specification.clone(), self.workload)?,
+            owner,
             problem: self.specification.problem_id(),
             attempt: context.attempt_id(),
             preparation_node: self.preparation_node.clone(),
@@ -4328,6 +4395,29 @@ mod tests {
 
     const TEST_RECORD_BYTES: usize = 32;
     const TEST_PREDICTION_WIDTH: usize = 1;
+
+    #[test]
+    fn t51_replay_phase_timings_separate_prediction_and_accumulation() {
+        use std::sync::atomic::Ordering;
+
+        let timings = super::GriddedNormalReplayTimings::new(3, 4);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let timings = &timings;
+                scope.spawn(move || {
+                    timings.record(0, 7, 11);
+                    timings.record(1, 7, 17);
+                });
+            }
+        });
+        assert_eq!(timings.pass_ordinal, 3);
+        assert_eq!(timings.workers, 4);
+        for (phase, elapsed) in timings.phases.iter().zip([44, 68]) {
+            assert_eq!(phase.partitions.load(Ordering::Relaxed), 4);
+            assert_eq!(phase.records.load(Ordering::Relaxed), 28);
+            assert_eq!(phase.elapsed_nanos.load(Ordering::Relaxed), elapsed);
+        }
+    }
 
     #[test]
     fn t51_recorded_phase_demand_fixture_has_exact_admission_boundary() {

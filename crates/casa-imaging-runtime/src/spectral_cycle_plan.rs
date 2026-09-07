@@ -1173,6 +1173,14 @@ fn append_low_memory_adaptation(
         quiescence_after: BTreeSet::new(),
     };
     let mut nodes = dag.nodes().values().cloned().collect::<Vec<_>>();
+    if let Some(reader) = complete_data.prepared_artifact_reader() {
+        nodes
+            .iter_mut()
+            .find(|node| node.id == *reader.node())
+            .ok_or(SpectralCyclePlanError::Overflow)?
+            .dependencies
+            .insert(WorkDependency::Work(join.clone()));
+    }
     nodes
         .iter_mut()
         .find(|node| node.id == *science_node)

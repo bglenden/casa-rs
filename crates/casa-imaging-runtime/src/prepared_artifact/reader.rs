@@ -8,6 +8,7 @@ use crate::{
     PlannedArtifact, ResourceMeasurement, WorkDomain, WorkExecutionContext, WorkImplementationId,
     WorkKind, WorkMeasurements, WorkNodeId,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const READER_CATALOG_DOMAIN: &[u8] = b"casa-rs:prepared-artifact-reader-catalog:v1";
 
@@ -20,6 +21,7 @@ pub(super) struct ReaderEntry {
 
 pub(super) struct ReaderManifestSnapshot {
     segment_digests: Box<[Box<[[u8; 32]]>]>,
+    payload_verified: Box<[AtomicBool]>,
     resident_bytes: u64,
 }
 
@@ -41,6 +43,7 @@ impl ReaderManifestSnapshot {
         }
         Ok(Self {
             segment_digests: segment_digests.into_boxed_slice(),
+            payload_verified: (0..entries.len()).map(|_| AtomicBool::new(false)).collect(),
             resident_bytes,
         })
     }
@@ -57,22 +60,25 @@ impl ReaderManifestSnapshot {
 pub(super) fn reader_manifest_snapshot_resident_bytes(
     entries: &[ReaderEntry],
 ) -> Result<u64, PreparedArtifactError> {
-    let fixed = size_of::<ReaderManifestSnapshot>()
-        .checked_add(size_of::<Arc<ReaderManifestSnapshot>>())
-        .and_then(|bytes| {
-            // Each retained descriptor, the session plan, and its active binding
-            // carry an execution seal independently of the immutable digest snapshot.
-            bytes.checked_add(
-                entries
-                    .len()
-                    .checked_add(2)?
-                    .checked_mul(size_of::<CompiledProblemId>())?,
-            )
-        })
-        .and_then(|bytes| {
-            bytes.checked_add(entries.len().checked_mul(size_of::<Box<[[u8; 32]]>>())?)
-        })
-        .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
+    let fixed =
+        size_of::<ReaderManifestSnapshot>()
+            .checked_add(size_of::<Arc<ReaderManifestSnapshot>>())
+            .and_then(|bytes| {
+                // Each retained descriptor, the session plan, and its active binding
+                // carry an execution seal independently of the immutable digest snapshot.
+                bytes.checked_add(
+                    entries
+                        .len()
+                        .checked_add(2)?
+                        .checked_mul(size_of::<CompiledProblemId>())?,
+                )
+            })
+            .and_then(|bytes| {
+                bytes.checked_add(entries.len().checked_mul(
+                    size_of::<Box<[[u8; 32]]>>().checked_add(size_of::<AtomicBool>())?,
+                )?)
+            })
+            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
     entries
         .iter()
         .try_fold(fixed, |bytes, entry| {
@@ -106,6 +112,7 @@ pub struct PreparedArtifactReaderPlan {
     decoded_resident_bytes: u64,
     decoder_workspace_bytes: u64,
     store_resident_bytes: u64,
+    reload_probe_resident_bytes: u64,
     total_resident_bytes: u64,
     logical_bytes: u64,
 }
@@ -134,6 +141,7 @@ impl PreparedArtifactReaderPlan {
             decoded_resident_bytes,
             decoder_workspace_bytes,
             store_resident_bytes,
+            reload_probe_resident_bytes: 0,
             total_resident_bytes: decoded_resident_bytes
                 + decoder_workspace_bytes
                 + store_resident_bytes,
@@ -315,9 +323,24 @@ impl PreparedArtifactReaderFactory {
         hasher.update(decoded_resident_bytes.to_le_bytes());
         hasher.update(decoder_workspace_bytes.to_le_bytes());
         let catalog_identity = ArtifactIdentity::from_owner_digest(hasher.finalize().into());
+        let reload_probe_resident_bytes = if super::reload_probe::enabled() {
+            let minimum_payload = entries
+                .iter()
+                .map(|entry| entry.payload_bytes)
+                .min()
+                .filter(|bytes| *bytes > 0)
+                .ok_or(PreparedArtifactError::InvalidDescriptor)?;
+            super::reload_probe::Probe::reservation(
+                entries.len(),
+                (decoder_workspace_bytes / minimum_payload).max(1),
+            )?
+        } else {
+            0
+        };
         let total_resident_bytes = decoded_resident_bytes
             .checked_add(decoder_workspace_bytes)
             .and_then(|bytes| bytes.checked_add(store_resident_bytes))
+            .and_then(|bytes| bytes.checked_add(reload_probe_resident_bytes))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         let suffix = catalog_identity.to_string();
         let plan = PreparedArtifactReaderPlan {
@@ -333,6 +356,7 @@ impl PreparedArtifactReaderFactory {
             decoded_resident_bytes,
             decoder_workspace_bytes,
             store_resident_bytes,
+            reload_probe_resident_bytes,
             total_resident_bytes,
             logical_bytes,
         };
@@ -396,6 +420,7 @@ struct ReaderState {
     released: bool,
     fence_emitted: bool,
     observer_emitted: bool,
+    reload_probe_bound: bool,
 }
 
 impl ReaderState {
@@ -435,8 +460,11 @@ impl ReaderState {
         self.observations.cells_requested = self.observations.cells_requested.saturating_add(1);
     }
 
-    fn record_cell_committed(&mut self) {
-        self.observations.cells_verified = self.observations.cells_verified.saturating_add(1);
+    fn record_cell_committed(&mut self, verified_payload: bool) {
+        self.observations.cells_verified = self
+            .observations
+            .cells_verified
+            .saturating_add(u64::from(verified_payload));
         self.observations.cells_committed = self.observations.cells_committed.saturating_add(1);
     }
 
@@ -475,6 +503,36 @@ impl fmt::Debug for PreparedArtifactReader {
 }
 
 impl PreparedArtifactReader {
+    /// Construct catalog-bounded diagnostic state already charged to this
+    /// reader's plan. It must share the provider's existing synchronization and
+    /// lifetime; it cannot read payloads or alter the decoded-pool ceiling.
+    pub fn take_reload_cost_probe(
+        &self,
+    ) -> Result<Option<Box<super::reload_probe::Probe>>, PreparedArtifactError> {
+        if self.plan.reload_probe_resident_bytes == 0 {
+            return Ok(None);
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| PreparedArtifactError::PoisonedStore)?;
+        if state.reload_probe_bound
+            || state.binding.is_some()
+            || state.closed
+            || state.aborted
+            || state.released
+        {
+            return Err(PreparedArtifactError::ReaderBindingMismatch);
+        }
+        state.reload_probe_bound = true;
+        Ok(Some(Box::new(super::reload_probe::Probe::new(
+            self.entries
+                .iter()
+                .map(|entry| entry.descriptor.identity().as_bytes()),
+            self.plan.reload_probe_resident_bytes,
+        ))))
+    }
+
     /// Borrow the immutable physical-plan declaration for this session.
     #[must_use]
     pub const fn plan(&self) -> &PreparedArtifactReaderPlan {
@@ -550,7 +608,11 @@ impl PreparedArtifactReader {
         ))
     }
 
-    /// Stream one exact artifact through T50 validation into a caller-owned decoder.
+    /// Stream an artifact into a caller-owned decoder. Its payload hashes are
+    /// checked on the first successful read in this session; subsequent reads
+    /// trust the private payload while retaining finite-value and length checks.
+    /// Concurrent first reads may each validate. External modification after
+    /// validation is outside this session's integrity guarantee.
     pub fn read(
         &self,
         identity: ArtifactIdentity,
@@ -597,11 +659,14 @@ impl PreparedArtifactReader {
             integrity_identity: entry.integrity_identity,
             cache_identity: entry.descriptor.cache_identity(),
         };
+        let verify_payload =
+            !manifest_snapshot.payload_verified[entry_index].load(Ordering::Acquire);
         let read = self.store.read_for_reader(
             &entry.descriptor,
             &artifact,
             manifest_snapshot.segment_digests(entry_index),
             manifest_snapshot.resident_bytes(),
+            verify_payload,
             consumer,
         );
         let mut state = self
@@ -635,7 +700,9 @@ impl PreparedArtifactReader {
                 } else {
                     match state.read_count.checked_add(1) {
                         Some(read_count) => {
-                            state.record_cell_committed();
+                            manifest_snapshot.payload_verified[entry_index]
+                                .store(true, Ordering::Release);
+                            state.record_cell_committed(verify_payload);
                             state.read_count = read_count;
                             Ok(())
                         }
@@ -727,6 +794,7 @@ impl PreparedArtifactReader {
             .peak_resident_bytes
             .checked_add(residency.peak_decoder_workspace_bytes)
             .and_then(|bytes| bytes.checked_add(state.reader_resident_peak))
+            .and_then(|bytes| bytes.checked_add(self.plan.reload_probe_resident_bytes))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         if combined_resident > self.plan.total_resident_bytes {
             return Err(PreparedArtifactError::ResidentBudgetExceeded {
@@ -853,6 +921,7 @@ impl PreparedArtifactReader {
             .peak_resident_bytes
             .checked_add(residency.peak_decoder_workspace_bytes)
             .and_then(|bytes| bytes.checked_add(state.reader_resident_peak))
+            .and_then(|bytes| bytes.checked_add(self.plan.reload_probe_resident_bytes))
             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         self.emit_observer(&mut state, residency, combined_resident);
         let resources = context
@@ -1231,6 +1300,20 @@ mod tests {
         }
 
         fn with_entries(entry_count: usize) -> Self {
+            Self::with_payload(
+                entry_count,
+                PAYLOAD,
+                PreparedArtifactPrecision::U8,
+                STREAMING_BUFFER_BYTES,
+            )
+        }
+
+        fn with_payload(
+            entry_count: usize,
+            payload: &[u8],
+            precision: PreparedArtifactPrecision,
+            buffer_bytes: u64,
+        ) -> Self {
             assert!(entry_count > 0);
             let directory = tempfile::tempdir().expect("reader private cache root");
             let storage = StorageDomain {
@@ -1242,7 +1325,7 @@ mod tests {
                 operations_rate: None,
                 queue: crate::QueueResourceId::new("reader-test-queue"),
             };
-            let budget = PreparedArtifactBudget::new(4 << 20, entry_count, STREAMING_BUFFER_BYTES)
+            let budget = PreparedArtifactBudget::new(4 << 20, entry_count, buffer_bytes)
                 .expect("bounded reader cache budget");
             let store = Arc::new(
                 PreparedArtifactStore::open(directory.path().join("private"), &storage, budget)
@@ -1259,14 +1342,14 @@ mod tests {
             )
             .expect("reader test registration");
             let owner = PreparedArtifactOwner::from_manifest(registry, registration);
-            let payload_sha256: [u8; 32] = Sha256::digest(PAYLOAD).into();
+            let payload_sha256: [u8; 32] = Sha256::digest(payload).into();
             let mut artifacts = Vec::with_capacity(entry_count);
             for ordinal in 0..entry_count {
                 let scientific_identity = PreparedArtifactScientificIdentity::kernel(
                     PreparedArtifactKernelSemantics::new(
                         PreparedArtifactKernelAlgorithm::Gridding,
-                        vec![PAYLOAD.len() as u64, ordinal as u64 + 1],
-                        vec![PAYLOAD.len() as u64, ordinal as u64 + 1],
+                        vec![payload.len() as u64, ordinal as u64 + 1],
+                        vec![payload.len() as u64, ordinal as u64 + 1],
                     )
                     .expect("reader test kernel semantics"),
                 )
@@ -1274,11 +1357,11 @@ mod tests {
                 let scientific = ScientificCommitments::from_problem(&problem, scientific_identity);
                 let segment = PreparedArtifactSegmentDescriptor::new(
                     "science",
-                    vec![PAYLOAD.len() as u64],
+                    vec![payload.len() as u64 / precision.element_bytes()],
                     vec![0],
                     vec![1],
                     None,
-                    PreparedArtifactPrecision::U8,
+                    precision,
                     PreparedArtifactOrder::Axis0ContiguousLittleEndian,
                 )
                 .expect("reader test segment");
@@ -1298,17 +1381,17 @@ mod tests {
                     cache_identity: descriptor.cache_identity().to_string(),
                     descriptor: ManifestDescriptor::from_descriptor(&descriptor),
                     payload_sha256: encode_hex(&payload_sha256),
-                    payload_bytes: PAYLOAD.len() as u64,
+                    payload_bytes: payload.len() as u64,
                     segments: vec![ManifestSegment {
                         descriptor: segment,
                         offset: 0,
-                        bytes: PAYLOAD.len() as u64,
+                        bytes: payload.len() as u64,
                         sha256: encode_hex(&payload_sha256),
                     }],
                 };
                 let entry = store.entry_path(descriptor.identity());
                 fs::create_dir(&entry).expect("reader test cache entry");
-                fs::write(entry.join(PAYLOAD_FILE), PAYLOAD).expect("reader test payload");
+                fs::write(entry.join(PAYLOAD_FILE), payload).expect("reader test payload");
                 let mut encoded = serde_json::to_vec(&manifest).expect("reader test manifest");
                 encoded.push(b'\n');
                 fs::write(entry.join(MANIFEST_FILE), encoded).expect("reader test manifest file");
@@ -1336,6 +1419,194 @@ mod tests {
                 artifact_identity,
             }
         }
+    }
+
+    struct ReloadControlConsumer {
+        bytes: Vec<u8>,
+        cost: super::super::reload_probe::Cost,
+        observed: bool,
+    }
+
+    impl PreparedArtifactConsumer for ReloadControlConsumer {
+        fn reload_cost_enabled(&self) -> bool {
+            self.cost.enabled()
+        }
+        fn observe_reload_cost(&mut self, cost: &super::super::reload_probe::Cost) {
+            self.observed = true;
+            self.cost.merge(cost);
+        }
+        fn consume_segment(
+            &mut self,
+            _: &PreparedArtifactSegmentDescriptor,
+            offset: u64,
+            bytes: &[u8],
+        ) -> Result<(), PreparedArtifactError> {
+            assert_eq!(offset as usize, self.bytes.len());
+            self.bytes.extend_from_slice(bytes);
+            Ok(())
+        }
+    }
+
+    #[test]
+    #[ignore = "seconds-scale observer control; requires the approved outer build/control/run guard"]
+    fn t51_cf_reload_reader_observer_control() {
+        use super::super::reload_probe::{Cost, Stage};
+        let payload = (0..65536)
+            .flat_map(|index| {
+                [((index % 127) as f32) / 128.0, -0.125_f32]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+            })
+            .collect::<Vec<_>>();
+        let fixture =
+            ReaderFixture::with_payload(1, &payload, PreparedArtifactPrecision::ComplexF32, 65536);
+        let reader = fixture.factory.session();
+        let mode =
+            std::env::var("CASA_RS_TRACE_CF_RELOAD_COST").unwrap_or_else(|_| "off".to_string());
+        let mut probe = reader.take_reload_cost_probe().unwrap();
+        activate_reader(&fixture, &reader).expect("activate calibrated production reader");
+        let mut sum = Cost::new(true);
+        let mut elapsed = std::time::Duration::ZERO;
+        let started = std::time::Instant::now();
+        for ordinal in 0..512 {
+            let identity = fixture.artifact_identity.as_bytes();
+            let mut sample = probe
+                .as_mut()
+                .map(|probe| probe.begin(identity, payload.len()).unwrap());
+            if let (Some(probe), Some(sample)) = (probe.as_mut(), sample.as_mut()) {
+                probe.admit(sample).unwrap();
+            }
+            let selected = sample.as_ref().is_some_and(|sample| sample.cost.enabled());
+            let mut consumer = ReloadControlConsumer {
+                bytes: Vec::with_capacity(payload.len()),
+                cost: Cost::new(selected),
+                observed: false,
+            };
+            let read_started = std::time::Instant::now();
+            reader
+                .read(fixture.artifact_identity, &mut consumer)
+                .expect("same verified payload");
+            elapsed += read_started.elapsed();
+            assert_eq!(consumer.bytes, payload);
+            assert_eq!(consumer.observed, selected);
+            sum.merge(&consumer.cost);
+            if let Some(probe) = probe.as_mut() {
+                probe.evicted(identity).unwrap();
+            }
+            if let Some(mut sample) = sample {
+                sample.cost.merge(&consumer.cost);
+                sample
+                    .cost
+                    .finish(Stage::Reader, selected.then_some(read_started));
+                sample.emit(true);
+            }
+            assert_eq!(reader.state.lock().unwrap().read_count, ordinal + 1);
+        }
+        eprintln!(
+            "t51_cf_reload_control mode={} loads=512 payload_bytes={} read_envelope_nanos={} cohort_nanos={} payload_sha256={:x}{}",
+            mode,
+            payload.len(),
+            elapsed.as_nanos(),
+            started.elapsed().as_nanos(),
+            Sha256::digest(&payload),
+            sum
+        );
+        if let Some(probe) = probe {
+            probe.emit(false);
+        }
+        reader.abort();
+    }
+
+    #[test]
+    fn reader_reload_observation_preserves_all_payload_failure_guards() {
+        use super::super::reload_probe::Cost;
+        let payload = (0..16)
+            .flat_map(|_| [1.0_f32, 0.0].into_iter().flat_map(f32::to_le_bytes))
+            .collect::<Vec<_>>();
+        for fault in 0..4 {
+            let fixture = ReaderFixture::with_payload(
+                1,
+                &payload,
+                PreparedArtifactPrecision::ComplexF32,
+                65536,
+            );
+            let reader = fixture.factory.session();
+            activate_reader(&fixture, &reader).unwrap();
+            let mut changed = payload.clone();
+            match fault {
+                0 => changed[0] ^= 1,
+                1 => changed[..4].copy_from_slice(&f32::NAN.to_le_bytes()),
+                2 => {
+                    changed.pop();
+                }
+                3 => changed.push(0),
+                _ => unreachable!(),
+            }
+            fs::write(
+                fixture
+                    .factory
+                    .store
+                    .entry_path(fixture.artifact_identity)
+                    .join(PAYLOAD_FILE),
+                &changed,
+            )
+            .unwrap();
+            let mut consumer = ReloadControlConsumer {
+                bytes: Vec::new(),
+                cost: Cost::new(true),
+                observed: false,
+            };
+            let error = reader
+                .read(fixture.artifact_identity, &mut consumer)
+                .unwrap_err();
+            assert!(
+                consumer.observed,
+                "failed selected payloads still emit their timing"
+            );
+            match fault {
+                0 => assert!(matches!(error, PreparedArtifactError::CorruptArtifact)),
+                1 => assert!(matches!(
+                    error,
+                    PreparedArtifactError::NonFiniteValue { .. }
+                )),
+                2 => assert!(matches!(error, PreparedArtifactError::IncompleteArtifact)),
+                3 => assert!(matches!(error, PreparedArtifactError::OversizedArtifact)),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                reader.state.lock().unwrap().observations.finite_failures,
+                u64::from(fault == 1)
+            );
+            assert_failed_reader_unpublished(
+                &fixture,
+                &reader,
+                changed.len() as u64,
+                if fault == 0 || fault == 3 {
+                    payload.len() as u64
+                } else {
+                    0
+                },
+                u64::from(fault == 0),
+                u64::from(fault >= 2),
+            );
+        }
+    }
+
+    #[test]
+    fn reader_reload_probe_reservation_is_single_use_and_plan_charged() {
+        let mut fixture = ReaderFixture::new();
+        let plan = &mut fixture.factory.plan;
+        let unobserved = plan.total_resident_bytes - plan.reload_probe_resident_bytes;
+        let reserved = super::super::reload_probe::Probe::reservation(1, 1).unwrap();
+        plan.reload_probe_resident_bytes = reserved;
+        plan.total_resident_bytes = unobserved + reserved;
+        let reader = fixture.factory.session();
+        assert_eq!(reader.plan().total_resident_bytes(), unobserved + reserved);
+        assert!(reader.take_reload_cost_probe().unwrap().is_some());
+        assert!(matches!(
+            reader.take_reload_cost_probe(),
+            Err(PreparedArtifactError::ReaderBindingMismatch)
+        ));
     }
 
     #[test]
@@ -2168,6 +2439,33 @@ mod tests {
     }
 
     #[test]
+    fn reader_payload_hashing_is_amortized_within_session() {
+        let fixture = ReaderFixture::with_entries(2);
+        let reader = fixture.factory.session();
+        activate_reader(&fixture, &reader).unwrap();
+        for _ in 0..3 {
+            for entry in fixture.factory.entries.iter() {
+                reader
+                    .read(entry.descriptor.identity(), &mut DiscardingConsumer)
+                    .unwrap();
+            }
+        }
+        let state = reader.state.lock().unwrap();
+        assert_eq!(
+            state.observations.consume_payload.read_bytes,
+            6 * PAYLOAD.len() as u64
+        );
+        assert_eq!(
+            state.observations.consume_payload.hashed_bytes,
+            2 * PAYLOAD.len() as u64
+        );
+        assert_eq!(state.observations.cells_verified, 2);
+        assert_eq!(state.observations.cells_committed, 6);
+        drop(state);
+        reader.abort();
+    }
+
+    #[test]
     fn reader_session_does_not_repeat_store_inventory_or_payload_validation_per_load() {
         let fixture = ReaderFixture::new();
         let reader = fixture.factory.session();
@@ -2217,13 +2515,9 @@ mod tests {
 
         let mut prior_bytes = reader.state.lock().expect("reader state").read_bytes;
         let mut prior_operations = reader.state.lock().expect("reader state").read_operations;
-        let expected_operations = (PAYLOAD.len() as u64).div_ceil(STREAMING_BUFFER_BYTES) * 2
-            + fixture.factory.entries[0]
-                .descriptor
-                .compatibility
-                .segments
-                .len() as u64
-            + 3;
+        let read_and_finite_operations =
+            (PAYLOAD.len() as u64).div_ceil(STREAMING_BUFFER_BYTES) * 2 + 3;
+        let segment_count = fixture.factory.entries[0].descriptor.segments().len() as u64;
         for read in 1..=2 {
             reader
                 .read(fixture.artifact_identity, &mut DiscardingConsumer)
@@ -2237,8 +2531,9 @@ mod tests {
                 "cell load {read} must stream the target payload exactly once"
             );
             assert_eq!(
-                read_operations, expected_operations,
-                "cell load {read} must do only bounded payload reads and checksum work"
+                read_operations,
+                read_and_finite_operations + if read == 1 { segment_count } else { 0 },
+                "only the first cell load performs digest validation"
             );
             prior_bytes = state.read_bytes;
             prior_operations = state.read_operations;
@@ -2260,11 +2555,21 @@ mod tests {
             .join(PAYLOAD_FILE);
         let mut corrupted = PAYLOAD.to_vec();
         corrupted[0] ^= 1;
-        fs::write(payload, corrupted).expect("corrupt one cell behind the cooperative store lock");
-        assert!(matches!(
-            reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
-            Err(PreparedArtifactError::CorruptArtifact)
-        ));
+        fs::write(payload, corrupted)
+            .expect("modify a private payload outside its ownership rules");
+        reader
+            .read(fixture.artifact_identity, &mut DiscardingConsumer)
+            .expect("the session trusts a payload after its first successful validation");
+        assert_eq!(
+            reader
+                .state
+                .lock()
+                .unwrap()
+                .observations
+                .consume_payload
+                .hashed_bytes,
+            PAYLOAD.len() as u64
+        );
         assert_eq!(
             reader
                 .state
@@ -2287,6 +2592,71 @@ mod tests {
             0,
             "aborting the reader must release store mutation exclusion"
         );
+        let next_reader = fixture.factory.session();
+        activate_reader(&fixture, &next_reader).unwrap();
+        assert!(matches!(
+            next_reader.read(fixture.artifact_identity, &mut DiscardingConsumer),
+            Err(PreparedArtifactError::CorruptArtifact)
+        ));
+    }
+
+    #[test]
+    fn reader_verified_payload_still_checks_finite_values_and_length() {
+        let payload = [1.0_f32, 0.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        for fault in 0..3 {
+            let fixture = ReaderFixture::with_payload(
+                1,
+                &payload,
+                PreparedArtifactPrecision::ComplexF32,
+                65536,
+            );
+            let reader = fixture.factory.session();
+            activate_reader(&fixture, &reader).unwrap();
+            reader
+                .read(fixture.artifact_identity, &mut DiscardingConsumer)
+                .unwrap();
+            let mut changed = payload.clone();
+            match fault {
+                0 => changed[..4].copy_from_slice(&f32::NAN.to_le_bytes()),
+                1 => {
+                    changed.pop();
+                }
+                2 => changed.push(0),
+                _ => unreachable!(),
+            }
+            fs::write(
+                fixture
+                    .factory
+                    .store
+                    .entry_path(fixture.artifact_identity)
+                    .join(PAYLOAD_FILE),
+                changed,
+            )
+            .unwrap();
+            let error = reader
+                .read(fixture.artifact_identity, &mut DiscardingConsumer)
+                .unwrap_err();
+            match fault {
+                0 => assert!(matches!(
+                    error,
+                    PreparedArtifactError::NonFiniteValue { .. }
+                )),
+                1 => assert!(matches!(error, PreparedArtifactError::IncompleteArtifact)),
+                2 => assert!(matches!(error, PreparedArtifactError::OversizedArtifact)),
+                _ => unreachable!(),
+            }
+            let state = reader.state.lock().unwrap();
+            assert!(state.aborted);
+            assert_eq!(
+                state.observations.consume_payload.hashed_bytes,
+                payload.len() as u64
+            );
+            assert_eq!(state.observations.cells_verified, 1);
+            assert_eq!(state.observations.cells_committed, 1);
+        }
     }
 
     #[test]

@@ -20,6 +20,9 @@ use casa_imaging_reconstruction::{
     AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorError, AwPreparedCatalog,
     AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata, AwPreparedCellProvider,
 };
+use casa_imaging_runtime::reload_probe::{
+    Cost as ReloadCost, Probe as ReloadProbe, Sample as ReloadSample, Stage as ReloadStage,
+};
 use casa_imaging_runtime::{
     ArtifactIdentity, ImplementationRegistry, PreparedArtifact, PreparedArtifactDescriptor,
     PreparedArtifactError, PreparedArtifactImportSegment, PreparedArtifactImportSource,
@@ -309,6 +312,7 @@ struct PreparedPoolState {
     copied_bytes: u64,
     closed: bool,
     aborted: bool,
+    reload_probe: Option<Box<ReloadProbe>>,
 }
 
 struct ResidentPreparedCell {
@@ -601,6 +605,9 @@ impl PreparedAwCellProvider {
             .into_iter()
             .map(|cell| (cell.metadata.identity().as_bytes(), cell))
             .collect::<BTreeMap<_, _>>();
+        let reload_probe = reader
+            .take_reload_cost_probe()
+            .map_err(|_| AwOperatorError::PreparedCellUnavailable)?;
         Ok(Self {
             pool: Arc::new(PreparedPool {
                 reader,
@@ -608,6 +615,7 @@ impl PreparedAwCellProvider {
                 state: Mutex::new(PreparedPoolState {
                     ceiling: resident_byte_ceiling,
                     workspace_ceiling,
+                    reload_probe,
                     ..PreparedPoolState::default()
                 }),
                 available: Condvar::new(),
@@ -664,6 +672,7 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
             return Err(AwOperatorError::ResidencyCeilingExceeded);
         }
         let mut evicted = 0_usize;
+        let mut reload_sample = None;
         'load: loop {
             let mut state = self
                 .pool
@@ -693,13 +702,25 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 drop(state);
                 return Ok(self.lease(cell, AwPreparedCellDisposition::Resident, evicted, 0));
             }
+            if reload_sample.is_none() {
+                if let Some(probe) = state.reload_probe.as_mut() {
+                    reload_sample = Some(
+                        probe
+                            .begin(prepared.descriptor().identity().as_bytes(), bytes)
+                            .map_err(|_| AwOperatorError::MeasurementOverflow)?,
+                    );
+                }
+            }
             if state.loading.contains(&identity) {
-                drop(
-                    self.pool
-                        .available
-                        .wait(state)
-                        .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
-                );
+                observe_reload(&mut reload_sample, ReloadStage::LoadingWait, || {
+                    drop(
+                        self.pool
+                            .available
+                            .wait(state)
+                            .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
+                    );
+                    Ok::<_, AwOperatorError>(())
+                })?;
                 continue;
             }
             if state
@@ -708,12 +729,15 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 .ok_or(AwOperatorError::MeasurementOverflow)?
                 > state.workspace_ceiling
             {
-                drop(
-                    self.pool
-                        .available
-                        .wait(state)
-                        .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
-                );
+                observe_reload(&mut reload_sample, ReloadStage::WorkspaceWait, || {
+                    drop(
+                        self.pool
+                            .available
+                            .wait(state)
+                            .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
+                    );
+                    Ok::<_, AwOperatorError>(())
+                })?;
                 continue;
             }
             while state
@@ -723,6 +747,9 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 .ok_or(AwOperatorError::MeasurementOverflow)?
                 > state.ceiling
             {
+                let eviction_started = reload_sample
+                    .as_ref()
+                    .and_then(|sample: &ReloadSample| sample.cost.start());
                 let victim = state
                     .cells
                     .iter()
@@ -730,14 +757,29 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                     .min_by_key(|(victim, resident)| (resident.last_use, **victim))
                     .map(|(victim, _)| *victim);
                 let Some(victim) = victim else {
-                    drop(
-                        self.pool
-                            .available
-                            .wait(state)
-                            .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
-                    );
+                    finish_reload(&mut reload_sample, ReloadStage::Eviction, eviction_started);
+                    observe_reload(&mut reload_sample, ReloadStage::PinWait, || {
+                        drop(
+                            self.pool
+                                .available
+                                .wait(state)
+                                .map_err(|_| AwOperatorError::PreparedCellUnavailable)?,
+                        );
+                        Ok::<_, AwOperatorError>(())
+                    })?;
                     continue 'load;
                 };
+                if let Some(probe) = state.reload_probe.as_mut() {
+                    let descriptor = self
+                        .pool
+                        .prepared
+                        .get(&victim)
+                        .ok_or(AwOperatorError::PreparedCellUnavailable)?
+                        .descriptor();
+                    probe
+                        .evicted(descriptor.identity().as_bytes())
+                        .map_err(|_| AwOperatorError::MeasurementOverflow)?;
+                }
                 let victim = state
                     .cells
                     .remove(&victim)
@@ -756,6 +798,8 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                             .map_err(|_| AwOperatorError::MeasurementOverflow)?,
                     )
                     .ok_or(AwOperatorError::MeasurementOverflow)?;
+                drop(victim);
+                finish_reload(&mut reload_sample, ReloadStage::Eviction, eviction_started);
             }
             if state.cells.contains_key(&identity) || state.loading.contains(&identity) {
                 continue;
@@ -774,15 +818,32 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 .loads
                 .checked_add(1)
                 .ok_or(AwOperatorError::MeasurementOverflow)?;
+            if let (Some(probe), Some(sample)) =
+                (state.reload_probe.as_mut(), reload_sample.as_mut())
+            {
+                probe
+                    .admit(sample)
+                    .map_err(|_| AwOperatorError::MeasurementOverflow)?;
+            }
             drop(state);
 
+            let selected = reload_sample
+                .as_ref()
+                .is_some_and(|sample| sample.cost.enabled());
+            let mut load_cost = ReloadCost::new(selected);
             let decoded = (|| {
-                let mut decoder = PreparedCellDecoder::new(prepared)?;
-                self.pool
-                    .reader
-                    .read(prepared.descriptor().identity(), &mut decoder)?;
+                let mut decoder = load_cost.measure(ReloadStage::DecoderAllocate, || {
+                    PreparedCellDecoder::new(prepared, selected)
+                })?;
+                let read = load_cost.measure(ReloadStage::Reader, || {
+                    self.pool
+                        .reader
+                        .read(prepared.descriptor().identity(), &mut decoder)
+                });
+                load_cost.merge(&decoder.reload_cost);
+                read?;
                 let cell = decoder
-                    .finish(prepared)
+                    .finish(prepared, &mut load_cost)
                     .map_err(|_| PreparedArtifactError::InvalidLayout)?;
                 if cell.resident_bytes() != bytes {
                     return Err(PreparedArtifactError::InvalidLayout);
@@ -790,6 +851,7 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 Ok::<_, PreparedArtifactError>(Arc::new(cell))
             })();
 
+            let completion_started = load_cost.start();
             let mut state = self
                 .pool
                 .state
@@ -810,6 +872,12 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
                 Ok(cell) => cell,
                 Err(error) => {
                     self.pool.available.notify_all();
+                    drop(state);
+                    load_cost.finish(ReloadStage::PoolComplete, completion_started);
+                    if let Some(mut sample) = reload_sample {
+                        sample.cost.merge(&load_cost);
+                        sample.emit(false);
+                    }
                     return Err(error);
                 }
             };
@@ -850,13 +918,42 @@ impl AwPreparedCellProvider for PreparedAwCellProvider {
             observe_pinned(&mut state)?;
             self.pool.available.notify_all();
             drop(state);
-            return Ok(self.lease(
-                lease_cell,
-                AwPreparedCellDisposition::Loaded,
-                evicted,
-                bytes,
-            ));
+            load_cost.finish(ReloadStage::PoolComplete, completion_started);
+            let lease = load_cost.measure(ReloadStage::Lease, || {
+                self.lease(
+                    lease_cell,
+                    AwPreparedCellDisposition::Loaded,
+                    evicted,
+                    bytes,
+                )
+            });
+            if let Some(mut sample) = reload_sample {
+                sample.cost.merge(&load_cost);
+                sample.emit(true);
+            }
+            return Ok(lease);
         }
+    }
+}
+
+fn observe_reload<T>(
+    sample: &mut Option<ReloadSample>,
+    stage: ReloadStage,
+    operation: impl FnOnce() -> T,
+) -> T {
+    match sample {
+        Some(sample) => sample.cost.measure(stage, operation),
+        None => operation(),
+    }
+}
+
+fn finish_reload(
+    sample: &mut Option<ReloadSample>,
+    stage: ReloadStage,
+    started: Option<std::time::Instant>,
+) {
+    if let Some(sample) = sample {
+        sample.cost.finish(stage, started);
     }
 }
 
@@ -912,6 +1009,9 @@ impl PreparedArtifactReaderResidency for PreparedAwCellProvider {
         {
             return Err(PreparedArtifactError::ReaderStillInUse);
         }
+        if let Some(probe) = state.reload_probe.take() {
+            probe.emit(state.aborted);
+        }
         Self::measurements(&state)
     }
 
@@ -924,6 +1024,9 @@ impl PreparedArtifactReaderResidency for PreparedAwCellProvider {
         state.closed = true;
         if state.reserved != 0 || state.reserved_workspace != 0 || !state.loading.is_empty() {
             return Err(PreparedArtifactError::ReaderStillInUse);
+        }
+        if let Some(probe) = state.reload_probe.take() {
+            probe.emit(state.aborted);
         }
         let measurements = Self::measurements(&state)?;
         state.cells.clear();
@@ -963,10 +1066,14 @@ struct PreparedCellDecoder {
     weight: Vec<u8>,
     imaging_expected: usize,
     weight_expected: usize,
+    reload_cost: ReloadCost,
 }
 
 impl PreparedCellDecoder {
-    fn new(prepared: &CasaAwPreparedCell) -> Result<Self, PreparedArtifactError> {
+    fn new(
+        prepared: &CasaAwPreparedCell,
+        observe_reload: bool,
+    ) -> Result<Self, PreparedArtifactError> {
         let expected = |segment: &PreparedArtifactSegmentDescriptor| {
             segment
                 .shape()
@@ -991,10 +1098,15 @@ impl PreparedCellDecoder {
             weight: Vec::with_capacity(weight_expected),
             imaging_expected,
             weight_expected,
+            reload_cost: ReloadCost::new(observe_reload),
         })
     }
 
-    fn finish(self, prepared: &CasaAwPreparedCell) -> Result<AwConvolutionCell, CasaAwCacheError> {
+    fn finish(
+        self,
+        prepared: &CasaAwPreparedCell,
+        cost: &mut ReloadCost,
+    ) -> Result<AwConvolutionCell, CasaAwCacheError> {
         if self.imaging.len() != self.imaging_expected || self.weight.len() != self.weight_expected
         {
             return Err(fail(
@@ -1002,16 +1114,30 @@ impl PreparedCellDecoder {
                 "private payload ended before its declared shape",
             ));
         }
-        let imaging_plane = decode_complex32_plane(self.imaging, &prepared.imaging)?;
-        let weight_plane = decode_complex32_plane(self.weight, &prepared.weight)?;
-        let imaging = adapt_kernel_from_plane(&prepared.imaging, imaging_plane)?;
-        let weight = adapt_kernel_from_plane(&prepared.weight, weight_plane)?;
-        AwConvolutionCell::new(prepared.metadata.identity(), imaging, weight)
-            .map_err(|error| fail(&prepared.imaging.path, error.to_string()))
+        let (imaging_plane, weight_plane) = cost.measure(ReloadStage::DecodePlanes, || {
+            Ok::<_, CasaAwCacheError>((
+                decode_complex32_plane(self.imaging, &prepared.imaging)?,
+                decode_complex32_plane(self.weight, &prepared.weight)?,
+            ))
+        })?;
+        cost.measure(ReloadStage::ConstructKernels, || {
+            let imaging = adapt_kernel_from_plane(&prepared.imaging, imaging_plane)?;
+            let weight = adapt_kernel_from_plane(&prepared.weight, weight_plane)?;
+            AwConvolutionCell::new(prepared.metadata.identity(), imaging, weight)
+                .map_err(|error| fail(&prepared.imaging.path, error.to_string()))
+        })
     }
 }
 
 impl casa_imaging_runtime::PreparedArtifactConsumer for PreparedCellDecoder {
+    fn reload_cost_enabled(&self) -> bool {
+        self.reload_cost.enabled()
+    }
+
+    fn observe_reload_cost(&mut self, cost: &ReloadCost) {
+        self.reload_cost.merge(cost);
+    }
+
     fn consume_segment(
         &mut self,
         segment: &PreparedArtifactSegmentDescriptor,
@@ -1154,9 +1280,34 @@ fn adapt_kernel_from_plane(
     plane: Array2<Complex32>,
 ) -> Result<AwConvolutionKernel, CasaAwCacheError> {
     let layout = kernel_layout(metadata)?;
-    let taps = plane.iter().copied().collect();
+    #[cfg(test)]
+    if ownership_transfer_probe::copy_control_enabled() {
+        return AwConvolutionKernel::new_complex32(layout, plane.iter().copied().collect())
+            .map_err(|error| fail(&metadata.path, error.to_string()));
+    }
+    let taps = take_plane_storage(metadata, plane)?;
     AwConvolutionKernel::new_complex32(layout, taps)
         .map_err(|error| fail(&metadata.path, error.to_string()))
+}
+
+fn take_plane_storage(
+    metadata: &KernelMetadata,
+    plane: Array2<Complex32>,
+) -> Result<Vec<Complex32>, CasaAwCacheError> {
+    if plane.shape() != metadata.shape || !plane.is_standard_layout() {
+        return Err(fail(
+            &metadata.path,
+            "decoded plane has an unexpected shape or layout",
+        ));
+    }
+    let (taps, offset) = plane.into_raw_vec_and_offset();
+    if offset != Some(0) || metadata.shape[0].checked_mul(metadata.shape[1]) != Some(taps.len()) {
+        return Err(fail(
+            &metadata.path,
+            "decoded plane does not own exactly its logical storage",
+        ));
+    }
+    Ok(taps)
 }
 
 fn kernel_layout(metadata: &KernelMetadata) -> Result<AwKernelLayout, CasaAwCacheError> {
@@ -1555,6 +1706,9 @@ fn fail(path: impl AsRef<Path>, detail: impl Into<String>) -> CasaAwCacheError {
 
 #[cfg(test)]
 mod encoding_probe;
+
+#[cfg(test)]
+mod ownership_transfer_probe;
 
 #[cfg(test)]
 pub(crate) mod tests {

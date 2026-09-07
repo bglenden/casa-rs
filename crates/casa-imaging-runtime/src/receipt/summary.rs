@@ -84,8 +84,7 @@ impl ReceiptSummary {
 
 #[derive(Clone, Debug)]
 struct CachedSummary {
-    digest: [u8; 32],
-    file_bytes: u64,
+    encoded_bytes: Arc<[u8]>,
     charged_bytes: u64,
     summary: ReceiptSummary,
 }
@@ -105,7 +104,7 @@ pub(super) struct ReceiptSummaryCacheStats {
     pub(super) charged_bytes: u64,
     pub(super) full_decodes: u64,
     pub(super) hits: u64,
-    pub(super) bytes_hashed: u64,
+    pub(super) bytes_compared: u64,
 }
 
 impl ReceiptSummaryCache {
@@ -154,7 +153,7 @@ impl ReceiptSummaryCache {
 }
 
 impl ExecutionReceiptStore {
-    /// Read current, integrity-checked admission evidence without retaining full bodies.
+    /// Read current, integrity-checked admission evidence without decoding unchanged bodies.
     pub(crate) fn summaries(&self) -> Result<Vec<ReceiptSummary>, ReceiptError> {
         let attempts = self.attempts()?;
         let paths = attempts
@@ -189,16 +188,16 @@ impl ExecutionReceiptStore {
             .cloned();
         let mut file = File::open(path).map_err(read_error)?;
         if let Some(cached) = cached {
-            let (digest, file_bytes) = current_digest(&mut file)?;
+            let comparison = current_bytes_match(&mut file, &cached.encoded_bytes)?;
             #[cfg(test)]
             {
                 let mut cache = self.state.summaries.lock().unwrap();
-                cache.stats.bytes_hashed += file_bytes;
-                if digest == cached.digest && file_bytes == cached.file_bytes {
+                cache.stats.bytes_compared += comparison.1;
+                if comparison.0 {
                     cache.stats.hits += 1;
                 }
             }
-            if digest == cached.digest && file_bytes == cached.file_bytes {
+            if comparison.0 {
                 return Ok(cached.summary);
             }
             file.rewind().map_err(read_error)?;
@@ -206,21 +205,21 @@ impl ExecutionReceiptStore {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes).map_err(read_error)?;
         let file_bytes = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        let digest = Sha256::digest(&bytes).into();
         #[cfg(test)]
         {
             let mut cache = self.state.summaries.lock().unwrap();
             cache.stats.full_decodes += 1;
-            cache.stats.bytes_hashed += file_bytes;
         }
-        // The digest and canonical validation cover the very same byte snapshot.
+        // Exact byte equality reuses the validation of this same snapshot.
         let summary = ReceiptSummary::from_document(decode_document(&bytes)?, file_bytes)?;
-        // Charge the whole source document, rather than estimating each projection string.
-        // Fixed cache-node storage is additionally bounded by max_receipts.
+        // Charge the encoded snapshot and a source-sized bound for the projection.
+        // Fixed cache-node and Arc storage is additionally bounded by max_receipts.
         let charged_bytes = file_bytes
+            .saturating_mul(2)
             .saturating_add(path.as_os_str().as_encoded_bytes().len() as u64)
             .saturating_add(size_of::<CachedSummary>() as u64)
-            .saturating_add(size_of::<PathBuf>() as u64);
+            .saturating_add(size_of::<PathBuf>() as u64)
+            .saturating_add((2 * size_of::<usize>()) as u64);
         self.state
             .summaries
             .lock()
@@ -228,8 +227,7 @@ impl ExecutionReceiptStore {
             .insert(
                 path.to_path_buf(),
                 CachedSummary {
-                    digest,
-                    file_bytes,
+                    encoded_bytes: bytes.into(),
                     charged_bytes,
                     summary: summary.clone(),
                 },
@@ -239,10 +237,9 @@ impl ExecutionReceiptStore {
     }
 }
 
-fn current_digest(file: &mut File) -> Result<([u8; 32], u64), ReceiptError> {
+fn current_bytes_match(file: &mut impl Read, expected: &[u8]) -> Result<(bool, u64), ReceiptError> {
     let mut buffer = [0_u8; 64 * 1024];
-    let mut hasher = Sha256::new();
-    let mut bytes = 0_u64;
+    let mut offset = 0_usize;
     loop {
         let read = match file.read(&mut buffer) {
             Ok(read) => read,
@@ -250,17 +247,83 @@ fn current_digest(file: &mut File) -> Result<([u8; 32], u64), ReceiptError> {
             Err(error) => return Err(read_error(error)),
         };
         if read == 0 {
-            break;
+            return Ok((offset == expected.len(), offset as u64));
         }
-        hasher.update(&buffer[..read]);
-        bytes = bytes.saturating_add(read as u64);
+        let end = offset.saturating_add(read);
+        if expected.get(offset..end) != Some(&buffer[..read]) {
+            return Ok((false, end as u64));
+        }
+        offset = end;
     }
-    Ok((hasher.finalize().into(), bytes))
 }
 
 fn read_error(source: std::io::Error) -> ReceiptError {
     ReceiptError::Io {
         action: "read retained execution receipt",
         source,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn receipt_byte_comparison_detects_changes_and_both_length_mismatches() {
+        let bytes = (0..131_073)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            current_bytes_match(&mut &bytes[..], &bytes).unwrap(),
+            (true, bytes.len() as u64)
+        );
+        assert_eq!(current_bytes_match(&mut &b""[..], b"").unwrap(), (true, 0));
+        for index in [0, 65_536, bytes.len() - 1] {
+            let mut changed = bytes.clone();
+            changed[index] ^= 1;
+            assert!(!current_bytes_match(&mut &changed[..], &bytes).unwrap().0);
+        }
+        assert!(
+            !current_bytes_match(&mut &bytes[..bytes.len() - 1], &bytes)
+                .unwrap()
+                .0
+        );
+        let mut extra = bytes.clone();
+        extra.push(0);
+        assert!(!current_bytes_match(&mut &extra[..], &bytes).unwrap().0);
+    }
+
+    #[test]
+    fn receipt_byte_comparison_handles_short_reads_interrupts_and_io_failure() {
+        struct Reader<'a> {
+            bytes: &'a [u8],
+            error: Option<std::io::ErrorKind>,
+        }
+        impl Read for Reader<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if let Some(error) = self.error.take() {
+                    return Err(error.into());
+                }
+                let end = buffer.len().min(13);
+                self.bytes.read(&mut buffer[..end])
+            }
+        }
+        let bytes = [7; 67];
+        let mut reader = Reader {
+            bytes: &bytes,
+            error: Some(std::io::ErrorKind::Interrupted),
+        };
+        assert_eq!(
+            current_bytes_match(&mut reader, &bytes).unwrap(),
+            (true, 67)
+        );
+        let mut reader = Reader {
+            bytes: &bytes,
+            error: Some(std::io::ErrorKind::PermissionDenied),
+        };
+        assert!(matches!(
+            current_bytes_match(&mut reader, &bytes),
+            Err(ReceiptError::Io { .. })
+        ));
     }
 }

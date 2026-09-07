@@ -140,6 +140,9 @@ impl TaylorProducts {
         psf_cutoff: f32,
         primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     ) -> Result<Self, ProductsError> {
+        let envelope_started = std::env::var_os("CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES")
+            .is_some()
+            .then(std::time::Instant::now);
         let state = inputs.normal_state();
         if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
             return Err(ProductsError::SourceLineageMismatch);
@@ -204,6 +207,7 @@ impl TaylorProducts {
                 .filter(|value| value.is_finite() && *value > 0.0)
                 .ok_or(ProductsError::SourceLineageMismatch)?
         };
+        let preparation_nanos = envelope_started.map(|started| started.elapsed().as_nanos());
         let mut psf = Vec::with_capacity(moments);
         let mut weight: Vec<Vec<f32>> = Vec::with_capacity(moments);
         let mut sum_weights = Vec::with_capacity(moments);
@@ -250,6 +254,7 @@ impl TaylorProducts {
             }
             sum_weights.push(sum_weight as f32);
         }
+        let normalization_started = envelope_started.map(|_| std::time::Instant::now());
         let residual = (0..terms)
             .map(|term| {
                 let source = state
@@ -307,6 +312,14 @@ impl TaylorProducts {
             }
         }
 
+        if let Some(started) = normalization_started {
+            eprintln!(
+                "imaging_taylor_normalization_envelope model_generation={} aw_projection={aw_projection} preparation_nanos={} residual_model_nanos={} normal_sum_weight={principal_sum_weight} residual_sum_weight={residual_sum_weight} excludes=psf_weight_products,restoration,publication",
+                inputs.final_model().generation_id(),
+                preparation_nanos.expect("normalization timer follows preparation timer"),
+                started.elapsed().as_nanos(),
+            );
+        }
         let peak = psf[0]
             .iter()
             .enumerate()

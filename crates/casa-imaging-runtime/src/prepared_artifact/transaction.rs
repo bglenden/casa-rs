@@ -653,13 +653,14 @@ impl PreparedArtifactStore {
         Ok((lock, Arc::new(manifest_snapshot), measurements))
     }
 
-    /// Stream and checksum one cell while the session holds the validated store lock.
+    /// Stream a cell under the session lock, checking hashes on its first read.
     pub(super) fn read_for_reader(
         &self,
         descriptor: &PreparedArtifactDescriptor,
         artifact: &PreparedArtifact,
         expected_segment_digests: &[[u8; 32]],
         snapshot_resident_bytes: u64,
+        verify_payload: bool,
         consumer: &mut dyn PreparedArtifactConsumer,
     ) -> Result<PreparedArtifactSessionRead, PreparedArtifactSessionFailure> {
         let reservation = self
@@ -684,6 +685,8 @@ impl PreparedArtifactStore {
             ReaderObservationPhase::Consume,
         );
         evidence.acquire_resident(snapshot_resident_bytes);
+        use super::reload_probe::{Cost, Stage};
+        let mut reload_cost = Cost::new(consumer.reload_cost_enabled());
         let payload_started = std::time::Instant::now();
         let consumed = (|| -> Result<(ArtifactIdentity, u64), PreparedArtifactError> {
             evidence.ensure_resident_budget()?;
@@ -698,11 +701,13 @@ impl PreparedArtifactStore {
                 .entry_path(descriptor.compatibility.identity)
                 .join(PAYLOAD_FILE);
             evidence.store_read_operation();
-            let mut payload = File::open(payload_path).map_err(map_incomplete)?;
+            let mut payload = reload_cost.measure(Stage::Open, || {
+                File::open(payload_path).map_err(map_incomplete)
+            })?;
             evidence.payload_open();
             evidence.observe_file_descriptors(2);
             let buffer_len = streaming_buffer_len(self.budget, &descriptor.compatibility)?;
-            let mut buffer = vec![0_u8; buffer_len];
+            let mut buffer = reload_cost.measure(Stage::BufferAllocate, || vec![0_u8; buffer_len]);
             let mut payload_hasher = Sha256::new();
             let mut payload_bytes = 0_u64;
             evidence.with_resident(observed_vec_resident_bytes(&buffer), |evidence| {
@@ -721,23 +726,35 @@ impl PreparedArtifactStore {
                         let mut limit = usize::try_from(remaining.min(buffer.len() as u64))
                             .map_err(|_| PreparedArtifactError::ArtifactTooLarge)?;
                         limit -= limit % scalar_bytes;
-                        read_exact_counted(
-                            &mut payload,
-                            &mut buffer[..limit],
-                            evidence,
-                            CacheIoClass::Read,
-                        )?;
-                        validate_finite(
-                            &buffer[..limit],
-                            segment.precision,
-                            &segment.name,
-                            scalar,
-                        )?;
-                        payload_hasher.update(&buffer[..limit]);
-                        segment_hasher.update(&buffer[..limit]);
-                        evidence.record_payload_hashed(limit as u64);
+                        reload_cost.measure(Stage::Read, || {
+                            read_exact_counted(
+                                &mut payload,
+                                &mut buffer[..limit],
+                                evidence,
+                                CacheIoClass::Read,
+                            )
+                        })?;
+                        reload_cost.measure(Stage::Finite, || {
+                            validate_finite(
+                                &buffer[..limit],
+                                segment.precision,
+                                &segment.name,
+                                scalar,
+                            )
+                        })?;
+                        if verify_payload {
+                            reload_cost.measure(Stage::PayloadHash, || {
+                                payload_hasher.update(&buffer[..limit])
+                            });
+                            reload_cost.measure(Stage::SegmentHash, || {
+                                segment_hasher.update(&buffer[..limit])
+                            });
+                            evidence.record_payload_hashed(limit as u64);
+                        }
                         evidence.store_validation();
-                        consumer.consume_segment(segment, byte_offset, &buffer[..limit])?;
+                        reload_cost.measure(Stage::Consumer, || {
+                            consumer.consume_segment(segment, byte_offset, &buffer[..limit])
+                        })?;
                         remaining -= limit as u64;
                         byte_offset += limit as u64;
                         scalar += (limit / scalar_bytes) as u64;
@@ -745,19 +762,32 @@ impl PreparedArtifactStore {
                             .checked_add(limit as u64)
                             .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
                     }
-                    if <[u8; 32]>::from(segment_hasher.finalize()) != *expected_segment_digest {
-                        return Err(PreparedArtifactError::CorruptArtifact);
+                    if verify_payload {
+                        let digest_matches = reload_cost.measure(Stage::FinalIntegrity, || {
+                            <[u8; 32]>::from(segment_hasher.finalize()) == *expected_segment_digest
+                        });
+                        if !digest_matches {
+                            return Err(PreparedArtifactError::CorruptArtifact);
+                        }
+                        evidence.store_validation();
                     }
-                    evidence.store_validation();
                 }
                 let mut extra = [0_u8; 1];
-                if read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)? != 0 {
+                if reload_cost.measure(Stage::FinalIntegrity, || {
+                    read_counted(&mut payload, &mut extra, evidence, CacheIoClass::Read)
+                })? != 0
+                {
                     return Err(PreparedArtifactError::OversizedArtifact);
                 }
                 Ok(())
             })?;
-            let content_identity =
-                derive_content_identity(descriptor, payload_hasher.finalize().into());
+            let content_identity = if verify_payload {
+                reload_cost.measure(Stage::FinalIntegrity, || {
+                    derive_content_identity(descriptor, payload_hasher.finalize().into())
+                })
+            } else {
+                artifact.integrity_identity
+            };
             evidence.store_validation();
             if payload_bytes != declared_bytes || content_identity != artifact.integrity_identity {
                 return Err(PreparedArtifactError::CorruptArtifact);
@@ -765,6 +795,13 @@ impl PreparedArtifactStore {
             Ok((content_identity, payload_bytes))
         })();
         evidence.observe_payload_consumption(payload_started.elapsed());
+        reload_cost.finish(
+            Stage::Payload,
+            reload_cost.enabled().then_some(payload_started),
+        );
+        if reload_cost.enabled() {
+            consumer.observe_reload_cost(&reload_cost);
+        }
         let (content_identity, payload_bytes) = match consumed {
             Ok(consumed) => consumed,
             Err(error) => {

@@ -13,6 +13,65 @@ const REPEAT_PLANE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_COHORT_BYTES: usize = 64 * 1024 * 1024;
 
 #[test]
+#[ignore = "seconds-scale observer control; requires the approved outer build/control/run guard"]
+fn t51_cf_reload_decoder_observer_control() {
+    use super::{ReloadCost, ReloadStage, adapt_kernel_from_plane, decode_complex32_plane};
+    let root = PathBuf::from(std::env::var_os("CASA_RS_VLASS_CF_CACHE").unwrap());
+    let mode = std::env::var("CASA_RS_TRACE_CF_RELOAD_COST").unwrap_or_else(|_| "off".to_string());
+    for (name, shape) in [
+        ("CFS_0_0_CF_0_0_0.im", [200, 200]),
+        ("CFS_0_0_CF_15_18_0.im", [560, 560]),
+        ("CFS_0_0_CF_0_31_0.im", [2048, 2048]),
+    ] {
+        let (_, metadata) = read_metadata(&root.join(name)).unwrap();
+        assert_eq!(&metadata.shape[..2], &shape);
+        let (payload, _, _, _) = bulk_reference(&metadata);
+        let expected = adapt_kernel_from_plane(
+            &metadata,
+            decode_complex32_plane(payload.clone(), &metadata).unwrap(),
+        )
+        .unwrap();
+        let repetitions = (MAX_COHORT_BYTES / payload.len()).max(1);
+        let mut nanos = 0_u128;
+        let mut observed = ReloadCost::new(true);
+        for ordinal in 0..repetitions {
+            // Calibration deliberately fixes the number of clocked operations;
+            // these are not production service-time samples or estimates.
+            let enabled = mode == "detailed" || mode == "sparse" && ordinal % 32 == 0;
+            let mut cost = ReloadCost::new(enabled);
+            let started = Instant::now();
+            let mut encoded = cost.measure(ReloadStage::DecoderAllocate, || {
+                Vec::with_capacity(payload.len())
+            });
+            for chunk in payload.chunks(CHUNK_BYTES) {
+                cost.measure(ReloadStage::Consumer, || {
+                    encoded.extend_from_slice(std::hint::black_box(chunk))
+                });
+            }
+            let plane = cost.measure(ReloadStage::DecodePlanes, || {
+                decode_complex32_plane(encoded, &metadata).unwrap()
+            });
+            let kernel = cost.measure(ReloadStage::ConstructKernels, || {
+                adapt_kernel_from_plane(&metadata, plane).unwrap()
+            });
+            nanos += started.elapsed().as_nanos();
+            assert_eq!(kernel, expected);
+            observed.merge(&cost);
+        }
+        eprintln!(
+            "t51_cf_decoder_control mode={} plane={} payload_bytes={} loads={} execution_nanos={} payload_sha256={:x}{}",
+            mode,
+            name,
+            payload.len(),
+            repetitions,
+            nanos,
+            Sha256::digest(&payload),
+            observed
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires explicitly selected real CASA CF planes; read-only decoder baseline"]
 fn t51_cf_decoder_stage_baseline() {
     use super::{adapt_kernel_from_plane, decode_complex32_plane};

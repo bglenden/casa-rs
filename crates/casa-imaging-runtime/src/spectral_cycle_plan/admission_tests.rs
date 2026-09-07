@@ -292,6 +292,46 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
     );
     let (selected, candidate) =
         select_gridded_window_plan(preferred.clone(), &policy, preview, compose).unwrap();
+    let mut fixed_policy = policy.clone();
+    fixed_policy.resource_policy = ResourcePolicy::Explicit(crate::ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), memory)]),
+        workers: Some(1),
+        ..crate::ResourceOverride::default()
+    });
+    for window in [&preferred, &selected] {
+        let planned = compose_major_physical(
+            &problem,
+            &registry,
+            &fixed_policy,
+            &weighting,
+            phase,
+            Some(window),
+        )
+        .unwrap();
+        let reader = planned.complete_data.prepared_artifact_reader().unwrap();
+        let nodes = planned.physical.execution_dag().nodes();
+        let join = adaptation_route_join_node(phase.pass);
+        assert!(
+            nodes[reader.node()]
+                .dependencies
+                .contains(&WorkDependency::Work(join.clone()))
+        );
+        assert!(
+            nodes[planned.complete_data.replay_node()]
+                .dependencies
+                .contains(&WorkDependency::Work(reader.node().clone()))
+        );
+        for route in [
+            retained_route_node(phase.pass),
+            low_memory_io_route_node(phase.pass),
+        ] {
+            assert!(
+                nodes[&join]
+                    .dependencies
+                    .contains(&WorkDependency::Fence(FenceId::new(route, FenceKind::Io)))
+            );
+        }
+    }
     assert!(selected.maximum_records() < preferred.maximum_records());
     assert!(candidate.complete_data.residency().aw_prepared_pool_bytes() >= 472_524_620);
     assert_eq!(

@@ -2208,14 +2208,11 @@ impl<T: ImagePixel> Lattice<T> for PagedImage<T> {
                 });
             }
         }
-        // Use tiled_io for single-pixel read via a 1-element slice.
         if let Some(ref tio) = self.tiled_io {
-            let ones = vec![1; self.shape.len()];
-            let arr = tio
+            return tio
                 .borrow_mut()
-                .get_slice::<T>(position, &ones)
-                .map_err(|e| LatticeError::Table(e.to_string()))?;
-            return Ok(arr.into_iter().next().unwrap_or_default());
+                .get_at::<T>(position)
+                .map_err(|e| LatticeError::Table(e.to_string()));
         }
         Ok(self
             .read_array()

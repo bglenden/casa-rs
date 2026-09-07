@@ -660,6 +660,9 @@ where
                     }
                 };
                 minor_outcomes.push(minor_outcome);
+                let terminal_refresh_started = (!continue_cleaning
+                    && std::env::var_os("CASA_RS_TRACE_MAJOR_CYCLE_ENVELOPES").is_some())
+                .then(std::time::Instant::now);
                 let final_input = minor.into_final_major_input();
                 let final_aw = prepared_aw
                     .as_ref()
@@ -770,6 +773,13 @@ where
                     .take_completion()
                     .ok_or_else(|| boxed("final-major execution omitted scientific evidence"))?
                     .into_completion();
+                if let Some(started) = terminal_refresh_started {
+                    eprintln!(
+                        "imaging_terminal_refresh_envelope ordinal={ordinal} model_generation={} elapsed_nanos={} includes=handoff,planning,phase_run,reconciliation,receipt_recovery excludes=minor_cycle,product_normalization,restoration,publication",
+                        completion.final_model().generation_id(),
+                        started.elapsed().as_nanos(),
+                    );
+                }
                 if !visibility_write_requested {
                     break (
                         completion,

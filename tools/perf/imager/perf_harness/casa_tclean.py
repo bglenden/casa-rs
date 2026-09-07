@@ -27,6 +27,7 @@ import time
 from typing import Any, Callable
 
 try:
+    from .casa_major_timing import trace_major_cycles
     from .casa_runtime_identity import (
         capture_runtime_identity,
         stable_identity_projection,
@@ -35,6 +36,7 @@ try:
     )
     from .tree_identity import sha256_file, tree_identity
 except ImportError:  # Executed directly by the CASA Python interpreter.
+    from casa_major_timing import trace_major_cycles
     from casa_runtime_identity import (
         capture_runtime_identity,
         stable_identity_projection,
@@ -1157,7 +1159,8 @@ def execute_invocation_plan(
     preflight_seconds = time.perf_counter() - protocol_started
     tclean_started = time.perf_counter()
     try:
-        return_value = tclean_task(**effective_kwargs)
+        with trace_major_cycles():
+            return_value = tclean_task(**effective_kwargs)
     except KeyboardInterrupt:
         wall_seconds = time.perf_counter() - tclean_started
         product_started = time.perf_counter()

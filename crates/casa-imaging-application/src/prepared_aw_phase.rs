@@ -740,11 +740,37 @@ mod tests {
         let cold =
             prepare_aw_projection(&problem, deployment.clone(), &cold_runtime).expect("cold Load");
         assert_eq!(cold.receipts.len(), 2);
+        let cold_catalog = &cold.receipts[0];
+        assert_eq!(
+            cold_catalog.status(),
+            casa_imaging_runtime::ReceiptStatus::Failed
+        );
+        assert_eq!(
+            cold_catalog.failure_kind(),
+            Some(casa_imaging_runtime::ReceiptFailureKind::EvidenceContract)
+        );
+        let artifacts = cold_catalog
+            .artifact_identities()
+            .into_iter()
+            .filter(|artifact| {
+                cold_catalog.artifact_role(*artifact)
+                    == Some(casa_imaging_runtime::ArtifactRole::Cache)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(artifacts.len(), 1);
+        assert!(artifacts.into_iter().all(|artifact| {
+            cold_catalog.artifact_disposition(artifact)
+                == Some(casa_imaging_runtime::ArtifactDisposition::RejectedStale)
+        }));
         let operations_rate = profile
             .operations_rate_id()
             .expect("AW profile operations calibration")
             .as_str();
         let load_receipt = &cold.receipts[1];
+        assert_eq!(
+            load_receipt.status(),
+            casa_imaging_runtime::ReceiptStatus::Completed
+        );
         let selected = load_receipt.selected_alternative_projection();
         assert_eq!(
             selected
@@ -784,6 +810,10 @@ mod tests {
         ];
         let warm = prepare_aw_projection(&problem, deployment, &warm_runtime).expect("warm Reuse");
         assert_eq!(warm.receipts.len(), 1);
+        assert_eq!(
+            warm.receipts[0].status(),
+            casa_imaging_runtime::ReceiptStatus::Completed
+        );
         drop(warm.bind_plan().expect("fresh warm reader binding"));
     }
 

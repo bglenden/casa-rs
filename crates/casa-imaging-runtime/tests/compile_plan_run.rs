@@ -12869,17 +12869,8 @@ fn sealed_products_round(
     )
     .expect("bind model lifecycle");
     let named = lifecycle.initial_empty().expect("empty named generation");
-    let delta = lifecycle
-        .compile_delta(
-            &named,
-            [ModelDeltaTerm::new(
-                ModelCell::new(0, 0, 0, [4, 4]),
-                casa_imaging_model::ModelValue::new(0.75).expect("finite value"),
-            )],
-        )
-        .expect("pending delta");
     let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("prepare model");
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prepare model");
 
     let plan = plan_weighting(
         problem,

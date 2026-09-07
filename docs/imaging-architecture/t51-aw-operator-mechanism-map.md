@@ -46,8 +46,18 @@ reuse DIRTY bytes; a DIRTY-bound descriptor or reader cannot execute as CLEAN.
 Private cache schema/identity version 7 rejects previous manifests without a
 migration reader. The cold/warm acceptance starts with a fresh private store and
 requires unchanged payload and manifest bytes, inodes, and modification times.
-All existing integrity, resource, decoded-pool, and decoder-workspace checks remain
-in force; execution-seal metadata is charged beside the retained reader snapshot.
+Resource, decoded-pool, and decoder-workspace checks remain in force;
+execution-seal metadata is charged beside the retained reader snapshot.
+
+Payload hashes are checked on the first successful read of each artifact in a
+reader session, then reused while the cooperative store lock excludes mutation.
+Concurrent first reads may both validate; a new session validates again. Every
+read still checks byte length, finite values, and declared representation. This
+deliberately no longer promises detection of same-length, finite external
+modification after successful validation in that session. Verification flags are
+charged to the reader snapshot; no payload cache or persistent format is added.
+The regression checks actual hashed bytes independently of timing, including
+new-session corruption rejection and retained per-read finite/length rejection.
 
 The cross-problem regression uses the canonical source-free prepared prephase for
 both single and catalog operations. It supplies current-problem plans and registry

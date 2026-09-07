@@ -56,7 +56,7 @@ fn t51_retained_receipt_decode_cost() {
         if repeat > 0 {
             assert_eq!(stats.full_decodes, previous.full_decodes);
             assert_eq!(stats.hits - previous.hits, before.len() as u64);
-            assert_eq!(stats.bytes_hashed - previous.bytes_hashed, bytes);
+            assert_eq!(stats.bytes_compared - previous.bytes_compared, bytes);
         }
         for summary in &summaries {
             let receipt = store
@@ -80,12 +80,12 @@ fn t51_retained_receipt_decode_cost() {
             );
         }
         eprintln!(
-            "t51_receipt_summaries repeat={repeat} receipts={} seconds={seconds:.9} charged_bytes={} full_decodes={} hits={} bytes_hashed={} verification_outside_timing=true",
+            "t51_receipt_summaries repeat={repeat} receipts={} seconds={seconds:.9} charged_bytes={} full_decodes={} hits={} bytes_compared={} verification_outside_timing=true",
             summaries.len(),
             stats.charged_bytes,
             stats.full_decodes,
             stats.hits,
-            stats.bytes_hashed
+            stats.bytes_compared
         );
     }
     assert_eq!(before, snapshot(&root), "retained files unchanged");
