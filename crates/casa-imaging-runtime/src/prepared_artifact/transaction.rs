@@ -1296,15 +1296,10 @@ impl PreparedArtifactStore {
                     Ok((existing, disposition, cache_bytes))
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    self.evict_for(
+                    let cache_bytes = self.evict_for(
                         descriptor.compatibility.identity,
                         incoming_bytes,
                         retained,
-                        evidence,
-                    )?;
-                    let cache_bytes = self.validate_budget_with_incoming(
-                        descriptor.compatibility.identity,
-                        incoming_bytes,
                         evidence,
                     )?;
                     sync_directory_counted(&self.cache, evidence)?;
@@ -1418,9 +1413,11 @@ impl PreparedArtifactStore {
         incoming_bytes: u64,
         retained: &[PreparedArtifactDescriptor],
         evidence: &mut ValidationEvidence,
-    ) -> Result<(), PreparedArtifactError> {
+    ) -> Result<u64, PreparedArtifactError> {
         self.with_entries(evidence, |evidence, entries| {
-            entries.retain(|entry| entry.identity != incoming);
+            if entries.iter().any(|entry| entry.identity == incoming) {
+                return Err(PreparedArtifactError::PublicationConflict);
+            }
             let mut total = incoming_bytes;
             let mut existing_bytes = 0_u64;
             for entry in entries.iter() {
@@ -1464,7 +1461,8 @@ impl PreparedArtifactStore {
                 evidence.store_write_operation();
                 fs::remove_dir_all(eviction_path)?;
             }
-            Ok(())
+            evidence.observe_cache_bytes(total);
+            Ok(total)
         })
     }
 
@@ -1488,42 +1486,6 @@ impl PreparedArtifactStore {
             if entries.len() > self.budget.entries {
                 return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
                     required: entries.len(),
-                    budget: self.budget.entries,
-                });
-            }
-            Ok(total)
-        })
-    }
-
-    fn validate_budget_with_incoming(
-        &self,
-        incoming: ArtifactIdentity,
-        incoming_bytes: u64,
-        evidence: &mut ValidationEvidence,
-    ) -> Result<u64, PreparedArtifactError> {
-        self.with_entries(evidence, |evidence, entries| {
-            if entries.iter().any(|entry| entry.identity == incoming) {
-                return Err(PreparedArtifactError::PublicationConflict);
-            }
-            let total = entries.iter().try_fold(incoming_bytes, |total, entry| {
-                total
-                    .checked_add(entry.bytes)
-                    .ok_or(PreparedArtifactError::ArtifactTooLarge)
-            })?;
-            let count = entries
-                .len()
-                .checked_add(1)
-                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
-            evidence.observe_cache_bytes(total);
-            if total > self.budget.cache_bytes {
-                return Err(PreparedArtifactError::CacheBudgetExceeded {
-                    required: total,
-                    budget: self.budget.cache_bytes,
-                });
-            }
-            if count > self.budget.entries {
-                return Err(PreparedArtifactError::CacheEntryBudgetExceeded {
-                    required: count,
                     budget: self.budget.entries,
                 });
             }

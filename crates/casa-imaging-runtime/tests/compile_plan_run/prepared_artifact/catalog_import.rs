@@ -813,6 +813,50 @@ fn catalog_cold_import_revalidates_source_inode_before_opening_any_importer() {
 }
 
 #[test]
+fn catalog_cold_import_does_not_repeat_the_eviction_inventory_for_budgeting() {
+    let problem = compile(request(1)).expect("problem");
+    let mut operations = Vec::new();
+    for count in [1, 4] {
+        let fixture = fixture(&problem, count, None);
+        let execution_plan = plan(
+            &problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            |_, _| Ok::<_, ()>(fixture.physical),
+        )
+        .expect("plan");
+        let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([220; 32]);
+        run_prepared(
+            &problem,
+            &execution_plan,
+            &fixture.suite,
+            execution_plan.bind_receipt(execution_provenance(
+                attempt,
+                BuildIdentity::from_sha256([221; 32]),
+            )),
+        )
+        .expect("cold catalog import");
+        let receipt = execution_plan
+            .receipt_store()
+            .open(attempt)
+            .expect("receipt");
+        assert_eq!(receipt.status(), ReceiptStatus::Completed);
+        operations.push(
+            receipt
+                .stage_actual_io(&fixture.catalog_node, IoBufferKind::StorageManager)
+                .expect("catalog I/O")
+                .1,
+        );
+    }
+    // Each prior entry costs eight raw-budget operations, one orphan-inventory
+    // visit, and eight eviction-inventory operations. Per-cell work cancels.
+    let prior_entry_visits = (0..4).sum::<u64>();
+    assert!(
+        operations[1] <= 4 * operations[0] + 17 * prior_entry_visits,
+        "catalog work repeated an inventory: {operations:?}"
+    );
+}
+
+#[test]
 fn catalog_cold_import_admits_one_workspace_and_two_queue_slots_at_all_catalog_sizes() {
     let problem = compile(request(1)).expect("problem");
     let mut prior_memory = 0;
