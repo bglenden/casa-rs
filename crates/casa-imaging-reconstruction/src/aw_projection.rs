@@ -168,7 +168,7 @@ impl AwConvolutionKernel {
     /// Validate one prepared convolution plane without pre-normalizing it.
     pub fn new(layout: AwKernelLayout, taps: Vec<Complex64>) -> Result<Self, AwOperatorError> {
         if layout.shape[0].checked_mul(layout.shape[1]) != Some(taps.len())
-            || taps.iter().any(|tap| !finite(*tap))
+            || !taps.iter().fold(true, |valid, tap| valid & finite(*tap))
         {
             return Err(AwOperatorError::InvalidKernelLayout);
         }
@@ -188,9 +188,9 @@ impl AwConvolutionKernel {
         taps: Vec<Complex32>,
     ) -> Result<Self, AwOperatorError> {
         if layout.shape[0].checked_mul(layout.shape[1]) != Some(taps.len())
-            || taps
-                .iter()
-                .any(|tap| !tap.re.is_finite() || !tap.im.is_finite())
+            || !taps.iter().fold(true, |valid, tap| {
+                valid & tap.re.is_finite() & tap.im.is_finite()
+            })
         {
             return Err(AwOperatorError::InvalidKernelLayout);
         }
