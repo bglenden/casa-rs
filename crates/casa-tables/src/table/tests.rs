@@ -3531,6 +3531,19 @@ fn partial_save_with_changed_rows_patches_only_touched_incremental_rows() {
     reopened
         .persist_selected_rows_in_place(&["id", "scan"], &[2, 41])
         .expect("sparse incremental partial save");
+    reopened.discard_persisted_cell_updates(&["id", "scan"], &[2, 41]);
+    assert_eq!(
+        reopened
+            .column_accessor("id")
+            .unwrap()
+            .scalar_cells_owned_for_rows(&[2, 41, 2])
+            .unwrap(),
+        vec![
+            Some(ScalarValue::Int32(2002)),
+            Some(ScalarValue::Int32(41)),
+            Some(ScalarValue::Int32(2002))
+        ]
+    );
     assert!(
         !reopened.inner.has_loaded_rows(),
         "sparse incremental save should not force row materialization"
@@ -4682,27 +4695,45 @@ fn add_variable_shape_tiled_column_in_place_persists_defined_rows_only() {
     let mut table = Table::open(TableOptions::new(&root)).expect("open base table");
     let column = ColumnSchema::array_variable("vis", PrimitiveType::Float32, Some(2));
     table.add_column(column, None).expect("add column");
-    table_set_cell(
-        &mut table,
-        1,
-        "vis",
-        Value::Array(ArrayValue::Float32(
-            ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap(),
-        )),
-    )
-    .expect("set row 1");
-    table_set_cell(
-        &mut table,
-        2,
-        "vis",
-        Value::Array(ArrayValue::Float32(
-            ArrayD::from_shape_vec(vec![1, 3], vec![5.0, 6.0, 7.0]).unwrap(),
-        )),
-    )
-    .expect("set row 2");
+    for (row, shape, values) in [
+        (1, vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]),
+        (2, vec![1, 3], vec![5.0, 6.0, 7.0]),
+    ] {
+        let mut prepared = table.row_accessor_mut().prepare(&["vis"]).unwrap();
+        prepared.seek(row).unwrap();
+        prepared
+            .set_value_at(
+                0,
+                Value::Array(ArrayValue::Float32(
+                    ArrayD::from_shape_vec(shape, values).unwrap(),
+                )),
+            )
+            .unwrap();
+    }
     table
-        .persist_added_tiled_shape_column_in_place("vis", &[1, 2], Some(&[2, 2, 8]))
+        .prepare_write()
+        .add_tiled_shape_column("vis", &[1, 2], Some(&[2, 2, 8]))
         .expect("save added tiled column");
+    table.discard_persisted_cell_updates(&["vis"], &[1, 2]);
+    let same_handle = table.column_accessor("vis").unwrap();
+    for (row, expected) in [false, true, true].into_iter().enumerate() {
+        assert_eq!(
+            same_handle.array_cell_is_defined_uncached(row).unwrap(),
+            expected
+        );
+    }
+    assert_eq!(
+        same_handle.array_cells_owned_uncached(&[2, 1]).unwrap(),
+        vec![
+            Some(ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![1, 3], vec![5.0, 6.0, 7.0]).unwrap()
+            )),
+            Some(ArrayValue::Float32(
+                ArrayD::from_shape_vec(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]).unwrap()
+            )),
+        ]
+    );
+    assert!(!table.inner.has_loaded_rows());
 
     let reopened = Table::open(TableOptions::new(&root)).expect("reopen table");
     let vis = reopened.column_accessor("vis").expect("vis accessor");
@@ -4789,8 +4820,26 @@ fn clone_tiled_array_column_in_place_preserves_source_values_and_allows_sparse_p
         )
         .expect("add corrected column");
     reopened
-        .persist_added_tiled_column_clone_in_place("DATA", "CORRECTED_DATA", "TiledCorrected")
+        .prepare_write()
+        .add_tiled_column_clone("DATA", "CORRECTED_DATA", "TiledCorrected")
         .expect("clone DATA to CORRECTED_DATA");
+    let control_reads = crate::storage::table_control::CONTROL_FILE_READS.get();
+    let cloned = reopened
+        .column_accessor("CORRECTED_DATA")
+        .unwrap()
+        .array_cells_owned_uncached(&[3, 0, 3])
+        .expect("read cloned column through the same lazy handle");
+    let source = reopened
+        .column_accessor("DATA")
+        .unwrap()
+        .array_cells_owned_uncached(&[3, 0, 3])
+        .unwrap();
+    assert_eq!(cloned, source);
+    assert_eq!(
+        crate::storage::table_control::CONTROL_FILE_READS.get(),
+        control_reads
+    );
+    assert!(!reopened.inner.has_loaded_rows());
     table_set_cell(
         &mut reopened,
         2,

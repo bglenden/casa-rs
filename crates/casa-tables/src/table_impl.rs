@@ -1850,6 +1850,27 @@ impl TableImpl {
         self.schema = schema;
     }
 
+    pub(crate) fn refresh_read_metadata(
+        &mut self,
+        table_dat: TableDatContents,
+    ) -> Result<(), TableError> {
+        if let Some(source) = self.lazy_rows.as_mut() {
+            source.read_metadata.take();
+            let metadata =
+                RetainedTableReadMetadata::open(&source.path, table_dat).map_err(|error| {
+                    TableError::Storage(format!(
+                        "failed to refresh read metadata for table {}: {error}",
+                        source.path.display()
+                    ))
+                })?;
+            source
+                .read_metadata
+                .set(metadata)
+                .expect("read metadata cleared before refreshing");
+        }
+        Ok(())
+    }
+
     /// Replace all inner state from a storage snapshot.
     ///
     /// Used by `Table::lock()` when sync data indicates another process
