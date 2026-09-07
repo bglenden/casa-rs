@@ -230,7 +230,7 @@ fn run_full_products(require_cold_dirty: bool) {
     assert_eq!(
         aw_receipts.len(),
         if role == AcceptanceRole::Dirty && require_cold_dirty {
-            1025
+            2
         } else {
             1
         }

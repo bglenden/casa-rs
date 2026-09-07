@@ -21,6 +21,13 @@ actual deterministic CLEAN reuses it unchanged with the frozen mask, original
 2000-iteration budget, and original stopping criteria. Both roles retain the
 full 18/19-product comparison contracts below.
 
+The catalog-scoped preparation route records two preparation receipts when cold
+(one expected rejected reuse probe plus one successful ordered import), or one
+when fully warm. The 1,024 cells remain individually identified and checked
+inside those phase receipts; receipt count is not artifact count. The
+[mechanism map](t51-aw-operator-mechanism-map.md#catalog-scoped-preparation)
+defines partial failure, cooperative cancellation and restart behavior.
+
 The earlier six-product, Rust-start-model residual-refresh diagnostic is not
 this gate's reference. The representative gate produces independent CASA DIRTY
 and CLEAN references once using the installed 6.7.6.14 task/library code and an

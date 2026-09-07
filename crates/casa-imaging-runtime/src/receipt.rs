@@ -1420,6 +1420,12 @@ impl ExecutionReceiptStore {
     }
 
     fn make_room(&self, body: &ReceiptBody, incoming_bytes: u64) -> Result<(), ReceiptError> {
+        if boundary_probe_enabled() {
+            eprintln!(
+                "t51_receipt_history boundary=retention attempt={}",
+                body.attempt()
+            );
+        }
         if incoming_bytes > self.state.retention.max_bytes {
             return Err(ReceiptError::RetentionExceeded);
         }
@@ -3541,6 +3547,68 @@ impl ArtifactProjection {
     }
 }
 
+/// Incremental receipt workspace introduced by a catalog's listed artifacts.
+/// The fixed problem/node projection is unchanged by catalog size. Encoding a
+/// worst-case terminal while the current encoding is live can retain three
+/// artifact projections and three encodings; account for those copies here.
+pub(crate) fn artifact_workspace_bytes(
+    artifacts: impl IntoIterator<Item = crate::PlannedArtifact>,
+) -> Result<u64, ReceiptError> {
+    #[derive(Serialize)]
+    struct ArtifactList<'a> {
+        artifacts: [&'a ArtifactProjection; 1],
+    }
+    #[derive(Serialize)]
+    struct Plan<'a> {
+        plan: ArtifactList<'a>,
+    }
+    #[derive(Serialize)]
+    struct Document<'a> {
+        receipt: Plan<'a>,
+    }
+
+    let mut total = 0_u64;
+    for artifact in artifacts {
+        let mut projection = ArtifactProjection::new(&artifact);
+        projection.observed_identity = Some("f".repeat(64));
+        projection.disposition = Some(ArtifactDispositionProjection::RejectedStale);
+        projection.actual_bytes = Some(u64::MAX);
+        projection.path_identity = Some("f".repeat(64));
+        let encoded = serde_json::to_vec_pretty(&Document {
+            receipt: Plan {
+                plan: ArtifactList {
+                    artifacts: [&projection],
+                },
+            },
+        })
+        .map_err(|source| ReceiptError::Json { source })?;
+        let owned = [
+            Some(&projection.artifact_identity),
+            Some(&projection.node_id),
+            Some(&projection.role),
+            projection.cache_identity.as_ref(),
+            projection.observed_identity.as_ref(),
+            projection.path_identity.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .try_fold(std::mem::size_of::<ArtifactProjection>(), |bytes, text| {
+            bytes
+                .checked_add(text.capacity())
+                .ok_or(ReceiptError::RetentionExceeded)
+        })?;
+        let bytes = owned
+            .checked_add(encoded.capacity())
+            .and_then(|bytes| bytes.checked_mul(3))
+            .and_then(|bytes| u64::try_from(bytes).ok())
+            .ok_or(ReceiptError::RetentionExceeded)?;
+        total = total
+            .checked_add(bytes)
+            .ok_or(ReceiptError::RetentionExceeded)?;
+    }
+    Ok(total)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ArtifactDispositionProjection {
@@ -3852,6 +3920,16 @@ impl<'store> ReceiptRecorder<'store> {
     ) -> Result<(), ReceiptError> {
         self.record_measurements(node, measurements)?;
         self.finish_node(node, ReceiptStatus::Failed)?;
+        self.checkpoint()
+    }
+
+    pub(crate) fn work_cancelled_with_measurements(
+        &mut self,
+        node: &WorkNodeId,
+        measurements: &WorkMeasurements,
+    ) -> Result<(), ReceiptError> {
+        self.record_measurements(node, measurements)?;
+        self.finish_node(node, ReceiptStatus::Cancelled)?;
         self.checkpoint()
     }
 
@@ -5726,6 +5804,9 @@ fn decode_document(bytes: &[u8]) -> Result<ReceiptDocument, ReceiptError> {
 }
 
 fn encode_document(body: &ReceiptBody) -> Result<Vec<u8>, ReceiptError> {
+    if boundary_probe_enabled() {
+        eprintln!("t51_receipt_encode attempt={}", body.attempt());
+    }
     let payload = serde_json::to_vec(body).map_err(|source| ReceiptError::Json { source })?;
     let document = ReceiptDocument {
         schema: ReceiptSchema {
@@ -5736,6 +5817,11 @@ fn encode_document(body: &ReceiptBody) -> Result<Vec<u8>, ReceiptError> {
         receipt: body.clone(),
     };
     serde_json::to_vec_pretty(&document).map_err(|source| ReceiptError::Json { source })
+}
+
+fn boundary_probe_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("CASA_RS_T51_RECEIPT_BOUNDARY_PROBE").is_some())
 }
 
 fn worst_case_receipt_bytes(body: &ReceiptBody) -> Result<u64, ReceiptError> {
@@ -8590,5 +8676,43 @@ mod tests {
                 .expect("checked joint reservation")
                 > ceiling_between_max_and_sum
         );
+    }
+
+    #[test]
+    fn catalog_receipt_workspace_grows_linearly_and_covers_three_terminal_encodings() {
+        use super::{ArtifactDispositionProjection, ArtifactProjection, artifact_workspace_bytes};
+        use crate::{ArtifactIdentity, ArtifactRole, CacheIdentity, PlannedArtifact, WorkNodeId};
+
+        let artifact = PlannedArtifact::new(
+            ArtifactIdentity::from_owner_digest([1; 32]),
+            WorkNodeId::new("catalog-\"escaped\"-node"),
+            ArtifactRole::Prepared,
+            Some(CacheIdentity::from_owner_digest([2; 32])),
+        );
+        let one = artifact_workspace_bytes([artifact.clone()]).expect("one artifact workspace");
+        for count in [1, 32, 1024] {
+            let reserved = artifact_workspace_bytes(std::iter::repeat_n(artifact.clone(), count))
+                .expect("catalog receipt workspace");
+            assert_eq!(reserved, one * count as u64);
+            let projections = (0..count)
+                .map(|_| {
+                    let mut projection = ArtifactProjection::new(&artifact);
+                    projection.observed_identity = Some("f".repeat(64));
+                    projection.disposition = Some(ArtifactDispositionProjection::RejectedStale);
+                    projection.actual_bytes = Some(u64::MAX);
+                    projection.path_identity = Some("f".repeat(64));
+                    projection
+                })
+                .collect::<Vec<_>>();
+            let encoded = serde_json::to_vec_pretty(
+                &serde_json::json!({"receipt": {"plan": {"artifacts": projections}}}),
+            )
+            .expect("actual terminal encoding");
+            assert!(
+                reserved
+                    >= 3 * (encoded.capacity() + count * std::mem::size_of::<ArtifactProjection>())
+                        as u64
+            );
+        }
     }
 }

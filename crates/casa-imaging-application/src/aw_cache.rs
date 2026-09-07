@@ -1754,6 +1754,24 @@ pub(crate) mod tests {
         );
     }
 
+    pub(crate) fn write_catalog_test_cache(root: &Path, count: usize) {
+        for index in 0..count {
+            for (prefix, weight, affine, value) in [
+                ("CFS", false, [-2.0, 2.0], Complex32::new(3.0, -1.0)),
+                ("WTCFS", true, [-1.0, 1.0], Complex32::new(7.0, 2.0)),
+            ] {
+                write_cell_at_w(
+                    root,
+                    &format!("{prefix}_{index}.im"),
+                    weight,
+                    affine,
+                    (index * index) as f64 / 0.5,
+                    value,
+                );
+            }
+        }
+    }
+
     #[test]
     fn indexes_asymmetric_same_world_window_without_loading_pixels() {
         let root = TempDir::new().unwrap();

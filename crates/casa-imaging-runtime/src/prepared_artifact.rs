@@ -3,6 +3,7 @@
 //! Plan-bound private persistence for immutable implementation preparation.
 
 mod accounting;
+mod catalog;
 mod codec;
 mod filesystem;
 mod planning;
@@ -11,6 +12,7 @@ pub mod reload_probe;
 mod transaction;
 
 use accounting::*;
+use catalog::*;
 use codec::*;
 use filesystem::*;
 pub use planning::{
@@ -1019,11 +1021,13 @@ fn validate_catalog_descriptors(
 
 fn catalog_work_node_id(
     descriptors: &[PreparedArtifactDescriptor],
+    operation: PreparedArtifactOperation,
 ) -> Result<WorkNodeId, PreparedArtifactError> {
     validate_catalog_identity_input(descriptors)?;
     let mut hasher = Sha256::new();
     hasher.update(CATALOG_WORK_NODE_ID_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
+    hasher.update([operation_tag(operation)]);
     hash_len(&mut hasher, descriptors.len())?;
     for descriptor in descriptors {
         hasher.update(descriptor.compatibility.identity.as_bytes());
@@ -1031,18 +1035,21 @@ fn catalog_work_node_id(
     }
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(WorkNodeId::new(format!(
-        "prepared-artifact-catalog-warm-reuse-{}",
+        "prepared-artifact-catalog-{}-{}",
+        operation.name(),
         encode_hex(&digest)
     )))
 }
 
 fn catalog_work_implementation_id(
     descriptors: &[PreparedArtifactDescriptor],
+    operation: PreparedArtifactOperation,
 ) -> Result<WorkImplementationId, PreparedArtifactError> {
     validate_catalog_identity_input(descriptors)?;
     let mut hasher = Sha256::new();
     hasher.update(CATALOG_WORK_IMPLEMENTATION_ID_DOMAIN);
     hasher.update(IDENTITY_VERSION.to_le_bytes());
+    hasher.update([operation_tag(operation)]);
     hash_len(&mut hasher, descriptors.len())?;
     for descriptor in descriptors {
         hasher.update(descriptor.compatibility.identity.as_bytes());
@@ -1050,7 +1057,8 @@ fn catalog_work_implementation_id(
     }
     let digest: [u8; 32] = hasher.finalize().into();
     Ok(WorkImplementationId::new(format!(
-        "prepared-artifact-catalog-warm-reuse-{}",
+        "prepared-artifact-catalog-{}-{}",
+        operation.name(),
         encode_hex(&digest)
     )))
 }
@@ -1074,20 +1082,36 @@ fn catalog_outcome_resident_bytes(entries: usize) -> Result<u64, PreparedArtifac
 
 fn catalog_planned_artifacts(
     descriptors: &[PreparedArtifactDescriptor],
+    sources: Option<&[Option<PreparedArtifactImportSource>]>,
 ) -> Result<Vec<PlannedArtifact>, PreparedArtifactError> {
-    let node = catalog_work_node_id(descriptors)?;
+    let operation = if sources.is_some() {
+        PreparedArtifactOperation::Load
+    } else {
+        PreparedArtifactOperation::Reuse
+    };
+    let node = catalog_work_node_id(descriptors, operation)?;
     Ok(descriptors
         .iter()
-        .flat_map(|descriptor| {
+        .enumerate()
+        .flat_map(|(index, descriptor)| {
+            let operation = if sources.is_some_and(|sources| sources[index].is_some()) {
+                PreparedArtifactOperation::Load
+            } else {
+                PreparedArtifactOperation::Reuse
+            };
             [
                 PlannedArtifact::new(
                     descriptor.compatibility.identity,
                     node.clone(),
-                    ArtifactRole::Cache,
+                    if operation == PreparedArtifactOperation::Load {
+                        ArtifactRole::Prepared
+                    } else {
+                        ArtifactRole::Cache
+                    },
                     Some(descriptor.compatibility.cache_identity),
                 ),
                 PlannedArtifact::new(
-                    derive_eviction_ledger_identity(descriptor, PreparedArtifactOperation::Reuse),
+                    derive_eviction_ledger_identity(descriptor, operation),
                     node.clone(),
                     ArtifactRole::Input,
                     None,
@@ -2072,6 +2096,8 @@ impl ValidatedArtifact {
 /// Typed fail-closed prepared-artifact error.
 #[derive(Debug)]
 pub enum PreparedArtifactError {
+    /// The runtime requested a cooperative stop before the next catalog entry.
+    Interrupted,
     /// A plan-bound store operation failed after producing receipt evidence.
     Execution {
         /// Underlying typed store failure.
@@ -2211,6 +2237,7 @@ pub enum PreparedArtifactError {
 impl fmt::Display for PreparedArtifactError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Interrupted => formatter.write_str("prepared-artifact work interrupted by runtime control"),
             Self::Execution { source, .. } => write!(formatter, "{source}"),
             Self::Io(error) => write!(formatter, "prepared-artifact I/O failed: {error}"),
             Self::Json(error) => write!(formatter, "prepared-artifact manifest failed: {error}"),
@@ -4086,6 +4113,7 @@ mod tests {
             .evict_for(
                 ArtifactIdentity::from_owner_digest([3; 32]),
                 100,
+                &[],
                 &mut evidence,
             )
             .expect_err("the injected second eviction step fails");
@@ -4204,6 +4232,41 @@ mod tests {
             evidence.resident_buffer_bytes,
             baseline + descriptor_bytes + canonical_bytes
         );
+    }
+
+    #[test]
+    fn orphan_reconciliation_rejects_excess_bytes_and_foreign_contents_before_deletion() {
+        for foreign in [false, true] {
+            let directory = tempfile::tempdir().expect("orphan reconciliation cache");
+            let budget = PreparedArtifactBudget::new(100, 3, 64).expect("bounded recovery");
+            let store = open_test_store(directory.path(), budget).expect("store");
+            let staging = store.cache.join(format!("{STAGING_PREFIX}interrupted"));
+            fs::create_dir(&staging).expect("orphan directory");
+            let payload = staging.join(if foreign {
+                "foreign-user-file"
+            } else {
+                PAYLOAD_FILE
+            });
+            fs::write(&payload, [1_u8; 128]).expect("orphan bytes");
+            let mut evidence = ValidationEvidence::new(budget);
+            let error = store
+                .remove_orphan_staging(&mut evidence)
+                .expect_err("out-of-contract staging remains untouched");
+            if foreign {
+                assert!(matches!(error, PreparedArtifactError::UnknownCacheEntry(_)));
+            } else {
+                assert!(matches!(
+                    error,
+                    PreparedArtifactError::CacheBudgetExceeded {
+                        required: 128,
+                        budget: 100
+                    }
+                ));
+                assert_eq!(evidence.temporary_storage_peak, 128);
+            }
+            assert!(payload.exists());
+            assert!(evidence.evictions.is_empty());
+        }
     }
 
     #[test]

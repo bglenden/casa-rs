@@ -27,9 +27,10 @@ pub struct PreparedArtifactPlanFragment<'a> {
     source: Option<PreparedArtifactSourceBinding<'a>>,
 }
 
-/// Canonical composition of one ordered catalog warm-reuse transaction.
+/// Canonical composition of one ordered reuse or sequential cold-import phase.
 pub struct PreparedArtifactCatalogPlanFragment<'a> {
     descriptors: &'a [PreparedArtifactDescriptor],
+    sources: Option<&'a [Option<PreparedArtifactImportSource>]>,
     store: &'a PreparedArtifactStore,
     producer: WorkNodeId,
     publication_commit: WorkNodeId,
@@ -637,20 +638,6 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
 }
 
 impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
-    /// Derive the registry key for the exact ordered catalog transaction.
-    pub fn implementation_id(
-        descriptors: &[PreparedArtifactDescriptor],
-    ) -> Result<WorkImplementationId, PreparedArtifactPlanError> {
-        Ok(catalog_work_implementation_id(descriptors)?)
-    }
-
-    /// Derive the cache-node identity for the exact ordered catalog transaction.
-    pub fn node_id(
-        descriptors: &[PreparedArtifactDescriptor],
-    ) -> Result<WorkNodeId, PreparedArtifactPlanError> {
-        Ok(catalog_work_node_id(descriptors)?)
-    }
-
     /// Bind an exact ordered catalog to one cache node and one release node.
     pub fn new(
         descriptors: &'a [PreparedArtifactDescriptor],
@@ -662,6 +649,7 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
         validate_catalog_descriptors(store, descriptors)?;
         Ok(Self {
             descriptors,
+            sources: None,
             store,
             producer,
             publication_commit,
@@ -669,16 +657,43 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
         })
     }
 
+    /// Select sequential cold import from exact, predecessor-owned sources.
+    ///
+    /// Each source must match the descriptor at the same ordered position;
+    /// `None` requires revalidation/reuse of that selected member. All selected
+    /// members are excluded from this phase's own evictions, including warm ones.
+    /// Admission reserves simultaneous workspace and shared source lanes, not
+    /// an independent buffer or queue for every catalog member.
+    pub fn with_import_sources(
+        mut self,
+        sources: &'a [Option<PreparedArtifactImportSource>],
+    ) -> Result<Self, PreparedArtifactPlanError> {
+        validate_catalog_sources(self.descriptors, sources)?;
+        self.sources = Some(sources);
+        Ok(self)
+    }
+
+    fn operation(&self) -> PreparedArtifactOperation {
+        if self.sources.is_some() {
+            PreparedArtifactOperation::Load
+        } else {
+            PreparedArtifactOperation::Reuse
+        }
+    }
+
     /// Return the deterministic catalog cache-node identity.
     pub fn work_node_id(&self) -> Result<WorkNodeId, PreparedArtifactPlanError> {
-        Self::node_id(self.descriptors)
+        Ok(catalog_work_node_id(self.descriptors, self.operation())?)
     }
 
     /// Return the deterministic catalog implementation identity.
     pub fn work_implementation_id(
         &self,
     ) -> Result<WorkImplementationId, PreparedArtifactPlanError> {
-        Self::implementation_id(self.descriptors)
+        Ok(catalog_work_implementation_id(
+            self.descriptors,
+            self.operation(),
+        )?)
     }
 
     /// Compose the catalog transaction with already validated physical work.
@@ -687,13 +702,12 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
         base: &PhysicalWorkBinding,
     ) -> Result<PhysicalWorkBinding, PreparedArtifactPlanError> {
         validate_catalog_descriptors(self.store, self.descriptors)?;
-        let reservation = self.store.catalog_reuse_reservation(self.descriptors)?;
-        let node_id = catalog_work_node_id(self.descriptors)?;
-        let implementation = catalog_work_implementation_id(self.descriptors)?;
-        let identity = node_id
-            .as_str()
-            .strip_prefix("prepared-artifact-catalog-warm-reuse-")
-            .ok_or(PreparedArtifactError::InvalidDescriptor)?;
+        let reservation = self
+            .store
+            .catalog_reservation(self.descriptors, self.sources)?;
+        let node_id = self.work_node_id()?;
+        let implementation = self.work_implementation_id()?;
+        let identity = node_id.as_str();
         let allocation_id =
             AllocationId::new(format!("prepared-catalog-resident-buffer-{identity}"));
         let slot_id = PhysicalSlotId::new(format!("prepared-catalog-resident-slot-{identity}"));
@@ -712,10 +726,7 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
             .ok_or(PreparedArtifactError::InvalidDescriptor)?;
         let demand_id = self.store.storage_demand_id(first);
         let mut alternative = base.execution_dag().resource_alternative().clone();
-        alternative.id = AlternativeId::new(format!(
-            "{}-prepared-catalog-reuse-{identity}",
-            alternative.id.as_str()
-        ));
+        alternative.id = AlternativeId::new(format!("{}-{identity}", alternative.id.as_str()));
         alternative.demand.memory.push(MemoryDemand {
             allocation_id: allocation_id.as_str().to_string(),
             hard_bytes: reservation.resident_buffer_bytes(),
@@ -744,6 +755,9 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
             cache_demand.persistent_cache_bytes = cache_demand
                 .persistent_cache_bytes
                 .max(reservation.persistent_cache_bytes());
+            cache_demand.temporary_bytes = cache_demand
+                .temporary_bytes
+                .max(reservation.temporary_staging_bytes());
             cache_demand.read_rate = combine_count(cache_demand.read_rate, 1);
             cache_demand.write_rate = combine_count(cache_demand.write_rate, 1);
             cache_demand.operations_rate = combine_count(cache_demand.operations_rate, 1);
@@ -752,7 +766,7 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
             alternative.demand.storage.push(StorageDemand {
                 demand_id: demand_id.clone(),
                 domain: self.store.storage_domain().clone(),
-                temporary_bytes: 0,
+                temporary_bytes: reservation.temporary_staging_bytes(),
                 staged_output_bytes: 0,
                 final_output_bytes: 0,
                 persistent_cache_bytes: reservation.persistent_cache_bytes(),
@@ -762,7 +776,27 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
                 queue_slots: CountDemand::new(1, 1),
             });
         }
-        let claims = vec![
+        let source_demands = catalog_source_demands(self.sources.unwrap_or_default());
+        alternative
+            .demand
+            .storage
+            .extend(
+                source_demands
+                    .iter()
+                    .map(|(demand_id, domain)| StorageDemand {
+                        demand_id: demand_id.clone(),
+                        domain: domain.clone(),
+                        temporary_bytes: 0,
+                        staged_output_bytes: 0,
+                        final_output_bytes: 0,
+                        persistent_cache_bytes: 0,
+                        read_rate: CountDemand::new(1, 1),
+                        write_rate: CountDemand::zero(),
+                        operations_rate: CountDemand::new(1, 1),
+                        queue_slots: CountDemand::new(1, 1),
+                    }),
+            );
+        let mut claims = vec![
             claim(LeaseResource::Workers, 1),
             claim(LeaseResource::Locks, 1),
             claim(
@@ -798,14 +832,59 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
                 },
                 1,
             ),
-            claim(LeaseResource::StorageQueue { demand_id }, 1),
+            claim(
+                LeaseResource::StorageQueue {
+                    demand_id: demand_id.clone(),
+                },
+                1,
+            ),
         ];
+        if reservation.temporary_staging_bytes() > 0 {
+            claims.push(claim(
+                LeaseResource::Storage {
+                    demand_id,
+                    use_kind: StorageUseKind::Temporary,
+                },
+                reservation.temporary_staging_bytes(),
+            ));
+        }
+        for source_demand in source_demands.keys() {
+            claims.extend([
+                claim(
+                    LeaseResource::StorageReadRate {
+                        demand_id: source_demand.clone(),
+                    },
+                    1,
+                ),
+                claim(
+                    LeaseResource::StorageOperationsRate {
+                        demand_id: source_demand.clone(),
+                    },
+                    1,
+                ),
+                claim(
+                    LeaseResource::StorageQueue {
+                        demand_id: source_demand.clone(),
+                    },
+                    1,
+                ),
+            ]);
+        }
+        let dependencies = std::iter::once(WorkDependency::Work(self.producer))
+            .chain(
+                self.sources
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|source| WorkDependency::Work(source.producer().clone())),
+            )
+            .collect();
         let catalog_node = WorkNode {
             id: node_id.clone(),
             kind: WorkKind::Cache,
             domain: WorkDomain::Cpu,
             implementation,
-            dependencies: BTreeSet::from([WorkDependency::Work(self.producer)]),
+            dependencies,
             claims,
             allocations: vec![AllocationUse {
                 allocation: allocation_id.clone(),
@@ -814,7 +893,7 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
             fences: BTreeSet::new(),
             quiescence_after: BTreeSet::new(),
         };
-        let release_id = WorkNodeId::new(format!("prepared-release-catalog-reuse-{identity}"));
+        let release_id = WorkNodeId::new(format!("prepared-release-{identity}"));
         let release_node = WorkNode {
             id: release_id.clone(),
             kind: WorkKind::Release,
@@ -898,8 +977,11 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
         })?;
         let catalog_stage = StagePrediction::new(node_id, 1_000).with_io(vec![IoPrediction::new(
             IoBufferKind::StorageManager,
-            reservation.persistent_cache_bytes(),
-            10_000_u64.saturating_add(self.descriptors.len() as u64),
+            reservation
+                .persistent_cache_bytes()
+                .checked_add(reservation.source_read_bytes())
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?,
+            catalog_io_operation_prediction(self.store, self.descriptors, self.sources)?,
         )]);
         let release_stage = StagePrediction::new(release_id, 100).with_io(vec![IoPrediction::new(
             IoBufferKind::StorageManager,
@@ -920,7 +1002,14 @@ impl<'a> PreparedArtifactCatalogPlanFragment<'a> {
                 .collect(),
         )?;
         let mut artifacts = base.artifacts().to_vec();
-        artifacts.extend(catalog_planned_artifacts(self.descriptors)?);
+        artifacts.extend(catalog_planned_artifacts(self.descriptors, self.sources)?);
+        artifacts.extend(
+            self.sources
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|source| source.planned_artifact()),
+        );
         Ok(PhysicalWorkBinding::with_implementation_contract(
             base.implementation_contract().for_execution_dag(&dag)?,
             dag,

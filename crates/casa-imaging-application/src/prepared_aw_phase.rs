@@ -3,7 +3,7 @@
 //! Plan/run-owned preparation of a complete AW convolution-function catalog.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io,
     sync::{Arc, Mutex},
 };
@@ -16,11 +16,11 @@ use casa_imaging_runtime::{
     ImplementationContractMetadata, ImplementationRegistry, ImplementationRegistryId, IoBufferKind,
     IoMeasurement, ObservationReadCompletionContext, PlanningBindings, PreparedArtifact,
     PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,
-    PreparedArtifactExecutionBinding, PreparedArtifactImportSource, PreparedArtifactOperation,
-    PreparedArtifactPlanFragment, PreparedArtifactReaderFactory, PreparedArtifactRegistration,
-    PreparedArtifactReuseOutcome, PreparedArtifactStore, ResourceMeasurement, RunBindings,
-    RunError, RunToCompletion, StorageDomain, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan, run,
+    PreparedArtifactExecutionBinding, PreparedArtifactImportSource, PreparedArtifactPlanFragment,
+    PreparedArtifactReaderFactory, PreparedArtifactRegistration, PreparedArtifactReuseOutcome,
+    PreparedArtifactStore, ResourceMeasurement, RunBindings, RunError, RunToCompletion,
+    StorageDomain, WorkExecutionContext, WorkImplementation, WorkImplementationId,
+    WorkMeasurements, plan, run,
 };
 
 use crate::{
@@ -64,44 +64,46 @@ impl PreparedAwPhase {
     }
 }
 
-enum OperationResult {
-    Artifact(PreparedArtifact),
-    Rejected,
+enum CatalogOutcome {
+    Reused(PreparedArtifactCatalogReuseOutcome),
+    Imported(Vec<PreparedArtifact>),
 }
 
-struct OperationAdapter {
-    id: WorkImplementationId,
-    operation: PreparedArtifactOperation,
-    store: Arc<PreparedArtifactStore>,
+struct ColdCatalog {
     cache: Arc<CasaAwCache>,
-    prepared: CasaAwPreparedCell,
-    source: Option<PreparedArtifactImportSource>,
-    result: Mutex<Option<OperationResult>>,
+    cells: Vec<CasaAwPreparedCell>,
+    sources: Vec<Option<PreparedArtifactImportSource>>,
 }
 
-struct CatalogReuseAdapter {
+struct CatalogAdapter {
     id: WorkImplementationId,
     store: Arc<PreparedArtifactStore>,
     descriptors: Vec<casa_imaging_runtime::PreparedArtifactDescriptor>,
-    result: Mutex<Option<PreparedArtifactCatalogReuseOutcome>>,
+    cold: Option<ColdCatalog>,
+    result: Mutex<Option<CatalogOutcome>>,
 }
 
 enum PhaseImplementation {
     Base {
         id: WorkImplementationId,
-        sources: Vec<PreparedArtifactImportSource>,
+        sources: Vec<(casa_imaging_runtime::ArtifactIdentity, u64)>,
     },
-    CatalogReuse(Box<CatalogReuseAdapter>),
-    Operation(Box<OperationAdapter>),
+    Catalog(Box<CatalogAdapter>),
 }
 
-struct OperationInput<'a> {
-    cache: Arc<CasaAwCache>,
-    store: Arc<PreparedArtifactStore>,
-    cell: CasaAwPreparedCell,
-    source_domain: &'a StorageDomain,
-    operation: PreparedArtifactOperation,
-    phase: u64,
+enum CatalogInput<'a> {
+    Reuse(Vec<casa_imaging_runtime::PreparedArtifactDescriptor>),
+    Import {
+        cache: Arc<CasaAwCache>,
+        cells: Vec<CasaAwPreparedCell>,
+        reusable: BTreeSet<casa_imaging_runtime::ArtifactIdentity>,
+        source_domain: &'a StorageDomain,
+    },
+}
+
+enum CatalogPhaseResult {
+    Reused(PreparedArtifactCatalogReuseOutcome),
+    Imported(Vec<(CasaAwPreparedCell, PreparedArtifact)>),
 }
 
 impl WorkImplementation for PhaseImplementation {
@@ -110,65 +112,36 @@ impl WorkImplementation for PhaseImplementation {
     fn implementation_id(&self) -> &WorkImplementationId {
         match self {
             Self::Base { id, .. } => id,
-            Self::CatalogReuse(op) => &op.id,
-            Self::Operation(op) => &op.id,
+            Self::Catalog(op) => &op.id,
         }
     }
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
         let op = match self {
             Self::Base { sources, .. } => return base_measurements(context, sources),
-            Self::CatalogReuse(op) => {
-                let (outcome, measurements) = op
-                    .store
-                    .reuse_catalog(&context, &op.descriptors)
-                    .map_err(io::Error::other)?;
-                *op.result
-                    .lock()
-                    .map_err(|_| io::Error::other("AW catalog result state poisoned"))? =
-                    Some(outcome);
-                return Ok(measurements);
-            }
-            Self::Operation(op) => op,
+            Self::Catalog(op) => op,
         };
-        let result = match op.operation {
-            PreparedArtifactOperation::Reuse => {
-                let (outcome, measurements) = op
-                    .prepared
-                    .reuse_warm(&op.store, context)
-                    .map_err(io::Error::other)?;
-                let result = match outcome {
-                    PreparedArtifactReuseOutcome::Reused(artifact) => {
-                        OperationResult::Artifact(artifact)
-                    }
-                    PreparedArtifactReuseOutcome::Rejected(_) => OperationResult::Rejected,
-                };
-                (result, measurements)
-            }
-            PreparedArtifactOperation::Load => {
-                let source = op
-                    .source
-                    .as_ref()
-                    .ok_or_else(|| io::Error::other("AW cold load omitted its source"))?;
-                let (artifact, measurements) = op
-                    .prepared
-                    .import_cold(&op.cache, &op.store, source, context)
-                    .map_err(io::Error::other)?;
-                (OperationResult::Artifact(artifact), measurements)
-            }
-            PreparedArtifactOperation::Consume => {
-                return Err(io::Error::other(
-                    "AW preparation cannot eagerly consume prepared payloads",
-                ));
-            }
-            PreparedArtifactOperation::Generate => {
-                return Err(io::Error::other("CASA AW import requires plan-listed Load"));
-            }
+        let (result, measurements) = if let Some(cold) = &op.cold {
+            let (artifacts, measurements) = op
+                .store
+                .import_catalog(&context, &op.descriptors, &cold.sources, |index| {
+                    cold.cache.importer(&cold.cells[index]).map_err(|_| {
+                        casa_imaging_runtime::PreparedArtifactError::SourceIdentityMismatch
+                    })
+                })
+                .map_err(io::Error::other)?;
+            (CatalogOutcome::Imported(artifacts), measurements)
+        } else {
+            let (outcome, measurements) = op
+                .store
+                .reuse_catalog(&context, &op.descriptors)
+                .map_err(io::Error::other)?;
+            (CatalogOutcome::Reused(outcome), measurements)
         };
         *op.result
             .lock()
-            .map_err(|_| io::Error::other("AW result state poisoned"))? = Some(result.0);
-        Ok(result.1)
+            .map_err(|_| io::Error::other("AW catalog result state poisoned"))? = Some(result);
+        Ok(measurements)
     }
 
     fn failure_measurements<'a>(&'a self, error: &'a Self::Error) -> Option<&'a WorkMeasurements> {
@@ -177,6 +150,7 @@ impl WorkImplementation for PhaseImplementation {
             .downcast_ref::<casa_imaging_runtime::PreparedArtifactError>()?
             .work_measurements()
     }
+
     fn wait_for_fence(
         &self,
         _: WorkExecutionContext<'_>,
@@ -184,12 +158,14 @@ impl WorkImplementation for PhaseImplementation {
     ) -> Result<WorkMeasurements, Self::Error> {
         Ok(WorkMeasurements::default())
     }
+
     fn complete_observation_read(
         &self,
         _: ObservationReadCompletionContext,
     ) -> Result<AttemptBoundObservationCompletion, Self::Error> {
         Err(io::Error::other("AW pre-phase is source-free"))
     }
+
     fn publish(&self, _: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -197,7 +173,7 @@ impl WorkImplementation for PhaseImplementation {
 
 fn base_measurements(
     context: WorkExecutionContext<'_>,
-    sources: &[PreparedArtifactImportSource],
+    sources: &[(casa_imaging_runtime::ArtifactIdentity, u64)],
 ) -> Result<WorkMeasurements, io::Error> {
     let resources = context
         .resources()
@@ -221,12 +197,12 @@ fn base_measurements(
         .then(|| {
             sources
                 .iter()
-                .map(|source| {
+                .map(|&(identity, bytes)| {
                     ArtifactMeasurement::new(
-                        source.identity(),
-                        Some(source.identity()),
+                        identity,
+                        Some(identity),
                         ArtifactDisposition::Loaded,
-                        source.source_read_bytes(),
+                        bytes,
                         None,
                     )
                     .map_err(io::Error::other)
@@ -271,39 +247,50 @@ impl ImplementationRegistry for PhaseRegistry {
 }
 
 impl PhaseRegistry {
-    fn take_result(&self) -> Result<(CasaAwPreparedCell, OperationResult), ApplicationError> {
-        let operation = self
-            .implementations
+    fn catalog(&self) -> &CatalogAdapter {
+        self.implementations
             .values()
             .find_map(|implementation| match implementation {
-                PhaseImplementation::Base { .. } | PhaseImplementation::CatalogReuse(_) => None,
-                PhaseImplementation::Operation(op) => Some(op),
+                PhaseImplementation::Catalog(op) => Some(op.as_ref()),
+                PhaseImplementation::Base { .. } => None,
             })
-            .ok_or_else(|| boxed("AW operation is absent"))?;
-        let result = operation
-            .result
-            .lock()
-            .map_err(|_| boxed("AW result state poisoned"))?
-            .take()
-            .ok_or_else(|| boxed("AW operation did not execute"))?;
-        Ok((operation.prepared.clone(), result))
+            .expect("AW phase registry contains exactly one catalog")
     }
 
-    fn take_catalog_result(&self) -> Result<PreparedArtifactCatalogReuseOutcome, ApplicationError> {
+    fn into_result(self) -> Result<CatalogPhaseResult, ApplicationError> {
         let catalog = self
             .implementations
-            .values()
+            .into_values()
             .find_map(|implementation| match implementation {
-                PhaseImplementation::CatalogReuse(op) => Some(op),
-                PhaseImplementation::Base { .. } | PhaseImplementation::Operation(_) => None,
+                PhaseImplementation::Catalog(op) => Some(op),
+                PhaseImplementation::Base { .. } => None,
             })
-            .ok_or_else(|| boxed("AW catalog reuse operation is absent"))?;
-        catalog
+            .expect("AW phase registry contains exactly one catalog");
+        let result = catalog
             .result
-            .lock()
+            .into_inner()
             .map_err(|_| boxed("AW catalog result state poisoned"))?
-            .take()
-            .ok_or_else(|| boxed("AW catalog reuse operation did not execute"))
+            .ok_or_else(|| boxed("AW catalog operation did not complete"))?;
+        match (catalog.cold, result) {
+            (None, CatalogOutcome::Reused(outcome)) => Ok(CatalogPhaseResult::Reused(outcome)),
+            (Some(cold), CatalogOutcome::Imported(artifacts)) => {
+                if cold.cells.len() != artifacts.len()
+                    || cold
+                        .cells
+                        .iter()
+                        .zip(&artifacts)
+                        .any(|(cell, artifact)| cell.descriptor().identity() != artifact.identity())
+                {
+                    return Err(boxed("AW cold catalog omitted or reordered an artifact"));
+                }
+                Ok(CatalogPhaseResult::Imported(
+                    cold.cells.into_iter().zip(artifacts).collect(),
+                ))
+            }
+            _ => Err(boxed(
+                "AW catalog result did not match its planned operation",
+            )),
+        }
     }
 }
 
@@ -364,45 +351,52 @@ pub(crate) fn prepare_aw_projection(
         .iter()
         .map(|cell| cell.descriptor().clone())
         .collect::<Vec<_>>();
-    let (catalog_outcome, catalog_receipt) =
-        run_catalog_reuse(problem, runtime, Arc::clone(&store), descriptors)?;
+    let (catalog_outcome, catalog_receipt) = run_catalog(
+        problem,
+        runtime,
+        Arc::clone(&store),
+        CatalogInput::Reuse(descriptors),
+    )?;
     receipts.push(catalog_receipt);
 
     let mut artifacts = Vec::new();
-    let mut missing = Vec::new();
+    let mut reusable = BTreeSet::new();
+    let CatalogPhaseResult::Reused(catalog_outcome) = catalog_outcome else {
+        return Err(boxed("AW reuse phase returned cold artifacts"));
+    };
     let outcomes = catalog_outcome.into_entries();
     if outcomes.len() != ordered.len() {
         return Err(boxed("AW catalog reuse omitted an entry"));
     }
-    for (cell, outcome) in ordered.into_iter().zip(outcomes) {
+    for (cell, outcome) in ordered.iter().zip(outcomes) {
         if outcome.identity() != cell.descriptor().identity() {
             return Err(boxed("AW catalog reuse changed descriptor order"));
         }
         match outcome.into_outcome() {
-            PreparedArtifactReuseOutcome::Reused(artifact) => artifacts.push((cell, artifact)),
-            PreparedArtifactReuseOutcome::Rejected(_) => missing.push(cell),
+            PreparedArtifactReuseOutcome::Reused(artifact) => {
+                reusable.insert(artifact.identity());
+                artifacts.push((cell.clone(), artifact));
+            }
+            PreparedArtifactReuseOutcome::Rejected(_) => {}
         }
     }
-    for (ordinal, cell) in missing.into_iter().enumerate() {
-        let loaded = run_operation(
+    if reusable.len() != ordered.len() {
+        let (loaded, receipt) = run_catalog(
             problem,
             runtime,
-            OperationInput {
+            Arc::clone(&store),
+            CatalogInput::Import {
                 cache: Arc::clone(&cache),
-                store: Arc::clone(&store),
-                cell,
+                cells: ordered,
+                reusable,
                 source_domain: &deployment.storage_domain,
-                operation: PreparedArtifactOperation::Load,
-                phase: 1_000_000 + ordinal as u64,
             },
         )?;
-        receipts.push(loaded.1);
-        let (cell, result) = loaded.0;
-        if let OperationResult::Artifact(artifact) = result {
-            artifacts.push((cell, artifact));
-        } else {
-            return Err(boxed("AW cold load omitted artifact"));
-        }
+        receipts.push(receipt);
+        let CatalogPhaseResult::Imported(loaded) = loaded else {
+            return Err(boxed("AW cold phase returned reuse outcomes"));
+        };
+        artifacts = loaded;
     }
     artifacts.sort_by_key(|(cell, _)| cell.metadata().identity().as_bytes());
     if artifacts.len() != entries {
@@ -428,69 +422,108 @@ pub(crate) fn prepare_aw_projection(
     })
 }
 
-fn run_catalog_reuse(
+fn run_catalog(
     problem: &CompiledProblem,
     runtime: &ApplicationRuntime,
     store: Arc<PreparedArtifactStore>,
-    descriptors: Vec<casa_imaging_runtime::PreparedArtifactDescriptor>,
-) -> Result<(PreparedArtifactCatalogReuseOutcome, ExecutionReceipt), ApplicationError> {
-    let metadata = ImplementationContractMetadata::new(
-        problem.problem_id(),
-        problem.numerics_id(),
-        problem.required_capabilities().clone(),
-    );
+    input: CatalogInput<'_>,
+) -> Result<(CatalogPhaseResult, ExecutionReceipt), ApplicationError> {
     let producer = casa_imaging_runtime::WorkNodeId::new("prepared-phase-producer");
-    let id = PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)?;
-    let mut implementations = BTreeMap::from([(
-        id.clone(),
-        PhaseImplementation::CatalogReuse(Box::new(CatalogReuseAdapter {
-            id,
-            store: Arc::clone(&store),
-            descriptors,
-            result: Mutex::new(None),
-        })),
-    )]);
-    implementations.insert(
+    let commit = casa_imaging_runtime::WorkNodeId::new("prepared-phase-commit");
+    let (descriptors, cold) = match input {
+        CatalogInput::Reuse(descriptors) => (descriptors, None),
+        CatalogInput::Import {
+            cache,
+            cells,
+            reusable,
+            source_domain,
+        } => {
+            let sources = cells
+                .iter()
+                .map(|cell| {
+                    (!reusable.contains(&cell.descriptor().identity()))
+                        .then(|| cell.import_source(&cache, source_domain, producer.clone()))
+                        .transpose()
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let descriptors = cells.iter().map(|cell| cell.descriptor().clone()).collect();
+            (
+                descriptors,
+                Some(ColdCatalog {
+                    cache,
+                    cells,
+                    sources,
+                }),
+            )
+        }
+    };
+    let reuse = cold.is_none();
+    let mut fragment = PreparedArtifactCatalogPlanFragment::new(
+        &descriptors,
+        &store,
+        producer.clone(),
+        commit.clone(),
         runtime.implementation.clone(),
-        PhaseImplementation::Base {
-            id: runtime.implementation.clone(),
-            sources: vec![],
-        },
-    );
+    )?;
+    if let Some(cold) = &cold {
+        fragment = fragment.with_import_sources(&cold.sources)?;
+    }
+    let id = fragment.work_implementation_id()?;
+    let sources = cold
+        .iter()
+        .flat_map(|cold| &cold.sources)
+        .flatten()
+        .map(|source| (source.identity(), source.source_read_bytes()))
+        .collect();
     let registry = PhaseRegistry {
         id: runtime.registry,
-        metadata,
-        implementations,
+        metadata: ImplementationContractMetadata::new(
+            problem.problem_id(),
+            problem.numerics_id(),
+            problem.required_capabilities().clone(),
+        ),
+        implementations: BTreeMap::from([
+            (
+                id.clone(),
+                PhaseImplementation::Catalog(Box::new(CatalogAdapter {
+                    id,
+                    store: Arc::clone(&store),
+                    descriptors,
+                    cold,
+                    result: Mutex::new(None),
+                })),
+            ),
+            (
+                runtime.implementation.clone(),
+                PhaseImplementation::Base {
+                    id: runtime.implementation.clone(),
+                    sources,
+                },
+            ),
+        ]),
         prepared_artifact: crate::prepared_aw_registration(runtime.implementation.clone()),
     };
-    let descriptors = registry
-        .implementations
-        .values()
-        .find_map(|implementation| match implementation {
-            PhaseImplementation::CatalogReuse(op) => Some(op.descriptors.as_slice()),
-            PhaseImplementation::Base { .. } | PhaseImplementation::Operation(_) => None,
-        })
-        .ok_or_else(|| boxed("AW catalog reuse operation is absent"))?;
-    let first = descriptors
-        .first()
-        .ok_or_else(|| boxed("AW prepared catalog is empty"))?;
+    let catalog = registry.catalog();
     let base = PreparedArtifactPlanFragment::standalone_base(
         problem,
         &registry,
         runtime.implementation.clone(),
-        first,
+        &catalog.descriptors[0],
         &store,
         runtime.stage_nanos,
         runtime.confidence_parts_per_million,
     )?;
-    let physical = PreparedArtifactCatalogPlanFragment::new(
-        descriptors,
+    let mut fragment = PreparedArtifactCatalogPlanFragment::new(
+        &catalog.descriptors,
         &store,
         producer,
-        casa_imaging_runtime::WorkNodeId::new("prepared-phase-commit"),
+        commit,
         runtime.implementation.clone(),
-    )?
-    .compose(&base)?;
+    )?;
+    if let Some(cold) = &catalog.cold {
+        fragment = fragment.with_import_sources(&cold.sources)?;
+    }
+    let physical = fragment.compose(&base)?;
     let execution_plan = plan(
         problem,
         PlanningBindings::new(
@@ -510,7 +543,7 @@ fn run_catalog_reuse(
         &runtime.resource_policy,
         runtime.cost_model.profile_id(),
     );
-    let attempt = aw_attempt(runtime.attempts[0], 0);
+    let attempt = aw_attempt(runtime.attempts[0], u64::from(!reuse));
     let execution = run(
         &executable,
         &execution_plan,
@@ -523,146 +556,15 @@ fn run_catalog_reuse(
             .bind(ExecutionProvenance::new(attempt, runtime.build)),
     );
     if let Err(error) = execution
-        && !matches!(
-            error,
-            RunError::Evidence(ExecutionEvidenceError::RejectedArtifact { .. })
-        )
-    {
-        return Err(Box::new(error));
-    }
-    Ok((
-        registry.take_catalog_result()?,
-        runtime.receipts.open(attempt)?,
-    ))
-}
-
-fn run_operation(
-    problem: &CompiledProblem,
-    runtime: &ApplicationRuntime,
-    input: OperationInput<'_>,
-) -> Result<((CasaAwPreparedCell, OperationResult), ExecutionReceipt), ApplicationError> {
-    let OperationInput {
-        cache,
-        store,
-        cell,
-        source_domain,
-        operation,
-        phase,
-    } = input;
-    let metadata = ImplementationContractMetadata::new(
-        problem.problem_id(),
-        problem.numerics_id(),
-        problem.required_capabilities().clone(),
-    );
-    let producer = casa_imaging_runtime::WorkNodeId::new("prepared-phase-producer");
-    let mut implementations = BTreeMap::new();
-    let id = cell.descriptor().work_implementation_id(operation);
-    let source = (operation == PreparedArtifactOperation::Load)
-        .then(|| cell.import_source(&cache, source_domain, producer.clone()))
-        .transpose()?;
-    let sources = source.iter().cloned().collect();
-    implementations.insert(
-        id.clone(),
-        PhaseImplementation::Operation(Box::new(OperationAdapter {
-            id,
-            operation,
-            store: Arc::clone(&store),
-            cache: Arc::clone(&cache),
-            prepared: cell,
-            source,
-            result: Mutex::new(None),
-        })),
-    );
-    implementations.insert(
-        runtime.implementation.clone(),
-        PhaseImplementation::Base {
-            id: runtime.implementation.clone(),
-            sources,
-        },
-    );
-    let registry = PhaseRegistry {
-        id: runtime.registry,
-        metadata,
-        implementations,
-        prepared_artifact: crate::prepared_aw_registration(runtime.implementation.clone()),
-    };
-    let descriptor = registry
-        .implementations
-        .values()
-        .find_map(|implementation| match implementation {
-            PhaseImplementation::Base { .. } | PhaseImplementation::CatalogReuse(_) => None,
-            PhaseImplementation::Operation(op) => Some(op.prepared.descriptor()),
-        })
-        .ok_or_else(|| boxed("AW operation is absent"))?;
-    let mut physical = PreparedArtifactPlanFragment::standalone_base(
-        problem,
-        &registry,
-        runtime.implementation.clone(),
-        descriptor,
-        &store,
-        runtime.stage_nanos,
-        runtime.confidence_parts_per_million,
-    )?;
-    for implementation in registry.implementations.values() {
-        if let PhaseImplementation::Operation(op) = implementation {
-            let fragment = PreparedArtifactPlanFragment::new(
-                op.prepared.descriptor(),
-                &store,
-                operation,
-                producer.clone(),
-                casa_imaging_runtime::WorkNodeId::new("prepared-phase-commit"),
-                runtime.implementation.clone(),
-            );
-            let fragment = if let Some(source) = &op.source {
-                fragment.with_import_source(source)
-            } else {
-                fragment
-            };
-            physical = fragment.compose(&physical)?;
-        }
-    }
-    let execution_plan = plan(
-        problem,
-        PlanningBindings::new(
-            runtime.registry,
-            runtime.resource_policy.clone(),
-            runtime.cost_model,
-        ),
-        &runtime.authority,
-        &registry,
-        &runtime.receipts,
-        move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-    )?;
-    let executable =
-        casa_imaging_reconstruction::ExecutableModelProblem::from_compiled(problem.clone())?;
-    let current = RunBindings::new(
-        problem.inputs().clone(),
-        &runtime.resource_policy,
-        runtime.cost_model.profile_id(),
-    );
-    let attempt = aw_attempt(runtime.attempts[0], phase);
-    let execution = run(
-        &executable,
-        &execution_plan,
-        &current,
-        &registry,
-        &runtime.authority,
-        &mut RunToCompletion,
-        runtime
-            .receipts
-            .bind(ExecutionProvenance::new(attempt, runtime.build)),
-    );
-    if let Err(error) = execution {
-        if !(operation == PreparedArtifactOperation::Reuse
+        && !(reuse
             && matches!(
                 error,
                 RunError::Evidence(ExecutionEvidenceError::RejectedArtifact { .. })
             ))
-        {
-            return Err(Box::new(error));
-        }
+    {
+        return Err(Box::new(error));
     }
-    Ok((registry.take_result()?, runtime.receipts.open(attempt)?))
+    Ok((registry.into_result()?, runtime.receipts.open(attempt)?))
 }
 
 fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
@@ -676,6 +578,7 @@ fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
 
 #[cfg(test)]
 mod tests {
+    mod catalog_scale_probe;
     mod cold_load_probe;
 
     use std::{collections::BTreeSet, path::Path};
@@ -888,7 +791,7 @@ mod tests {
             let cold =
                 prepare_aw_projection(&dirty, deployment.clone(), &runtime(root.path(), &profile))
                     .expect("cold DIRTY preparation");
-            assert_eq!(cold.receipts.len(), cell_count + 1);
+            assert_eq!(cold.receipts.len(), 2);
             drop(cold.bind_plan().expect("bind DIRTY reader"));
             let before = snapshot(&deployment.private_root);
             assert_eq!(
@@ -921,6 +824,7 @@ mod tests {
 
     #[test]
     fn two_cell_cold_load_keeps_every_plan_within_two_queue_slots() {
+        use std::os::unix::fs::MetadataExt;
         let root = TempDir::new().expect("temporary preparation root");
         let casa = root.path().join("casa-cache");
         std::fs::create_dir(&casa).expect("create CASA cache root");
@@ -938,19 +842,22 @@ mod tests {
         .expect("test storage profile")
         .with_measured_operations_rate(root.path())
         .expect("measured test storage operations");
-        let runtime = runtime(root.path(), &profile);
-        let phase = prepare_aw_projection(
-            &problem(),
-            ApplicationAwPreparation {
-                casa_cache: casa,
-                private_root,
-                storage_domain: profile.storage_domain(),
-                resident_bytes: 1 << 20,
-                conjugate_beams: true,
-            },
-            &runtime,
-        )
-        .expect("two-cell cold preparation");
+        let mut runtime = runtime(root.path(), &profile);
+        let deployment = ApplicationAwPreparation {
+            casa_cache: casa,
+            private_root,
+            storage_domain: profile.storage_domain(),
+            resident_bytes: 1 << 20,
+            conjugate_beams: true,
+        };
+        let phase = prepare_aw_projection(&problem(), deployment.clone(), &runtime)
+            .expect("two-cell cold preparation");
+
+        assert_eq!(
+            phase.receipts.len(),
+            2,
+            "one probe and one cold catalog phase"
+        );
 
         let mut cache_demands = BTreeSet::new();
         let mut cold_load_nodes = BTreeSet::new();
@@ -975,16 +882,59 @@ mod tests {
                     .filter(|demand| demand.demand_id.starts_with("private-prepared-cache-"))
                     .map(|demand| demand.demand_id.clone()),
             );
-            cold_load_nodes.extend(
-                receipt
-                    .plan_node_identities()
-                    .into_iter()
-                    .filter(|node| node.as_str().starts_with("prepared-artifact-cold-load-")),
-            );
+            cold_load_nodes.extend(receipt.plan_node_identities().into_iter().filter(|node| {
+                node.as_str()
+                    .starts_with("prepared-artifact-catalog-cold-load-")
+            }));
         }
         assert_eq!(cache_demands.len(), 1);
-        assert_eq!(cold_load_nodes.len(), 2);
+        assert_eq!(cold_load_nodes.len(), 1);
         drop(phase.bind_plan().expect("fresh two-cell reader binding"));
+
+        let missing = phase.prepared[0].descriptor().identity();
+        let reused = phase.prepared[1].descriptor().identity();
+        let objects = deployment.private_root.join("objects-v3");
+        std::fs::rename(
+            objects.join(missing.to_string()),
+            root.path().join("interrupted-cell"),
+        )
+        .expect("simulate an absent cell without touching the warm one");
+        let snapshot = || {
+            ["manifest.json", "payload.bin"].map(|name| {
+                let path = objects.join(reused.to_string()).join(name);
+                let metadata = std::fs::metadata(&path).expect("warm metadata");
+                (
+                    metadata.ino(),
+                    metadata.mtime(),
+                    metadata.mtime_nsec(),
+                    std::fs::read(path).expect("warm bytes"),
+                )
+            })
+        };
+        let before = snapshot();
+        runtime.attempts[0] = ExecutionAttemptId::from_sha256([10; 32]);
+        let mixed = prepare_aw_projection(&problem(), deployment, &runtime)
+            .expect("mixed cold/warm catalog preparation");
+        assert_eq!(mixed.receipts.len(), 2);
+        let terminal = &mixed.receipts[1];
+        assert_eq!(
+            terminal.artifact_disposition(missing),
+            Some(ArtifactDisposition::Loaded)
+        );
+        assert_eq!(
+            terminal.artifact_disposition(reused),
+            Some(ArtifactDisposition::Reused)
+        );
+        assert_eq!(
+            snapshot(),
+            before,
+            "mixed preparation must not rewrite the warm member"
+        );
+        drop(
+            mixed
+                .bind_plan()
+                .expect("complete mixed-catalog reader binding"),
+        );
     }
 
     fn runtime(root: &Path, profile: &ProductionStorageProfile) -> ApplicationRuntime {

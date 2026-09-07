@@ -5,6 +5,9 @@ use super::*;
 #[path = "prepared_artifact/aw_metadata_residency.rs"]
 mod aw_metadata_residency;
 
+#[path = "prepared_artifact/catalog_import.rs"]
+mod catalog_import;
+
 const PREPARED_PAYLOAD_BYTES: u64 = (3 * 3 + 5 * 5) * 8;
 
 fn prepared_storage_domain() -> &'static StorageDomain {
@@ -212,6 +215,7 @@ struct PreparedCatalogAdapter {
     store: PreparedArtifactStore,
     descriptors: Vec<PreparedArtifactDescriptor>,
     observed: Mutex<Option<Vec<PreparedObserved>>>,
+    import: Option<catalog_import::CatalogImport>,
 }
 
 impl WorkImplementation for PreparedCatalogAdapter {
@@ -222,6 +226,9 @@ impl WorkImplementation for PreparedCatalogAdapter {
     }
 
     fn execute(&self, context: WorkExecutionContext<'_>) -> Result<WorkMeasurements, Self::Error> {
+        if let Some(import) = &self.import {
+            return import.execute(&self.store, &self.descriptors, context);
+        }
         let (outcome, measurements) = self
             .store
             .reuse_catalog(&context, &self.descriptors)
@@ -1064,8 +1071,16 @@ fn catalog_registry(
     store: PreparedArtifactStore,
     descriptors: Vec<PreparedArtifactDescriptor>,
 ) -> (PreparedSuiteRegistry, WorkImplementationId) {
-    let id = PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)
-        .expect("catalog implementation identity");
+    let id = PreparedArtifactCatalogPlanFragment::new(
+        &descriptors,
+        &store,
+        WorkNodeId::new("prepared-phase-producer"),
+        WorkNodeId::new("prepared-phase-commit"),
+        implementation(6),
+    )
+    .expect("catalog fragment")
+    .work_implementation_id()
+    .expect("catalog implementation identity");
     let metadata = ImplementationContractMetadata::new(
         problem.problem_id(),
         problem.numerics_id(),
@@ -1087,6 +1102,7 @@ fn catalog_registry(
                         store,
                         descriptors,
                         observed: Mutex::new(None),
+                        import: None,
                     })),
                 ),
             ]),
@@ -1146,7 +1162,7 @@ fn catalog_adapter_observed(
 fn catalog_warm_reuse_returns_ordered_missing_outcomes_after_one_transaction() {
     let problem = compile(request(1)).expect("missing catalog problem");
     let cache = prepared_tempdir();
-    let budget = PreparedArtifactBudget::new(500_000, 4, 4_096).expect("missing catalog budget");
+    let budget = PreparedArtifactBudget::new(250_000, 4, 4_096).expect("missing catalog budget");
     let planning_store =
         PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
             .expect("missing catalog planning store");
@@ -1190,8 +1206,16 @@ fn catalog_warm_reuse_returns_ordered_missing_outcomes_after_one_transaction() {
     );
     let receipt = receipts.open(attempt).expect("missing catalog receipt");
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
-    let catalog_node =
-        PreparedArtifactCatalogPlanFragment::node_id(&descriptors).expect("catalog node identity");
+    let catalog_node = PreparedArtifactCatalogPlanFragment::new(
+        &descriptors,
+        &planning_store,
+        WorkNodeId::new("prepared-phase-producer"),
+        WorkNodeId::new("prepared-phase-commit"),
+        implementation(6),
+    )
+    .expect("catalog fragment")
+    .work_node_id()
+    .expect("catalog node identity");
     assert!(receipt.stage_actual_elapsed_nanos(&catalog_node).is_some());
     assert!(
         receipt
@@ -1204,7 +1228,7 @@ fn catalog_warm_reuse_returns_ordered_missing_outcomes_after_one_transaction() {
 fn catalog_warm_reuse_validates_complete_payloads_and_returns_ordered_hits() {
     let problem = compile(request(1)).expect("complete catalog problem");
     let cache = prepared_tempdir();
-    let budget = PreparedArtifactBudget::new(500_000, 4, 4_096).expect("complete catalog budget");
+    let budget = PreparedArtifactBudget::new(250_000, 4, 4_096).expect("complete catalog budget");
     let descriptor_store =
         PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
             .expect("complete catalog descriptor store");
@@ -1218,19 +1242,55 @@ fn catalog_warm_reuse_validates_complete_payloads_and_returns_ordered_hits() {
     for (index, descriptor) in descriptors.iter().cloned().enumerate() {
         let store = PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
             .expect("complete catalog generation store");
+        let adapter = PreparedOperationAdapter::new(
+            PreparedArtifactOperation::Generate,
+            store,
+            descriptor.clone(),
+        );
+        let (mut suite, id) = prepared_registry(&problem, adapter);
+        suite.implementations.insert(
+            implementation(6),
+            PreparedSuiteImplementation::Base(Box::new(recording_executor(6, None, None))),
+        );
+        let base = PreparedArtifactPlanFragment::standalone_base(
+            &problem,
+            &suite,
+            implementation(6),
+            &descriptor,
+            &descriptor_store,
+            1_000,
+            900_000,
+        )
+        .expect("source-free generation base");
+        let physical = PreparedArtifactPlanFragment::new(
+            &descriptor,
+            &descriptor_store,
+            PreparedArtifactOperation::Generate,
+            WorkNodeId::new("prepared-phase-producer"),
+            WorkNodeId::new("prepared-phase-commit"),
+            implementation(6),
+        )
+        .compose(&base)
+        .expect("generation composition");
+        let plan = plan_with_receipts(
+            &problem,
+            PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
+            &setup_receipts,
+            |_, _| Ok::<_, ()>(physical),
+        )
+        .expect("generation plan");
+        run_prepared(
+            &problem,
+            &plan,
+            &suite,
+            setup_receipts.bind(execution_provenance(
+                casa_imaging_runtime::ExecutionAttemptId::from_sha256([220 + index as u8; 32]),
+                BuildIdentity::from_sha256([224 + index as u8; 32]),
+            )),
+        )
+        .expect("source-free catalog setup");
         assert!(matches!(
-            execute_prepared_operation(
-                &problem,
-                &setup_receipts,
-                store,
-                descriptor,
-                PreparedArtifactOperation::Generate,
-                PreparedRunExpectation {
-                    attempt_byte: 220 + index as u8,
-                    build_byte: 224 + index as u8,
-                    expect_rejection: false,
-                },
-            ),
+            prepared_adapter_observed(&suite, &id),
             PreparedObserved::Materialized { .. }
         ));
     }
@@ -1279,10 +1339,10 @@ fn catalog_warm_reuse_validates_complete_payloads_and_returns_ordered_hits() {
 }
 
 #[test]
-fn catalog_warm_reuse_rejects_staging_before_publishing_any_outcome() {
+fn catalog_warm_reuse_recovers_recognized_staging_before_missing_outcomes() {
     let problem = compile(request(1)).expect("staging catalog problem");
     let cache = prepared_tempdir();
-    let budget = PreparedArtifactBudget::new(500_000, 4, 4_096).expect("staging catalog budget");
+    let budget = PreparedArtifactBudget::new(250_000, 4, 4_096).expect("staging catalog budget");
     let planning_store =
         PreparedArtifactStore::open(cache.path(), prepared_storage_domain(), budget)
             .expect("staging catalog planning store");
@@ -1314,9 +1374,26 @@ fn catalog_warm_reuse_rejects_staging_before_publishing_any_outcome() {
             BuildIdentity::from_sha256([214; 32]),
         )),
     )
-    .expect_err("staging catalog must fail closed");
-    assert!(matches!(error, RunError::Execution { .. }));
-    assert_eq!(catalog_adapter_observed(&suite, &catalog_id), None);
+    .expect_err("missing catalog remains rejected after recovery");
+    assert!(matches!(
+        error,
+        RunError::Evidence(ExecutionEvidenceError::RejectedArtifact { .. })
+    ));
+    assert_eq!(
+        catalog_adapter_observed(&suite, &catalog_id),
+        Some(vec![
+            PreparedObserved::Rejected(
+                PreparedArtifactRejection::Missing
+            );
+            3
+        ])
+    );
+    assert!(
+        !cache
+            .path()
+            .join("objects-v3/.staging-incomplete-catalog")
+            .exists()
+    );
 }
 
 #[test]
@@ -1338,8 +1415,16 @@ fn catalog_warm_reuse_is_one_six_node_bounded_transaction_for_256_entries() {
         })
         .collect::<Vec<_>>();
     descriptors.sort_unstable_by_key(PreparedArtifactDescriptor::identity);
-    let catalog_id = PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)
-        .expect("catalog implementation identity");
+    let catalog_id = PreparedArtifactCatalogPlanFragment::new(
+        &descriptors,
+        &store,
+        WorkNodeId::new("prepared-phase-producer"),
+        WorkNodeId::new("prepared-phase-commit"),
+        implementation(6),
+    )
+    .expect("catalog fragment")
+    .work_implementation_id()
+    .expect("catalog implementation identity");
     let metadata = ImplementationContractMetadata::new(
         problem.problem_id(),
         problem.numerics_id(),
@@ -1359,10 +1444,9 @@ fn catalog_warm_reuse_is_one_six_node_bounded_transaction_for_256_entries() {
                 PreparedSuiteImplementation::Base(Box::new(base_executor)),
             ),
             (
-                catalog_id,
+                catalog_id.clone(),
                 PreparedSuiteImplementation::Failure(Box::new(PreparedFailureAdapter {
-                    id: PreparedArtifactCatalogPlanFragment::implementation_id(&descriptors)
-                        .expect("catalog adapter identity"),
+                    id: catalog_id,
                     evidence: WorkMeasurements::default(),
                     succeed: true,
                 })),

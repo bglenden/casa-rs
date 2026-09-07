@@ -155,6 +155,9 @@ impl ReceiptSummaryCache {
 impl ExecutionReceiptStore {
     /// Read current, integrity-checked admission evidence without decoding unchanged bodies.
     pub(crate) fn summaries(&self) -> Result<Vec<ReceiptSummary>, ReceiptError> {
+        if boundary_probe_enabled() {
+            eprintln!("t51_receipt_history boundary=planning");
+        }
         let attempts = self.attempts()?;
         let paths = attempts
             .iter()
@@ -189,6 +192,12 @@ impl ExecutionReceiptStore {
         let mut file = File::open(path).map_err(read_error)?;
         if let Some(cached) = cached {
             let comparison = current_bytes_match(&mut file, &cached.encoded_bytes)?;
+            if boundary_probe_enabled() {
+                eprintln!(
+                    "t51_receipt_current_bytes bytes={} unchanged={}",
+                    comparison.1, comparison.0
+                );
+            }
             #[cfg(test)]
             {
                 let mut cache = self.state.summaries.lock().unwrap();

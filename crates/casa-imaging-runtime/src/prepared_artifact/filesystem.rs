@@ -241,7 +241,11 @@ pub(super) fn directory_size_counted(
         paths.iter().try_fold(0_u64, |total, entry| {
             evidence.store_read_operation();
             let metadata = entry.symlink_metadata()?;
-            if !metadata.file_type().is_file() {
+            if !metadata.file_type().is_file()
+                || !entry
+                    .file_name()
+                    .is_some_and(|name| name == MANIFEST_FILE || name == PAYLOAD_FILE)
+            {
                 return Err(PreparedArtifactError::UnknownCacheEntry(
                     entry.to_path_buf(),
                 ));

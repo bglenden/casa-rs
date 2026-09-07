@@ -218,34 +218,6 @@ impl PreparedArtifactStore {
         })
     }
 
-    pub(super) fn catalog_reuse_reservation(
-        &self,
-        descriptors: &[PreparedArtifactDescriptor],
-    ) -> Result<PreparedArtifactReservation, PreparedArtifactError> {
-        validate_catalog_descriptors(self, descriptors)?;
-        let mut reservation = self.reservation(
-            descriptors
-                .first()
-                .ok_or(PreparedArtifactError::InvalidDescriptor)?,
-            PreparedArtifactOperation::Reuse,
-        )?;
-        for descriptor in &descriptors[1..] {
-            let entry = self.reservation(descriptor, PreparedArtifactOperation::Reuse)?;
-            reservation.entry_bytes = reservation.entry_bytes.max(entry.entry_bytes);
-            reservation.streaming_buffer_bytes = reservation
-                .streaming_buffer_bytes
-                .max(entry.streaming_buffer_bytes);
-            reservation.resident_buffer_bytes = reservation
-                .resident_buffer_bytes
-                .max(entry.resident_buffer_bytes);
-        }
-        reservation.resident_buffer_bytes = reservation
-            .resident_buffer_bytes
-            .checked_add(catalog_outcome_resident_bytes(descriptors.len())?)
-            .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
-        Ok(reservation)
-    }
-
     /// Generate, validate, and atomically publish exact cold bytes.
     ///
     /// The returned identity exposes no payload access. The measurements cover
@@ -413,20 +385,22 @@ impl PreparedArtifactStore {
 
     /// Validate and reuse an ordered catalog under one plan-bound cache transaction.
     ///
-    /// The cache root is enumerated once, payload validation reuses one bounded
-    /// streaming buffer at a time, and no result is returned until every listed
-    /// descriptor has reached a deterministic `Reused` or `Rejected` outcome.
+    /// Recognized abandoned private staging is reconciled under the same lock
+    /// before validation. Payload validation reuses one bounded streaming buffer
+    /// at a time, and no result is returned until every listed descriptor has
+    /// reached a deterministic `Reused` or `Rejected` outcome. Reconciliation
+    /// and its bounded storage/eviction evidence belong to this planned node.
     pub fn reuse_catalog(
         &self,
         context: &WorkExecutionContext<'_>,
         descriptors: &[PreparedArtifactDescriptor],
     ) -> Result<(PreparedArtifactCatalogReuseOutcome, WorkMeasurements), PreparedArtifactError>
     {
-        let reservation = self.catalog_reuse_reservation(descriptors)?;
-        validate_catalog_plan_binding(*context, self, descriptors, reservation)?;
+        let reservation = self.catalog_reservation(descriptors, None)?;
+        validate_catalog_plan_binding(*context, self, descriptors, None, reservation)?;
         let mut evidence =
             ValidationEvidence::for_operation(self.budget, reservation.resident_buffer_bytes);
-        let outcomes_resident = catalog_outcome_resident_bytes(descriptors.len())?;
+        let outcomes_resident = catalog_metadata_reservation(descriptors, None)?;
         evidence.acquire_resident(outcomes_resident);
         if let Err(error) = evidence.ensure_resident_budget() {
             let measurements = failed_catalog_measurements(*context, self, descriptors, &evidence);
@@ -440,7 +414,9 @@ impl PreparedArtifactStore {
                 return Err(error.with_measurements(measurements));
             }
         };
-        let evaluation = self.reuse_catalog_locked(descriptors, &mut evidence);
+        let evaluation = self
+            .remove_orphan_staging(&mut evidence)
+            .and_then(|()| self.reuse_catalog_locked(descriptors, &mut evidence));
         let unlock = lock.release(&mut evidence);
         let (outcomes, cache_bytes) = match (evaluation, unlock) {
             (Ok(evaluation), Ok(())) => evaluation,
@@ -1045,37 +1021,16 @@ impl PreparedArtifactStore {
             let measurements = failed_measurements(*context, descriptor, operation, &evidence);
             return Err(error.with_measurements(measurements));
         }
-        let mut lock = match self.lock(&mut evidence) {
-            Ok(lock) => lock,
-            Err(error) => {
-                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
-                return Err(error.with_measurements(measurements));
-            }
-        };
-        let mut published = self.publish_bytes_locked(
+        let (validated, final_disposition, cache_bytes) = match self.settle_transaction(
             descriptor,
             disposition,
-            materialization,
+            Some(materialization),
             reservation,
+            &[],
             &mut evidence,
-        );
-        if published.is_err()
-            && let Err(rollback) = self.rollback_materialized(&mut evidence)
-        {
-            published = Err(rollback);
-        }
-        let unlock = lock.release(&mut evidence);
-        let (validated, final_disposition, cache_bytes) = match (published, unlock) {
-            (Ok(published), Ok(())) => published,
-            (Err(error), _) => {
-                let measurements = failed_measurements(*context, descriptor, operation, &evidence);
-                return Err(error.with_measurements(measurements));
-            }
-            (Ok(_), Err(error)) => {
-                let error = match self.rollback_materialized(&mut evidence) {
-                    Ok(()) => error,
-                    Err(rollback) => rollback,
-                };
+        ) {
+            Ok(published) => published,
+            Err(error) => {
                 let measurements = failed_measurements(*context, descriptor, operation, &evidence);
                 return Err(error.with_measurements(measurements));
             }
@@ -1094,12 +1049,58 @@ impl PreparedArtifactStore {
         Ok((validated.into_handle(descriptor), measurements))
     }
 
+    pub(super) fn settle_transaction(
+        &self,
+        descriptor: &PreparedArtifactDescriptor,
+        disposition: ArtifactDisposition,
+        materialization: Option<PreparedArtifactMaterialization<'_>>,
+        reservation: PreparedArtifactReservation,
+        retained: &[PreparedArtifactDescriptor],
+        evidence: &mut ValidationEvidence,
+    ) -> Result<(ValidatedArtifact, ArtifactDisposition, u64), PreparedArtifactError> {
+        let mut lock = self.lock(evidence)?;
+        let mut published = if let Some(materialization) = materialization {
+            self.publish_bytes_locked(
+                descriptor,
+                disposition,
+                materialization,
+                reservation,
+                retained,
+                evidence,
+            )
+        } else {
+            self.validate_entry_with_evidence(descriptor.identity(), Some(descriptor), evidence)
+                .and_then(|validated| {
+                    self.validate_budget_without_eviction(evidence)
+                        .map(|cache_bytes| (validated, ArtifactDisposition::Reused, cache_bytes))
+                })
+        };
+        if published.is_err()
+            && let Err(rollback) = self.rollback_materialized(evidence)
+        {
+            published = Err(rollback);
+        }
+        let unlock = lock.release(evidence);
+        match (published, unlock) {
+            (Ok(published), Ok(())) => Ok(published),
+            (Err(error), _) => Err(error),
+            (Ok(_), Err(error)) => {
+                let error = match self.rollback_materialized(evidence) {
+                    Ok(()) => error,
+                    Err(rollback) => rollback,
+                };
+                Err(error)
+            }
+        }
+    }
+
     fn publish_bytes_locked(
         &self,
         descriptor: &PreparedArtifactDescriptor,
         disposition: ArtifactDisposition,
         mut materialization: PreparedArtifactMaterialization<'_>,
         reservation: PreparedArtifactReservation,
+        retained: &[PreparedArtifactDescriptor],
         evidence: &mut ValidationEvidence,
     ) -> Result<(ValidatedArtifact, ArtifactDisposition, u64), PreparedArtifactError> {
         self.validate_raw_budget(descriptor.compatibility.identity, evidence)?;
@@ -1295,7 +1296,12 @@ impl PreparedArtifactStore {
                     Ok((existing, disposition, cache_bytes))
                 }
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    self.evict_for(descriptor.compatibility.identity, incoming_bytes, evidence)?;
+                    self.evict_for(
+                        descriptor.compatibility.identity,
+                        incoming_bytes,
+                        retained,
+                        evidence,
+                    )?;
                     let cache_bytes = self.validate_budget_with_incoming(
                         descriptor.compatibility.identity,
                         incoming_bytes,
@@ -1410,6 +1416,7 @@ impl PreparedArtifactStore {
         &self,
         incoming: ArtifactIdentity,
         incoming_bytes: u64,
+        retained: &[PreparedArtifactDescriptor],
         evidence: &mut ValidationEvidence,
     ) -> Result<(), PreparedArtifactError> {
         self.with_entries(evidence, |evidence, entries| {
@@ -1427,10 +1434,15 @@ impl PreparedArtifactStore {
             evidence.observe_cache_bytes(existing_bytes);
             evidence.ensure_resident_budget()?;
             let mut evicted = 0_usize;
+            let mut candidates = entries.iter().filter(|entry| {
+                retained
+                    .binary_search_by_key(&entry.identity, PreparedArtifactDescriptor::identity)
+                    .is_err()
+            });
             while total > self.budget.cache_bytes
                 || entries.len().saturating_sub(evicted).saturating_add(1) > self.budget.entries
             {
-                let Some(entry) = entries.get(evicted).copied() else {
+                let Some(entry) = candidates.next().copied() else {
                     return Err(PreparedArtifactError::CacheBudgetExceeded {
                         required: total,
                         budget: self.budget.cache_bytes,
@@ -1773,7 +1785,7 @@ impl PreparedArtifactStore {
         })
     }
 
-    fn remove_orphan_staging(
+    pub(super) fn remove_orphan_staging(
         &self,
         evidence: &mut ValidationEvidence,
     ) -> Result<(), PreparedArtifactError> {
@@ -1801,6 +1813,12 @@ impl PreparedArtifactStore {
                 }
                 evidence.observe_temporary_storage(orphan_bytes);
                 evidence.ensure_resident_budget()?;
+                if orphan_bytes > self.budget.cache_bytes {
+                    return Err(PreparedArtifactError::CacheBudgetExceeded {
+                        required: orphan_bytes,
+                        budget: self.budget.cache_bytes,
+                    });
+                }
 
                 for path in paths.iter().filter(|path| {
                     path.file_name()

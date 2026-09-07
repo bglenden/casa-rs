@@ -137,6 +137,7 @@ fn t51_paired_cf_cold_load_discriminator() {
         })
     );
     let mut total_bytes = 0;
+    let base_attempt = runtime.attempts[0];
     for (ordinal, (label, index, stem, shape)) in selected.into_iter().enumerate() {
         assert!(
             started.elapsed().as_secs_f64() < 50.0,
@@ -148,30 +149,37 @@ fn t51_paired_cf_cold_load_discriminator() {
             cell.descriptor().weight_plane().unwrap().shape(),
             [320, 320]
         );
-        let node = cell
-            .descriptor()
-            .work_node_id(PreparedArtifactOperation::Load);
         let identity = cell.descriptor().identity();
         let entry = store.root().join("objects-v3").join(identity.to_string());
         assert!(!entry.exists(), "must be an actual cold private Load");
         let load_started = Instant::now();
-        let ((_, result), receipt) = run_operation(
+        runtime.attempts[0] = aw_attempt(base_attempt, ordinal as u64);
+        let (result, receipt) = run_catalog(
             &problem,
             &runtime,
-            OperationInput {
+            Arc::clone(&store),
+            CatalogInput::Import {
+                reusable: BTreeSet::new(),
                 cache: Arc::clone(&cache),
-                store: Arc::clone(&store),
-                cell,
+                cells: vec![cell],
                 source_domain: &source_domain,
-                operation: PreparedArtifactOperation::Load,
-                phase: 1_000_000 + ordinal as u64,
             },
         )
         .unwrap();
         let load_seconds = load_started.elapsed().as_secs_f64();
-        let OperationResult::Artifact(artifact) = result else {
+        let CatalogPhaseResult::Imported(mut artifacts) = result else {
             panic!("cold Load returned no artifact")
         };
+        assert_eq!(artifacts.len(), 1);
+        let (_, artifact) = artifacts.pop().unwrap();
+        let node = receipt
+            .plan_node_identities()
+            .into_iter()
+            .find(|node| {
+                node.as_str()
+                    .starts_with("prepared-artifact-catalog-cold-load-")
+            })
+            .expect("cold catalog node");
         assert_eq!(artifact.identity(), identity);
         let producer_nanos = receipt.stage_actual_elapsed_nanos(&node).unwrap();
         let io = IoBufferKind::ALL.into_iter().filter_map(|kind| {
@@ -183,7 +191,7 @@ fn t51_paired_cf_cold_load_discriminator() {
         eprintln!(
             "t51_paired_cf_load_timing {}",
             serde_json::json!({
-                "label": label, "artifact_identity": identity.to_string(), "run_operation_seconds": load_seconds,
+                "label": label, "artifact_identity": identity.to_string(), "run_catalog_seconds": load_seconds,
                 "receipt_producer_seconds": producer_nanos as f64 / 1e9, "io": io,
             })
         );

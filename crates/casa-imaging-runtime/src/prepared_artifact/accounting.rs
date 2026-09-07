@@ -52,9 +52,31 @@ pub(super) fn validate_catalog_plan_binding(
     context: WorkExecutionContext<'_>,
     store: &PreparedArtifactStore,
     descriptors: &[PreparedArtifactDescriptor],
+    sources: Option<&[Option<PreparedArtifactImportSource>]>,
     reservation: PreparedArtifactReservation,
 ) -> Result<(), PreparedArtifactError> {
     validate_catalog_descriptors(store, descriptors)?;
+    let operation = if let Some(sources) = sources {
+        validate_catalog_sources(descriptors, sources)?;
+        for (descriptor, source) in descriptors.iter().zip(sources) {
+            let Some(source) = source else { continue };
+            if source
+                .segments
+                .iter()
+                .any(|segment| segment.source.starts_with(&store.root))
+            {
+                return Err(PreparedArtifactError::InvalidSource);
+            }
+            validate_source_binding(
+                context,
+                descriptor,
+                PreparedArtifactSourceBinding::Import(source),
+            )?;
+        }
+        PreparedArtifactOperation::Load
+    } else {
+        PreparedArtifactOperation::Reuse
+    };
     for descriptor in descriptors {
         if descriptor.compatibility.owner.implementation_registry
             != context.implementation_registry_id()
@@ -67,21 +89,20 @@ pub(super) fn validate_catalog_plan_binding(
     }
     let node = context.node();
     if node.kind != WorkKind::Cache
-        || node.id != catalog_work_node_id(descriptors)?
-        || node.implementation != catalog_work_implementation_id(descriptors)?
+        || node.id != catalog_work_node_id(descriptors, operation)?
+        || node.implementation != catalog_work_implementation_id(descriptors, operation)?
     {
         return Err(PreparedArtifactError::UnplannedOperation);
     }
     let planned = context.planned_artifacts().cloned().collect::<Vec<_>>();
-    let expected = catalog_planned_artifacts(descriptors)?;
+    let mut expected = catalog_planned_artifacts(descriptors, sources)?;
+    expected.sort_unstable_by_key(PlannedArtifact::identity);
     if planned.len() != expected.len()
-        || expected.iter().any(|expected| {
-            !planned.iter().any(|actual| {
-                actual.identity() == expected.identity()
-                    && actual.node() == expected.node()
-                    && actual.role() == expected.role()
-                    && actual.cache_identity() == expected.cache_identity()
-            })
+        || expected.iter().zip(&planned).any(|(expected, actual)| {
+            actual.identity() != expected.identity()
+                || actual.node() != expected.node()
+                || actual.role() != expected.role()
+                || actual.cache_identity() != expected.cache_identity()
         })
         || planned
             .iter()
@@ -102,7 +123,7 @@ pub(super) fn validate_catalog_plan_binding(
         .collect::<Vec<_>>();
     if matching.len() != 1
         || matching[0].persistent_cache_bytes < reservation.persistent_cache_bytes
-        || matching[0].temporary_bytes != 0
+        || matching[0].temporary_bytes < reservation.temporary_staging_bytes
         || matching[0].read_rate.hard() == 0
         || matching[0].write_rate.hard() == 0
         || matching[0].operations_rate.hard() == 0
@@ -111,6 +132,57 @@ pub(super) fn validate_catalog_plan_binding(
         return Err(PreparedArtifactError::MissingReservation(
             "catalog private-cache storage demand",
         ));
+    }
+    if reservation.temporary_staging_bytes > 0 {
+        require_claim(
+            node,
+            |resource| {
+                resource
+                    == &LeaseResource::Storage {
+                        demand_id: demand_id.clone(),
+                        use_kind: StorageUseKind::Temporary,
+                    }
+            },
+            reservation.temporary_staging_bytes,
+            "catalog private staging",
+        )?;
+    }
+    for (source_demand, domain) in catalog_source_demands(sources.unwrap_or_default()) {
+        let demands = context
+            .resource_alternative()
+            .demand
+            .storage
+            .iter()
+            .filter(|demand| demand.demand_id == source_demand)
+            .collect::<Vec<_>>();
+        if demands.len() != 1
+            || demands[0].domain != domain
+            || demands[0].read_rate.hard() == 0
+            || demands[0].operations_rate.hard() == 0
+            || demands[0].queue_slots.hard() == 0
+            || demands[0].write_rate.hard() != 0
+            || demands[0].temporary_bytes != 0
+            || demands[0].staged_output_bytes != 0
+            || demands[0].final_output_bytes != 0
+            || demands[0].persistent_cache_bytes != 0
+        {
+            return Err(PreparedArtifactError::MissingReservation(
+                "catalog source lane",
+            ));
+        }
+        for resource in [
+            LeaseResource::StorageReadRate {
+                demand_id: source_demand.clone(),
+            },
+            LeaseResource::StorageOperationsRate {
+                demand_id: source_demand.clone(),
+            },
+            LeaseResource::StorageQueue {
+                demand_id: source_demand.clone(),
+            },
+        ] {
+            require_claim(node, |claim| claim == &resource, 1, "catalog source lane")?;
+        }
     }
     for (resource, amount, label) in [
         (LeaseResource::Workers, 1, "worker"),
@@ -165,7 +237,11 @@ pub(super) fn validate_catalog_plan_binding(
     let stage = context.stage_prediction();
     if stage.io().len() != 1
         || stage.io()[0].kind() != IoBufferKind::StorageManager
-        || stage.io()[0].bytes() < reservation.persistent_cache_bytes
+        || stage.io()[0].bytes()
+            < reservation
+                .persistent_cache_bytes
+                .checked_add(reservation.source_read_bytes)
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?
         || stage.io()[0].operations() == 0
     {
         return Err(PreparedArtifactError::MissingReservation(
@@ -175,7 +251,7 @@ pub(super) fn validate_catalog_plan_binding(
     Ok(())
 }
 
-fn validate_source_binding(
+pub(super) fn validate_source_binding(
     context: WorkExecutionContext<'_>,
     descriptor: &PreparedArtifactDescriptor,
     source: PreparedArtifactSourceBinding<'_>,
@@ -813,13 +889,15 @@ pub(super) fn observed_resource_peak(
         LeaseResource::Storage {
             demand_id,
             use_kind: StorageUseKind::Temporary,
-        } if demand_id == cache_demand_id
-            && !matches!(
+        } if demand_id == cache_demand_id => {
+            if matches!(
                 operation,
                 PreparedArtifactOperation::Reuse | PreparedArtifactOperation::Consume
-            ) =>
-        {
-            evidence.temporary_storage_peak.max(entry_bytes)
+            ) {
+                evidence.temporary_storage_peak
+            } else {
+                evidence.temporary_storage_peak.max(entry_bytes)
+            }
         }
         LeaseResource::StorageReadRate { demand_id }
             if demand_id == cache_demand_id && evidence.cache_read.bytes > 0 =>

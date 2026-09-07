@@ -67,6 +67,54 @@ outcome or mutation. The unrelated general publication fixture currently applies
 a nonzero model delta to a certified-zero initial major pass; this regression does
 not change that fixture or weaken the production model check.
 
+## Catalog-scoped preparation
+
+AW preparation now performs one ordered catalog-reuse execution, followed by
+one ordered cold-import execution only when cells are missing: two preparation
+receipts for a cold or mixed cache, one for a completely warm cache. The initial
+cold probe retains its expected rejected-artifact evidence. No per-cell AW
+plan/run route remains. Genuine single-artifact clients retain their existing
+operation API.
+
+`PreparedArtifactCatalogPlanFragment::with_import_sources` selects a complete
+ordered mixed catalog: a present source imports that cell, and `None` requires
+revalidation/reuse without opening an importer. Warm members therefore remain
+plan-listed inside the cold phase, not just handles retained by the application.
+The fragment instance supplies operation-distinct work and implementation IDs.
+`PreparedArtifactStore::import_catalog` opens one application-owned importer at
+a time and uses the same store-owned publication transaction as single-artifact
+preparation. Source identity and inode/root checks remain per object. Admission
+groups sequential source traffic by storage domain, root, and calibration, with
+one source lane plus one cache lane in the same-domain fixture. Payload workspace
+is the maximum active-cell requirement; descriptor/source/outcome and worst-case
+receipt workspace remain explicit O(N) metadata. The required retained catalog
+must fit the private cache. This phase excludes all selected members from its
+own evictions, including already-warm members and its completed import prefix.
+It does not pin objects against another execution between per-cell locks.
+Cache-inventory scans still occur per cell.
+
+Each object is independently durable under the existing per-object lock. A
+later failure or cooperative cancellation keeps the completed prefix and its
+measurements, without claiming unreached cells. The runtime checks stop requests
+between cells and owns release/terminal classification; it does not add an
+application scheduler or permit in-node adaptation. Receipt progress is written
+at phase lifecycle boundaries, not after each cell. A hard kill may leave an old
+Running receipt while settled objects exist. A fresh attempt revalidates them
+and reconciles recognized, byte-bounded private staging under the cache lock;
+foreign files remain rejected. Protected nonterminal receipts are not evicted
+or treated as evidence of completion. Receipt schema 22 and cache schema 7 are
+unchanged.
+
+The ignored `t51_cold_catalog_receipt_boundaries` control exercises 1, 32 and
+1,024 cells with fixed seeded history. Its opt-in
+`CASA_RS_T51_RECEIPT_BOUNDARY_PROBE` logs full-body encodings, history boundaries,
+and current-byte comparisons without changing execution or trust policy. Run it
+in release mode under its documented 120-second / 2-GiB external guard. Ordinary
+tests cover grouped admission, failed prefixes, early/mid/late cancellation,
+source replacement, oversized-receipt rejection before dispatch and staging
+recovery. Measured timing and acceptance artifacts belong in the
+[canonical T51 record](https://github.com/bglenden/casa-rs/issues/537#issuecomment-5553500652).
+
 ## Campaign record
 
 Single candidate: current-owner paired AW consumption of validated CASA-imported
