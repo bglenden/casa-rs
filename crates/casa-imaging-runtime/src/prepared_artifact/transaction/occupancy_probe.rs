@@ -4,6 +4,60 @@ use std::time::Instant;
 
 use super::*;
 
+#[test]
+fn cache_inventory_validation_and_size_share_one_entry_walk() {
+    let root = tempfile::tempdir().unwrap();
+    let budget = PreparedArtifactBudget::new(4096, 4, 128).unwrap();
+    let domain = StorageDomain {
+        id: StorageDomainId::new("inventory-test"),
+        root: root.path().to_path_buf(),
+        capacity_bytes: budget.cache_bytes,
+        read_rate: crate::RateResourceId::new("inventory-read"),
+        write_rate: crate::RateResourceId::new("inventory-write"),
+        operations_rate: None,
+        queue: crate::QueueResourceId::new("inventory-queue"),
+    };
+    let store = PreparedArtifactStore::open(root.path(), &domain, budget).unwrap();
+    let mut expected_bytes = 0;
+    for index in 1..=4 {
+        let entry = store.entry_path(ArtifactIdentity::from_owner_digest([index; 32]));
+        fs::create_dir(&entry).unwrap();
+        fs::write(entry.join(MANIFEST_FILE), b"{}").unwrap();
+        let payload = vec![index; usize::from(index) * 32];
+        fs::write(entry.join(PAYLOAD_FILE), &payload).unwrap();
+        expected_bytes += 2 + payload.len() as u64;
+    }
+    for expected in [expected_bytes, expected_bytes + 1] {
+        let mut evidence =
+            ValidationEvidence::for_reader(budget, 1 << 20, ReaderObservationPhase::Activation);
+        let bytes = store
+            .validate_raw_budget(ArtifactIdentity::from_owner_digest([0; 32]), &mut evidence)
+            .unwrap();
+        assert_eq!(bytes, expected);
+        assert_eq!(evidence.reader.directory_enumerations, 5);
+        assert_eq!(evidence.reader.directory_entries, 12);
+        assert_eq!(evidence.cache_read.bytes, 0);
+
+        let mut evidence =
+            ValidationEvidence::for_reader(budget, 1 << 20, ReaderObservationPhase::Activation);
+        let bytes = store
+            .with_entries(&mut evidence, |_, entries| {
+                assert_eq!(entries.len(), 4);
+                Ok(entries.iter().map(|entry| entry.bytes).sum::<u64>())
+            })
+            .unwrap();
+        assert_eq!(bytes, expected);
+        assert_eq!(evidence.reader.directory_enumerations, 5);
+        assert_eq!(evidence.reader.directory_entries, 12);
+        assert_eq!(evidence.cache_read.bytes, 0);
+
+        let payload = store
+            .entry_path(ArtifactIdentity::from_owner_digest([1; 32]))
+            .join(PAYLOAD_FILE);
+        fs::write(payload, [1; 33]).unwrap();
+    }
+}
+
 /// Metadata-only discriminator; never publishes, evicts, locks, or reads payloads.
 #[test]
 #[ignore = "requires an immutable stopped private store and fresh same-volume scratch"]

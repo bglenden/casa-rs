@@ -187,16 +187,18 @@ pub(super) fn validate_manifest_segments(
 pub(super) fn validate_entry_inventory(
     directory: &Path,
     evidence: &mut ValidationEvidence,
-) -> Result<(), PreparedArtifactError> {
+) -> Result<u64, PreparedArtifactError> {
     with_directory_paths_counted(directory, evidence, MAX_ENTRY_FILES, |evidence, paths| {
         if paths.len() != MAX_ENTRY_FILES {
             return Err(PreparedArtifactError::IncompleteArtifact);
         }
         let mut manifest = false;
         let mut payload = false;
+        let mut bytes = 0_u64;
         for path in paths {
             evidence.store_read_operation();
-            if !path.symlink_metadata()?.file_type().is_file() {
+            let metadata = path.symlink_metadata()?;
+            if !metadata.file_type().is_file() {
                 return Err(PreparedArtifactError::UnknownCacheEntry(path.to_path_buf()));
             }
             let name = path
@@ -207,12 +209,15 @@ pub(super) fn validate_entry_inventory(
             if name == PAYLOAD_FILE {
                 evidence.payload_metadata_check();
             }
+            bytes = bytes
+                .checked_add(metadata.len())
+                .ok_or(PreparedArtifactError::ArtifactTooLarge)?;
         }
         if !manifest || !payload {
             return Err(PreparedArtifactError::IncompleteArtifact);
         }
         evidence.store_validation();
-        Ok(())
+        Ok(bytes)
     })
     .map_err(|error| match error {
         PreparedArtifactError::Io(error) => map_incomplete(error),

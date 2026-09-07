@@ -1690,9 +1690,10 @@ impl PreparedArtifactStore {
                         let identity = ArtifactIdentity::from_owner_digest(digest);
                         if metadata.file_type().is_dir() {
                             if identity != planned {
-                                validate_entry_inventory(path, evidence)?;
+                                validate_entry_inventory(path, evidence)?
+                            } else {
+                                directory_size_counted(path, evidence)?
                             }
-                            directory_size_counted(path, evidence)?
                         } else if identity == planned {
                             metadata.len()
                         } else {
@@ -1771,11 +1772,8 @@ impl PreparedArtifactStore {
                                 budget: self.budget.entries,
                             });
                         }
-                        validate_entry_inventory(path, evidence)?;
-                        entries.push(CacheInventoryEntry {
-                            identity,
-                            bytes: directory_size_counted(path, evidence)?,
-                        });
+                        let bytes = validate_entry_inventory(path, evidence)?;
+                        entries.push(CacheInventoryEntry { identity, bytes });
                     }
                     Ok(())
                 },
