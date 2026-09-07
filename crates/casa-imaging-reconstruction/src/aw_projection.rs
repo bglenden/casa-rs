@@ -1217,7 +1217,10 @@ pub(crate) struct AwScienceProbeTap {
 }
 
 impl AwGridPlan {
-    fn new(shape: [usize; 2], taps: FusedTaps) -> Self {
+    fn new(shape: [usize; 2], mut taps: FusedTaps) -> Self {
+        // Grid taps address distinct cells; order them for contiguous grid access
+        // without changing the already-computed normalization or prediction taps.
+        taps.values.sort_unstable_by_key(|tap| tap.index);
         Self {
             shape,
             taps: taps.values.into_boxed_slice(),
@@ -1501,6 +1504,9 @@ fn circular_degrees(value: f64) -> f64 {
 fn finite(value: Complex64) -> bool {
     value.re.is_finite() && value.im.is_finite()
 }
+
+#[cfg(test)]
+mod locality_probe;
 
 #[cfg(test)]
 mod tests {
@@ -2386,8 +2392,14 @@ mod tests {
                     );
                     let expected =
                         Complex64::new(fields[8].parse().unwrap(), fields[9].parse().unwrap());
+                    let [x, y] = probe.taps[*index].grid_coordinate;
+                    let grid_index = x * plan.shape[1] + y;
+                    let plan_index = plan
+                        .taps
+                        .binary_search_by_key(&grid_index, |tap| tap.index)
+                        .unwrap();
                     assert_eq!(
-                        plan.taps[*index].coefficient, expected,
+                        plan.taps[plan_index].coefficient, expected,
                         "native unpointed coefficient"
                     );
                     *index += 1;
