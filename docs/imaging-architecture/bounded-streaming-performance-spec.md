@@ -7,6 +7,11 @@ Delivery 1 work issue: #540
 Delivery 2 source issue: #541, with the MFS production slice to be extracted
 Verification: issue-named focused gates; `just docs-check`; `just arch-check`
 
+The run authorizations and numerical candidate-admission thresholds below belong
+to the named #540/#541 campaign. They are not global prerequisites for local
+experiments on other tickets; use the current imaging-performance skill for
+general iteration guidance.
+
 ## Decision
 
 Imaging execution gains one shared bounded streaming Module inside
