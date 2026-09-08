@@ -923,7 +923,7 @@
 
 <h1 id="imaging-architecture-lessons-and-next-tranche-contract">Imaging architecture lessons and next-tranche contract<a class="headerlink" href="#imaging-architecture-lessons-and-next-tranche-contract" title="Permanent link">&para;</a></h1>
 <p>Truth class: normative programme delivery
-Last reality check: 2026-09-02
+Last reality check: 2026-09-07
 Verification: <code>just docs-check</code>; <code>just arch-check</code></p>
 <p>This document records the delivery consequences learned while implementing and
 merging T01-T12 and T14, together with the subsequently archived multi-ticket
@@ -1033,12 +1033,13 @@ programme gate remains unchanged.</p>
    not count. Keep one implementation ticket active; allow a second only when
    both depend solely on merged interfaces and touch no common ownership
    surface.</li>
-<li><strong>Code, gate, or blocker.</strong> Within 45 minutes of selection, open the linked
-   pull request with a material code/test commit, start a required pre-edit
-   named gate, or report the exact failed command or contract, file/type/symbol,
-   evidence, and next action. During non-gate work, another 45 minutes may not
-   pass without a material commit or concrete blocker. Ask only at the existing
-   stop points. In-scope Rust API changes are already approved.</li>
+<li><strong>Code, result, gate, or blocker.</strong> Within 45 minutes of selection, produce
+   a tested code change, a discriminating measurement, start an issue-named
+   gate, or report the concrete blocker and next action. Apply the same progress
+   checkpoint during non-gate work; do not manufacture commits or expand
+   bookkeeping to satisfy it. Open the linked pull request when a material
+   code/test commit is ready. Ask only at the existing stop points. In-scope
+   Rust API changes are already approved.</li>
 <li><strong>One acceptance boundary.</strong> Run only ticket-required or directly affected
    identity, schema, resource, architecture, and immediate-seam gates. Generic
    workflows, <code>just verify</code>, GUI, docs, Python, unrelated crates, and broad
@@ -1061,23 +1062,23 @@ programme gate remains unchanged.</p>
 command and start once, then its result. The post-repair closure check is not a
 second review and may not reopen design or inspect untouched work.</p>
 <h4 id="correctness-first-execution-and-lean-records">Correctness-first execution and lean records<a class="headerlink" href="#correctness-first-execution-and-lean-records" title="Permanent link">&para;</a></h4>
-<p>For correctness tickets, performance measurement informs later acceleration; it
-does not add a speed gate. In particular, the serial reference contract in #448
-precedes acceleration. Before full correctness acceptance, a performance change
-requires measured evidence that pathological or unbounded behavior prevents
-practical completion of a required gate. Required memory/resource limits remain
-gates. Being slower than CASA alone is not a correctness blocker. If a forecast
-conflicts with an observer time ceiling, report the forecast and guard for a
-decision; do not silently make that ceiling or CASA runtime an acceptance target.
-Tickets whose approved outcome explicitly includes performance retain their
-named performance requirements.</p>
-<p>The 45-minute rule requires meaningful progress or a concrete blocker, not
-artificial micro-commits, repeated GitHub updates, or per-commit reviews. Keep one
-canonical current evidence summary on the issue or pull request and link from
-the other. Publish milestones, blockers, scope decisions, and final evidence;
-retain individual probes and hypotheses in diagnostic artifacts rather than
-mirroring a running transcript. Batch source-hash and registry maintenance where
-safe before affected gates and review; never weaken identity validation.</p>
+<p>Scientific correctness and required resource limits remain acceptance gates;
+correctness-only tickets do not acquire a speed gate. Bounded local improvements
+to repeated computation, allocation, copying, caching, and I/O may precede full
+acceptance when they preserve required behavior. Use a focused parent/candidate
+check, then the issue-named acceptance; missing full-workload attribution or an
+exact CASA component timer does not block that local experiment. The serial
+reference requirement in #448 and approved performance targets remain unchanged.
+An explicit run/time checkpoint still stops execution; process changes do not
+renew an exhausted run allowance.</p>
+<p>The 45-minute rule requires a working change, discriminating result, or concrete
+blocker, not artificial micro-commits or repeated GitHub updates. Keep one current
+summary on the issue or pull request and link from the other. Batch source-hash
+and registry maintenance before affected gates and review. Internal hashes,
+receipts, and defensive checks are implementation choices, not automatically
+scientific requirements: establish the behavior actually required before adding
+or repeating them. Changing a promised guarantee requires an explicit decision
+and corresponding tests; it is not an excuse to bypass a failing check.</p>
 <p>Use the single consolidated contract review above, not a new review cycle for
 each diagnostic or optimization. Retry limits follow the same underlying problem
 across agents and handoffs. Routine progress monitoring belongs in scripts or
