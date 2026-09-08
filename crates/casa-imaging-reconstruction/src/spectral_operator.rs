@@ -527,7 +527,7 @@ pub struct SpectralOperatorSpecification {
     mosaic_response_selections: Box<[MosaicResponseSelection]>,
     mosaic_field_capacity: usize,
     mosaic_normal_entry_capacity: usize,
-    selected_spectral_rows: BTreeMap<(MeasurementSetIdentity, u32), SelectedSpectralRowShape>,
+    selected_spectral_rows: Box<[SelectedSpectralRowEntry]>,
     primary_beam_cutoff: f32,
     polarization_coordinates: Box<[PolarizationCoordinate]>,
     image_shape: [usize; 2],
@@ -554,6 +554,109 @@ struct SelectedSpectralRowShape {
     channels: usize,
     first: u32,
     second: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectedSpectralRowEntry {
+    key: (MeasurementSetIdentity, u32),
+    shape: SelectedSpectralRowShape,
+}
+
+#[cfg(test)]
+mod specification_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn owned_metadata_counts_string_capacity_and_excludes_shared_catalog_payload() {
+        let cells = 512 * 512;
+        let (problem, lifecycle, model, normal) = crate::major_cycle::native_minor_fixture::build(
+            vec![Complex64::default(); 2 * cells].into_boxed_slice(),
+            vec![Complex64::default(); 3 * cells].into_boxed_slice(),
+            None,
+        );
+        drop((lifecycle, model, normal));
+        let mut specification =
+            SpectralOperatorSpecification::new(&problem).expect("specification");
+        assert!(
+            specification
+                .selected_spectral_rows
+                .windows(2)
+                .all(|pair| pair[0].key < pair[1].key)
+        );
+        let initial = specification
+            .owned_heap_bytes()
+            .expect("initial owned bytes");
+        let mut name = String::with_capacity(128);
+        name.push_str("outlier");
+        let capacity = name.capacity();
+        specification.domains[0].role = ImageDomainRole::Outlier(name);
+        assert_eq!(
+            specification
+                .owned_heap_bytes()
+                .expect("named domain bytes"),
+            initial + capacity
+        );
+        assert!(specification.mosaic_response_selections.is_empty());
+        let selection = MosaicResponseSelection {
+            measurement_set: problem.inputs().observation_snapshot().sources()[0].identity(),
+            spectral_window_id: 0,
+            channel_indices: vec![0, 2].into_boxed_slice(),
+            coordinate_catalog: SpectralWindowCoordinateCatalog::new(vec![1.0e9; 3], 1.0e6)
+                .expect("small shared catalog"),
+        };
+        specification.mosaic_response_selections = vec![selection].into_boxed_slice();
+        let with_selection = specification
+            .owned_heap_bytes()
+            .expect("owned selection bytes");
+        assert_eq!(
+            with_selection,
+            initial + capacity + size_of::<MosaicResponseSelection>() + 2 * size_of::<u32>()
+        );
+        specification.mosaic_response_selections[0].coordinate_catalog =
+            SpectralWindowCoordinateCatalog::new(vec![1.0e9; 4096], 1.0e6)
+                .expect("larger source-shared catalog");
+        assert_eq!(
+            specification
+                .owned_heap_bytes()
+                .expect("shared payload excluded"),
+            with_selection
+        );
+        let standard_headers = specification
+            .compiler_convolution_metadata_bytes()
+            .expect("standard headers");
+        assert_eq!(
+            standard_headers,
+            specification.charts.len() * size_of::<ConvolutionOperator>()
+        );
+        specification.w_projection = Some(
+            WProjectionContract::new(1.0, std::num::NonZeroUsize::new(3)).expect("three planes"),
+        );
+        assert_eq!(
+            specification
+                .compiler_convolution_metadata_bytes()
+                .expect("W headers"),
+            standard_headers
+                + specification.charts.len()
+                    * (size_of::<WProjectionDiagnostics>() + 3 * size_of::<WProjectionKernel>())
+        );
+        specification.w_projection = Some(
+            WProjectionContract::new(0.0, std::num::NonZeroUsize::new(3)).expect("zero W envelope"),
+        );
+        assert_eq!(
+            specification
+                .compiler_convolution_metadata_bytes()
+                .expect("zero W uses standard"),
+            standard_headers
+        );
+        specification.w_projection = Some(
+            WProjectionContract::new(1.0, std::num::NonZeroUsize::new(usize::MAX))
+                .expect("oversized plane count"),
+        );
+        assert!(matches!(
+            specification.compiler_convolution_metadata_bytes(),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        ));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1071,22 +1174,31 @@ impl SpectralOperatorSpecification {
             .first()
             .ok_or(SpectralOperatorError::UnsupportedProblem)?
             .geometry;
-        let mut selected_spectral_rows = BTreeMap::new();
+        let mut selected_spectral_rows = Vec::new();
         for source in problem.inputs().observation_snapshot().sources() {
             for spectral_window in source.selection().spectral_windows() {
                 let channels = spectral_window.channel_indices();
-                selected_spectral_rows.insert(
-                    (source.identity(), spectral_window.spectral_window_id()),
-                    SelectedSpectralRowShape {
+                selected_spectral_rows.push(SelectedSpectralRowEntry {
+                    key: (source.identity(), spectral_window.spectral_window_id()),
+                    shape: SelectedSpectralRowShape {
                         channels: channels.len(),
                         first: *channels
                             .first()
                             .ok_or(SpectralOperatorError::InvalidSample)?,
                         second: channels.get(1).copied(),
                     },
-                );
+                });
             }
         }
+        selected_spectral_rows.sort_unstable_by_key(|entry| entry.key);
+        // Compiled observations reject duplicate source identities and SPW selections.
+        if selected_spectral_rows
+            .windows(2)
+            .any(|pair| pair[0].key == pair[1].key)
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let selected_spectral_rows = selected_spectral_rows.into_boxed_slice();
         let (mosaic_response_selections, mosaic_field_capacity, mosaic_normal_entry_capacity) =
             if mosaic {
                 let mut selections = Vec::new();
@@ -1216,6 +1328,68 @@ impl SpectralOperatorSpecification {
         self.charts.len()
     }
 
+    /// Exact owned container payload, excluding inline state and source-shared catalogs.
+    pub(crate) fn owned_heap_bytes(&self) -> Result<usize, SpectralOperatorError> {
+        let containers = [
+            std::mem::size_of_val(self.polarization_coordinates.as_ref()),
+            std::mem::size_of_val(self.domains.as_ref()),
+            std::mem::size_of_val(self.charts.as_ref()),
+            std::mem::size_of_val(self.joint_line_term_by_channel.as_ref()),
+            std::mem::size_of_val(self.output_channel_frequencies_hz.as_ref()),
+            std::mem::size_of_val(self.selected_spectral_rows.as_ref()),
+        ];
+        let bytes =
+            containers
+                .into_iter()
+                .try_fold(self.mosaic_selection_bytes()?, |total, bytes| {
+                    total
+                        .checked_add(bytes)
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)
+                })?;
+        self.domains.iter().try_fold(bytes, |total, domain| {
+            let name_bytes = match &domain.role {
+                ImageDomainRole::Main => 0,
+                ImageDomainRole::Outlier(name) => name.capacity(),
+            };
+            total
+                .checked_add(name_bytes)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })
+    }
+
+    /// Owned convolution headers, excluding the numerical buffers projected by the workload.
+    pub(crate) fn compiler_convolution_metadata_bytes(
+        &self,
+    ) -> Result<usize, SpectralOperatorError> {
+        self.charts.iter().try_fold(0_usize, |total, chart| {
+            let w_headers = match self
+                .w_projection
+                .filter(|contract| contract.maximum_abs_w_lambda() > f64::MIN_POSITIVE)
+            {
+                Some(contract) => w_projection_plane_count(&chart.geometry, contract)
+                    .checked_mul(size_of::<WProjectionKernel>())
+                    .and_then(|bytes| bytes.checked_add(size_of::<WProjectionDiagnostics>()))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+                None => 0,
+            };
+            total
+                .checked_add(size_of::<ConvolutionOperator>())
+                .and_then(|bytes| bytes.checked_add(w_headers))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })
+    }
+
+    fn mosaic_selection_bytes(&self) -> Result<usize, SpectralOperatorError> {
+        self.mosaic_response_selections.iter().try_fold(
+            std::mem::size_of_val(self.mosaic_response_selections.as_ref()),
+            |total, selection| {
+                total
+                    .checked_add(std::mem::size_of_val(selection.channel_indices.as_ref()))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            },
+        )
+    }
+
     fn mosaic_selected_channel_capacity(&self) -> usize {
         self.mosaic_response_selections
             .iter()
@@ -1245,10 +1419,14 @@ impl SpectralOperatorSpecification {
             .ok_or(SpectralOperatorError::InvalidSample)?
             .selected();
         let address = selected.address();
-        let shape = self
+        let shape_index = self
             .selected_spectral_rows
-            .get(&(address.measurement_set, address.spectral_window_id))
-            .ok_or(SpectralOperatorError::InvalidSample)?;
+            .binary_search_by_key(
+                &(address.measurement_set, address.spectral_window_id),
+                |entry| entry.key,
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        let shape = &self.selected_spectral_rows[shape_index].shape;
         if shape.channels == 1 {
             return Ok(false);
         }
@@ -1356,19 +1534,7 @@ impl SpectralOperatorSpecification {
                 .map(|chart| {
                     let conv_size = chart.geometry.grid_shape.into_iter().max().unwrap_or(0);
                     let contract = self.w_projection.expect("W contract is present");
-                    let half_field_angle = ((chart.geometry.image_shape[0] as f64
-                        * chart.geometry.increment_rad[0].abs())
-                    .max(
-                        chart.geometry.image_shape[1] as f64
-                            * chart.geometry.increment_rad[1].abs(),
-                    )) / 2.0;
-                    let automatic =
-                        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs())
-                            as usize;
-                    let planes = contract
-                        .planes()
-                        .map(std::num::NonZeroUsize::get)
-                        .unwrap_or(automatic.max(1));
+                    let planes = w_projection_plane_count(&chart.geometry, contract);
                     let sampling = if planes > 1 { 4 } else { 1 };
                     ((conv_size / 2).saturating_sub(2) as f64 / sampling as f64 - 0.5)
                         .ceil()
@@ -1963,19 +2129,7 @@ pub fn spectral_operator_workload(
                     });
                 let projected = specification.w_projection.map_or(standard, |contract| {
                     let conv_size = chart.geometry.grid_shape.into_iter().max().unwrap_or(0);
-                    let half_field_angle = ((chart.geometry.image_shape[0] as f64
-                        * chart.geometry.increment_rad[0].abs())
-                    .max(
-                        chart.geometry.image_shape[1] as f64
-                            * chart.geometry.increment_rad[1].abs(),
-                    )) / 2.0;
-                    let automatic =
-                        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs())
-                            as usize;
-                    let planes = contract
-                        .planes()
-                        .map(std::num::NonZeroUsize::get)
-                        .unwrap_or(automatic.max(1));
+                    let planes = w_projection_plane_count(&chart.geometry, contract);
                     let quarter_cells = (conv_size / 2)
                         .saturating_sub(1)
                         .checked_mul((conv_size / 2).saturating_sub(1));
@@ -2071,16 +2225,7 @@ pub fn spectral_operator_workload(
         .map(|selection| selection.channel_indices.len())
         .max()
         .unwrap_or(0);
-    let mosaic_selection_bytes = specification
-        .mosaic_response_selections
-        .len()
-        .checked_mul(size_of::<MosaicResponseSelection>())
-        .and_then(|bytes| {
-            mosaic_selected_channel_capacity
-                .checked_mul(size_of::<u32>())
-                .and_then(|channels| bytes.checked_add(channels))
-        })
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let mosaic_selection_bytes = specification.mosaic_selection_bytes()?;
     let response_residency = crate::mosaic::response_residency_projection(
         mosaic_response_route_capacity,
         mosaic_selection_bytes,
@@ -4961,6 +5106,7 @@ pub(super) struct CasaLinearRowResampler<P = SmallVec<[Complex64; 4]>> {
     pending: Option<NativeSpectralGroup<P>>,
     grid: Option<CasaLinearGrid>,
     next_fine_channel: usize,
+    native_channels: usize,
 }
 
 impl<P> CasaLinearRowResampler<P> {
@@ -4969,16 +5115,17 @@ impl<P> CasaLinearRowResampler<P> {
             pending: None,
             grid: None,
             next_fine_channel: 0,
+            native_channels: 0,
         }
     }
 
-    pub(super) fn push(
+    pub(super) fn push<T>(
         &mut self,
         current: NativeSpectralGroup<P>,
         output: CasaLinearOutputGrid,
         finite_values: FiniteValuePolicy,
-        mut interpolate_prediction: impl FnMut(&P, &P, [f64; 2]) -> Result<P, SpectralOperatorError>,
-        mut emit: impl FnMut(CasaResampledGroup<P>) -> Result<(), SpectralOperatorError>,
+        mut interpolate_prediction: impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
+        mut emit: impl FnMut(CasaResampledGroup<T>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         let geometry = current
             .samples
@@ -4990,6 +5137,10 @@ impl<P> CasaLinearRowResampler<P> {
             .as_ref()
             .is_none_or(|previous| previous.key != current.key)
         {
+            self.finish()?;
+            if current.samples[0].selected().address().channel_index != geometry.first().0 {
+                return Err(SpectralOperatorError::IncompleteCoverage);
+            }
             let pair = geometry
                 .first_pair_hz()
                 .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
@@ -4998,6 +5149,7 @@ impl<P> CasaLinearRowResampler<P> {
                     .ok_or(SpectralOperatorError::InvalidSample)?,
             );
             self.next_fine_channel = 0;
+            self.native_channels = 1;
             self.pending = Some(current);
             return Ok(());
         }
@@ -5013,6 +5165,16 @@ impl<P> CasaLinearRowResampler<P> {
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
+        if self.native_channels >= geometry.selected_channels()
+            || current.samples[0].selected().address().channel_index
+                <= previous.samples[0].selected().address().channel_index
+            || (self.native_channels == 1
+                && Some(current.samples[0].selected().address().channel_index)
+                    != geometry.second().map(|second| second.0))
+        {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        self.native_channels += 1;
         let grid = self.grid.ok_or(SpectralOperatorError::InvalidSample)?;
         let result = grid
             .samples_for_pair(
@@ -5035,20 +5197,31 @@ impl<P> CasaLinearRowResampler<P> {
         result
     }
 
-    fn finish(&mut self) {
+    pub(super) fn finish(&mut self) -> Result<(), SpectralOperatorError> {
+        if let Some(pending) = &self.pending {
+            let geometry = pending.samples[0]
+                .selected()
+                .row_spectral_geometry()
+                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+            if self.native_channels != geometry.selected_channels() {
+                return Err(SpectralOperatorError::IncompleteCoverage);
+            }
+        }
         self.pending = None;
         self.grid = None;
         self.next_fine_channel = 0;
+        self.native_channels = 0;
+        Ok(())
     }
 }
 
-fn resample_native_pair<P>(
+fn resample_native_pair<P, T>(
     left: &NativeSpectralGroup<P>,
     right: &NativeSpectralGroup<P>,
     fine: CasaLinearSample,
     finite_values: FiniteValuePolicy,
-    interpolate_prediction: &mut impl FnMut(&P, &P, [f64; 2]) -> Result<P, SpectralOperatorError>,
-) -> Result<CasaResampledGroup<P>, SpectralOperatorError> {
+    interpolate_prediction: &mut impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
+) -> Result<CasaResampledGroup<T>, SpectralOperatorError> {
     if left.samples.len() != right.samples.len()
         || left.observed.len() != left.samples.len()
         || right.observed.len() != right.samples.len()
@@ -5481,7 +5654,7 @@ impl CompleteDataOwnerState {
     }
 
     fn finish_casa_linear_rows(&mut self) -> Result<(), SpectralOperatorError> {
-        self.linear_rows.finish();
+        self.linear_rows.finish()?;
         Ok(())
     }
 
@@ -10903,6 +11076,21 @@ pub(crate) struct WProjectionConvolution {
     kernel_identity: [u8; 32],
 }
 
+fn w_projection_plane_count(
+    geometry: &SpectralOperatorGeometry,
+    contract: WProjectionContract,
+) -> usize {
+    let half_field_angle = ((geometry.image_shape[0] as f64 * geometry.increment_rad[0].abs())
+        .max(geometry.image_shape[1] as f64 * geometry.increment_rad[1].abs()))
+        / 2.0;
+    let automatic =
+        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs()) as usize;
+    contract
+        .planes()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(automatic.max(1))
+}
+
 impl WProjectionConvolution {
     fn new(
         geometry: &SpectralOperatorGeometry,
@@ -10910,15 +11098,7 @@ impl WProjectionConvolution {
     ) -> Result<Self, SpectralOperatorError> {
         let standard = StandardConvolution::new(geometry);
         let maximum_abs_w_lambda = contract.maximum_abs_w_lambda();
-        let half_field_angle = ((geometry.image_shape[0] as f64 * geometry.increment_rad[0].abs())
-            .max(geometry.image_shape[1] as f64 * geometry.increment_rad[1].abs()))
-            / 2.0;
-        let automatic_planes =
-            (1.05 * maximum_abs_w_lambda * half_field_angle.sin().abs()) as usize;
-        let plane_count = contract
-            .planes()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or(automatic_planes.max(1));
+        let plane_count = w_projection_plane_count(geometry, contract);
         let sampling = if plane_count > 1 { 4 } else { 1 };
         let effective_max_w_lambda = if contract.planes().is_some() {
             0.25 / geometry.increment_rad[0].abs()
@@ -11680,6 +11860,15 @@ pub enum SpectralOperatorError {
     /// An opaque record has an unsupported, truncated, or invalid fixed encoding.
     #[error("gridded normal-operator record encoding is invalid")]
     InvalidGriddedRecord,
+    /// A failed source consumption or frame write invalidated this compilation.
+    #[error("gridded normal-operator compilation is poisoned")]
+    GriddedCompilationPoisoned,
+    /// The synchronous runtime frame sink rejected a complete encoded frame.
+    #[error("gridded normal-operator frame sink failed")]
+    GriddedFrameSink,
+    /// Compilation exceeded its admitted finite artifact or descriptor capacity.
+    #[error("gridded normal-operator compilation exhausted its admitted capacity")]
+    GriddedCompilationCapacity,
     /// A worker panicked while mutating one exclusive gridded-normal sector.
     #[error("gridded normal-operator sector state was poisoned")]
     GriddedSectorPoisoned,

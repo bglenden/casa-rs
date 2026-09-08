@@ -492,7 +492,7 @@ impl SpectralCyclePlan {
             None
         } else {
             Some(
-                crate::complete_data_operator::project_managed_spill_budget(
+                crate::complete_data_operator::project_gridded_normal_compilation(
                     problem,
                     weighting.limits().max_block_samples(),
                 )
@@ -630,6 +630,7 @@ impl SpectralCyclePlan {
                     retained_artifact_bytes.unwrap_or(
                         artifact_budget
                             .ok_or(SpectralCyclePlanError::Overflow)?
+                            .spill
                             .maximum_artifact_bytes(),
                     ),
                 ))
@@ -712,7 +713,7 @@ struct SpectralCyclePhasePlanning {
     include_minor: bool,
     phase_input: Option<ArtifactIdentity>,
     strategy: GriddedNormalStrategy,
-    artifact_budget: Option<crate::managed_spill::ManagedSpillBudget>,
+    artifact_budget: Option<crate::complete_data_operator::GriddedNormalCompilationAdmission>,
     gridded_replay_descriptor: Option<GriddedNormalReplayDescriptor>,
 }
 
@@ -2261,14 +2262,29 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     policy: &SpectralCycleExecutionPolicy,
     node: &WorkNodeId,
     pass: SpectralPassIdentity,
-    budget: crate::managed_spill::ManagedSpillBudget,
+    admission: crate::complete_data_operator::GriddedNormalCompilationAdmission,
     mode: ManagedSpillMode<'_>,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
+    let budget = admission.spill;
     let storage = policy
         .gridded_normal_storage
         .as_ref()
         .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
     let mode = mode.specification(budget);
+    let reconciliation = base
+        .observation_transaction()
+        .post_replay_reconciliation()
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+    let compiler_allocation = (!mode.is_read).then(|| {
+        AllocationId::new(crate::complete_data_operator::gridded_compiler_allocation(
+            node.as_str(),
+        ))
+    });
+    let compiler_bytes = u64::try_from(admission.compiler.workspace_bytes())
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
+    let compiler_slot = compiler_allocation
+        .as_ref()
+        .map(|allocation| PhysicalSlotId::new(format!("{}-slot", allocation.as_str())));
     let suffix = format!("{}-{}", pass.ordinal(), mode.suffix);
     let storage_id = format!("{MANAGED_SPILL_STORAGE_DEMAND}-{suffix}");
     let allocation = AllocationId::new(format!("managed-spill-buffer-{suffix}"));
@@ -2292,6 +2308,10 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     };
     let serialization_compatibility = SlotCompatibility {
         layout: AllocationLayout::new("managed-spill-serialization"),
+        ..compatibility.clone()
+    };
+    let compiler_compatibility = SlotCompatibility {
+        layout: AllocationLayout::new("gridded-normal-compiler"),
         ..compatibility.clone()
     };
     let reused_slot = reusable_physical_slot(&base, node, &compatibility, buffer_bytes, None);
@@ -2323,10 +2343,6 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         owner.kind = WorkKind::Spill;
         owner.domain = WorkDomain::Io;
         owner.fences = BTreeSet::from([FenceKind::Io]);
-        let reconciliation = base
-            .observation_transaction()
-            .post_replay_reconciliation()
-            .ok_or(SpectralCyclePlanError::Overflow)?;
         let reconciliation = nodes
             .iter_mut()
             .find(|candidate| candidate.id == *reconciliation)
@@ -2400,6 +2416,12 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         allocation: serialization_allocation.clone(),
         lifetime: lifetime.clone(),
     });
+    if let Some(allocation) = &compiler_allocation {
+        owner.allocations.push(AllocationUse {
+            allocation: allocation.clone(),
+            lifetime: lifetime.clone(),
+        });
+    }
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.id = AlternativeId::new(format!("{}-gridded-{suffix}", alternative.id.as_str()));
     if reused_slot.is_none() {
@@ -2415,6 +2437,14 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             allocation_id: serialization_allocation.as_str().to_string(),
             hard_bytes: serialization_bytes,
             preferred_bytes: serialization_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+    }
+    if let Some(allocation) = &compiler_allocation {
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: allocation.as_str().to_string(),
+            hard_bytes: compiler_bytes,
+            preferred_bytes: compiler_bytes,
             views: vec![CapacityViewId::new("host-memory")],
         });
     }
@@ -2522,6 +2552,25 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     },
                 },
             ])
+            .chain(
+                compiler_allocation
+                    .as_ref()
+                    .zip(compiler_slot.as_ref())
+                    .map(|(allocation, slot)| LogicalAllocation {
+                        id: allocation.clone(),
+                        bytes: compiler_bytes,
+                        purpose: AllocationPurpose::Data,
+                        compatibility: compiler_compatibility.clone(),
+                        physical_slot: slot.clone(),
+                        lifetime: AllocationLifetime {
+                            acquire_at: node.clone(),
+                            // Scientific sealing consumes the compiler after the I/O fence.
+                            release_after: BTreeSet::from([WorkDependency::Work(
+                                reconciliation.clone(),
+                            )]),
+                        },
+                    }),
+            )
             .collect(),
         physical_slots: base
             .execution_dag()
@@ -2544,6 +2593,19 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                 capacity_bytes: serialization_bytes,
                 compatibility: serialization_compatibility,
             }))
+            .chain(
+                compiler_allocation
+                    .as_ref()
+                    .zip(compiler_slot)
+                    .map(|(allocation, slot)| PhysicalSlot {
+                        id: slot,
+                        lease_resource: LeaseResource::Memory {
+                            allocation_id: allocation.as_str().to_string(),
+                        },
+                        capacity_bytes: compiler_bytes,
+                        compatibility: compiler_compatibility,
+                    }),
+            )
             .collect(),
         initial_knobs: base.execution_dag().initial_knobs().clone(),
         adaptations: base

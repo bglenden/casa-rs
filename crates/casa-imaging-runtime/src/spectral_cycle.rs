@@ -2085,13 +2085,18 @@ impl SpectralCycleExecutor {
 
     fn log_gridded_write_measurements(&self, compilation: &GriddedNormalReplayCompilation) {
         let artifact = compilation.write_measurements();
-        let allocations = compilation.compilation_measurements();
+        let compiler = compilation.compilation_measurements();
         eprintln!(
-            "imaging_gridded_compile_summary ordinal={} blocks={} reduced_groups={} reduced_records={} artifact_bytes={} payload_bytes={} write_bytes={} write_operations={} payload_copy_bytes={} payload_copy_operations={} buffer_allocations={} buffer_reuses={} source_group_vector_allocations={} source_group_capacity_growth_bytes={} reduction_map_entry_insertions={} multiplicity_vector_allocations={} multiplicity_capacity_growth_bytes={} encoded_buffer_allocations={} encoded_buffer_bytes={} descriptor_vector_allocations={} descriptor_capacity_growth_bytes={}",
+            "imaging_gridded_compile_summary ordinal={} source_blocks={} source_samples={} frames={} reduced_groups={} reduced_records={} compiler_workspace_bytes={} peak_raw_records={} peak_frame_records={} artifact_bytes={} payload_bytes={} write_bytes={} write_operations={} payload_copy_bytes={} payload_copy_operations={} writer_buffer_allocations={} writer_buffer_reuses={}",
             self.pass.ordinal(),
-            allocations.blocks,
-            allocations.reduced_group_count(),
-            allocations.reduced_record_count(),
+            compiler.source_blocks,
+            compiler.source_samples,
+            compiler.frames,
+            compiler.reduced_groups,
+            compiler.reduced_records,
+            compiler.workspace_bytes,
+            compiler.peak_raw_records,
+            compiler.peak_frame_records,
             artifact.artifact_bytes(),
             artifact.payload_bytes(),
             artifact.transferred_bytes(),
@@ -2100,15 +2105,6 @@ impl SpectralCycleExecutor {
             artifact.payload_copy_operations(),
             artifact.buffer_allocations(),
             artifact.buffer_reuses(),
-            allocations.source_group_vector_allocations,
-            allocations.source_group_capacity_growth_bytes,
-            allocations.reduction_map_entry_insertions,
-            allocations.multiplicity_vector_allocations,
-            allocations.multiplicity_capacity_growth_bytes,
-            allocations.encoded_buffer_allocations,
-            allocations.encoded_buffer_bytes,
-            allocations.descriptor_vector_allocations,
-            allocations.descriptor_capacity_growth_bytes,
         );
     }
 

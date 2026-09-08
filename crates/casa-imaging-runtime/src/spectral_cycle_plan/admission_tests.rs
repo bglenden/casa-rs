@@ -259,7 +259,8 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         phase_input: Some(ArtifactIdentity::from_owner_digest([50; 32])),
         strategy: GriddedNormalStrategy::ReuseManagedSpill,
         artifact_budget: Some(
-            crate::complete_data_operator::project_managed_spill_budget(&problem, 4096).unwrap(),
+            crate::complete_data_operator::project_gridded_normal_compilation(&problem, 4096)
+                .unwrap(),
         ),
         gridded_replay_descriptor: Some(GriddedNormalReplayDescriptor::planning_fixture(
             16_106_938_800,

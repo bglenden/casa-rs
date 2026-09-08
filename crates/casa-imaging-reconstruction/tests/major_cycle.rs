@@ -44,10 +44,15 @@ use casa_imaging_reconstruction::{
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation,
     compile_spectral_stencil, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, GriddedNormalOperatorCompiler, SourceCardinalityObservation,
-        SpectralOperatorPass, prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, GriddedNormalCompilationPlan, GriddedNormalOperatorCompiler,
+        GriddedNormalOperatorFrame, SourceCardinalityObservation, SpectralOperatorPass,
+        prepare_spectral_operator, spectral_operator_workload,
     },
 };
+
+#[path = "support/gridded_frames.rs"]
+mod gridded_frames;
+use gridded_frames::{RecordedFrame, compilation_plan};
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
     let mut bytes = [seed; 32];
@@ -715,6 +720,97 @@ fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() 
 }
 
 #[test]
+fn t55_all_flagged_program_finishes_without_encoded_frames() {
+    let problem = t19_compatible_problem(252);
+    let mut samples = fixture_samples(&problem);
+    for sample in &mut samples {
+        sample.channel_flag = true;
+    }
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(1, 1).unwrap()).unwrap();
+    let selected_generation = replay_selected_generation(&problem, &samples);
+    let generation =
+        freeze_weighting_generation_with(&problem, &plan, &samples, constant_basis_contributions)
+            .expect("all-flagged weighting generation");
+    let (blocks, summary) = replay_with(
+        &generation,
+        &problem,
+        &plan,
+        &samples,
+        constant_basis_contributions,
+    );
+    assert!(!blocks.is_empty());
+    let mut compiler = GriddedNormalOperatorCompiler::new(
+        &problem,
+        compilation_plan(&problem, 1, samples.len()),
+        SourceCardinalityObservation::Enabled,
+    )
+    .expect("zero-work compiler");
+    let mut sink = |_: GriddedNormalOperatorFrame<'_>| -> Result<(), SpectralOperatorError> {
+        panic!("an all-flagged source must not manufacture an encoded frame")
+    };
+    for block in &blocks {
+        compiler.consume_source(block, &mut sink).unwrap();
+    }
+    let measurements = compiler.finish_rows_and_frames(&mut sink).unwrap();
+    assert_eq!(measurements.source_samples, samples.len() as u64);
+    assert_eq!(measurements.source_blocks, blocks.len() as u64);
+    assert_eq!(measurements.frames, 0);
+    let program = compiler
+        .complete(&summary, selected_generation, None)
+        .expect("seal zero-work program");
+    assert_eq!(program.block_count(), 0);
+    assert_eq!(program.record_count(), 0);
+
+    let mut lifecycle = bind_lifecycle(&problem, attempt(251));
+    let initial = lifecycle.initial_empty().unwrap();
+    let preparation = MajorCyclePreparation::prepare(&lifecycle, initial, None).unwrap();
+    let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+    let workload =
+        spectral_operator_workload(&specification, 1, SpectralOperatorPass::InitialMajor).unwrap();
+    let mut owner = prepare_spectral_operator(specification, workload)
+        .unwrap()
+        .begin(&problem, &generation)
+        .unwrap();
+    owner
+        .bind_major_cycle_model(preparation.final_model(), None)
+        .unwrap();
+    for block in &blocks {
+        owner.consume_block(block).unwrap();
+    }
+    let complete = owner
+        .complete(&summary, selected_generation, None)
+        .expect("all-flagged initial normal");
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .unwrap()
+        .reconcile(&mut lifecycle)
+        .unwrap();
+    let (prior, continuation) = joined.into_continuation();
+    let prior_content = prior.content_identity();
+    let (mut lifecycle, named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
+        attempt(250),
+        2,
+        continuation,
+    )
+    .unwrap();
+    let preparation = MajorCyclePreparation::prepare(&lifecycle, named, None).unwrap();
+    let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+    let workload =
+        spectral_operator_workload(&specification, 1, SpectralOperatorPass::ResidualRefresh)
+            .unwrap();
+    let prepared = prepare_spectral_operator(specification, workload).unwrap();
+    let apply = program
+        .begin_apply(&problem, preparation.final_model(), prior, prepared)
+        .expect("begin empty gridded apply");
+    let complete = apply.finish().expect("finish validated zero-work apply");
+    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+        .unwrap()
+        .reconcile(&mut lifecycle)
+        .unwrap();
+    assert_eq!(joined.normal_state().content_identity(), prior_content);
+}
+
+#[test]
 fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
     let problem = t19_compatible_problem(253);
     let mut initial_lifecycle = bind_lifecycle(&problem, attempt(254));
@@ -746,20 +842,34 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
             constant_basis_contributions,
         );
 
-        let mut compiler =
-            GriddedNormalOperatorCompiler::new(&problem, SourceCardinalityObservation::Disabled)
-                .expect("gridded compiler");
-        let gridded_blocks = weighted_blocks
-            .iter()
-            .map(|block| {
-                compiler
-                    .compile_block(block)
-                    .expect("compile gridded block")
-            })
-            .collect::<Vec<_>>();
+        let compilation =
+            compilation_plan(&problem, plan.limits().max_block_samples(), samples.len());
+        let mut compiler = GriddedNormalOperatorCompiler::new(
+            &problem,
+            compilation,
+            SourceCardinalityObservation::Disabled,
+        )
+        .expect("gridded compiler");
+        let mut gridded_blocks = Vec::<RecordedFrame>::new();
+        let mut sink = |frame: GriddedNormalOperatorFrame<'_>| {
+            gridded_blocks.push(RecordedFrame::from(frame));
+            Ok(())
+        };
+        for block in &weighted_blocks {
+            compiler
+                .consume_source(block, &mut sink)
+                .expect("compile gridded block");
+        }
+        compiler
+            .finish_rows_and_frames(&mut sink)
+            .expect("finish gridded frames");
         let program = compiler
             .complete(&summary, selected_generation, None)
             .expect("seal gridded program");
+        assert_eq!(
+            program.record_count(),
+            gridded_blocks.iter().map(RecordedFrame::record_count).sum()
+        );
 
         let specification =
             SpectralOperatorSpecification::new(&problem).expect("initial spectral specification");
@@ -907,33 +1017,196 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
 #[test]
 fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
     // The last native centre is exactly CASA's excluded upper halo boundary.
-    check_linear_cube_replay(&[1.0e9, 1.1e9, 1.2e9], 1.0e8, Some(8));
+    check_linear_cube_replay(
+        &[1.0e9, 1.1e9, 1.2e9],
+        1.0e8,
+        Some(8),
+        LinearReplayConfiguration::default(),
+    );
 }
 
 #[test]
 fn t55_linear_cube_predicts_native_samples_just_beyond_image_channel_centres() {
-    check_linear_cube_replay(&[1.05e9, 1.15e9 + 3.09247875], 1.0e8, Some(5));
+    check_linear_cube_replay(
+        &[1.05e9, 1.15e9 + 3.09247875],
+        1.0e8,
+        Some(5),
+        LinearReplayConfiguration::default(),
+    );
 }
 
 #[test]
 fn t55_linear_native_prediction_uses_channel_centres_not_channel_width() {
     let centres = [1.07e9, 1.12e9];
-    let (spacing_width_predictions, spacing_width_records) =
-        check_linear_cube_replay(&centres, 5.0e7, None);
-    let (different_width_predictions, different_width_records) =
-        check_linear_cube_replay(&centres, 1.0e8, None);
+    let spacing_width =
+        check_linear_cube_replay(&centres, 5.0e7, None, LinearReplayConfiguration::default());
+    let different_width =
+        check_linear_cube_replay(&centres, 1.0e8, None, LinearReplayConfiguration::default());
     assert_eq!(
-        spacing_width_predictions, different_width_predictions,
+        spacing_width.predictions, different_width.predictions,
         "CASA native model prediction uses the first two selected centres, independently of CHAN_WIDTH"
     );
-    assert_eq!(spacing_width_records, different_width_records);
+    assert_eq!(spacing_width.records, different_width.records);
+}
+
+struct LinearReplayConfiguration {
+    source_block_samples: usize,
+    one_atom_capacity: bool,
+    check_rejections: bool,
+}
+
+impl Default for LinearReplayConfiguration {
+    fn default() -> Self {
+        Self {
+            source_block_samples: 1,
+            one_atom_capacity: false,
+            check_rejections: false,
+        }
+    }
+}
+
+struct LinearReplayResult {
+    predictions: Vec<num_complex::Complex64>,
+    records: u64,
+    frames: Vec<RecordedFrame>,
+    source_blocks: u64,
+    frames_per_source: Vec<u64>,
+    source_records_per_source: Vec<u64>,
+    gridded_residual: Vec<num_complex::Complex64>,
+    direct_residual: Vec<num_complex::Complex64>,
+}
+
+#[test]
+fn t55_fixed_atom_frames_are_independent_of_source_block_boundaries() {
+    let run = |source_block_samples| {
+        check_linear_cube_replay(
+            &[1.0e9, 1.1e9, 1.2e9],
+            1.0e8,
+            Some(8),
+            LinearReplayConfiguration {
+                source_block_samples,
+                one_atom_capacity: true,
+                check_rejections: false,
+            },
+        )
+    };
+    let split = run(1);
+    let combined = run(6);
+    assert_eq!(split.frames, combined.frames);
+    assert_eq!(split.predictions, combined.predictions);
+    assert_eq!(split.gridded_residual, combined.gridded_residual);
+    assert_eq!(split.direct_residual, combined.direct_residual);
+    assert_ne!(split.source_blocks, combined.source_blocks);
+    assert_ne!(combined.source_blocks, combined.frames.len() as u64);
+    assert!(combined.frames_per_source.iter().any(|frames| *frames > 1));
+    assert!(split.source_records_per_source[1] > 0);
+    assert_eq!(
+        &split.frames_per_source[..3],
+        &[0, 0, 0],
+        "complete atoms remain buffered across native-channel source blocks"
+    );
+    assert!(
+        split.frames_per_source[3..]
+            .iter()
+            .any(|frames| *frames > 0)
+    );
+}
+
+#[test]
+fn t55_linear_compiler_rejects_incomplete_rows_and_poisoned_streams() {
+    check_linear_cube_replay(
+        &[1.0e9, 1.1e9, 1.2e9],
+        1.0e8,
+        Some(8),
+        LinearReplayConfiguration {
+            source_block_samples: 1,
+            one_atom_capacity: true,
+            check_rejections: true,
+        },
+    );
+}
+
+fn check_linear_compiler_rejections(
+    problem: &casa_imaging_model::CompiledProblem,
+    plan: GriddedNormalCompilationPlan,
+    blocks: &[WeightingReplayChunk],
+    summary: &WeightingReplaySummary,
+    selected_generation: casa_imaging_model::SelectedObservationGenerationId,
+) {
+    let compiler = || {
+        GriddedNormalOperatorCompiler::new(problem, plan, SourceCardinalityObservation::Enabled)
+            .expect("independent compiler attempt")
+    };
+    let mut sink = |_: GriddedNormalOperatorFrame<'_>| Ok(());
+
+    let mut incomplete = compiler();
+    for block in &blocks[..2] {
+        incomplete.consume_source(block, &mut sink).unwrap();
+    }
+    assert!(matches!(
+        incomplete.finish_rows_and_frames(&mut sink),
+        Err(SpectralOperatorError::IncompleteCoverage)
+    ));
+    assert!(matches!(
+        incomplete.complete(summary, selected_generation, None),
+        Err(SpectralOperatorError::GriddedCompilationPoisoned)
+    ));
+
+    let mut duplicate = compiler();
+    duplicate.consume_source(&blocks[0], &mut sink).unwrap();
+    assert!(matches!(
+        duplicate.consume_source(&blocks[0], &mut sink),
+        Err(SpectralOperatorError::BlockSequence)
+    ));
+    assert!(matches!(
+        duplicate.finish_rows_and_frames(&mut sink),
+        Err(SpectralOperatorError::GriddedCompilationPoisoned)
+    ));
+    assert!(matches!(
+        duplicate.complete(summary, selected_generation, None),
+        Err(SpectralOperatorError::GriddedCompilationPoisoned)
+    ));
+
+    let mut failed_sink = compiler();
+    let mut calls = 0;
+    let mut rejecting_sink = |_: GriddedNormalOperatorFrame<'_>| {
+        calls += 1;
+        Err(SpectralOperatorError::InvalidSample)
+    };
+    let result = blocks.iter().try_for_each(|block| {
+        failed_sink
+            .consume_source(block, &mut rejecting_sink)
+            .map(|_| ())
+    });
+    assert!(matches!(result, Err(SpectralOperatorError::InvalidSample)));
+    assert_eq!(calls, 1);
+    assert!(matches!(
+        failed_sink.finish_rows_and_frames(&mut sink),
+        Err(SpectralOperatorError::GriddedCompilationPoisoned)
+    ));
+    assert!(matches!(
+        failed_sink.complete(summary, selected_generation, None),
+        Err(SpectralOperatorError::GriddedCompilationPoisoned)
+    ));
+
+    let mut finished = compiler();
+    for block in blocks {
+        finished.consume_source(block, &mut sink).unwrap();
+    }
+    finished.finish_rows_and_frames(&mut sink).unwrap();
+    assert!(finished.consume_source(&blocks[0], &mut sink).is_err());
+    assert!(matches!(
+        finished.complete(summary, selected_generation, None),
+        Err(SpectralOperatorError::GriddedCompilationPoisoned)
+    ));
 }
 
 fn check_linear_cube_replay(
     native_frequencies: &[f64],
     channel_width_hz: f64,
     records_per_row: Option<usize>,
-) -> (Vec<num_complex::Complex64>, u64) {
+    configuration: LinearReplayConfiguration,
+) -> LinearReplayResult {
     let channels = (0..native_frequencies.len() as u32).collect::<Vec<_>>();
     let problem = reconstruction_problem_with_sampling_and_model(
         source_with_channels(247, [channels.clone(), channels]),
@@ -999,7 +1272,8 @@ fn check_linear_cube_replay(
     );
     let plan = plan_weighting(
         &problem,
-        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+        WeightingExecutionLimits::new(configuration.source_block_samples, 1)
+            .expect("weighting limits"),
     )
     .expect("weighting plan");
     let selected_generation = replay_selected_generation(&problem, &samples);
@@ -1007,17 +1281,59 @@ fn check_linear_cube_replay(
         .expect("freeze split-channel weighting generation");
     let (weighted_blocks, summary) =
         replay_with(&generation, &problem, &plan, &samples, contributions);
-    let mut compiler =
-        GriddedNormalOperatorCompiler::new(&problem, SourceCardinalityObservation::Disabled)
-            .expect("gridded compiler");
-    let gridded_blocks = weighted_blocks
-        .iter()
-        .map(|block| {
-            compiler
-                .compile_block(block)
-                .expect("compile split-channel gridded block")
-        })
-        .collect::<Vec<_>>();
+    let compilation = if configuration.one_atom_capacity {
+        let atom = GriddedNormalCompilationPlan::maximum_atom_records(&problem).unwrap();
+        let record_bytes =
+            casa_imaging_reconstruction::runtime_adapter::gridded_normal_operator_record_bytes(
+                &problem,
+            )
+            .unwrap();
+        let artifact_bytes = samples.len() * 2 * (atom * record_bytes + 32);
+        GriddedNormalCompilationPlan::new(
+            &problem,
+            configuration.source_block_samples,
+            atom,
+            atom,
+            artifact_bytes as u64,
+            32,
+        )
+        .expect("one-atom raw/frame plan")
+    } else {
+        compilation_plan(&problem, plan.limits().max_block_samples(), samples.len())
+    };
+    if configuration.check_rejections {
+        check_linear_compiler_rejections(
+            &problem,
+            compilation,
+            &weighted_blocks,
+            &summary,
+            selected_generation,
+        );
+    }
+    let mut compiler = GriddedNormalOperatorCompiler::new(
+        &problem,
+        compilation,
+        SourceCardinalityObservation::Enabled,
+    )
+    .expect("gridded compiler");
+    let mut gridded_blocks = Vec::<RecordedFrame>::new();
+    let mut sink = |frame: GriddedNormalOperatorFrame<'_>| {
+        gridded_blocks.push(RecordedFrame::from(frame));
+        Ok(())
+    };
+    let mut frames_per_source = Vec::new();
+    let mut source_records_per_source = Vec::new();
+    for block in &weighted_blocks {
+        let previous_frames = compiler.measurements().frames;
+        let measurements = compiler
+            .consume_source(block, &mut sink)
+            .expect("compile split-channel gridded block");
+        frames_per_source.push(measurements.frames - previous_frames);
+        source_records_per_source.push(measurements.source_cardinality.unwrap().records);
+    }
+    compiler
+        .finish_rows_and_frames(&mut sink)
+        .expect("finish split-channel frames");
     let program = compiler
         .complete(&summary, selected_generation, None)
         .expect("seal split-channel gridded program");
@@ -1115,6 +1431,10 @@ fn check_linear_cube_replay(
         .reconcile(&mut lifecycle)
         .expect("reconciled channel-local replay");
 
+    assert_eq!(
+        joined.normal_state().block_count(),
+        program.source_block_count()
+    );
     assert_eq!(joined.normal_state().channel_count(), 2);
     assert_eq!(joined.normal_state().sum_weights(), initial_sum_weights);
     assert_eq!(
@@ -1206,13 +1526,19 @@ fn check_linear_cube_replay(
         direct.normal_state().residual()[maximum_index],
         gridded_residual[maximum_index],
     );
-    (
-        predictions
+    LinearReplayResult {
+        predictions: predictions
             .iter()
             .map(|sample| sample.predicted())
             .collect(),
-        program.record_count(),
-    )
+        records: program.record_count(),
+        source_blocks: program.source_block_count(),
+        frames: gridded_blocks,
+        frames_per_source,
+        source_records_per_source,
+        gridded_residual,
+        direct_residual: direct.normal_state().residual().to_vec(),
+    }
 }
 
 #[test]

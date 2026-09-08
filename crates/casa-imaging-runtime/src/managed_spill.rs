@@ -951,10 +951,12 @@ impl ManagedSpillArtifact {
         frame_counts: Arc<[usize]>,
         source_slot_bytes: u64,
     ) -> Result<ManagedSpillBlockSource, ManagedSpillError> {
-        let maximum_frames_per_block = frame_counts.iter().copied().max().unwrap_or(0);
-        if maximum_frames_per_block == 0 {
+        let empty_artifact = self.seal.frame_count == 0
+            && self.seal.record_count == 0
+            && self.seal.payload_bytes == 0;
+        if frame_counts.contains(&0) || (frame_counts.is_empty() && !empty_artifact) {
             return Err(ManagedSpillError::InvalidBudget(
-                "the source window must contain at least one frame",
+                "only an empty sealed artifact can have an empty source schedule",
             ));
         }
         usize::try_from(source_slot_bytes)
@@ -1197,9 +1199,10 @@ impl ManagedSpillBlockSource {
         let cancelled = AtomicBool::new(false);
         let mut storage = self.create_storage(0);
         let poll = self.fill(0, &mut storage, SourceFillCancellation::new(&cancelled))?;
-        let SourcePoll::Ready { .. } = poll else {
+        let ready = matches!(poll, SourcePoll::Ready { .. });
+        if !(ready || self.finished && self.seal.frame_count == 0) {
             return Err(ManagedSpillError::IncompleteRead);
-        };
+        }
         let payload_bytes = storage.frames().try_fold(0_u64, |total, frame| {
             total
                 .checked_add(u64::try_from(frame.payload().len()).map_err(|_| {
@@ -1223,11 +1226,12 @@ impl ManagedSpillBlockSource {
             sha256_bytes: self
                 .measurements
                 .transferred_bytes
-                .checked_add(payload_bytes)
+                .checked_sub(if ready { 0 } else { FOOTER_BYTES as u64 })
+                .and_then(|bytes| bytes.checked_add(payload_bytes))
                 .ok_or(ManagedSpillError::ArithmeticOverflow(
                     "prefetched checksum bytes",
                 ))?,
-            sha256_calls: frame_count,
+            sha256_calls: if ready { frame_count } else { 1 },
             peak_buffer_bytes,
             payload_copy_bytes: 0,
             payload_copy_operations: 0,
@@ -1236,7 +1240,9 @@ impl ManagedSpillBlockSource {
         };
         self.measurements = MutableReadMeasurements::default();
         self.created_slots.store(0, Ordering::Release);
-        self.prefetched_window = Some(storage);
+        if ready {
+            self.prefetched_window = Some(storage);
+        }
         Ok(measurements)
     }
 
@@ -2507,6 +2513,69 @@ mod tests {
         let second = execute_artifact(&artifact, 1).expect("second bounded replay");
         assert_eq!(second.kernel_completion.payloads.len(), 2);
         assert_private_file_count(root.path(), 1);
+    }
+
+    #[test]
+    fn empty_sealed_artifact_completes_without_publishing_a_frame() {
+        let (_root, artifact) = sealed_numbered_artifact(0);
+        let source_slot_bytes = FRAME_HEADER_BYTES as u64;
+        for prefetch in [false, true] {
+            let mut source = artifact
+                .planned_block_source(Arc::from([]), source_slot_bytes)
+                .expect("empty sealed source schedule");
+            let prefetch_bytes = if prefetch {
+                let measurement = source
+                    .prefetch_first_window()
+                    .expect("validate empty prefetch");
+                assert_eq!(measurement.frame_count(), 0);
+                assert_eq!(measurement.record_count(), 0);
+                assert!(source.prefetched_window.is_none());
+                measurement.transferred_bytes()
+            } else {
+                0
+            };
+            let outcome = execute_bounded(
+                BoundedStreamPlan::new::<(), ()>(2, 1, source_slot_bytes * 2, 1, 0)
+                    .expect("empty pull plan"),
+                0,
+                source,
+                CollectKernel::default(),
+            )
+            .expect("complete validated zero-work replay");
+            assert!(outcome.kernel_completion.payloads.is_empty());
+            assert!(outcome.kernel_completion.storage_addresses.is_empty());
+            assert_eq!(outcome.measurements.blocks_filled, 0);
+            assert_eq!(outcome.measurements.logical_units_filled, 0);
+            assert_eq!(outcome.source_completion.seal(), artifact.seal());
+            assert_eq!(
+                prefetch_bytes + outcome.source_completion.measurements().transferred_bytes(),
+                artifact.seal().artifact_bytes()
+            );
+        }
+        let retained = artifact
+            .load_retained_block_source(Arc::from([]), source_slot_bytes)
+            .expect("validate empty retained source");
+        assert!(retained.windows.is_empty());
+        assert_eq!(retained.retained_bytes, 0);
+    }
+
+    #[test]
+    fn empty_source_schedule_requires_empty_seal_and_valid_footer() {
+        let (_root, nonempty) = sealed_two_frame_artifact();
+        assert!(matches!(
+            nonempty.planned_block_source(Arc::from([]), FRAME_HEADER_BYTES as u64),
+            Err(ManagedSpillError::InvalidBudget(_))
+        ));
+        let (_root, empty) = sealed_numbered_artifact(0);
+        write_all_at(
+            &artifact_file(&empty),
+            &[0xff; 32],
+            (FILE_HEADER_BYTES + 48) as u64,
+        );
+        assert!(matches!(
+            artifact_source_error(&empty),
+            ManagedSpillError::GlobalChecksumMismatch
+        ));
     }
 
     #[test]

@@ -19,8 +19,8 @@ use std::time::Duration;
 
 use casa_imaging_model::{
     CompiledGeometryId, CompiledProblem, CompiledProblemId, ContinuumTransformGenerationId,
-    ModelDeltaTerm, ModelSample, NumericsContractId, ReconstructionBasis,
-    SelectedObservationGenerationId, SpectralKernel, WeightingCommitmentId,
+    ModelDeltaTerm, ModelSample, NumericsContractId, SelectedObservationGenerationId,
+    WeightingCommitmentId,
 };
 use casa_imaging_reconstruction::{
     FinalNormalState, MajorCyclePreparation, PreparedAwProjection, SpectralChannelValidity,
@@ -29,20 +29,18 @@ use casa_imaging_reconstruction::{
     WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerSlabFold, CompleteDataOwnerState,
-        GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
-        GriddedNormalOperatorApply, GriddedNormalOperatorBlockMeasurements,
-        GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram, GriddedNormalPartial,
-        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality,
-        GriddedNormalStorageLayout, GriddedNormalStoragePlan, GriddedNormalWork,
-        PreparedSpectralOperator, PreparedSpectralOperatorRecycle, SourceCardinalityObservation,
-        SpectralOperatorPass, SpectralOperatorWorkload, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, prepare_spectral_operator,
-        reprepare_spectral_operator, spectral_operator_workload,
+        GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalCompilationPlan,
+        GriddedNormalExecutionResidency, GriddedNormalOperatorApply, GriddedNormalOperatorCompiler,
+        GriddedNormalOperatorFrame, GriddedNormalOperatorProgram, GriddedNormalPartial,
+        GriddedNormalRoutingMeasurements, GriddedNormalStorageLayout, GriddedNormalStoragePlan,
+        GriddedNormalWork, PreparedSpectralOperator, PreparedSpectralOperatorRecycle,
+        SourceCardinalityObservation, SpectralOperatorPass, SpectralOperatorWorkload,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     },
 };
 
-#[cfg(test)]
-use casa_imaging_reconstruction::runtime_adapter::GriddedNormalOperatorStageTimings;
+pub(crate) use casa_imaging_reconstruction::runtime_adapter::GriddedNormalCompilationMeasurements;
 
 use crate::bounded_stream::{
     BlockIdentity, BoundedPartitionMeasurements, BoundedStreamError, BoundedStreamMeasurements,
@@ -171,13 +169,14 @@ impl GriddedNormalReplayWindowPlan {
         frames: &[(u64, u64)],
         prediction_width: usize,
     ) -> Result<u64, CompleteDataPlanError> {
-        let Some((maximum_payload, maximum_records)) = frames
+        if prediction_width == 0 {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let (maximum_payload, maximum_records) = frames
             .iter()
             .copied()
             .max_by_key(|(payload, records)| (*payload, *records))
-        else {
-            return Err(CompleteDataPlanError::PlanMismatch);
-        };
+            .unwrap_or((0, 0));
         let minimum_source = maximum_payload
             .checked_add(FRAME_HEADER_BYTES as u64)
             .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
@@ -257,13 +256,23 @@ impl GriddedNormalReplayWindowPlan {
         }
 
         let mut frame_counts = Vec::new();
-        let mut route_slot_record_capacities = Vec::<usize>::new();
+        let mut route_slot_record_capacities = if frames.is_empty() {
+            vec![0]
+        } else {
+            Vec::new()
+        };
         let mut route_slot_record_capacity_sum = 0_usize;
         let mut source_bytes = 0_u64;
         let mut frame_count = 0_usize;
         let mut record_count = 0_usize;
-        let mut maximum_source_bytes = 0_u64;
-        let mut maximum_window_frames = 0_usize;
+        // An empty stream still pulls and validates its sealed footer.
+        let empty_source_bytes = if frames.is_empty() {
+            FRAME_HEADER_BYTES as u64
+        } else {
+            0
+        };
+        let mut maximum_source_bytes = empty_source_bytes;
+        let mut maximum_window_frames = usize::from(frames.is_empty());
         let mut maximum_window_records = 0_usize;
         for (index, &(frame_payload_bytes, records)) in frames.iter().enumerate() {
             let records =
@@ -364,7 +373,7 @@ impl GriddedNormalReplayWindowPlan {
             .map(|maximum_frames| {
                 let mut bounded_counts = Vec::new();
                 let mut frame_offset = 0_usize;
-                let mut maximum_source_bytes = 0_u64;
+                let mut maximum_source_bytes = empty_source_bytes;
                 let mut ordinal_capacities = vec![0_usize; maximum_frames];
                 let mut maximum_records = 0_usize;
                 for &planned in &frame_counts {
@@ -602,25 +611,8 @@ pub(crate) struct GriddedNormalReplayCompilation {
     compiler: GriddedNormalOperatorCompiler,
     writer: Option<ManagedSpillWriter>,
     spill: Option<GriddedNormalSpillArtifact>,
-    compilation_measurements: GriddedNormalCompilationMeasurements,
     #[cfg(test)]
     stage_timings: Option<GriddedNormalCompilationStageTimings>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct GriddedNormalCompilationMeasurements {
-    pub(crate) blocks: u64,
-    reduced_records: u64,
-    pub(crate) source_cardinality: Option<GriddedNormalSourceCardinality>,
-    pub(crate) source_group_vector_allocations: u64,
-    pub(crate) source_group_capacity_growth_bytes: u64,
-    pub(crate) reduction_map_entry_insertions: u64,
-    pub(crate) multiplicity_vector_allocations: u64,
-    pub(crate) multiplicity_capacity_growth_bytes: u64,
-    pub(crate) encoded_buffer_allocations: u64,
-    pub(crate) encoded_buffer_bytes: u64,
-    pub(crate) descriptor_vector_allocations: u64,
-    pub(crate) descriptor_capacity_growth_bytes: u64,
 }
 
 #[cfg(test)]
@@ -634,98 +626,6 @@ pub(crate) struct GriddedNormalCompilationStageTimings {
     pub(crate) completion: Duration,
 }
 
-#[cfg(test)]
-fn add_compiler_stage_timings(
-    total: &mut GriddedNormalCompilationStageTimings,
-    block: GriddedNormalOperatorStageTimings,
-) {
-    total.record_key_construction += block.record_key_construction;
-    total.grouping_reduction += block.grouping_reduction;
-    total.encoding_checksum += block.encoding_checksum;
-    total.completion += block.completion;
-}
-
-impl GriddedNormalCompilationMeasurements {
-    fn new(observation: SourceCardinalityObservation) -> Self {
-        Self {
-            source_cardinality: match observation {
-                SourceCardinalityObservation::Disabled => None,
-                SourceCardinalityObservation::Enabled => {
-                    Some(GriddedNormalSourceCardinality::default())
-                }
-            },
-            ..Self::default()
-        }
-    }
-
-    pub(crate) const fn reduced_group_count(self) -> u64 {
-        self.reduction_map_entry_insertions
-    }
-
-    pub(crate) const fn reduced_record_count(self) -> u64 {
-        self.reduced_records
-    }
-
-    fn add_block(
-        &mut self,
-        reduced_records: u64,
-        block: GriddedNormalOperatorBlockMeasurements,
-    ) -> io::Result<()> {
-        macro_rules! add {
-            ($field:ident, $value:expr) => {
-                self.$field = self.$field.checked_add($value).ok_or_else(|| {
-                    io::Error::other("gridded-normal allocation measurement overflow")
-                })?;
-            };
-        }
-        add!(blocks, 1);
-        add!(reduced_records, reduced_records);
-        match (&mut self.source_cardinality, block.source_cardinality) {
-            (Some(total), Some(block)) => {
-                total.groups = total.groups.checked_add(block.groups).ok_or_else(|| {
-                    io::Error::other("gridded-normal source group measurement overflow")
-                })?;
-                total.records = total.records.checked_add(block.records).ok_or_else(|| {
-                    io::Error::other("gridded-normal source record measurement overflow")
-                })?;
-            }
-            (None, None) => {}
-            _ => return Err(io::Error::other("gridded-normal observation mode changed")),
-        }
-        add!(
-            source_group_vector_allocations,
-            block.source_group_vector_allocations
-        );
-        add!(
-            source_group_capacity_growth_bytes,
-            block.source_group_capacity_growth_bytes
-        );
-        add!(
-            reduction_map_entry_insertions,
-            block.reduction_map_entry_insertions
-        );
-        add!(
-            multiplicity_vector_allocations,
-            block.multiplicity_vector_allocations
-        );
-        add!(
-            multiplicity_capacity_growth_bytes,
-            block.multiplicity_capacity_growth_bytes
-        );
-        add!(encoded_buffer_allocations, block.encoded_buffer_allocations);
-        add!(encoded_buffer_bytes, block.encoded_buffer_bytes);
-        add!(
-            descriptor_vector_allocations,
-            block.descriptor_vector_allocations
-        );
-        add!(
-            descriptor_capacity_growth_bytes,
-            block.descriptor_capacity_growth_bytes
-        );
-        Ok(())
-    }
-}
-
 impl GriddedNormalReplayCompilation {
     pub(crate) fn new(
         problem: &CompiledProblem,
@@ -733,17 +633,36 @@ impl GriddedNormalReplayCompilation {
         storage: &ManagedSpillStorage,
         max_block_samples: usize,
     ) -> io::Result<Self> {
-        let budget = project_managed_spill_budget(problem, max_block_samples)?;
+        let admission = project_gridded_normal_compilation(problem, max_block_samples)?;
+        let budget = admission.spill;
         validate_managed_spill_context(
             context,
             budget,
             crate::IoBufferKind::SpillWrite,
             budget.io_buffer_bytes(),
         )?;
+        let allocation = gridded_compiler_allocation(context.node().id.as_str());
+        let bytes =
+            u64::try_from(admission.compiler.workspace_bytes()).map_err(io::Error::other)?;
+        if context
+            .allocations()
+            .iter()
+            .filter(|capability| {
+                capability.allocation().as_str() == allocation
+                    && capability.capacity_bytes() == bytes
+                    && capability.lifetime() == &ClaimLifetime::through_fence(crate::FenceKind::Io)
+            })
+            .count()
+            != 1
+        {
+            return Err(io::Error::other(
+                "gridded compiler lacks its exact admitted workspace",
+            ));
+        }
         Self::create(
             problem,
             storage,
-            budget,
+            admission,
             SourceCardinalityObservation::Disabled,
         )
     }
@@ -751,15 +670,16 @@ impl GriddedNormalReplayCompilation {
     fn create(
         problem: &CompiledProblem,
         storage: &ManagedSpillStorage,
-        budget: ManagedSpillBudget,
+        admission: GriddedNormalCompilationAdmission,
         observation: SourceCardinalityObservation,
     ) -> io::Result<Self> {
         Ok(Self {
-            compiler: GriddedNormalOperatorCompiler::new(problem, observation)
+            compiler: GriddedNormalOperatorCompiler::new(problem, admission.compiler, observation)
                 .map_err(io::Error::other)?,
-            writer: Some(ManagedSpillWriter::create(storage, budget).map_err(io::Error::other)?),
+            writer: Some(
+                ManagedSpillWriter::create(storage, admission.spill).map_err(io::Error::other)?,
+            ),
             spill: None,
-            compilation_measurements: GriddedNormalCompilationMeasurements::new(observation),
             #[cfg(test)]
             stage_timings: None,
         })
@@ -772,11 +692,11 @@ impl GriddedNormalReplayCompilation {
         max_block_samples: usize,
         observe_timings: bool,
     ) -> io::Result<Self> {
-        let budget = project_managed_spill_budget(problem, max_block_samples)?;
+        let admission = project_gridded_normal_compilation(problem, max_block_samples)?;
         let mut compilation = Self::create(
             problem,
             storage,
-            budget,
+            admission,
             SourceCardinalityObservation::Enabled,
         )?;
         compilation.stage_timings =
@@ -788,64 +708,23 @@ impl GriddedNormalReplayCompilation {
         &mut self,
         block: &casa_imaging_reconstruction::WeightingReplayChunk,
     ) -> io::Result<()> {
-        #[cfg(test)]
-        let compiled = if let Some(timings) = self.stage_timings.as_mut() {
-            let (compiled, measured) = self
-                .compiler
-                .compile_block_observed(block)
-                .map_err(io::Error::other)?;
-            add_compiler_stage_timings(timings, measured);
-            compiled
-        } else {
-            self.compiler
-                .compile_block(block)
-                .map_err(io::Error::other)?
-        };
-        #[cfg(not(test))]
-        let compiled = self
-            .compiler
-            .compile_block(block)
-            .map_err(io::Error::other)?;
-        self.compilation_measurements
-            .add_block(compiled.record_count(), compiled.measurements())?;
-        #[cfg(test)]
-        if let Some(timings) = self.stage_timings.as_mut() {
-            let measured = self
-                .writer
-                .as_mut()
-                .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
-                .append_frame_observed(
-                    compiled.sequence(),
-                    compiled.record_count(),
-                    compiled.encoded_bytes(),
-                )
-                .map_err(io::Error::other)?;
-            timings.encoding_checksum += measured.encoding_checksum;
-            timings.payload_movement += measured.payload_movement;
-            timings.artifact_writes += measured.artifact_writes;
-            timings.completion += measured.completion;
-            Ok(())
-        } else {
-            self.writer
-                .as_mut()
-                .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
-                .append_frame(
-                    compiled.sequence(),
-                    compiled.record_count(),
-                    compiled.encoded_bytes(),
-                )
-                .map_err(io::Error::other)
-        }
-        #[cfg(not(test))]
-        self.writer
+        let writer = self
+            .writer
             .as_mut()
-            .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?
-            .append_frame(
-                compiled.sequence(),
-                compiled.record_count(),
-                compiled.encoded_bytes(),
-            )
-            .map_err(io::Error::other)
+            .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
+        let mut frame_error = None;
+        let result = self.compiler.consume_source(
+            block,
+            &mut spill_frame_sink(
+                writer,
+                #[cfg(test)]
+                self.stage_timings.as_mut(),
+                &mut frame_error,
+            ),
+        );
+        result
+            .map(|_| ())
+            .map_err(|error| frame_error.unwrap_or_else(|| io::Error::other(error)))
     }
 
     pub(crate) fn write_measurements(&self) -> ManagedSpillMeasurements {
@@ -861,15 +740,34 @@ impl GriddedNormalReplayCompilation {
     }
 
     pub(crate) const fn compilation_measurements(&self) -> GriddedNormalCompilationMeasurements {
-        self.compilation_measurements
+        self.compiler.measurements()
     }
 
     #[cfg(test)]
-    pub(crate) const fn stage_timings(&self) -> Option<GriddedNormalCompilationStageTimings> {
-        self.stage_timings
+    pub(crate) fn stage_timings(&self) -> Option<GriddedNormalCompilationStageTimings> {
+        self.stage_timings.map(|mut timings| {
+            let compiler = self.compiler.stage_timings();
+            timings.record_key_construction += compiler.record_key_construction;
+            timings.grouping_reduction += compiler.grouping_reduction;
+            timings.encoding_checksum += compiler.encoding_checksum;
+            timings.completion += compiler.completion;
+            timings
+        })
     }
 
     pub(crate) fn seal(&mut self) -> io::Result<()> {
+        let writer = self
+            .writer
+            .as_mut()
+            .ok_or_else(|| io::Error::other("gridded-normal writer already sealed"))?;
+        let mut frame_error = None;
+        let result = self.compiler.finish_rows_and_frames(&mut spill_frame_sink(
+            writer,
+            #[cfg(test)]
+            self.stage_timings.as_mut(),
+            &mut frame_error,
+        ));
+        result.map_err(|error| frame_error.unwrap_or_else(|| io::Error::other(error)))?;
         #[cfg(test)]
         let started = self
             .stage_timings
@@ -945,6 +843,50 @@ impl GriddedNormalReplayCompilation {
             latest_cache_resident_bytes: None,
         })
     }
+}
+
+fn spill_frame_sink<'a>(
+    writer: &'a mut ManagedSpillWriter,
+    #[cfg(test)] mut timings: Option<&'a mut GriddedNormalCompilationStageTimings>,
+    error: &'a mut Option<io::Error>,
+) -> impl FnMut(GriddedNormalOperatorFrame<'_>) -> Result<(), SpectralOperatorError> + 'a {
+    move |frame| {
+        #[cfg(test)]
+        let result = if let Some(timings) = timings.as_deref_mut() {
+            writer
+                .append_frame_observed(
+                    frame.sequence(),
+                    frame.record_count(),
+                    frame.encoded_bytes(),
+                )
+                .map(|measured| {
+                    timings.encoding_checksum += measured.encoding_checksum;
+                    timings.payload_movement += measured.payload_movement;
+                    timings.artifact_writes += measured.artifact_writes;
+                    timings.completion += measured.completion;
+                })
+        } else {
+            writer.append_frame(
+                frame.sequence(),
+                frame.record_count(),
+                frame.encoded_bytes(),
+            )
+        };
+        #[cfg(not(test))]
+        let result = writer.append_frame(
+            frame.sequence(),
+            frame.record_count(),
+            frame.encoded_bytes(),
+        );
+        result.map_err(|failure| {
+            *error = Some(io::Error::other(failure));
+            SpectralOperatorError::GriddedFrameSink
+        })
+    }
+}
+
+pub(crate) fn gridded_compiler_allocation(node: &str) -> String {
+    format!("gridded-normal-compiler-{node}")
 }
 
 fn validate_managed_spill_context(
@@ -1653,107 +1595,89 @@ impl GriddedNormalRouteResidency {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct GriddedNormalFrameBounds {
-    maximum_samples: u64,
-    maximum_frame_groups: usize,
-    maximum_contributions_per_group: usize,
-    maximum_frames: u64,
+pub(crate) struct GriddedNormalCompilationAdmission {
+    pub(crate) spill: ManagedSpillBudget,
+    pub(crate) compiler: GriddedNormalCompilationPlan,
 }
 
-impl GriddedNormalFrameBounds {
-    fn maximum_frame_records(self) -> io::Result<usize> {
-        self.maximum_frame_groups
-            .checked_mul(self.maximum_contributions_per_group)
-            .ok_or_else(|| io::Error::other("gridded-normal frame record bound overflow"))
-    }
-}
-
-fn project_gridded_normal_frame_bounds(
+/// Choose a finite storage capacity independently of fine-grid expansion.
+/// Exceeding it is a typed spill failure, never a promise that all geometries fit.
+pub(crate) fn project_gridded_normal_compilation(
     problem: &CompiledProblem,
     max_block_samples: usize,
-) -> io::Result<GriddedNormalFrameBounds> {
-    if max_block_samples == 0 {
+) -> io::Result<GriddedNormalCompilationAdmission> {
+    let mut maximum_samples = 0_u64;
+    let mut maximum_correlations = 1_usize;
+    for source in problem.inputs().observation_snapshot().sources() {
+        let selection = source.selection();
+        let channels = selection
+            .spectral_windows()
+            .iter()
+            .map(|window| window.channel_indices().len())
+            .max()
+            .unwrap_or(0);
+        let correlations = selection
+            .correlations()
+            .iter()
+            .map(|selection| selection.products().len())
+            .max()
+            .unwrap_or(0);
+        maximum_correlations = maximum_correlations.max(correlations);
+        let samples = u64::try_from(channels)
+            .ok()
+            .and_then(|channels| {
+                u64::try_from(correlations)
+                    .ok()
+                    .and_then(|correlations| channels.checked_mul(correlations))
+            })
+            .and_then(|per_row| selection.rows().selected_row_count().checked_mul(per_row))
+            .ok_or_else(|| io::Error::other("selected sample bound overflow"))?;
+        maximum_samples = maximum_samples
+            .checked_add(samples)
+            .ok_or_else(|| io::Error::other("selected sample bound overflow"))?;
+    }
+    if max_block_samples < maximum_correlations {
         return Err(io::Error::other(
-            "gridded-normal replay requires a positive block bound",
+            "gridded compiler block cannot hold one correlation group",
         ));
     }
-    let maximum_samples = problem
-        .inputs()
-        .observation_snapshot()
-        .sources()
-        .iter()
-        .try_fold(0_u64, |total, source| {
-            let selection = source.selection();
-            let channels = selection
-                .spectral_windows()
-                .iter()
-                .map(|window| window.channel_indices().len())
-                .max()
-                .unwrap_or(0);
-            let correlations = selection
-                .correlations()
-                .iter()
-                .map(|selection| selection.products().len())
-                .max()
-                .unwrap_or(0);
-            let per_row = u64::try_from(channels)
-                .ok()
-                .and_then(|channels| {
-                    u64::try_from(correlations)
-                        .ok()
-                        .and_then(|correlations| channels.checked_mul(correlations))
-                })
-                .ok_or_else(|| io::Error::other("selected sample bound overflow"))?;
-            let source_samples = selection
-                .rows()
-                .selected_row_count()
-                .checked_mul(per_row)
-                .ok_or_else(|| io::Error::other("selected sample bound overflow"))?;
-            total
-                .checked_add(source_samples)
-                .ok_or_else(|| io::Error::other("selected sample bound overflow"))
-        })?;
-    let max_block = u64::try_from(max_block_samples)
-        .map_err(|_| io::Error::other("gridded-normal block bound overflow"))?;
-    let maximum_frames = maximum_samples
-        .checked_add(max_block - 1)
-        .and_then(|samples| samples.checked_div(max_block))
-        .ok_or_else(|| io::Error::other("gridded-normal frame bound overflow"))?
+    let block_samples = u64::try_from(max_block_samples).map_err(io::Error::other)?;
+    let minimum_block_samples = max_block_samples - maximum_correlations + 1;
+    let source_blocks = maximum_samples
+        .div_ceil(minimum_block_samples as u64)
         .max(1);
-    let spectral_contributions_per_sample = match problem.reconstruction().basis() {
-        ReconstructionBasis::Constant => 1_usize,
-        ReconstructionBasis::TaylorViaChannelMajor { .. }
-        | ReconstructionBasis::ChannelLocal { .. } => {
-            match problem.science().spectral().sampling().kernel() {
-                SpectralKernel::Identity | SpectralKernel::Nearest => 1,
-                SpectralKernel::Linear => 2,
-                SpectralKernel::Cubic => 4,
-                SpectralKernel::ChannelIntegration { maximum_terms } => maximum_terms,
-            }
-        }
-        // Taylor compilation reduces all `2T-1` signed moments for one spatial
-        // convolution key into one reconstruction-owned opaque record.
-        ReconstructionBasis::Taylor { .. } => 1,
-        ReconstructionBasis::JointContinuumLine { .. } => 1,
-    };
-    let physical_chart_count = SpectralOperatorSpecification::new(problem)
-        .map_err(io::Error::other)?
-        .chart_count();
-    let maximum_contributions_per_sample = spectral_contributions_per_sample
-        .checked_mul(physical_chart_count)
-        .ok_or_else(|| io::Error::other("image-domain contribution bound overflow"))?;
-    // Compilation contributes at most one prediction group per weighted sample;
-    // BTree reduction can only lower that count. Each group contains at most the
-    // product of the spectral-kernel and physical-chart contribution bounds.
-    let maximum_frame_groups = usize::try_from(maximum_samples.min(max_block))
-        .map_err(|_| io::Error::other("gridded-normal frame group bound overflow"))?
-        .max(1);
-    Ok(GriddedNormalFrameBounds {
-        maximum_samples,
-        maximum_frame_groups,
-        maximum_contributions_per_group: maximum_contributions_per_sample,
-        maximum_frames,
-    })
+    let atom =
+        GriddedNormalCompilationPlan::maximum_atom_records(problem).map_err(io::Error::other)?;
+    let width = gridded_normal_operator_record_bytes(problem).map_err(io::Error::other)?;
+    let frame_records = usize::try_from(maximum_samples.min(block_samples).max(1))
+        .ok()
+        .and_then(|samples| samples.checked_mul(atom))
+        .ok_or_else(|| io::Error::other("gridded compiler record capacity overflow"))?;
+    let frame_bytes = frame_records
+        .checked_mul(width)
+        .ok_or_else(|| io::Error::other("gridded compiler frame capacity overflow"))?;
+    let payload_capacity = maximum_samples
+        .max(1)
+        .checked_mul(atom as u64)
+        .and_then(|records| records.checked_mul(width as u64))
+        .ok_or_else(|| io::Error::other("gridded compiler artifact capacity overflow"))?;
+    // This input-sized policy is a reservation choice, not an emission bound.
+    // Actual frame packing is governed by the independent U/R capacities below.
+    let capacity =
+        ManagedSpillBudget::for_bounded_stream(payload_capacity, frame_bytes, source_blocks)
+            .map_err(io::Error::other)?;
+    let spill = ManagedSpillBudget::new(capacity.maximum_artifact_bytes(), frame_bytes)
+        .map_err(io::Error::other)?;
+    let compiler = GriddedNormalCompilationPlan::new(
+        problem,
+        max_block_samples,
+        frame_records,
+        frame_records,
+        spill.maximum_artifact_bytes(),
+        crate::managed_spill::FRAME_HEADER_BYTES,
+    )
+    .map_err(io::Error::other)?;
+    Ok(GriddedNormalCompilationAdmission { spill, compiler })
 }
 
 fn project_gridded_normal_route_residency(
@@ -1762,36 +1686,6 @@ fn project_gridded_normal_route_residency(
     window_plan: &GriddedNormalReplayWindowPlan,
 ) -> Result<GriddedNormalRouteResidency, CompleteDataPlanError> {
     GriddedNormalRouteResidency::from_window_plan(window_plan)
-}
-
-pub(crate) fn project_managed_spill_budget(
-    problem: &CompiledProblem,
-    max_block_samples: usize,
-) -> io::Result<ManagedSpillBudget> {
-    let bounds = project_gridded_normal_frame_bounds(problem, max_block_samples)?;
-    let record_bytes = gridded_normal_operator_record_bytes(problem).map_err(io::Error::other)?;
-    let record_bytes_u64 = u64::try_from(record_bytes)
-        .map_err(|_| io::Error::other("gridded-normal record width overflow"))?;
-    let maximum_contributions_per_sample = u64::try_from(bounds.maximum_contributions_per_group)
-        .map_err(|_| io::Error::other("spectral contribution bound overflow"))?;
-    let maximum_payload_bytes = bounds
-        .maximum_samples
-        .checked_mul(maximum_contributions_per_sample)
-        .and_then(|contributions| contributions.checked_mul(record_bytes_u64))
-        .ok_or_else(|| io::Error::other("gridded-normal payload bound overflow"))?;
-    let maximum_frame_payload_bytes = bounds
-        .maximum_frame_records()?
-        .checked_mul(record_bytes)
-        .ok_or_else(|| io::Error::other("gridded-normal frame payload overflow"))?;
-    ManagedSpillBudget::for_bounded_stream(
-        maximum_payload_bytes.max(
-            u64::try_from(maximum_frame_payload_bytes)
-                .map_err(|_| io::Error::other("gridded-normal frame payload overflow"))?,
-        ),
-        maximum_frame_payload_bytes,
-        bounds.maximum_frames,
-    )
-    .map_err(io::Error::other)
 }
 
 /// Runtime-owned physical residency for one complete-data operator.
@@ -4393,6 +4287,40 @@ mod tests {
 
     const TEST_RECORD_BYTES: usize = 32;
     const TEST_PREDICTION_WIDTH: usize = 1;
+
+    #[test]
+    fn empty_replay_window_keeps_only_footer_pull_and_zero_record_route_capacity() {
+        let minimum =
+            GriddedNormalReplayWindowPlan::minimum_working_set_bytes(&[], TEST_PREDICTION_WIDTH)
+                .expect("empty replay working set");
+        let plan = GriddedNormalReplayWindowPlan::for_frame_payloads(
+            &[],
+            minimum,
+            TEST_RECORD_BYTES,
+            TEST_PREDICTION_WIDTH,
+            1,
+        )
+        .expect("explicit empty replay plan");
+        assert!(plan.frame_counts().is_empty());
+        assert_eq!(plan.maximum_frames(), 1);
+        assert_eq!(plan.maximum_records(), 0);
+        assert_eq!(plan.route_slot_record_capacities(), &[0]);
+        assert_eq!(plan.source_slot_bytes(), super::FRAME_HEADER_BYTES as u64);
+        assert_eq!(plan.working_set_bytes(), minimum);
+        let schedule = plan.batch_schedule(1).expect("empty pull schedule");
+        assert!(schedule.frame_counts.is_empty());
+        assert_eq!(schedule.source_slot_bytes, plan.source_slot_bytes());
+        assert!(
+            GriddedNormalReplayWindowPlan::for_frame_payloads(
+                &[],
+                minimum - 1,
+                TEST_RECORD_BYTES,
+                TEST_PREDICTION_WIDTH,
+                1,
+            )
+            .is_err()
+        );
+    }
 
     #[test]
     fn t51_replay_phase_timings_separate_prediction_and_accumulation() {

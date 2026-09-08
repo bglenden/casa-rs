@@ -1,15 +1,97 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Compile the standard operator's complete correlation predictions separately
-//! from its weighted accumulation stencil, including CASA row interpolation.
+//! Stream complete correlation atoms using two native prediction banks.
 
 use super::*;
 use crate::{
     spectral_operator::direction_independent_polarization,
     weighting::{WeightingSampleValue, WeightingSelectedSample},
 };
+use std::ops::Range;
 
-type CorrelationPredictions = SmallVec<[Vec<ReducedRecordKey>; 4]>;
+#[derive(Debug, Default)]
+struct NativePredictionBank {
+    records: Vec<ReducedRecordKey>,
+    correlations: Vec<Range<usize>>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct StandardRecordScratch {
+    banks: [NativePredictionBank; 2],
+    atom: Vec<ReducedRecordKey>,
+    next_bank: usize,
+    maximum_native_terms_per_correlation: usize,
+}
+
+impl StandardRecordScratch {
+    pub(super) fn workspace_bytes(
+        maximum_correlations: usize,
+        maximum_native_terms_per_correlation: usize,
+        maximum_atom_records: usize,
+    ) -> Result<usize, SpectralOperatorError> {
+        maximum_correlations
+            .checked_mul(maximum_native_terms_per_correlation)
+            .and_then(|n| n.checked_mul(2))
+            .and_then(|n| n.checked_add(maximum_atom_records))
+            .and_then(|n| n.checked_mul(size_of::<ReducedRecordKey>()))
+            .and_then(|n| {
+                maximum_correlations
+                    .checked_mul(2)
+                    .and_then(|q| q.checked_mul(size_of::<Range<usize>>()))
+                    .and_then(|ranges| n.checked_add(ranges))
+            })
+            .ok_or(SpectralOperatorError::ResidencyOverflow)
+    }
+
+    pub(super) fn new(
+        maximum_correlations: usize,
+        maximum_native_terms_per_correlation: usize,
+        maximum_atom_records: usize,
+    ) -> Result<Self, SpectralOperatorError> {
+        Self::workspace_bytes(
+            maximum_correlations,
+            maximum_native_terms_per_correlation,
+            maximum_atom_records,
+        )?;
+        let native_capacity = maximum_correlations
+            .checked_mul(maximum_native_terms_per_correlation)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        Ok(Self {
+            banks: [
+                NativePredictionBank {
+                    records: fixed_records(native_capacity)?,
+                    correlations: fixed_records(maximum_correlations)?,
+                },
+                NativePredictionBank {
+                    records: fixed_records(native_capacity)?,
+                    correlations: fixed_records(maximum_correlations)?,
+                },
+            ],
+            atom: fixed_records(maximum_atom_records)?,
+            next_bank: 0,
+            maximum_native_terms_per_correlation,
+        })
+    }
+}
+
+fn fixed_records<T>(capacity: usize) -> Result<Vec<T>, SpectralOperatorError> {
+    let mut records = Vec::new();
+    records
+        .try_reserve_exact(capacity)
+        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+    if records.capacity() != capacity {
+        return Err(SpectralOperatorError::ResidencyOverflow);
+    }
+    Ok(records)
+}
+
+fn push_fixed<T>(records: &mut Vec<T>, record: T) -> Result<(), SpectralOperatorError> {
+    if records.len() == records.capacity() {
+        return Err(SpectralOperatorError::ResidencyOverflow);
+    }
+    records.push(record);
+    Ok(())
+}
 
 #[derive(Clone, Copy)]
 struct RecordStencil {
@@ -20,142 +102,195 @@ struct RecordStencil {
     imaging_weight: f64,
 }
 
+struct InterpolatedPredictions {
+    banks: [usize; 2],
+    factors: [f64; 2],
+}
+
 impl GriddedNormalOperatorCompiler {
     pub(super) fn construct_standard_record_keys(
         &mut self,
         block: &WeightingReplayChunk,
-    ) -> Result<
-        (
-            Vec<Vec<ReducedRecordKey>>,
-            GriddedNormalOperatorBlockMeasurements,
-        ),
-        SpectralOperatorError,
-    > {
-        let mut groups = Vec::new();
-        let mut measurements = GriddedNormalOperatorBlockMeasurements::default();
-        for correlations in block.correlation_groups() {
-            let first = correlations
-                .first()
-                .ok_or(SpectralOperatorError::InvalidSample)?;
-            let operator = direction_independent_polarization(
-                self.specification.polarization_coordinates(),
-                &correlations
-                    .iter()
-                    .map(|sample| sample.selected().address().correlation_type)
-                    .collect::<SmallVec<[_; 4]>>(),
-            )?;
-            let predicted = self.standard_predictions(correlations, &operator)?;
-            if self
-                .specification
-                .uses_casa_linear_resampling(correlations)?
-            {
-                let native = NativeSpectralGroup {
-                    key: NativeSpectralRowKey::from_sample(first.selected()),
-                    frequency_hz: first.selected().output_frame_frequency_hz(),
-                    samples: correlations.iter().cloned().collect(),
-                    // Observations remain exclusively in the initial normal state.
-                    observed: std::iter::repeat_n(Complex64::default(), correlations.len())
-                        .collect(),
-                    predicted,
-                };
-                let output = self.specification.casa_linear_output_grid()?;
-                let mut rows =
-                    std::mem::replace(&mut self.linear_rows, CasaLinearRowResampler::new());
-                let result = rows.push(
-                    native,
-                    output,
-                    self.finite_values,
-                    interpolate_predictions,
-                    |resampled| {
-                        self.resampled_record_groups(resampled, &mut groups, &mut measurements)
-                    },
-                );
-                self.linear_rows = rows;
-                result?;
-            } else {
-                let flags = correlations
-                    .iter()
-                    .map(|sample| {
-                        accept_polarization_input(sample.selected(), self.finite_values)
-                            .map(|accepted| !accepted)
-                    })
-                    .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-                let flags = polarization_effective_flags(&operator, flags);
-                let columns = operator.model_coordinates().len();
-                for (row, prediction) in predicted.into_iter().enumerate() {
-                    if flags[row] {
-                        continue;
-                    }
-                    let mut accumulation = Vec::new();
-                    for (ordinal, spectral) in correlations[row].spectral_values().enumerate() {
-                        let contribution = spectral.contribution();
-                        if first
-                            .spectral_values()
-                            .nth(ordinal)
-                            .map(|value| value.contribution())
-                            != Some(contribution)
-                        {
-                            return Err(SpectralOperatorError::InvalidSample);
+        emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
+    ) -> Result<GriddedNormalSourceCardinality, SpectralOperatorError> {
+        let mut scratch = std::mem::take(&mut self.standard_scratch);
+        let mut rows = std::mem::replace(&mut self.linear_rows, CasaLinearRowResampler::new());
+        let result = (|| {
+            let mut cardinality = GriddedNormalSourceCardinality::default();
+            for correlations in block.correlation_groups() {
+                let first = correlations
+                    .first()
+                    .ok_or(SpectralOperatorError::InvalidSample)?;
+                let operator = direction_independent_polarization(
+                    self.specification.polarization_coordinates(),
+                    &correlations
+                        .iter()
+                        .map(|sample| sample.selected().address().correlation_type)
+                        .collect::<SmallVec<[_; 4]>>(),
+                )?;
+                let bank = scratch.next_bank;
+                self.standard_predictions(
+                    correlations,
+                    &operator,
+                    &mut scratch.banks[bank],
+                    scratch.maximum_native_terms_per_correlation,
+                )?;
+                if self
+                    .specification
+                    .uses_casa_linear_resampling(correlations)?
+                {
+                    let native = NativeSpectralGroup {
+                        key: NativeSpectralRowKey::from_sample(first.selected()),
+                        frequency_hz: first.selected().output_frame_frequency_hz(),
+                        samples: correlations.iter().cloned().collect(),
+                        observed: std::iter::repeat_n(Complex64::default(), correlations.len())
+                            .collect(),
+                        predicted: bank,
+                    };
+                    scratch.next_bank ^= 1;
+                    rows.push(
+                        native,
+                        self.specification.casa_linear_output_grid()?,
+                        self.finite_values,
+                        |left, right, factors| {
+                            Ok(InterpolatedPredictions {
+                                banks: [*left, *right],
+                                factors,
+                            })
+                        },
+                        |resampled| {
+                            self.resampled_record_groups(
+                                resampled,
+                                &mut scratch,
+                                emit,
+                                &mut cardinality,
+                            )
+                        },
+                    )?;
+                } else {
+                    rows.finish()?;
+                    let flags = correlations
+                        .iter()
+                        .map(|sample| {
+                            accept_polarization_input(sample.selected(), self.finite_values)
+                                .map(|accepted| !accepted)
+                        })
+                        .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+                    let flags = polarization_effective_flags(&operator, flags);
+                    let columns = operator.model_coordinates().len();
+                    for (row, flagged) in flags.into_iter().enumerate() {
+                        if flagged {
+                            continue;
                         }
-                        self.append_standard_stencil(
-                            &mut accumulation,
-                            first.selected(),
-                            RecordStencil {
-                                output_channel: usize::try_from(contribution.output_channel())
-                                    .map_err(|_| SpectralOperatorError::InvalidSample)?,
-                                frequency_hz: contribution.evaluation_frequency_hz(),
-                                factor: contribution.factor(),
-                                role: RecordRole::Accumulation,
-                                imaging_weight: spectral.imaging_weight(),
-                            },
-                            &operator.coefficients()[row * columns..(row + 1) * columns],
-                        )?;
+                        scratch.atom.clear();
+                        for record in &scratch.banks[bank].records
+                            [scratch.banks[bank].correlations[row].clone()]
+                        {
+                            push_fixed(&mut scratch.atom, *record)?;
+                        }
+                        let prediction_len = scratch.atom.len();
+                        for (ordinal, spectral) in correlations[row].spectral_values().enumerate() {
+                            let contribution = spectral.contribution();
+                            if first
+                                .spectral_values()
+                                .nth(ordinal)
+                                .map(|value| value.contribution())
+                                != Some(contribution)
+                            {
+                                return Err(SpectralOperatorError::InvalidSample);
+                            }
+                            self.append_standard_stencil(
+                                &mut scratch.atom,
+                                first.selected(),
+                                RecordStencil {
+                                    output_channel: usize::try_from(contribution.output_channel())
+                                        .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                                    frequency_hz: contribution.evaluation_frequency_hz(),
+                                    factor: contribution.factor(),
+                                    role: RecordRole::Accumulation,
+                                    imaging_weight: spectral.imaging_weight(),
+                                },
+                                &operator.coefficients()[row * columns..(row + 1) * columns],
+                            )?;
+                        }
+                        emit_atom(&mut scratch.atom, prediction_len, emit, &mut cardinality)?;
                     }
-                    append_group(prediction, accumulation, &mut groups, &mut measurements)?;
                 }
             }
-        }
-        Ok((groups, measurements))
+            Ok(cardinality)
+        })();
+        self.linear_rows = rows;
+        self.standard_scratch = scratch;
+        result
     }
 
     fn standard_predictions(
         &self,
         correlations: &[WeightingSampleValue],
         operator: &PolarizationOperator,
-    ) -> Result<CorrelationPredictions, SpectralOperatorError> {
+        bank: &mut NativePredictionBank,
+        maximum_native_terms_per_correlation: usize,
+    ) -> Result<(), SpectralOperatorError> {
         let first = correlations
             .first()
             .ok_or(SpectralOperatorError::InvalidSample)?;
-        operator
+        if correlations.len() > bank.correlations.capacity() {
+            return Err(SpectralOperatorError::ResidencyOverflow);
+        }
+        bank.records.clear();
+        bank.correlations.clear();
+        let linear = self
+            .specification
+            .uses_casa_linear_resampling(correlations)?;
+        let linear_terms = if linear {
+            self.specification.prediction_contributions(first)?
+        } else {
+            SmallVec::new()
+        };
+        for coefficients in operator
             .coefficients()
             .chunks_exact(operator.model_coordinates().len())
-            .map(|coefficients| {
-                let mut records = Vec::new();
-                for contribution in self.specification.prediction_contributions(first)? {
-                    self.append_standard_stencil(
-                        &mut records,
-                        first.selected(),
-                        RecordStencil {
-                            output_channel: usize::try_from(contribution.output_channel())
-                                .map_err(|_| SpectralOperatorError::InvalidSample)?,
-                            frequency_hz: contribution.evaluation_frequency_hz(),
-                            factor: contribution.factor(),
-                            role: RecordRole::Prediction,
-                            imaging_weight: 0.0,
-                        },
-                        coefficients,
-                    )?;
+        {
+            let start = bank.records.len();
+            let mut append = |contribution: casa_imaging_model::SelectedSpectralContribution| {
+                self.append_standard_stencil(
+                    &mut bank.records,
+                    first.selected(),
+                    RecordStencil {
+                        output_channel: usize::try_from(contribution.output_channel())
+                            .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                        frequency_hz: contribution.evaluation_frequency_hz(),
+                        factor: contribution.factor(),
+                        role: RecordRole::Prediction,
+                        imaging_weight: 0.0,
+                    },
+                    coefficients,
+                )?;
+                if bank.records.len() - start > maximum_native_terms_per_correlation {
+                    return Err(SpectralOperatorError::ResidencyOverflow);
                 }
-                Ok(records)
-            })
-            .collect()
+                Ok(())
+            };
+            if linear {
+                for contribution in &linear_terms {
+                    append(*contribution)?;
+                }
+            } else {
+                for spectral in first.spectral_values() {
+                    append(spectral.contribution())?;
+                }
+            }
+            push_fixed(&mut bank.correlations, start..bank.records.len())?;
+        }
+        Ok(())
     }
 
     fn resampled_record_groups(
         &self,
-        resampled: CasaResampledGroup<CorrelationPredictions>,
-        groups: &mut Vec<Vec<ReducedRecordKey>>,
-        measurements: &mut GriddedNormalOperatorBlockMeasurements,
+        resampled: CasaResampledGroup<InterpolatedPredictions>,
+        scratch: &mut StandardRecordScratch,
+        emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
+        cardinality: &mut GriddedNormalSourceCardinality,
     ) -> Result<(), SpectralOperatorError> {
         let operator = direction_independent_polarization(
             self.specification.polarization_coordinates(),
@@ -163,13 +298,37 @@ impl GriddedNormalOperatorCompiler {
         )?;
         let flags = polarization_effective_flags(&operator, resampled.flags);
         let columns = operator.model_coordinates().len();
-        for (row, prediction) in resampled.predicted.into_iter().enumerate() {
-            if flags[row] {
+        for (row, flagged) in flags.into_iter().enumerate() {
+            if flagged {
                 continue;
             }
-            let mut accumulation = Vec::new();
+            scratch.atom.clear();
+            for (bank, factor) in resampled
+                .predicted
+                .banks
+                .into_iter()
+                .zip(resampled.predicted.factors)
+            {
+                if factor == 0.0 {
+                    continue;
+                }
+                let bank = &scratch.banks[bank];
+                let range = bank
+                    .correlations
+                    .get(row)
+                    .ok_or(SpectralOperatorError::InvalidSample)?;
+                for term in &bank.records[range.clone()] {
+                    let mut term = *term;
+                    term.forward_real =
+                        canonical_zero_bits(f64::from_bits(term.forward_real) * factor);
+                    term.forward_imaginary =
+                        canonical_zero_bits(f64::from_bits(term.forward_imaginary) * factor);
+                    push_fixed(&mut scratch.atom, term)?;
+                }
+            }
+            let prediction_len = scratch.atom.len();
             self.append_standard_stencil(
-                &mut accumulation,
+                &mut scratch.atom,
                 &resampled.selected,
                 RecordStencil {
                     output_channel: resampled.output_channel,
@@ -180,7 +339,7 @@ impl GriddedNormalOperatorCompiler {
                 },
                 &operator.coefficients()[row * columns..(row + 1) * columns],
             )?;
-            append_group(prediction, accumulation, groups, measurements)?;
+            emit_atom(&mut scratch.atom, prediction_len, emit, cardinality)?;
         }
         Ok(())
     }
@@ -227,92 +386,136 @@ impl GriddedNormalOperatorCompiler {
                     .and_then(|value| value.checked_add(polarization))
                     .and_then(|value| u32::try_from(value).ok())
                     .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                records.push(ReducedRecordKey {
-                    chart_ordinal: u32::try_from(chart_ordinal)
-                        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
-                    output_channel: output_plane,
-                    taps: encode_taps(taps)?,
-                    forward_real: canonical_zero_bits(forward.re),
-                    forward_imaginary: canonical_zero_bits(forward.im),
-                    imaging_weight: canonical_zero_bits(stencil.imaging_weight),
-                    role: stencil.role,
-                    aw: None,
-                });
+                push_fixed(
+                    records,
+                    ReducedRecordKey {
+                        chart_ordinal: u32::try_from(chart_ordinal)
+                            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
+                        output_channel: output_plane,
+                        taps: encode_taps(taps)?,
+                        forward_real: canonical_zero_bits(forward.re),
+                        forward_imaginary: canonical_zero_bits(forward.im),
+                        imaging_weight: canonical_zero_bits(stencil.imaging_weight),
+                        role: stencil.role,
+                        aw: None,
+                    },
+                )?;
             }
         }
         Ok(())
     }
 }
 
-fn interpolate_predictions(
-    left: &CorrelationPredictions,
-    right: &CorrelationPredictions,
-    factors: [f64; 2],
-) -> Result<CorrelationPredictions, SpectralOperatorError> {
-    if left.len() != right.len() {
-        return Err(SpectralOperatorError::InvalidSample);
-    }
-    left.iter()
-        .zip(right)
-        .map(|(left, right)| {
-            let mut records = Vec::with_capacity(left.len() + right.len());
-            for (parent, factor) in [(left, factors[0]), (right, factors[1])] {
-                if factor == 0.0 {
-                    continue;
-                }
-                for term in parent {
-                    let mut term = term.clone();
-                    term.forward_real =
-                        canonical_zero_bits(f64::from_bits(term.forward_real) * factor);
-                    term.forward_imaginary =
-                        canonical_zero_bits(f64::from_bits(term.forward_imaginary) * factor);
-                    records.push(term);
-                }
-            }
-            Ok(records)
-        })
-        .collect()
-}
-
-fn append_group(
-    prediction: Vec<ReducedRecordKey>,
-    accumulation: Vec<ReducedRecordKey>,
-    groups: &mut Vec<Vec<ReducedRecordKey>>,
-    measurements: &mut GriddedNormalOperatorBlockMeasurements,
+fn emit_atom(
+    atom: &mut Vec<ReducedRecordKey>,
+    prediction_len: usize,
+    emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
+    cardinality: &mut GriddedNormalSourceCardinality,
 ) -> Result<(), SpectralOperatorError> {
-    if accumulation.is_empty() || prediction.is_empty() {
+    let accumulation_len = atom.len() - prediction_len;
+    if prediction_len == 0 || accumulation_len == 0 {
         return Ok(());
     }
-    let same_stencil = prediction.len() == accumulation.len()
-        && prediction.iter().zip(&accumulation).all(|(left, right)| {
-            left.chart_ordinal == right.chart_ordinal
-                && left.output_channel == right.output_channel
-                && left.taps == right.taps
-                && left.forward_real == right.forward_real
-                && left.forward_imaginary == right.forward_imaginary
-        });
-    let capacity = if same_stencil {
-        prediction.len()
-    } else {
-        prediction.len() + accumulation.len()
-    };
-    let mut group = Vec::with_capacity(capacity);
+    let same_stencil = prediction_len == accumulation_len
+        && atom[..prediction_len]
+            .iter()
+            .zip(&atom[prediction_len..])
+            .all(|(left, right)| {
+                left.chart_ordinal == right.chart_ordinal
+                    && left.output_channel == right.output_channel
+                    && left.taps == right.taps
+                    && left.forward_real == right.forward_real
+                    && left.forward_imaginary == right.forward_imaginary
+            });
     if same_stencil {
-        group.extend(accumulation.into_iter().map(|mut record| {
+        atom.copy_within(prediction_len.., 0);
+        atom.truncate(accumulation_len);
+        for record in atom.iter_mut() {
             record.role = RecordRole::Both;
-            record
-        }));
-    } else {
-        group.extend(prediction);
-        group.extend(accumulation);
+        }
     }
-    record_vector_growth(
-        0,
-        group.capacity(),
-        size_of::<ReducedRecordKey>(),
-        &mut measurements.source_group_vector_allocations,
-        &mut measurements.source_group_capacity_growth_bytes,
-    )?;
-    groups.push(group);
-    Ok(())
+    cardinality.groups = cardinality
+        .groups
+        .checked_add(1)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    cardinality.records = cardinality
+        .records
+        .checked_add(
+            u64::try_from(atom.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?,
+        )
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    emit(atom)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fixed_workspace_rejects_growth_and_overflow() {
+        let mut scratch = StandardRecordScratch::new(4, 6, 15).unwrap();
+        let actual = scratch
+            .banks
+            .iter()
+            .map(|bank| {
+                bank.records.capacity() * size_of::<ReducedRecordKey>()
+                    + bank.correlations.capacity() * size_of::<Range<usize>>()
+            })
+            .sum::<usize>()
+            + scratch.atom.capacity() * size_of::<ReducedRecordKey>();
+        assert_eq!(
+            actual,
+            StandardRecordScratch::workspace_bytes(4, 6, 15).unwrap()
+        );
+        for _ in 0..4 {
+            push_fixed(&mut scratch.banks[0].correlations, 0..0).unwrap();
+        }
+        assert!(push_fixed(&mut scratch.banks[0].correlations, 0..0).is_err());
+        assert_eq!(scratch.banks[0].correlations.capacity(), 4);
+        assert!(StandardRecordScratch::workspace_bytes(usize::MAX, 2, 0).is_err());
+    }
+
+    #[test]
+    fn atom_collapse_preserves_accumulation_weights_without_growth() {
+        let prediction = ReducedRecordKey {
+            chart_ordinal: 0,
+            output_channel: 0,
+            taps: 0,
+            forward_real: 1.0_f64.to_bits(),
+            forward_imaginary: 0,
+            imaging_weight: 0,
+            role: RecordRole::Prediction,
+            aw: None,
+        };
+        let mut accumulation = prediction;
+        accumulation.role = RecordRole::Accumulation;
+        accumulation.imaging_weight = 3.0_f64.to_bits();
+        let mut atom = fixed_records(2).unwrap();
+        push_fixed(&mut atom, prediction).unwrap();
+        push_fixed(&mut atom, accumulation).unwrap();
+        let mut cardinality = GriddedNormalSourceCardinality::default();
+        let mut calls = 0;
+        emit_atom(
+            &mut atom,
+            1,
+            &mut |records| {
+                calls += 1;
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].role, RecordRole::Both);
+                assert_eq!(records[0].imaging_weight, 3.0_f64.to_bits());
+                Ok(())
+            },
+            &mut cardinality,
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(
+            cardinality,
+            GriddedNormalSourceCardinality {
+                groups: 1,
+                records: 1
+            }
+        );
+        assert_eq!(atom.capacity(), 2);
+    }
 }

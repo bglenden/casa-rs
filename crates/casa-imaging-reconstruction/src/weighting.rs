@@ -147,8 +147,76 @@ pub struct WeightingResidency {
     sum_weight_accumulator_bytes: usize,
     replay_read_bytes: usize,
     weighted_block_bytes: usize,
+    weighted_sample_bytes: usize,
     simultaneous_selected_weighted_bytes: usize,
     peak_bytes: usize,
+}
+
+pub(crate) fn maximum_spectral_terms(problem: &CompiledProblem) -> usize {
+    use casa_imaging_model::{ReconstructionBasis, SpectralKernel};
+    match problem.reconstruction().basis() {
+        ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::TaylorViaChannelMajor { .. }
+        | ReconstructionBasis::ChannelLocal { .. }
+        | ReconstructionBasis::JointContinuumLine { .. } => {
+            match problem.science().spectral().sampling().kernel() {
+                SpectralKernel::Identity | SpectralKernel::Nearest => 1,
+                SpectralKernel::Linear => 2,
+                SpectralKernel::Cubic => 4,
+                SpectralKernel::ChannelIntegration { maximum_terms } => maximum_terms,
+            }
+        }
+    }
+}
+
+// SmallVec's collect, clone and push paths round spilled capacity to a power of two.
+fn smallvec_heap_bytes<T>(maximum_len: usize) -> Result<usize, WeightingError> {
+    if maximum_len <= 4 {
+        return Ok(0);
+    }
+    maximum_len
+        .checked_next_power_of_two()
+        .and_then(|capacity| capacity.checked_mul(size_of::<T>()))
+        .ok_or(WeightingError::ResidencyOverflow)
+}
+
+pub(crate) fn native_row_heap_bytes(
+    maximum_correlations: usize,
+    maximum_terms: usize,
+) -> Result<usize, WeightingError> {
+    let spectral = smallvec_heap_bytes::<WeightingSpectralValue>(maximum_terms)?
+        .checked_mul(maximum_correlations)
+        .and_then(|bytes| bytes.checked_mul(2))
+        .ok_or(WeightingError::ResidencyOverflow)?;
+    let native_samples = smallvec_heap_bytes::<WeightingSampleValue>(maximum_correlations)?;
+    let observed = smallvec_heap_bytes::<num_complex::Complex64>(maximum_correlations)?;
+    let correlations =
+        smallvec_heap_bytes::<casa_imaging_model::CorrelationType>(maximum_correlations)?;
+    let weights = smallvec_heap_bytes::<f64>(maximum_correlations)?;
+    let flags = smallvec_heap_bytes::<bool>(maximum_correlations)?;
+    native_samples
+        .checked_add(observed)
+        .and_then(|bytes| bytes.checked_mul(2))
+        .and_then(|bytes| bytes.checked_add(spectral))
+        .and_then(|bytes| bytes.checked_add(observed))
+        .and_then(|bytes| bytes.checked_add(correlations))
+        .and_then(|bytes| bytes.checked_add(weights))
+        .and_then(|bytes| bytes.checked_add(flags))
+        .ok_or(WeightingError::ResidencyOverflow)
+}
+
+fn validate_spectral_contribution_capacity(
+    problem: &CompiledProblem,
+    contributions: &SelectedSpectralContributions,
+) -> Result<(), WeightingError> {
+    let maximum = maximum_spectral_terms(problem);
+    if contributions.len() > maximum {
+        return Err(WeightingError::SpectralContributionCapacity {
+            actual: contributions.len(),
+            maximum,
+        });
+    }
+    Ok(())
 }
 
 impl WeightingResidency {
@@ -267,9 +335,14 @@ pub fn plan_weighting(
         .and_then(|bytes| bytes.checked_mul(grid.planes))
         .ok_or(WeightingError::ResidencyOverflow)?;
     let replay_read_bytes = 0;
+    let weighted_sample_bytes = size_of::<WeightingSampleValue>()
+        .checked_add(smallvec_heap_bytes::<WeightingSpectralValue>(
+            maximum_spectral_terms(problem),
+        )?)
+        .ok_or(WeightingError::ResidencyOverflow)?;
     let weighted_block_bytes = limits
         .max_block_samples
-        .checked_mul(size_of::<WeightingSampleValue>())
+        .checked_mul(weighted_sample_bytes)
         .ok_or(WeightingError::ResidencyOverflow)?;
     let simultaneous_selected_weighted_bytes = weighted_block_bytes;
     let peak_bytes = density_grid_bytes
@@ -292,6 +365,7 @@ pub fn plan_weighting(
             sum_weight_accumulator_bytes,
             replay_read_bytes,
             weighted_block_bytes,
+            weighted_sample_bytes,
             simultaneous_selected_weighted_bytes,
             peak_bytes,
         },
@@ -474,7 +548,7 @@ impl WeightingAlgorithmState {
     /// Return the maximum selected samples in one planned replay block.
     #[must_use]
     pub const fn max_replay_block_samples(&self) -> usize {
-        self.planned_residency.weighted_block_bytes / std::mem::size_of::<WeightingSampleValue>()
+        self.planned_residency.weighted_block_bytes / self.planned_residency.weighted_sample_bytes
     }
 
     /// Begin one bounded weighted replay callback phase.
@@ -490,6 +564,7 @@ impl WeightingAlgorithmState {
         }
         let block = Vec::with_capacity(plan.limits.max_block_samples);
         let peak_weighted_capacity = block.capacity();
+        let coverage = CoverageEncoder::new();
         Ok(WeightingReplayPhase {
             generation: self,
             problem,
@@ -498,7 +573,8 @@ impl WeightingAlgorithmState {
             pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
-            coverage: CoverageEncoder::new(),
+            previous_checkpoint: coverage.checkpoint_token(),
+            coverage,
             sample_count: 0,
             replay_sequence,
         })
@@ -523,6 +599,7 @@ impl WeightingAlgorithmState {
         }
         let block = Vec::with_capacity(plan.limits.max_block_samples);
         let peak_weighted_capacity = block.capacity();
+        let coverage = CoverageEncoder::derived(proof.coverage());
         Ok(WeightingReplayPhase {
             generation: self,
             problem,
@@ -531,7 +608,8 @@ impl WeightingAlgorithmState {
             pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
-            coverage: CoverageEncoder::derived(proof.coverage()),
+            previous_checkpoint: coverage.checkpoint_token(),
+            coverage,
             sample_count: 0,
             replay_sequence,
         })
@@ -834,6 +912,7 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
+        validate_spectral_contribution_capacity(problem, &contributions)?;
         let sample =
             WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
         let source_imaging_weight = match problem.weighting().density_scope() {
@@ -895,6 +974,7 @@ impl WeightingSumWeightPhase {
     }
 
     fn into_fused(self, density_prepass: bool, plan: &WeightingPlan) -> FusedWeightingPhase {
+        let coverage = CoverageEncoder::new();
         FusedWeightingPhase {
             sum: self,
             density_prepass,
@@ -903,7 +983,8 @@ impl WeightingSumWeightPhase {
             max_block_samples: plan.limits.max_block_samples,
             peak_weighted_capacity: plan.limits.max_block_samples,
             block_sequence: 0,
-            coverage: CoverageEncoder::new(),
+            previous_checkpoint: coverage.checkpoint_token(),
+            coverage,
         }
     }
 
@@ -970,6 +1051,7 @@ impl WeightingSumWeightPhase {
                 sum_weight_accumulator_bytes,
                 replay_read_bytes: 0,
                 weighted_block_bytes: 0,
+                weighted_sample_bytes: self.planned_residency.weighted_sample_bytes,
                 simultaneous_selected_weighted_bytes: 0,
                 peak_bytes,
             },
@@ -989,6 +1071,7 @@ pub struct FusedWeightingPhase {
     peak_weighted_capacity: usize,
     block_sequence: u64,
     coverage: CoverageEncoder,
+    previous_checkpoint: [u8; 32],
 }
 
 impl FusedWeightingPhase {
@@ -1088,7 +1171,7 @@ impl FusedWeightingPhase {
             replay_identity(state.generation_id, coverage, sample_count, block_count, 0);
         let weighted_block_bytes = self
             .peak_weighted_capacity
-            .checked_mul(size_of::<WeightingSampleValue>())
+            .checked_mul(state.planned_residency.weighted_sample_bytes)
             .ok_or(WeightingError::ResidencyOverflow)?;
         let peak_bytes = state
             .generation_residency
@@ -1116,6 +1199,7 @@ impl FusedWeightingPhase {
                     .sum_weight_accumulator_bytes,
                 replay_read_bytes: 0,
                 weighted_block_bytes,
+                weighted_sample_bytes: state.planned_residency.weighted_sample_bytes,
                 simultaneous_selected_weighted_bytes: weighted_block_bytes,
                 peak_bytes,
             },
@@ -1130,11 +1214,12 @@ impl FusedWeightingPhase {
             .checked_add(1)
             .ok_or(WeightingError::BlockCountOverflow)?;
         self.peak_weighted_capacity = self.peak_weighted_capacity.max(self.block.capacity());
-        Ok(WeightingReplayChunk {
+        Ok(WeightingReplayChunk::new(
             sequence,
-            samples: std::mem::take(&mut self.block),
-            coverage: self.coverage.clone(),
-        })
+            std::mem::take(&mut self.block),
+            &self.coverage,
+            &mut self.previous_checkpoint,
+        ))
     }
 
     fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
@@ -1427,6 +1512,119 @@ mod selected_sample_tests {
     use super::{WeightingRowSpectralGeometry, WeightingSelectedSample, primary_aw_pointing_pixel};
 
     #[test]
+    fn chunk_checkpoint_chain_binds_each_emitted_prefix() {
+        use super::{CoverageEncoder, WeightingReplayChunk};
+
+        let mut coverage = CoverageEncoder::new();
+        let empty = coverage.checkpoint_token();
+        let mut previous = empty;
+        coverage.update(b"first selected prefix");
+        let first = WeightingReplayChunk::new(0, Vec::new(), &coverage, &mut previous);
+        assert_eq!(first.previous_checkpoint(), empty);
+        assert_eq!(first.checkpoint(), coverage.checkpoint_token());
+        coverage.update(b"second selected prefix");
+        let second = WeightingReplayChunk::new(1, Vec::new(), &coverage, &mut previous);
+        assert_eq!(second.previous_checkpoint(), first.checkpoint());
+        assert_eq!(previous, second.checkpoint());
+
+        let mut other_coverage = CoverageEncoder::new();
+        let mut other_previous = other_coverage.checkpoint_token();
+        other_coverage.update(b"another selected prefix");
+        let other_first =
+            WeightingReplayChunk::new(0, Vec::new(), &other_coverage, &mut other_previous);
+        other_coverage.update(b"second selected prefix");
+        let other_second =
+            WeightingReplayChunk::new(1, Vec::new(), &other_coverage, &mut other_previous);
+        assert_eq!(other_second.sequence(), second.sequence());
+        assert_eq!(other_second.previous_checkpoint(), other_first.checkpoint());
+        assert_ne!(other_second.previous_checkpoint(), first.checkpoint());
+        assert_ne!(other_second.checkpoint(), second.checkpoint());
+    }
+
+    #[test]
+    fn checkpoint_tokens_preserve_science_hash_state_and_separate_derived_proofs() {
+        use super::{CoverageEncoder, WeightingReplayCoverageId};
+        use sha2::Digest;
+
+        let mut coverage = CoverageEncoder::new();
+        coverage.update(b"selected prefix");
+        let token = coverage.checkpoint_token();
+        assert_eq!(coverage.checkpoint_token(), token);
+        let expected: [u8; 32] = coverage.hasher.clone().unwrap().finalize().into();
+        assert_eq!(token, expected);
+
+        let proof = WeightingReplayCoverageId(super::LogicalIdentity::from_sha256(token));
+        let derived = CoverageEncoder::derived(proof);
+        assert_ne!(derived.checkpoint_token(), token);
+        assert_ne!(
+            derived.checkpoint_token(),
+            CoverageEncoder::new().checkpoint_token()
+        );
+        let other = CoverageEncoder::derived(WeightingReplayCoverageId(
+            super::LogicalIdentity::from_sha256([7; 32]),
+        ));
+        assert_ne!(derived.checkpoint_token(), other.checkpoint_token());
+        assert_eq!(derived.work.bytes, 0);
+        assert_eq!(derived.work.hash_calls, 0);
+    }
+
+    #[test]
+    fn spectral_heap_bound_matches_smallvec_collection_and_clone() {
+        use super::{WeightingSpectralValue, smallvec_heap_bytes};
+        use smallvec::SmallVec;
+
+        for terms in [0, 1, 4, 5, 8, 9, 17] {
+            let values = (0..terms)
+                .map(|channel| {
+                    Ok::<_, super::WeightingError>(WeightingSpectralValue {
+                        contribution: casa_imaging_model::SelectedSpectralContribution::new(
+                            channel as u32,
+                            1.0,
+                            1.0e9,
+                        )
+                        .unwrap(),
+                        imaging_weight: 1.0,
+                    })
+                })
+                .collect::<Result<SmallVec<[_; 4]>, _>>()
+                .unwrap();
+            for values in [&values, &values.clone()] {
+                let heap = if values.spilled() {
+                    values.capacity() * size_of::<WeightingSpectralValue>()
+                } else {
+                    0
+                };
+                assert_eq!(
+                    heap,
+                    smallvec_heap_bytes::<WeightingSpectralValue>(terms).unwrap()
+                );
+            }
+        }
+        assert!(smallvec_heap_bytes::<WeightingSpectralValue>(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn native_row_heap_counts_two_sample_banks_and_resampled_vectors() {
+        use super::{WeightingSampleValue, WeightingSpectralValue, native_row_heap_bytes};
+        assert_eq!(native_row_heap_bytes(4, 4).unwrap(), 0);
+        assert_eq!(
+            native_row_heap_bytes(4, 5).unwrap(),
+            2 * 4 * 8 * size_of::<WeightingSpectralValue>()
+        );
+        let q_capacity = (0..5)
+            .collect::<smallvec::SmallVec<[usize; 4]>>()
+            .capacity();
+        let vectors = q_capacity
+            * (2 * size_of::<WeightingSampleValue>()
+                + 3 * size_of::<num_complex::Complex64>()
+                + size_of::<casa_imaging_model::CorrelationType>()
+                + size_of::<f64>()
+                + size_of::<bool>());
+        assert_eq!(native_row_heap_bytes(5, 4).unwrap(), vectors);
+        assert!(native_row_heap_bytes(usize::MAX, 5).is_err());
+    }
+
+    #[test]
     fn bounded_replay_retains_a_compact_kernel_projection_and_only_required_spectral_values() {
         let weighted_bytes = size_of::<WeightingSelectedSample>();
         let spectral_bytes = size_of::<Option<WeightingRowSpectralGeometry>>();
@@ -1507,9 +1705,35 @@ pub struct WeightingReplayChunk {
     sequence: u64,
     samples: Vec<WeightingSampleValue>,
     coverage: CoverageEncoder,
+    previous_checkpoint: [u8; 32],
+    checkpoint: [u8; 32],
 }
 
 impl WeightingReplayChunk {
+    fn new(
+        sequence: u64,
+        samples: Vec<WeightingSampleValue>,
+        coverage: &CoverageEncoder,
+        previous_checkpoint: &mut [u8; 32],
+    ) -> Self {
+        let checkpoint = coverage.checkpoint_token();
+        Self {
+            sequence,
+            samples,
+            coverage: coverage.clone(),
+            previous_checkpoint: std::mem::replace(previous_checkpoint, checkpoint),
+            checkpoint,
+        }
+    }
+
+    pub(super) const fn previous_checkpoint(&self) -> [u8; 32] {
+        self.previous_checkpoint
+    }
+
+    pub(super) const fn checkpoint(&self) -> [u8; 32] {
+        self.checkpoint
+    }
+
     /// Return the zero-based replay block sequence.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
@@ -1560,6 +1784,7 @@ pub struct WeightingReplayPhase<'a> {
     peak_weighted_capacity: usize,
     block_sequence: u64,
     coverage: CoverageEncoder,
+    previous_checkpoint: [u8; 32],
     sample_count: u64,
     replay_sequence: u64,
 }
@@ -1579,6 +1804,7 @@ impl WeightingReplayPhase<'_> {
         {
             return Err(WeightingError::ProblemMismatch);
         }
+        validate_spectral_contribution_capacity(problem, &contributions)?;
         let sample = WeightingSelectedSample::from_selected(
             problem,
             sample.into(),
@@ -1690,7 +1916,7 @@ impl WeightingReplayPhase<'_> {
         );
         let weighted_block_bytes = self
             .peak_weighted_capacity
-            .checked_mul(size_of::<WeightingSampleValue>())
+            .checked_mul(self.generation.planned_residency.weighted_sample_bytes)
             .ok_or(WeightingError::ResidencyOverflow)?;
         let replay_read_bytes = 0;
         let simultaneous_selected_weighted_bytes = weighted_block_bytes;
@@ -1723,6 +1949,7 @@ impl WeightingReplayPhase<'_> {
                     sum_weight_accumulator_bytes: 0,
                     replay_read_bytes,
                     weighted_block_bytes,
+                    weighted_sample_bytes: self.generation.planned_residency.weighted_sample_bytes,
                     simultaneous_selected_weighted_bytes,
                     peak_bytes,
                 },
@@ -1741,11 +1968,12 @@ impl WeightingReplayPhase<'_> {
         // original full-capacity allocation with its logical length intact;
         // shrinking a partial terminal block could transiently allocate a copy.
         let samples = std::mem::take(&mut self.block);
-        Ok(WeightingReplayChunk {
+        Ok(WeightingReplayChunk::new(
             sequence,
             samples,
-            coverage: self.coverage.clone(),
-        })
+            &self.coverage,
+            &mut self.previous_checkpoint,
+        ))
     }
 
     fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
@@ -1840,6 +2068,14 @@ impl WeightingReplaySummary {
 /// Weighting failure independent of source or consumer I/O.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WeightingError {
+    /// A supplied stencil exceeds the canonical compiled producer's bound.
+    #[error("spectral contribution count {actual} exceeds compiled capacity {maximum}")]
+    SpectralContributionCapacity {
+        /// Number of contributions supplied by the caller.
+        actual: usize,
+        /// Maximum produced by the compiled basis and spectral kernel.
+        maximum: usize,
+    },
     /// Reconstruction could not compile the paired sparse spectral stencil.
     #[error(transparent)]
     SpectralStencil(#[from] crate::SpectralStencilError),
@@ -2500,6 +2736,21 @@ pub(super) struct CoverageEncoder {
 }
 
 impl CoverageEncoder {
+    pub(super) fn checkpoint_token(&self) -> [u8; 32] {
+        if let Some(hasher) = &self.hasher {
+            hasher.clone().finalize().into()
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(b"casa-rs-derived-weighting-checkpoint");
+            hasher.update(
+                self.derived
+                    .expect("derived coverage has a proof")
+                    .as_bytes(),
+            );
+            hasher.finalize().into()
+        }
+    }
+
     pub(super) fn new() -> Self {
         let mut encoder = Self {
             hasher: Some(Sha256::new()),

@@ -73,13 +73,12 @@ pub use spectral_operator::{
 pub mod runtime_adapter {
     pub use crate::gridded_normal_operator::{
         GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-        GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
-        GriddedNormalOperatorApply, GriddedNormalOperatorBlock,
-        GriddedNormalOperatorBlockMeasurements, GriddedNormalOperatorCompiler,
-        GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
-        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality,
-        GriddedNormalStorageLayout, GriddedNormalStoragePlan, GriddedNormalWork,
-        SourceCardinalityObservation, gridded_normal_operator_record_bytes,
+        GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalCompilationMeasurements,
+        GriddedNormalCompilationPlan, GriddedNormalExecutionResidency, GriddedNormalOperatorApply,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame, GriddedNormalOperatorProgram,
+        GriddedNormalOperatorStageTimings, GriddedNormalPartial, GriddedNormalRoutingMeasurements,
+        GriddedNormalSourceCardinality, GriddedNormalStorageLayout, GriddedNormalStoragePlan,
+        GriddedNormalWork, SourceCardinalityObservation, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
     pub use crate::reconstruction_cycle::{

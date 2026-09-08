@@ -4,7 +4,7 @@
 
 use std::{collections::BTreeMap, convert::Infallible, fs, io, path::PathBuf, sync::OnceLock};
 
-use crate::complete_data_operator::project_managed_spill_budget;
+use crate::complete_data_operator::project_gridded_normal_compilation;
 use crate::spectral_cycle::CompleteDataStreamEvidence;
 use crate::{
     AttemptBoundObservationCompletion, BuildIdentity, CapacityDomainId, CapacityViewId,
@@ -335,17 +335,16 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
         );
         assert_eq!(
             run.final_stream.planned_gridded_route_capacity_bytes,
-            gridded_normal_route_capacity_bytes(0, 3, 1).unwrap(),
-            "the shared route window must cover the three exact empty frames",
+            gridded_normal_route_capacity_bytes(0, 1, 1).unwrap(),
+            "zero encoded frames reserve only the minimum route window",
         );
         assert_eq!(
             run.final_stream.peak_partial_dynamic_capacity_bytes, 0,
             "route-once replay must not retain dynamic scientific partials",
         );
         assert_eq!(
-            run.final_stream.peak_physical_route_capacity_bytes,
-            run.final_stream.planned_gridded_route_capacity_bytes,
-            "the empty replay must stay within its exact physical route allocation",
+            run.final_stream.peak_physical_route_capacity_bytes, 0,
+            "empty replay performs no physical route allocation",
         );
         assert!(
             run.final_stream.peak_kernel_window_capacity_bytes
@@ -375,11 +374,22 @@ fn faceted_complete_data_products_are_exact_across_distinct_admitted_plans() {
     assert_worker_independent_stream(&serial.final_stream, &parallel.final_stream, "replay");
     assert_eq!(serial.final_stream.planned_workers, 1);
     assert_eq!(parallel.final_stream.planned_workers, 2);
-    assert_ne!(
-        serial.final_stream.peak_worker_stack_capacity_bytes,
-        parallel.final_stream.peak_worker_stack_capacity_bytes,
-        "the compared plans must reserve distinct worker-memory envelopes",
+    assert!(
+        serial.final_stream.planned_kernel_window_capacity_bytes
+            < parallel.final_stream.planned_kernel_window_capacity_bytes,
+        "the two-worker plan must admit a larger kernel/worker resource envelope",
     );
+    for run in [&serial, &parallel] {
+        assert_eq!(
+            run.final_stream.peak_worker_stack_capacity_bytes, 0,
+            "empty replay starts no worker task requiring a stack window"
+        );
+        assert_eq!(run.final_stream.peak_physical_route_capacity_bytes, 0);
+        assert!(
+            run.final_stream.peak_kernel_window_capacity_bytes
+                <= run.final_stream.planned_kernel_window_capacity_bytes
+        );
+    }
 }
 
 #[test]
@@ -407,13 +417,14 @@ fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
         )
         .expect("scalar record width");
 
-    let budget = project_managed_spill_budget(&problem, maximum_block_samples)
-        .expect("faceted replay budget");
+    let budget = project_gridded_normal_compilation(&problem, maximum_block_samples)
+        .expect("faceted replay budget")
+        .spill;
 
     assert_eq!(
         budget.maximum_frame_payload_bytes(),
-        3 * 4 * record_bytes,
-        "one weighted sample may produce one record in each physical facet chart",
+        3 * 2 * 4 * record_bytes,
+        "an indivisible atom admits distinct prediction and accumulation terms in every physical chart",
     );
 }
 
@@ -566,6 +577,35 @@ fn execute_complete_data_mfs_with_policy(
     };
     let planned = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())
         .expect("plan initial complete-data MFS pass");
+    for physical in planned.physical_candidates() {
+        let compiler = physical
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .find(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("gridded-normal-compiler-")
+            })
+            .expect("compiler has one admitted allocation");
+        let reconciliation = physical
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .unwrap();
+        assert_eq!(
+            compiler.lifetime.release_after,
+            std::collections::BTreeSet::from([crate::WorkDependency::Work(reconciliation.clone())]),
+            "compiler stays charged through post-fence scientific sealing",
+        );
+        assert_eq!(
+            compiler.bytes,
+            crate::complete_data_operator::project_gridded_normal_compilation(&problem, 1)
+                .unwrap()
+                .compiler
+                .workspace_bytes() as u64,
+        );
+    }
     let frozen_reservation = FrozenWeightingReservation::acquire(
         &authority,
         resource_policy.clone(),

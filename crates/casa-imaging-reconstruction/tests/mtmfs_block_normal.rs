@@ -49,12 +49,16 @@ use casa_imaging_reconstruction::{
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerSlabFold, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
-        GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame, GriddedNormalOperatorProgram,
         GriddedNormalRoutingMeasurements, SourceCardinalityObservation, SpectralOperatorPass,
         gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
         prepare_spectral_operator, spectral_operator_workload, standard_convolution_support,
     },
 };
+
+#[path = "support/gridded_frames.rs"]
+mod gridded_frames;
+use gridded_frames::{RecordedFrame, compilation_plan};
 
 const REFERENCE_FREQUENCY_HZ: f64 = 1.0e9;
 const IMAGE_WIDTH: usize = 8;
@@ -1527,43 +1531,65 @@ fn empty_model(problem: &casa_imaging_model::CompiledProblem) -> MajorCyclePrepa
 fn compile_compact_program(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
-) -> (
-    GriddedNormalOperatorProgram,
-    Vec<GriddedNormalOperatorBlock>,
-) {
+) -> (GriddedNormalOperatorProgram, Vec<RecordedFrame>) {
     let record_bytes = gridded_normal_operator_record_bytes(problem)
         .expect("problem-derived compact record width");
-    let mut compiler =
-        GriddedNormalOperatorCompiler::new(problem, SourceCardinalityObservation::Enabled)
-            .expect("begin Taylor compact compiler");
-    let blocks =
+    let compilation = compilation_plan(
+        problem,
+        frozen.plan.limits().max_block_samples(),
         frozen
             .blocks
             .iter()
-            .map(|block| {
-                let (compiled, timings) = compiler
-                    .compile_block_observed(block)
-                    .expect("compile observed Taylor compact block");
-                let measurements = compiled.measurements();
-                assert_eq!(
-                measurements.source_cardinality,
-                Some(casa_imaging_reconstruction::runtime_adapter::GriddedNormalSourceCardinality {
-                    groups: block.samples().len() as u64,
-                    records: block.samples().len() as u64,
-                })
-            );
-                assert_eq!(
-                    measurements.encoded_buffer_bytes,
-                    compiled.record_count() * record_bytes as u64
-                );
-                assert_eq!(measurements.encoded_buffer_allocations, 1);
-                let _exclusive_stage_total = timings.record_key_construction
-                    + timings.grouping_reduction
-                    + timings.encoding_checksum
-                    + timings.completion;
-                compiled
-            })
-            .collect::<Vec<_>>();
+            .map(|block| block.samples().len())
+            .sum(),
+    );
+    let mut compiler = GriddedNormalOperatorCompiler::new(
+        problem,
+        compilation,
+        SourceCardinalityObservation::Enabled,
+    )
+    .expect("begin Taylor compact compiler");
+    let mut blocks = Vec::<RecordedFrame>::new();
+    let mut sink = |frame: GriddedNormalOperatorFrame<'_>| {
+        let recorded = RecordedFrame::from(frame);
+        assert_eq!(
+            recorded.encoded_bytes().len() as u64,
+            recorded.record_count() * record_bytes as u64
+        );
+        blocks.push(recorded);
+        Ok(())
+    };
+    let mut source_samples = 0;
+    for (index, block) in frozen.blocks.iter().enumerate() {
+        let measurements = compiler
+            .consume_source(block, &mut sink)
+            .expect("compile observed Taylor source block");
+        source_samples += block.samples().len() as u64;
+        assert_eq!(measurements.source_blocks, index as u64 + 1);
+        assert_eq!(measurements.source_samples, source_samples);
+        assert_eq!(
+            measurements.source_cardinality,
+            Some(
+                casa_imaging_reconstruction::runtime_adapter::GriddedNormalSourceCardinality {
+                    groups: source_samples,
+                    records: source_samples,
+                }
+            )
+        );
+    }
+    let measurements = compiler
+        .finish_rows_and_frames(&mut sink)
+        .expect("finish Taylor frames");
+    assert_eq!(measurements.frames, blocks.len() as u64);
+    assert_eq!(
+        measurements.reduced_records,
+        blocks.iter().map(RecordedFrame::record_count).sum()
+    );
+    let timings = compiler.stage_timings();
+    let _exclusive_stage_total = timings.record_key_construction
+        + timings.grouping_reduction
+        + timings.encoding_checksum
+        + timings.completion;
     let program = compiler
         .complete(&frozen.summary, frozen.selected_generation, None)
         .expect("seal v3 Taylor compact program");
@@ -1581,7 +1607,7 @@ fn execute_compact_taylor(
     problem: &casa_imaging_model::CompiledProblem,
     frozen: &FrozenTaylorReplay,
     program: &GriddedNormalOperatorProgram,
-    blocks: &[GriddedNormalOperatorBlock],
+    blocks: &[RecordedFrame],
     preparation: &MajorCyclePreparation,
     prior: FinalNormalState,
     workers: usize,
@@ -2604,7 +2630,7 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.schema_version(), 8);
+    assert_eq!(program.schema_version(), 11);
     assert_eq!(
         gridded_normal_operator_record_bytes(&problem).expect("Taylor record width"),
         32,
@@ -2615,10 +2641,7 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     assert_eq!(program.block_count(), blocks.len() as u64);
     assert_eq!(
         program.record_count(),
-        blocks
-            .iter()
-            .map(GriddedNormalOperatorBlock::record_count)
-            .sum()
+        blocks.iter().map(RecordedFrame::record_count).sum()
     );
     assert!(program.record_count() > 0);
     for block in &blocks {

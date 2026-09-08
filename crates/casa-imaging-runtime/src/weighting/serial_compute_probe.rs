@@ -56,8 +56,8 @@ use super::*;
 use crate::{
     ManagedSpillStorage, ProductionStorageProfile, ResourceAuthority,
     complete_data_operator::{
-        GriddedNormalCompilationMeasurements, GriddedNormalReplayCompilation,
-        project_managed_spill_budget,
+        GriddedNormalCompilationAdmission, GriddedNormalCompilationMeasurements,
+        GriddedNormalReplayCompilation, project_gridded_normal_compilation,
     },
     managed_spill::{ManagedSpillMeasurements, ManagedSpillSeal},
 };
@@ -95,8 +95,6 @@ const EXPECTED_INITIAL_WEIGHTING_REPLAY: &str =
 const EXPECTED_INITIAL_WEIGHTING_COVERAGE: &str =
     "68125bafbe2e1a53cd3dfac4b5198997687f61fefefc1264604d26546537bacb";
 const EXPECTED_INITIAL_WEIGHTING_RESIDENCY_BYTES: usize = 60_031_360;
-const EXPECTED_INITIAL_ARTIFACT_MAXIMUM_BYTES: u64 = 1_078_864_440;
-const EXPECTED_INITIAL_ARTIFACT_IO_BUFFER_BYTES: u64 = 131_144;
 const EXPECTED_INITIAL_COVERAGE_PROOF_BYTES: u64 = 2_864_160_146;
 const EXPECTED_INITIAL_COVERAGE_PROOF_HASH_CALLS: u64 = 33_696_007;
 const BASELINE_REPEATABILITY_LIMIT: f64 = 0.03;
@@ -383,6 +381,7 @@ struct StageLocalReplayStorage {
     resource_signature: [String; 4],
     maximum_artifact_bytes: u64,
     io_buffer_bytes: u64,
+    admission: GriddedNormalCompilationAdmission,
 }
 
 struct InitialWeightedProbe<'a> {
@@ -448,7 +447,8 @@ struct InitialWeightedObservation {
 
 impl StageLocalReplayStorage {
     fn new(problem: &CompiledProblem, max_block_samples: usize) -> Result<Self, Box<dyn Error>> {
-        let budget = project_managed_spill_budget(problem, max_block_samples)?;
+        let admission = project_gridded_normal_compilation(problem, max_block_samples)?;
+        let budget = admission.spill;
         let root = tempfile::tempdir()?;
         let profile = ProductionStorageProfile::new(
             root.path(),
@@ -474,6 +474,7 @@ impl StageLocalReplayStorage {
             resource_signature,
             maximum_artifact_bytes: budget.maximum_artifact_bytes(),
             io_buffer_bytes: budget.io_buffer_bytes(),
+            admission,
         })
     }
 }
@@ -750,19 +751,20 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
 
     assert_eq!(
         baseline_before.signature, observed.signature,
-        "enabling observation changed scientific, allocation, or resource identity"
+        "enabling observation changed scientific, compiler-capacity, or resource identity"
     );
     assert_eq!(
         baseline_before.signature, baseline_after.signature,
-        "the repeated baseline changed scientific, allocation, or resource identity"
+        "the repeated baseline changed scientific, compiler-capacity, or resource identity"
     );
     let signature = &observed.signature;
     let compilation = signature.compilation;
     let source_cardinality = compilation
         .source_cardinality
         .expect("stage-local probe enables source-cardinality observation");
-    let reduced_group_count = compilation.reduced_group_count();
-    let reduced_record_count = compilation.reduced_record_count();
+    let reduced_group_count = compilation.reduced_groups;
+    let reduced_record_count = compilation.reduced_records;
+    let admission = replay_storage.admission;
     let write = signature.write;
     let seal = signature.artifact_seal;
     assert_eq!(
@@ -775,15 +777,22 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         [EXPECTED_WEIGHTED_BLOCKS, 0],
         "weighted block shape changed or sink-free replay emitted final visibilities"
     );
-    assert_eq!(compilation.blocks, EXPECTED_WEIGHTED_BLOCKS);
+    assert_eq!(compilation.source_blocks, EXPECTED_WEIGHTED_BLOCKS);
+    assert_eq!(compilation.source_samples, selected_samples);
+    assert_eq!(
+        compilation.workspace_bytes,
+        admission.compiler.workspace_bytes()
+    );
+    assert!(compilation.peak_frame_records <= admission.compiler.frame_record_capacity());
+    assert!(compilation.peak_raw_records <= admission.compiler.raw_record_capacity());
     assert!(
         source_cardinality.groups >= reduced_group_count
             && source_cardinality.records >= reduced_record_count,
-        "block-local reduction increased group or record cardinality"
+        "bounded raw-chunk reduction increased group or record cardinality"
     );
     assert_eq!(
-        reduced_group_count, compilation.reduction_map_entry_insertions,
-        "one map insertion must mint each reduced group"
+        reduced_group_count, reduced_record_count,
+        "the scalar fixture has one record in each complete group"
     );
     assert_eq!(
         reduced_record_count,
@@ -791,13 +800,8 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         "compiled and written record counts differ"
     );
     assert_eq!(
-        compilation.encoded_buffer_bytes,
-        write.payload_bytes(),
-        "compiled and written payload bytes differ"
-    );
-    assert_eq!(
         reduced_record_count * u64::try_from(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)?,
-        compilation.encoded_buffer_bytes,
+        write.payload_bytes(),
         "fixed-width encoded record accounting changed"
     );
     assert_eq!(
@@ -815,20 +819,35 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     );
     assert_eq!(seal.artifact_bytes(), write.artifact_bytes());
     assert_ne!(seal.global_sha256(), [0; 32]);
-    assert_eq!(write.frame_count(), EXPECTED_WEIGHTED_BLOCKS);
+    assert_eq!(write.frame_count(), compilation.frames);
+    assert!(compilation.frames <= u64::try_from(admission.compiler.descriptor_capacity())?);
+    assert_eq!(
+        compilation.frames,
+        reduced_record_count.div_ceil(u64::try_from(admission.compiler.frame_record_capacity())?),
+        "one-record scalar groups greedily fill every nonterminal frame"
+    );
+    assert_eq!(
+        compilation.peak_frame_records,
+        usize::try_from(reduced_record_count)?.min(admission.compiler.frame_record_capacity())
+    );
     assert_eq!(write.transferred_bytes(), write.artifact_bytes());
     assert_eq!(write.operations(), write.frame_count() + 2);
     assert_eq!(write.sha256_calls(), write.frame_count() + 1);
     assert_eq!(write.payload_copy_bytes(), write.payload_bytes());
     assert_eq!(
         write.payload_copy_operations(),
-        compilation.encoded_buffer_allocations,
-        "one writer copy must correspond to each non-empty encoded block"
+        compilation.frames,
+        "one writer copy must correspond to each non-empty encoded frame"
     );
     assert_eq!(write.buffer_allocations(), 1);
     assert_eq!(write.buffer_reuses(), write.frame_count() - 1);
     assert_eq!(write.peak_buffer_bytes(), signature.io_buffer_bytes);
     assert!(write.artifact_bytes() <= signature.maximum_artifact_bytes);
+    assert_eq!(
+        write.sha256_bytes(),
+        write.artifact_bytes() - admission.spill.serialization_buffer_bytes()
+            + write.payload_bytes()
+    );
     assert_eq!(
         [
             signature.selected_generation_proof_bytes,
@@ -869,71 +888,18 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     );
     assert_eq!(
         [
-            compilation.blocks,
+            compilation.source_blocks,
+            compilation.source_samples,
             source_cardinality.groups,
             source_cardinality.records,
-            reduced_group_count,
-            reduced_record_count,
-            compilation.source_group_vector_allocations,
-            compilation.source_group_capacity_growth_bytes,
-            compilation.reduction_map_entry_insertions,
-            compilation.multiplicity_vector_allocations,
-            compilation.multiplicity_capacity_growth_bytes,
-            compilation.encoded_buffer_allocations,
-            compilation.encoded_buffer_bytes,
-            compilation.descriptor_vector_allocations,
-            compilation.descriptor_capacity_growth_bytes,
         ],
         [
-            8_227,
+            EXPECTED_WEIGHTED_BLOCKS,
+            EXPECTED_SELECTED_SAMPLES,
             29_169_920,
             29_169_920,
-            14_520_731,
-            14_520_731,
-            29_169_920,
-            4_667_187_200,
-            14_520_731,
-            14_521_550,
-            464_689_600,
-            8_137,
-            464_663_392,
-            13,
-            786_432,
         ],
-        "initial weighted compiler allocation or cardinality signature changed"
-    );
-    assert_eq!(
-        [
-            write.artifact_bytes(),
-            write.payload_bytes(),
-            write.frame_count(),
-            write.record_count(),
-            write.transferred_bytes(),
-            write.operations(),
-            write.sha256_bytes(),
-            write.sha256_calls(),
-            write.peak_buffer_bytes(),
-            write.payload_copy_bytes(),
-            write.payload_copy_operations(),
-            write.buffer_allocations(),
-            write.buffer_reuses(),
-        ],
-        [
-            465_255_832,
-            464_663_392,
-            8_227,
-            14_520_731,
-            465_255_832,
-            8_229,
-            929_919_144,
-            8_228,
-            EXPECTED_INITIAL_ARTIFACT_IO_BUFFER_BYTES,
-            464_663_392,
-            8_137,
-            1,
-            8_226,
-        ],
-        "initial weighted artifact write/copy signature changed"
+        "initial weighted compiler source coverage changed"
     );
     assert_eq!(
         [
@@ -958,8 +924,8 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         ],
         [
             EXPECTED_INITIAL_WEIGHTING_RESIDENCY_BYTES,
-            usize::try_from(EXPECTED_INITIAL_ARTIFACT_MAXIMUM_BYTES)?,
-            usize::try_from(EXPECTED_INITIAL_ARTIFACT_IO_BUFFER_BYTES)?,
+            usize::try_from(admission.spill.maximum_artifact_bytes())?,
+            usize::try_from(admission.spill.io_buffer_bytes())?,
         ],
         "initial weighted residency or artifact budget signature changed"
     );
@@ -991,7 +957,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     println!(
         "{}",
         serde_json::to_string(&json!({
-            "schema": "casa-rs-initial-weighted-discriminator-v1",
+            "schema": "casa-rs-initial-weighted-discriminator-v2",
             "source_revision": source_revision()?,
             "dataset": DATASET_RELATIVE_PATH,
             "problem_id": problem.problem_id().to_string(),
@@ -1040,23 +1006,23 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
                 "artifact_maximum_bytes": signature.maximum_artifact_bytes,
                 "artifact_io_buffer_bytes": signature.io_buffer_bytes,
                 "artifact_peak_buffer_bytes": write.peak_buffer_bytes(),
+                "compiler_workspace_bytes": admission.compiler.workspace_bytes(),
+                "compiler_frame_record_capacity": admission.compiler.frame_record_capacity(),
+                "compiler_raw_record_capacity": admission.compiler.raw_record_capacity(),
+                "compiler_descriptor_capacity": admission.compiler.descriptor_capacity(),
             },
             "resource_signature": signature.resource_signature,
             "compilation_counters": {
-                "blocks": compilation.blocks,
+                "source_blocks": compilation.source_blocks,
+                "source_samples": compilation.source_samples,
                 "source_groups": source_cardinality.groups,
                 "source_records": source_cardinality.records,
                 "reduced_groups": reduced_group_count,
                 "reduced_records": reduced_record_count,
-                "source_group_vector_allocations": compilation.source_group_vector_allocations,
-                "source_group_capacity_growth_bytes": compilation.source_group_capacity_growth_bytes,
-                "reduction_map_entry_insertions": compilation.reduction_map_entry_insertions,
-                "multiplicity_vector_allocations": compilation.multiplicity_vector_allocations,
-                "multiplicity_capacity_growth_bytes": compilation.multiplicity_capacity_growth_bytes,
-                "encoded_buffer_allocations": compilation.encoded_buffer_allocations,
-                "encoded_buffer_bytes": compilation.encoded_buffer_bytes,
-                "descriptor_vector_allocations": compilation.descriptor_vector_allocations,
-                "descriptor_capacity_growth_bytes": compilation.descriptor_capacity_growth_bytes,
+                "frames": compilation.frames,
+                "workspace_bytes": compilation.workspace_bytes,
+                "peak_raw_records": compilation.peak_raw_records,
+                "peak_frame_records": compilation.peak_frame_records,
             },
             "write_counters": {
                 "artifact_bytes": write.artifact_bytes(),
