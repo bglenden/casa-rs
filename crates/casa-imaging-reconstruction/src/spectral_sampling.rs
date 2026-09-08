@@ -506,6 +506,9 @@ fn channel_local_terms(
             evaluation.output_frame().boundaries_hz(),
             frequency_hz,
         )),
+        SpectralKernel::Cubic if centres.len() == 1 => {
+            Ok(nearest_terms(&centres, &boundaries, frequency_hz))
+        }
         SpectralKernel::Cubic => Ok(cubic_terms(&centres, frequency_hz)),
         SpectralKernel::ChannelIntegration { maximum_terms } => integration_terms(
             &boundaries,
