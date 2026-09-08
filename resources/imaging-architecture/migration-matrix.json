@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "contract_revision": 87,
+  "contract_revision": 88,
   "programme_issue": 486,
   "owner_issue": 487,
   "status_values": ["Native", "TemporarilyUnavailable"],
@@ -101,7 +101,7 @@
     "repo://crates/casa-imaging-model/src/model_state.rs": "e824f140c6401ceaff875d0b32309ceac36d331ff6f77aab3ab3da36c1291b39",
     "repo://crates/casa-imaging-reconstruction/src/lib.rs": "a5c142468944c7f288f2fb5be2c4893b04fd6f8f60da2d9af86d08d7e8025409",
     "repo://crates/casa-imaging-reconstruction/src/major_cycle.rs": "7c13ae0ddd9185f73d275c184469134cd8476c0e93a7a2d619728bb4e725615b",
-    "repo://crates/casa-imaging-reconstruction/src/spectral_operator.rs": "e8bf36d6e7d0a8a36decd26ccd33c82a53b9129857d1bdff36fa6f9edb087460",
+    "repo://crates/casa-imaging-reconstruction/src/spectral_operator.rs": "62faff835f68a1d1f0fb87412b3621dea4a2ea33ba15c65a46177f22240ec206",
     "repo://crates/casa-imaging-reconstruction/src/weighting.rs": "89c76b71a1c607363dd613dce4f73fa8602b68d0e2091480191fe99afcdac4a3",
     "repo://crates/casa-imaging-runtime/src/execution.rs": "b4877d6d24cdb7c3291d485f96bf62e1b25eec184200668fe1470cd75183446b",
     "repo://crates/casa-imaging-runtime/src/execution_bindings.rs": "213b6185d809ce2e8d66164c0320d672af08086b6938ea55d9bd09f5364ba761",

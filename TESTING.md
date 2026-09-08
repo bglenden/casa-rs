@@ -109,6 +109,9 @@ when the requested padded size differs from the rounded FFT grid.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.
+The checked-in [T53 receipt](resources/imaging-architecture/representative-science-evidence/w-multifield-cube-vla.json)
+binds the current W-cube result and the applicable standard, mosaic and native-AW
+supporting joins without replacing their individual scientific contracts.
 
 T53 preserves the #478 named join gates
 `wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_multifield`

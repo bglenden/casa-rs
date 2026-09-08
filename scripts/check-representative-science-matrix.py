@@ -547,6 +547,7 @@ def main() -> int:
         591,
         535,
         538,
+        539,
     }
     missing = sorted(required - set(issues))
     extra = sorted(set(issues) - required)
