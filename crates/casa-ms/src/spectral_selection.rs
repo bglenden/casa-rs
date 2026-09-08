@@ -1077,8 +1077,7 @@ impl CubeSpectralSetup {
                     })
                     .collect::<MsResult<Vec<_>>>()?
             };
-        let source_channel_widths_for_interpolation = if interpolation
-            == CubeInterpolation::Nearest
+        let source_channel_widths_for_interpolation = if interpolation == CubeInterpolation::Nearest
             || self.interpolation_uses_native_source_frequencies
         {
             source_channel_widths_hz.to_vec()
