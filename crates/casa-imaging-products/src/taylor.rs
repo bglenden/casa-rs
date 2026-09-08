@@ -443,7 +443,7 @@ impl TaylorProducts {
         let validity = inputs.problem().products().validity();
         let pb_policy = validity.primary_beam();
         if pb_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || pb_policy.blanking() != ProductBlankingPolicy::ZeroAndFalseMask
+            || pb_policy.blanking() != ProductBlankingPolicy::Zero
         {
             return Err(ProductsError::UnsupportedProblem);
         }
@@ -467,7 +467,7 @@ impl TaylorProducts {
         if taylor_policy.reference()
             != TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
             || taylor_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || taylor_policy.blanking() != ProductBlankingPolicy::ZeroAndFalseMask
+            || taylor_policy.blanking() != ProductBlankingPolicy::Zero
         {
             return Err(ProductsError::UnsupportedProblem);
         }
@@ -504,16 +504,8 @@ impl TaylorProducts {
         } else {
             vec![0.0; cells]
         };
-        let reconstruction_mask =
-            crate::authority::reconstruction_mask_for_domain(inputs, domain_role)?;
-        let clean_mask = weight[0]
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let selected = reconstruction_mask.is_none_or(|mask| mask.support()[index]);
-                (selected && value.is_finite() && *value > 0.0) as u8 as f32
-            })
-            .collect();
+        let clean_mask =
+            crate::authority::reconstruction_support_plane(inputs, domain_role, cells)?;
 
         Ok(Self {
             shape,

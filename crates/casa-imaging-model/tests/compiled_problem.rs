@@ -121,14 +121,14 @@ fn product_validity() -> ProductValidityPolicies {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam support"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor support"),
     )
@@ -811,7 +811,7 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
     let reordered = compile_request(specification(true), inputs(true)).expect("compile reordered");
 
     assert_eq!(graph.graph_id(), reordered.product_graph().graph_id());
-    assert_eq!(graph.schema_version(), 3);
+    assert_eq!(graph.schema_version(), 4);
     assert_eq!(
         graph
             .nodes()
@@ -913,31 +913,40 @@ fn compiler_owns_the_exact_product_graph_and_atomic_publication_contract() {
 }
 
 #[test]
-fn unit_response_primary_beam_validity_is_explicit_request_semantics() {
+fn uncorrected_mask_is_separate_from_numeric_support_and_binds_publication_identity() {
     let validity = product_validity()
-        .with_unit_response(casa_imaging_model::UnitResponseValidityPolicy::PrimaryBeam);
-    let compiled = compile_request(
-        ProblemSpecification::new(
-            science(),
-            reconstruction(),
-            weighting(),
-            ProductRequirements::new(
-                vec![
-                    ProductKind::Residual,
-                    ProductKind::Model,
-                    ProductKind::RestoredImage,
-                    ProductKind::PrimaryBeam,
-                ],
-                ProductNormalization::UnitResponse,
-                RestoringBeamPolicy::PerPlane,
-                validity,
+        .with_uncorrected_mask(casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam);
+    let compile_with_policy = |validity| {
+        compile_request(
+            ProblemSpecification::new(
+                science(),
+                reconstruction(),
+                weighting(),
+                ProductRequirements::new(
+                    vec![
+                        ProductKind::Residual,
+                        ProductKind::Model,
+                        ProductKind::RestoredImage,
+                        ProductKind::PrimaryBeam,
+                    ],
+                    ProductNormalization::UnitResponse,
+                    RestoringBeamPolicy::PerPlane,
+                    validity,
+                ),
+                read_only_transaction(),
+                numerics(false),
             ),
-            read_only_transaction(),
-            numerics(false),
-        ),
-        inputs(false),
-    )
-    .expect("compile explicit primary-beam validity");
+            inputs(false),
+        )
+        .expect("compile explicit primary-beam mask policy")
+    };
+    let compiled = compile_with_policy(validity);
+    let absent = compile_with_policy(product_validity());
+    assert_ne!(compiled.problem_id(), absent.problem_id());
+    assert_ne!(
+        compiled.product_graph().graph_id(),
+        absent.product_graph().graph_id()
+    );
 
     for role in [
         ProductRole::Residual(ProductTerm::Taylor(0)),
@@ -949,8 +958,165 @@ fn unit_response_primary_beam_validity_is_explicit_request_semantics() {
                 .node(role)
                 .expect("uncorrected product")
                 .validity(),
-            ProductValidityRule::PrimaryBeam(validity.primary_beam()),
+            ProductValidityRule::FinalNormalState,
         );
+        assert_eq!(
+            compiled
+                .product_graph()
+                .node(role)
+                .unwrap()
+                .storage()
+                .pixel_mask(),
+            casa_imaging_model::ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(
+                validity.primary_beam()
+            )),
+        );
+        assert_eq!(
+            absent
+                .product_graph()
+                .node(role)
+                .unwrap()
+                .storage()
+                .pixel_mask(),
+            casa_imaging_model::ProductPixelMask::Absent
+        );
+    }
+}
+
+#[test]
+fn single_and_taylor_storage_contracts_preserve_science_and_exact_casa_metadata() {
+    use casa_imaging_model::{ProductPixelMask, UncorrectedImageMaskPolicy};
+    for taylor in [false, true] {
+        for mask in [
+            UncorrectedImageMaskPolicy::None,
+            UncorrectedImageMaskPolicy::PrimaryBeam,
+        ] {
+            let validity = product_validity().with_uncorrected_mask(mask);
+            let mut requested = vec![
+                ProductKind::Psf,
+                ProductKind::Residual,
+                ProductKind::Model,
+                ProductKind::RestoredImage,
+                ProductKind::PrimaryBeam,
+                ProductKind::PbCorrectedImage,
+            ];
+            if taylor {
+                requested.extend([
+                    ProductKind::TaylorTerms,
+                    ProductKind::SpectralIndex,
+                    ProductKind::SpectralIndexError,
+                    ProductKind::PbCorrectedSpectralIndex,
+                ]);
+            }
+            let reconstruction = if taylor {
+                reconstruction()
+            } else {
+                ReconstructionContract::new(
+                    ReconstructionBasis::Constant,
+                    ReconstructionAlgorithm::Hogbom,
+                    ReconstructionControls::new(100, 0.1, 0.0),
+                    PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+                )
+            };
+            let compiled = compile_request(
+                ProblemSpecification::new(
+                    science(),
+                    reconstruction,
+                    weighting(),
+                    ProductRequirements::new(
+                        requested,
+                        ProductNormalization::UnitResponse,
+                        RestoringBeamPolicy::PerPlane,
+                        validity,
+                    ),
+                    read_only_transaction(),
+                    numerics(false),
+                ),
+                inputs(false),
+            )
+            .expect("storage contract matrix");
+            let graph = compiled.product_graph();
+            let terms = if taylor {
+                vec![ProductTerm::Taylor(0), ProductTerm::Taylor(1)]
+            } else {
+                vec![ProductTerm::Single]
+            };
+            let pb_mask = ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(
+                validity.primary_beam(),
+            ));
+            for term in terms {
+                let psf = graph.node(ProductRole::Psf(term)).unwrap();
+                assert_eq!(psf.unit(), ProductUnit::JyPerBeam);
+                assert_eq!(psf.storage().unit(), None);
+                assert_eq!(psf.storage().pixel_mask(), ProductPixelMask::Absent);
+                let residual = graph.node(ProductRole::Residual(term)).unwrap();
+                assert_eq!(residual.unit(), ProductUnit::JyPerBeam);
+                assert_eq!(residual.storage().unit(), None);
+                assert!(!residual.storage().attach_beam());
+                assert_eq!(residual.validity(), ProductValidityRule::FinalNormalState);
+                let image = graph.node(ProductRole::RestoredImage(term)).unwrap();
+                assert_eq!(image.storage().unit(), Some(ProductUnit::JyPerBeam));
+                assert!(image.storage().attach_beam());
+                for member in [residual, image] {
+                    assert_eq!(
+                        member.storage().pixel_mask(),
+                        if mask == UncorrectedImageMaskPolicy::PrimaryBeam {
+                            pb_mask
+                        } else {
+                            ProductPixelMask::Absent
+                        }
+                    );
+                }
+                assert_eq!(
+                    graph
+                        .node(ProductRole::PbCorrectedImage(term))
+                        .unwrap()
+                        .storage()
+                        .pixel_mask(),
+                    pb_mask
+                );
+            }
+            let response_term = if taylor {
+                ProductTerm::Taylor(0)
+            } else {
+                ProductTerm::Single
+            };
+            assert_eq!(
+                graph
+                    .node(ProductRole::PrimaryBeam(response_term))
+                    .unwrap()
+                    .storage()
+                    .pixel_mask(),
+                pb_mask
+            );
+            if taylor {
+                assert_eq!(
+                    graph
+                        .node(ProductRole::PrimaryBeam(ProductTerm::Taylor(1)))
+                        .unwrap()
+                        .storage()
+                        .pixel_mask(),
+                    ProductPixelMask::Absent
+                );
+                for role in [ProductRole::SpectralIndex, ProductRole::SpectralIndexError] {
+                    assert_eq!(
+                        graph.node(role).unwrap().storage().pixel_mask(),
+                        ProductPixelMask::Explicit(ProductValidityRule::Taylor(validity.taylor()))
+                    );
+                }
+                assert_eq!(
+                    graph
+                        .node(ProductRole::PbCorrectedSpectralIndex)
+                        .unwrap()
+                        .storage()
+                        .pixel_mask(),
+                    ProductPixelMask::Explicit(ProductValidityRule::TaylorAndPrimaryBeam {
+                        taylor: validity.taylor(),
+                        primary_beam: validity.primary_beam(),
+                    })
+                );
+            }
+        }
     }
 }
 
@@ -1046,8 +1212,8 @@ fn product_graph_identity_is_content_derived_and_stable_across_unrelated_problem
     assert_eq!(
         first.product_graph().graph_id().as_bytes(),
         [
-            139, 130, 57, 178, 38, 63, 150, 135, 182, 215, 213, 237, 156, 152, 40, 187, 235, 26,
-            221, 172, 147, 63, 210, 224, 10, 236, 117, 22, 5, 151, 235, 95,
+            226, 86, 70, 9, 128, 137, 8, 177, 64, 235, 56, 129, 92, 254, 223, 99, 204, 213, 226,
+            23, 33, 81, 13, 186, 217, 0, 75, 136, 230, 104, 29, 122,
         ]
     );
 }
@@ -1676,7 +1842,7 @@ fn canonical_identity_normalizes_signed_zero_but_changes_with_science() {
         positive_zero.weighting().commitment_id()
     );
     assert_ne!(positive_zero.problem_id(), changed.problem_id());
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 23);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 24);
 }
 
 #[test]
@@ -2140,13 +2306,13 @@ fn invalid_polarization_is_a_reconstruction_contract_error() {
 }
 
 #[test]
-fn compiled_problem_identity_has_a_pinned_schema_twenty_digest() {
+fn compiled_problem_identity_has_a_pinned_schema_twenty_four_digest() {
     let compiled = compile_request(specification(false), inputs(false)).expect("compile problem");
 
-    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 23);
+    assert_eq!(casa_imaging_model::CompiledProblemId::SCHEMA_VERSION, 24);
     assert_eq!(
         compiled.problem_id().to_string(),
-        "ead5796690bd3ce87c2f86634c5fc896f4dcf8abbc7cb49387985c1162ed525a"
+        "34295fbeea2413a7fdeb2e511931b17e0204c332597454fe04c7a6bf89a1aefc"
     );
     let lifecycle = casa_imaging_model::LogicalIdentity::from_sha256(
         compiled.model_lifecycle().contract_id().as_bytes(),

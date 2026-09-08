@@ -4895,14 +4895,14 @@ fn specification_with_science(
                 PrimaryBeamValidityPolicy::new(
                     0.2,
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )
                 .expect("valid PB policy"),
                 TaylorValidityPolicy::new(
                     TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
                     0.1,
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )
                 .expect("valid Taylor policy"),
             ),

@@ -4424,7 +4424,7 @@ mod tests {
                 casa_imaging_model::PrimaryBeamValidityPolicy::new(
                     0.0001,
                     casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-                    casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+                    casa_imaging_model::ProductBlankingPolicy::Zero,
                 )
                 .unwrap(),
             )

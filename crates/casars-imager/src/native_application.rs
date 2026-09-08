@@ -198,7 +198,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
         gain: f64::from(config.gain),
         threshold_jy: f64::from(config.threshold_jy),
         psf_cutoff: config.psf_cutoff,
-        primary_beam_cutoff: config.mosaic_pb_limit.abs(),
+        primary_beam_limit: config.mosaic_pb_limit,
         normalization: if direction_dependent {
             match config.normalization {
                 AwProjectNormalization::FlatNoise => ProductNormalization::FlatNoise,
@@ -661,6 +661,14 @@ mod tests {
                 ResourcePolicy::Balanced,
                 "{mode} explicit parallel request"
             );
+        }
+    }
+
+    #[test]
+    fn t55_application_request_preserves_signed_primary_beam_limit() {
+        for pblimit in ["0.2", "-0.2"] {
+            let request = application_request(&config(&["--pblimit", pblimit])).unwrap();
+            assert_eq!(request.primary_beam_limit, pblimit.parse::<f32>().unwrap());
         }
     }
 

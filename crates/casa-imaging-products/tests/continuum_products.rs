@@ -158,14 +158,14 @@ fn validity() -> ProductValidityPolicies {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam policy"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -582,27 +582,6 @@ fn run_round_with_contributions(
     samples: Vec<SelectedObservationSample>,
     contributions: fn(&SelectedObservationSample) -> SelectedSpectralContributions,
 ) -> ContinuumRound {
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(attempt_byte),
-        7,
-    )
-    .expect("bind model lifecycle");
-    let named = lifecycle.initial_empty().expect("empty named generation");
-
-    // One pending delta so the final model is non-trivial.
-    let delta = lifecycle
-        .compile_delta(
-            &named,
-            [casa_imaging_model::ModelDeltaTerm::new(
-                casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
-                casa_imaging_model::ModelValue::new(0.75).expect("finite value"),
-            )],
-        )
-        .expect("pending delta");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("prepare model");
-
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -614,32 +593,18 @@ fn run_round_with_contributions(
     let (blocks, summary) = replay(&generation, problem, &plan, &samples, contributions);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
-    let specification =
-        SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
+    run_product_fixture_cycles(
+        problem,
+        attempt_byte,
+        &plan,
+        &generation,
+        (blocks, summary),
+        selected_generation,
+        [casa_imaging_model::ModelDeltaTerm::new(
+            casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
+            casa_imaging_model::ModelValue::new(0.75).expect("finite value"),
+        )],
     )
-    .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
-    let mut state = prepared
-        .begin(problem, &generation)
-        .expect("begin complete-data owner");
-    state
-        .bind_major_cycle_model(preparation.final_model(), None)
-        .expect("bind exact final model before replay");
-    for block in &blocks {
-        state.consume_block(block).expect("consume weighted block");
-    }
-    let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected_generation, None)
-        .expect("complete T19 evidence");
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle)
-        .expect("atomic Major-Cycle reconciliation");
-    ContinuumRound { join: joined }
 }
 
 fn run_two_domain_round(
@@ -647,30 +612,6 @@ fn run_two_domain_round(
     attempt_byte: u8,
 ) -> ContinuumRound {
     let runs = two_domain_fixture_runs(problem);
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(attempt_byte),
-        7,
-    )
-    .expect("bind model lifecycle");
-    let named = lifecycle.initial_empty().expect("empty named generation");
-    let delta = lifecycle
-        .compile_delta(
-            &named,
-            [
-                casa_imaging_model::ModelDeltaTerm::new(
-                    casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
-                    casa_imaging_model::ModelValue::new(0.75).expect("main model value"),
-                ),
-                casa_imaging_model::ModelDeltaTerm::new(
-                    casa_imaging_model::ModelCell::new(1, 0, 0, [2, 1]),
-                    casa_imaging_model::ModelValue::new(0.25).expect("outlier model value"),
-                ),
-            ],
-        )
-        .expect("two-domain delta");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("prepare model");
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -731,32 +672,92 @@ fn run_two_domain_round(
         blocks.push(block);
     }
 
-    let specification =
-        SpectralOperatorSpecification::new(problem).expect("two-domain specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
+    run_product_fixture_cycles(
+        problem,
+        attempt_byte,
+        &plan,
+        &generation,
+        (blocks, summary),
+        selected_generation,
+        [
+            casa_imaging_model::ModelDeltaTerm::new(
+                casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
+                casa_imaging_model::ModelValue::new(0.75).expect("main model value"),
+            ),
+            casa_imaging_model::ModelDeltaTerm::new(
+                casa_imaging_model::ModelCell::new(1, 0, 0, [2, 1]),
+                casa_imaging_model::ModelValue::new(0.25).expect("outlier model value"),
+            ),
+        ],
     )
-    .expect("two-domain workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
-    let mut state = prepared
-        .begin(problem, &generation)
-        .expect("begin complete-data owner");
-    state
-        .bind_major_cycle_model(preparation.final_model(), None)
-        .expect("bind two-domain model");
-    for block in &blocks {
-        state.consume_block(block).expect("consume weighted block");
+}
+
+fn run_product_fixture_cycles(
+    problem: &casa_imaging_model::CompiledProblem,
+    attempt_byte: u8,
+    plan: &WeightingPlan,
+    generation: &WeightingAlgorithmState,
+    replay: (Vec<WeightingReplayChunk>, WeightingReplaySummary),
+    selected_generation: SelectedObservationGenerationId,
+    delta_terms: impl IntoIterator<Item = casa_imaging_model::ModelDeltaTerm>,
+) -> ContinuumRound {
+    let (blocks, summary) = replay;
+    let run = |lifecycle: &mut ModelLifecycle,
+               preparation: MajorCyclePreparation,
+               prior: Option<casa_imaging_reconstruction::FinalNormalState>| {
+        let specification = SpectralOperatorSpecification::new(problem).expect("specification");
+        let pass = if prior.is_some() {
+            SpectralOperatorPass::ResidualRefresh
+        } else {
+            SpectralOperatorPass::InitialMajor
+        };
+        let workload =
+            spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
+                .expect("workload");
+        let prepared =
+            prepare_spectral_operator(specification, workload).expect("prepare operator");
+        let mut state = prepared
+            .begin(problem, generation)
+            .expect("begin complete-data owner");
+        state
+            .bind_major_cycle_model(preparation.final_model(), prior)
+            .expect("bind exact model");
+        for block in &blocks {
+            state.consume_block(block).expect("consume weighted block");
+        }
+        let evidence: CompleteDataOwnerResult = state
+            .complete(&summary, selected_generation, None)
+            .expect("complete evidence");
+        MajorCycleOwner::from_complete_data(evidence, preparation)
+            .expect("major-cycle owner")
+            .reconcile(lifecycle)
+            .expect("reconcile")
+    };
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(attempt_byte),
+        7,
+    )
+    .expect("initial lifecycle");
+    let named = lifecycle.initial_empty().expect("empty model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("initial model");
+    let (normal, continuation) = run(&mut lifecycle, preparation, None).into_continuation();
+    let (mut lifecycle, named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(attempt_byte),
+        8,
+        continuation,
+    )
+    .expect("continued lifecycle");
+    let delta = lifecycle
+        .compile_delta(&named, delta_terms)
+        .expect("nonzero model delta");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final model");
+    ContinuumRound {
+        join: run(&mut lifecycle, preparation, Some(normal)),
     }
-    let evidence = state
-        .complete(&summary, selected_generation, None)
-        .expect("complete two-domain evidence");
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("two-domain reconciliation");
-    ContinuumRound { join: joined }
 }
 
 fn rerun_two_domain_with_masks(
@@ -973,31 +974,26 @@ fn prechange_commitment_bytes(
 }
 
 #[test]
-fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
+fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity() {
     const CONSTANT_DIGEST: [u8; 32] = [
-        0xe3, 0xe5, 0x7c, 0x95, 0x4a, 0xb0, 0x46, 0x0b, 0xec, 0xd2, 0x2b, 0xf9, 0x26, 0x61, 0xc6,
-        0x7f, 0x71, 0xb1, 0x6b, 0x8f, 0xdb, 0xcf, 0xea, 0x70, 0xb0, 0x92, 0x2a, 0x41, 0x9c, 0x01,
-        0x12, 0xc2,
+        5, 157, 124, 217, 41, 58, 172, 225, 35, 73, 181, 215, 147, 202, 230, 43, 102, 198, 118, 94,
+        34, 21, 19, 149, 157, 210, 141, 44, 102, 74, 20, 20,
     ];
     const CHANNEL_DIGEST: [u8; 32] = [
-        0xc2, 0xd7, 0xfe, 0x01, 0x06, 0xe3, 0xa3, 0x16, 0xcf, 0x62, 0x91, 0xb6, 0x37, 0x01, 0xae,
-        0x2e, 0x3b, 0xe9, 0x64, 0xde, 0x4e, 0xe5, 0x17, 0xc3, 0xda, 0x64, 0x3a, 0x8c, 0x14, 0x36,
-        0xf6, 0x99,
+        83, 130, 167, 255, 44, 222, 18, 84, 22, 15, 187, 107, 30, 206, 96, 167, 135, 157, 7, 118,
+        39, 171, 253, 237, 7, 113, 18, 34, 114, 207, 168, 121,
     ];
-    const CONSTANT_V3_DIGEST: [u8; 32] = [
-        0xa8, 0xfa, 0x62, 0x1b, 0x7e, 0x24, 0x24, 0x37, 0xbd, 0x4a, 0x09, 0x3c, 0x74, 0x54, 0x44,
-        0x42, 0x6c, 0xbb, 0xfe, 0x55, 0xd7, 0x8f, 0xd7, 0xfe, 0xd3, 0xdf, 0x1e, 0xe3, 0x1e, 0xc1,
-        0x9a, 0x98,
+    const CONSTANT_CURRENT_DIGEST: [u8; 32] = [
+        52, 249, 155, 123, 100, 111, 20, 8, 130, 124, 180, 42, 249, 93, 202, 200, 185, 58, 58, 32,
+        141, 100, 109, 108, 128, 187, 98, 248, 31, 130, 115, 192,
     ];
-    const CHANNEL_V3_DIGEST: [u8; 32] = [
-        0x95, 0xc4, 0x69, 0x1d, 0x06, 0xa5, 0x40, 0x6b, 0x93, 0xc0, 0xbf, 0x96, 0x7e, 0x04, 0x54,
-        0xa1, 0x20, 0x2f, 0x6d, 0x4c, 0x18, 0x9e, 0xec, 0x8b, 0xf1, 0x0b, 0xb7, 0x04, 0x44, 0xa9,
-        0xf6, 0x66,
+    const CHANNEL_CURRENT_DIGEST: [u8; 32] = [
+        17, 2, 239, 135, 197, 110, 183, 246, 8, 172, 30, 158, 94, 72, 238, 255, 99, 68, 87, 147,
+        151, 42, 236, 52, 79, 159, 157, 10, 233, 114, 195, 151,
     ];
-    const TAYLOR_V3_DIGEST: [u8; 32] = [
-        0xd8, 0x7e, 0x61, 0xf3, 0x96, 0x65, 0x9d, 0xd8, 0xb9, 0x7b, 0xc8, 0x4b, 0x61, 0x27, 0x9b,
-        0x25, 0xc5, 0x6a, 0x7a, 0xeb, 0x5f, 0x01, 0xac, 0x4f, 0x0b, 0xee, 0x48, 0x7b, 0xb5, 0xdb,
-        0x84, 0x8e,
+    const TAYLOR_CURRENT_DIGEST: [u8; 32] = [
+        150, 138, 198, 193, 164, 206, 155, 124, 229, 62, 97, 5, 161, 236, 66, 121, 121, 143, 83,
+        150, 109, 220, 124, 42, 9, 167, 237, 246, 222, 1, 201, 67,
     ];
 
     let constant_problem = continuum_problem(131, &CONTINUUM_PRODUCTS);
@@ -1009,8 +1005,6 @@ fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
     let constant_digest = <[u8; 32]>::from(Sha256::digest(&constant_bytes));
     assert_eq!(constant_bytes.len(), 411);
     assert_eq!(constant_bytes[200], 0, "PlaneV1 retains catalog tag zero");
-    assert_eq!(constant_digest, CONSTANT_DIGEST);
-    assert_eq!(constant_catalog.commitment_id(), CONSTANT_V3_DIGEST);
 
     let channel_problem = continuum_problem_with_reconstruction(
         133,
@@ -1037,8 +1031,6 @@ fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
         channel_bytes[200], 1,
         "ChannelSlabV1 retains catalog tag one"
     );
-    assert_eq!(channel_digest, CHANNEL_DIGEST);
-    assert_eq!(channel_catalog.commitment_id(), CHANNEL_V3_DIGEST);
 
     let taylor_products = [
         ProductKind::Psf,
@@ -1063,11 +1055,23 @@ fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
     let taylor_round = run_continuum_round(&taylor_problem, 136);
     let taylor_catalog =
         ContinuumSourceCatalog::from_major_cycle(&taylor_problem, &taylor_round.join)
-            .expect("v3 Taylor source catalog");
-    assert_eq!(taylor_catalog.commitment_id(), TAYLOR_V3_DIGEST);
-
-    assert_eq!(constant_catalog.commitment_id(), CONSTANT_V3_DIGEST);
-    assert_eq!(channel_catalog.commitment_id(), CHANNEL_V3_DIGEST);
+            .expect("current Taylor source catalog");
+    assert_eq!(
+        [
+            constant_digest,
+            channel_digest,
+            constant_catalog.commitment_id(),
+            channel_catalog.commitment_id(),
+            taylor_catalog.commitment_id()
+        ],
+        [
+            CONSTANT_DIGEST,
+            CHANNEL_DIGEST,
+            CONSTANT_CURRENT_DIGEST,
+            CHANNEL_CURRENT_DIGEST,
+            TAYLOR_CURRENT_DIGEST
+        ],
+    );
 }
 
 #[test]
@@ -1407,17 +1411,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
                     && member.contract().role() == ProductRole::CleanMask
             })
             .expect("domain mask member");
-        let expected_mask = domain
-            .sensitivity()
-            .iter()
-            .map(|value| {
-                if sum_weight > 0.0 && value.is_finite() && *value > 0.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            })
-            .collect::<Vec<_>>();
+        let expected_mask = vec![1.0; expected_shape[0] * expected_shape[1]];
         assert_eq!(mask_member.payload(), expected_mask);
     }
 }
@@ -1509,7 +1503,7 @@ fn mosaic_sensitivity_owns_normalization_primary_beam_and_valid_support() {
     let policy = PrimaryBeamValidityPolicy::new(
         0.25,
         ProductSupportComparison::StrictlyGreater,
-        ProductBlankingPolicy::ZeroAndFalseMask,
+        ProductBlankingPolicy::Zero,
     )
     .expect("valid PB policy");
     assert_eq!(sensitivity.validity(policy), [true, true, false, false]);
@@ -1834,7 +1828,7 @@ fn standard_cube_products_publish_analytic_primary_beams_per_output_channel() {
 }
 
 #[test]
-fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_validity() {
+fn clean_mask_product_is_the_committed_reconstruction_support() {
     let problem = continuum_problem(117, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 118);
     let normal = round.join.normal_state();
@@ -1877,18 +1871,10 @@ fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_vali
         published_mask.validity().iter().all(|valid| *valid),
         "the numeric CLEAN-mask support is not the product-validity mask"
     );
-    let expected = normal
-        .sensitivity()
+    let expected = mask
+        .support()
         .iter()
-        .enumerate()
-        .map(|(index, sensitivity)| {
-            let selected = mask.support()[index];
-            if selected && sensitivity.is_finite() && *sensitivity > 0.0 {
-                1.0
-            } else {
-                0.0
-            }
-        })
+        .map(|selected| if *selected { 1.0 } else { 0.0 })
         .collect::<Vec<_>>();
     assert_eq!(published_mask.payload(), expected);
 }
@@ -2119,20 +2105,7 @@ fn sealed_members_carry_the_complete_graph_contract() {
         .expect("mask member");
     assert_eq!(mask.resolved_beam(), None);
 
-    // The mask is the actual usable-sensitivity support of this state.
-    let expected_mask: Vec<f32> = round
-        .join
-        .normal_state()
-        .sensitivity()
-        .iter()
-        .map(|value| {
-            if *value > 0.0 && value.is_finite() {
-                1.0
-            } else {
-                0.0
-            }
-        })
-        .collect();
+    let expected_mask = vec![1.0; SHAPE[0] * SHAPE[1]];
     assert_eq!(mask.payload(), expected_mask);
 }
 

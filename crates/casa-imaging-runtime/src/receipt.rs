@@ -7857,7 +7857,7 @@ fn product_support_comparison(value: ProductSupportComparison) -> &'static str {
 
 fn product_blanking(value: ProductBlankingPolicy) -> &'static str {
     match value {
-        ProductBlankingPolicy::ZeroAndFalseMask => "zero_and_false_mask",
+        ProductBlankingPolicy::Zero => "zero_and_false_mask",
     }
 }
 

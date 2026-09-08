@@ -15,7 +15,7 @@ use crate::{
 };
 
 const PRODUCT_GRAPH_IDENTITY_DOMAIN: &[u8] = b"casa-rs-product-graph";
-const PRODUCT_GRAPH_IDENTITY_VERSION: u32 = 3;
+const PRODUCT_GRAPH_IDENTITY_VERSION: u32 = 4;
 
 /// Stable compiler-derived identity of one complete product topology.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -229,7 +229,7 @@ pub enum ProductBeamRule {
     Metadata(RestoringBeamPolicy),
 }
 
-/// Valid support carried by one product, distinct from a reconstruction mask.
+/// Support predicate reused by numerical blanking and stored pixel masks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductValidityRule {
     /// Every represented pixel is valid.
@@ -247,6 +247,48 @@ pub enum ProductValidityRule {
         /// Exact primary-beam support policy.
         primary_beam: PrimaryBeamValidityPolicy,
     },
+}
+
+/// Exact presence and support of a stored pixel mask.
+///
+/// An explicit all-true mask is distinct from an absent mask. Neither choice
+/// changes numerical normalization or the reconstruction owner's search mask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductPixelMask {
+    /// No named/default pixel mask is stored.
+    Absent,
+    /// Store the support predicate as an explicit default pixel mask.
+    Explicit(ProductValidityRule),
+}
+
+/// Compiler-owned metadata to serialize alongside a product's numeric payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProductStorageContract {
+    pixel_mask: ProductPixelMask,
+    unit: Option<ProductUnit>,
+    attach_beam: bool,
+}
+
+impl ProductStorageContract {
+    /// Return the required mask presence and support, including all-true masks.
+    #[must_use]
+    pub const fn pixel_mask(self) -> ProductPixelMask {
+        self.pixel_mask
+    }
+
+    /// Return the serialized unit, or an explicitly empty unit label.
+    ///
+    /// The node's scientific unit remains available independently.
+    #[must_use]
+    pub const fn unit(self) -> Option<ProductUnit> {
+        self.unit
+    }
+
+    /// Whether the product's resolved scientific beam metadata is attached.
+    #[must_use]
+    pub const fn attach_beam(self) -> bool {
+        self.attach_beam
+    }
 }
 
 /// Backend-independent logical schema of a product payload.
@@ -273,6 +315,7 @@ pub struct ProductNode {
     normalization: Option<ProductNormalization>,
     beam: ProductBeamRule,
     validity: ProductValidityRule,
+    storage: ProductStorageContract,
     schema: ProductSchema,
     dependencies: Box<[ProductNodeId]>,
 }
@@ -320,10 +363,16 @@ impl ProductNode {
         self.beam
     }
 
-    /// Return the output-validity rule.
+    /// Return the numerical-support rule, independently of the stored mask.
     #[must_use]
     pub const fn validity(&self) -> ProductValidityRule {
         self.validity
+    }
+
+    /// Return the exact stored mask, unit label, and beam-attachment contract.
+    #[must_use]
+    pub const fn storage(&self) -> ProductStorageContract {
+        self.storage
     }
 
     /// Return the backend-independent logical payload schema.
@@ -844,17 +893,44 @@ impl<'a> GraphBuilder<'a> {
 
     fn normalized_image_validity(&self) -> ProductValidityRule {
         match self.products.normalization() {
-            ProductNormalization::UnitResponse => match self.products.validity().unit_response() {
-                crate::UnitResponseValidityPolicy::FinalNormalState => {
-                    ProductValidityRule::FinalNormalState
-                }
-                crate::UnitResponseValidityPolicy::PrimaryBeam => {
-                    ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
-                }
-            },
+            ProductNormalization::UnitResponse => ProductValidityRule::FinalNormalState,
             ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
                 ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam())
             }
+        }
+    }
+
+    fn storage_contract(&self, projection: &NodeProjection) -> ProductStorageContract {
+        let primary_beam =
+            ProductValidityRule::PrimaryBeam(self.products.validity().primary_beam());
+        let pixel_mask = match projection.role {
+            ProductRole::Residual(_) | ProductRole::RestoredImage(_) => {
+                match self.products.validity().uncorrected_mask() {
+                    crate::UncorrectedImageMaskPolicy::None => ProductPixelMask::Absent,
+                    crate::UncorrectedImageMaskPolicy::PrimaryBeam => {
+                        ProductPixelMask::Explicit(primary_beam)
+                    }
+                }
+            }
+            ProductRole::PrimaryBeam(term) if term == self.primary_beam_term() => {
+                ProductPixelMask::Explicit(primary_beam)
+            }
+            ProductRole::PbCorrectedImage(_)
+            | ProductRole::SpectralIndex
+            | ProductRole::SpectralIndexError
+            | ProductRole::PbCorrectedSpectralIndex => {
+                ProductPixelMask::Explicit(projection.validity)
+            }
+            _ => ProductPixelMask::Absent,
+        };
+        ProductStorageContract {
+            pixel_mask,
+            unit: match projection.role {
+                ProductRole::Psf(_) | ProductRole::Residual(_) => None,
+                _ => Some(projection.unit),
+            },
+            attach_beam: projection.beam != ProductBeamRule::None
+                && !matches!(projection.role, ProductRole::Residual(_)),
         }
     }
 
@@ -961,6 +1037,7 @@ impl<'a> GraphBuilder<'a> {
             .node_ids
             .insert((domain_index, projection.role), node_id);
         debug_assert!(previous.is_none());
+        let storage = self.storage_contract(&projection);
         self.nodes.push(ProductNode {
             node_id,
             role: projection.role,
@@ -975,6 +1052,7 @@ impl<'a> GraphBuilder<'a> {
             normalization: projection.normalization,
             beam: projection.beam,
             validity: projection.validity,
+            storage,
             schema: projection.schema,
             dependencies,
         });
@@ -1193,13 +1271,7 @@ fn encode_node(encoder: &mut CanonicalEncoder, node: &ProductNode) {
     for coordinate in &node.axes.polarization {
         encoder.u8(polarization_tag(*coordinate));
     }
-    encoder.u8(match node.unit {
-        ProductUnit::NotApplicable => 0,
-        ProductUnit::JyPerBeam => 1,
-        ProductUnit::JyPerPixel => 2,
-        ProductUnit::Dimensionless => 3,
-        ProductUnit::VisibilityWeight => 4,
-    });
+    encode_unit(encoder, node.unit);
     match node.normalization {
         Some(normalization) => {
             encoder.u8(1);
@@ -1209,6 +1281,21 @@ fn encode_node(encoder: &mut CanonicalEncoder, node: &ProductNode) {
     }
     encode_beam_rule(encoder, node.beam);
     encode_validity_rule(encoder, node.validity);
+    match node.storage.pixel_mask {
+        ProductPixelMask::Absent => encoder.u8(0),
+        ProductPixelMask::Explicit(rule) => {
+            encoder.u8(1);
+            encode_validity_rule(encoder, rule);
+        }
+    }
+    match node.storage.unit {
+        None => encoder.u8(0),
+        Some(unit) => {
+            encoder.u8(1);
+            encode_unit(encoder, unit);
+        }
+    }
+    encoder.u8(u8::from(node.storage.attach_beam));
     encoder.u8(match node.schema {
         ProductSchema::ImageF32V1 => 0,
         ProductSchema::LogicalCollectionV1 => 1,
@@ -1219,6 +1306,16 @@ fn encode_node(encoder: &mut CanonicalEncoder, node: &ProductNode) {
     for dependency in &node.dependencies {
         encoder.usize(dependency.ordinal());
     }
+}
+
+fn encode_unit(encoder: &mut CanonicalEncoder, unit: ProductUnit) {
+    encoder.u8(match unit {
+        ProductUnit::NotApplicable => 0,
+        ProductUnit::JyPerBeam => 1,
+        ProductUnit::JyPerPixel => 2,
+        ProductUnit::Dimensionless => 3,
+        ProductUnit::VisibilityWeight => 4,
+    });
 }
 
 fn encode_role(encoder: &mut CanonicalEncoder, role: ProductRole) {
@@ -1331,7 +1428,7 @@ fn encode_support_comparison(encoder: &mut CanonicalEncoder, comparison: Product
 
 fn encode_blanking(encoder: &mut CanonicalEncoder, blanking: ProductBlankingPolicy) {
     encoder.u8(match blanking {
-        ProductBlankingPolicy::ZeroAndFalseMask => 0,
+        ProductBlankingPolicy::Zero => 0,
     });
 }
 

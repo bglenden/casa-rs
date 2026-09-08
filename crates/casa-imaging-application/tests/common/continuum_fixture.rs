@@ -147,6 +147,13 @@ pub(super) fn spectral_line_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+pub(super) fn vla_spectral_line_measurement_set(root: &Path) -> PathBuf {
+    let mut options = MeasurementSetFixtureOptions::new(true, true, 4, 1, 2, 1, false)
+        .with_vla_observation_metadata();
+    options.native_evla_cf = true;
+    measurement_set_fixture(root, "vla-line-input.ms", options)
+}
+
 pub(super) fn thirty_two_channel_measurement_set(root: &Path) -> PathBuf {
     measurement_set_fixture(
         root,
@@ -946,7 +953,7 @@ pub(super) fn request(
         gain: 1.0,
         threshold_jy: 0.0,
         psf_cutoff: 0.2,
-        primary_beam_cutoff: 0.2,
+        primary_beam_limit: 0.2,
         normalization: casa_imaging_model::ProductNormalization::UnitResponse,
         beam_policy: ContinuumBeamPolicy::PerPlane,
         mask: ContinuumMask::FullPlane,

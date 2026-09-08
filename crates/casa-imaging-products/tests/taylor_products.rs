@@ -200,14 +200,14 @@ fn validity_with_taylor_fraction(taylor_fraction: f32) -> ProductValidityPolicie
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("PB validity"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             taylor_fraction,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("Taylor validity"),
     )
@@ -332,7 +332,11 @@ fn taylor_problem_with_fraction(
     .expect("compile Taylor problem")
 }
 
-fn joint_problem(seed: u8, products: &[ProductKind]) -> casa_imaging_model::CompiledProblem {
+fn joint_problem(
+    seed: u8,
+    products: &[ProductKind],
+    uncorrected_mask: casa_imaging_model::UncorrectedImageMaskPolicy,
+) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
@@ -417,7 +421,7 @@ fn joint_problem(seed: u8, products: &[ProductKind]) -> casa_imaging_model::Comp
                 products.to_vec(),
                 ProductNormalization::UnitResponse,
                 RestoringBeamPolicy::Common,
-                validity(),
+                validity().with_uncorrected_mask(uncorrected_mask),
             ),
             ObservationTransactionRequirements::new(ModelColumnWrite::Disabled),
             NumericsContract::new(
@@ -618,29 +622,6 @@ fn run_round_with_terms(
     seed: u8,
     model_terms: &[(usize, f64)],
 ) -> MajorCycleCompletion {
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(seed),
-        7,
-    )
-    .expect("model lifecycle");
-    let empty = lifecycle.initial_empty().expect("empty model");
-    let delta = (!model_terms.is_empty()).then(|| {
-        lifecycle
-            .compile_delta(
-                &empty,
-                model_terms.iter().map(|(coefficient, value)| {
-                    casa_imaging_model::ModelDeltaTerm::new(
-                        casa_imaging_model::ModelCell::new(0, *coefficient, 0, [4, 4]),
-                        casa_imaging_model::ModelValue::new(*value).expect("model value"),
-                    )
-                }),
-            )
-            .expect("model delta")
-    });
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, empty, delta).expect("preparation");
-    let final_model_generation = preparation.final_model_generation();
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -650,40 +631,85 @@ fn run_round_with_terms(
     let selected = selected_generation(problem, &samples);
     let generation = weighting_generation(problem, &plan, &samples).expect("weighting generation");
     let (blocks, summary) = replay(&generation, problem, &plan, &samples);
-    let specification =
-        SpectralOperatorSpecification::new(problem).expect("spectral specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
+    let run = |lifecycle: &mut ModelLifecycle,
+               preparation: MajorCyclePreparation,
+               prior: Option<casa_imaging_reconstruction::FinalNormalState>| {
+        let final_model_generation = preparation.final_model_generation();
+        let specification =
+            SpectralOperatorSpecification::new(problem).expect("spectral specification");
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            if prior.is_some() {
+                SpectralOperatorPass::ResidualRefresh
+            } else {
+                SpectralOperatorPass::InitialMajor
+            },
+        )
+        .expect("operator workload");
+        let prepared =
+            prepare_spectral_operator(specification, workload).expect("prepare operator");
+        let mut state = prepared
+            .begin(problem, &generation)
+            .expect("begin complete-data owner");
+        state
+            .bind_major_cycle_model(preparation.final_model(), prior)
+            .expect("bind final model");
+        for block in &blocks {
+            state.consume_block(block).expect("consume block");
+        }
+        let evidence: CompleteDataOwnerResult = state
+            .complete(&summary, selected, None)
+            .expect("complete normal state");
+        let mut owner =
+            MajorCycleOwner::from_complete_data(evidence, preparation).expect("major-cycle owner");
+        if matches!(
+            problem.reconstruction().basis(),
+            ReconstructionBasis::JointContinuumLine { .. }
+        ) {
+            owner = owner
+                .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(Box::new(
+                    joint_product_masks(problem, final_model_generation),
+                )))
+                .expect("bind joint final masks");
+        }
+        owner.reconcile(lifecycle).expect("major-cycle join")
+    };
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(seed),
+        7,
     )
-    .expect("operator workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
-    let mut state = prepared
-        .begin(problem, &generation)
-        .expect("begin complete-data owner");
-    state
-        .bind_major_cycle_model(preparation.final_model(), None)
-        .expect("bind final model");
-    for block in &blocks {
-        state.consume_block(block).expect("consume block");
+    .expect("model lifecycle");
+    let empty = lifecycle.initial_empty().expect("empty model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, empty, None).expect("initial preparation");
+    let initial = run(&mut lifecycle, preparation, None);
+    if model_terms.is_empty() {
+        return initial;
     }
-    let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected, None)
-        .expect("complete normal state");
-    let mut owner =
-        MajorCycleOwner::from_complete_data(evidence, preparation).expect("major-cycle owner");
-    if matches!(
-        problem.reconstruction().basis(),
-        ReconstructionBasis::JointContinuumLine { .. }
-    ) {
-        owner = owner
-            .bind_reconstruction_masks(&ReconstructionMaskSet::Coupled(Box::new(
-                joint_product_masks(problem, final_model_generation),
-            )))
-            .expect("bind joint final masks");
-    }
-    owner.reconcile(&mut lifecycle).expect("major-cycle join")
+    let (normal, continuation) = initial.into_continuation();
+    let (mut lifecycle, named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(seed),
+        8,
+        continuation,
+    )
+    .expect("continued lifecycle");
+    let delta = lifecycle
+        .compile_delta(
+            &named,
+            model_terms.iter().map(|(coefficient, value)| {
+                casa_imaging_model::ModelDeltaTerm::new(
+                    casa_imaging_model::ModelCell::new(0, *coefficient, 0, [4, 4]),
+                    casa_imaging_model::ModelValue::new(*value).expect("model value"),
+                )
+            }),
+        )
+        .expect("model delta");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final preparation");
+    run(&mut lifecycle, preparation, Some(normal))
 }
 
 fn seal(
@@ -739,6 +765,7 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
             ProductKind::SumWeights,
             ProductKind::Mask,
         ],
+        casa_imaging_model::UncorrectedImageMaskPolicy::None,
     );
     let join = run_round_with_terms(&problem, 146, &[(0, 1.0), (1, 2.0)]);
     let masks = joint_product_masks(&problem, join.final_model().generation_id());
@@ -834,6 +861,35 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
             .filter(|value| **value == 1.0)
             .count(),
         8
+    );
+}
+
+#[test]
+fn joint_publication_rejects_unimplemented_primary_beam_masks_at_planning() {
+    let problem = joint_problem(
+        147,
+        &[
+            ProductKind::Psf,
+            ProductKind::Residual,
+            ProductKind::Model,
+            ProductKind::RestoredImage,
+        ],
+        casa_imaging_model::UncorrectedImageMaskPolicy::PrimaryBeam,
+    );
+    let join = run_round_with_terms(&problem, 147, &[(0, 1.0), (1, 2.0)]);
+    let masks = joint_product_masks(&problem, join.final_model().generation_id());
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle_with_coupled_masks(&problem, &join, &masks)
+            .expect("joint source catalog");
+    assert_eq!(
+        ProductGenerationAuthority::bind(&problem)
+            .plan(
+                &catalog,
+                &ContinuumProductControls::default()
+                    .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon),
+            )
+            .expect_err("joint publication has no PB-mask producer"),
+        ProductsError::UnsupportedProblem,
     );
 }
 
@@ -1073,23 +1129,28 @@ fn t44_standard_pb_family_uses_pb_tt0_and_does_not_invent_weight_or_alpha_pbcor(
     let join = run_round(&problem, 206);
     let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &join).expect("PB catalog");
     let authority = ProductGenerationAuthority::bind(&problem);
-    let unmodelled = authority
-        .plan(&catalog, &ContinuumProductControls::default())
-        .expect("unmodelled PB plan");
+    assert_eq!(
+        authority
+            .plan(&catalog, &ContinuumProductControls::default())
+            .expect_err("requested PB needs a bound model at planning"),
+        ProductsError::UnsupportedProblem
+    );
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
     let planned = authority
         .plan(&catalog, &controls)
         .expect("analytic PB plan");
-    assert_ne!(planned.generation_id(), unmodelled.generation_id());
+    let alternate = authority
+        .plan(
+            &catalog,
+            &ContinuumProductControls::default()
+                .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand),
+        )
+        .expect("alternate analytic PB plan");
+    assert_ne!(planned.generation_id(), alternate.generation_id());
     assert_eq!(
         planned.primary_beam_model(),
         Some(AnalyticPrimaryBeamModel::CasaEvlaCommon)
-    );
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("PB inputs");
-    assert_eq!(
-        produce_continuum_members(&unmodelled, &inputs).expect_err("requested PB needs a model"),
-        ProductsError::UnsupportedProblem
     );
     let sealed = seal_with_controls(&problem, &join, controls);
     let pb0 = member(&sealed, ".pb.tt0");

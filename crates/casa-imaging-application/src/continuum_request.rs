@@ -37,7 +37,7 @@ use casa_imaging_model::{
     ScientificContract, SelectedMainRow, SelectedRowsBuilder, SequentialContinuumTransform,
     SkyDirection, SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
     SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UnitResponseValidityPolicy,
+    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UncorrectedImageMaskPolicy,
     UvwCoordinateLaw, VisibilityColumn as OwnerVisibilityColumn, VisibilityInnerProduct,
     WProjectionContract, WeightColumn as OwnerWeightColumn, WeightDensityScope, WeightingContract,
     WeightingScheme,
@@ -425,8 +425,9 @@ pub struct ContinuumImagingRequest {
     pub threshold_jy: f64,
     /// Restoring-beam fit cutoff.
     pub psf_cutoff: f32,
-    /// Positive primary-beam support cutoff corresponding to CASA `abs(pblimit)`.
-    pub primary_beam_cutoff: f32,
+    /// Signed CASA `pblimit`: magnitude sets PB support; a negative value omits
+    /// pixel masks on uncorrected residual/restored products without changing normalization.
+    pub primary_beam_limit: f32,
     /// Direction-dependent image normalization selected by the task surface.
     pub normalization: ProductNormalization,
     /// Restoring-beam policy.
@@ -1770,12 +1771,10 @@ fn prepare(
         .and_then(|samples| samples.checked_mul(request.polarizations.len()))
         .ok_or_else(|| boxed("reconstruction model sample count overflowed"))?;
     let instrument = scientific_instrument_model(&request, &ms)?;
-    let unit_response_validity = match primary_beam_model {
-        Some(
-            casa_imaging_products::AnalyticPrimaryBeamModel::CasaAlma12mAiry
-            | casa_imaging_products::AnalyticPrimaryBeamModel::CasaAca7mAiry,
-        ) => UnitResponseValidityPolicy::PrimaryBeam,
-        _ => UnitResponseValidityPolicy::FinalNormalState,
+    let uncorrected_mask = if primary_beam_model.is_some() && request.primary_beam_limit >= 0.0 {
+        UncorrectedImageMaskPolicy::PrimaryBeam
+    } else {
+        UncorrectedImageMaskPolicy::None
     };
     let w_projection = request
         .task_requirements
@@ -1872,7 +1871,7 @@ fn prepare(
             &request,
             &prepared_spectral,
             instrument.map(|value| value.0),
-            unit_response_validity,
+            uncorrected_mask,
             w_projection,
             aw_projection,
         )?
@@ -1881,7 +1880,7 @@ fn prepare(
             &request,
             &prepared_spectral,
             instrument.map(|value| value.0),
-            unit_response_validity,
+            uncorrected_mask,
             w_projection,
             aw_projection,
         )?,
@@ -1916,9 +1915,9 @@ fn prepare(
             MinorCycleImageResponse::new(
                 request.normalization,
                 PrimaryBeamValidityPolicy::new(
-                    request.primary_beam_cutoff,
+                    request.primary_beam_limit.abs(),
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )?,
             )
             .map_err(|error| Box::new(error) as crate::ApplicationError)
@@ -2302,8 +2301,9 @@ fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::Appl
         || !request.threshold_jy.is_finite()
         || !request.psf_cutoff.is_finite()
         || request.psf_cutoff <= 0.0
-        || !request.primary_beam_cutoff.is_finite()
-        || !(0.0..1.0).contains(&request.primary_beam_cutoff)
+        || !request.primary_beam_limit.is_finite()
+        || request.primary_beam_limit == 0.0
+        || !(0.0..1.0).contains(&request.primary_beam_limit.abs())
         || (request.algorithm != ContinuumAlgorithm::Dirty
             && (request.cycle_iterations == 0 || request.maximum_major_cycles == Some(0)))
         || request
@@ -2915,7 +2915,7 @@ fn specification(
     request: &ContinuumImagingRequest,
     spectral: &PreparedSpectralAxis,
     instrument_model: Option<InstrumentModel>,
-    unit_response_validity: UnitResponseValidityPolicy,
+    uncorrected_mask: UncorrectedImageMaskPolicy,
     w_projection: Option<WProjectionContract>,
     aw_projection: Option<AwProjectionContract>,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
@@ -3059,18 +3059,18 @@ fn specification(
             },
             ProductValidityPolicies::new(
                 PrimaryBeamValidityPolicy::new(
-                    request.primary_beam_cutoff,
+                    request.primary_beam_limit.abs(),
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )?,
                 TaylorValidityPolicy::new(
                     TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
                     0.1,
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )?,
             )
-            .with_unit_response(unit_response_validity),
+            .with_uncorrected_mask(uncorrected_mask),
         ),
         ObservationTransactionRequirements::new(if request.save_model_column {
             ModelColumnWrite::SelectedRows

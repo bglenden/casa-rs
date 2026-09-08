@@ -13,9 +13,9 @@
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ModelCell, ProductAxes,
-    ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductRole,
-    ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule,
-    ReconstructionBasis, RestoringBeamPolicy,
+    ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductPixelMask,
+    ProductRole, ProductSchema, ProductStorageContract, ProductSupportComparison, ProductTerm,
+    ProductUnit, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{ModelGeneration, NormalStateCatalog, SpectralChannelValidity};
 
@@ -39,7 +39,7 @@ use crate::taylor::{
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 8;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 9;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -227,6 +227,25 @@ impl ProductGenerationAuthority {
                 .get(node_ordinal.ordinal())
                 .ok_or(ProductsError::UnsupportedProblem)?;
             ensure_producible(node.role())?;
+            let needs_primary_beam = |rule| {
+                matches!(
+                    rule,
+                    ProductValidityRule::PrimaryBeam(_)
+                        | ProductValidityRule::TaylorAndPrimaryBeam { .. }
+                )
+            };
+            let requires_primary_beam = needs_primary_beam(node.validity())
+                || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
+                    if needs_primary_beam(rule));
+            if requires_primary_beam
+                && (controls.primary_beam_model.is_none()
+                    || matches!(
+                        sources.problem().reconstruction().basis(),
+                        ReconstructionBasis::JointContinuumLine { .. }
+                    ))
+            {
+                return Err(ProductsError::UnsupportedProblem);
+            }
             let axes = node.axes();
             let shape = axes.shape();
             let payload_values = shape
@@ -253,6 +272,7 @@ impl ProductGenerationAuthority {
                 normalization: node.normalization(),
                 beam_rule: node.beam(),
                 validity: node.validity(),
+                storage: node.storage(),
                 dependencies: node.dependencies().to_vec().into_boxed_slice(),
                 artifact_id,
             });
@@ -389,6 +409,7 @@ impl ProductGenerationAuthority {
                         axes: member.axes.clone(),
                         beam_rule: member.beam_rule,
                         validity: member.validity,
+                        storage: member.storage,
                         dependencies: member.dependencies.clone(),
                     },
                     resolved_beams: sealed_beams_for_member(
@@ -485,6 +506,24 @@ fn encode_contract(encoder: &mut Encoder, node: &casa_imaging_model::ProductNode
         ProductValidityRule::Taylor(_) => 3,
         ProductValidityRule::TaylorAndPrimaryBeam { .. } => 4,
     });
+    let storage = node.storage();
+    encoder.u8(match storage.pixel_mask() {
+        ProductPixelMask::Absent => 0,
+        ProductPixelMask::Explicit(ProductValidityRule::All) => 1,
+        ProductPixelMask::Explicit(ProductValidityRule::FinalNormalState) => 2,
+        ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(_)) => 3,
+        ProductPixelMask::Explicit(ProductValidityRule::Taylor(_)) => 4,
+        ProductPixelMask::Explicit(ProductValidityRule::TaylorAndPrimaryBeam { .. }) => 5,
+    });
+    encoder.u8(match storage.unit() {
+        None => 0,
+        Some(ProductUnit::NotApplicable) => 1,
+        Some(ProductUnit::JyPerBeam) => 2,
+        Some(ProductUnit::JyPerPixel) => 3,
+        Some(ProductUnit::Dimensionless) => 4,
+        Some(ProductUnit::VisibilityWeight) => 5,
+    });
+    encoder.u8(u8::from(storage.attach_beam()));
     let axes = node.axes();
     for extent in axes.shape() {
         encoder.usize(extent);
@@ -596,6 +635,7 @@ pub struct PlannedMember {
     normalization: Option<ProductNormalization>,
     beam_rule: ProductBeamRule,
     validity: ProductValidityRule,
+    storage: ProductStorageContract,
     dependencies: Box<[ProductNodeId]>,
     artifact_id: MemberArtifactId,
 }
@@ -649,10 +689,16 @@ impl PlannedMember {
         self.beam_rule
     }
 
-    /// Return the output-validity rule of this member.
+    /// Return this member's numerical-support rule, independently of its stored mask.
     #[must_use]
     pub const fn validity(&self) -> ProductValidityRule {
         self.validity
+    }
+
+    /// Return the exact stored-mask and metadata contract.
+    #[must_use]
+    pub const fn storage(&self) -> ProductStorageContract {
+        self.storage
     }
 
     /// Return graph-node dependencies, all of which precede this node.
@@ -830,26 +876,6 @@ pub fn produce_continuum_members(
                     return Err(ProductsError::SourceLineageMismatch);
                 }
                 let output_channel = plane.output_channel;
-                let plane_validity = if member.validity == ProductValidityRule::All {
-                    None
-                } else {
-                    let plane_validity = product_plane_validity(
-                        member.validity,
-                        &plane,
-                        planned.primary_beam_model,
-                        inputs,
-                        member.axes().domain(),
-                    )?;
-                    scatter_image_polarization_plane(
-                        &mut validity,
-                        member.axes(),
-                        polarization,
-                        output_channel,
-                        plane_shape,
-                        &plane_validity,
-                    )?;
-                    Some(plane_validity)
-                };
                 if matches!(member.role, ProductRole::SumWeights(_)) {
                     scatter_polarization_plane_state(
                         &mut payload,
@@ -872,8 +898,32 @@ pub fn produce_continuum_members(
                     restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
                     primary_beam_model: planned.primary_beam_model,
                 })?;
-                if let Some(plane_validity) = plane_validity.as_deref() {
-                    zero_invalid_plane_values(&mut plane_payload, plane_validity)?;
+                if member.validity != ProductValidityRule::All {
+                    let support = product_plane_validity(
+                        member.validity,
+                        &plane,
+                        planned.primary_beam_model,
+                        inputs,
+                        member.axes().domain(),
+                    )?;
+                    zero_invalid_plane_values(&mut plane_payload, &support)?;
+                }
+                if let ProductPixelMask::Explicit(rule) = member.storage.pixel_mask() {
+                    let support = product_plane_validity(
+                        rule,
+                        &plane,
+                        planned.primary_beam_model,
+                        inputs,
+                        member.axes().domain(),
+                    )?;
+                    scatter_image_polarization_plane(
+                        &mut validity,
+                        member.axes(),
+                        polarization,
+                        output_channel,
+                        plane_shape,
+                        &support,
+                    )?;
                 }
                 scatter_image_polarization_plane(
                     &mut payload,
@@ -936,13 +986,14 @@ fn produce_taylor_members(
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         let payload = products.payload(member.role)?;
-        let validity = if matches!(
-            member.validity,
-            ProductValidityRule::All | ProductValidityRule::FinalNormalState
-        ) {
-            vec![true; member.payload_values]
-        } else {
-            products.validity(member.validity)?
+        let validity = match member.storage.pixel_mask() {
+            ProductPixelMask::Absent
+            | ProductPixelMask::Explicit(
+                ProductValidityRule::All | ProductValidityRule::FinalNormalState,
+            ) => {
+                vec![true; member.payload_values]
+            }
+            ProductPixelMask::Explicit(rule) => products.validity(rule)?,
         };
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {
@@ -1041,7 +1092,7 @@ fn produce_joint_members(
     });
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
-        let (payload, validity) = produce_joint_member(
+        let (payload, mut validity) = produce_joint_member(
             member,
             inputs,
             shape,
@@ -1051,6 +1102,9 @@ fn produce_joint_members(
             fitted_beam,
             restoring_beam,
         )?;
+        if member.storage.pixel_mask() == ProductPixelMask::Absent {
+            validity.fill(true);
+        }
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {
                 expected: member.payload_values,
@@ -1546,20 +1600,7 @@ fn produce_plane_member(
             )
         }
         ProductRole::CleanMask => {
-            let mask = reconstruction_mask_for_domain(inputs, member.axes().domain())?;
-            Ok(plane
-                .sensitivity
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    let selected = mask.is_none_or(|mask| mask.support()[index]);
-                    if valid && selected && *value > 0.0 && value.is_finite() {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                })
-                .collect())
+            reconstruction_support_plane(inputs, member.axes().domain(), cells)
         }
         role => Err(ProductsError::UnsupportedProductRole {
             role,
@@ -1626,7 +1667,24 @@ fn restored_plane(
     Ok(restored)
 }
 
-pub(crate) fn reconstruction_mask_for_domain<'a>(
+pub(crate) fn reconstruction_support_plane(
+    inputs: &ContinuumProductInputs<'_>,
+    role: &ImageDomainRole,
+    cells: usize,
+) -> Result<Vec<f32>, ProductsError> {
+    let mask = reconstruction_mask_for_domain(inputs, role)?;
+    Ok((0..cells)
+        .map(|index| {
+            if mask.is_none_or(|mask| mask.support()[index]) {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect())
+}
+
+fn reconstruction_mask_for_domain<'a>(
     inputs: &'a ContinuumProductInputs<'_>,
     role: &ImageDomainRole,
 ) -> Result<Option<&'a casa_imaging_reconstruction::ReconstructionMask>, ProductsError> {
@@ -1901,6 +1959,7 @@ pub struct SealedMemberContract {
     axes: ProductAxes,
     beam_rule: ProductBeamRule,
     validity: ProductValidityRule,
+    storage: ProductStorageContract,
     dependencies: Box<[ProductNodeId]>,
 }
 
@@ -1935,10 +1994,16 @@ impl SealedMemberContract {
         self.beam_rule
     }
 
-    /// Return the output-validity rule.
+    /// Return the numerical-support rule, independently of the stored mask.
     #[must_use]
     pub const fn validity(&self) -> ProductValidityRule {
         self.validity
+    }
+
+    /// Return the exact stored-mask and metadata contract authorized for publication.
+    #[must_use]
+    pub const fn storage(&self) -> ProductStorageContract {
+        self.storage
     }
 
     /// Return graph-node dependencies, all of which precede this node.
@@ -2017,12 +2082,12 @@ impl SealedMember {
         &self.payload
     }
 
-    /// Borrow the sealed product-validity mask in the same storage order as
+    /// Borrow the sealed stored-mask support in the same storage order as
     /// the numeric payload.
     ///
-    /// This is independent of the numeric CLEAN-mask product. Invalid or
-    /// unmapped spectral planes are false here even when a CASA-compatible
-    /// persistence beam placeholder is later required.
+    /// This is independent of numerical blanking and the numeric CLEAN-mask
+    /// product. An absent stored mask has all-true support; an explicit mask
+    /// follows the compiled storage contract even on blank spectral planes.
     #[must_use]
     pub fn validity(&self) -> &[bool] {
         &self.validity

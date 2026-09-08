@@ -28,7 +28,7 @@ pub use compiled_problem::{
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
     SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UnitResponseValidityPolicy,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UncorrectedImageMaskPolicy,
     UvTaper, WProjectionContract, WProjectionContractError, WeightDensityScope, WeightingContract,
     WeightingScheme, compile, validate_compiled_problem_identity,
 };
@@ -110,8 +110,8 @@ pub use selected_observation_sample::{
 
 pub use product_graph::{
     IndependentProductStoreProtocol, ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph,
-    ProductGraphId, ProductNode, ProductNodeId, ProductPublication, ProductRole, ProductSchema,
-    ProductTerm, ProductUnit, ProductValidityRule,
+    ProductGraphId, ProductNode, ProductNodeId, ProductPixelMask, ProductPublication, ProductRole,
+    ProductSchema, ProductStorageContract, ProductTerm, ProductUnit, ProductValidityRule,
 };
 
 pub use transaction::{

@@ -33,7 +33,7 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 23;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 24;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
 const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
@@ -1356,19 +1356,19 @@ pub enum ProductSupportComparison {
     StrictlyGreater,
 }
 
-/// Persisted treatment of pixels outside a product's valid support.
+/// Numerical treatment of pixels outside a product's valid support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductBlankingPolicy {
-    /// Store numeric zero and mark the corresponding validity mask false.
-    ZeroAndFalseMask,
+    /// Store numeric zero, independently of any attached pixel mask.
+    Zero,
 }
 
-/// Validity source for uncorrected unit-response residual and restored images.
+/// Stored pixel-mask policy for uncorrected residual and restored images.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UnitResponseValidityPolicy {
-    /// Preserve every plane accepted by the final normal state.
-    FinalNormalState,
-    /// Restrict published pixels to the configured primary-beam support.
+pub enum UncorrectedImageMaskPolicy {
+    /// Do not attach a pixel mask; internal numerical blanking still applies.
+    None,
+    /// Attach the configured primary-beam support without changing pixel values.
     PrimaryBeam,
 }
 
@@ -1492,7 +1492,7 @@ impl TaylorValidityPolicy {
 pub struct ProductValidityPolicies {
     primary_beam: PrimaryBeamValidityPolicy,
     taylor: TaylorValidityPolicy,
-    unit_response: UnitResponseValidityPolicy,
+    uncorrected_mask: UncorrectedImageMaskPolicy,
 }
 
 impl ProductValidityPolicies {
@@ -1505,14 +1505,14 @@ impl ProductValidityPolicies {
         Self {
             primary_beam,
             taylor,
-            unit_response: UnitResponseValidityPolicy::FinalNormalState,
+            uncorrected_mask: UncorrectedImageMaskPolicy::None,
         }
     }
 
-    /// Select the validity source for uncorrected unit-response products.
+    /// Select stored-mask attachment for uncorrected products, separately from blanking.
     #[must_use]
-    pub const fn with_unit_response(mut self, unit_response: UnitResponseValidityPolicy) -> Self {
-        self.unit_response = unit_response;
+    pub const fn with_uncorrected_mask(mut self, policy: UncorrectedImageMaskPolicy) -> Self {
+        self.uncorrected_mask = policy;
         self
     }
 
@@ -1528,10 +1528,10 @@ impl ProductValidityPolicies {
         self.taylor
     }
 
-    /// Return the validity source for uncorrected unit-response products.
+    /// Return stored-mask attachment for uncorrected products.
     #[must_use]
-    pub const fn unit_response(self) -> UnitResponseValidityPolicy {
-        self.unit_response
+    pub const fn uncorrected_mask(self) -> UncorrectedImageMaskPolicy {
+        self.uncorrected_mask
     }
 }
 
@@ -3292,11 +3292,11 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         ProductSupportComparison::StrictlyGreater => 0,
     });
     encoder.u8(match primary_beam_validity.blanking() {
-        ProductBlankingPolicy::ZeroAndFalseMask => 0,
+        ProductBlankingPolicy::Zero => 0,
     });
-    encoder.u8(match products.validity.unit_response() {
-        UnitResponseValidityPolicy::FinalNormalState => 0,
-        UnitResponseValidityPolicy::PrimaryBeam => 1,
+    encoder.u8(match products.validity.uncorrected_mask() {
+        UncorrectedImageMaskPolicy::None => 0,
+        UncorrectedImageMaskPolicy::PrimaryBeam => 1,
     });
     let taylor_validity = products.validity.taylor();
     encoder.u8(match taylor_validity.reference() {
@@ -3307,7 +3307,7 @@ fn canonical_problem_identity_basis(input: ProblemIdentityInput<'_>) -> LogicalI
         ProductSupportComparison::StrictlyGreater => 0,
     });
     encoder.u8(match taylor_validity.blanking() {
-        ProductBlankingPolicy::ZeroAndFalseMask => 0,
+        ProductBlankingPolicy::Zero => 0,
     });
     encoder.usize(products.normalization_boundary.operations().len());
     for operation in products.normalization_boundary.operations() {

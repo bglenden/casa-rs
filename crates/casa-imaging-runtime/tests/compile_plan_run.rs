@@ -139,14 +139,14 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
         casa_imaging_model::PrimaryBeamValidityPolicy::new(
             0.2,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid PB policy"),
         casa_imaging_model::TaylorValidityPolicy::new(
             casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )

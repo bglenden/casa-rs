@@ -730,7 +730,7 @@ pub(super) fn full_aw_request(
         gain: f64::from(0.1_f32),
         threshold_jy: 0.0,
         psf_cutoff: 0.35,
-        primary_beam_cutoff: 0.0001,
+        primary_beam_limit: 0.0001,
         normalization: ProductNormalization::FlatNoise,
         beam_policy: ContinuumBeamPolicy::Common,
         mask: ContinuumMask::FullPlane,
