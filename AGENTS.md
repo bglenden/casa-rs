@@ -1,7 +1,7 @@
 # Agent Operating Contract
 
 Truth class: normative
-Last reality check: 2026-08-04
+Last reality check: 2026-09-07
 Verification: just docs-check
 
 ## Purpose
@@ -57,17 +57,16 @@ the smallest local patch, even when that means changing more in-repo code now.
   license, build, distribution, and maintenance effects rather than rejecting
   them because of size alone.
 - Before adding library functionality, search the existing Rust surface for
-  reusable or composable behavior. Unless repository search is already the
-  current agent's normal role, delegate that search to a sub-agent so the main
-  implementation context stays focused.
+  reusable behavior. Delegate a bounded search when it saves time alongside
+  useful local work; a direct lookup does not require an agent handoff.
 - Before implementing behavior that exists in CASA/casacore C++, inspect the
   relevant upstream task, tool, or library path and preserve its semantics
   unless there is an explicit reason to diverge.
-- Before optimizing imaging behavior, inspect the last optimized pre-cutover
-  casa-rs implementation at `fff9c2d553eace4b6a57b1df9ded4773f2263ceb`,
-  then the corresponding CASA/casacore and LibRA paths. Reuse proven
-  techniques through the current shared owners; do not restore displaced
-  packages, mode-specific duplicate paths, or old dependency direction.
+- For imaging performance, inspect the hot function and its counterpart at
+  `fff9c2d553eace4b6a57b1df9ded4773f2263ceb` early. Consult CASA/casacore
+  for science semantics and LibRA for relevant implementation techniques, not
+  as a mandatory three-repository survey before every local experiment. Reuse
+  proven mechanisms without restoring displaced packages or duplicate routes.
 - For parity or correctness differences, instrument both implementations
   instead of relying on blind parameter experiments or speculative fixes.
 - Prefer idiomatic Rust over direct C++ API mirroring; this is not a wrapper
@@ -82,10 +81,10 @@ the smallest local patch, even when that means changing more in-repo code now.
 
 ## Plan First And Anti-Slop
 
-For substantial code changes, plan the target structure before editing. Identify
-existing behavior to reuse, the canonical ownership boundary, the
-migration/deletion path, and the affected verification. A small local change
-needs only a proportionate plan; do not add ceremony for its own sake.
+For substantial structural changes, identify reuse, ownership, migration/deletion,
+and affected verification before editing. For a local change, a concrete code
+hypothesis and focused check are enough. Once the evidence distinguishes the next
+implementation decision, test it instead of extending the measurement machinery.
 
 - Prefer the simplest coherent architecture, not the smallest patch or the
   fewest lines.
