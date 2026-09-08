@@ -3,6 +3,62 @@
 use super::*;
 
 #[test]
+#[ignore = "requires the CASA-staged T53 shared-phase tiled-UVW fixture"]
+fn t53_w_cube_reads_the_current_uvw_column_after_casa_storage_replacement() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let source = PathBuf::from(std::env::var("CASA_RS_T53_DATA_ROOT").expect("T53 fixture root"))
+        .join("refim-withline-shared-phase-tiled-v2.ms");
+    let staged = root.path().join("input.ms");
+    assert!(
+        std::process::Command::new("cp")
+            .arg("-R")
+            .arg(source)
+            .arg(&staged)
+            .status()
+            .expect("copy immutable fixture")
+            .success()
+    );
+    initialize_measurement_set_owner_manifest(&staged).expect("initialize staged owner");
+    let mut imaging = request(
+        staged,
+        root.path().join("w-cube"),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.field_ids = Some(vec![0, 1]);
+    imaging.image_size = 32;
+    imaging.cell_arcsec = 8.0;
+    imaging.spectral_window = Some("0:0~3".into());
+    imaging.w_projection_planes = Some(8);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            interpolation: casa_ms::CubeInterpolation::Linear,
+            start: Some(CubeAxisValue::Channel(1)),
+            width: Some(CubeAxisValue::Channel(1)),
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(2),
+    };
+    imaging.task_requirements = vec![
+        TaskRequirement::SerialCpu,
+        TaskRequirement::SpectralCube,
+        TaskRequirement::WProjection,
+        TaskRequirement::WProjectionPlanes,
+    ];
+    let output =
+        execute_continuum(imaging).expect("read current UVW binding, not its renamed origin");
+    let weights = output
+        .outcome
+        .output
+        .scientific
+        .normal_state()
+        .sum_weights();
+    assert_eq!(weights.len(), 2);
+    assert!(weights.iter().all(|weight| *weight > 0.0));
+}
+
+#[test]
 fn t53_mosaic_cube_publishes_the_complete_casa_product_inventory() {
     if !isolated_case(
         "t53_mosaic_cube_publishes_the_complete_casa_product_inventory",

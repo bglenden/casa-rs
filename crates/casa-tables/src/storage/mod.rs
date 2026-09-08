@@ -3398,8 +3398,7 @@ impl CompositeStorage {
         let dm_seq_nr = table_dat
             .column_set
             .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
+            .get(desc_idx)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "array column '{column}' missing ColumnSet binding"
@@ -3477,8 +3476,7 @@ impl CompositeStorage {
         let dm_seq_nr = table_dat
             .column_set
             .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
+            .get(desc_idx)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "array column '{column}' missing ColumnSet binding"
