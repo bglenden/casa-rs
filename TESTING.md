@@ -76,7 +76,8 @@ CASA; CASA is used only to prepare/compare the frozen independent reference.
 These amendments are recorded in the [T52 work record](https://github.com/bglenden/casa-rs/issues/538#issuecomment-5577836559).
 
 Focused T52 gates are `t52_` model/reconstruction/application tests, the runtime
-`prepared_artifact` integration module (including `native_catalog`), existing
+`catalog` integration tests (including `native_catalog`) and `prepared_artifact`
+library tests, existing
 `prepared_aw_phase` import/reuse regressions, and the directly affected imager,
 provider and profile projection tests. The ignored frozen-cell tests require
 explicit surface/catalog paths; no CASA installation or model-data path is

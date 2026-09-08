@@ -15,6 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "resources/imaging-architecture/representative-science-matrix.json"
 SHA256 = re.compile(r"[0-9a-f]{64}")
 COMMIT = re.compile(r"[0-9a-f]{40}")
+T52_VALIDITY_RULE = (
+    "Owner-approved T52 exception: alpha and alpha.error mask mismatch fraction is "
+    "at most 1e-5, with every differing pixel reported. All other validity and "
+    "numerical requirements are unchanged."
+)
 EVIDENCE_TIERS = {
     "diagnostic_law",
     "representative_scientific_acceptance",
@@ -91,6 +96,45 @@ def require_mode_fact(
 ) -> None:
     if mode.get(field) != expected:
         failures.append(f"{identifier}: mode fact {field} must be {expected!r}")
+
+
+def native_aw_validity_is_approved(comparison: dict[str, object]) -> bool:
+    """The T52 amendment permits only bounded, fully enumerated alpha masks."""
+    mismatches = comparison.get("mask_mismatches")
+    if (
+        comparison.get("other_product_validity_exact") is not True
+        or not isinstance(mismatches, dict)
+        or set(mismatches) != {".alpha", ".alpha.error"}
+    ):
+        return False
+    for evidence in mismatches.values():
+        if not isinstance(evidence, dict):
+            return False
+        count = evidence.get("count")
+        total = evidence.get("total")
+        samples = evidence.get("samples")
+        if (
+            isinstance(count, bool)
+            or not isinstance(count, int)
+            or total != 512 * 512
+            or not 0 <= count <= total * 1e-5
+            or not isinstance(samples, list)
+            or len(samples) != count
+        ):
+            return False
+        locations = [sample.get("location") for sample in samples if isinstance(sample, dict)]
+        if len(locations) != count or any(
+            not isinstance(location, list)
+            or len(location) != 4
+            or location[2:] != [0, 0]
+            or any(isinstance(axis, bool) or not isinstance(axis, int) or not 0 <= axis < 512
+                   for axis in location[:2])
+            for location in locations
+        ) or len({tuple(location) for location in locations}) != count:
+            return False
+    return comparison.get("exact", {}).get("validity") is all(
+        evidence["count"] == 0 for evidence in mismatches.values()
+    )
 
 
 def validate_mode_contract(
@@ -185,6 +229,19 @@ def validate_mode_contract(
         require_mode_fact(identifier, mode, "casa_wprojplanes", -1, failures)
         require_mode_fact(identifier, mode, "dirty_products_compared", True, failures)
         require_mode_fact(identifier, mode, "final_prediction_model_data_compared", True, failures)
+    elif identifier == "native-aw-evla":
+        for field, expected in {
+            "gridder": "awproject", "source": "native-evla", "nterms": 2,
+            "w_planes": 32, "pointings": 9, "spectral_windows": 4,
+            "dirty_product_count": 18, "clean_product_count": 19,
+            "actual_minor_iterations": 30, "workers": 1,
+            "native_runtime_uses_casa": False, "warm_generation_cells": 0,
+        }.items():
+            require_mode_fact(identifier, mode, field, expected, failures)
+        if receipt.get("validity_rule") != T52_VALIDITY_RULE:
+            failures.append(f"{identifier}: validity amendment differs from owner approval")
+        if not native_aw_validity_is_approved(receipt.get("comparison", {})):
+            failures.append(f"{identifier}: bounded alpha validity evidence is incomplete")
 
 
 def validate_receipt(
@@ -272,9 +329,16 @@ def validate_receipt(
         if comparison.get("all_values_finite") is not True:
             failures.append(f"{identifier}: finite-value evidence is missing")
         exact = comparison.get("exact")
+        validity_pass = isinstance(exact, dict) and (
+            exact.get("validity") is True
+            or (identifier == "native-aw-evla"
+                and receipt.get("validity_rule") == T52_VALIDITY_RULE
+                and exact.get("validity") is False
+                and native_aw_validity_is_approved(comparison))
+        )
         if not isinstance(exact, dict) or any(
-            exact.get(field) is not True for field in ("topology", "wcs", "validity")
-        ):
+            exact.get(field) is not True for field in ("topology", "wcs")
+        ) or not validity_pass:
             failures.append(f"{identifier}: exact topology/WCS/validity evidence is missing")
         inventory = comparison.get("product_inventory")
         if not isinstance(inventory, dict):
@@ -353,6 +417,30 @@ def validate_receipt(
             ):
                 failures.append(f"{identifier}: external receipt binding is malformed")
         loaded = load_external_receipts(identifier, external, require_external, failures)
+        if identifier == "native-aw-evla" and loaded:
+            for role, count in (("dirty", 18), ("clean", 19)):
+                document = loaded.get(f"{role} full product comparison", {})
+                if (document.get("status") != "completed"
+                    or document.get("product_inventory", {}).get("status") != "matched"
+                    or len(document.get("products", {})) != count):
+                    failures.append(f"{identifier}: {role} full-product comparison is incomplete")
+                    continue
+                for product, result in document["products"].items():
+                    full = result.get("full_array", {})
+                    topology = full.get("topology", {})
+                    mismatches = topology.get("mask_mismatch_count", math.inf)
+                    maximum = full.get("total_elements", 0) * 1e-5 if product in {".alpha", ".alpha.error"} else 0
+                    if (not topology.get("finite_equal")
+                        or not topology.get("nonfinite_kind_equal")
+                        or mismatches > maximum
+                        or len(topology.get("mask_mismatch_samples", [])) != mismatches
+                        or result.get("direction_wcs", {}).get("status") != "matched"):
+                        failures.append(f"{identifier}: {role} {product} exceeds validity/WCS contract")
+                    if role == "clean" and product in {".alpha", ".alpha.error"}:
+                        compact = comparison.get("mask_mismatches", {}).get(product, {})
+                        if compact != {"count": mismatches, "total": full.get("total_elements"),
+                                       "samples": topology.get("mask_mismatch_samples")}:
+                            failures.append(f"{identifier}: {product} compact mask facts differ")
         if identifier == "standard-mfs-hogbom-vla" and loaded:
             serial = loaded.get("serial production execution", {})
             serial_comparison = loaded.get("serial CASA oracle comparison", {})
@@ -458,6 +546,7 @@ def main() -> int:
         590,
         591,
         535,
+        538,
     }
     missing = sorted(required - set(issues))
     extra = sorted(set(issues) - required)
