@@ -31,7 +31,7 @@ fn t51_cold_catalog_receipt_boundaries() {
         let seed = prepare_aw_projection(
             &problem(),
             ApplicationAwPreparation {
-                casa_cache: seed_casa,
+                source: crate::ApplicationAwSource::CasaImport(seed_casa),
                 private_root: root.path().join("seed-prepared"),
                 storage_domain: profile.storage_domain(),
                 resident_bytes: 1 << 20,
@@ -69,7 +69,7 @@ fn t51_cold_catalog_receipt_boundaries() {
         let phase = prepare_aw_projection(
             &problem(),
             ApplicationAwPreparation {
-                casa_cache: casa,
+                source: crate::ApplicationAwSource::CasaImport(casa),
                 private_root: root.path().join("prepared"),
                 storage_domain: profile.storage_domain(),
                 resident_bytes: 1 << 20,

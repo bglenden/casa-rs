@@ -141,7 +141,7 @@ impl EvlaApertureGrid {
         parallactic_angle_rad: f64,
     ) -> Result<Self, NativeAwGenerationError> {
         if size < 4
-            || !size.is_multiple_of(2)
+            || size % 2 != 0
             || subpixels == 0
             || size
                 .checked_mul(size)

@@ -6,7 +6,7 @@ mod evla;
 mod paired;
 
 pub use evla::{EvlaApertureGrid, EvlaApertureModel};
-pub use paired::{NativeAwPair, NativeAwPlane, evla_aw_workspace_bytes, generate_evla_aw_pair};
+pub use paired::{EvlaAwWorkspace, NativeAwPair, NativeAwPlane};
 use thiserror::Error;
 
 /// A native A/W request or numerical calculation could not be completed.

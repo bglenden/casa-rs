@@ -112,6 +112,12 @@ impl AwKernelLayout {
     fn integral_tap_count(self) -> usize {
         (self.support[0] * 2 + 1) * (self.support[1] * 2 + 1)
     }
+
+    /// Exact stored X/Y dimensions, independent of pixel origin.
+    #[must_use]
+    pub const fn shape(self) -> [usize; 2] {
+        self.shape
+    }
 }
 
 /// One dense CASA convolution plane in its stored UV coordinate layout.
@@ -284,6 +290,12 @@ impl AwPreparedCellMetadata {
     #[must_use]
     pub const fn identity(&self) -> PreparedArtifactScientificIdentity {
         self.identity
+    }
+
+    /// Validated imaging and weight layouts in that order.
+    #[must_use]
+    pub const fn layouts(&self) -> [AwKernelLayout; 2] {
+        [self.imaging_layout, self.weight_layout]
     }
 }
 

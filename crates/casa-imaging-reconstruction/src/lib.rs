@@ -51,8 +51,8 @@ mod spectral_sampling;
 mod weighting;
 
 pub use aw_generation::{
-    EvlaApertureGrid, EvlaApertureModel, NativeAwGenerationError, NativeAwPair, NativeAwPlane,
-    evla_aw_workspace_bytes, generate_evla_aw_pair,
+    EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair,
+    NativeAwPlane,
 };
 pub use aw_projection::{
     AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorDiagnostics, AwOperatorError,

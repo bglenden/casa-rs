@@ -428,13 +428,13 @@ package enum TutorialNotebookPrototypeFixtureAdapter {
             taskID: "imager",
             title: "Create a TW Hya continuum image",
             annotation: "Load the tutorial parameters without running the task.",
-            contractVersion: 15,
+            contractVersion: 16,
             sparseProfileTOML: """
             [casars]
             format = 1
             surface = "imager"
             kind = "task"
-            contract = 15
+            contract = 16
 
             [parameters]
             vis = "data/twhya_calibrated.ms"

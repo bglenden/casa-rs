@@ -104,6 +104,24 @@ buffer are charged inside one
 `SourceReadAhead` slot. Every `WorkImplementation` also states its failure
 measurement policy explicitly; there is no default that can silently discard
 completed I/O or mutation evidence.
+
+Native EVLA paired A/W cells use that same private store and downstream
+prepared-cell decoder/operator. `casa-imaging-model` owns the immutable,
+content-identified dish model and complete frequency/W/PA/Mueller/term request.
+`casa-imaging-reconstruction` owns aperture evaluation, shared float FFT,
+support selection and sampled-area normalization without filesystem or runtime
+dependencies. After admission, the application adapter reuses one bounded
+six-plane workspace and streams each realized pair through the ordinary writer.
+Runtime binds the predeclared logical request to its validated exact cropped
+descriptor and content; it rebinds reusable cells to the current execution
+without granting persisted metadata execution authority. Missing or rejected
+members never form a complete catalog. Explicit generate/regenerate operations
+may retain a validated prefix for restart; reuse performs no beam generation.
+The first provider is EVLA-specific, not evidence of general telescope support.
+Its surface data is an explicit input, never discovered in an installed CASA
+runtime. Native cache files are private schema-7 implementation artifacts, not
+CASA-readable CF tables; existing CASA caches remain read-only import inputs.
+
 `casa-imaging-application` owns production composition across
 MeasurementSet observation authority, reconstruction, products, and physical
 execution. It compiles the logical request, checks it against the implementation

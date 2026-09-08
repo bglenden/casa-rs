@@ -411,7 +411,6 @@ fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
     )
     .unwrap();
     let input = NativeAwRequestInput {
-        geometry: problem.geometry().geometry_id(),
         surface,
         antenna_diameter_m: 25.0,
         frequencies: vec![
@@ -445,7 +444,7 @@ fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
         },
         maximum_cells: 32,
     };
-    let baseline = NativeAwRequest::new(input.clone()).unwrap();
+    let baseline = NativeAwRequest::new(problem.geometry().geometry_id(), input.clone()).unwrap();
     assert_eq!(baseline.cell_count(), 16);
     let first = baseline.cell(0).unwrap();
     assert_eq!(first.0.conjugate_frequency_hz, 3.25e9);
@@ -453,7 +452,7 @@ fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
     assert_eq!(baseline.cell(1).unwrap().0.mueller, 15);
     assert_eq!(baseline.cell(4).unwrap().0.w_wavelengths, 100.0);
     assert!(baseline.cell(16).is_none());
-    let repeated = NativeAwRequest::new(input.clone()).unwrap();
+    let repeated = NativeAwRequest::new(problem.geometry().geometry_id(), input.clone()).unwrap();
     for index in 0..baseline.cell_count() {
         assert_eq!(baseline.cell(index), repeated.cell(index));
     }
@@ -490,7 +489,7 @@ fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
     for (index, change) in changes.iter().enumerate() {
         let mut changed = input.clone();
         change(&mut changed);
-        let changed = NativeAwRequest::new(changed).unwrap();
+        let changed = NativeAwRequest::new(problem.geometry().geometry_id(), changed).unwrap();
         assert_ne!(
             first.1,
             changed.cell(0).unwrap().1,
@@ -499,18 +498,18 @@ fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
     }
     let mut bounded = input.clone();
     bounded.maximum_cells = 15;
-    assert!(NativeAwRequest::new(bounded).is_err());
+    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), bounded).is_err());
     let mut diameter = input.clone();
     diameter.antenna_diameter_m = 24.0;
-    assert!(NativeAwRequest::new(diameter).is_err());
+    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), diameter).is_err());
     let mut duplicate = input.clone();
     duplicate.frequencies[1].spectral_window = 2;
-    assert!(NativeAwRequest::new(duplicate).is_err());
+    assert!(NativeAwRequest::new(problem.geometry().geometry_id(), duplicate).is_err());
     let mut resource_only = input;
     resource_only.maximum_cells = 64;
     assert_eq!(
         first.1,
-        NativeAwRequest::new(resource_only)
+        NativeAwRequest::new(problem.geometry().geometry_id(), resource_only)
             .unwrap()
             .cell(0)
             .unwrap()

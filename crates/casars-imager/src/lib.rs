@@ -8,6 +8,7 @@
 //! composition, execution planning, and publication live in
 //! `casa-imaging-application` and its library dependencies.
 
+mod aw_source;
 mod managed_output;
 mod native_application;
 mod schema;
@@ -22,6 +23,7 @@ use casa_task_runtime::{
     parse_parameter_cli_overrides,
 };
 
+pub use aw_source::{ImagerAwCfSource, ImagerNativeAwCachePolicy};
 pub use casa_ms::{CubeAxisConfig, CubeAxisValue, CubeInterpolation};
 pub use managed_output::*;
 pub use schema::command_schema;
@@ -596,7 +598,12 @@ impl CliConfig {
                 "--write-preview-pngs" => {
                     config.write_preview_pngs = parse_bool(value(1)?, flag)?;
                 }
-                "--cfcache" => aw_controls(&mut config).cf_cache = PathBuf::from(value(1)?),
+                "--cfcache" => {
+                    aw_controls(&mut config).source =
+                        casa_imaging_application::ContinuumAwCfSource::CasaImport(PathBuf::from(
+                            value(1)?,
+                        ));
+                }
                 "--cf-resident-mb" => {
                     aw_controls(&mut config).cf_resident_bytes =
                         parse::<usize>(value(1)?, flag)?.saturating_mul(1024 * 1024)
@@ -965,7 +972,7 @@ impl CliConfig {
         if config.aw_project.is_some() {
             let normalization = config.normalization;
             let controls = aw_controls(&mut config);
-            controls.cf_cache = PathBuf::from(text("cfcache")?);
+            controls.source = aw_source::source_from_parameters(values)?;
             controls.cf_resident_bytes = usize::try_from(integer("cf_resident_mb")?)
                 .map_err(|error| error.to_string())?
                 .saturating_mul(1024 * 1024);
@@ -1238,6 +1245,13 @@ fn request_from_parameter_cli_args(args: &[OsString]) -> Result<ImagerRunTaskReq
             managed_save: false,
         })
         .map_err(|error| format!("resolve imager parameters: {error}"))?;
+    if let Some(diagnostic) = session
+        .diagnostics()
+        .iter()
+        .find(|diagnostic| diagnostic.level == casa_task_runtime::DiagnosticLevel::Error)
+    {
+        return Err(format!("resolve imager parameters: {}", diagnostic.message));
+    }
     let adaptation = imager_provider_invocation(&session.values(), Vec::new())?;
     let stdin = adaptation
         .invocation

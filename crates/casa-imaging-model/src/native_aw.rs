@@ -136,10 +136,27 @@ pub struct EvlaAwCellRequest {
 }
 
 impl EvlaAwCellRequest {
+    /// Numerical residency ceiling for six Complex32 working planes and the
+    /// shared FFT implementation's conservative plan/scratch reservation.
+    pub fn generation_workspace_bytes(&self) -> Result<usize, NativeAwRequestError> {
+        self.validate()?;
+        let fft_axis_bound = 4 * usize::BITS as usize;
+        self.size
+            .checked_mul(self.size)
+            .and_then(|pixels| pixels.checked_mul(6))
+            .and_then(|planes| {
+                self.size
+                    .checked_mul(3 * fft_axis_bound + 1)
+                    .and_then(|fft| planes.checked_add(fft))
+            })
+            .and_then(|values| values.checked_mul(8))
+            .ok_or(NativeAwRequestError::InvalidSampling)
+    }
+
     /// Validate a cell before numerical generation or scientific identity minting.
     pub fn validate(&self) -> Result<(), NativeAwRequestError> {
         if self.size < 8
-            || !self.size.is_multiple_of(2)
+            || self.size % 2 != 0
             || self
                 .size
                 .checked_mul(self.size)
@@ -226,8 +243,6 @@ pub struct NativeAwTerms {
 /// Complete application-resolved science inputs and an explicit metadata bound.
 #[derive(Clone, Debug)]
 pub struct NativeAwRequestInput {
-    /// Logical geometry owner for the image, UV, projection and frame conventions.
-    pub geometry: CompiledGeometryId,
     /// Explicit content-identified EVLA dish model.
     pub surface: EvlaDishSurface,
     /// Antenna diameter in metres; this EVLA model requires exactly 25 m.
@@ -261,13 +276,17 @@ pub struct NativeAwRequestInput {
 #[derive(Clone, Debug)]
 pub struct NativeAwRequest {
     input: Arc<NativeAwRequestInput>,
+    geometry: CompiledGeometryId,
     identity: [u8; 32],
     cell_count: usize,
 }
 
 impl NativeAwRequest {
     /// Validate and freeze the entire catalog request before any generation.
-    pub fn new(input: NativeAwRequestInput) -> Result<Self, NativeAwRequestError> {
+    pub fn new(
+        geometry: CompiledGeometryId,
+        input: NativeAwRequestInput,
+    ) -> Result<Self, NativeAwRequestError> {
         let NativeAwRequestInput {
             frequencies,
             w_values,
@@ -339,7 +358,7 @@ impl NativeAwRequest {
         // This version fixes receiver selection, squint, three-subpixel
         // integration, float arithmetic, support search, cropping and area.
         digest.update(b"EVLA-BeamCalc-61020062/3subpixel/F64-geometry-C32-field/centered-forward-FFT/TM2-support-1e-3-even-buffer2/complex-sampled-area-v1\0");
-        digest.update(input.geometry.as_bytes());
+        digest.update(geometry.as_bytes());
         digest.update(input.surface.content_identity());
         digest.update(input.antenna_diameter_m.to_bits().to_le_bytes());
         digest.update((grid.size as u64).to_le_bytes());
@@ -368,6 +387,7 @@ impl NativeAwRequest {
         }
         Ok(Self {
             input: Arc::new(input),
+            geometry,
             identity: digest.finalize().into(),
             cell_count,
         })
@@ -377,6 +397,12 @@ impl NativeAwRequest {
     #[must_use]
     pub fn input(&self) -> &NativeAwRequestInput {
         &self.input
+    }
+
+    /// Compiled geometry whose conventions are committed by every cell.
+    #[must_use]
+    pub const fn geometry(&self) -> CompiledGeometryId {
+        self.geometry
     }
 
     /// Exact expected pair count; a prefix never constitutes a usable catalog.
@@ -398,6 +424,15 @@ impl NativeAwRequest {
                 .iter()
                 .map(|g| g.channel_frequencies_hz.capacity() * size_of::<f64>())
                 .sum::<usize>()
+    }
+
+    /// One reusable numerical cell workspace, independent of catalog size.
+    /// Shared scientific input residency is reported separately.
+    pub fn generation_workspace_bytes(&self) -> Result<usize, NativeAwRequestError> {
+        self.cell(0)
+            .expect("validated nonempty catalog")
+            .0
+            .generation_workspace_bytes()
     }
 
     /// Resolve an expected cell in deterministic frequency/W/PA/Mueller order.

@@ -13,132 +13,191 @@ use crate::spectral_operator::{
 };
 
 /// Conservative numerical workspace bound, including FFT plans and scratch.
-pub fn evla_aw_workspace_bytes(
-    request: EvlaAwCellRequest,
-) -> Result<usize, NativeAwGenerationError> {
+fn evla_aw_workspace_bytes(request: EvlaAwCellRequest) -> Result<usize, NativeAwGenerationError> {
     request
-        .validate()
-        .map_err(|_| NativeAwGenerationError::InvalidGrid)?;
-    let fft = fft_resident_complex_values_for_shape([request.size; 2])
-        .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?;
-    (request.size * request.size * 6)
-        .checked_add(fft)
-        .and_then(|n| n.checked_mul(size_of::<Complex32>()))
-        .ok_or(NativeAwGenerationError::WorkspaceMismatch)
+        .generation_workspace_bytes()
+        .map_err(|_| NativeAwGenerationError::InvalidGrid)
 }
 
 /// One generated, independently cropped plane in x-contiguous order.
 #[derive(Debug)]
-pub struct NativeAwPlane {
+pub struct NativeAwPlane<'a> {
     /// Square pixel extent after support-buffer cropping.
     pub size: usize,
     /// Symmetric support in non-oversampled grid pixels.
     pub support: usize,
     /// Complex32 samples with the CASA sampled-area normalization applied.
-    pub values: Vec<Complex32>,
+    pub values: &'a [Complex32],
 }
 
 /// Imaging and weight cells produced from the same scientific request.
 #[derive(Debug)]
-pub struct NativeAwPair {
+pub struct NativeAwPair<'a> {
     /// A times W times the optional anti-aliasing term.
-    pub imaging: NativeAwPlane,
+    pub imaging: NativeAwPlane<'a>,
     /// Frequency/conjugate-frequency beam product, without the W phase.
-    pub weight: NativeAwPlane,
+    pub weight: NativeAwPlane<'a>,
 }
 
-/// Generate a genuine paired EVLA A/W cell without CASA or cache access.
-///
-/// Admission must precede this call using the request's workspace bound plus
-/// the model's retained bytes. The computation keeps six square Complex32
-/// planes, independent of catalog size, and compacts both outputs in place.
-pub fn generate_evla_aw_pair(
-    model: &EvlaApertureModel,
-    request: EvlaAwCellRequest,
-) -> Result<NativeAwPair, NativeAwGenerationError> {
-    evla_aw_workspace_bytes(request)?;
-    let n = request.size * request.size;
-    let reserve = fft_resident_complex_values_for_shape([request.size; 2])
-        .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?;
-    let mut fft = PreparedFft::<f32>::new([request.size; 2], reserve)
-        .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?;
-    let mut jones = vec![Complex32::default(); 4 * n];
-    let mut imaging = vec![Complex32::default(); n];
-    let mut weight = vec![Complex32::default(); n];
-    fill_sky_mueller(
-        model,
-        request,
-        request.frequency_hz,
-        &mut fft,
-        &mut jones,
-        &mut imaging,
-    )?;
-    fill_sky_mueller(
-        model,
-        request,
-        request.conjugate_frequency_hz,
-        &mut fft,
-        &mut jones,
-        &mut weight,
-    )?;
-    let origin = (request.size / 2) as isize;
-    let inner_half = (request.size / request.oversampling / 2) as isize;
-    for y in 0..request.size {
-        let iy = y as isize - origin;
-        let m = request.sky_increment_rad[1] * iy as f64;
-        for x in 0..request.size {
-            let ix = x as isize - origin;
-            let p = if request.prolate_spheroidal {
-                if (-inner_half..inner_half).contains(&ix)
-                    && (-inner_half..inner_half).contains(&iy)
-                {
-                    (grdsf(ix as f64 / inner_half as f64) as f32)
-                        * (grdsf(iy as f64 / inner_half as f64) as f32)
+/// Reusable, one-cell numerical allocation. Construct only after admission.
+pub struct EvlaAwWorkspace {
+    size: usize,
+    fft: PreparedFft<f32>,
+    jones: Vec<Complex32>,
+    imaging: Vec<Complex32>,
+    weight: Vec<Complex32>,
+    realized: Option<[(usize, usize); 2]>,
+    reserved_bytes: usize,
+}
+
+impl EvlaAwWorkspace {
+    /// Allocate exactly one admitted working grid; catalog size does not
+    /// multiply its residency. The same allocation is reused for every cell.
+    pub fn new(
+        request: EvlaAwCellRequest,
+        admitted_bytes: usize,
+    ) -> Result<Self, NativeAwGenerationError> {
+        let reserved_bytes = evla_aw_workspace_bytes(request)?;
+        if reserved_bytes > admitted_bytes {
+            return Err(NativeAwGenerationError::WorkspaceMismatch);
+        }
+        let reserve = fft_resident_complex_values_for_shape([request.size; 2])
+            .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?;
+        let n = request.size * request.size;
+        if (6 * n + reserve) * size_of::<Complex32>() != reserved_bytes {
+            return Err(NativeAwGenerationError::WorkspaceMismatch);
+        }
+        Ok(Self {
+            size: request.size,
+            fft: PreparedFft::<f32>::new([request.size; 2], reserve)
+                .map_err(|_| NativeAwGenerationError::WorkspaceMismatch)?,
+            jones: vec![Complex32::default(); 4 * n],
+            imaging: vec![Complex32::default(); n],
+            weight: vec![Complex32::default(); n],
+            realized: None,
+            reserved_bytes,
+        })
+    }
+
+    /// Charged allocation, including the shared FFT's opaque-plan reservation.
+    #[must_use]
+    pub const fn resident_bytes(&self) -> usize {
+        self.reserved_bytes
+    }
+
+    /// Borrow the last successfully realized pair, with no pixel copies.
+    #[must_use]
+    pub fn pair(&self) -> Option<NativeAwPair<'_>> {
+        let [
+            (imaging_size, imaging_support),
+            (weight_size, weight_support),
+        ] = self.realized?;
+        Some(NativeAwPair {
+            imaging: NativeAwPlane {
+                size: imaging_size,
+                support: imaging_support,
+                values: &self.imaging[..imaging_size * imaging_size],
+            },
+            weight: NativeAwPlane {
+                size: weight_size,
+                support: weight_support,
+                values: &self.weight[..weight_size * weight_size],
+            },
+        })
+    }
+
+    /// Generate a genuine paired EVLA A/W cell without CASA or cache access.
+    ///
+    /// Admission must precede this call using the request's workspace bound plus
+    /// the model's retained bytes. The computation keeps six square Complex32
+    /// planes, independent of catalog size, and compacts both outputs in place.
+    pub fn generate(
+        &mut self,
+        model: &EvlaApertureModel,
+        request: EvlaAwCellRequest,
+    ) -> Result<NativeAwPair<'_>, NativeAwGenerationError> {
+        self.realized = None;
+        evla_aw_workspace_bytes(request)?;
+        if self.size != request.size {
+            return Err(NativeAwGenerationError::WorkspaceMismatch);
+        }
+        let Self {
+            fft,
+            jones,
+            imaging,
+            weight,
+            ..
+        } = self;
+        fill_sky_mueller(model, request, request.frequency_hz, fft, jones, imaging)?;
+        fill_sky_mueller(
+            model,
+            request,
+            request.conjugate_frequency_hz,
+            fft,
+            jones,
+            weight,
+        )?;
+        let origin = (request.size / 2) as isize;
+        let inner_half = (request.size / request.oversampling / 2) as isize;
+        for y in 0..request.size {
+            let iy = y as isize - origin;
+            let m = request.sky_increment_rad[1] * iy as f64;
+            for x in 0..request.size {
+                let ix = x as isize - origin;
+                let p = if request.prolate_spheroidal {
+                    if (-inner_half..inner_half).contains(&ix)
+                        && (-inner_half..inner_half).contains(&iy)
+                    {
+                        (grdsf(ix as f64 / inner_half as f64) as f32)
+                            * (grdsf(iy as f64 / inner_half as f64) as f32)
+                    } else {
+                        0.0
+                    }
                 } else {
-                    0.0
+                    1.0
+                };
+                let pixel = x + request.size * y;
+                weight[pixel] =
+                    Complex32::new(p * p, 0.0) * (imaging[pixel] * weight[pixel].conj());
+                let l = request.sky_increment_rad[0] * ix as f64;
+                let rsq = l * l + m * m;
+                let mut screen = Complex32::new(p, 0.0);
+                if request.w_wavelengths > 0.0 && rsq < 1.0 {
+                    let phase =
+                        std::f64::consts::TAU * request.w_wavelengths * ((1.0 - rsq).sqrt() - 1.0);
+                    let (sin, cos) = phase.sin_cos();
+                    screen *= Complex32::new(cos as f32, sin as f32);
                 }
-            } else {
-                1.0
-            };
-            let pixel = x + request.size * y;
-            weight[pixel] = Complex32::new(p * p, 0.0) * (imaging[pixel] * weight[pixel].conj());
-            let l = request.sky_increment_rad[0] * ix as f64;
-            let rsq = l * l + m * m;
-            let mut screen = Complex32::new(p, 0.0);
-            if request.w_wavelengths > 0.0 && rsq < 1.0 {
-                let phase =
-                    std::f64::consts::TAU * request.w_wavelengths * ((1.0 - rsq).sqrt() - 1.0);
-                let (sin, cos) = phase.sin_cos();
-                screen *= Complex32::new(cos as f32, sin as f32);
+                imaging[pixel] *= screen;
             }
-            imaging[pixel] *= screen;
         }
-    }
-    // CASA's copy back from the FFT image excludes the final row and column.
-    // Retain these pre-transform edges in the no-longer-used Jones workspace.
-    let edges = &mut jones[..4 * request.size];
-    save_edges(&imaging, request.size, &mut edges[..2 * request.size]);
-    save_edges(&weight, request.size, &mut edges[2 * request.size..]);
-    transform(&mut fft, request.size, &mut imaging);
-    transform(&mut fft, request.size, &mut weight);
-    restore_edges(&mut imaging, request.size, &edges[..2 * request.size]);
-    restore_edges(&mut weight, request.size, &edges[2 * request.size..]);
-    let mut peak = imaging[0];
-    for value in &imaging[1..] {
-        if value.norm_sqr() > peak.norm_sqr() {
-            peak = *value;
+        // CASA's copy back from the FFT image excludes the final row and column.
+        // Retain these pre-transform edges in the no-longer-used Jones workspace.
+        let edges = &mut jones[..4 * request.size];
+        save_edges(imaging, request.size, &mut edges[..2 * request.size]);
+        save_edges(weight, request.size, &mut edges[2 * request.size..]);
+        transform(fft, request.size, imaging);
+        transform(fft, request.size, weight);
+        restore_edges(imaging, request.size, &edges[..2 * request.size]);
+        restore_edges(weight, request.size, &edges[2 * request.size..]);
+        let mut peak = imaging[0];
+        for value in &imaging[1..] {
+            if value.norm_sqr() > peak.norm_sqr() {
+                peak = *value;
+            }
         }
+        if peak.norm() == 0.0 || !peak.norm().is_finite() {
+            return Err(NativeAwGenerationError::InvalidNumerics);
+        }
+        for value in imaging.iter_mut() {
+            *value /= peak;
+        }
+        self.realized = Some([
+            crop_normalize(imaging, request)?,
+            crop_normalize(weight, request)?,
+        ]);
+        Ok(self.pair().expect("both crops succeeded"))
     }
-    if peak.norm() == 0.0 || !peak.norm().is_finite() {
-        return Err(NativeAwGenerationError::InvalidNumerics);
-    }
-    for value in &mut imaging {
-        *value /= peak;
-    }
-    Ok(NativeAwPair {
-        imaging: crop_normalize(imaging, request)?,
-        weight: crop_normalize(weight, request)?,
-    })
 }
 
 fn fill_sky_mueller(
@@ -212,9 +271,9 @@ fn restore_edges(values: &mut [Complex32], size: usize, edges: &[Complex32]) {
 }
 
 fn crop_normalize(
-    mut values: Vec<Complex32>,
+    values: &mut [Complex32],
     request: EvlaAwCellRequest,
-) -> Result<NativeAwPlane, NativeAwGenerationError> {
+) -> Result<(usize, usize), NativeAwGenerationError> {
     let origin = request.size / 2;
     let threshold = (f64::from(values[origin * (request.size + 1)].norm()) * 1e-3) as f32;
     let mut radius = None;
@@ -258,23 +317,124 @@ fn crop_normalize(
             values[x + size * y] = values[x + bottom + request.size * (y + bottom)] / area;
         }
     }
-    values.truncate(size * size);
-    if values
+    if values[..size * size]
         .iter()
         .any(|v| !v.re.is_finite() || !v.im.is_finite())
     {
         return Err(NativeAwGenerationError::InvalidNumerics);
     }
-    Ok(NativeAwPlane {
-        size,
-        support,
-        values,
-    })
+    Ok((size, support))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn t52_paired_workspace_is_admitted_reused_and_deterministic() {
+        let surface = casa_imaging_model::EvlaDishSurface::new(
+            (0..=125)
+                .map(|i| {
+                    let r = i as f64 / 10.0;
+                    [r, r * r / 36.0, r / 18.0]
+                })
+                .collect(),
+        )
+        .unwrap();
+        let model = EvlaApertureModel::new(surface);
+        let request = EvlaAwCellRequest {
+            size: 128,
+            sky_increment_rad: [-0.001, 0.001],
+            frequency_hz: 3e9,
+            conjugate_frequency_hz: 3.1e9,
+            w_wavelengths: 100.0,
+            parallactic_angle_rad: 0.31,
+            mueller: 0,
+            oversampling: 4,
+            prolate_spheroidal: false,
+            aperture: true,
+        };
+        let bound = request.generation_workspace_bytes().unwrap();
+        assert!(matches!(
+            EvlaAwWorkspace::new(request, bound - 1),
+            Err(NativeAwGenerationError::WorkspaceMismatch)
+        ));
+        let mut workspace = EvlaAwWorkspace::new(request, bound).unwrap();
+        let pointers = (
+            workspace.jones.as_ptr(),
+            workspace.imaging.as_ptr(),
+            workspace.weight.as_ptr(),
+        );
+        let pair = workspace.generate(&model, request).unwrap();
+        let first = (pair.imaging.values.to_vec(), pair.weight.values.to_vec());
+        for _ in 0..3 {
+            let pair = workspace.generate(&model, request).unwrap();
+            assert_eq!(pair.imaging.values, first.0);
+            assert_eq!(pair.weight.values, first.1);
+            assert_eq!(workspace.resident_bytes(), bound);
+            assert_eq!(
+                (
+                    workspace.jones.as_ptr(),
+                    workspace.imaging.as_ptr(),
+                    workspace.weight.as_ptr()
+                ),
+                pointers
+            );
+        }
+        let mut fresh = EvlaAwWorkspace::new(request, bound).unwrap();
+        let repeated = fresh.generate(&model, request).unwrap();
+        assert_eq!(repeated.imaging.values, first.0);
+        assert_eq!(repeated.weight.values, first.1);
+        let mut invalid = request;
+        invalid.size *= 2;
+        assert!(workspace.generate(&model, invalid).is_err());
+        assert!(
+            workspace.pair().is_none(),
+            "failed generation must not expose the preceding cell"
+        );
+    }
+
+    #[test]
+    fn t52_analytic_aperture_free_pair_has_unit_sampled_area() {
+        let model = EvlaApertureModel::new(
+            casa_imaging_model::EvlaDishSurface::new(vec![
+                [0.0, 0.0, 0.0],
+                [6.25, 1.0, 0.32],
+                [12.5, 4.0, 0.64],
+            ])
+            .unwrap(),
+        );
+        let request = EvlaAwCellRequest {
+            size: 128,
+            sky_increment_rad: [-0.001, 0.001],
+            frequency_hz: 3e9,
+            conjugate_frequency_hz: 3e9,
+            w_wavelengths: 0.0,
+            parallactic_angle_rad: 0.0,
+            mueller: 0,
+            oversampling: 4,
+            prolate_spheroidal: true,
+            aperture: false,
+        };
+        let mut workspace =
+            EvlaAwWorkspace::new(request, request.generation_workspace_bytes().unwrap()).unwrap();
+        let pair = workspace.generate(&model, request).unwrap();
+        for plane in [pair.imaging, pair.weight] {
+            let mut area = num_complex::Complex64::default();
+            for ix in -(plane.support as isize)..plane.support as isize {
+                for iy in -(plane.support as isize)..plane.support as isize {
+                    let x = (plane.size as isize / 2 + ix * 4) as usize;
+                    let y = (plane.size as isize / 2 + iy * 4) as usize;
+                    let value = plane.values[x + plane.size * y];
+                    area += num_complex::Complex64::new(f64::from(value.re), f64::from(value.im));
+                }
+            }
+            assert!(
+                (area - 1.0).norm() < 2e-6,
+                "sampled-area normalization {area}"
+            );
+        }
+    }
 
     #[test]
     fn t52_centered_float_fft_obeys_impulse_and_phase_laws() {
@@ -326,16 +486,11 @@ mod tests {
             prolate_spheroidal: specification["prolate_spheroidal"].as_bool().unwrap(),
             aperture: true,
         };
-        let result = generate_evla_aw_pair(&model, request).unwrap();
+        let mut workspace =
+            EvlaAwWorkspace::new(request, evla_aw_workspace_bytes(request).unwrap()).unwrap();
+        let result = workspace.generate(&model, request).unwrap();
         for (role, plane) in [("imaging", result.imaging), ("weight", result.weight)] {
             let bytes = std::fs::read(root.join(format!("{role}.bin"))).unwrap();
-            eprintln!(
-                "T52 {role} size={} support={} values={} reference_bytes={}",
-                plane.size,
-                plane.support,
-                plane.values.len(),
-                bytes.len()
-            );
             assert_eq!(
                 plane.size,
                 specification[role]["size"].as_u64().unwrap() as usize
@@ -344,38 +499,125 @@ mod tests {
                 plane.support,
                 specification[role]["support"].as_u64().unwrap() as usize
             );
-            assert_eq!(bytes.len(), plane.values.len() * 8);
-            let mut error_squared = 0.0_f64;
-            let mut reference_squared = 0.0_f64;
-            let mut maximum_error = 0.0_f64;
-            let mut reference_peak = 0.0_f64;
-            // The T51 exporter writes its canonical last-axis-contiguous
-            // representation; native numerical workspaces are x-contiguous.
-            for (index, bytes) in bytes.chunks_exact(8).enumerate() {
-                let value = plane.values[index / plane.size + plane.size * (index % plane.size)];
-                let reference = Complex32::new(
-                    f32::from_le_bytes(bytes[..4].try_into().unwrap()),
-                    f32::from_le_bytes(bytes[4..].try_into().unwrap()),
-                );
-                let error = f64::from((value - reference).norm());
-                let magnitude = f64::from(reference.norm());
-                error_squared += error * error;
-                reference_squared += magnitude * magnitude;
-                maximum_error = maximum_error.max(error);
-                reference_peak = reference_peak.max(magnitude);
-            }
-            let relative_l2 = (error_squared / reference_squared).sqrt();
-            let peak_scaled_max = maximum_error / reference_peak;
-            eprintln!(
-                "T52 {role} relative_l2={relative_l2:.12e} peak_scaled_max={peak_scaled_max:.12e}"
-            );
-            // Independent f32 FFT implementations may differ in roundoff, but
-            // no fitted scale, phase, support, or science tolerance is allowed.
-            assert!(relative_l2 <= 1e-5, "{role} relative L2 {relative_l2}");
-            assert!(
-                peak_scaled_max <= 1e-5,
-                "{role} element error {peak_scaled_max}"
-            );
+            assert_frozen_plane(role, &plane, &bytes);
         }
+    }
+
+    #[test]
+    #[ignore = "24 frozen EVLA cells; explicit exported catalog, surface and image geometry required"]
+    fn t52_evla_paired_cohort_matches_frozen_casa() {
+        let root =
+            std::path::PathBuf::from(std::env::var_os("CASA_RS_T52_CATALOG_FIXTURE").unwrap());
+        let sky_cell: f64 = std::env::var("CASA_RS_T52_WORKING_SKY_CELL_RAD")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let working_size: usize = std::env::var("CASA_RS_T52_WORKING_SIZE")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let surface =
+            std::fs::read_to_string(std::env::var("CASA_RS_T52_SURFACE").unwrap()).unwrap();
+        let model = EvlaApertureModel::new(
+            casa_imaging_model::EvlaDishSurface::from_surface_text(&surface).unwrap(),
+        );
+        let catalog = std::fs::read_to_string(root.join("catalog.tsv")).unwrap();
+        let mut workspace = None;
+        let mut tested = 0;
+        for line in catalog.lines() {
+            let fields: Vec<_> = line.split('\t').collect();
+            let name = fields[0];
+            let indices: Vec<_> = name.split('_').collect();
+            let w_index: usize = indices[5].parse().unwrap();
+            if ![0, 18, 31].contains(&w_index) {
+                continue;
+            }
+            let f = |i: usize| fields[i].parse::<f64>().unwrap();
+            let u = |i: usize| fields[i].parse::<usize>().unwrap();
+            let request = EvlaAwCellRequest {
+                size: working_size,
+                sky_increment_rad: [-sky_cell, sky_cell],
+                frequency_hz: f(1),
+                conjugate_frequency_hz: f(7),
+                w_wavelengths: f(2),
+                parallactic_angle_rad: f(5).to_radians(),
+                mueller: u(4),
+                oversampling: u(15),
+                prolate_spheroidal: false,
+                aperture: true,
+            };
+            let workspace = workspace.get_or_insert_with(|| {
+                EvlaAwWorkspace::new(request, evla_aw_workspace_bytes(request).unwrap()).unwrap()
+            });
+            let pair = workspace.generate(&model, request).unwrap();
+            for (role, plane, shape_index, support_index) in [
+                ("imaging", pair.imaging, 16, 13),
+                ("weight", pair.weight, 23, 20),
+            ] {
+                let label = format!("{name}.{role}");
+                assert_eq!(plane.size, u(shape_index), "{label} shape");
+                assert_eq!(plane.support, u(support_index), "{label} support");
+                let bytes = std::fs::read(root.join(format!("{label}.bin"))).unwrap();
+                assert_frozen_plane(&label, &plane, &bytes);
+            }
+            tested += 1;
+        }
+        assert_eq!(
+            tested, 24,
+            "four frequencies x two circular hands x three W coordinates"
+        );
+    }
+
+    fn assert_frozen_plane(role: &str, plane: &NativeAwPlane<'_>, bytes: &[u8]) {
+        eprintln!("T52 {role} size={} support={}", plane.size, plane.support);
+        assert_eq!(bytes.len(), plane.values.len() * 8);
+        let mut error_squared = 0.0_f64;
+        let mut reference_squared = 0.0_f64;
+        let mut native_squared = 0.0_f64;
+        let mut native_sum = num_complex::Complex64::default();
+        let mut reference_sum = num_complex::Complex64::default();
+        let mut maximum_error = 0.0_f64;
+        let mut reference_peak = 0.0_f64;
+        // The T51 exporter writes its canonical last-axis-contiguous
+        // representation; native numerical workspaces are x-contiguous.
+        for (index, bytes) in bytes.chunks_exact(8).enumerate() {
+            let value = plane.values[index / plane.size + plane.size * (index % plane.size)];
+            let reference = Complex32::new(
+                f32::from_le_bytes(bytes[..4].try_into().unwrap()),
+                f32::from_le_bytes(bytes[4..].try_into().unwrap()),
+            );
+            let error = f64::from((value - reference).norm());
+            let magnitude = f64::from(reference.norm());
+            error_squared += error * error;
+            reference_squared += magnitude * magnitude;
+            native_squared += f64::from(value.norm_sqr());
+            native_sum += num_complex::Complex64::new(f64::from(value.re), f64::from(value.im));
+            reference_sum +=
+                num_complex::Complex64::new(f64::from(reference.re), f64::from(reference.im));
+            maximum_error = maximum_error.max(error);
+            reference_peak = reference_peak.max(magnitude);
+        }
+        let relative_l2 = (error_squared / reference_squared).sqrt();
+        let peak_scaled_max = maximum_error / reference_peak;
+        let relative_energy = (native_squared / reference_squared - 1.0).abs();
+        let relative_normalization = (native_sum - reference_sum).norm() / reference_sum.norm();
+        eprintln!(
+            "T52 {role} relative_l2={relative_l2:.12e} peak_scaled_max={peak_scaled_max:.12e} relative_energy={relative_energy:.12e} relative_normalization={relative_normalization:.12e}"
+        );
+        // Independent f32 FFT implementations may differ in roundoff, but
+        // no fitted scale, phase, support, or science tolerance is allowed.
+        assert!(relative_l2 <= 1e-5, "{role} relative L2 {relative_l2}");
+        assert!(
+            relative_energy <= 1e-5,
+            "{role} relative energy {relative_energy}"
+        );
+        assert!(
+            relative_normalization <= 1e-5,
+            "{role} normalization {relative_normalization}"
+        );
+        assert!(
+            peak_scaled_max <= 1e-5,
+            "{role} element error {peak_scaled_max}"
+        );
     }
 }

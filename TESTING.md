@@ -62,6 +62,30 @@ to NRMS <= 0.001, and outside-PB validity differences are counted and reported.
 This does not change CASA's strict Taylor support law, add a numerical epsilon,
 or relax any other product's exact validity comparison.
 
+T52 native EVLA paired-CF acceptance uses the application production route at
+512x512 with nine overlapping VLASS fields, four SPWs, nonzero W, both circular
+parallel hands, and 5,990,400 selected correlation-channel samples. Its frozen
+DIRTY and 30-iteration deterministic MT-MFS CLEAN references require all 18/19
+products and the unchanged beam, flux, centroid, structure and NRMS limits.
+On 2026-09-08 the programme owner approved retaining the frozen maximum mask
+mismatch fraction of 1e-5 only for `.alpha` and `.alpha.error`, with every
+differing pixel reported; all other validity is exact. The owner also approved
+macOS-only execution evidence in place of a host with no CASA installation.
+The native Rust generator and application must still neither link nor invoke
+CASA; CASA is used only to prepare/compare the frozen independent reference.
+These amendments are recorded in the [T52 work record](https://github.com/bglenden/casa-rs/issues/538#issuecomment-5577836559).
+
+Focused T52 gates are `t52_` model/reconstruction/application tests, the runtime
+`prepared_artifact` integration module (including `native_catalog`), existing
+`prepared_aw_phase` import/reuse regressions, and the directly affected imager,
+provider and profile projection tests. The ignored frozen-cell tests require
+explicit surface/catalog paths; no CASA installation or model-data path is
+discovered implicitly. `perf_harness.t52_native_acceptance` binds the release
+test binary, input/source hashes, cold/warm cache payloads, full comparisons
+and a 30-minute/32-GiB process-scope guard. Supply its explicit absolute paths
+from the retained run request; generation workspace admission is a separate
+accounted bound, not a claim about total process RSS.
+
 ## Required discipline
 
 - Every approved work item defines falsifiable acceptance checks and ships verification evidence.

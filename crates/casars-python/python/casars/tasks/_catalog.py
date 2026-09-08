@@ -328,7 +328,7 @@ def imager(
     chanchunks: int | Literal['none'] | object = _UNSET,
     uvrange: str | object = _UNSET,
     intent: str | object = _UNSET,
-    cfcache: StrPath | Literal['auto'] | object = _UNSET,
+    cfcache: StrPath | Literal['none'] | object = _UNSET,
     cf_resident_mb: int | object = _UNSET,
     facets: int | object = _UNSET,
     psfphasecenter: str | object = _UNSET,
@@ -353,6 +353,14 @@ def imager(
     fitspw: str | object = _UNSET,
     fitorder: int | object = _UNSET,
     save_continuum_residual: bool | object = _UNSET,
+    aw_cf_source: Literal['casa-import', 'native-evla'] | object = _UNSET,
+    native_cf_cache: StrPath | Literal['none'] | object = _UNSET,
+    evla_surface: StrPath | Literal['none'] | object = _UNSET,
+    native_cf_policy: Literal['reuse-only', 'generate-missing', 'regenerate'] | object = _UNSET,
+    native_cf_working_size: int | Literal['none'] | object = _UNSET,
+    native_cf_oversampling: int | Literal['none'] | object = _UNSET,
+    native_cf_cache_bytes: int | Literal['none'] | object = _UNSET,
+    native_cf_maximum_cells: int | Literal['none'] | object = _UNSET,
     parameters: TaskParameters | None = None,
     profile: StrPath | None = None,
     base_source: Literal["defaults", "last", "last_successful"] = "defaults",
@@ -368,7 +376,7 @@ def imager(
     confirm_mutation: bool = False,
 ) -> TaskCompletion:
     """Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet"""
-    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'startmodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'fullsummary', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'uvtaper', 'write_preview_pngs', 'write_pb', 'pbcor', 'pblimit', 'wterm', 'gridder', 'standard_mfs_acceleration', 'parallel', 'imaging_read_ahead_blocks', 'imaging_fft_backend', 'chanchunks', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'facets', 'psfphasecenter', 'vptable', 'aterm', 'psterm', 'wbawp', 'conjbeams', 'computepastep', 'rotatepastep', 'pointingoffsetsigdev', 'mosweight', 'normtype', 'imaging_memory_target_mb', 'imaging_memory_pressure_policy', 'imaging_prepare_buffer_mb', 'imaging_row_block_rows', 'imaging_prepare_workers', 'imaging_fft_precision', 'projection', 'standard_mfs_grid_threads', 'fitspw', 'fitorder', 'save_continuum_residual'))
+    overrides = _explicit(locals(), ('vis', 'imagename', 'imsize', 'cell', 'datacolumn', 'savemodel', 'startmodel', 'outlierfile', 'field', 'phasecenter_field', 'ddid', 'phasecenter', 'spw', 'channel_start', 'channel_count', 'stokes', 'specmode', 'start', 'width', 'outframe', 'veltype', 'interpolation', 'restfreq', 'restoringbeam', 'perchanweightdensity', 'dirty_only', 'niter', 'threshold', 'nmajor', 'fullsummary', 'gain', 'nsigma', 'psfcutoff', 'minor_cycle_length', 'cyclefactor', 'deconvolver', 'minpsffraction', 'maxpsffraction', 'nterms', 'hogbom_iteration_mode', 'scales', 'smallscalebias', 'usemask', 'sidelobethreshold', 'noisethreshold', 'lownoisethreshold', 'negativethreshold', 'minbeamfrac', 'growiterations', 'mask_box', 'weighting', 'mask_image', 'robust', 'wprojplanes', 'usepointing', 'uvtaper', 'write_preview_pngs', 'write_pb', 'pbcor', 'pblimit', 'wterm', 'gridder', 'standard_mfs_acceleration', 'parallel', 'imaging_read_ahead_blocks', 'imaging_fft_backend', 'chanchunks', 'uvrange', 'intent', 'cfcache', 'cf_resident_mb', 'facets', 'psfphasecenter', 'vptable', 'aterm', 'psterm', 'wbawp', 'conjbeams', 'computepastep', 'rotatepastep', 'pointingoffsetsigdev', 'mosweight', 'normtype', 'imaging_memory_target_mb', 'imaging_memory_pressure_policy', 'imaging_prepare_buffer_mb', 'imaging_row_block_rows', 'imaging_prepare_workers', 'imaging_fft_precision', 'projection', 'standard_mfs_grid_threads', 'fitspw', 'fitorder', 'save_continuum_residual', 'aw_cf_source', 'native_cf_cache', 'evla_surface', 'native_cf_policy', 'native_cf_working_size', 'native_cf_oversampling', 'native_cf_cache_bytes', 'native_cf_maximum_cells'))
     return _run(
         "imager",
         parameters=parameters,

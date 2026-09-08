@@ -3,7 +3,8 @@
 //! Opt-in, read-only timing discriminator for the existing cold CF serializer.
 
 use super::{
-    Complex32, KernelMetadata, LoadedCasaPlane, PagedImage, encode_complex32_range, read_metadata,
+    Complex32, KernelMetadata, LoadedCasaPlane, PagedImage, encode_complex32_range, kernel_layout,
+    read_metadata,
 };
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, process::Command, time::Instant};
@@ -27,8 +28,8 @@ fn t51_cf_reload_decoder_observer_control() {
         assert_eq!(&metadata.shape[..2], &shape);
         let (payload, _, _, _) = bulk_reference(&metadata);
         let expected = adapt_kernel_from_plane(
-            &metadata,
-            decode_complex32_plane(payload.clone(), &metadata).unwrap(),
+            kernel_layout(&metadata).unwrap(),
+            decode_complex32_plane(payload.clone(), kernel_layout(&metadata).unwrap()).unwrap(),
         )
         .unwrap();
         let repetitions = (MAX_COHORT_BYTES / payload.len()).max(1);
@@ -49,10 +50,10 @@ fn t51_cf_reload_decoder_observer_control() {
                 });
             }
             let plane = cost.measure(ReloadStage::DecodePlanes, || {
-                decode_complex32_plane(encoded, &metadata).unwrap()
+                decode_complex32_plane(encoded, kernel_layout(&metadata).unwrap()).unwrap()
             });
             let kernel = cost.measure(ReloadStage::ConstructKernels, || {
-                adapt_kernel_from_plane(&metadata, plane).unwrap()
+                adapt_kernel_from_plane(kernel_layout(&metadata).unwrap(), plane).unwrap()
             });
             nanos += started.elapsed().as_nanos();
             assert_eq!(kernel, expected);
@@ -86,8 +87,8 @@ fn t51_cf_decoder_stage_baseline() {
         let (payload, _, _, _) = bulk_reference(&metadata);
         let payload_sha256 = format!("{:x}", Sha256::digest(&payload));
         let expected = adapt_kernel_from_plane(
-            &metadata,
-            decode_complex32_plane(payload.clone(), &metadata).unwrap(),
+            kernel_layout(&metadata).unwrap(),
+            decode_complex32_plane(payload.clone(), kernel_layout(&metadata).unwrap()).unwrap(),
         )
         .unwrap();
         for trial in 0..5 {
@@ -98,10 +99,10 @@ fn t51_cf_decoder_stage_baseline() {
             }
             let copy = started.elapsed();
             let started = Instant::now();
-            let plane = decode_complex32_plane(encoded, &metadata).unwrap();
+            let plane = decode_complex32_plane(encoded, kernel_layout(&metadata).unwrap()).unwrap();
             let parse = started.elapsed();
             let started = Instant::now();
-            let kernel = adapt_kernel_from_plane(&metadata, plane).unwrap();
+            let kernel = adapt_kernel_from_plane(kernel_layout(&metadata).unwrap(), plane).unwrap();
             let adapt_validate = started.elapsed();
             assert_eq!(kernel, expected);
             eprintln!(

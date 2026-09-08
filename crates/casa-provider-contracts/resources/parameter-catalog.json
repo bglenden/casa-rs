@@ -8986,8 +8986,231 @@
       "persistence_class": "profile"
     },
     {
-      "id": "parameter.cfcache",
+      "id": "parameter.aw_cf_source",
       "semantic_revision": 1,
+      "casa_name": "aw_cf_source",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "casa-import",
+          "native-evla"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Paired AW convolution-function source",
+        "details": "Exactly one read-only CASA import or frozen native EVLA source; there is no fallback.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.native_cf_cache",
+      "semantic_revision": 1,
+      "casa_name": "native_cf_cache",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "path",
+          "resource_kind": "directory"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_data",
+      "documentation": {
+        "summary": "Private native AW cache directory",
+        "details": "Native prepared-artifact cache; writable for generation actions and not readable by CASA.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.evla_surface",
+      "semantic_revision": 1,
+      "casa_name": "evla_surface",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "path",
+          "resource_kind": "file"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "path"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "input_data",
+      "documentation": {
+        "summary": "EVLA dish surface model",
+        "details": "Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.native_cf_policy",
+      "semantic_revision": 1,
+      "casa_name": "native_cf_policy",
+      "value_domain": {
+        "kind": "choice",
+        "values": [
+          "reuse-only",
+          "generate-missing",
+          "regenerate"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [],
+      "unit_dimension": null,
+      "semantic_role": "output_policy",
+      "documentation": {
+        "summary": "Native AW cache action",
+        "details": "reuse-only validates a complete cache; generate-missing preserves valid cells; regenerate explicitly replaces all requested cells.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.native_cf_working_size",
+      "semantic_revision": 1,
+      "casa_name": "native_cf_working_size",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Native AW full FFT extent",
+        "details": "Explicit full even working-grid extent before support selection, not a requested output crop.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.native_cf_oversampling",
+      "semantic_revision": 1,
+      "casa_name": "native_cf_oversampling",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Native AW convolution oversampling",
+        "details": "Explicit integer convolution-plane oversampling; validated by the native application owner.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.native_cf_cache_bytes",
+      "semantic_revision": 1,
+      "casa_name": "native_cf_cache_bytes",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": "data_size",
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Native AW durable-storage ceiling",
+        "details": "Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.native_cf_maximum_cells",
+      "semantic_revision": 1,
+      "casa_name": "native_cf_maximum_cells",
+      "value_domain": {
+        "kind": "optional",
+        "value": {
+          "kind": "integer"
+        },
+        "states": [
+          "none"
+        ]
+      },
+      "normalization": {
+        "kind": "identity"
+      },
+      "base_constraints": [
+        {
+          "kind": "positive"
+        }
+      ],
+      "unit_dimension": null,
+      "semantic_role": "algorithm",
+      "documentation": {
+        "summary": "Native AW maximum catalog cells",
+        "details": "Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state.",
+        "examples": []
+      },
+      "persistence_class": "profile"
+    },
+    {
+      "id": "parameter.cfcache",
+      "semantic_revision": 2,
       "casa_name": "cfcache",
       "value_domain": {
         "kind": "optional",
@@ -8996,7 +9219,7 @@
           "resource_kind": "directory"
         },
         "states": [
-          "auto"
+          "none"
         ]
       },
       "normalization": {
@@ -9004,12 +9227,11 @@
       },
       "base_constraints": [],
       "unit_dimension": null,
-      "semantic_role": "algorithm",
+      "semantic_role": "input_data",
       "documentation": {
-        "summary": "AWProject convolution-function cache selection",
-        "details": "auto selects the managed plan-keyed cache; an explicit directory imports or reuses a CASA-compatible cache without changing its scientific identity.",
+        "summary": "Read-only CASA AW convolution-function cache input",
+        "details": "Explicit CASA CFS_/WTCFS_ directory imported read-only. Native writable caches use the separate native_cf_cache concept; no automatic cache discovery or generation is implied.",
         "examples": [
-          "auto",
           "/data/cf-cache"
         ]
       },

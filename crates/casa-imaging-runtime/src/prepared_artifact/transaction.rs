@@ -16,12 +16,17 @@ pub(super) struct PreparedArtifactSessionFailure {
     pub(super) measurements: Option<Box<PreparedArtifactSessionMeasurements>>,
 }
 
-struct ManifestValidatedArtifact {
+pub(super) struct PreparedArtifactPublicationScope<'a> {
+    pub(super) retained: &'a [PreparedArtifactDescriptor],
+    pub(super) regeneration_candidate: Option<&'a PreparedArtifactDescriptor>,
+}
+
+pub(super) struct ManifestValidatedArtifact {
     payload_sha256: [u8; 32],
     payload_bytes: u64,
     disk_bytes: u64,
     path: PathBuf,
-    descriptor: PreparedArtifactCompatibility,
+    pub(super) descriptor: PreparedArtifactCompatibility,
     segment_integrity: Vec<ManifestSegmentIntegrity>,
 }
 
@@ -1065,7 +1070,10 @@ impl PreparedArtifactStore {
                 disposition,
                 materialization,
                 reservation,
-                retained,
+                PreparedArtifactPublicationScope {
+                    retained,
+                    regeneration_candidate: None,
+                },
                 evidence,
             )
         } else {
@@ -1094,13 +1102,13 @@ impl PreparedArtifactStore {
         }
     }
 
-    fn publish_bytes_locked(
+    pub(super) fn publish_bytes_locked(
         &self,
         descriptor: &PreparedArtifactDescriptor,
         disposition: ArtifactDisposition,
         mut materialization: PreparedArtifactMaterialization<'_>,
         reservation: PreparedArtifactReservation,
-        retained: &[PreparedArtifactDescriptor],
+        publication_scope: PreparedArtifactPublicationScope<'_>,
         evidence: &mut ValidationEvidence,
     ) -> Result<(ValidatedArtifact, ArtifactDisposition, u64), PreparedArtifactError> {
         self.validate_raw_budget(descriptor.compatibility.identity, evidence)?;
@@ -1281,6 +1289,32 @@ impl PreparedArtifactStore {
                 return Err(PreparedArtifactError::CorruptArtifact);
             }
             let target = self.entry_path(descriptor.compatibility.identity);
+            if let Some(candidate) = publication_scope.regeneration_candidate {
+                match self.validate_entry_with_evidence(
+                    candidate.identity(),
+                    Some(candidate),
+                    evidence,
+                ) {
+                    Ok(_) if candidate.identity() != descriptor.identity() => {
+                        return Err(PreparedArtifactError::PublicationConflict);
+                    }
+                    Ok(_) => {}
+                    Err(error) if rejection_for(&error).is_some() => {
+                        // Explicit regeneration may discard an invalid immutable
+                        // member only after its complete replacement validates.
+                        let path = self.entry_path(candidate.identity());
+                        let bytes = directory_size_counted(&path, evidence)?;
+                        evidence.store_write_operation();
+                        fs::remove_dir_all(&path)?;
+                        evidence.record_eviction(CacheInventoryEntry {
+                            identity: candidate.identity(),
+                            bytes,
+                        });
+                        sync_directory_counted(&self.cache, evidence)?;
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
             evidence.store_read_operation();
             match target.symlink_metadata() {
                 Ok(_) => {
@@ -1299,7 +1333,7 @@ impl PreparedArtifactStore {
                     let cache_bytes = self.evict_for(
                         descriptor.compatibility.identity,
                         incoming_bytes,
-                        retained,
+                        publication_scope.retained,
                         evidence,
                     )?;
                     sync_directory_counted(&self.cache, evidence)?;
@@ -1393,7 +1427,7 @@ impl PreparedArtifactStore {
         sync_directory_counted(&self.cache, evidence)
     }
 
-    fn rollback_materialized(
+    pub(super) fn rollback_materialized(
         &self,
         evidence: &mut ValidationEvidence,
     ) -> Result<(), PreparedArtifactError> {
@@ -1466,7 +1500,7 @@ impl PreparedArtifactStore {
         })
     }
 
-    fn validate_budget_without_eviction(
+    pub(super) fn validate_budget_without_eviction(
         &self,
         evidence: &mut ValidationEvidence,
     ) -> Result<u64, PreparedArtifactError> {
@@ -1798,7 +1832,7 @@ impl PreparedArtifactStore {
         )
     }
 
-    fn validate_entry_with_evidence(
+    pub(super) fn validate_entry_with_evidence(
         &self,
         identity: ArtifactIdentity,
         expected: Option<&PreparedArtifactDescriptor>,
@@ -1890,7 +1924,7 @@ impl PreparedArtifactStore {
         })
     }
 
-    fn validate_manifest_at_path(
+    pub(super) fn validate_manifest_at_path(
         &self,
         directory: PathBuf,
         identity: ArtifactIdentity,

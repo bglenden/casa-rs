@@ -129,6 +129,36 @@ def test_generated_imager_wrapper_preserves_vlass_awproject_controls(monkeypatch
     assert overrides["imaging_fft_precision"] == "f32"
 
 
+def test_generated_imager_wrapper_preserves_explicit_native_evla_source(monkeypatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(task: str, **options: Any) -> object:
+        captured.update(task=task, **options)
+        return object()
+
+    monkeypatch.setattr(_catalog, "_run", fake_run)
+    tasks.imager(
+        vis="vlass.ms",
+        imagename="native",
+        gridder="awproject",
+        aw_cf_source="native-evla",
+        native_cf_cache="private/native-cache",
+        evla_surface="models/EVLA.surface",
+        native_cf_policy="generate-missing",
+        native_cf_working_size=256,
+        native_cf_oversampling=20,
+        native_cf_cache_bytes=2147483648,
+        native_cf_maximum_cells=1024,
+    )
+    assert captured["overrides"] == {
+        "vis": "vlass.ms", "imagename": "native", "gridder": "awproject",
+        "aw_cf_source": "native-evla", "native_cf_cache": "private/native-cache",
+        "evla_surface": "models/EVLA.surface", "native_cf_policy": "generate-missing",
+        "native_cf_working_size": 256, "native_cf_oversampling": 20,
+        "native_cf_cache_bytes": 2147483648, "native_cf_maximum_cells": 1024,
+    }
+
+
 def test_catalog_generates_one_wrapper_for_every_session(monkeypatch) -> None:
     session_ids = tuple(
         surface["id"]

@@ -60,7 +60,7 @@ fn ownership_transfer_retains_allocation_and_exact_component_bits() {
         .collect::<Vec<_>>();
     let pointer = values.as_ptr();
     let plane = Array2::from_shape_vec(metadata.shape, values).unwrap();
-    let taps = take_plane_storage(&metadata, plane).unwrap();
+    let taps = take_plane_storage(kernel_layout(&metadata).unwrap(), plane).unwrap();
     assert_eq!(
         pointer,
         taps.as_ptr(),
@@ -73,8 +73,11 @@ fn ownership_transfer_retains_allocation_and_exact_component_bits() {
             .collect::<Vec<_>>()
     );
     let plane = Array2::from_shape_vec(metadata.shape, taps).unwrap();
-    let reference = copying_control(|| adapt_kernel_from_plane(&metadata, plane.clone())).unwrap();
-    let candidate = adapt_kernel_from_plane(&metadata, plane).unwrap();
+    let reference = copying_control(|| {
+        adapt_kernel_from_plane(kernel_layout(&metadata).unwrap(), plane.clone())
+    })
+    .unwrap();
+    let candidate = adapt_kernel_from_plane(kernel_layout(&metadata).unwrap(), plane).unwrap();
     assert_eq!(candidate, reference);
     assert_eq!(format!("{candidate:?}"), format!("{reference:?}"));
 }
@@ -91,7 +94,7 @@ fn ownership_transfer_rejects_unexpected_dimensions_layout_offset_and_backing() 
         Array2::from_elem((nx + 1, ny), value).slice_move(ndarray::s![..nx, ..]),
     ];
     for plane in cases {
-        assert!(adapt_kernel_from_plane(&metadata, plane).is_err());
+        assert!(adapt_kernel_from_plane(kernel_layout(&metadata).unwrap(), plane).is_err());
     }
 }
 
@@ -101,8 +104,14 @@ fn ownership_transfer_preserves_nonfinite_rejection() {
     for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
         for value in [Complex32::new(invalid, 0.0), Complex32::new(0.0, invalid)] {
             let plane = Array2::from_elem(metadata.shape, value);
-            assert!(copying_control(|| adapt_kernel_from_plane(&metadata, plane.clone())).is_err());
-            assert!(adapt_kernel_from_plane(&metadata, plane).is_err());
+            assert!(
+                copying_control(|| adapt_kernel_from_plane(
+                    kernel_layout(&metadata).unwrap(),
+                    plane.clone()
+                ))
+                .is_err()
+            );
+            assert!(adapt_kernel_from_plane(kernel_layout(&metadata).unwrap(), plane).is_err());
         }
     }
 }
