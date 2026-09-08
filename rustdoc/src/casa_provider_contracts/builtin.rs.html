@@ -355,8 +355,8 @@
 <a href=#355 id=355 data-nosnippet>355</a>    </span><span class="kw">fn </span>imager_wide_field_controls_share_one_catalog_owned_surface() {
 <a href=#356 id=356 data-nosnippet>356</a>        <span class="kw">let </span>catalog = builtin_surface_catalog().unwrap();
 <a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">let </span>surface = catalog.surface(<span class="string">"imager"</span>).unwrap();
-<a href=#358 id=358 data-nosnippet>358</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">15</span>);
-<a href=#359 id=359 data-nosnippet>359</a>        <span class="macro">assert_eq!</span>(surface.bindings().len(), <span class="number">94</span>);
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="macro">assert_eq!</span>(surface.contract_version(), <span class="number">16</span>);
+<a href=#359 id=359 data-nosnippet>359</a>        <span class="macro">assert_eq!</span>(surface.bindings().len(), <span class="number">102</span>);
 <a href=#360 id=360 data-nosnippet>360</a>        <span class="kw">for </span>binding <span class="kw">in </span>surface.bindings() {
 <a href=#361 id=361 data-nosnippet>361</a>            <span class="kw">let </span>concept = catalog
 <a href=#362 id=362 data-nosnippet>362</a>                .catalog
@@ -393,7 +393,7 @@
 <a href=#393 id=393 data-nosnippet>393</a>            value: ParameterValue::String(<span class="string">"awproject"</span>.to_string()),
 <a href=#394 id=394 data-nosnippet>394</a>        };
 <a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">for </span>name <span class="kw">in </span>[
-<a href=#396 id=396 data-nosnippet>396</a>            <span class="string">"cfcache"</span>,
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="string">"aw_cf_source"</span>,
 <a href=#397 id=397 data-nosnippet>397</a>            <span class="string">"cf_resident_mb"</span>,
 <a href=#398 id=398 data-nosnippet>398</a>            <span class="string">"psfphasecenter"</span>,
 <a href=#399 id=399 data-nosnippet>399</a>            <span class="string">"vptable"</span>,

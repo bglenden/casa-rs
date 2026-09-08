@@ -374,6 +374,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#native-evla-aw-convolution-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native EVLA AW convolution functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sources-and-precedence" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -852,6 +863,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#native-evla-aw-convolution-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native EVLA AW convolution functions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sources-and-precedence" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -956,7 +978,7 @@ designed to paste cleanly into Markdown:</p>
 <span class="n">format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span>
 <span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"imager"</span>
 <span class="n">kind</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"task"</span>
-<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">15</span>
+<span class="n">contract</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16</span>
 
 <span class="k">[parameters]</span>
 <span class="n">vis</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"data/target.ms"</span>
@@ -989,6 +1011,26 @@ an explicit ordered migration chain.</p>
 <p>Relative dataset and product paths resolve against the explicit workspace, GUI
 project root, or process current directory. They do not resolve relative to the
 profile file merely because the file lives elsewhere.</p>
+<h2 id="native-evla-aw-convolution-functions">Native EVLA AW convolution functions<a class="headerlink" href="#native-evla-aw-convolution-functions" title="Permanent link">&para;</a></h2>
+<p>With <code>gridder = "awproject"</code>, <code>aw_cf_source = "casa-import"</code> is the default and
+requires an explicit <code>cfcache</code> input directory. CASA <code>CFS_</code>/<code>WTCFS_</code> cells are
+imported read-only; <code>auto</code> does not select or create a cache.</p>
+<p>Select <code>aw_cf_source = "native-evla"</code> to use the frozen homogeneous 25 m EVLA
+dish model without CASA at runtime. Supply <code>evla_surface</code> (the explicit dish
+surface input file), <code>native_cf_cache</code> (a separate private cache directory),
+<code>native_cf_working_size</code>, <code>native_cf_oversampling</code>, <code>native_cf_cache_bytes</code>, and
+<code>native_cf_maximum_cells</code>. Sampling and resource bounds are explicit request
+parameters, not inferred from a cache's contents. The native cache is <strong>not
+CASA-readable</strong> and cannot also be supplied as <code>cfcache</code>.</p>
+<p><code>native_cf_policy</code> defaults to <code>"reuse-only"</code>: an incomplete or invalid cache
+fails without generation. <code>"generate-missing"</code> creates absent cells and retains
+valid completed cells; corruption remains an error. <code>"regenerate"</code> explicitly
+replaces all requested cells and carries the provider's overwrite safety
+classification. Neither source falls back to the other. These parameters are
+available through the same CLI flags, task JSON, sparse profiles, and generated
+Python wrapper. Profiles store the requested paths/action/bounds, not compiled
+plans, generated cells, cache inventory, or publication state. This exposes the
+frozen EVLA case, not general telescope support.</p>
 <h2 id="sources-and-precedence">Sources and precedence<a class="headerlink" href="#sources-and-precedence" title="Permanent link">&para;</a></h2>
 <p>Every parameter session has exactly one base source:</p>
 <ul>

@@ -79,67 +79,71 @@
 <a href=#79 id=79 data-nosnippet>79</a>    PreparedArtifactConsumer, PreparedArtifactDescriptor, PreparedArtifactError,
 <a href=#80 id=80 data-nosnippet>80</a>    PreparedArtifactExecutionBinding, PreparedArtifactGenerator, PreparedArtifactImportSegment,
 <a href=#81 id=81 data-nosnippet>81</a>    PreparedArtifactImportSource, PreparedArtifactImporter, PreparedArtifactKind,
-<a href=#82 id=82 data-nosnippet>82</a>    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
-<a href=#83 id=83 data-nosnippet>83</a>    PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
-<a href=#84 id=84 data-nosnippet>84</a>    PreparedArtifactPrecision, PreparedArtifactReader, PreparedArtifactReaderFactory,
-<a href=#85 id=85 data-nosnippet>85</a>    PreparedArtifactReaderPlan, PreparedArtifactReaderResidency, PreparedArtifactRegistration,
-<a href=#86 id=86 data-nosnippet>86</a>    PreparedArtifactRejection, PreparedArtifactReservation, PreparedArtifactResidencyMeasurements,
-<a href=#87 id=87 data-nosnippet>87</a>    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
-<a href=#88 id=88 data-nosnippet>88</a>    PreparedArtifactStore, PreparedArtifactUvAffine,
-<a href=#89 id=89 data-nosnippet>89</a>};
-<a href=#90 id=90 data-nosnippet>90</a><span class="kw">pub use </span>product_publication::{
-<a href=#91 id=91 data-nosnippet>91</a>    AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,
-<a href=#92 id=92 data-nosnippet>92</a>    ProductPublicationError, ProductPublicationPlan,
+<a href=#82 id=82 data-nosnippet>82</a>    PreparedArtifactLoadSource, PreparedArtifactNativeCatalogOutcome,
+<a href=#83 id=83 data-nosnippet>83</a>    PreparedArtifactNativeEntryOutcome, PreparedArtifactNativeGenerator,
+<a href=#84 id=84 data-nosnippet>84</a>    PreparedArtifactNativeLayout, PreparedArtifactNativeOperation,
+<a href=#85 id=85 data-nosnippet>85</a>    PreparedArtifactNativePlanFragment, PreparedArtifactNativePlaneLayout,
+<a href=#86 id=86 data-nosnippet>86</a>    PreparedArtifactNativeRequest, PreparedArtifactOperation, PreparedArtifactOrder,
+<a href=#87 id=87 data-nosnippet>87</a>    PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
+<a href=#88 id=88 data-nosnippet>88</a>    PreparedArtifactPrecision, PreparedArtifactReader, PreparedArtifactReaderFactory,
+<a href=#89 id=89 data-nosnippet>89</a>    PreparedArtifactReaderPlan, PreparedArtifactReaderResidency, PreparedArtifactRegistration,
+<a href=#90 id=90 data-nosnippet>90</a>    PreparedArtifactRejection, PreparedArtifactReservation, PreparedArtifactResidencyMeasurements,
+<a href=#91 id=91 data-nosnippet>91</a>    PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
+<a href=#92 id=92 data-nosnippet>92</a>    PreparedArtifactStore, PreparedArtifactUvAffine,
 <a href=#93 id=93 data-nosnippet>93</a>};
-<a href=#94 id=94 data-nosnippet>94</a><span class="kw">pub use </span>publication_layout::{
-<a href=#95 id=95 data-nosnippet>95</a>    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
-<a href=#96 id=96 data-nosnippet>96</a>    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
-<a href=#97 id=97 data-nosnippet>97</a>    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
-<a href=#98 id=98 data-nosnippet>98</a>    PublicationStagingError,
-<a href=#99 id=99 data-nosnippet>99</a>};
-<a href=#100 id=100 data-nosnippet>100</a><span class="kw">pub use </span>receipt::{
-<a href=#101 id=101 data-nosnippet>101</a>    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
-<a href=#102 id=102 data-nosnippet>102</a>    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
-<a href=#103 id=103 data-nosnippet>103</a>    ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate,
-<a href=#104 id=104 data-nosnippet>104</a>    ReceiptPublicationParticipant, ReceiptRetention, ReceiptStatus,
-<a href=#105 id=105 data-nosnippet>105</a>};
-<a href=#106 id=106 data-nosnippet>106</a><span class="kw">pub use </span>resource_authority::{
-<a href=#107 id=107 data-nosnippet>107</a>    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,
-<a href=#108 id=108 data-nosnippet>108</a>    AdmissionInfeasibilityCertificate, AlternativeId, AlternativeRejection,
-<a href=#109 id=109 data-nosnippet>109</a>    AlternativeRejectionReason, CacheDemand, CapabilityId, CapabilityPredicate, CapacityDomainId,
-<a href=#110 id=110 data-nosnippet>110</a>    CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
-<a href=#111 id=111 data-nosnippet>111</a>    DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
-<a href=#112 id=112 data-nosnippet>112</a>    LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
-<a href=#113 id=113 data-nosnippet>113</a>    MemoryViewKind, PressureUpdate, ProductionStorageProfile, QueueDemand, QueueResource,
-<a href=#114 id=114 data-nosnippet>114</a>    QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit,
-<a href=#115 id=115 data-nosnippet>115</a>    ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
-<a href=#116 id=116 data-nosnippet>116</a>    ResourceIdentity, ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy,
-<a href=#117 id=117 data-nosnippet>117</a>    ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand,
-<a href=#118 id=118 data-nosnippet>118</a>    StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind, TransferDemand,
-<a href=#119 id=119 data-nosnippet>119</a>    TransferLink, TransferLinkId,
-<a href=#120 id=120 data-nosnippet>120</a>};
-<a href=#121 id=121 data-nosnippet>121</a><span class="kw">pub use </span>serial_product_publication::{
-<a href=#122 id=122 data-nosnippet>122</a>    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationCompletion,
-<a href=#123 id=123 data-nosnippet>123</a>    SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
-<a href=#124 id=124 data-nosnippet>124</a>    SerialProductPublicationPlan, SerialProductPublicationPlanError,
-<a href=#125 id=125 data-nosnippet>125</a>    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
-<a href=#126 id=126 data-nosnippet>126</a>};
-<a href=#127 id=127 data-nosnippet>127</a><span class="kw">pub use </span>spectral_cycle::{
-<a href=#128 id=128 data-nosnippet>128</a>    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
-<a href=#129 id=129 data-nosnippet>129</a>    ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
-<a href=#130 id=130 data-nosnippet>130</a>    SpectralCyclePassInput, SpectralCycleRegistry,
-<a href=#131 id=131 data-nosnippet>131</a>};
-<a href=#132 id=132 data-nosnippet>132</a><span class="kw">pub use </span>spectral_cycle_plan::{
-<a href=#133 id=133 data-nosnippet>133</a>    PlannedGriddedNormalBinding, SpectralCycleExecutionPolicy, SpectralCyclePlan,
-<a href=#134 id=134 data-nosnippet>134</a>    SpectralCyclePlanError, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+<a href=#94 id=94 data-nosnippet>94</a><span class="kw">pub use </span>product_publication::{
+<a href=#95 id=95 data-nosnippet>95</a>    AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,
+<a href=#96 id=96 data-nosnippet>96</a>    ProductPublicationError, ProductPublicationPlan,
+<a href=#97 id=97 data-nosnippet>97</a>};
+<a href=#98 id=98 data-nosnippet>98</a><span class="kw">pub use </span>publication_layout::{
+<a href=#99 id=99 data-nosnippet>99</a>    PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
+<a href=#100 id=100 data-nosnippet>100</a>    PublicationMappedStaging, PublicationParticipant, PublicationPhysicalLayout,
+<a href=#101 id=101 data-nosnippet>101</a>    PublicationResourceBounds, PublicationResourceBoundsError, PublicationStaging,
+<a href=#102 id=102 data-nosnippet>102</a>    PublicationStagingError,
+<a href=#103 id=103 data-nosnippet>103</a>};
+<a href=#104 id=104 data-nosnippet>104</a><span class="kw">pub use </span>receipt::{
+<a href=#105 id=105 data-nosnippet>105</a>    BuildIdentity, CompiledProblemEvidence, ExecutionAttemptId, ExecutionProvenance,
+<a href=#106 id=106 data-nosnippet>106</a>    ExecutionReceipt, ExecutionReceiptBinding, ExecutionReceiptStore, ReceiptAdaptation,
+<a href=#107 id=107 data-nosnippet>107</a>    ReceiptError, ReceiptFailureKind, ReceiptInfeasibilityCertificate,
+<a href=#108 id=108 data-nosnippet>108</a>    ReceiptPublicationParticipant, ReceiptRetention, ReceiptStatus,
+<a href=#109 id=109 data-nosnippet>109</a>};
+<a href=#110 id=110 data-nosnippet>110</a><span class="kw">pub use </span>resource_authority::{
+<a href=#111 id=111 data-nosnippet>111</a>    Accelerator, AcceleratorDemand, AcceleratorId, AcceleratorKind,
+<a href=#112 id=112 data-nosnippet>112</a>    AdmissionInfeasibilityCertificate, AlternativeId, AlternativeRejection,
+<a href=#113 id=113 data-nosnippet>113</a>    AlternativeRejectionReason, CacheDemand, CapabilityId, CapabilityPredicate, CapacityDomainId,
+<a href=#114 id=114 data-nosnippet>114</a>    CapacityViewId, CountDemand, CpuClassCapacity, DemandAlternative, DemandAlternatives,
+<a href=#115 id=115 data-nosnippet>115</a>    DemandEnvelope, ExternalPressure, HostInventory, IoBufferDemand, IoBufferKind, LeaseRelease,
+<a href=#116 id=116 data-nosnippet>116</a>    LeaseResource, MemoryCapacityDomain, MemoryCapacityKind, MemoryDemand, MemoryView,
+<a href=#117 id=117 data-nosnippet>117</a>    MemoryViewKind, PressureUpdate, ProductionStorageProfile, QueueDemand, QueueResource,
+<a href=#118 id=118 data-nosnippet>118</a>    QueueResourceId, QuiescencePoint, RateDemand, RateResource, RateResourceId, RateUnit,
+<a href=#119 id=119 data-nosnippet>119</a>    ResourceAuthority, ResourceError, ResourceFence, ResourceGrant, ResourceHeadroom,
+<a href=#120 id=120 data-nosnippet>120</a>    ResourceIdentity, ResourceLease, ResourceOverride, ResourcePermit, ResourcePolicy,
+<a href=#121 id=121 data-nosnippet>121</a>    ResourceTopology, RuntimeOverheadDemand, RuntimeOverheadKind, ScalingMetadata, StorageDemand,
+<a href=#122 id=122 data-nosnippet>122</a>    StorageDomain, StorageDomainId, StorageIoResourceBinding, StorageUseKind, TransferDemand,
+<a href=#123 id=123 data-nosnippet>123</a>    TransferLink, TransferLinkId,
+<a href=#124 id=124 data-nosnippet>124</a>};
+<a href=#125 id=125 data-nosnippet>125</a><span class="kw">pub use </span>serial_product_publication::{
+<a href=#126 id=126 data-nosnippet>126</a>    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductPublicationCompletion,
+<a href=#127 id=127 data-nosnippet>127</a>    SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
+<a href=#128 id=128 data-nosnippet>128</a>    SerialProductPublicationPlan, SerialProductPublicationPlanError,
+<a href=#129 id=129 data-nosnippet>129</a>    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
+<a href=#130 id=130 data-nosnippet>130</a>};
+<a href=#131 id=131 data-nosnippet>131</a><span class="kw">pub use </span>spectral_cycle::{
+<a href=#132 id=132 data-nosnippet>132</a>    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
+<a href=#133 id=133 data-nosnippet>133</a>    ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
+<a href=#134 id=134 data-nosnippet>134</a>    SpectralCyclePassInput, SpectralCycleRegistry,
 <a href=#135 id=135 data-nosnippet>135</a>};
-<a href=#136 id=136 data-nosnippet>136</a><span class="kw">pub use </span>weighting::{
-<a href=#137 id=137 data-nosnippet>137</a>    ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,
-<a href=#138 id=138 data-nosnippet>138</a>    FrozenWeightingReservation, ReplayCallbackError, SelectedObservationSourceResources,
-<a href=#139 id=139 data-nosnippet>139</a>    SpectralPassIdentity, SpectralPassPhase, WeightedObservationBlock, WeightedObservationSample,
-<a href=#140 id=140 data-nosnippet>140</a>    WeightedSpectralValue, WeightingEvidenceError, WeightingExecutionState,
-<a href=#141 id=141 data-nosnippet>141</a>    WeightingGenerationCompletionError, WeightingGenerationError, WeightingPlanFragment,
-<a href=#142 id=142 data-nosnippet>142</a>    WeightingPlanFragmentError, WeightingReplayCompletion, WeightingReplayCompletionError,
-<a href=#143 id=143 data-nosnippet>143</a>    WeightingReplayError, WeightingSourceTraversalError, WeightingStreamingMode,
-<a href=#144 id=144 data-nosnippet>144</a>};
+<a href=#136 id=136 data-nosnippet>136</a><span class="kw">pub use </span>spectral_cycle_plan::{
+<a href=#137 id=137 data-nosnippet>137</a>    PlannedGriddedNormalBinding, SpectralCycleExecutionPolicy, SpectralCyclePlan,
+<a href=#138 id=138 data-nosnippet>138</a>    SpectralCyclePlanError, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+<a href=#139 id=139 data-nosnippet>139</a>};
+<a href=#140 id=140 data-nosnippet>140</a><span class="kw">pub use </span>weighting::{
+<a href=#141 id=141 data-nosnippet>141</a>    ContinuumDensityCallbackError, ContinuumDensityTraversalError, FrozenWeightingArtifact,
+<a href=#142 id=142 data-nosnippet>142</a>    FrozenWeightingReservation, ReplayCallbackError, SelectedObservationSourceResources,
+<a href=#143 id=143 data-nosnippet>143</a>    SpectralPassIdentity, SpectralPassPhase, WeightedObservationBlock, WeightedObservationSample,
+<a href=#144 id=144 data-nosnippet>144</a>    WeightedSpectralValue, WeightingEvidenceError, WeightingExecutionState,
+<a href=#145 id=145 data-nosnippet>145</a>    WeightingGenerationCompletionError, WeightingGenerationError, WeightingPlanFragment,
+<a href=#146 id=146 data-nosnippet>146</a>    WeightingPlanFragmentError, WeightingReplayCompletion, WeightingReplayCompletionError,
+<a href=#147 id=147 data-nosnippet>147</a>    WeightingReplayError, WeightingSourceTraversalError, WeightingStreamingMode,
+<a href=#148 id=148 data-nosnippet>148</a>};
 </code></pre></div></section></main></body></html>

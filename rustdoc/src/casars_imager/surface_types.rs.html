@@ -100,11 +100,11 @@
 <a href=#100 id=100 data-nosnippet>100</a>    </span>PbSquare,
 <a href=#101 id=101 data-nosnippet>101</a>}
 <a href=#102 id=102 data-nosnippet>102</a>
-<a href=#103 id=103 data-nosnippet>103</a><span class="doccomment">/// A/W-projection task controls retained until their native owner lands.
+<a href=#103 id=103 data-nosnippet>103</a><span class="doccomment">/// A/W-projection task controls projected to the native application owner.
 <a href=#104 id=104 data-nosnippet>104</a></span><span class="attr">#[derive(Debug, Clone, PartialEq)]
 <a href=#105 id=105 data-nosnippet>105</a></span><span class="kw">pub struct </span>AwProjectControls {
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// Convolution-function cache path.
-<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub </span>cf_cache: PathBuf,
+<a href=#106 id=106 data-nosnippet>106</a>    <span class="doccomment">/// Exactly one read-only CASA import or explicitly requested native cache.
+<a href=#107 id=107 data-nosnippet>107</a>    </span><span class="kw">pub </span>source: casa_imaging_application::ContinuumAwCfSource,
 <a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// Requested resident cache ceiling.
 <a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub </span>cf_resident_bytes: usize,
 <a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Explicit W-plane count.
@@ -139,7 +139,7 @@
 <a href=#139 id=139 data-nosnippet>139</a>    <span class="doccomment">/// CASA task defaults, transported without executing A/W projection.
 <a href=#140 id=140 data-nosnippet>140</a>    </span><span class="kw">pub fn </span>casa_defaults(cf_cache: PathBuf) -&gt; <span class="self">Self </span>{
 <a href=#141 id=141 data-nosnippet>141</a>        <span class="self">Self </span>{
-<a href=#142 id=142 data-nosnippet>142</a>            cf_cache,
+<a href=#142 id=142 data-nosnippet>142</a>            source: casa_imaging_application::ContinuumAwCfSource::CasaImport(cf_cache),
 <a href=#143 id=143 data-nosnippet>143</a>            cf_resident_bytes: <span class="number">256 </span>* <span class="number">1024 </span>* <span class="number">1024</span>,
 <a href=#144 id=144 data-nosnippet>144</a>            w_plane_count: <span class="prelude-val">None</span>,
 <a href=#145 id=145 data-nosnippet>145</a>            psf_phase_center_direction_rad: <span class="prelude-val">None</span>,

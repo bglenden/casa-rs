@@ -1715,9 +1715,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <ul>
 <li>Parameter catalog schema version: <code>1</code></li>
 <li>Parameter surface schema version: <code>1</code></li>
-<li>Concepts: 402</li>
+<li>Concepts: 410</li>
 <li>Surfaces: 41 (39 task, 2 session)</li>
-<li>Surface bindings: 757</li>
+<li>Surface bindings: 765</li>
 </ul>
 <table>
 <thead>
@@ -1758,9 +1758,9 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <tr>
 <td><a href="#surface-imager">Imager</a><br><code>imager</code></td>
 <td>task</td>
-<td style="text-align: right;">15</td>
+<td style="text-align: right;">16</td>
 <td><code>imager</code></td>
-<td style="text-align: right;">94</td>
+<td style="text-align: right;">102</td>
 <td>Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</td>
 </tr>
 <tr>
@@ -3166,7 +3166,7 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <h2 id="imager-imager">Imager (<code>imager</code>)<a class="headerlink" href="#imager-imager" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Kind: <code>task</code></li>
-<li>Contract version: <code>15</code></li>
+<li>Contract version: <code>16</code></li>
 <li>Category: Imaging</li>
 <li>Provider family: <code>imager</code></li>
 <li>Summary: Run CASA-compatible dirty and deconvolved imaging from a MeasurementSet</li>
@@ -3737,11 +3737,11 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 </tr>
 <tr>
 <td><code>cfcache</code></td>
-<td><code>parameter.cfcache@r1</code></td>
-<td><code>optional&lt;path (directory)&gt; (states: auto)</code></td>
-<td><code>"auto"</code>; optional</td>
+<td><code>parameter.cfcache@r2</code></td>
+<td><code>optional&lt;path (directory)&gt; (states: none)</code></td>
+<td><code>"none"</code>; required</td>
 <td>Advanced Wide-Field</td>
-<td>AWProject convolution-function cache selection<br><em>Surface:</em> auto selects the managed plan-keyed cache; an explicit path preserves CASA cache interoperability.</td>
+<td>Read-only CASA AW convolution-function cache input<br><em>Surface:</em> Existing CASA CFS_/WTCFS_ input directory, imported read-only. This is never a native writable cache.</td>
 </tr>
 <tr>
 <td><code>cf_resident_mb</code></td>
@@ -3934,6 +3934,70 @@ Sources: <code>crates/casa-provider-contracts/resources/parameter-catalog.json</
 <td><code>false</code>; optional</td>
 <td>Continuum Subtraction</td>
 <td>Overwrite output-role selected cells in an existing CORRECTED_DATA column in place<br><em>Surface:</em> Requires continuum subtraction; fit-only and nonselected cells, flags, and weights remain unchanged.</td>
+</tr>
+<tr>
+<td><code>aw_cf_source</code></td>
+<td><code>parameter.aw_cf_source@r1</code></td>
+<td><code>choice (2 values)</code></td>
+<td><code>"casa-import"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Paired AW convolution-function source<br><em>Surface:</em> Exactly one read-only CASA import or frozen native EVLA source; there is no fallback.</td>
+</tr>
+<tr>
+<td><code>native_cf_cache</code></td>
+<td><code>parameter.native_cf_cache@r1</code></td>
+<td><code>optional&lt;path (directory)&gt; (states: none)</code></td>
+<td><code>"none"</code>; required</td>
+<td>Advanced Wide-Field</td>
+<td>Private native AW cache directory<br><em>Surface:</em> Native prepared-artifact cache; writable for generation actions and not readable by CASA.</td>
+</tr>
+<tr>
+<td><code>evla_surface</code></td>
+<td><code>parameter.evla_surface@r1</code></td>
+<td><code>optional&lt;path (file)&gt; (states: none)</code></td>
+<td><code>"none"</code>; required</td>
+<td>Advanced Wide-Field</td>
+<td>EVLA dish surface model<br><em>Surface:</em> Explicit radius, height and slope reference-data file for the frozen homogeneous 25 m EVLA model; no CASA installation discovery.</td>
+</tr>
+<tr>
+<td><code>native_cf_policy</code></td>
+<td><code>parameter.native_cf_policy@r1</code></td>
+<td><code>choice (3 values)</code></td>
+<td><code>"reuse-only"</code>; optional</td>
+<td>Advanced Wide-Field</td>
+<td>Native AW cache action<br><em>Surface:</em> reuse-only validates a complete cache; generate-missing preserves valid cells; regenerate explicitly replaces all requested cells.</td>
+</tr>
+<tr>
+<td><code>native_cf_working_size</code></td>
+<td><code>parameter.native_cf_working_size@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; required</td>
+<td>Advanced Wide-Field</td>
+<td>Native AW full FFT extent<br><em>Surface:</em> Explicit full even working-grid extent before support selection, not a requested output crop.</td>
+</tr>
+<tr>
+<td><code>native_cf_oversampling</code></td>
+<td><code>parameter.native_cf_oversampling@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; required</td>
+<td>Advanced Wide-Field</td>
+<td>Native AW convolution oversampling<br><em>Surface:</em> Explicit integer convolution-plane oversampling; validated by the native application owner.</td>
+</tr>
+<tr>
+<td><code>native_cf_cache_bytes</code></td>
+<td><code>parameter.native_cf_cache_bytes@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none); unit dimension: data_size</code></td>
+<td><code>"none"</code>; required</td>
+<td>Advanced Wide-Field</td>
+<td>Native AW durable-storage ceiling<br><em>Surface:</em> Explicit catalog-wide storage bound in bytes, independent of cropped cell size. This is a request bound, not saved cache inventory.</td>
+</tr>
+<tr>
+<td><code>native_cf_maximum_cells</code></td>
+<td><code>parameter.native_cf_maximum_cells@r1</code></td>
+<td><code>optional&lt;integer&gt; (states: none)</code></td>
+<td><code>"none"</code>; required</td>
+<td>Advanced Wide-Field</td>
+<td>Native AW maximum catalog cells<br><em>Surface:</em> Explicit maximum admitted metadata-only paired-cell count, not serialized compiled catalog state.</td>
 </tr>
 </tbody>
 </table>
