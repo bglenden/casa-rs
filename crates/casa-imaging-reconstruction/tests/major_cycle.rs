@@ -28,12 +28,12 @@ use casa_imaging_model::{
     SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
     SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
     SelectedSampleMetadata, SelectedSpectralContribution, SelectedSpectralContributions,
-    SelectedVisibilitySample, SkyDirection, SourceGenerations, SpectralContract,
-    SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor, SpectralSamplingLaw,
-    SpectralWcs, SpectralWindowSelection, StageErrorBudget, TaylorSupportReference,
-    TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw,
-    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
-    WeightingScheme, compile, compile_observation,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection,
+    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, ExecutableModelProblem, FinalModelCompletionId, MajorCycleError,
@@ -41,7 +41,8 @@ use casa_imaging_reconstruction::{
     ModelLifecycle, ModelLifecycleError, ReconstructionCycle, ReconstructionMask,
     SpectralChannelValidity, SpectralOperatorError, SpectralOperatorSpecification,
     WeightingAlgorithmState, WeightingError, WeightingExecutionLimits, WeightingPlan,
-    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation, plan_weighting,
+    WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation,
+    compile_spectral_stencil, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, GriddedNormalOperatorCompiler, SourceCardinalityObservation,
         SpectralOperatorPass, prepare_spectral_operator, spectral_operator_workload,
@@ -59,6 +60,10 @@ fn attempt(byte: u8) -> ModelExecutionAttemptId {
 }
 
 fn source(seed: u8) -> ObservationSourceInput {
+    source_with_channels(seed, [vec![0], vec![1]])
+}
+
+fn source_with_channels(seed: u8, channels: [Vec<u32>; 2]) -> ObservationSourceInput {
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -125,10 +130,11 @@ fn source(seed: u8) -> ObservationSourceInput {
                 DataDescriptionSelection::new(0, 0, 0),
                 DataDescriptionSelection::new(1, 1, 0),
             ],
-            vec![
-                SpectralWindowSelection::new(0, vec![0]),
-                SpectralWindowSelection::new(1, vec![1]),
-            ],
+            channels
+                .into_iter()
+                .enumerate()
+                .map(|(spw, channels)| SpectralWindowSelection::new(spw as u32, channels))
+                .collect(),
             vec![CorrelationSelection::new(
                 0,
                 vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
@@ -243,7 +249,7 @@ fn reconstruction_problem_with_sampling(
     sampling: SpectralSamplingLaw,
 ) -> casa_imaging_model::CompiledProblem {
     reconstruction_problem_with_sampling_and_model(
-        observation,
+        source(observation),
         width,
         channels,
         basis,
@@ -258,7 +264,7 @@ fn reconstruction_problem_with_sampling(
 }
 
 fn reconstruction_problem_with_sampling_and_model(
-    observation: u8,
+    source: ObservationSourceInput,
     width: usize,
     channels: usize,
     basis: ReconstructionBasis,
@@ -314,7 +320,7 @@ fn reconstruction_problem_with_sampling_and_model(
         ),
     );
     let snapshot = compile_observation(ObservationSnapshotInput::new(
-        vec![source(observation)],
+        vec![source],
         Vec::new(),
         model_state,
     ))
@@ -900,32 +906,89 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
 
 #[test]
 fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
-    let problem = reconstruction_problem_with_sampling(
-        247,
+    // The last native centre is exactly CASA's excluded upper halo boundary.
+    check_linear_cube_replay(&[1.0e9, 1.1e9, 1.2e9], 8);
+}
+
+#[test]
+fn t55_linear_cube_predicts_native_samples_just_beyond_image_channel_centres() {
+    check_linear_cube_replay(&[1.05e9, 1.15e9 + 3.09247875], 5);
+}
+
+fn check_linear_cube_replay(native_frequencies: &[f64], records_per_row: usize) {
+    let channels = (0..native_frequencies.len() as u32).collect::<Vec<_>>();
+    let problem = reconstruction_problem_with_sampling_and_model(
+        source_with_channels(247, [channels.clone(), channels]),
         8,
         2,
         ReconstructionBasis::ChannelLocal { channels: 2 },
         ReconstructionAlgorithm::Dirty,
         ReconstructionControls::new(0, 1.0, 0.0),
-        SpectralSamplingLaw::LINEAR,
+        (
+            SpectralSamplingLaw::LINEAR,
+            ModelStateIdentity::Empty,
+            ModelInputCommitment::Empty,
+        ),
     );
-    let samples = fixture_samples(&problem);
+    let samples = fixture_samples(&problem)
+        .into_iter()
+        .flat_map(|row| {
+            native_frequencies
+                .iter()
+                .copied()
+                .enumerate()
+                .map(move |(channel, frequency)| {
+                    let mut sample = row.clone();
+                    sample.address.channel_index = channel as u32;
+                    sample.address.frequency_centre_hz = frequency;
+                    sample.address.frequency_lower_hz = frequency - 5.0e7;
+                    sample.address.frequency_upper_hz = frequency + 5.0e7;
+                    sample.address.channel_width_hz = 1.0e8;
+                    sample
+                })
+        })
+        .collect::<Vec<_>>();
+    let contributions = |sample: &SelectedObservationSample| {
+        let interval = SelectedSpectralInterval::new(
+            sample.address.frequency_centre_hz,
+            sample.address.frequency_lower_hz,
+            sample.address.frequency_upper_hz,
+        )
+        .expect("native channel interval");
+        let evaluation = SelectedSpectralEvaluation::new(
+            interval,
+            interval,
+            f64::from(sample.input_weight),
+            true,
+        )
+        .expect("topocentric native spectral evaluation");
+        compile_spectral_stencil(&problem, sample, evaluation)
+            .expect("production linear spectral stencil")
+            .contributions()
+            .clone()
+    };
+    assert!(
+        native_frequencies.len() == 2
+            || samples.iter().any(|sample| {
+                contributions(sample)
+                    .iter()
+                    .filter(|contribution| {
+                        contribution.factor() > 0.0 && contribution.factor() < 1.0
+                    })
+                    .count()
+                    == 2
+            })
+    );
     let plan = plan_weighting(
         &problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
     )
     .expect("weighting plan");
     let selected_generation = replay_selected_generation(&problem, &samples);
-    let generation =
-        freeze_weighting_generation_with(&problem, &plan, &samples, split_channel_contributions)
-            .expect("freeze split-channel weighting generation");
-    let (weighted_blocks, summary) = replay_with(
-        &generation,
-        &problem,
-        &plan,
-        &samples,
-        split_channel_contributions,
-    );
+    let generation = freeze_weighting_generation_with(&problem, &plan, &samples, contributions)
+        .expect("freeze split-channel weighting generation");
+    let (weighted_blocks, summary) =
+        replay_with(&generation, &problem, &plan, &samples, contributions);
     let mut compiler =
         GriddedNormalOperatorCompiler::new(&problem, SourceCardinalityObservation::Disabled)
             .expect("gridded compiler");
@@ -942,61 +1005,67 @@ fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
         .expect("seal split-channel gridded program");
     assert_eq!(
         program.record_count(),
-        u64::try_from(samples.len() * 2).expect("record count"),
-        "one grouped record is retained for each accepted spectral contribution"
+        (samples.len() / native_frequencies.len() * records_per_row) as u64,
+        "the complete native prediction stencil and distinct accumulation stencil determine the retained record count"
     );
 
-    let mut initial_lifecycle = bind_lifecycle(&problem, attempt(248));
-    let initial_model = initial_lifecycle.initial_empty().expect("empty model");
-    let initial_preparation =
-        MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
-            .expect("initial preparation");
-    let specification =
-        SpectralOperatorSpecification::new(&problem).expect("initial spectral specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
-    )
-    .expect("initial workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("initial operator");
-    let mut owner = prepared
-        .begin(&problem, &generation)
-        .expect("initial complete-data owner");
-    owner
-        .bind_major_cycle_model(initial_preparation.final_model(), None)
-        .expect("bind initial model");
-    for block in &weighted_blocks {
-        owner.consume_block(block).expect("consume selected block");
-    }
-    let initial_complete = owner
-        .complete(&summary, selected_generation, None)
-        .expect("complete initial normal state");
-    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
-        .expect("initial major owner")
-        .reconcile(&mut initial_lifecycle)
-        .expect("initial channel slab");
-    let initial_sum_weights = initial_join.normal_state().sum_weights().to_vec();
-    let (initial_normal, continuation) = initial_join.into_continuation();
-
-    let (mut lifecycle, named_model) = ModelLifecycle::continue_from(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
-        attempt(249),
-        2,
-        continuation,
-    )
-    .expect("continued lifecycle");
-    let delta = lifecycle
-        .compile_delta(
-            &named_model,
-            [
-                ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [1, 0]), delta_value(0.5)),
-                ModelDeltaTerm::new(ModelCell::new(0, 1, 0, [2, 0]), delta_value(0.75)),
-            ],
+    let prepare_case = || {
+        let mut initial_lifecycle = bind_lifecycle(&problem, attempt(248));
+        let initial_model = initial_lifecycle.initial_empty().expect("empty model");
+        let initial_preparation =
+            MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
+                .expect("initial preparation");
+        let specification =
+            SpectralOperatorSpecification::new(&problem).expect("initial spectral specification");
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            SpectralOperatorPass::InitialMajor,
         )
-        .expect("two-channel model delta");
-    let preparation = MajorCyclePreparation::prepare(&lifecycle, named_model, Some(delta))
-        .expect("residual preparation");
+        .expect("initial workload");
+        let prepared =
+            prepare_spectral_operator(specification, workload).expect("initial operator");
+        let mut owner = prepared
+            .begin(&problem, &generation)
+            .expect("initial complete-data owner");
+        owner
+            .bind_major_cycle_model(initial_preparation.final_model(), None)
+            .expect("bind initial model");
+        for block in &weighted_blocks {
+            owner.consume_block(block).expect("consume selected block");
+        }
+        let initial_complete = owner
+            .complete(&summary, selected_generation, None)
+            .expect("complete initial normal state");
+        let initial_join =
+            MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
+                .expect("initial major owner")
+                .reconcile(&mut initial_lifecycle)
+                .expect("initial channel slab");
+        let (initial_normal, continuation) = initial_join.into_continuation();
+
+        let (lifecycle, named_model) = ModelLifecycle::continue_from(
+            ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
+            attempt(249),
+            2,
+            continuation,
+        )
+        .expect("continued lifecycle");
+        let delta = lifecycle
+            .compile_delta(
+                &named_model,
+                [
+                    ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [1, 0]), delta_value(0.5)),
+                    ModelDeltaTerm::new(ModelCell::new(0, 1, 0, [2, 0]), delta_value(0.75)),
+                ],
+            )
+            .expect("two-channel model delta");
+        let preparation = MajorCyclePreparation::prepare(&lifecycle, named_model, Some(delta))
+            .expect("residual preparation");
+        (lifecycle, preparation, initial_normal)
+    };
+    let (mut lifecycle, preparation, initial_normal) = prepare_case();
+    let initial_sum_weights = initial_normal.sum_weights().to_vec();
     let final_model_generation = preparation.final_model_generation();
     let specification =
         SpectralOperatorSpecification::new(&problem).expect("residual spectral specification");
@@ -1038,6 +1107,84 @@ fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
             .residual()
             .iter()
             .all(|value| value.re.is_finite() && value.im.is_finite())
+    );
+    let gridded_residual = joined.normal_state().residual().to_vec();
+    let (mut direct_lifecycle, direct_preparation, direct_initial_normal) = prepare_case();
+    assert_eq!(
+        direct_preparation.final_model_generation(),
+        final_model_generation
+    );
+    assert_eq!(
+        direct_preparation.final_model().samples(),
+        joined.final_model().samples()
+    );
+    let specification =
+        SpectralOperatorSpecification::new(&problem).expect("direct spectral specification");
+    let workload = spectral_operator_workload(
+        &specification,
+        plan.limits().max_block_samples(),
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .expect("direct residual workload");
+    let prepared = prepare_spectral_operator(specification, workload).expect("direct operator");
+    let mut direct_owner = prepared
+        .begin(&problem, &generation)
+        .expect("direct complete-data owner with the same frozen weighting");
+    direct_owner
+        .bind_major_cycle_model(
+            direct_preparation.final_model(),
+            Some(direct_initial_normal),
+        )
+        .expect("bind the same final model and retained invariants");
+    direct_owner.enable_final_visibility_samples();
+    let mut predictions = Vec::new();
+    for block in &weighted_blocks {
+        predictions.extend_from_slice(
+            direct_owner
+                .consume_block(block)
+                .expect("consume the same selected native-channel blocks"),
+        );
+    }
+    assert_eq!(
+        predictions.len(),
+        samples.len() / native_frequencies.len() * 2,
+        "CASA linear prediction includes the two native channels admitted by its channel map, including edge extrapolation"
+    );
+    assert!(
+        predictions
+            .iter()
+            .all(|sample| sample.predicted().norm() > 0.01)
+    );
+    let direct_complete = direct_owner
+        .complete(&summary, selected_generation, None)
+        .expect("complete direct linear residual");
+    let direct = MajorCycleOwner::from_complete_data(direct_complete, direct_preparation)
+        .expect("direct major owner")
+        .reconcile(&mut direct_lifecycle)
+        .expect("reconciled direct residual");
+    assert_eq!(direct.normal_state().sum_weights(), initial_sum_weights);
+    let differences = direct
+        .normal_state()
+        .residual()
+        .iter()
+        .zip(&gridded_residual)
+        .map(|(direct, gridded)| (*direct - *gridded).norm())
+        .collect::<Vec<_>>();
+    let minimum_nonzero = differences
+        .iter()
+        .copied()
+        .filter(|difference| *difference > 0.0)
+        .fold(f64::INFINITY, f64::min);
+    let (maximum_index, maximum) = differences
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .expect("two residual planes");
+    assert!(
+        *maximum < 1.0e-7,
+        "row-local CASA linear residual differs from sealed replay: native=[1.0,1.1,1.2]GHz output=[1.05,1.15]GHz minimum_nonzero={minimum_nonzero:e} maximum={maximum:e} index={maximum_index} direct={:?} gridded={:?}",
+        direct.normal_state().residual()[maximum_index],
+        gridded_residual[maximum_index],
     );
 }
 
@@ -1278,6 +1425,12 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                 .prepare_independent(&lifecycle, base, &normal, &mask)
                 .expect("prepared planes");
             assert_eq!(work.plane_count(), 3);
+            let planned_workspace = casa_imaging_reconstruction::runtime_adapter::ReconstructionPlaneWorkspace::for_problem(&problem)
+                .expect("compiled workspace").expect("independent cube workspace");
+            let actual_workspace = work.workspace();
+            assert_eq!(planned_workspace.plane_count(), work.plane_count());
+            assert!(actual_workspace.worker_bytes() <= planned_workspace.worker_bytes());
+            assert!(actual_workspace.retained_bytes() <= planned_workspace.retained_bytes());
             for start in (0..work.plane_count()).step_by(workers) {
                 let end = (start + workers).min(work.plane_count());
                 let partials = std::thread::scope(|scope| {
@@ -1291,6 +1444,7 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
                         .collect::<Vec<_>>()
                 });
                 for partial in partials.into_iter().rev() {
+                    assert!(partial.owned_bytes() <= actual_workspace.worker_bytes());
                     work.commit_plane(partial).expect("canonical plane commit");
                 }
             }
@@ -1523,16 +1677,6 @@ fn constant_basis_contributions(
         None,
     ])
     .expect("one constant-basis MFS contribution")
-}
-
-fn split_channel_contributions(
-    sample: &SelectedObservationSample,
-) -> SelectedSpectralContributions {
-    SelectedSpectralContributions::new([
-        SelectedSpectralContribution::new(0, 0.25, sample.address.frequency_centre_hz),
-        SelectedSpectralContribution::new(1, 0.75, sample.address.frequency_centre_hz),
-    ])
-    .expect("two linear output contributions")
 }
 
 /// Mint the authoritative T17 observation generation of the fixture stream.
@@ -1992,7 +2136,7 @@ fn all_zero_ingested_model_uses_the_general_operator_and_matches_empty_science()
         8 * 8,
     ));
     let problem = reconstruction_problem_with_sampling_and_model(
-        69,
+        source(69),
         8,
         1,
         ReconstructionBasis::Constant,

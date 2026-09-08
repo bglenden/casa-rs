@@ -1142,7 +1142,7 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
 #[test]
 fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
     use casa_test_support::spectral_interop::{
-        SpectralInterpolationMethod, SpectralInterpolationOracle,
+        SpectralInterpolationEdge, SpectralInterpolationMethod, SpectralInterpolationOracle,
     };
 
     let directory = tempfile::tempdir().expect("temporary T35 source-backed fixture");
@@ -1241,6 +1241,7 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
         &output_centres,
         evaluation.output_frame().centre_hz(),
         SpectralInterpolationMethod::Cubic,
+        SpectralInterpolationEdge::FlagOutside,
     )
     .expect("CASA/casacore cubic spectral oracle");
     assert!(casa.valid);

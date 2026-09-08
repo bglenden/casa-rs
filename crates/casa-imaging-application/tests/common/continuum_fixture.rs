@@ -67,7 +67,7 @@ pub(super) fn two_pointing_alma_spectral_measurement_set(root: &Path) -> PathBuf
 }
 
 fn add_two_field_pointings(path: &Path) {
-    let mut measurement_set = MeasurementSet::open(&path).expect("open two-pointing fixture");
+    let mut measurement_set = MeasurementSet::open(path).expect("open two-pointing fixture");
     for row in 0..measurement_set.row_count() {
         let field = row % 2;
         let sign = if field == 0 { 1.0 } else { -1.0 };

@@ -660,6 +660,7 @@ dependencies = [
  "libc",
  "num-complex",
  "objc2",
+ "objc2-foundation",
  "objc2-metal",
  "rayon",
  "serde",

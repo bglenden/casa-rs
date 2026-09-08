@@ -19,6 +19,7 @@ mod prepared_artifact;
 pub mod product_publication;
 mod publication_layout;
 mod receipt;
+mod reconstruction_executor;
 mod resource_authority;
 mod serial_product_publication;
 mod spectral_cycle;
@@ -129,7 +130,7 @@ pub use serial_product_publication::{
     SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use spectral_cycle::{
-    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink, InitialMajorPhaseCompletion,
+    FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink,
     ReconstructionCyclePhaseCompletion, ReconstructionCyclePhaseEvidence, SpectralCycleExecutor,
     SpectralCyclePassInput, SpectralCycleRegistry,
 };

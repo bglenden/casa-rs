@@ -155,25 +155,35 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     let program = MinorCycleProgram::for_problem(&problem)?.record_component_sequence(16)?;
 
     let initial = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())?;
-    let minor_node = initial
-        .minor_cycle_node()
-        .ok_or("T43/T44 initial plan lacks its reconstruction cycle")?
-        .clone();
+    let frozen_reservation = FrozenWeightingReservation::acquire(
+        authority,
+        resource_policy.clone(),
+        initial.weighting_plan().planned_residency(),
+        1 << 20,
+    )?;
+    let plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(initial.physical_candidates()),
+    )?;
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data,
         source_resources,
         pass,
+        minor_cycle_node,
         gridded_normal,
         ..
-    } = initial.into_parts();
-    let frozen_reservation = FrozenWeightingReservation::acquire(
-        authority,
-        resource_policy.clone(),
-        weighting.planned_residency(),
-        1 << 20,
-    )?;
+    } = initial.into_parts(&plan)?;
+    let minor_node =
+        minor_cycle_node.ok_or("T43/T44 initial plan lacks its reconstruction cycle")?;
     let executor = SpectralCycleExecutor::new(
         implementation_id(),
         problem.clone(),
@@ -198,18 +208,6 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
     );
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, executor);
-    let plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        authority,
-        &registry,
-        &receipts,
-        move |_, _| Ok::<_, Infallible>(vec![physical]),
-    )?;
     runtime_run(
         &executable,
         &plan,
@@ -570,18 +568,27 @@ fn execute_continuing_cycle(
         ordinal,
         replay,
     )?;
-    let minor_node = planned
-        .minor_cycle_node()
-        .ok_or("T43 continuing plan lacks reconstruction cycle")?
-        .clone();
+    let plan = runtime_plan(
+        problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        authority,
+        planning_registry,
+        receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )?;
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data,
         pass,
+        minor_cycle_node,
         gridded_normal,
         ..
-    } = planned.into_parts();
+    } = planned.into_parts(&plan)?;
+    let minor_node = minor_cycle_node.ok_or("T43 continuing plan lacks reconstruction cycle")?;
     let executor = SpectralCycleExecutor::new_gridded(
         implementation_id(),
         problem.clone(),
@@ -603,14 +610,7 @@ fn execute_continuing_cycle(
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), problem, executor);
     run_plan(
-        problem,
-        resource_policy,
-        authority,
-        receipts,
-        current,
-        &registry,
-        physical,
-        ordinal,
+        problem, authority, receipts, current, &registry, &plan, ordinal,
     )?;
     Ok((
         registry
@@ -650,14 +650,25 @@ fn execute_terminal_major(
         ordinal,
         replay,
     )?;
+    let plan = runtime_plan(
+        problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        authority,
+        planning_registry,
+        receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )?;
     let SpectralCyclePlanParts {
-        physical,
         weighting,
         complete_data,
         pass,
         gridded_normal,
         ..
-    } = planned.into_parts();
+    } = planned.into_parts(&plan)?;
     let executor = SpectralCycleExecutor::new_gridded(
         implementation_id(),
         problem.clone(),
@@ -672,14 +683,7 @@ fn execute_terminal_major(
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), problem, executor);
     run_plan(
-        problem,
-        resource_policy,
-        authority,
-        receipts,
-        current,
-        &registry,
-        physical,
-        ordinal,
+        problem, authority, receipts, current, &registry, &plan, ordinal,
     )?;
     Ok(registry
         .implementation()
@@ -688,34 +692,20 @@ fn execute_terminal_major(
         .into_completion())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn run_plan(
     problem: &casa_imaging_model::CompiledProblem,
-    resource_policy: &ResourcePolicy,
     authority: &ResourceAuthority,
     receipts: &ExecutionReceiptStore,
     current: &RunBindings,
     registry: &SpectralCycleRegistry<SpectralCycleExecutor>,
-    physical: casa_imaging_runtime::PhysicalWorkBinding,
+    plan: &casa_imaging_runtime::ExecutionPlan,
     ordinal: u32,
 ) -> Result<(), Box<dyn Error>> {
-    let plan = runtime_plan(
-        problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        authority,
-        registry,
-        receipts,
-        move |_, _| Ok::<_, Infallible>(vec![physical]),
-    )?;
     let executable = ExecutableModelProblem::from_compiled(problem.clone())?;
     let attempt = attempt_id(ordinal);
     runtime_run(
         &executable,
-        &plan,
+        plan,
         current,
         registry,
         authority,

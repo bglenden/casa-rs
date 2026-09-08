@@ -82,7 +82,9 @@ pub mod runtime_adapter {
         SourceCardinalityObservation, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
-    pub use crate::reconstruction_cycle::{ReconstructionPlanePartial, ReconstructionPlaneWork};
+    pub use crate::reconstruction_cycle::{
+        ReconstructionPlanePartial, ReconstructionPlaneWork, ReconstructionPlaneWorkspace,
+    };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,
         CompleteDataOwnerState, FinalVisibilitySample, PreparedSpectralOperator,
@@ -952,11 +954,13 @@ impl ModelLifecycle {
         terms: impl IntoIterator<Item = ModelDeltaTerm>,
     ) -> Result<ModelDelta, ModelLifecycleError> {
         self.validate_base(base)?;
-        let capacity = self
-            .contract
-            .bounds()
-            .max_delta_terms()
-            .min(self.contract.target().sample_count());
+        let terms = terms.into_iter();
+        let capacity = terms.size_hint().0.min(
+            self.contract
+                .bounds()
+                .max_delta_terms()
+                .min(self.contract.target().sample_count()),
+        );
         let mut canonical = Vec::with_capacity(capacity);
         let mut prior = None;
         for term in terms {

@@ -272,6 +272,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
             &policy,
             &weighting,
             phase,
+            1,
             Some(window),
         )
     };
@@ -282,9 +283,6 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
                 &policy.resource_policy,
                 preferred_candidate
                     .physical
-                    .clone()
-                    .with_fixed_worker_count(1)
-                    .unwrap()
                     .execution_dag()
                     .resource_alternative()
             )
@@ -305,6 +303,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
             &fixed_policy,
             &weighting,
             phase,
+            1,
             Some(window),
         )
         .unwrap();
@@ -363,11 +362,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
 
     let minimum = preview(None).unwrap();
     let minimum_candidate = compose(&minimum).unwrap();
-    let serial = minimum_candidate
-        .physical
-        .clone()
-        .with_fixed_worker_count(1)
-        .unwrap();
+    let serial = minimum_candidate.physical.clone();
     let remaining = authority
         .remaining_planning_memory_bytes(
             &policy.resource_policy,
@@ -375,12 +370,71 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         )
         .unwrap();
     let floor = memory - remaining;
+    let mut at_floor = policy.clone();
+    at_floor.authority = ResourceAuthority::with_inventory(inventory(root.path(), floor)).unwrap();
     for workers in [1, 4] {
-        let physical = minimum_candidate
-            .physical
-            .clone()
-            .with_fixed_worker_count(workers)
+        let (_, candidate) =
+            select_gridded_window_plan(preferred.clone(), &at_floor, preview, |window| {
+                compose_major_physical(
+                    &problem,
+                    &registry,
+                    &at_floor,
+                    &weighting,
+                    phase,
+                    workers,
+                    Some(window),
+                )
+            })
             .unwrap();
+        let quote = at_floor.authority.remaining_planning_memory_bytes(
+            &at_floor.resource_policy,
+            candidate.physical.execution_dag().resource_alternative(),
+        );
+        assert_eq!(
+            quote.is_ok(),
+            workers == 1,
+            "the window search must quote this exact worker profile, not a serial projection"
+        );
+        assert_eq!(
+            candidate
+                .physical
+                .execution_dag()
+                .resource_alternative()
+                .scaling
+                .minimum_workers,
+            workers
+        );
+        assert_eq!(
+            candidate
+                .physical
+                .execution_dag()
+                .resource_alternative()
+                .scaling
+                .maximum_workers,
+            workers
+        );
+    }
+    assert!(
+        matches!(
+            select_gridded_window_plan(preferred.clone(), &policy, preview, |_| {
+                Err(SpectralCyclePlanError::Overflow)
+            }),
+            Err(SpectralCyclePlanError::Overflow)
+        ),
+        "invalid composition must not be treated as a capacity refusal"
+    );
+    for workers in [1, 4] {
+        let physical = compose_major_physical(
+            &problem,
+            &registry,
+            &policy,
+            &weighting,
+            phase,
+            workers,
+            Some(&minimum),
+        )
+        .unwrap()
+        .physical;
         assert_eq!(
             physical.execution_dag().logical_allocations(),
             serial.execution_dag().logical_allocations()
@@ -398,7 +452,15 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
     let mut below = policy.clone();
     below.authority = ResourceAuthority::with_inventory(inventory(root.path(), floor - 1)).unwrap();
     let (_, rejected) = select_gridded_window_plan(preferred, &below, preview, |window| {
-        compose_major_physical(&problem, &registry, &below, &weighting, phase, Some(window))
+        compose_major_physical(
+            &problem,
+            &registry,
+            &below,
+            &weighting,
+            phase,
+            1,
+            Some(window),
+        )
     })
     .unwrap();
     assert!(

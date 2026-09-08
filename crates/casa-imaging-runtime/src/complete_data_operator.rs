@@ -1319,7 +1319,7 @@ impl FrozenGriddedNormalReplay {
             .iter()
             .find_map(|claim| (claim.resource == LeaseResource::Workers).then_some(claim.amount))
             .ok_or_else(|| io::Error::other("gridded-normal worker claim missing"))?;
-        if worker_claim != context.knobs().workers {
+        if worker_claim == 0 || worker_claim > context.knobs().workers {
             return Err(io::Error::other(
                 "gridded-normal worker claim disagrees with execution knobs",
             ));
@@ -2050,8 +2050,9 @@ impl CompleteDataPlanFragment {
     /// `working_set_bytes` is the Resource Authority's policy-adjusted
     /// host-memory ceiling. The schedule selects the
     /// deepest slab whose complete operator residency fits that ceiling and
-    /// reuses that one peak allocation for every ordered slab. A ceiling below
-    /// the minimum one-channel residency fails planning.
+    /// reuses that one peak allocation for every ordered slab. Below the minimum,
+    /// retain the fully charged one-channel candidate for authoritative rejection
+    /// by the ordinary runtime planner; this constructor does not admit execution.
     pub(crate) fn channel_major_with_preparation_node(
         problem: &CompiledProblem,
         max_replay_block_samples: usize,
@@ -2067,7 +2068,7 @@ impl CompleteDataPlanFragment {
             SpectralOperatorPass::InitialMajor,
         )?;
         let fold_accumulator_bytes = project_fold_accumulator_bytes(full_workload)?;
-        let mut admitted_depth = 0;
+        let mut admitted_depth = 1;
         for depth in 1..=total_channels {
             let specification = SpectralOperatorSpecification::for_slab(problem, 0, depth)?;
             let workload = spectral_operator_workload(
@@ -2092,9 +2093,6 @@ impl CompleteDataPlanFragment {
                 continue;
             }
             admitted_depth = depth;
-        }
-        if admitted_depth == 0 {
-            return Err(CompleteDataPlanError::PlanMismatch);
         }
         let mut specifications = Vec::new();
         let mut workloads = Vec::new();

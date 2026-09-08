@@ -214,13 +214,30 @@ fn t51_source_allocation_is_checked_before_deferred_open() {
         ),
     )
     .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let receipts =
+        ExecutionReceiptStore::new(directory.path(), ReceiptRetention::new(2, 1 << 20).unwrap())
+            .unwrap();
+    let plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        &authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )
+    .unwrap();
     let SpectralCyclePlanParts {
         physical,
         weighting,
         complete_data,
         pass,
         ..
-    } = planned.into_parts();
+    } = planned.into_parts(&plan).unwrap();
     let read = physical
         .execution_dag()
         .nodes()
@@ -263,23 +280,6 @@ fn t51_source_allocation_is_checked_before_deferred_open() {
     );
     let registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, executor);
-    let directory = tempfile::tempdir().unwrap();
-    let receipts =
-        ExecutionReceiptStore::new(directory.path(), ReceiptRetention::new(2, 1 << 20).unwrap())
-            .unwrap();
-    let plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(
-            registry_id(),
-            policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        &authority,
-        &registry,
-        &receipts,
-        move |_, _| Ok::<_, Infallible>(vec![physical]),
-    )
-    .unwrap();
     let error = runtime_run(
         &ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
         &plan,
@@ -512,7 +512,15 @@ fn execute_complete_data_mfs_with_policy(
         .into_parts();
     let snapshot = compile_observation(snapshot_input).expect("compile owner snapshot");
     let problem = compile(ImagingRequest::new(
-        problem_specification(weighting),
+        problem_specification_with_reconstruction(
+            weighting,
+            ReconstructionContract::new(
+                ReconstructionBasis::Constant,
+                ReconstructionAlgorithm::Hogbom,
+                ReconstructionControls::new(2, 0.1, 0.0),
+                PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+            ),
+        ),
         geometry_with_facets(facets),
         ProblemInputIdentities::new(snapshot),
         model_lifecycle(ModelStateIdentity::Empty),
@@ -558,26 +566,42 @@ fn execute_complete_data_mfs_with_policy(
     };
     let planned = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())
         .expect("plan initial complete-data MFS pass");
-    let minor_node = planned
-        .minor_cycle_node()
-        .expect("initial plan includes reconstruction cycle")
-        .clone();
+    let frozen_reservation = FrozenWeightingReservation::acquire(
+        &authority,
+        resource_policy.clone(),
+        planned.weighting_plan().planned_residency(),
+        replay_proof_bytes,
+    )
+    .expect("reserve frozen weighting state");
+    let receipt_directory = tempfile::tempdir().expect("receipt directory");
+    let receipts = ExecutionReceiptStore::new(
+        receipt_directory.path(),
+        ReceiptRetention::new(4, 1 << 20).expect("receipt retention"),
+    )
+    .expect("receipt store");
+    let initial_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        &authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(planned.physical_candidates()),
+    )
+    .expect("bind initial execution plan");
     let SpectralCyclePlanParts {
-        physical,
         weighting: weighting_plan,
         complete_data,
         source_resources,
         pass,
+        minor_cycle_node,
         gridded_normal,
         ..
-    } = planned.into_parts();
-    let frozen_reservation = FrozenWeightingReservation::acquire(
-        &authority,
-        resource_policy.clone(),
-        weighting_plan.planned_residency(),
-        replay_proof_bytes,
-    )
-    .expect("reserve frozen weighting state");
+    } = planned.into_parts(&initial_plan).unwrap();
+    let minor_node = minor_cycle_node.expect("initial plan includes reconstruction cycle");
     let executor = SpectralCycleExecutor::new(
         implementation_id(),
         problem.clone(),
@@ -607,25 +631,6 @@ fn execute_complete_data_mfs_with_policy(
     );
     let initial_registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, executor);
-    let receipt_directory = tempfile::tempdir().expect("receipt directory");
-    let receipts = ExecutionReceiptStore::new(
-        receipt_directory.path(),
-        ReceiptRetention::new(4, 1 << 20).expect("receipt retention"),
-    )
-    .expect("receipt store");
-    let initial_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        &authority,
-        &initial_registry,
-        &receipts,
-        move |_, _| Ok::<_, Infallible>(vec![physical]),
-    )
-    .expect("bind initial execution plan");
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model_id());
     let initial_attempt = attempt_id(execution_id, 0);
@@ -651,6 +656,16 @@ fn execute_complete_data_mfs_with_policy(
         .implementation()
         .take_reconstruction_cycle_completion()
         .expect("initial reconstruction completion");
+    if facets == FacetLayout::Single {
+        let measurements = initial_registry
+            .implementation()
+            .reconstruction_measurements()
+            .expect("single-plane owner uses the bounded resident executor");
+        assert_eq!(measurements.partitions_executed, 1);
+        assert_eq!(measurements.commits_completed, 1);
+        assert_eq!(measurements.source_read_operations, 0);
+        assert_eq!(measurements.blocks_filled, 0);
+    }
     let frozen_weighting = initial_registry
         .implementation()
         .take_frozen_weighting()
@@ -676,14 +691,26 @@ fn execute_complete_data_mfs_with_policy(
         gridded_replay,
     )
     .expect("plan final gridded replay");
+    let final_plan = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry_id(),
+            resource_policy.clone(),
+            PlannerCostModelProfileBootstrap::new(cost_model_id()),
+        ),
+        &authority,
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, Infallible>(final_planned.physical_candidates()),
+    )
+    .expect("bind final execution plan");
     let SpectralCyclePlanParts {
-        physical: final_physical,
         weighting: final_weighting,
         complete_data: final_complete_data,
         pass: final_pass,
         gridded_normal: final_gridded_normal,
         ..
-    } = final_planned.into_parts();
+    } = final_planned.into_parts(&final_plan).unwrap();
     let expected_replay_grid_bytes = expected_replay_grid_bytes(
         final_complete_data
             .gridded_replay_record_bound()
@@ -703,19 +730,6 @@ fn execute_complete_data_mfs_with_policy(
     .with_frozen_weighting(frozen_weighting);
     let final_registry =
         SpectralCycleRegistry::new(registry_id(), implementation_id(), &problem, final_executor);
-    let final_plan = runtime_plan(
-        &problem,
-        PlanningBindings::new(
-            registry_id(),
-            resource_policy.clone(),
-            PlannerCostModelProfileBootstrap::new(cost_model_id()),
-        ),
-        &authority,
-        &final_registry,
-        &receipts,
-        move |_, _| Ok::<_, Infallible>(vec![final_physical]),
-    )
-    .expect("bind final execution plan");
     runtime_run(
         &executable,
         &final_plan,
@@ -864,6 +878,21 @@ pub(super) fn geometry_with_facets(facets: FacetLayout) -> GeometryInput {
 }
 
 pub(super) fn problem_specification(weighting: WeightingContract) -> ProblemSpecification {
+    problem_specification_with_reconstruction(
+        weighting,
+        ReconstructionContract::new(
+            ReconstructionBasis::Constant,
+            ReconstructionAlgorithm::Dirty,
+            ReconstructionControls::new(0, 1.0, 0.0),
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+    )
+}
+
+fn problem_specification_with_reconstruction(
+    weighting: WeightingContract,
+    reconstruction: ReconstructionContract,
+) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
         ReductionPolicy::Compensated,
@@ -899,12 +928,7 @@ pub(super) fn problem_specification(weighting: WeightingContract) -> ProblemSpec
                 ),
             ),
         ),
-        ReconstructionContract::new(
-            ReconstructionBasis::Constant,
-            ReconstructionAlgorithm::Dirty,
-            ReconstructionControls::new(0, 1.0, 0.0),
-            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
-        ),
+        reconstruction,
         weighting,
         ProductRequirements::new(
             vec![ProductKind::Psf],

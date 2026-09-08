@@ -2141,6 +2141,24 @@ impl ResourceAuthority {
         self.remaining_memory_bytes(policy, &host_view.id, ResourceGrant::default())
     }
 
+    pub(crate) fn planning_worker_capacity(
+        &self,
+        policy: &ResourcePolicy,
+    ) -> Result<u64, ResourceError> {
+        validate_policy(&self.inner.topology, policy)?;
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let pressured = capacity_under_pressure(&self.inner.topology, &state);
+        let policy_capacity =
+            apply_concurrent_policies(&self.inner.topology, &state, policy, &pressured);
+        Ok(available_after_active_leases(&state, policy_capacity)?
+            .hard
+            .workers)
+    }
+
     fn remaining_memory_bytes(
         &self,
         policy: &ResourcePolicy,

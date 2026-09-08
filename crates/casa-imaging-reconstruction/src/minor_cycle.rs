@@ -54,28 +54,56 @@ pub fn minor_cycle_workspace_bytes(
     maximum_iterations: usize,
     recorded_components: usize,
 ) -> u64 {
+    minor_cycle_workspace(
+        shape,
+        basis,
+        algorithm,
+        maximum_iterations,
+        recorded_components,
+    )
+    .bytes
+}
+
+pub(crate) struct MinorCycleWorkspace {
+    pub(crate) bytes: u64,
+    pub(crate) maximum_delta_terms: u64,
+    pub(crate) maximum_recorded_components: u64,
+}
+
+pub(crate) fn minor_cycle_workspace(
+    shape: [usize; 2],
+    basis: ReconstructionBasis,
+    algorithm: &ReconstructionAlgorithm,
+    maximum_iterations: usize,
+    recorded_components: usize,
+) -> MinorCycleWorkspace {
     let cells = sat_u64(shape[0]).saturating_mul(sat_u64(shape[1]));
-    let scalar_workspace = cells.saturating_mul(16);
-    let (terms, scales_px) = match (basis, algorithm) {
-        (
-            ReconstructionBasis::Taylor { terms }
-            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. },
-            ReconstructionAlgorithm::Mtmfs { scales_px, .. },
-        ) => (terms, scales_px),
-        (
-            ReconstructionBasis::JointContinuumLine {
-                continuum_terms,
-                line_terms,
-            },
-            ReconstructionAlgorithm::JointContinuumLine { scales_px, .. },
-        ) => (continuum_terms.saturating_add(line_terms), scales_px),
-        _ => return scalar_workspace,
+    let terms = match basis {
+        ReconstructionBasis::Taylor { terms }
+        | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } => terms,
+        ReconstructionBasis::JointContinuumLine {
+            continuum_terms,
+            line_terms,
+        } => continuum_terms.saturating_add(line_terms),
+        _ => 1,
+    };
+    let coupled = matches!(
+        algorithm,
+        ReconstructionAlgorithm::Mtmfs { .. } | ReconstructionAlgorithm::JointContinuumLine { .. }
+    );
+    let scales_px: &[f64] = match algorithm {
+        ReconstructionAlgorithm::Multiscale { scales_px, .. }
+        | ReconstructionAlgorithm::Mtmfs { scales_px, .. }
+        | ReconstructionAlgorithm::JointContinuumLine { scales_px, .. } => scales_px,
+        _ => &[],
     };
     let terms = sat_u64(terms);
     let effective_sample_counts = scales_px
         .iter()
         .copied()
-        .filter(|scale| *scale <= (shape[0] / 2) as f64 && *scale <= (shape[1] / 2) as f64)
+        .filter(|scale| {
+            !coupled || (*scale <= (shape[0] / 2) as f64 && *scale <= (shape[1] / 2) as f64)
+        })
         .map(|scale| {
             if scale == 0.0 {
                 1
@@ -105,6 +133,7 @@ pub fn minor_cycle_workspace_bytes(
     let plane_scratch = cells.saturating_mul(size_of_u64::<f64>());
     let kernel_storage = kernel_samples
         .saturating_mul(size_of_u64::<([isize; 2], f64)>())
+        .saturating_mul(2)
         .saturating_add(scale_count.saturating_mul(size_of_u64::<ScaleKernel>()));
     let square_terms = terms.saturating_mul(terms);
     let scale_systems = scale_count.saturating_mul(
@@ -116,16 +145,29 @@ pub fn minor_cycle_workspace_bytes(
         .saturating_mul(size_of_u64::<f64>())
         .saturating_mul(4)
         .saturating_add(terms.saturating_mul(size_of_u64::<f64>()).saturating_mul(6));
-    let sparse_delta = possible_sparse_terms.saturating_mul(SPARSE_TERM_ENTRY_BOUND_BYTES);
-    let diagnostics = sat_u64(recorded_components)
-        .min(sat_u64(maximum_iterations).saturating_mul(terms))
-        .saturating_mul(size_of_u64::<MinorCycleComponent>());
+    // Include the partially occupied root even for a one-component solve.
+    let sparse_delta = possible_sparse_terms
+        .max(16)
+        .saturating_mul(SPARSE_TERM_ENTRY_BOUND_BYTES)
+        .saturating_add(possible_sparse_terms.saturating_mul(3 * size_of_u64::<ModelDeltaTerm>()));
+    let maximum_recorded_components =
+        sat_u64(recorded_components).min(sat_u64(maximum_iterations).saturating_mul(terms));
+    let diagnostics =
+        maximum_recorded_components.saturating_mul(2 * size_of_u64::<MinorCycleComponent>());
     let container_overhead = terms
         .saturating_add(scale_count.saturating_mul(2))
         .saturating_add(8)
         .saturating_mul(size_of_u64::<Vec<u8>>());
+    let clark_active = if matches!(algorithm, ReconstructionAlgorithm::Clark) {
+        cells
+    } else {
+        0
+    };
+    let psf_fit = cells
+        .saturating_mul(size_of_u64::<f32>())
+        .saturating_add(crate::psf_beam::psf_fit_workspace_bytes(shape));
 
-    residual_planes
+    let bytes = residual_planes
         .saturating_add(plane_scratch)
         .saturating_add(kernel_storage)
         .saturating_add(scale_systems)
@@ -133,6 +175,13 @@ pub fn minor_cycle_workspace_bytes(
         .saturating_add(sparse_delta)
         .saturating_add(diagnostics)
         .saturating_add(container_overhead)
+        .saturating_add(clark_active)
+        .saturating_add(psf_fit);
+    MinorCycleWorkspace {
+        bytes,
+        maximum_delta_terms: possible_sparse_terms,
+        maximum_recorded_components,
+    }
 }
 
 fn sat_u64(value: usize) -> u64 {
@@ -536,7 +585,7 @@ impl MinorCycleProgram {
         self.hogbom_iteration_accounting
     }
 
-    fn actual_iteration_limit(&self) -> usize {
+    pub(crate) fn actual_iteration_limit(&self) -> usize {
         if matches!(&self.algorithm, ReconstructionAlgorithm::Hogbom)
             && self.hogbom_iteration_accounting == HogbomIterationAccounting::CasaInclusive
         {
@@ -2980,23 +3029,20 @@ fn robust_supported_rms(
     base: &ModelGeneration,
     model_plane: MinorCycleModelPlane,
 ) -> Result<f64, MinorCycleError> {
-    let mut values = residual
-        .iter()
-        .enumerate()
-        .filter_map(|(index, value)| {
-            let pixel = plane_pixel(index, shape);
-            valid_support(base, shape, model_plane, pixel).then_some(*value)
-        })
-        .collect::<Vec<_>>();
+    let mut values = Vec::with_capacity(residual.len());
+    values.extend(residual.iter().enumerate().filter_map(|(index, value)| {
+        let pixel = plane_pixel(index, shape);
+        valid_support(base, shape, model_plane, pixel).then_some(*value)
+    }));
     if values.is_empty() {
         return Err(MinorCycleError::EmptyValidSupport);
     }
-    values.sort_by(f64::total_cmp);
+    values.sort_unstable_by(f64::total_cmp);
     let median = values[values.len() / 2];
     for value in &mut values {
         *value = (*value - median).abs();
     }
-    values.sort_by(f64::total_cmp);
+    values.sort_unstable_by(f64::total_cmp);
     Ok(1.482_602_218_505_602 * values[values.len() / 2])
 }
 
@@ -4819,6 +4865,39 @@ mod tests {
                 < 1.0e-12
         );
         assert_eq!(recorded.len(), 3);
+    }
+
+    #[test]
+    fn t55_point_workspace_includes_active_set_sparse_delta_and_diagnostics() {
+        let shape = [128, 256];
+        let bytes = |algorithm, iterations, recorded| {
+            minor_cycle_workspace_bytes(
+                shape,
+                ReconstructionBasis::ChannelLocal { channels: 64 },
+                algorithm,
+                iterations,
+                recorded,
+            )
+        };
+        let hogbom = bytes(&ReconstructionAlgorithm::Hogbom, 8, 0);
+        let clark = bytes(&ReconstructionAlgorithm::Clark, 8, 0);
+        assert!(hogbom > 16 * (shape[0] * shape[1]) as u64);
+        assert_eq!(clark - hogbom, (shape[0] * shape[1]) as u64);
+        assert!(bytes(&ReconstructionAlgorithm::Clark, 16, 0) > clark);
+        assert_eq!(
+            bytes(&ReconstructionAlgorithm::Clark, 8, 64) - clark,
+            16 * size_of::<MinorCycleComponent>() as u64
+        );
+        assert_eq!(
+            bytes(&ReconstructionAlgorithm::Hogbom, 8, 0),
+            minor_cycle_workspace_bytes(
+                shape,
+                ReconstructionBasis::Constant,
+                &ReconstructionAlgorithm::Hogbom,
+                8,
+                0
+            )
+        );
     }
 
     #[test]

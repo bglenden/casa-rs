@@ -17,12 +17,23 @@ pub enum SpectralInterpolationMethod {
     Cubic = 2,
 }
 
+/// Edge behavior for the CASA/casacore spectral interpolation oracle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum SpectralInterpolationEdge {
+    /// Mark coordinates outside the input range as invalid.
+    FlagOutside = 0,
+    /// Evaluate the unflagged casacore interpolator, including extrapolation.
+    Extrapolate = 1,
+}
+
 /// Exact CASA/casacore coefficient and edge-validity result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpectralInterpolationOracleResult {
     /// One coefficient for each input coordinate, in source order.
     pub coefficients: Vec<f64>,
-    /// Whether the requested coordinate is inside the source coordinate range.
+    /// Whether the selected casacore overload returns an unflagged value.
+    /// Unflagged extrapolation is valid even outside the input coordinate range.
     pub valid: bool,
 }
 
@@ -34,6 +45,7 @@ unsafe extern "C" {
         input_count: i32,
         output_coordinate: f64,
         method: i32,
+        edge: i32,
         coefficients_out: *mut f64,
         valid_out: *mut u8,
         out_error: *mut *mut std::ffi::c_char,
@@ -51,6 +63,7 @@ impl SpectralInterpolationOracle {
         input_coordinates: &[f64],
         output_coordinate: f64,
         method: SpectralInterpolationMethod,
+        edge: SpectralInterpolationEdge,
     ) -> Result<SpectralInterpolationOracleResult, OracleError> {
         oracle_operation!("spectral.interpolation_coefficients", {
             let input_count =
@@ -64,6 +77,12 @@ impl SpectralInterpolationOracle {
                     message: "coordinates must be finite and nonempty".to_owned(),
                 });
             }
+            if !output_coordinate.is_finite() {
+                return Err(OracleError::InvalidInput {
+                    context: "spectral output coordinate",
+                    message: "coordinate must be finite".to_owned(),
+                });
+            }
             let mut coefficients = vec![0.0; input_coordinates.len()];
             let mut valid = 0_u8;
             let mut error: *mut std::ffi::c_char = std::ptr::null_mut();
@@ -73,6 +92,7 @@ impl SpectralInterpolationOracle {
                     input_count,
                     output_coordinate,
                     method as i32,
+                    edge as i32,
                     coefficients.as_mut_ptr(),
                     &mut valid,
                     &mut error,

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Affine cross-plan state for serial CPU continuum reconstruction.
+//! Affine cross-plan state for resource-admitted CPU reconstruction.
 
 use std::{
     io,
@@ -766,7 +766,7 @@ pub struct SpectralCycleExecutor {
     source_resources: Option<SelectedObservationSourceResources>,
     pass: SpectralPassIdentity,
     complete_data: CompleteDataPlanFragment,
-    reconstruction_cycle: Option<SerialReconstructionCycleExecution>,
+    reconstruction_cycle: Option<ReconstructionCycleExecution>,
     final_visibility_sink: Option<Mutex<Box<dyn FinalVisibilitySink>>>,
     phase_input_artifact: Option<(crate::ArtifactIdentity, u64)>,
     gridded_input_artifact: Option<crate::GriddedNormalReplayDescriptor>,
@@ -947,6 +947,7 @@ struct SpectralCycleExecutorState {
     prepared_model: Option<PreparedFinalModel>,
     result: Option<MajorCycleOperatorResult>,
     reconstruction_cycle_completion: Option<ReconstructionCyclePhaseCompletion>,
+    reconstruction_measurements: Option<crate::bounded_stream::BoundedStreamMeasurements>,
     reconstruction_masks: Option<ReconstructionMaskSet>,
     output_completion: Option<MajorCycleCompletion>,
     complete_data_source_pass_count: u64,
@@ -1104,7 +1105,7 @@ impl FinalMajorPhaseInput {
     }
 }
 
-struct SerialReconstructionCycleExecution {
+struct ReconstructionCycleExecution {
     node: crate::WorkNodeId,
     masks: ImageDomainReconstructionMaskPlans,
     program: MinorCycleProgram,
@@ -1219,6 +1220,7 @@ impl SpectralCycleExecutor {
                 prepared_model: None,
                 result: None,
                 reconstruction_cycle_completion: None,
+                reconstruction_measurements: None,
                 reconstruction_masks: None,
                 output_completion: None,
                 complete_data_source_pass_count: 0,
@@ -1285,6 +1287,7 @@ impl SpectralCycleExecutor {
                 prepared_model: None,
                 result: None,
                 reconstruction_cycle_completion: None,
+                reconstruction_measurements: None,
                 reconstruction_masks: None,
                 output_completion: None,
                 complete_data_source_pass_count: 0,
@@ -1342,6 +1345,7 @@ impl SpectralCycleExecutor {
                 prepared_model: None,
                 result: None,
                 reconstruction_cycle_completion: None,
+                reconstruction_measurements: None,
                 reconstruction_masks: None,
                 output_completion: Some(completion),
                 complete_data_source_pass_count: 0,
@@ -1398,7 +1402,7 @@ impl SpectralCycleExecutor {
         masks: ImageDomainReconstructionMaskPlans,
         program: MinorCycleProgram,
     ) -> Self {
-        self.reconstruction_cycle = Some(SerialReconstructionCycleExecution {
+        self.reconstruction_cycle = Some(ReconstructionCycleExecution {
             node,
             masks,
             program,
@@ -2195,12 +2199,53 @@ impl SpectralCycleExecutor {
         );
     }
 
+    #[cfg(test)]
+    pub(crate) fn reconstruction_measurements(
+        &self,
+    ) -> Option<crate::bounded_stream::BoundedStreamMeasurements> {
+        self.state.lock().ok()?.reconstruction_measurements.clone()
+    }
+
+    fn reconstruction_node_measurements(
+        &self,
+        context: WorkExecutionContext<'_>,
+        state: &SpectralCycleExecutorState,
+    ) -> Option<WorkMeasurements> {
+        if self
+            .reconstruction_cycle
+            .as_ref()
+            .is_none_or(|cycle| cycle.node != context.node().id)
+        {
+            return None;
+        }
+        let measurements = state.reconstruction_measurements.as_ref()?;
+        let resources = context
+            .node()
+            .claims
+            .iter()
+            .map(|claim| {
+                let peak = match claim.resource {
+                    LeaseResource::Workers => measurements.workers_with_nonzero_partitions as u64,
+                    LeaseResource::RuntimeOverhead(crate::RuntimeOverheadKind::ThreadStack) => {
+                        measurements.peak_worker_stack_capacity_bytes
+                    }
+                    _ => claim.amount,
+                };
+                ResourceMeasurement::new(claim.resource.clone(), claim.lifetime.clone(), peak)
+            })
+            .collect();
+        Some(WorkMeasurements::new(resources, vec![], vec![]))
+    }
+
     fn node_measurements(
         &self,
         context: WorkExecutionContext<'_>,
         state: &SpectralCycleExecutorState,
         fragment: &WeightingPlanFragment<'_>,
     ) -> Result<WorkMeasurements, io::Error> {
+        if let Some(measurements) = self.reconstruction_node_measurements(context, state) {
+            return Ok(measurements);
+        }
         let final_model_preparation =
             crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
         let traversal_measurements = (context.node().id == *fragment.source_read_node()
@@ -2334,6 +2379,9 @@ impl SpectralCycleExecutor {
         context: WorkExecutionContext<'_>,
         state: &SpectralCycleExecutorState,
     ) -> Result<WorkMeasurements, io::Error> {
+        if let Some(measurements) = self.reconstruction_node_measurements(context, state) {
+            return Ok(measurements);
+        }
         let final_model_preparation =
             crate::spectral_cycle_plan::pass_node("final-model-preparation", self.pass);
         let retained_route = crate::spectral_cycle_plan::retained_route_node(self.pass);
@@ -2744,9 +2792,35 @@ impl WorkImplementation for SpectralCycleExecutor {
                     .as_ref()
                     .ok_or_else(|| io::Error::other("model lifecycle missing"))?;
                 let started = imaging_stage_timing_started();
-                let completion = InitialMajorPhaseCompletion::new(result)
-                    .run_reconstruction_cycle(lifecycle, &cycle.masks, cycle.program.clone())
-                    .map_err(io::Error::other)?;
+                let mut measurements = None;
+                let completion = InitialMajorPhaseCompletion::new(result).run_reconstruction_cycle(
+                    lifecycle,
+                    &cycle.masks,
+                    cycle.program.clone(),
+                    context,
+                    self.pass.ordinal(),
+                    &mut measurements,
+                );
+                state.reconstruction_measurements = measurements;
+                if let Some(measurements) = &state.reconstruction_measurements {
+                    eprintln!(
+                        "imaging_minor_cycle_summary ordinal={} workers={} worker_threads_started={} active_workers={} planes={} commits={} dispatch_waves={} planned_kernel_bytes={} peak_kernel_bytes={} peak_partial_bytes={} executed_work_identity={:x?} committed_work_identity={:x?} wall_nanos={}",
+                        self.pass.ordinal(),
+                        measurements.workers,
+                        measurements.worker_threads_started,
+                        measurements.workers_with_nonzero_partitions,
+                        measurements.partitions_executed,
+                        measurements.commits_completed,
+                        measurements.dispatch_waves,
+                        measurements.planned_kernel_window_capacity_bytes,
+                        measurements.peak_kernel_window_capacity_bytes,
+                        measurements.peak_partial_dynamic_capacity_bytes,
+                        measurements.executed_work_identity_digest,
+                        measurements.committed_work_identity_digest,
+                        measurements.wall_nanos
+                    );
+                }
+                let completion = completion?;
                 log_imaging_stage_timing("minor_cycle", self.pass, started);
                 state.reconstruction_cycle_completion = Some(completion);
             } else if fragment
@@ -3007,24 +3081,27 @@ impl WorkImplementation for SpectralCycleExecutor {
 }
 
 /// Affine authoritative completion of the ordinary initial-major plan.
-pub struct InitialMajorPhaseCompletion {
+struct InitialMajorPhaseCompletion {
     result: MajorCycleOperatorResult,
 }
 
 impl InitialMajorPhaseCompletion {
     /// Adopt one successful initial-major result.
     #[must_use]
-    pub const fn new(result: MajorCycleOperatorResult) -> Self {
+    const fn new(result: MajorCycleOperatorResult) -> Self {
         Self { result }
     }
 
     /// Run one resource-admitted cycle using the normal state's declared coupling.
-    pub fn run_reconstruction_cycle(
+    fn run_reconstruction_cycle(
         self,
         lifecycle: &ModelLifecycle,
         mask_plans: &ImageDomainReconstructionMaskPlans,
         program: MinorCycleProgram,
-    ) -> Result<ReconstructionCyclePhaseCompletion, ReconstructionCycleError> {
+        context: WorkExecutionContext<'_>,
+        pass: u32,
+        measurements: &mut Option<crate::bounded_stream::BoundedStreamMeasurements>,
+    ) -> Result<ReconstructionCyclePhaseCompletion, io::Error> {
         let completion = self.result.into_completion();
         let (normal_state, continuation) = completion.into_continuation();
         let policy = if matches!(
@@ -3039,22 +3116,19 @@ impl InitialMajorPhaseCompletion {
         let (masks, auto_masks, cycle) =
             if normal_state.catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
                 if mask_plans.len() != 1 {
-                    return Err(ReconstructionCycleError::Minor(
+                    return Err(io::Error::other(ReconstructionCycleError::Minor(
                         casa_imaging_reconstruction::MinorCycleError::Mask(
                             casa_imaging_reconstruction::MaskError::DomainCardinalityMismatch,
                         ),
-                    ));
+                    )));
                 }
                 let (masks, auto_masks) = mask_plans
                     .primary()
                     .materialize_coupled(continuation.generation(), &normal_state)
-                    .map_err(|error| ReconstructionCycleError::Minor(error.into()))?;
-                let cycle = ReconstructionCycle::new(policy, program).run_coupled(
-                    lifecycle,
-                    continuation.generation(),
-                    &normal_state,
-                    &masks,
-                )?;
+                    .map_err(io::Error::other)?;
+                let cycle = ReconstructionCycle::new(policy, program)
+                    .run_coupled(lifecycle, continuation.generation(), &normal_state, &masks)
+                    .map_err(io::Error::other)?;
                 (
                     ReconstructionMaskSet::Coupled(Box::new(masks)),
                     auto_masks
@@ -3066,24 +3140,34 @@ impl InitialMajorPhaseCompletion {
             } else {
                 let (masks, auto_masks) = mask_plans
                     .materialize(continuation.generation(), &normal_state)
-                    .map_err(|error| ReconstructionCycleError::Minor(error.into()))?
+                    .map_err(io::Error::other)?
                     .into_parts();
                 let cycle = if normal_state.catalog() == NormalStateCatalog::UnnormalizedPlaneV1
                     && normal_state.domain_count() > 1
                 {
-                    ReconstructionCycle::new(policy, program).run_domains(
-                        lifecycle,
-                        continuation.generation(),
-                        &normal_state,
-                        &masks,
-                    )?
+                    ReconstructionCycle::new(policy, program)
+                        .run_domains(lifecycle, continuation.generation(), &normal_state, &masks)
+                        .map_err(io::Error::other)?
+                } else if policy == ChannelCyclePolicy::Independent {
+                    let cycle = ReconstructionCycle::new(policy, program);
+                    let work = cycle
+                        .prepare_independent(
+                            lifecycle,
+                            continuation.generation(),
+                            &normal_state,
+                            masks.primary(),
+                        )
+                        .map_err(io::Error::other)?;
+                    crate::reconstruction_executor::execute(work, context, pass, measurements)?
                 } else {
-                    ReconstructionCycle::new(policy, program).run(
-                        lifecycle,
-                        continuation.generation(),
-                        &normal_state,
-                        masks.primary(),
-                    )?
+                    ReconstructionCycle::new(policy, program)
+                        .run(
+                            lifecycle,
+                            continuation.generation(),
+                            &normal_state,
+                            masks.primary(),
+                        )
+                        .map_err(io::Error::other)?
                 };
                 (ReconstructionMaskSet::Domains(masks), auto_masks, cycle)
             };

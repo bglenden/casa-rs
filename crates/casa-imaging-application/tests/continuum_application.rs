@@ -47,6 +47,9 @@ use continuum_fixture::*;
 #[path = "continuum_application/t53_spectral_joins.rs"]
 mod t53_spectral_joins;
 
+#[path = "continuum_application/t55_cube_pipeline.rs"]
+mod t55_cube_pipeline;
+
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
 }

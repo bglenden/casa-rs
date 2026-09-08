@@ -599,7 +599,142 @@ pub struct ReconstructionPlanePartial<'a> {
     evidence: ChannelCycleEvidence,
 }
 
+/// Scientific-owner memory envelope for independent single-domain planes.
+///
+/// Normal State and base model remain shared in their existing plan slots.
+/// Per-worker bytes include the private solve and its returned partial; retained
+/// bytes include the ordered collection and final combined-delta compilation.
+#[derive(Clone, Copy, Debug)]
+pub struct ReconstructionPlaneWorkspace {
+    planes: usize,
+    worker_bytes: u64,
+    retained_bytes: u64,
+}
+
+impl ReconstructionPlaneWorkspace {
+    /// Derive the largest legal independent-plane work from compiled controls.
+    /// Coupled, multi-domain, and dirty work have different execution shapes.
+    pub fn for_problem(
+        problem: &casa_imaging_model::CompiledProblem,
+    ) -> Result<Option<Self>, MinorCycleError> {
+        use casa_imaging_model::{ReconstructionAlgorithm, ReconstructionBasis};
+        if problem.geometry().domains().len() != 1
+            || !matches!(
+                problem.reconstruction().basis(),
+                ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. }
+            )
+            || !matches!(
+                problem.reconstruction().algorithm(),
+                ReconstructionAlgorithm::Hogbom
+                    | ReconstructionAlgorithm::Clark
+                    | ReconstructionAlgorithm::Multiscale { .. }
+            )
+        {
+            return Ok(None);
+        }
+        let program = MinorCycleProgram::for_problem(problem)?;
+        let target = problem.model_lifecycle().target();
+        let planes = target
+            .coefficients()
+            .checked_mul(target.polarizations())
+            .ok_or(MinorCycleError::ModelShapeMismatch)?;
+        Ok(Some(Self::new(
+            target.domains()[0].pixels(),
+            planes,
+            &program,
+            program.actual_iteration_limit(),
+            problem.model_lifecycle().bounds().max_delta_terms(),
+        )))
+    }
+
+    fn new(
+        shape: [usize; 2],
+        planes: usize,
+        program: &MinorCycleProgram,
+        recorded_components: usize,
+        maximum_delta_terms: usize,
+    ) -> Self {
+        let plane = crate::minor_cycle::minor_cycle_workspace(
+            shape,
+            casa_imaging_model::ReconstructionBasis::Constant,
+            program.algorithm(),
+            program.actual_iteration_limit(),
+            recorded_components,
+        );
+        let terms = plane
+            .maximum_delta_terms
+            .saturating_mul(planes as u64)
+            .min(maximum_delta_terms as u64);
+        let recorded_bytes = plane
+            .maximum_recorded_components
+            .saturating_mul(size_of::<crate::MinorCycleComponent>() as u64);
+        let evidence_bytes = (planes as u64).saturating_mul(
+            (size_of::<ChannelCycleEvidence>() as u64).saturating_add(recorded_bytes),
+        );
+        let retained_bytes = terms
+            .saturating_mul(4 * size_of::<ModelDeltaTerm>() as u64)
+            .saturating_add(evidence_bytes)
+            .saturating_add(size_of::<ReconstructionPlaneWork<'_>>() as u64);
+        Self {
+            planes,
+            worker_bytes: plane.bytes,
+            retained_bytes,
+        }
+    }
+
+    /// Canonical plane slots, including slots that may be blank at execution.
+    #[must_use]
+    pub const fn plane_count(self) -> usize {
+        self.planes
+    }
+
+    /// Heap envelope for each concurrently executing or pending plane partial.
+    #[must_use]
+    pub const fn worker_bytes(self) -> u64 {
+        self.worker_bytes
+    }
+
+    /// Shared ordered-collection heap envelope, independent of worker count.
+    #[must_use]
+    pub const fn retained_bytes(self) -> u64 {
+        self.retained_bytes
+    }
+}
+
+impl ReconstructionPlanePartial<'_> {
+    /// Actual heap bytes carried by this opaque completed plane.
+    #[must_use]
+    pub fn owned_bytes(&self) -> u64 {
+        let terms = self
+            .delta
+            .as_ref()
+            .map_or(0, |delta| std::mem::size_of_val(delta.terms()));
+        let recorded = self
+            .evidence
+            .minor_cycle
+            .as_ref()
+            .and_then(MinorCycleEvidence::recorded_component_sequence)
+            .map_or(0, std::mem::size_of_val);
+        (terms + recorded) as u64
+    }
+}
+
 impl<'a> ReconstructionPlaneWork<'a> {
+    /// Envelope for these exact controls and the full pending cycle collection.
+    #[must_use]
+    pub fn workspace(&self) -> ReconstructionPlaneWorkspace {
+        ReconstructionPlaneWorkspace::new(
+            self.binding.normal.shape(),
+            self.plane_count,
+            &self.binding.cycle.program,
+            self.binding
+                .cycle
+                .program
+                .component_sequence_limit()
+                .unwrap_or(0),
+            self.binding.lifecycle.contract().bounds().max_delta_terms(),
+        )
+    }
     /// Number of canonical plane slots, including explicit blank/unmapped slots.
     #[must_use]
     pub const fn plane_count(&self) -> usize {
@@ -665,6 +800,11 @@ impl<'a> ReconstructionPlaneWork<'a> {
             return Err(ReconstructionCycleError::InvalidPlaneCoverage);
         }
         if let Some(delta) = partial.delta {
+            let terms = self.terms.len().saturating_add(delta.terms().len());
+            let bound = self.binding.lifecycle.contract().bounds().max_delta_terms();
+            if terms > bound {
+                return Err(ModelLifecycleError::DeltaTermBoundExceeded { terms, bound }.into());
+            }
             self.terms.extend_from_slice(delta.terms());
         }
         self.channels.push(partial.evidence);

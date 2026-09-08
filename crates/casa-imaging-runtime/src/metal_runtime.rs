@@ -1159,6 +1159,39 @@ mod tests {
         assert_eq!(decision.overhead().command_buffer_bytes, 16);
     }
 
+    #[cfg(all(target_os = "macos", not(coverage)))]
+    #[test]
+    #[ignore = "requires a process-accessible Apple Metal device; explicit T55/T57 numerics discriminator"]
+    fn t57_native_f64_kernel_capability_discriminator() {
+        let (plan, topology) = metal_plan(1);
+        let decision = MetalExecutionDecision::bind(&plan, &topology).expect("Metal decision");
+        let platform =
+            open_platform_state(&decision).expect("discriminator requires the actual device");
+        let source = objc2_foundation::NSString::from_str(
+            "#include <metal_stdlib>\nusing namespace metal;\nkernel void f64_probe(device double *values [[buffer(0)]], uint index [[thread_position_in_grid]]) { values[index] = values[index] * 0.5; }",
+        );
+        match platform
+            ._device
+            .newLibraryWithSource_options_error(&source, None)
+        {
+            Ok(_) => println!(
+                "t57_native_f64_compile supported=true device={}",
+                platform._device.name()
+            ),
+            Err(error) => {
+                let diagnostic = error.localizedDescription().to_string();
+                println!(
+                    "t57_native_f64_compile supported=false device={} diagnostic={diagnostic}",
+                    platform._device.name()
+                );
+                assert!(
+                    diagnostic.contains("double") && diagnostic.contains("not supported"),
+                    "unexpected compiler failure is not F64 capability evidence"
+                );
+            }
+        }
+    }
+
     #[test]
     fn decision_rejects_separate_device_memory() {
         let (plan, mut topology) = metal_plan(1);

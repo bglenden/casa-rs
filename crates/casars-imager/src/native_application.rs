@@ -317,6 +317,11 @@ fn task_requirements(config: &CliConfig) -> Vec<TaskRequirement> {
     if config.save_model != SaveModelMode::None {
         requirements.push(TaskRequirement::ModelColumnWrite);
     }
+    if config.standard_mfs_acceleration == StandardMfsAccelerationPolicy::Cpu
+        && !requirements.contains(&TaskRequirement::SerialCpu)
+    {
+        requirements.push(TaskRequirement::SerialCpu);
+    }
     requirements.extend(backend_requirements(config));
     requirements.extend(unsupported_native_controls(config));
     requirements
@@ -638,6 +643,25 @@ mod tests {
             application_request(&parallel).unwrap().resource_policy,
             ResourcePolicy::Balanced
         );
+    }
+
+    #[test]
+    fn t55_serial_cpu_policy_is_independent_of_spectral_mode() {
+        for mode in ["mfs", "cube", "cubedata", "cubesource", "mvc"] {
+            let serial = config(&["--specmode", mode, "--no-parallel"]);
+            let ResourcePolicy::Explicit(policy) =
+                application_request(&serial).unwrap().resource_policy
+            else {
+                panic!("{mode} CPU baseline must carry an explicit serial policy");
+            };
+            assert_eq!(policy.workers, Some(1), "{mode}");
+            let parallel = config(&["--specmode", mode, "--parallel"]);
+            assert_eq!(
+                application_request(&parallel).unwrap().resource_policy,
+                ResourcePolicy::Balanced,
+                "{mode} explicit parallel request"
+            );
+        }
     }
 
     #[test]
