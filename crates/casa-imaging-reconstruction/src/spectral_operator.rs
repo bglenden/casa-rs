@@ -175,6 +175,7 @@ impl SpectralBasisPlan {
 
 pub(crate) const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const NORMAL_STATE_CONTENT_DOMAIN: &[u8] = b"casa-rs-normal-state-content";
+const STANDARD_GRID_PADDING: f64 = 1.2;
 pub(crate) const SUPPORT: usize = 3;
 const TAP_COUNT: usize = SUPPORT * 2 + 1;
 #[cfg(test)]
@@ -1377,8 +1378,8 @@ fn compile_operator_geometry(
         image_shape
     } else {
         [
-            casa_composite_padded_len(image_shape[0], 1.2),
-            casa_composite_padded_len(image_shape[1], 1.2),
+            casa_composite_padded_len(image_shape[0], STANDARD_GRID_PADDING),
+            casa_composite_padded_len(image_shape[1], STANDARD_GRID_PADDING),
         ]
     };
     let reference_pixel = direction.reference_pixel();
@@ -10824,10 +10825,15 @@ impl WProjectionConvolution {
             })
             .collect::<Vec<_>>();
         let correction_y = correction_x.clone();
-        let s0 = geometry.increment_rad[0].abs() * sampling as f64 * geometry.grid_shape[0] as f64
-            / conv_size as f64;
-        let s1 = geometry.increment_rad[1].abs() * sampling as f64 * geometry.grid_shape[1] as f64
-            / conv_size as f64;
+        // CASA WPConvFunc samples the requested padded image extent, not the
+        // rounded FFT grid, and evaluates padding * image size in Float.
+        let padded_extent = geometry
+            .image_shape
+            .map(|size| f64::from(STANDARD_GRID_PADDING as f32 * size as f32));
+        let s0 =
+            geometry.increment_rad[0].abs() * sampling as f64 * padded_extent[0] / conv_size as f64;
+        let s1 =
+            geometry.increment_rad[1].abs() * sampling as f64 * padded_extent[1] / conv_size as f64;
         let mut fft = PreparedFft::new([conv_size, conv_size], usize::MAX)?;
         let mut kernels = Vec::with_capacity(plane_count);
         let mut plane_zero_peak = None;

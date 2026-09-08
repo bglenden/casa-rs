@@ -21,15 +21,12 @@ fn t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products() {
             .success()
     );
     initialize_measurement_set_owner_manifest(&staged).expect("initialize staged owner");
-    let mut imaging = request(
-        staged,
-        root.path().join("w-cube"),
-        ContinuumAlgorithm::Dirty,
-    );
+    let image_name = root.path().join("w-cube");
+    let mut imaging = request(staged, image_name.clone(), ContinuumAlgorithm::Dirty);
     imaging.field_ids = Some(vec![0, 1]);
-    imaging.image_size = 32;
+    imaging.image_size = 512;
     imaging.cell_arcsec = 8.0;
-    imaging.spectral_window = Some("0:0~3".into());
+    imaging.spectral_window = Some("0:0~17".into());
     imaging.w_projection_planes = Some(8);
     imaging.write_primary_beam = true;
     imaging.spectral_mode = SpectralImagingMode::Cube {
@@ -62,6 +59,32 @@ fn t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products() {
         products,
         [".image", ".model", ".pb", ".psf", ".residual", ".sumwt"]
     );
+
+    // CASA 6.7.6.14, the T53 W-cube manifest with channel_count=2. These
+    // off-axis PSF samples expose W-screen errors hidden by its unit peak.
+    let expected = [
+        ([480, 256], [-0.0026935364585369825, -0.0008300513145513833]),
+        ([256, 480], [0.006975448690354824, 0.0018625060329213738]),
+        ([420, 420], [-0.002909367671236396, -0.0011832300806418061]),
+        ([128, 448], [0.007868433371186256, -0.005988962948322296]),
+        ([32, 32], [-0.0011750415433198214, 0.017259715124964714]),
+        ([96, 320], [0.012149767018854618, -0.004782584495842457]),
+    ];
+    let psf = PagedImage::<f32>::open(image_name.with_extension("psf"))
+        .expect("open W-cube PSF")
+        .get_slice(&[0, 0, 0, 0], &[512, 512, 1, 2])
+        .expect("read both W-cube PSF channels");
+    let mut squared_error = 0.0;
+    let mut squared_reference = 0.0;
+    for ([x, y], channels) in expected {
+        for (channel, reference) in channels.into_iter().enumerate() {
+            let actual = f64::from(psf[[x, y, 0, channel]]);
+            squared_error += (actual - reference).powi(2);
+            squared_reference += reference * reference;
+        }
+    }
+    let nrms = (squared_error / squared_reference).sqrt();
+    assert!(nrms < 1.0e-3, "off-axis CASA W-cube PSF NRMS: {nrms}");
 }
 
 #[test]

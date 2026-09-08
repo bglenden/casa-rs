@@ -103,7 +103,9 @@ copy produced by `tools/perf/imager/stage_t53_shared_phase.py` with CASA Python.
 The staged copy preserves the original IncrementalStMan UVW layout and values.
 Set `CASA_RS_T53_DATA_ROOT` to its directory and run the ignored
 `t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products` test
-as the small native-reader and complete-product application preflight.
+as the two-channel native-reader, complete-product and off-axis CASA PSF
+application preflight. Its 512-square geometry exercises W-screen sampling
+when the requested padded size differs from the rounded FFT grid.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.
