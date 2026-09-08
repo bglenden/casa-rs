@@ -1877,6 +1877,13 @@ struct LeaseRecord {
     consumed: BTreeMap<LeaseResource, u64>,
     outstanding_fences: u64,
     release_requested: bool,
+    artifact_retention: bool,
+}
+
+#[derive(Clone, Debug)]
+enum ArtifactCapacity {
+    Memory(Box<[CapacityDomainId]>),
+    Storage(StorageDomainId),
 }
 
 #[derive(Debug)]
@@ -2345,6 +2352,7 @@ impl ResourceAuthority {
                 consumed: BTreeMap::new(),
                 outstanding_fences: 0,
                 release_requested: false,
+                artifact_retention: false,
             },
         );
         Ok(ResourceLease {
@@ -2622,6 +2630,7 @@ impl ResourceLease {
             resource,
             accounting_resource,
             amount,
+            artifact_capacity: None,
             released: false,
         })
     }
@@ -2658,10 +2667,84 @@ impl ResourceLease {
         Ok(LeaseRelease { released })
     }
 
-    /// Release the execution lease while retaining only consumed temporary
-    /// storage transferred to a sealed artifact.
-    pub(crate) fn release_retaining_artifact_storage(
+    /// Bind an exported permit to its exact physical capacity provenance.
+    /// The scheduler prepares each permit before transferring artifact ownership.
+    pub(crate) fn prepare_artifact_retention(
+        &self,
+        mut permit: ResourcePermit,
+    ) -> Result<ResourcePermit, ResourceError> {
+        if permit.released
+            || permit.lease_id != self.lease_id
+            || !Arc::ptr_eq(&permit.inner, &self.inner)
+            || permit.artifact_capacity.is_some()
+        {
+            return Err(ResourceError::Invalid(
+                "artifact preparation requires an unprepared live permit from this lease"
+                    .to_string(),
+            ));
+        }
+        let state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| ResourceError::AuthorityPoisoned)?;
+        let record = state.leases.get(&self.lease_id).ok_or_else(|| {
+            ResourceError::Invalid(
+                "cannot prepare an artifact from an absent resource lease".to_string(),
+            )
+        })?;
+        if record.release_requested {
+            return Err(ResourceError::Invalid(
+                "cannot prepare an artifact after lease release was requested".to_string(),
+            ));
+        }
+        permit.artifact_capacity = Some(self.artifact_capacity(&permit.resource)?);
+        Ok(permit)
+    }
+
+    fn artifact_capacity(
+        &self,
+        resource: &LeaseResource,
+    ) -> Result<ArtifactCapacity, ResourceError> {
+        match resource {
+            LeaseResource::Memory { allocation_id } => {
+                let memory = self.alternative.demand.memory.iter()
+                    .find(|memory| &memory.allocation_id == allocation_id)
+                    .ok_or_else(|| ResourceError::Invalid(
+                        "artifact allocation is absent from the admitted memory demand".to_string(),
+                    ))?;
+                let mut domains = memory.views.iter().map(|view_id| {
+                    self.inner.topology.memory_views.iter()
+                        .find(|view| &view.id == view_id)
+                        .map(|view| view.domain.clone())
+                        .ok_or_else(|| ResourceError::Invalid(
+                            "artifact allocation references an unknown memory view".to_string(),
+                        ))
+                }).collect::<Result<Vec<_>, _>>()?;
+                domains.sort_unstable();
+                domains.dedup();
+                Ok(ArtifactCapacity::Memory(domains.into_boxed_slice()))
+            }
+            LeaseResource::Storage { demand_id, use_kind: StorageUseKind::Temporary } => {
+                self.alternative.demand.storage.iter()
+                    .find(|demand| &demand.demand_id == demand_id)
+                    .map(|demand| ArtifactCapacity::Storage(demand.domain.clone()))
+                    .ok_or_else(|| ResourceError::Invalid(format!(
+                        "artifact storage permit references unknown demand {demand_id}",
+                    )))
+            }
+            _ => Err(ResourceError::Invalid(
+                "artifact retention may keep only temporary storage and scheduler-exported immutable memory".to_string(),
+            )),
+        }
+    }
+
+    /// Release execution resources while preserving live temporary storage and
+    /// the dedicated immutable memory allocations exported by the scheduler.
+    /// Artifacts dropped before finalization leave no retained reservation.
+    pub(crate) fn release_retaining_artifact_resources(
         mut self,
+        exported_resources: &BTreeSet<LeaseResource>,
     ) -> Result<LeaseRelease, ResourceError> {
         let mut state = self
             .inner
@@ -2671,41 +2754,52 @@ impl ResourceLease {
         let record = state.leases.get_mut(&self.lease_id).ok_or_else(|| {
             ResourceError::Invalid("cannot narrow an absent resource lease".to_string())
         })?;
-        if record.outstanding_fences != 0 || record.consumed.is_empty() {
+        if record.outstanding_fences != 0 {
             return Err(ResourceError::Invalid(
-                "artifact retention requires settled work and a consumed storage permit"
-                    .to_string(),
+                "artifact retention requires every execution fence to settle".to_string(),
             ));
+        }
+        if record.consumed.is_empty() {
+            state.leases.remove(&self.lease_id);
+            self.release_requested = true;
+            return Ok(LeaseRelease { released: true });
         }
         let mut retained = ResourceGrant::default();
         for (resource, amount) in &record.consumed {
-            let LeaseResource::Storage {
-                demand_id,
-                use_kind: StorageUseKind::Temporary,
-            } = resource
-            else {
+            if !exported_resources.contains(resource) {
                 return Err(ResourceError::Invalid(
-                    "artifact retention may keep only temporary storage".to_string(),
+                    "artifact retention requires a scheduler-exported immutable memory or temporary-storage permit".to_string(),
                 ));
-            };
-            let domain = self
-                .alternative
-                .demand
-                .storage
-                .iter()
-                .find(|demand| &demand.demand_id == demand_id)
-                .map(|demand| demand.domain.clone())
-                .ok_or_else(|| {
-                    ResourceError::Invalid(format!(
-                        "artifact storage permit references unknown demand {demand_id}"
-                    ))
-                })?;
-            let retained_bytes = retained.storage_bytes.entry(domain).or_default();
-            *retained_bytes = retained_bytes
-                .checked_add(*amount)
-                .ok_or(ResourceError::Overflow("artifact-retained storage"))?;
+            }
+            match self.artifact_capacity(resource)? {
+                ArtifactCapacity::Memory(domains) => {
+                    if record.limits.get(resource) != Some(amount) {
+                        return Err(ResourceError::Invalid(
+                            "artifact allocation must retain its exact admitted physical capacity"
+                                .to_string(),
+                        ));
+                    }
+                    for domain in &domains {
+                        add_map_bytes(
+                            &mut retained.memory_bytes,
+                            domain.clone(),
+                            *amount,
+                            "artifact-retained memory",
+                        )?;
+                    }
+                }
+                ArtifactCapacity::Storage(domain) => {
+                    add_resource_amount(
+                        &mut retained.storage_bytes,
+                        domain,
+                        *amount,
+                        "artifact-retained storage",
+                    )?;
+                }
+            }
         }
         record.reserved = retained;
+        record.artifact_retention = true;
         record.release_requested = true;
         self.release_requested = true;
         Ok(LeaseRelease { released: false })
@@ -2851,10 +2945,31 @@ pub struct ResourcePermit {
     resource: LeaseResource,
     accounting_resource: LeaseResource,
     amount: u64,
+    artifact_capacity: Option<ArtifactCapacity>,
     released: bool,
 }
 
 impl ResourcePermit {
+    /// Additional prepared-permit heap for production's single physical host domain.
+    /// Multiple views of that domain share one capacity entry; inline provenance
+    /// is already included in the permit allocation itself.
+    pub(crate) fn artifact_retention_heap_bytes(
+        resource: &LeaseResource,
+        memory_domain: &str,
+        storage_domain: &str,
+    ) -> Option<usize> {
+        match resource {
+            LeaseResource::Memory { .. } => {
+                std::mem::size_of::<CapacityDomainId>().checked_add(memory_domain.len())
+            }
+            LeaseResource::Storage {
+                use_kind: StorageUseKind::Temporary,
+                ..
+            } => Some(storage_domain.len()),
+            _ => None,
+        }
+    }
+
     /// Returns the named resource owned by this permit.
     pub const fn resource(&self) -> &LeaseResource {
         &self.resource
@@ -2898,6 +3013,7 @@ impl ResourcePermit {
             &self.resource,
             &self.accounting_resource,
             returned,
+            self.artifact_capacity.as_ref(),
         )?;
         self.amount = amount;
         Ok(())
@@ -2911,6 +3027,7 @@ impl ResourcePermit {
             &self.resource,
             &self.accounting_resource,
             self.amount,
+            self.artifact_capacity.as_ref(),
         )?;
         self.released = true;
         Ok(LeaseRelease { released })
@@ -2926,6 +3043,7 @@ impl Drop for ResourcePermit {
                 &self.resource,
                 &self.accounting_resource,
                 self.amount,
+                self.artifact_capacity.as_ref(),
             );
         }
     }
@@ -2999,6 +3117,7 @@ fn release_permit(
     resource: &LeaseResource,
     accounting_resource: &LeaseResource,
     amount: u64,
+    artifact_capacity: Option<&ArtifactCapacity>,
 ) -> Result<bool, ResourceError> {
     let mut state = inner
         .state
@@ -3025,6 +3144,51 @@ fn release_permit(
         let remaining = consumed.checked_sub(amount).ok_or_else(|| {
             ResourceError::Invalid("lease permit consumption underflowed".to_string())
         })?;
+        if record.artifact_retention {
+            let capacity = artifact_capacity.ok_or_else(|| {
+                ResourceError::Invalid(
+                    "retained artifact permit has no prepared capacity provenance".to_string(),
+                )
+            })?;
+            match capacity {
+                ArtifactCapacity::Memory(domains) => {
+                    for domain in domains {
+                        let reserved =
+                            record
+                                .reserved
+                                .memory_bytes
+                                .get_mut(domain)
+                                .ok_or_else(|| {
+                                    ResourceError::Invalid(
+                                        "artifact memory reservation is absent".to_string(),
+                                    )
+                                })?;
+                        *reserved = reserved.checked_sub(amount).ok_or_else(|| {
+                            ResourceError::Invalid(
+                                "artifact memory reservation underflowed".to_string(),
+                            )
+                        })?;
+                    }
+                }
+                ArtifactCapacity::Storage(domain) => {
+                    let reserved =
+                        record
+                            .reserved
+                            .storage_bytes
+                            .get_mut(domain)
+                            .ok_or_else(|| {
+                                ResourceError::Invalid(
+                                    "artifact storage reservation is absent".to_string(),
+                                )
+                            })?;
+                    *reserved = reserved.checked_sub(amount).ok_or_else(|| {
+                        ResourceError::Invalid(
+                            "artifact storage reservation underflowed".to_string(),
+                        )
+                    })?;
+                }
+            }
+        }
         if remaining == 0 {
             record.consumed.remove(accounting_resource);
         } else {

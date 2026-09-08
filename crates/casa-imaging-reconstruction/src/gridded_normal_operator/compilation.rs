@@ -27,6 +27,8 @@ pub struct GriddedNormalCompilationPlan {
     pub(super) frame_header_bytes: usize,
     pub(super) descriptor_capacity: usize,
     pub(super) diagnostic_capacity: usize,
+    transient_workspace_bytes: usize,
+    retained_metadata_bytes: usize,
     workspace_bytes: usize,
 }
 
@@ -143,20 +145,32 @@ impl GriddedNormalCompilationPlan {
                     .and_then(|metadata| bytes.checked_add(metadata))
             })
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        let workspace_bytes = [
+        let retained_diagnostics = if specification
+            .w_projection()
+            .is_some_and(|contract| contract.maximum_abs_w_lambda() > f64::MIN_POSITIVE)
+        {
+            specification.chart_count()
+        } else {
+            0
+        };
+        let retained_diagnostic_bytes = retained_diagnostics
+            .checked_mul(size_of::<WProjectionDiagnostics>())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let retained_metadata_bytes =
+            retained_manifest_bytes(&specification, descriptor_capacity, retained_diagnostics)?;
+        let transient_workspace_bytes = [
             arenas,
             standard,
             aw_atom,
             native_heap,
-            gridders,
-            specification.owned_heap_bytes()?,
+            // Convolution metadata includes the copied diagnostic output, which
+            // transfers to the manifest rather than dying with the gridders.
+            gridders
+                .checked_sub(retained_diagnostic_bytes)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
             size_of::<GriddedNormalOperatorCompiler>(),
-            size_of::<GriddedNormalOperatorManifest>() + 2 * size_of::<usize>(),
             diagnostic_capacity
                 .checked_mul(size_of::<((u32, usize), WeightingScienceAggregate)>())
-                .ok_or(SpectralOperatorError::ResidencyOverflow)?,
-            descriptor_capacity
-                .checked_mul(size_of::<BlockDescriptor>())
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?,
         ]
         .into_iter()
@@ -164,6 +178,9 @@ impl GriddedNormalCompilationPlan {
             sum.checked_add(bytes)
                 .ok_or(SpectralOperatorError::ResidencyOverflow)
         })?;
+        let workspace_bytes = transient_workspace_bytes
+            .checked_add(retained_metadata_bytes)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         Ok(Self {
             binding: static_binding(&specification),
             maximum_source_samples,
@@ -177,6 +194,8 @@ impl GriddedNormalCompilationPlan {
             frame_header_bytes,
             descriptor_capacity,
             diagnostic_capacity,
+            transient_workspace_bytes,
+            retained_metadata_bytes,
             workspace_bytes,
         })
     }
@@ -191,6 +210,25 @@ impl GriddedNormalCompilationPlan {
     #[must_use]
     pub const fn workspace_bytes(self) -> usize {
         self.workspace_bytes
+    }
+
+    /// Return the scientific specification binding certified by this plan.
+    #[must_use]
+    pub const fn binding(self) -> LogicalIdentity {
+        self.binding
+    }
+
+    /// Return compiler storage released when the attempt seals or fails.
+    #[must_use]
+    pub const fn transient_workspace_bytes(self) -> usize {
+        self.transient_workspace_bytes
+    }
+
+    /// Return manifest allocation capacity retained through the final replay reader.
+    /// Includes shared catalogs whose source reservation ends before replay.
+    #[must_use]
+    pub const fn retained_metadata_bytes(self) -> usize {
+        self.retained_metadata_bytes
     }
 
     /// Return the certified maximum encoded records in a frame.
@@ -210,6 +248,28 @@ impl GriddedNormalCompilationPlan {
     pub const fn descriptor_capacity(self) -> usize {
         self.descriptor_capacity
     }
+}
+
+pub(super) fn retained_manifest_bytes(
+    specification: &SpectralOperatorSpecification,
+    descriptor_capacity: usize,
+    diagnostic_count: usize,
+) -> Result<usize, SpectralOperatorError> {
+    let specification_bytes = specification
+        .owned_heap_bytes()?
+        .checked_add(specification.shared_catalog_heap_bytes()?)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    descriptor_capacity
+        .checked_mul(size_of::<BlockDescriptor>())
+        .and_then(|bytes| bytes.checked_add(size_of::<GriddedNormalOperatorManifest>()))
+        .and_then(|bytes| bytes.checked_add(2 * size_of::<usize>()))
+        .and_then(|bytes| {
+            diagnostic_count
+                .checked_mul(size_of::<WProjectionDiagnostics>())
+                .and_then(|diagnostics| bytes.checked_add(diagnostics))
+        })
+        .and_then(|bytes| bytes.checked_add(specification_bytes))
+        .ok_or(SpectralOperatorError::ResidencyOverflow)
 }
 
 fn compilation_dimensions(
@@ -304,7 +364,7 @@ pub struct GriddedNormalCompilationMeasurements {
 
 #[derive(Debug)]
 pub(super) struct FixedDescriptors {
-    storage: Box<[BlockDescriptor]>,
+    pub(super) storage: Box<[BlockDescriptor]>,
     length: usize,
 }
 
@@ -631,6 +691,70 @@ mod tests {
                 assert_eq!(frames.ledger.frame_bytes, frame_bytes as u64);
             }
         }
+    }
+
+    #[test]
+    fn sealed_empty_program_retains_reserved_metadata_not_only_live_descriptors() {
+        let (correlations, atom, _, _) = dimensions();
+        let plan = GriddedNormalCompilationPlan::new(problem(), correlations, atom, atom, 4096, 72)
+            .expect("compiler plan");
+        assert_eq!(
+            plan.workspace_bytes(),
+            plan.transient_workspace_bytes()
+                .checked_add(plan.retained_metadata_bytes())
+                .expect("checked split")
+        );
+        assert!(plan.transient_workspace_bytes() > 0);
+        assert!(plan.descriptor_capacity() > 0);
+        let mut compiler = GriddedNormalOperatorCompiler::new(
+            problem(),
+            plan,
+            SourceCardinalityObservation::Disabled,
+        )
+        .expect("compiler");
+        compiler
+            .finish_rows_and_frames(&mut |_| panic!("empty compiler emitted a frame"))
+            .expect("finish empty compiler");
+        let weighting_plan = crate::weighting::plan_weighting(
+            problem(),
+            crate::weighting::WeightingExecutionLimits::new(1, 1).unwrap(),
+        )
+        .unwrap();
+        let density =
+            crate::weighting::begin_weighting_generation(problem(), &weighting_plan).unwrap();
+        let stream = density
+            .finish_into_stream(problem(), &weighting_plan)
+            .unwrap();
+        let (_, _, replay) = stream.finish().unwrap();
+        let program = compiler
+            .complete(&replay, fixture().1, None)
+            .expect("seal empty program");
+        assert_eq!(program.block_count(), 0);
+        assert_eq!(program.compilation_binding(), plan.binding());
+        assert_eq!(
+            program.retained_metadata_bytes(),
+            plan.retained_metadata_bytes()
+        );
+        assert_eq!(
+            program.manifest.descriptors.storage.len(),
+            plan.descriptor_capacity()
+        );
+        let without_descriptors = retained_manifest_bytes(
+            &program.manifest.specification,
+            0,
+            program.w_projection_diagnostics().len(),
+        )
+        .unwrap();
+        assert_eq!(
+            program.retained_metadata_bytes() - without_descriptors,
+            plan.descriptor_capacity() * size_of::<BlockDescriptor>()
+        );
+        let cloned = program.clone();
+        assert!(Arc::ptr_eq(&program.manifest, &cloned.manifest));
+        assert_eq!(
+            cloned.retained_metadata_bytes(),
+            program.retained_metadata_bytes()
+        );
     }
 
     #[test]

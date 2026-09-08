@@ -577,6 +577,18 @@ fn execute_complete_data_mfs_with_policy(
     };
     let planned = SpectralCyclePlan::initial(&problem, &planning_registry, execution_policy())
         .expect("plan initial complete-data MFS pass");
+    let retained_metadata_bytes = planned.physical_candidates()[0]
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-retained-metadata-")
+        })
+        .expect("retained metadata allocation")
+        .bytes;
     for physical in planned.physical_candidates() {
         let compiler = physical
             .execution_dag()
@@ -603,7 +615,87 @@ fn execute_complete_data_mfs_with_policy(
             crate::complete_data_operator::project_gridded_normal_compilation(&problem, 1)
                 .unwrap()
                 .compiler
-                .workspace_bytes() as u64,
+                .transient_workspace_bytes() as u64,
+        );
+        assert_eq!(
+            compiler.lifetime.disposition,
+            crate::AllocationDisposition::Release
+        );
+        let metadata = physical
+            .execution_dag()
+            .logical_allocations()
+            .values()
+            .find(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("gridded-normal-retained-metadata-")
+            })
+            .expect("retained metadata has its own admitted allocation");
+        assert_ne!(metadata.physical_slot, compiler.physical_slot);
+        let compilation =
+            crate::complete_data_operator::project_gridded_normal_compilation(&problem, 1)
+                .unwrap()
+                .compiler;
+        assert_eq!(
+            metadata.compatibility.layout,
+            crate::AllocationLayout::new(format!(
+                "gridded-normal-retained-metadata-{}",
+                compilation.binding()
+            ))
+        );
+        let wrong_program = crate::complete_data_operator::gridded_metadata_allocation(
+            &compiler.lifetime.acquire_at,
+            casa_imaging_model::LogicalIdentity::from_sha256([0; 32]),
+            metadata.bytes,
+        );
+        assert_eq!(wrong_program.bytes, metadata.bytes);
+        assert_ne!(
+            wrong_program.compatibility.layout,
+            metadata.compatibility.layout
+        );
+        assert_eq!(metadata.purpose, crate::AllocationPurpose::Data);
+        assert_eq!(
+            metadata.compatibility.access,
+            crate::AllocationAccess::ReadOnly
+        );
+        assert_eq!(
+            metadata.compatibility.storage_mode,
+            crate::StorageMode::Host
+        );
+        assert_eq!(
+            metadata.compatibility.initialization,
+            crate::InitializationPolicy::OverwriteBeforeRead
+        );
+        assert_eq!(
+            metadata.lifetime.disposition,
+            crate::AllocationDisposition::ExportImmutableArtifact {
+                owner_node: compiler.lifetime.acquire_at.clone(),
+            }
+        );
+        assert_eq!(
+            metadata.lifetime.release_after,
+            std::collections::BTreeSet::from([
+                crate::WorkDependency::Work(compiler.lifetime.acquire_at.clone()),
+                crate::WorkDependency::Fence(crate::FenceId::new(
+                    compiler.lifetime.acquire_at.clone(),
+                    crate::FenceKind::Io
+                )),
+            ])
+        );
+        assert!(
+            metadata.bytes > compilation.retained_metadata_bytes() as u64,
+            "runtime backing, permit, and deletion-owning spill path are separately charged"
+        );
+        assert_eq!(
+            physical
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .filter(|allocation| allocation.physical_slot == metadata.physical_slot)
+                .count(),
+            1,
+            "exported immutable metadata never shares a reusable slot"
         );
     }
     let frozen_reservation = FrozenWeightingReservation::acquire(
@@ -815,6 +907,19 @@ fn execute_complete_data_mfs_with_policy(
         .take_completion()
         .expect("final-major completion")
         .into_completion();
+
+    let remaining_with_artifact = authority
+        .remaining_selected_source_memory_bytes(&resource_policy)
+        .expect("capacity with retained artifact");
+    completed_replay.assert_retained_backing_lifetime(|alive| {
+        assert_eq!(
+            authority
+                .remaining_selected_source_memory_bytes(&resource_policy)
+                .unwrap(),
+            remaining_with_artifact + if alive { 0 } else { retained_metadata_bytes },
+            "retained metadata is released exactly when the last guarded alias drops"
+        );
+    });
 
     RunEvidence {
         dirty,

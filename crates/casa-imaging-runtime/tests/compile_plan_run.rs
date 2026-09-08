@@ -3699,7 +3699,7 @@ fn execute_spectral_cycle_with_weighting_mode(
             )
         })
         .expect("initial gridded spill storage claim");
-    assert_eq!(receipt.schema_version(), 22);
+    assert_eq!(receipt.schema_version(), 23);
     assert_eq!(initial_storage_claim.lifetime, ClaimLifetime::Artifact);
     assert_eq!(
         receipt.actual_resource_peak(
@@ -4661,6 +4661,47 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
         workspace.hard_bytes > dense_array_estimate,
         "admission uses the owner workspace rather than the caller's old dense-array estimate"
     );
+    let minor_allocation = &dag.logical_allocations()[&minor.allocations[0].allocation];
+    let compiler = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-compiler-")
+        })
+        .unwrap();
+    let metadata = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-retained-metadata-")
+        })
+        .unwrap();
+    assert_eq!(compiler.physical_slot, minor_allocation.physical_slot);
+    assert_ne!(metadata.physical_slot, compiler.physical_slot);
+    let shared = &dag.physical_slots()[&compiler.physical_slot];
+    assert_eq!(
+        shared.capacity_bytes,
+        compiler.bytes.max(minor_allocation.bytes)
+    );
+    assert_eq!(workspace.hard_bytes, shared.capacity_bytes);
+    assert_eq!(shared.compatibility.storage_mode, StorageMode::Host);
+    assert_eq!(
+        shared.compatibility.layout.as_str(),
+        "owner-managed-host-workspace"
+    );
+    assert_eq!(
+        dag.logical_allocations()
+            .values()
+            .filter(|allocation| { allocation.physical_slot == metadata.physical_slot })
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -5282,6 +5323,7 @@ fn physical_work_for_weighting_problem_with_residency(
         compatibility: source_compatibility.clone(),
         physical_slot: source_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: WorkNodeId::new("transaction-read"),
             release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                 WorkNodeId::new("transaction-read"),
@@ -5975,6 +6017,7 @@ fn transaction_binding_with_seal(
         compatibility: product_writer_compatibility.clone(),
         physical_slot: product_writer_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: product.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(product.clone())]),
         },
@@ -5998,6 +6041,7 @@ fn transaction_binding_with_seal(
         compatibility: publication_compatibility.clone(),
         physical_slot: publication_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: if acquire_publication_early {
                 product.clone()
             } else {
@@ -6025,6 +6069,7 @@ fn transaction_binding_with_seal(
             compatibility: commit_compatibility.clone(),
             physical_slot: commit_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: casa_imaging_runtime::AllocationDisposition::Release,
                 acquire_at: commit.clone(),
                 release_after: BTreeSet::from([
                     WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -6174,6 +6219,7 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         compatibility: compatibility.clone(),
         physical_slot: source_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: casa_imaging_runtime::AllocationDisposition::Release,
             acquire_at: read.clone(),
             release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                 read.clone(),
@@ -6532,6 +6578,7 @@ fn conditional_adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBi
                 compatibility: retained_compatibility.clone(),
                 physical_slot: retained_slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: casa_imaging_runtime::AllocationDisposition::Release,
                     acquire_at: retained.clone(),
                     release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                         retained.clone(),
@@ -6546,6 +6593,7 @@ fn conditional_adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBi
                 compatibility: streamed_compatibility.clone(),
                 physical_slot: streamed_slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: casa_imaging_runtime::AllocationDisposition::Release,
                     acquire_at: streamed.clone(),
                     release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                         streamed.clone(),
@@ -6649,6 +6697,7 @@ fn auditable_physical_work(
                 compatibility: compatibility.clone(),
                 physical_slot: slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: casa_imaging_runtime::AllocationDisposition::Release,
                     acquire_at: WorkNodeId::new("first-major-work"),
                     release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new(
                         "minor-work",
@@ -6920,6 +6969,7 @@ fn release_failure_physical_work(
             compatibility: compatibility.clone(),
             physical_slot: physical_slot_id.clone(),
             lifetime: AllocationLifetime {
+                disposition: casa_imaging_runtime::AllocationDisposition::Release,
                 acquire_at: prepare_id.clone(),
                 release_after,
             },
@@ -8911,7 +8961,7 @@ fn later_member_failure_retains_terminal_prefix_and_suffix_evidence() {
     ));
     assert!(publication_launched.load(Ordering::SeqCst));
     assert_eq!(visible_generation.load(Ordering::SeqCst), 1);
-    assert_eq!(receipt.schema_version(), 22);
+    assert_eq!(receipt.schema_version(), 23);
     assert_eq!(receipt.status(), ReceiptStatus::Failed);
     let dispositions = execution_plan
         .publication_layouts()
@@ -11328,7 +11378,7 @@ fn run_persists_a_reopenable_receipt_with_exact_identities_and_every_plan_node()
         .expect("reopen durable receipt");
 
     assert_eq!(outcome, ExecutionOutcome::Succeeded);
-    assert_eq!(receipt.schema_version(), 22);
+    assert_eq!(receipt.schema_version(), 23);
     assert_eq!(receipt.status(), ReceiptStatus::Completed);
     assert_eq!(receipt.plan_identity(), execution_plan.plan_id().as_bytes());
     assert_eq!(receipt.problem_identity(), problem.problem_id().as_bytes());

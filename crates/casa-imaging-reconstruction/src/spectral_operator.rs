@@ -621,6 +621,25 @@ mod specification_metadata_tests {
                 .expect("shared payload excluded"),
             with_selection
         );
+        let shared_bytes = 4096 * size_of::<f64>() + 2 * size_of::<usize>();
+        assert_eq!(
+            specification.shared_catalog_heap_bytes().unwrap(),
+            shared_bytes
+        );
+        let shared = specification.mosaic_response_selections[0].clone();
+        specification.mosaic_response_selections = vec![shared.clone(), shared].into_boxed_slice();
+        assert_eq!(
+            specification.shared_catalog_heap_bytes().unwrap(),
+            shared_bytes,
+            "two retained handles to one Arc require one allocation charge"
+        );
+        specification.mosaic_response_selections[1].coordinate_catalog =
+            SpectralWindowCoordinateCatalog::new(vec![1.0e9; 4096], 1.0e6).unwrap();
+        assert_eq!(
+            specification.shared_catalog_heap_bytes().unwrap(),
+            2 * shared_bytes,
+            "equal contents in distinct Arcs require distinct allocation charges"
+        );
         let standard_headers = specification
             .compiler_convolution_metadata_bytes()
             .expect("standard headers");
@@ -1355,6 +1374,35 @@ impl SpectralOperatorSpecification {
                 .checked_add(name_bytes)
                 .ok_or(SpectralOperatorError::ResidencyOverflow)
         })
+    }
+
+    /// Count shared physical-coordinate allocations retained beyond source execution.
+    /// The initial source reservation may also cover these Arcs, but it ends at
+    /// the source DAG boundary; the retained manifest must carry its own claim.
+    pub(crate) fn shared_catalog_heap_bytes(&self) -> Result<usize, SpectralOperatorError> {
+        self.mosaic_response_selections.iter().enumerate().try_fold(
+            0_usize,
+            |total, (index, selection)| {
+                let frequencies = selection.coordinate_catalog.channel_frequencies_hz();
+                if self.mosaic_response_selections[..index]
+                    .iter()
+                    .any(|prior| {
+                        std::ptr::eq(
+                            prior.coordinate_catalog.channel_frequencies_hz(),
+                            frequencies,
+                        )
+                    })
+                {
+                    return Ok(total);
+                }
+                frequencies
+                    .len()
+                    .checked_mul(size_of::<f64>())
+                    .and_then(|bytes| bytes.checked_add(2 * size_of::<usize>()))
+                    .and_then(|bytes| total.checked_add(bytes))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            },
+        )
     }
 
     /// Owned convolution headers, excluding the numerical buffers projected by the workload.

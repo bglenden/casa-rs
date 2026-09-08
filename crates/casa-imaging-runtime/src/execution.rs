@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
+use std::sync::{Arc, Weak};
 
 use crate::execution_bindings::CanonicalEncoder;
 use crate::{
@@ -14,7 +15,7 @@ use crate::{
 };
 
 const PHYSICAL_WORK_IDENTITY_DOMAIN: &[u8] = b"casa-rs-physical-work-dag";
-const PHYSICAL_WORK_IDENTITY_VERSION: u32 = 7;
+const PHYSICAL_WORK_IDENTITY_VERSION: u32 = 8;
 
 macro_rules! execution_identity {
     ($name:ident, $summary:literal) => {
@@ -275,7 +276,11 @@ impl ClaimLifetime {
 #[derive(Debug)]
 pub struct RetainedArtifactPermit {
     lease_epoch: u64,
-    permits: Vec<ResourcePermit>,
+    permits: Box<[ResourcePermit]>,
+    immutable_allocations: Box<[[u8; 32]]>,
+    // This must drop after the permits: a dead weak token proves that every
+    // resource consumption owned by this artifact has already been released.
+    _liveness: Arc<()>,
 }
 
 impl RetainedArtifactPermit {
@@ -287,35 +292,94 @@ impl RetainedArtifactPermit {
 
     /// Narrow this capability to the sealed artifact's exact storage bytes.
     pub(crate) fn narrow_temporary_storage(mut self, amount: u64) -> Result<Self, ResourceError> {
-        if self.permits.len() != 1
-            || !matches!(
-                self.permits[0].resource(),
+        let mut storage = self.permits.iter_mut().filter(|permit| {
+            matches!(
+                permit.resource(),
                 LeaseResource::Storage {
                     use_kind: StorageUseKind::Temporary,
                     ..
                 }
             )
-        {
+        });
+        let Some(permit) = storage.next() else {
+            return Err(ResourceError::Invalid(
+                "artifact retention requires exactly one temporary-storage permit".to_string(),
+            ));
+        };
+        if storage.next().is_some() {
             return Err(ResourceError::Invalid(
                 "artifact retention requires exactly one temporary-storage permit".to_string(),
             ));
         }
-        self.permits[0].narrow_temporary_storage_to(amount)?;
+        permit.narrow_temporary_storage_to(amount)?;
         Ok(self)
     }
 
     /// Return whether this permit contains exactly one matching resource claim.
     pub(crate) fn covers_exact_temporary_storage(&self, amount: u64) -> bool {
-        self.permits.len() == 1
-            && matches!(
-                self.permits[0].resource(),
+        let mut storage = self.permits.iter().filter(|permit| {
+            matches!(
+                permit.resource(),
                 LeaseResource::Storage {
                     use_kind: StorageUseKind::Temporary,
                     ..
                 }
             )
-            && self.permits[0].amount() == amount
+        });
+        storage
+            .next()
+            .is_some_and(|permit| permit.amount() == amount)
+            && storage.next().is_none()
     }
+
+    /// Check one dedicated immutable allocation's exact producer, physical and
+    /// logical identity, layout, byte capacity, and terminal ownership contract.
+    pub(crate) fn covers_exact_immutable_allocation(
+        &self,
+        owner_node: &WorkNodeId,
+        allocation: &LogicalAllocation,
+    ) -> bool {
+        self.immutable_allocations.as_ref()
+            == [immutable_allocation_identity(owner_node, allocation)]
+    }
+
+    /// Heap retained by a capability with these exact named permits and export
+    /// proofs. The capability itself is inline in its artifact owner.
+    pub(crate) fn heap_bytes_for_resources(
+        resources: &[LeaseResource],
+        exported_allocation_count: usize,
+        memory_domain: &str,
+        storage_domain: &str,
+    ) -> Option<u64> {
+        let permit_bytes = resources.iter().try_fold(0_usize, |bytes, resource| {
+            let identity_bytes = match resource {
+                LeaseResource::Memory { allocation_id } => allocation_id.len(),
+                LeaseResource::Storage {
+                    demand_id,
+                    use_kind: StorageUseKind::Temporary,
+                } => demand_id.len(),
+                _ => return None,
+            };
+            bytes
+                .checked_add(size_of::<ResourcePermit>())?
+                .checked_add(identity_bytes.checked_mul(2)?)?
+                .checked_add(ResourcePermit::artifact_retention_heap_bytes(
+                    resource,
+                    memory_domain,
+                    storage_domain,
+                )?)
+        })?;
+        let bytes = permit_bytes
+            .checked_add(exported_allocation_count.checked_mul(size_of::<[u8; 32]>())?)?
+            .checked_add(2 * size_of::<usize>())?;
+        u64::try_from(bytes).ok()
+    }
+}
+
+#[derive(Debug)]
+struct ArtifactExport {
+    liveness: Weak<()>,
+    resources: BTreeSet<LeaseResource>,
 }
 
 /// One positive, typed lease claim made by a work node.
@@ -415,6 +479,22 @@ pub struct AllocationLifetime {
     pub acquire_at: WorkNodeId,
     /// Work and fence events that must all complete before physical reuse.
     pub release_after: BTreeSet<WorkDependency>,
+    /// Release the allocation or transfer its continuously held permit to an
+    /// immutable artifact after the terminal events and successful owner sealing.
+    pub disposition: AllocationDisposition,
+}
+
+/// Terminal ownership of one plan-owned logical allocation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AllocationDisposition {
+    /// Return the physical capacity after the declared terminal events.
+    Release,
+    /// Export a dedicated immutable host allocation from the producing node.
+    /// The artifact's final owning alias releases the same admitted permit.
+    ExportImmutableArtifact {
+        /// Node whose successful scientific completion seals the artifact.
+        owner_node: WorkNodeId,
+    },
 }
 
 /// One reusable physical storage slot charged to a lease memory resource.
@@ -1136,7 +1216,7 @@ pub(crate) struct ExecutionScheduler<'plan> {
     deferred_permits: Vec<DeferredPermit>,
     retained_permits: BTreeMap<RetainedPermitId, RetainedPermit>,
     artifact_permits: BTreeMap<WorkNodeId, Vec<ResourcePermit>>,
-    transferred_artifact_permits: bool,
+    artifact_exports: Vec<ArtifactExport>,
     observation_completion_permits: BTreeMap<WorkNodeId, Vec<ResourcePermit>>,
     terminal_publication: Option<WorkNodeId>,
     publication_permits: Vec<ResourcePermit>,
@@ -1253,7 +1333,7 @@ impl<'plan> ExecutionScheduler<'plan> {
             deferred_permits: Vec::new(),
             retained_permits: BTreeMap::new(),
             artifact_permits: BTreeMap::new(),
-            transferred_artifact_permits: false,
+            artifact_exports: Vec::new(),
             observation_completion_permits: BTreeMap::new(),
             terminal_publication: terminal_publication.cloned(),
             publication_permits: Vec::new(),
@@ -1562,16 +1642,66 @@ impl<'plan> ExecutionScheduler<'plan> {
         if self.states.get(node_id) != Some(&NodeState::Settled) {
             return Ok(None);
         }
-        let Some(permits) = self.artifact_permits.remove(node_id) else {
+        let allocations = self.dag.logical_allocations.values().filter(|allocation| {
+            matches!(&allocation.lifetime.disposition,
+                AllocationDisposition::ExportImmutableArtifact { owner_node } if owner_node == node_id)
+        }).collect::<Vec<_>>();
+        if allocations.is_empty() && self.artifact_permits.get(node_id).is_none_or(Vec::is_empty) {
             return Ok(None);
-        };
-        self.transferred_artifact_permits = true;
+        }
+        if self.draining.is_some() {
+            return Err(ExecutionError::invalid_state(
+                "failed or cancelled execution cannot export an artifact",
+            ));
+        }
+        if allocations.iter().any(|allocation| {
+            self.active_allocations
+                .get(&allocation.id)
+                .is_none_or(|active| !active.remaining.is_empty())
+        }) {
+            return Err(ExecutionError::invalid_state(
+                "immutable artifact allocation is absent, already transferred, or still in use",
+            ));
+        }
+        let mut permits = self.artifact_permits.remove(node_id).unwrap_or_default();
+        let mut immutable_allocations = Vec::with_capacity(allocations.len());
+        for allocation in allocations {
+            let active = self
+                .active_allocations
+                .remove(&allocation.id)
+                .expect("export allocation was checked before transfer");
+            if self.active_slots.remove(&active.slot).as_ref() != Some(&allocation.id) {
+                return Err(ExecutionError::invalid_state(
+                    "immutable artifact export lost its dedicated physical slot",
+                ));
+            }
+            immutable_allocations.push(immutable_allocation_identity(node_id, allocation));
+            permits.push(active.permit);
+        }
         let lease_epoch = self.lease_epoch().ok_or_else(|| {
             ExecutionError::invalid_state("artifact permit lost its Resource Authority lease")
         })?;
+        let lease = self
+            .lease
+            .as_ref()
+            .expect("artifact lease epoch was checked");
+        let permits = permits
+            .into_iter()
+            .map(|permit| lease.prepare_artifact_retention(permit))
+            .collect::<Result<Vec<_>, _>>()?;
+        let liveness = Arc::new(());
+        self.artifact_exports.push(ArtifactExport {
+            liveness: Arc::downgrade(&liveness),
+            resources: permits
+                .iter()
+                .map(|permit| permit.resource().clone())
+                .collect(),
+        });
         Ok(Some(RetainedArtifactPermit {
             lease_epoch,
-            permits,
+            permits: permits.into_boxed_slice(),
+            immutable_allocations: immutable_allocations.into_boxed_slice(),
+            _liveness: liveness,
         }))
     }
 
@@ -2088,6 +2218,14 @@ impl<'plan> ExecutionScheduler<'plan> {
             })
             .collect::<Vec<_>>();
         for allocation in completed {
+            if matches!(
+                self.dag.logical_allocations[&allocation]
+                    .lifetime
+                    .disposition,
+                AllocationDisposition::ExportImmutableArtifact { .. }
+            ) {
+                continue;
+            }
             let used_by_publication =
                 self.terminal_publication
                     .as_ref()
@@ -2346,17 +2484,13 @@ impl<'plan> ExecutionScheduler<'plan> {
             .lease
             .take()
             .ok_or_else(|| ExecutionError::invalid_state("execution lease was already released"))?;
-        if self.transferred_artifact_permits {
-            if lease.release_retaining_artifact_storage()?.is_released() {
-                return Err(ExecutionError::invalid_state(
-                    "artifact-retained execution lease released prematurely",
-                ));
-            }
-        } else if !lease.release()?.is_released() {
-            return Err(ExecutionError::invalid_state(
-                "terminal scheduler retained a resource permit or fence",
-            ));
-        }
+        let exports = self
+            .artifact_exports
+            .iter()
+            .filter(|export| export.liveness.upgrade().is_some())
+            .flat_map(|export| export.resources.iter().cloned())
+            .collect();
+        lease.release_retaining_artifact_resources(&exports)?;
         self.terminal = Some(outcome.clone());
         Ok(SchedulerAction::Complete(outcome))
     }
@@ -2594,22 +2728,7 @@ fn canonical_physical_work_id(plan: &ExecutionDag) -> PhysicalWorkId {
     }
     encoder.usize(plan.logical_allocations.len());
     for allocation in plan.logical_allocations.values() {
-        encoder.string(allocation.id.as_str());
-        encoder.u64(allocation.bytes);
-        match allocation.purpose {
-            AllocationPurpose::Data => encoder.u8(0),
-            AllocationPurpose::IoBuffer(kind) => {
-                encoder.u8(1);
-                encode_io_buffer(&mut encoder, kind);
-            }
-        }
-        encode_compatibility(&mut encoder, &allocation.compatibility);
-        encoder.string(allocation.physical_slot.as_str());
-        encoder.string(allocation.lifetime.acquire_at.as_str());
-        encoder.usize(allocation.lifetime.release_after.len());
-        for dependency in &allocation.lifetime.release_after {
-            encode_dependency(&mut encoder, dependency);
-        }
+        encode_allocation(&mut encoder, allocation);
     }
     encoder.usize(plan.physical_slots.len());
     for slot in plan.physical_slots.values() {
@@ -2633,6 +2752,43 @@ fn canonical_physical_work_id(plan: &ExecutionDag) -> PhysicalWorkId {
         });
     }
     PhysicalWorkId::from_sha256(encoder.finish())
+}
+
+fn immutable_allocation_identity(
+    owner_node: &WorkNodeId,
+    allocation: &LogicalAllocation,
+) -> [u8; 32] {
+    let mut encoder = CanonicalEncoder::new();
+    encoder.bytes(b"casa-rs-immutable-artifact-allocation-v1");
+    encoder.string(owner_node.as_str());
+    encode_allocation(&mut encoder, allocation);
+    encoder.finish()
+}
+
+fn encode_allocation(encoder: &mut CanonicalEncoder, allocation: &LogicalAllocation) {
+    encoder.string(allocation.id.as_str());
+    encoder.u64(allocation.bytes);
+    match allocation.purpose {
+        AllocationPurpose::Data => encoder.u8(0),
+        AllocationPurpose::IoBuffer(kind) => {
+            encoder.u8(1);
+            encode_io_buffer(encoder, kind);
+        }
+    }
+    encode_compatibility(encoder, &allocation.compatibility);
+    encoder.string(allocation.physical_slot.as_str());
+    encoder.string(allocation.lifetime.acquire_at.as_str());
+    encoder.usize(allocation.lifetime.release_after.len());
+    for dependency in &allocation.lifetime.release_after {
+        encode_dependency(encoder, dependency);
+    }
+    match &allocation.lifetime.disposition {
+        AllocationDisposition::Release => encoder.u8(0),
+        AllocationDisposition::ExportImmutableArtifact { owner_node } => {
+            encoder.u8(1);
+            encoder.string(owner_node.as_str());
+        }
+    }
 }
 
 fn encode_string_set<T>(
@@ -3854,6 +4010,42 @@ fn validate_allocations(
                 )));
             }
         }
+        if let AllocationDisposition::ExportImmutableArtifact { owner_node } =
+            &allocation.lifetime.disposition
+        {
+            let owner = nodes.get(owner_node).ok_or_else(|| {
+                ExecutionError::invalid_plan("immutable artifact export has an unknown owner")
+            })?;
+            let mut owner_terminal = BTreeSet::from([WorkDependency::Work(owner_node.clone())]);
+            owner_terminal.extend(
+                owner
+                    .fences
+                    .iter()
+                    .map(|kind| WorkDependency::Fence(FenceId::new(owner_node.clone(), *kind))),
+            );
+            if allocation.purpose != AllocationPurpose::Data
+                || allocation.compatibility.storage_mode != StorageMode::Host
+                || allocation.compatibility.access != AllocationAccess::ReadOnly
+                || allocation.bytes != slot.capacity_bytes
+                || owner.kind == WorkKind::Publication
+                || !owner
+                    .allocations
+                    .iter()
+                    .any(|use_| use_.allocation == allocation.id)
+                || !allocation.lifetime.release_after.iter().all(|release| {
+                    owner_terminal
+                        .iter()
+                        .any(|terminal| event_precedes(nodes, release, terminal))
+                })
+                || allocations.values().any(|other| {
+                    other.id != allocation.id && other.physical_slot == allocation.physical_slot
+                })
+            {
+                return Err(ExecutionError::invalid_plan(
+                    "artifact export requires a dedicated exact-size immutable Host/Data slot that settles by its owner's completion",
+                ));
+            }
+        }
         slot_allocations
             .entry(slot.id.clone())
             .or_default()
@@ -4756,3 +4948,7 @@ impl From<ResourceError> for ExecutionError {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "execution/artifact_tests.rs"]
+mod artifact_tests;

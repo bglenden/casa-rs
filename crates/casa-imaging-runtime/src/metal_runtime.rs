@@ -992,6 +992,7 @@ mod tests {
                 },
                 physical_slot: slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: crate::AllocationDisposition::Release,
                     acquire_at: node_ids[0].clone(),
                     release_after: BTreeSet::from([crate::WorkDependency::Fence(
                         crate::FenceId::new(node_ids[node_count - 1].clone(), FenceKind::Device),

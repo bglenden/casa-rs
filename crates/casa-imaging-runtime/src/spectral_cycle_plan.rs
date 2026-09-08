@@ -1340,6 +1340,7 @@ fn append_low_memory_adaptation(
                     compatibility: cache_compatibility.clone(),
                     physical_slot: cache_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: retained.clone(),
                         release_after: BTreeSet::from([WorkDependency::Work(science_node.clone())]),
                     },
@@ -1351,6 +1352,7 @@ fn append_low_memory_adaptation(
                     compatibility: cache_read_compatibility.clone(),
                     physical_slot: cache_read_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: retained.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             retained.clone(),
@@ -1365,6 +1367,7 @@ fn append_low_memory_adaptation(
                     compatibility: prefetch_compatibility.clone(),
                     physical_slot: prefetch_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: low_memory_io.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             science_node.clone(),
@@ -1685,6 +1688,7 @@ fn base_physical<R: ImplementationRegistry>(
             compatibility: source_compat.clone(),
             physical_slot: source_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: AllocationDisposition::Release,
                 acquire_at: read.clone(),
                 release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                     read.clone(),
@@ -1699,6 +1703,7 @@ fn base_physical<R: ImplementationRegistry>(
             compatibility: commit_compat.clone(),
             physical_slot: commit_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: AllocationDisposition::Release,
                 acquire_at: commit.clone(),
                 release_after: BTreeSet::from([
                     WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -2106,6 +2111,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
             compatibility: compatibility.clone(),
             physical_slot: commit_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: AllocationDisposition::Release,
                 acquire_at: commit.clone(),
                 release_after: BTreeSet::from([
                     WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -2280,13 +2286,31 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             node.as_str(),
         ))
     });
-    let compiler_bytes = u64::try_from(admission.compiler.workspace_bytes())
+    let compiler_bytes = u64::try_from(admission.compiler.transient_workspace_bytes())
         .map_err(|_| SpectralCyclePlanError::Overflow)?;
     let compiler_slot = compiler_allocation
         .as_ref()
         .map(|allocation| PhysicalSlotId::new(format!("{}-slot", allocation.as_str())));
     let suffix = format!("{}-{}", pass.ordinal(), mode.suffix);
     let storage_id = format!("{MANAGED_SPILL_STORAGE_DEMAND}-{suffix}");
+    let metadata_allocation = if mode.is_read {
+        None
+    } else {
+        let resources =
+            crate::complete_data_operator::gridded_metadata_resources(node, &storage_id);
+        let bytes = crate::complete_data_operator::gridded_backing_metadata_bytes(
+            admission.compiler.retained_metadata_bytes(),
+            storage.retained_path_bytes(),
+            &resources,
+            storage.resources().domain().as_str(),
+        )
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
+        Some(crate::complete_data_operator::gridded_metadata_allocation(
+            node,
+            admission.compiler.binding(),
+            bytes,
+        ))
+    };
     let allocation = AllocationId::new(format!("managed-spill-buffer-{suffix}"));
     let serialization_allocation =
         AllocationId::new(format!("managed-spill-serialization-{suffix}"));
@@ -2311,7 +2335,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         ..compatibility.clone()
     };
     let compiler_compatibility = SlotCompatibility {
-        layout: AllocationLayout::new("gridded-normal-compiler"),
+        layout: AllocationLayout::new("owner-managed-host-workspace"),
         ..compatibility.clone()
     };
     let reused_slot = reusable_physical_slot(&base, node, &compatibility, buffer_bytes, None);
@@ -2422,6 +2446,12 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             lifetime: lifetime.clone(),
         });
     }
+    if let Some(allocation) = &metadata_allocation {
+        owner.allocations.push(AllocationUse {
+            allocation: allocation.id.clone(),
+            lifetime: lifetime.clone(),
+        });
+    }
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.id = AlternativeId::new(format!("{}-gridded-{suffix}", alternative.id.as_str()));
     if reused_slot.is_none() {
@@ -2445,6 +2475,14 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             allocation_id: allocation.as_str().to_string(),
             hard_bytes: compiler_bytes,
             preferred_bytes: compiler_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+    }
+    if let Some(allocation) = &metadata_allocation {
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: allocation.id.as_str().to_owned(),
+            hard_bytes: allocation.bytes,
+            preferred_bytes: allocation.bytes,
             views: vec![CapacityViewId::new("host-memory")],
         });
     }
@@ -2528,6 +2566,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     compatibility: compatibility.clone(),
                     physical_slot: slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: node.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             node.clone(),
@@ -2544,6 +2583,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     },
                     physical_slot: serialization_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: node.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             node.clone(),
@@ -2563,6 +2603,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                         compatibility: compiler_compatibility.clone(),
                         physical_slot: slot.clone(),
                         lifetime: AllocationLifetime {
+                            disposition: AllocationDisposition::Release,
                             acquire_at: node.clone(),
                             // Scientific sealing consumes the compiler after the I/O fence.
                             release_after: BTreeSet::from([WorkDependency::Work(
@@ -2571,6 +2612,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                         },
                     }),
             )
+            .chain(metadata_allocation.iter().cloned())
             .collect(),
         physical_slots: base
             .execution_dag()
@@ -2606,6 +2648,14 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                         compatibility: compiler_compatibility,
                     }),
             )
+            .chain(metadata_allocation.iter().map(|allocation| PhysicalSlot {
+                id: allocation.physical_slot.clone(),
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: allocation.id.as_str().to_owned(),
+                },
+                capacity_bytes: allocation.bytes,
+                compatibility: allocation.compatibility.clone(),
+            }))
             .collect(),
         initial_knobs: base.execution_dag().initial_knobs().clone(),
         adaptations: base
@@ -2868,6 +2918,7 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
                     compatibility: compatibility.clone(),
                     physical_slot: slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: replay.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             replay.clone(),
@@ -2882,6 +2933,7 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
                     compatibility: compatibility.clone(),
                     physical_slot: block_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: replay.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             replay.clone(),
@@ -3003,16 +3055,37 @@ fn append_minor<R: ImplementationRegistry>(
         .clone();
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("spectral-cycle-minor-cycle");
-    let slot = PhysicalSlotId::new("spectral-cycle-minor-cycle-slot");
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
         alignment_bytes: 64,
         storage_mode: StorageMode::Host,
-        layout: AllocationLayout::new("spectral-cycle-minor-cycle"),
+        layout: AllocationLayout::new("owner-managed-host-workspace"),
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
+    let compiler_slot = base
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-compiler-")
+                && allocation.compatibility == compatibility
+                && allocation.lifetime.disposition == AllocationDisposition::Release
+                && allocation.lifetime.release_after
+                    == BTreeSet::from([WorkDependency::Work(reconcile.clone())])
+        })
+        .map(|allocation| &base.execution_dag().physical_slots()[&allocation.physical_slot]);
+    let slot = compiler_slot.map_or_else(
+        || PhysicalSlotId::new("spectral-cycle-minor-cycle-slot"),
+        |slot| slot.id.clone(),
+    );
+    let capacity_bytes = compiler_slot.map_or(resources.heap_bytes, |slot| {
+        slot.capacity_bytes.max(resources.heap_bytes)
+    });
     let mut nodes = base
         .execution_dag()
         .nodes()
@@ -3069,10 +3142,20 @@ fn append_minor<R: ImplementationRegistry>(
         .ok_or(SpectralCyclePlanError::Overflow)?;
     let mut knobs = base.execution_dag().initial_knobs().clone();
     knobs.workers = workers;
+    if let Some(PhysicalSlot {
+        lease_resource: LeaseResource::Memory { allocation_id },
+        ..
+    }) = compiler_slot
+    {
+        alternative
+            .demand
+            .memory
+            .retain(|demand| &demand.allocation_id != allocation_id);
+    }
     alternative.demand.memory.push(MemoryDemand {
         allocation_id: "spectral-cycle-minor-cycle".to_string(),
-        hard_bytes: resources.heap_bytes,
-        preferred_bytes: resources.heap_bytes,
+        hard_bytes: capacity_bytes,
+        preferred_bytes: capacity_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
     let dag = ExecutionDag::new(ExecutionDagSpecification {
@@ -3094,6 +3177,7 @@ fn append_minor<R: ImplementationRegistry>(
                 compatibility: compatibility.clone(),
                 physical_slot: slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: AllocationDisposition::Release,
                     acquire_at: minor.clone(),
                     release_after: BTreeSet::from([WorkDependency::Work(minor.clone())]),
                 },
@@ -3103,13 +3187,14 @@ fn append_minor<R: ImplementationRegistry>(
             .execution_dag()
             .physical_slots()
             .values()
+            .filter(|existing| existing.id != slot)
             .cloned()
             .chain([PhysicalSlot {
-                id: slot,
+                id: slot.clone(),
                 lease_resource: LeaseResource::Memory {
                     allocation_id: "spectral-cycle-minor-cycle".to_string(),
                 },
-                capacity_bytes: resources.heap_bytes,
+                capacity_bytes,
                 compatibility,
             }])
             .collect(),

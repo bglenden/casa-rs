@@ -26,6 +26,8 @@ const FOOTER_MAGIC: [u8; 8] = *b"CASPFTR\0";
 const FILE_HEADER_BYTES: usize = 16;
 pub(crate) const FRAME_HEADER_BYTES: usize = 72;
 const FOOTER_BYTES: usize = 80;
+const ARTIFACT_PREFIX: &str = ".casa-rs-managed-spill-";
+const ARTIFACT_RANDOM_BYTES: usize = 6;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ManagedSpillStageTimings {
@@ -81,13 +83,45 @@ impl ManagedSpillStorage {
     pub(crate) const fn cpu_replay_capacity(&self) -> Option<(u64, u64)> {
         self.cpu_replay_capacity
     }
+
+    pub(crate) fn retained_path_bytes(&self) -> usize {
+        self.directory
+            .join(".casa-rs-managed-spill-000000")
+            .as_os_str()
+            .as_encoded_bytes()
+            .len()
+    }
+
+    fn retention_identity(&self) -> [u8; 32] {
+        let mut digest = Sha256::new();
+        digest.update(b"casa-rs-managed-spill-storage-binding");
+        for bytes in [
+            self.directory.as_os_str().as_encoded_bytes(),
+            self.resources.domain().as_str().as_bytes(),
+            self.resources.read_rate().as_str().as_bytes(),
+            self.resources.write_rate().as_str().as_bytes(),
+            self.resources.queue().as_str().as_bytes(),
+        ] {
+            digest.update((bytes.len() as u64).to_be_bytes());
+            digest.update(bytes);
+        }
+        match self.cpu_replay_capacity {
+            Some((bytes, cores)) => {
+                digest.update([1]);
+                digest.update(bytes.to_be_bytes());
+                digest.update(cores.to_be_bytes());
+            }
+            None => digest.update([0]),
+        }
+        digest.finalize().into()
+    }
 }
 
 /// Plan-issued temporary-storage capacity retained by one sealed replay artifact.
 #[derive(Debug)]
 pub(crate) struct ManagedSpillRetention {
     _permit: crate::RetainedArtifactPermit,
-    storage: ManagedSpillStorage,
+    storage: [u8; 32],
     bytes: u64,
 }
 
@@ -96,21 +130,25 @@ impl ManagedSpillRetention {
         permit: crate::RetainedArtifactPermit,
         storage: &ManagedSpillStorage,
         bytes: u64,
+        owner_node: &crate::WorkNodeId,
+        metadata: &crate::LogicalAllocation,
     ) -> io::Result<Self> {
-        if !permit.covers_exact_temporary_storage(bytes) {
+        if !permit.covers_exact_temporary_storage(bytes)
+            || !permit.covers_exact_immutable_allocation(owner_node, metadata)
+        {
             return Err(io::Error::other(
                 "plan-issued artifact permit does not exactly match replay storage",
             ));
         }
         Ok(Self {
             _permit: permit,
-            storage: storage.clone(),
+            storage: storage.retention_identity(),
             bytes,
         })
     }
 
     pub(crate) fn validates_bytes(&self, storage: &ManagedSpillStorage, bytes: u64) -> bool {
-        self.storage == *storage && self.bytes == bytes
+        self.storage == storage.retention_identity() && self.bytes == bytes
     }
 }
 
@@ -577,12 +615,18 @@ impl ManagedSpillWriter {
         budget: ManagedSpillBudget,
     ) -> Result<Self, ManagedSpillError> {
         let file = Builder::new()
-            .prefix(".casa-rs-managed-spill-")
+            .prefix(ARTIFACT_PREFIX)
+            .rand_bytes(ARTIFACT_RANDOM_BYTES)
             .tempfile_in(&storage.directory)
             .map_err(|source| ManagedSpillError::Io {
                 operation: "create private temporary file",
                 source,
             })?;
+        if file.path().as_os_str().as_encoded_bytes().len() != storage.retained_path_bytes() {
+            return Err(ManagedSpillError::InvalidBudget(
+                "artifact path differs from retained metadata plan",
+            ));
+        }
         configure_bounded_page_cache(file.as_file())?;
         let buffer_len = usize::try_from(budget.io_buffer_bytes)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("artifact I/O buffer allocation"))?;
@@ -913,6 +957,10 @@ pub(crate) struct ManagedSpillArtifact {
 }
 
 impl ManagedSpillArtifact {
+    pub(crate) fn retained_path_bytes(&self) -> usize {
+        self.path.as_os_str().as_encoded_bytes().len()
+    }
+
     pub(crate) const fn seal(&self) -> ManagedSpillSeal {
         self.seal
     }

@@ -53,7 +53,7 @@ use crate::{
 };
 
 const RECEIPT_SCHEMA: &str = "casa-rs-imaging-execution-receipt";
-const RECEIPT_SCHEMA_VERSION: u32 = 22;
+const RECEIPT_SCHEMA_VERSION: u32 = 23;
 const COMPILED_PROBLEM_EVIDENCE_VERSION: u32 = 11;
 const RECEIPT_SUFFIX: &str = ".receipt.json";
 const RECEIPT_STAGING_PREFIX: &str = ".casa-rs-receipt-staging-";
@@ -3663,7 +3663,39 @@ struct AllocationProjection {
     physical_slot: String,
     acquire_at: String,
     release_after: Vec<String>,
+    disposition: AllocationDispositionProjection,
     compatibility: CompatibilityProjection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum AllocationDispositionProjection {
+    Release,
+    ExportImmutableArtifact { owner_node: String },
+}
+
+impl AllocationDispositionProjection {
+    fn new(disposition: &crate::AllocationDisposition) -> Self {
+        match disposition {
+            crate::AllocationDisposition::Release => Self::Release,
+            crate::AllocationDisposition::ExportImmutableArtifact { owner_node } => {
+                Self::ExportImmutableArtifact {
+                    owner_node: stable_text(owner_node.as_str()),
+                }
+            }
+        }
+    }
+
+    fn to_runtime(&self) -> crate::AllocationDisposition {
+        match self {
+            Self::Release => crate::AllocationDisposition::Release,
+            Self::ExportImmutableArtifact { owner_node } => {
+                crate::AllocationDisposition::ExportImmutableArtifact {
+                    owner_node: WorkNodeId::new(owner_node.clone()),
+                }
+            }
+        }
+    }
 }
 
 impl AllocationProjection {
@@ -3683,6 +3715,7 @@ impl AllocationProjection {
                 .iter()
                 .map(dependency)
                 .collect(),
+            disposition: AllocationDispositionProjection::new(&allocation.lifetime.disposition),
             compatibility: CompatibilityProjection::new(&allocation.compatibility),
         }
     }
@@ -5020,6 +5053,12 @@ fn validate_plan_projection(
                 && allocation_purpose_is_valid(&allocation.purpose)
                 && slot_ids.contains(allocation.physical_slot.as_str())
                 && node_ids.contains(allocation.acquire_at.as_str())
+                && match &allocation.disposition {
+                    AllocationDispositionProjection::Release => true,
+                    AllocationDispositionProjection::ExportImmutableArtifact { owner_node } => {
+                        is_redacted_text(owner_node) && node_ids.contains(owner_node.as_str())
+                    }
+                }
                 && !allocation.release_after.is_empty()
                 && allocation
                     .release_after
@@ -5249,6 +5288,7 @@ fn receipt_execution_dag(plan: &PlanProjection) -> Result<ExecutionDag, ReceiptE
                     .ok_or(ReceiptError::IntegrityMismatch)?,
                 physical_slot: PhysicalSlotId::new(allocation.physical_slot.clone()),
                 lifetime: AllocationLifetime {
+                    disposition: allocation.disposition.to_runtime(),
                     acquire_at: WorkNodeId::new(allocation.acquire_at.clone()),
                     release_after: allocation
                         .release_after
@@ -8592,6 +8632,31 @@ mod tests {
         ExecutionReceiptStore, ReceiptError, ReceiptRetention, maximum_json_serialized_text,
         prepared_publication_bytes, stable_float, staged_receipt,
     };
+
+    #[test]
+    fn t55_artifact_disposition_survives_receipt_serialization_without_a_release_default() {
+        for disposition in [
+            crate::AllocationDisposition::Release,
+            crate::AllocationDisposition::ExportImmutableArtifact {
+                owner_node: crate::WorkNodeId::new("sealed-replay"),
+            },
+        ] {
+            let projection = super::AllocationDispositionProjection::new(&disposition);
+            let bytes = serde_json::to_vec(&projection).unwrap();
+            let reopened: super::AllocationDispositionProjection =
+                serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(reopened.to_runtime(), disposition);
+        }
+        for invalid in [
+            r#"{}"#,
+            r#"{"kind":"export_immutable_artifact"}"#,
+            r#"{"kind":"unknown"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<super::AllocationDispositionProjection>(invalid).is_err()
+            );
+        }
+    }
 
     #[test]
     fn stable_float_canonicalizes_only_signed_zero() {

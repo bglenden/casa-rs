@@ -56,10 +56,10 @@ pub use cost_model::{
     ProfilePromotionError, ProfileReview, open_cost_model_profile, promote_cost_model_profile,
 };
 pub use execution::{
-    AdaptationId, AdaptationTransition, AllocationAccess, AllocationId, AllocationLayout,
-    AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime, ExecutionDag,
-    ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome, FenceId,
-    FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
+    AdaptationId, AdaptationTransition, AllocationAccess, AllocationDisposition, AllocationId,
+    AllocationLayout, AllocationLifetime, AllocationPurpose, AllocationUse, ClaimLifetime,
+    ExecutionDag, ExecutionDagSpecification, ExecutionError, ExecutionKnobs, ExecutionOutcome,
+    FenceId, FenceKind, InitializationPolicy, LogicalAllocation, PhysicalSlot, PhysicalSlotId,
     ResourceClaim, RetainedArtifactPermit, SlotCompatibility, StorageMode,
     WorkAllocationCapability, WorkDependency, WorkDomain, WorkImplementationId, WorkKind, WorkNode,
     WorkNodeId, WorkResourceCapability,

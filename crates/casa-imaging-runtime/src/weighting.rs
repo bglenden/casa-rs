@@ -3106,6 +3106,7 @@ impl AllocationSpec {
             compatibility: self.compatibility.clone(),
             physical_slot: self.slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: self.acquire_at.clone(),
                 release_after: self.release_after.clone(),
             },

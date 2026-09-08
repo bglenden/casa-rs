@@ -122,6 +122,17 @@ Its surface data is an explicit input, never discovered in an installed CASA
 runtime. Native cache files are private schema-7 implementation artifacts, not
 CASA-readable CF tables; existing CASA caches remain read-only import inputs.
 
+Run-scoped gridded replay exports a dedicated immutable Host/Data allocation
+from its original admitted execution lease. Work and I/O fences settle before
+scientific sealing transfers the existing permit; there is no release/reacquire
+gap or second lease. Runtime-owned shared backing couples the compiled program,
+temporary artifact, and retention capability to every reader and operator.
+The final owning alias releases the exact retained metadata and storage.
+Compiler transient and later minor-cycle heaps may reuse one max-sized host
+workspace only across ordered, disjoint lifetimes; exported allocations never
+reuse a physical slot. Private receipt schema 23 records each allocation's
+release or export disposition. CASA-interoperable formats are unchanged.
+
 `casa-imaging-application` owns production composition across
 MeasurementSet observation authority, reconstruction, products, and physical
 execution. It compiles the logical request, checks it against the implementation

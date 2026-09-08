@@ -3042,7 +3042,13 @@ impl WorkImplementation for SpectralCycleExecutor {
         let permit = permit
             .narrow_temporary_storage(sealed_bytes)
             .map_err(io::Error::other)?;
-        replay.retain_plan_storage(permit, &storage, sealed_bytes)?;
+        replay.retain_plan_storage(
+            permit,
+            &storage,
+            sealed_bytes,
+            owner_node,
+            &format!("managed-spill-storage-{}-write", self.pass.ordinal()),
+        )?;
         Ok(true)
     }
 

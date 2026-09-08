@@ -436,6 +436,7 @@ fn build_physical<R: ImplementationRegistry>(
             compatibility: commit_compat.clone(),
             physical_slot: commit_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: commit.clone(),
                 release_after: BTreeSet::from([
                     WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -662,6 +663,7 @@ fn allocation(
         compatibility,
         physical_slot,
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at,
             release_after: BTreeSet::from([release_after]),
         },

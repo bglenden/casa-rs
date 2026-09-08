@@ -527,9 +527,7 @@ impl GriddedNormalReplayWindowPlan {
 /// The application may move this capability between major-cycle executors, but
 /// cannot inspect records, reopen the selected observation, or apply science.
 pub struct FrozenGriddedNormalReplay {
-    program: GriddedNormalOperatorProgram,
-    spill: GriddedNormalSpillArtifact,
-    retention: Option<crate::managed_spill::ManagedSpillRetention>,
+    backing: Arc<RetainedGriddedBacking>,
     latest_read: Option<ManagedSpillMeasurements>,
     latest_stream: Option<BoundedStreamMeasurements>,
     latest_routing: Option<GriddedNormalRoutingMeasurements>,
@@ -541,7 +539,18 @@ pub struct FrozenGriddedNormalReplay {
     latest_cache_resident_bytes: Option<u64>,
 }
 
-enum GriddedNormalReplaySource {
+struct RetainedGriddedBacking {
+    program: GriddedNormalOperatorProgram,
+    spill: GriddedNormalSpillArtifact,
+    retention: OnceLock<crate::managed_spill::ManagedSpillRetention>,
+}
+
+struct GriddedNormalReplaySource {
+    source: GriddedNormalReplaySourceKind,
+    backing: Arc<RetainedGriddedBacking>,
+}
+
+enum GriddedNormalReplaySourceKind {
     Managed(ManagedSpillBlockSource),
     Retained(ManagedSpillRetainedBlockSource),
 }
@@ -552,9 +561,9 @@ impl OrderedBlockSource for GriddedNormalReplaySource {
     type Error = ManagedSpillError;
 
     fn create_storage(&self, slot: usize) -> Self::Storage {
-        match self {
-            Self::Managed(source) => source.create_storage(slot),
-            Self::Retained(source) => source.create_storage(slot),
+        match &self.source {
+            GriddedNormalReplaySourceKind::Managed(source) => source.create_storage(slot),
+            GriddedNormalReplaySourceKind::Retained(source) => source.create_storage(slot),
         }
     }
 
@@ -564,17 +573,23 @@ impl OrderedBlockSource for GriddedNormalReplaySource {
         storage: &mut Self::Storage,
         cancellation: crate::bounded_stream::SourceFillCancellation<'_>,
     ) -> Result<crate::bounded_stream::SourcePoll, Self::Error> {
-        match self {
-            Self::Managed(source) => source.fill(block_ordinal, storage, cancellation),
-            Self::Retained(source) => source.fill(block_ordinal, storage, cancellation),
+        match &mut self.source {
+            GriddedNormalReplaySourceKind::Managed(source) => {
+                source.fill(block_ordinal, storage, cancellation)
+            }
+            GriddedNormalReplaySourceKind::Retained(source) => {
+                source.fill(block_ordinal, storage, cancellation)
+            }
         }
     }
 
     fn complete(self) -> Result<Self::Completion, Self::Error> {
-        match self {
-            Self::Managed(source) => source.complete(),
-            Self::Retained(source) => source.complete(),
-        }
+        let result = match self.source {
+            GriddedNormalReplaySourceKind::Managed(source) => source.complete(),
+            GriddedNormalReplaySourceKind::Retained(source) => source.complete(),
+        };
+        drop(self.backing);
+        result
     }
 }
 
@@ -642,14 +657,14 @@ impl GriddedNormalReplayCompilation {
             budget.io_buffer_bytes(),
         )?;
         let allocation = gridded_compiler_allocation(context.node().id.as_str());
-        let bytes =
-            u64::try_from(admission.compiler.workspace_bytes()).map_err(io::Error::other)?;
+        let bytes = u64::try_from(admission.compiler.transient_workspace_bytes())
+            .map_err(io::Error::other)?;
         if context
             .allocations()
             .iter()
             .filter(|capability| {
                 capability.allocation().as_str() == allocation
-                    && capability.capacity_bytes() == bytes
+                    && capability.capacity_bytes() >= bytes
                     && capability.lifetime() == &ClaimLifetime::through_fence(crate::FenceKind::Io)
             })
             .count()
@@ -657,6 +672,45 @@ impl GriddedNormalReplayCompilation {
         {
             return Err(io::Error::other(
                 "gridded compiler lacks its exact admitted workspace",
+            ));
+        }
+        let storage_demand = context
+            .node()
+            .claims
+            .iter()
+            .find_map(|claim| match &claim.resource {
+                LeaseResource::Storage {
+                    demand_id,
+                    use_kind: crate::StorageUseKind::Temporary,
+                } if claim.lifetime == ClaimLifetime::Artifact => Some(demand_id.as_str()),
+                _ => None,
+            })
+            .ok_or_else(|| io::Error::other("gridded compiler lacks retained artifact storage"))?;
+        let resources = gridded_metadata_resources(&context.node().id, storage_demand);
+        let metadata = gridded_metadata_allocation(
+            &context.node().id,
+            admission.compiler.binding(),
+            gridded_backing_metadata_bytes(
+                admission.compiler.retained_metadata_bytes(),
+                storage.retained_path_bytes(),
+                &resources,
+                storage.resources().domain().as_str(),
+            )?,
+        );
+        if context
+            .allocations()
+            .iter()
+            .filter(|capability| {
+                capability.allocation() == &metadata.id
+                    && capability.physical_slot() == &metadata.physical_slot
+                    && capability.capacity_bytes() == metadata.bytes
+                    && capability.lifetime() == &ClaimLifetime::through_fence(FenceKind::Io)
+            })
+            .count()
+            != 1
+        {
+            return Err(io::Error::other(
+                "gridded compiler lacks its exact admitted retained metadata",
             ));
         }
         Self::create(
@@ -829,9 +883,11 @@ impl GriddedNormalReplayCompilation {
             ));
         }
         Ok(FrozenGriddedNormalReplay {
-            program,
-            spill,
-            retention: None,
+            backing: Arc::new(RetainedGriddedBacking {
+                program,
+                spill,
+                retention: OnceLock::new(),
+            }),
             latest_read: None,
             latest_stream: None,
             latest_routing: None,
@@ -887,6 +943,82 @@ fn spill_frame_sink<'a>(
 
 pub(crate) fn gridded_compiler_allocation(node: &str) -> String {
     format!("gridded-normal-compiler-{node}")
+}
+
+pub(crate) fn gridded_metadata_resources(
+    owner: &WorkNodeId,
+    storage_demand: &str,
+) -> [LeaseResource; 2] {
+    [
+        LeaseResource::Memory {
+            allocation_id: format!("gridded-normal-retained-metadata-{}", owner.as_str()),
+        },
+        LeaseResource::Storage {
+            demand_id: storage_demand.to_owned(),
+            use_kind: crate::StorageUseKind::Temporary,
+        },
+    ]
+}
+
+pub(crate) fn gridded_metadata_allocation(
+    owner: &WorkNodeId,
+    binding: casa_imaging_model::LogicalIdentity,
+    bytes: u64,
+) -> LogicalAllocation {
+    let id = AllocationId::new(format!(
+        "gridded-normal-retained-metadata-{}",
+        owner.as_str()
+    ));
+    LogicalAllocation {
+        physical_slot: PhysicalSlotId::new(format!("{}-slot", id.as_str())),
+        id,
+        bytes,
+        purpose: AllocationPurpose::Data,
+        compatibility: SlotCompatibility {
+            memory_domain: CapacityDomainId::new("host-memory"),
+            views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+            alignment_bytes: 64,
+            storage_mode: StorageMode::Host,
+            layout: AllocationLayout::new(format!("gridded-normal-retained-metadata-{binding}")),
+            initialization: InitializationPolicy::OverwriteBeforeRead,
+            access: AllocationAccess::ReadOnly,
+        },
+        lifetime: AllocationLifetime {
+            acquire_at: owner.clone(),
+            release_after: BTreeSet::from([
+                WorkDependency::Work(owner.clone()),
+                WorkDependency::Fence(FenceId::new(owner.clone(), FenceKind::Io)),
+            ]),
+            disposition: crate::AllocationDisposition::ExportImmutableArtifact {
+                owner_node: owner.clone(),
+            },
+        },
+    }
+}
+
+pub(crate) fn gridded_backing_metadata_bytes(
+    reconstruction_bytes: usize,
+    path_bytes: usize,
+    resources: &[LeaseResource],
+    storage_domain: &str,
+) -> io::Result<u64> {
+    let runtime_bytes = size_of::<RetainedGriddedBacking>()
+        .checked_add(2 * size_of::<usize>())
+        .and_then(|bytes| bytes.checked_add(path_bytes))
+        .and_then(|bytes| bytes.checked_add(reconstruction_bytes))
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or_else(|| io::Error::other("retained replay backing metadata overflow"))?;
+    runtime_bytes
+        .checked_add(
+            crate::RetainedArtifactPermit::heap_bytes_for_resources(
+                resources,
+                1,
+                "host-memory",
+                storage_domain,
+            )
+            .ok_or_else(|| io::Error::other("retained replay permit metadata overflow"))?,
+        )
+        .ok_or_else(|| io::Error::other("retained replay metadata overflow"))
 }
 
 fn validate_managed_spill_context(
@@ -951,15 +1083,40 @@ fn gridded_buffer_claim_satisfies(
 }
 
 impl FrozenGriddedNormalReplay {
+    #[cfg(test)]
+    pub(crate) fn assert_retained_backing_lifetime(self, mut check_charge: impl FnMut(bool)) {
+        assert!(self.backing.retention.get().is_some());
+        let weak = Arc::downgrade(&self.backing);
+        let program_owner = Arc::clone(&self.backing);
+        let reader = GriddedNormalReplaySource {
+            source: GriddedNormalReplaySourceKind::Managed(
+                self.backing.spill.block_source(1).unwrap(),
+            ),
+            backing: Arc::clone(&self.backing),
+        };
+        assert_eq!(Arc::strong_count(&program_owner), 3);
+        drop(self);
+        assert_eq!(Arc::strong_count(&program_owner), 2);
+        check_charge(true);
+        // Worker views borrow the program from this guarded owner.
+        assert!(program_owner.program.record_bytes() > 0);
+        drop(program_owner);
+        assert_eq!(weak.strong_count(), 1);
+        check_charge(true);
+        drop(reader);
+        assert!(weak.upgrade().is_none());
+        check_charge(false);
+    }
+
     pub(crate) fn w_projection_diagnostics(
         &self,
     ) -> &[casa_imaging_reconstruction::runtime_adapter::WProjectionDiagnostics] {
-        self.program.w_projection_diagnostics()
+        self.backing.program.w_projection_diagnostics()
     }
 
     #[cfg(test)]
-    pub(crate) const fn stage_local_artifact_seal(&self) -> crate::managed_spill::ManagedSpillSeal {
-        self.spill.seal()
+    pub(crate) fn stage_local_artifact_seal(&self) -> crate::managed_spill::ManagedSpillSeal {
+        self.backing.spill.seal()
     }
 
     pub(crate) fn preview_windows(
@@ -969,7 +1126,7 @@ impl FrozenGriddedNormalReplay {
         working_set_limit: Option<u64>,
     ) -> Result<GriddedNormalReplayWindowPlan, CompleteDataPlanError> {
         GriddedNormalReplayWindowPlan::for_program(
-            &self.program,
+            &self.backing.program,
             capacity,
             convolution_support,
             working_set_limit,
@@ -1012,17 +1169,38 @@ impl FrozenGriddedNormalReplay {
         permit: crate::RetainedArtifactPermit,
         storage: &ManagedSpillStorage,
         retained_bytes: u64,
+        owner_node: &WorkNodeId,
+        storage_demand: &str,
     ) -> io::Result<()> {
-        if self.retention.is_some() {
+        if self.backing.retention.get().is_some() {
             return Err(io::Error::other(
                 "managed spill artifact storage was retained more than once",
             ));
         }
-        self.retention = Some(crate::managed_spill::ManagedSpillRetention::bind(
-            permit,
-            storage,
-            retained_bytes,
-        )?);
+        let resources = gridded_metadata_resources(owner_node, storage_demand);
+        let metadata_bytes = gridded_backing_metadata_bytes(
+            self.backing.program.retained_metadata_bytes(),
+            self.backing.spill.retained_path_bytes(),
+            &resources,
+            storage.resources().domain().as_str(),
+        )?;
+        let metadata = gridded_metadata_allocation(
+            owner_node,
+            self.backing.program.compilation_binding(),
+            metadata_bytes,
+        );
+        self.backing
+            .retention
+            .set(crate::managed_spill::ManagedSpillRetention::bind(
+                permit,
+                storage,
+                retained_bytes,
+                owner_node,
+                &metadata,
+            )?)
+            .map_err(|_| {
+                io::Error::other("managed spill artifact storage was retained more than once")
+            })?;
         Ok(())
     }
 
@@ -1031,16 +1209,19 @@ impl FrozenGriddedNormalReplay {
         storage: &ManagedSpillStorage,
         retained_bytes: u64,
     ) -> bool {
-        self.retention
-            .as_ref()
+        self.backing
+            .retention
+            .get()
             .is_some_and(|retention| retention.validates_bytes(storage, retained_bytes))
     }
     /// Return the immutable descriptor consumed by later-major planning.
     #[must_use]
     pub fn descriptor(&self) -> GriddedNormalReplayDescriptor {
         GriddedNormalReplayDescriptor {
-            identity: crate::ArtifactIdentity::from_logical_identity(self.program.identity()),
-            bytes: self.spill.seal().artifact_bytes(),
+            identity: crate::ArtifactIdentity::from_logical_identity(
+                self.backing.program.identity(),
+            ),
+            bytes: self.backing.spill.seal().artifact_bytes(),
         }
     }
 
@@ -1130,6 +1311,7 @@ impl FrozenGriddedNormalReplay {
             ));
         }
         let source = self
+            .backing
             .spill
             .load_retained_block_source(schedule.frame_counts.clone(), schedule.source_slot_bytes)
             .map_err(io::Error::other)?;
@@ -1146,7 +1328,10 @@ impl FrozenGriddedNormalReplay {
         }
         self.latest_cache_load = Some(source.load_measurements());
         self.latest_cache_resident_bytes = Some(retained_bytes);
-        self.prepared_source = Some(GriddedNormalReplaySource::Retained(source));
+        self.prepared_source = Some(GriddedNormalReplaySource {
+            backing: Arc::clone(&self.backing),
+            source: GriddedNormalReplaySourceKind::Retained(source),
+        });
         self.prepared_batch_size = Some(batch_size);
         Ok(retained_bytes)
     }
@@ -1193,13 +1378,17 @@ impl FrozenGriddedNormalReplay {
             ));
         }
         let mut source = self
+            .backing
             .spill
             .planned_block_source(schedule.frame_counts.clone(), schedule.source_slot_bytes)
             .map_err(io::Error::other)?;
         self.latest_prefetch = is_prefetch_route
             .then(|| source.prefetch_first_window().map_err(io::Error::other))
             .transpose()?;
-        self.prepared_source = Some(GriddedNormalReplaySource::Managed(source));
+        self.prepared_source = Some(GriddedNormalReplaySource {
+            backing: Arc::clone(&self.backing),
+            source: GriddedNormalReplaySourceKind::Managed(source),
+        });
         self.prepared_batch_size = Some(batch_size);
         Ok(())
     }
@@ -1211,7 +1400,7 @@ impl FrozenGriddedNormalReplay {
         state: GriddedNormalOperatorState,
         route_capacity_bytes: u64,
     ) -> io::Result<CompleteDataOperatorResult> {
-        let budget = self.spill.budget();
+        let budget = self.backing.spill.budget();
         let window_plan = self.window_plan.as_ref().ok_or_else(|| {
             io::Error::other("gridded-normal replay lacks its sealed window plan")
         })?;
@@ -1292,7 +1481,7 @@ impl FrozenGriddedNormalReplay {
             .prepared_source
             .take()
             .ok_or_else(|| io::Error::other("gridded-normal replay backing was not selected"))?;
-        let record_bytes = self.program.record_bytes();
+        let record_bytes = self.backing.program.record_bytes();
         let outcome = execute_bounded(
             plan,
             pass_ordinal,
@@ -1323,7 +1512,7 @@ impl FrozenGriddedNormalReplay {
             }
         })?;
         let completion = outcome.source_completion;
-        if completion.seal() != self.spill.seal() {
+        if completion.seal() != self.backing.spill.seal() {
             return Err(io::Error::other(
                 "gridded-normal read completion changed the sealed artifact",
             ));
@@ -3578,6 +3767,7 @@ impl CompleteDataAllocation {
             lifetime: AllocationLifetime {
                 acquire_at: self.acquire_at.clone(),
                 release_after: self.release_after.clone(),
+                disposition: crate::AllocationDisposition::Release,
             },
         }
     }
@@ -3799,6 +3989,7 @@ impl CompleteDataPreparedState {
             )
             .map_err(|_| CompleteDataPlanError::PlanMismatch)?;
         let state = artifact
+            .backing
             .program
             .begin_apply_with_storage_plan(
                 problem,
@@ -3812,6 +4003,7 @@ impl CompleteDataPreparedState {
             })?;
         Ok(GriddedNormalOperatorState {
             state,
+            backing: Arc::clone(&artifact.backing),
             binding: CompleteDataExecutionBinding {
                 problem: problem.problem_id(),
                 attempt: context.attempt_id(),
@@ -3826,6 +4018,7 @@ impl CompleteDataPreparedState {
 
 pub(crate) struct GriddedNormalOperatorState {
     state: GriddedNormalOperatorApply,
+    backing: Arc<RetainedGriddedBacking>,
     binding: CompleteDataExecutionBinding,
 }
 
@@ -3840,6 +4033,7 @@ impl GriddedNormalOperatorState {
             .state
             .finish_with_routing_measurements()
             .map_err(CompleteDataOperatorError::Owner)?;
+        drop(self.backing);
         if evidence.completion().problem_id() != self.binding.problem {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }

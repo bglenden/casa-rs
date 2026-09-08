@@ -1386,8 +1386,17 @@ impl GriddedNormalOperatorCompiler {
         if let Some(probe) = self.science_probe.take() {
             probe.emit(self.record_layout);
         }
+        let retained_metadata_bytes = compilation::retained_manifest_bytes(
+            &self.specification,
+            descriptors.storage.len(),
+            self.w_projection_diagnostics.len(),
+        )?;
+        if retained_metadata_bytes != self.plan.retained_metadata_bytes() {
+            return Err(SpectralOperatorError::ResidencyOverflow);
+        }
         Ok(GriddedNormalOperatorProgram {
             manifest: Arc::new(GriddedNormalOperatorManifest {
+                retained_metadata_bytes,
                 identity,
                 specification: self.specification,
                 weighting_generation: replay.weighting_generation(),
@@ -1433,6 +1442,7 @@ fn record_vector_growth(
 }
 
 struct GriddedNormalOperatorManifest {
+    retained_metadata_bytes: usize,
     identity: LogicalIdentity,
     specification: SpectralOperatorSpecification,
     weighting_generation: crate::WeightingGenerationId,
@@ -1457,6 +1467,20 @@ pub struct GriddedNormalOperatorProgram {
 }
 
 impl GriddedNormalOperatorProgram {
+    /// Return the scientific specification binding certified during compilation.
+    #[must_use]
+    pub fn compilation_binding(&self) -> LogicalIdentity {
+        static_binding(&self.manifest.specification)
+    }
+
+    /// Return the sealed manifest's full reserved allocation, including unused descriptors.
+    /// Cloned programs share these allocations. This includes coordinate catalogs
+    /// that outlive the initial source reservation.
+    #[must_use]
+    pub fn retained_metadata_bytes(&self) -> usize {
+        self.manifest.retained_metadata_bytes
+    }
+
     /// Derive the shared physical storage layout from this program's science dimensions.
     pub fn storage_layout(
         &self,
