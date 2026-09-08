@@ -447,7 +447,13 @@ impl ReconstructionCycle {
                     },
                 });
             }
-            let result = run_minor_cycle(lifecycle, base, normal, mask, self.program.clone())?;
+            let program =
+                if normal.catalog() == crate::NormalStateCatalog::UnnormalizedTaylorBlockV1 {
+                    self.program.clone().with_global_convergence_check()
+                } else {
+                    self.program.clone()
+                };
+            let result = run_minor_cycle(lifecycle, base, normal, mask, program)?;
             let (delta, minor_cycle) = result.into_parts();
             let channels = vec![ChannelCycleEvidence {
                 output_channel: normal.slab().core_range().start,

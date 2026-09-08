@@ -6,15 +6,23 @@ use std::{
 };
 
 use casa_coordinates::{
-    CoordinateModel, CoordinateSystem, DirectionCoordinate, Projection, ProjectionType, StokesType,
+    CoordinateModel, CoordinateSystem, DirectionCoordinate, LinearCoordinate, Projection,
+    ProjectionType, SpectralCoordinate, StokesCoordinate, StokesType,
 };
 use casa_images::PagedImage;
 use casa_imaging_application::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumBeamPolicy, ContinuumImagingRequest,
-    ContinuumMask, ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, SpectralImagingMode,
-    TaskRequirement, VisibilityContinuumSubtraction, execute_continuum,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
+    ContinuumImagingRequest, ContinuumMask, ContinuumMaskBox, ContinuumStopReason,
+    ContinuumWeighting, SpectralImagingMode, TaskRequirement, VisibilityContinuumSubtraction,
+    execute_continuum, resource_policy_for_task_requirements,
 };
-use casa_imaging_model::ImageDomainRole;
+use casa_imaging_model::{
+    ImageDomainRole, ProductBeamRule, ProductRole, ProductTerm, ProductUnit, ProductValidityRule,
+};
+use casa_imaging_runtime::{
+    ArtifactDisposition, ArtifactRole, ClaimLifetime, FenceId, FenceKind, IoBufferKind,
+    LeaseResource, ReceiptStatus, StorageUseKind,
+};
 use casa_ms::{
     CubeAxisConfig, CubeAxisValue, MeasurementSet, MeasurementSetBuilder, OptionalMainColumn,
     SubtableId, VisibilityDataColumn,
@@ -32,689 +40,9 @@ const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".imag
 
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
-fn tiny_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 1, false),
-    )
-}
-
-fn multi_row_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "multi-row-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 8, false),
-    )
-}
-
-fn flagged_polarized_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "polarized-input.ms",
-        MeasurementSetFixtureOptions::new(true, true, 2, 1, 2, 1, false),
-    )
-}
-
-fn full_stokes_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "full-stokes-input.ms",
-        MeasurementSetFixtureOptions::new(true, false, 2, 1, 27, 702, false),
-    )
-}
-
-fn unequal_linear_parallel_hand_measurement_set(
-    root: &Path,
-    name: &str,
-    parallel_hand_weights: [f32; 2],
-) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        name,
-        MeasurementSetFixtureOptions::new(true, false, 1, 1, 2, 1, false)
-            .with_linear_correlations()
-            .with_parallel_hand_weights(parallel_hand_weights),
-    )
-}
-
-fn spectral_line_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "line-input.ms",
-        MeasurementSetFixtureOptions::new(true, true, 4, 1, 2, 1, false),
-    )
-}
-
-fn thirty_two_channel_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "thirty-two-channel-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 1, false),
-    )
-}
-
-fn thirty_two_channel_multi_row_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "thirty-two-channel-multi-row-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 8, false).with_two_fields(),
-    )
-}
-
-fn joint_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "joint-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 4, 1, 2, 1, false),
-    )
-}
-
-fn undefined_weight_spectrum_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "undefined-weight-spectrum.ms",
-        MeasurementSetFixtureOptions::new(false, false, 1, 1, 2, 1, true),
-    )
-}
-
-fn four_spw_aca_measurement_set(root: &Path) -> PathBuf {
-    measurement_set_fixture(
-        root,
-        "four-spw-input.ms",
-        MeasurementSetFixtureOptions::new(false, false, 8, 4, 4, 24, false)
-            .with_aca_observation_metadata(),
-    )
-}
-
-#[derive(Clone, Copy)]
-struct MeasurementSetFixtureOptions {
-    polarized: bool,
-    flag_cross_hand: bool,
-    channel_count: usize,
-    spectral_window_count: usize,
-    antenna_count: usize,
-    main_row_count: usize,
-    undefined_weight_spectrum: bool,
-    linear_correlations: bool,
-    parallel_hand_weights: Option<[f32; 2]>,
-    telescope_name: Option<&'static str>,
-    dish_diameter_m: f64,
-    field_count: usize,
-}
-
-impl MeasurementSetFixtureOptions {
-    const fn new(
-        polarized: bool,
-        flag_cross_hand: bool,
-        channel_count: usize,
-        spectral_window_count: usize,
-        antenna_count: usize,
-        main_row_count: usize,
-        undefined_weight_spectrum: bool,
-    ) -> Self {
-        Self {
-            polarized,
-            flag_cross_hand,
-            channel_count,
-            spectral_window_count,
-            antenna_count,
-            main_row_count,
-            undefined_weight_spectrum,
-            linear_correlations: false,
-            parallel_hand_weights: None,
-            telescope_name: None,
-            dish_diameter_m: 25.0,
-            field_count: 1,
-        }
-    }
-
-    const fn with_linear_correlations(mut self) -> Self {
-        self.linear_correlations = true;
-        self
-    }
-
-    const fn with_parallel_hand_weights(mut self, weights: [f32; 2]) -> Self {
-        self.parallel_hand_weights = Some(weights);
-        self
-    }
-
-    const fn with_aca_observation_metadata(mut self) -> Self {
-        self.telescope_name = Some("ALMA");
-        self.dish_diameter_m = 7.0;
-        self
-    }
-
-    const fn with_two_fields(mut self) -> Self {
-        self.field_count = 2;
-        self
-    }
-}
-
-fn measurement_set_fixture(
-    root: &Path,
-    name: &str,
-    options: MeasurementSetFixtureOptions,
-) -> PathBuf {
-    let output = root.join(name);
-    let mut builder = MeasurementSetBuilder::new().with_main_column(OptionalMainColumn::Data);
-    if options.undefined_weight_spectrum {
-        builder = builder.with_main_column(OptionalMainColumn::WeightSpectrum);
-    }
-    if options.polarized {
-        builder = builder.with_main_column(OptionalMainColumn::ModelData);
-    }
-    if options.channel_count == 4 {
-        builder = builder.with_main_column(OptionalMainColumn::CorrectedData);
-    }
-    let mut measurement_set =
-        MeasurementSet::create_memory(builder).expect("create in-memory application fixture");
-    populate_fixture(&mut measurement_set, options);
-    measurement_set
-        .save_as(&output)
-        .expect("persist fixture with production tiled bindings");
-    initialize_measurement_set_owner_manifest(&output).expect("initialize MS owner manifest");
-    MeasurementSet::open(&output)
-        .expect("reopen owned fixture")
-        .save()
-        .expect("preserve owner manifest and production bindings");
-
-    let persisted = MeasurementSet::open(&output).expect("inspect persisted fixture");
-    for column in ["DATA", "FLAG", "WEIGHT"] {
-        assert!(
-            persisted
-                .main_table()
-                .data_manager_info()
-                .iter()
-                .any(|manager| manager.dm_type == "TiledShapeStMan"
-                    && manager.columns.iter().any(|name| name == column)),
-            "{column} must use TiledShapeStMan"
-        );
-    }
-    output
-}
-
-fn populate_fixture(measurement_set: &mut MeasurementSet, options: MeasurementSetFixtureOptions) {
-    let MeasurementSetFixtureOptions {
-        polarized,
-        flag_cross_hand,
-        channel_count,
-        spectral_window_count,
-        antenna_count,
-        main_row_count,
-        linear_correlations,
-        parallel_hand_weights,
-        telescope_name,
-        dish_diameter_m,
-        field_count,
-        ..
-    } = options;
-    {
-        let mut antennas = measurement_set.antenna_mut().expect("ANTENNA");
-        for antenna in 0..antenna_count {
-            let arm = (antenna % 3) as f64 * std::f64::consts::TAU / 3.0;
-            let radius = 35.0 * (antenna / 3 + 1) as f64;
-            antennas
-                .add_antenna(
-                    &format!("VLA{:02}", antenna + 1),
-                    &format!("N{:02}", antenna + 1),
-                    "GROUND-BASED",
-                    "ALT-AZ",
-                    [
-                        -1_601_185.4 + radius * arm.cos(),
-                        -5_041_977.5 + radius * arm.sin(),
-                        3_554_875.9,
-                    ],
-                    [0.0; 3],
-                    dish_diameter_m,
-                )
-                .expect("add fixture antenna");
-        }
-    }
-
-    if let Some(telescope_name) = telescope_name {
-        measurement_set
-            .subtable_mut(SubtableId::Observation)
-            .expect("OBSERVATION")
-            .add_row(required_row(
-                schema::observation::REQUIRED_COLUMNS,
-                &[
-                    ("TELESCOPE_NAME", string(telescope_name)),
-                    (
-                        "TIME_RANGE",
-                        Value::Array(ArrayValue::Float64(
-                            ArrayD::from_shape_vec(
-                                vec![2],
-                                vec![59_000.0 * 86_400.0, 59_000.0 * 86_400.0 + 10.0],
-                            )
-                            .expect("observation time-range shape"),
-                        )),
-                    ),
-                    ("OBSERVER", string("casa-rs-test")),
-                    ("PROJECT", string("synthetic-aca-mvc")),
-                    ("RELEASE_DATE", float(59_000.0 * 86_400.0)),
-                ],
-            ))
-            .expect("add OBSERVATION row");
-    }
-
-    let correlation_codes = if !polarized {
-        vec![1]
-    } else if linear_correlations {
-        vec![9, 10, 11, 12]
-    } else {
-        vec![5, 6, 7, 8]
-    };
-    let correlation_count = correlation_codes.len();
-    let correlation_products = if polarized {
-        vec![0, 0, 0, 1, 1, 0, 1, 1]
-    } else {
-        vec![0, 0]
-    };
-    for field_id in 0..field_count {
-        let direction = ArrayValue::Float64(
-            ArrayD::from_shape_vec(vec![2, 1], vec![1.0 + field_id as f64 * 1.0e-4, 0.5])
-                .expect("direction shape"),
-        );
-        measurement_set
-            .subtable_mut(SubtableId::Field)
-            .expect("FIELD")
-            .add_row(required_row(
-                schema::field::REQUIRED_COLUMNS,
-                &[
-                    ("NAME", string(&format!("APPLICATION_FIELD_{field_id}"))),
-                    ("CODE", string("TARGET")),
-                    ("NUM_POLY", int(0)),
-                    ("DELAY_DIR", Value::Array(direction.clone())),
-                    ("PHASE_DIR", Value::Array(direction.clone())),
-                    ("REFERENCE_DIR", Value::Array(direction)),
-                    ("SOURCE_ID", int(-1)),
-                    ("TIME", float(59_000.0 * 86_400.0)),
-                    ("FLAG_ROW", boolean(false)),
-                ],
-            ))
-            .expect("add FIELD row");
-    }
-
-    measurement_set
-        .subtable_mut(SubtableId::Polarization)
-        .expect("POLARIZATION")
-        .add_row(required_row(
-            schema::polarization::REQUIRED_COLUMNS,
-            &[
-                ("NUM_CORR", int(correlation_count as i32)),
-                (
-                    "CORR_TYPE",
-                    Value::Array(ArrayValue::Int32(
-                        ArrayD::from_shape_vec(vec![correlation_count], correlation_codes)
-                            .expect("correlation shape"),
-                    )),
-                ),
-                (
-                    "CORR_PRODUCT",
-                    Value::Array(ArrayValue::Int32(
-                        ArrayD::from_shape_vec(vec![2, correlation_count], correlation_products)
-                            .expect("receptor-pair shape"),
-                    )),
-                ),
-                ("FLAG_ROW", boolean(false)),
-            ],
-        ))
-        .expect("add POLARIZATION row");
-
-    for spw in 0..spectral_window_count {
-        let first_frequency_hz = 44.0e9 + spw as f64 * 100.0e6;
-        let frequency = Value::Array(ArrayValue::Float64(
-            ArrayD::from_shape_vec(
-                vec![channel_count],
-                (0..channel_count)
-                    .map(|channel| first_frequency_hz + channel as f64 * 1.0e6)
-                    .collect(),
-            )
-            .expect("frequency shape"),
-        ));
-        let width = Value::Array(ArrayValue::Float64(
-            ArrayD::from_shape_vec(vec![channel_count], vec![1.0e6; channel_count])
-                .expect("width shape"),
-        ));
-        measurement_set
-            .subtable_mut(SubtableId::SpectralWindow)
-            .expect("SPECTRAL_WINDOW")
-            .add_row(required_row(
-                schema::spectral_window::REQUIRED_COLUMNS,
-                &[
-                    ("NUM_CHAN", int(channel_count as i32)),
-                    ("NAME", string(&format!("CONTINUUM_{spw}"))),
-                    ("REF_FREQUENCY", float(first_frequency_hz)),
-                    ("TOTAL_BANDWIDTH", float(channel_count as f64 * 1.0e6)),
-                    ("CHAN_FREQ", frequency),
-                    ("CHAN_WIDTH", width.clone()),
-                    ("EFFECTIVE_BW", width.clone()),
-                    ("RESOLUTION", width),
-                    ("MEAS_FREQ_REF", int(5)),
-                    ("NET_SIDEBAND", int(1)),
-                    ("FREQ_GROUP", int(0)),
-                    ("FREQ_GROUP_NAME", string("")),
-                    ("IF_CONV_CHAIN", int(0)),
-                    ("FLAG_ROW", boolean(false)),
-                ],
-            ))
-            .expect("add SPECTRAL_WINDOW row");
-        measurement_set
-            .subtable_mut(SubtableId::DataDescription)
-            .expect("DATA_DESCRIPTION")
-            .add_row(required_row(
-                schema::data_description::REQUIRED_COLUMNS,
-                &[
-                    ("SPECTRAL_WINDOW_ID", int(spw as i32)),
-                    ("POLARIZATION_ID", int(0)),
-                    ("FLAG_ROW", boolean(false)),
-                ],
-            ))
-            .expect("add DATA_DESCRIPTION row");
-    }
-
-    let visibilities = (0..correlation_count * channel_count)
-        .map(|index| Complex32::new((index % 6 + 1) as f32, 0.0))
-        .collect::<Vec<_>>();
-    let flags = (0..correlation_count * channel_count)
-        .map(|index| flag_cross_hand && index % 4 == 3)
-        .collect::<Vec<_>>();
-    let mut weights = vec![1.0; correlation_count];
-    if let Some([first, last]) = parallel_hand_weights {
-        weights[0] = first;
-        weights[correlation_count - 1] = last;
-    }
-    let mut overrides = vec![
-        ("ANTENNA1", int(0)),
-        ("ANTENNA2", int(1)),
-        ("FIELD_ID", int(0)),
-        ("DATA_DESC_ID", int(0)),
-        ("TIME", float(59_000.0 * 86_400.0)),
-        ("TIME_CENTROID", float(59_000.0 * 86_400.0)),
-        ("EXPOSURE", float(10.0)),
-        ("INTERVAL", float(10.0)),
-        ("SCAN_NUMBER", int(1)),
-        (
-            "UVW",
-            Value::Array(ArrayValue::Float64(
-                ArrayD::from_shape_vec(vec![3], vec![30.0, 40.0, 0.0]).expect("UVW shape"),
-            )),
-        ),
-        (
-            "DATA",
-            Value::Array(ArrayValue::Complex32(
-                ArrayD::from_shape_vec(vec![correlation_count, channel_count], visibilities)
-                    .expect("DATA shape"),
-            )),
-        ),
-        (
-            "FLAG",
-            Value::Array(ArrayValue::Bool(
-                ArrayD::from_shape_vec(vec![correlation_count, channel_count], flags)
-                    .expect("FLAG shape"),
-            )),
-        ),
-        (
-            "WEIGHT",
-            Value::Array(ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![correlation_count], weights.clone())
-                    .expect("WEIGHT shape"),
-            )),
-        ),
-        (
-            "SIGMA",
-            Value::Array(ArrayValue::Float32(
-                ArrayD::from_shape_vec(vec![correlation_count], weights).expect("SIGMA shape"),
-            )),
-        ),
-        ("FLAG_ROW", boolean(false)),
-    ];
-    if polarized {
-        overrides.push((
-            "MODEL_DATA",
-            Value::Array(ArrayValue::Complex32(ArrayD::from_elem(
-                vec![correlation_count, channel_count],
-                Complex32::new(9.0, 9.0),
-            ))),
-        ));
-    }
-    if channel_count == 4 {
-        overrides.push((
-            "CORRECTED_DATA",
-            Value::Array(ArrayValue::Complex32(
-                ArrayD::from_shape_vec(
-                    vec![correlation_count, channel_count],
-                    (0..correlation_count * channel_count)
-                        .map(|index| Complex32::new(20.0 + index as f32, -3.0))
-                        .collect(),
-                )
-                .expect("CORRECTED_DATA shape"),
-            )),
-        ));
-    }
-    let baselines = (0..antenna_count)
-        .flat_map(|first| ((first + 1)..antenna_count).map(move |second| (first, second)))
-        .collect::<Vec<_>>();
-    for row in 0..main_row_count {
-        let (antenna1, antenna2) = baselines[row % baselines.len()];
-        let integration = row / baselines.len();
-        let mut row_overrides = overrides.clone();
-        replace_override(&mut row_overrides, "ANTENNA1", int(antenna1 as i32));
-        replace_override(&mut row_overrides, "ANTENNA2", int(antenna2 as i32));
-        replace_override(
-            &mut row_overrides,
-            "DATA_DESC_ID",
-            int((row % spectral_window_count) as i32),
-        );
-        replace_override(
-            &mut row_overrides,
-            "FIELD_ID",
-            int((row % field_count) as i32),
-        );
-        replace_override(
-            &mut row_overrides,
-            "TIME",
-            float(59_000.0 * 86_400.0 + 10.0 * integration as f64),
-        );
-        replace_override(
-            &mut row_overrides,
-            "TIME_CENTROID",
-            float(59_000.0 * 86_400.0 + 10.0 * integration as f64),
-        );
-        replace_override(
-            &mut row_overrides,
-            "UVW",
-            Value::Array(ArrayValue::Float64(
-                ArrayD::from_shape_vec(
-                    vec![3],
-                    vec![
-                        30.0 * (antenna2 - antenna1) as f64,
-                        20.0 * (antenna1 + antenna2 + 1) as f64,
-                        2.0 * integration as f64,
-                    ],
-                )
-                .expect("UVW shape"),
-            )),
-        );
-        add_main_row(measurement_set, &row_overrides);
-    }
-}
-
-fn replace_override(overrides: &mut [(&str, Value)], name: &str, value: Value) {
-    overrides
-        .iter_mut()
-        .find(|(candidate, _)| *candidate == name)
-        .expect("fixture override")
-        .1 = value;
-}
-
-fn add_main_row(measurement_set: &mut MeasurementSet, overrides: &[(&str, Value)]) {
-    let schema = measurement_set
-        .main_table()
-        .schema()
-        .expect("MAIN schema")
-        .clone();
-    let definitions = schema::main_table::REQUIRED_COLUMNS
-        .iter()
-        .chain(schema::main_table::OPTIONAL_COLUMNS.iter())
-        .collect::<Vec<_>>();
-    let fields = schema
-        .columns()
-        .iter()
-        .map(|column| {
-            overrides
-                .iter()
-                .find(|(name, _)| *name == column.name())
-                .map(|(_, value)| RecordField::new(column.name(), value.clone()))
-                .unwrap_or_else(|| {
-                    let definition = definitions
-                        .iter()
-                        .find(|definition| definition.name == column.name())
-                        .expect("standard MAIN column");
-                    RecordField::new(column.name(), default_value(definition))
-                })
-        })
-        .collect();
-    measurement_set
-        .main_table_mut()
-        .add_row(RecordValue::new(fields))
-        .expect("add MAIN row");
-}
-
-fn required_row(definitions: &[ColumnDef], overrides: &[(&str, Value)]) -> RecordValue {
-    RecordValue::new(
-        definitions
-            .iter()
-            .map(|definition| {
-                overrides
-                    .iter()
-                    .find(|(name, _)| *name == definition.name)
-                    .map(|(_, value)| RecordField::new(definition.name, value.clone()))
-                    .unwrap_or_else(|| RecordField::new(definition.name, default_value(definition)))
-            })
-            .collect(),
-    )
-}
-
-fn default_value(definition: &ColumnDef) -> Value {
-    match definition.column_kind {
-        ColumnKind::Scalar => match definition.data_type {
-            PrimitiveType::Int32 => int(0),
-            PrimitiveType::Float64 => float(0.0),
-            PrimitiveType::Bool => boolean(false),
-            PrimitiveType::String => string(""),
-            other => panic!("unsupported fixture scalar type {other:?}"),
-        },
-        ColumnKind::FixedArray { shape } => Value::Array(ArrayValue::Float64(
-            ArrayD::from_shape_vec(shape.to_vec(), vec![0.0; shape.iter().product()])
-                .expect("fixed-array default shape"),
-        )),
-        ColumnKind::VariableArray { ndim } => {
-            let shape = vec![1; ndim];
-            match definition.data_type {
-                PrimitiveType::Bool => Value::Array(ArrayValue::Bool(
-                    ArrayD::from_shape_vec(shape, vec![false]).expect("bool default shape"),
-                )),
-                PrimitiveType::Float32 => Value::Array(ArrayValue::Float32(
-                    ArrayD::from_shape_vec(shape, vec![0.0]).expect("f32 default shape"),
-                )),
-                PrimitiveType::Float64 => Value::Array(ArrayValue::Float64(
-                    ArrayD::from_shape_vec(shape, vec![0.0]).expect("f64 default shape"),
-                )),
-                PrimitiveType::Int32 => Value::Array(ArrayValue::Int32(
-                    ArrayD::from_shape_vec(shape, vec![0]).expect("i32 default shape"),
-                )),
-                PrimitiveType::String => Value::Array(ArrayValue::String(
-                    ArrayD::from_shape_vec(shape, vec![String::new()])
-                        .expect("string default shape"),
-                )),
-                PrimitiveType::Complex32 => Value::Array(ArrayValue::Complex32(
-                    ArrayD::from_shape_vec(shape, vec![Complex32::new(0.0, 0.0)])
-                        .expect("complex default shape"),
-                )),
-                other => panic!("unsupported fixture array type {other:?}"),
-            }
-        }
-    }
-}
-
-fn int(value: i32) -> Value {
-    Value::Scalar(ScalarValue::Int32(value))
-}
-
-fn float(value: f64) -> Value {
-    Value::Scalar(ScalarValue::Float64(value))
-}
-
-fn boolean(value: bool) -> Value {
-    Value::Scalar(ScalarValue::Bool(value))
-}
-
-fn string(value: &str) -> Value {
-    Value::Scalar(ScalarValue::String(value.to_string()))
-}
-
-fn request(
-    measurement_set: PathBuf,
-    image_name: PathBuf,
-    algorithm: ContinuumAlgorithm,
-) -> ContinuumImagingRequest {
-    ContinuumImagingRequest {
-        measurement_set,
-        image_name,
-        image_size: 16,
-        facets: 1,
-        cell_arcsec: 1.0,
-        phase_center_field: None,
-        phase_center: None,
-        outlier_file: None,
-        field_ids: Some(vec![0]),
-        uv_range: None,
-        intent: None,
-        data_description: Some(0),
-        spectral_window: None,
-        channel_start: Some(0),
-        channel_count: Some(1),
-        spectral_mode: SpectralImagingMode::Continuum,
-        continuum_subtraction: None,
-        data_column: Some("DATA".to_string()),
-        polarizations: vec![casa_imaging_application::PolarizationCoordinate::StokesI],
-        algorithm,
-        weighting: ContinuumWeighting::Natural,
-        iterations: 1,
-        cycle_iterations: 1,
-        hogbom_iteration_accounting: casa_imaging_application::HogbomIterationAccounting::Strict,
-        maximum_major_cycles: Some(1),
-        noise_sigma: None,
-        cycle_factor: 1.0,
-        minimum_psf_fraction: 0.05,
-        maximum_psf_fraction: 0.8,
-        gain: 1.0,
-        threshold_jy: 0.0,
-        psf_cutoff: 0.2,
-        primary_beam_cutoff: 0.2,
-        normalization: casa_imaging_model::ProductNormalization::UnitResponse,
-        beam_policy: ContinuumBeamPolicy::PerPlane,
-        mask: ContinuumMask::FullPlane,
-        save_model_column: false,
-        save_continuum_residual: false,
-        write_primary_beam: false,
-        pbcor: false,
-        w_projection_planes: None,
-        task_requirements: Vec::new(),
-        resource_policy: casa_imaging_runtime::ResourcePolicy::Balanced,
-    }
-}
-
-fn set_production_io_environment() {
-    // The application deliberately requires measured spill rates at its
-    // production boundary; these values are only test calibration facts.
-    unsafe {
-        std::env::set_var("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "1000000000");
-        std::env::set_var("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "1000000000");
-    }
-}
+#[path = "common/continuum_fixture.rs"]
+mod continuum_fixture;
+use continuum_fixture::*;
 
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
@@ -749,6 +77,15 @@ fn product_plane_with_size(image_name: &Path, suffix: &str, image_size: usize) -
         .expect("open application product")
         .get_slice(&[0, 0, 0, 0], &[image_size, image_size, 1, 1])
         .expect("read application product plane")
+}
+
+fn peak_pixel(plane: &ArrayD<f32>) -> [usize; 2] {
+    let (index, _) = plane
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+        .expect("nonempty image plane");
+    [index / plane.shape()[1], index % plane.shape()[1]]
 }
 
 fn assert_model_residual_respect_mask(image_name: &Path, expected_mask_pixels: usize) {
@@ -792,7 +129,22 @@ fn application_executes_single_ddid_stokes_i_mfs_dirty_and_publishes_products() 
             PagedImage::<f32>::open(PathBuf::from(format!("{}{}", image_name.display(), suffix)))
                 .expect("reopen validity-bearing product");
         assert_eq!(product.default_mask_name(), None);
+        assert_eq!(product.units(), "Jy/beam", "ordinary {suffix} units");
     }
+    assert_eq!(
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.psf", image_name.display())))
+            .expect("reopen ordinary PSF")
+            .units(),
+        "Jy/beam",
+        "ordinary PSF units remain unchanged"
+    );
+    assert_eq!(
+        PagedImage::<f32>::open(PathBuf::from(format!("{}.model", image_name.display())))
+            .expect("reopen ordinary model")
+            .units(),
+        "Jy/pixel",
+        "ordinary model units remain unchanged"
+    );
     assert!(!PathBuf::from(format!("{}.mask", image_name.display())).exists());
 }
 
@@ -824,6 +176,670 @@ fn t49_application_executes_nonzero_w_through_major_cycle_replay() {
 }
 
 #[test]
+fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = vla_aw_measurement_set(root.path());
+    let cache = root.path().join("aw-cache");
+    write_aw_test_cache(&cache);
+    let image_name = root.path().join("aw-dirty");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.aw_projection = Some(aw_projection(cache, false));
+    imaging.task_requirements = vec![TaskRequirement::AwProjection];
+    imaging.write_primary_beam = true;
+
+    let result = execute_continuum(imaging).expect("native AW dirty execution");
+    let normal = result.outcome.output.scientific.normal_state();
+    assert_eq!(normal.sum_weights().len(), 1);
+    assert_eq!(normal.published_sum_weights().len(), 1);
+    // The fixture's prepared imaging cells hold 3x3 taps of (3 - i) and the
+    // paired weight cells hold 5x5 taps of (7 + 2i); every accepted sample has
+    // unit post-Briggs weight, so each hand's statistic is the tap-sum norm.
+    let imaging_hand = 9.0 * 3.0_f64.hypot(1.0);
+    let weight_hand = 25.0 * 7.0_f64.hypot(2.0);
+    assert!(
+        (normal.published_sum_weights()[0] - imaging_hand).abs()
+            <= f64::EPSILON * normal.published_sum_weights()[0].abs() * 8.0,
+        "single-term CASA publication keeps the minimum correlation-plane imaging-CF sumweight: published={} expected={imaging_hand}",
+        normal.published_sum_weights()[0]
+    );
+    assert!(
+        (normal.sum_weights()[0] - 2.0 * weight_hand).abs()
+            <= f64::EPSILON * normal.sum_weights()[0].abs() * 8.0,
+        "paired RR/LL measurements both contribute to the WTCF normal operator sum: normal={} expected={}",
+        normal.sum_weights()[0],
+        2.0 * weight_hand
+    );
+    assert_products(
+        &image_name,
+        &result.product_names,
+        &[
+            ".psf",
+            ".residual",
+            ".model",
+            ".image",
+            ".sumwt",
+            ".weight",
+            ".pb",
+        ],
+    );
+    let weight = product_plane(&image_name, ".weight");
+    let primary_beam = product_plane(&image_name, ".pb");
+    let peak_weight = weight.iter().copied().fold(0.0_f32, f32::max);
+    assert!(peak_weight.is_finite() && peak_weight > 0.0);
+    assert!(
+        weight
+            .iter()
+            .any(|value| (*value - peak_weight).abs() > 1.0e-6),
+        "AW weight must retain the spatial WTCF sensitivity instead of repeating sumwt"
+    );
+    for (weight, primary_beam) in weight.iter().zip(primary_beam.iter()) {
+        let expected = (weight.max(0.0) / peak_weight).sqrt();
+        let expected = if expected >= 0.2 { expected } else { 0.0 };
+        assert!(
+            (*primary_beam - expected).abs() <= 1.0e-6,
+            "AW PB must derive from the same WTCF sensitivity: weight={weight} pb={primary_beam} expected={expected}"
+        );
+    }
+    let receipt = &result.outcome.output.initial_receipt;
+    assert_eq!(receipt.initial_execution_knobs().io_depth, 2);
+    let nodes = receipt.plan_node_identities();
+    let reader = nodes
+        .iter()
+        .find(|node| {
+            node.as_str().starts_with("prepared-artifact-reader-")
+                && !node
+                    .as_str()
+                    .starts_with("prepared-artifact-reader-release-")
+        })
+        .expect("plan-owned AW reader Cache node");
+    let release = nodes
+        .iter()
+        .find(|node| {
+            node.as_str()
+                .starts_with("prepared-artifact-reader-release-")
+        })
+        .expect("terminal AW reader Release node");
+    let reader_fence = FenceId::new(reader.clone(), FenceKind::Io);
+    assert_eq!(
+        receipt.fence_status(&reader_fence),
+        Some(ReceiptStatus::Completed)
+    );
+    assert!(receipt.fence_actual_elapsed_nanos(&reader_fence).is_some());
+    let (read_bytes, read_operations) = receipt
+        .stage_actual_io(reader, IoBufferKind::StorageManager)
+        .expect("reader I/O evidence is emitted only at the fence");
+    assert!(read_bytes > 0);
+    assert!(read_operations > 0);
+    assert_eq!(
+        receipt.stage_actual_io(release, IoBufferKind::StorageManager),
+        Some((0, 0))
+    );
+
+    let retained = ClaimLifetime::through_fence(FenceKind::Io);
+    assert_eq!(
+        receipt.planned_resource_amount(reader, &LeaseResource::Workers, &ClaimLifetime::Work),
+        Some(1)
+    );
+    let selected = receipt.selected_alternative_projection();
+    let prepared_storage = selected
+        .demand
+        .storage
+        .iter()
+        .find(|demand| demand.demand_id.starts_with("private-prepared-cache-"))
+        .expect("reader private-cache storage demand");
+    assert!(prepared_storage.persistent_cache_bytes > 0);
+    assert!(prepared_storage.read_rate.hard() > 0);
+    assert!(prepared_storage.write_rate.hard() > 0);
+    assert!(prepared_storage.operations_rate.hard() > 0);
+    assert!(prepared_storage.queue_slots.hard() > 0);
+    assert!(selected.demand.locks.hard() > 0);
+    assert!(selected.demand.file_descriptors.hard() >= 2);
+    for (resource, amount) in [
+        (LeaseResource::Locks, 1),
+        (LeaseResource::FileDescriptors, 2),
+        (
+            LeaseResource::StorageReadRate {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
+        (
+            LeaseResource::StorageWriteRate {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
+        (
+            LeaseResource::StorageOperationsRate {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
+        (
+            LeaseResource::StorageQueue {
+                demand_id: prepared_storage.demand_id.clone(),
+            },
+            1,
+        ),
+    ] {
+        assert_eq!(
+            receipt.planned_resource_amount(reader, &resource, &retained),
+            Some(amount)
+        );
+    }
+    assert_eq!(
+        receipt.planned_resource_amount(
+            reader,
+            &LeaseResource::Storage {
+                demand_id: prepared_storage.demand_id.clone(),
+                use_kind: StorageUseKind::PersistentCache,
+            },
+            &retained,
+        ),
+        Some(prepared_storage.persistent_cache_bytes)
+    );
+    let decoder_workspace_bytes = 2 * (40_960 / 4);
+    assert!(
+        receipt
+            .planned_resource_amount(
+                reader,
+                &LeaseResource::IoBuffer(IoBufferKind::StorageManager),
+                &retained,
+            )
+            .is_some_and(|bytes| {
+                bytes > (1 << 20) + decoder_workspace_bytes
+                    && bytes <= (1 << 20) + decoder_workspace_bytes + (8 << 20)
+            })
+    );
+
+    let cache_artifacts = receipt
+        .artifact_identities()
+        .into_iter()
+        .filter(|identity| receipt.artifact_role(*identity) == Some(ArtifactRole::Cache))
+        .collect::<Vec<_>>();
+    assert_eq!(cache_artifacts.len(), 1);
+    let artifact = cache_artifacts[0];
+    assert_eq!(receipt.artifact_node(artifact).as_ref(), Some(reader));
+    assert_eq!(
+        receipt.artifact_disposition(artifact),
+        Some(ArtifactDisposition::Reused)
+    );
+    assert_eq!(receipt.artifact_actual_bytes(artifact), Some(40_960));
+    assert_eq!(
+        receipt.artifact_observed_identity(artifact),
+        Some(artifact.as_bytes())
+    );
+}
+
+#[test]
+fn t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+
+    let peak = |field: i32, use_pointing: bool| {
+        let run_root = root.path().join(format!(
+            "field-{field}-{}",
+            if use_pointing {
+                "pointing"
+            } else {
+                "phase-centre"
+            }
+        ));
+        std::fs::create_dir(&run_root).expect("create isolated AW run root");
+        let measurement_set = two_pointing_vla_aw_measurement_set(&run_root);
+        let cache = run_root.join("aw-pointing-cache");
+        write_aw_test_cache(&cache);
+        let image_name = run_root.join("image");
+        let mut imaging = request(
+            measurement_set,
+            image_name.clone(),
+            ContinuumAlgorithm::Dirty,
+        );
+        imaging.field_ids = Some(vec![field]);
+        imaging.aw_projection = Some(aw_projection(cache, use_pointing));
+        imaging.task_requirements = vec![TaskRequirement::AwProjection];
+        imaging.write_primary_beam = true;
+
+        execute_continuum(imaging).expect("native AW pointing execution");
+        peak_pixel(&product_plane(&image_name, ".weight"))
+    };
+
+    let phase_centre_peak = peak(0, false);
+    let first_pointing_peak = peak(0, true);
+    let second_pointing_peak = peak(1, true);
+    assert_ne!(first_pointing_peak, phase_centre_peak);
+    assert_ne!(second_pointing_peak, phase_centre_peak);
+    assert_ne!(first_pointing_peak, second_pointing_peak);
+}
+
+#[test]
+fn t51_direct_taylor_aw_clean_executes_the_application_replay_path() {
+    execute_taylor_aw_clean_with_memory_policy(false);
+}
+
+#[test]
+fn t51_fixed_memory_aw_clean_preserves_prepared_projection_during_recompute() {
+    execute_taylor_aw_clean_with_memory_policy(true);
+}
+
+fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = four_spw_vla_measurement_set(root.path());
+    let cache = root.path().join("aw-cache");
+    write_aw_test_cache(&cache);
+    let image_name = root.path().join("clean-mtmfs");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.channel_count = Some(8);
+    imaging.iterations = 1;
+    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
+    imaging.mask = ContinuumMask::Boxes(vec![ContinuumMaskBox {
+        blc: [3, 4],
+        trc: [11, 12],
+    }]);
+    imaging.aw_projection = Some(aw_projection(cache, false));
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::AwProjection];
+    imaging.resource_policy = resource_policy_for_task_requirements(&imaging.task_requirements);
+    if fixed_memory {
+        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
+            casa_imaging_runtime::ResourceOverride {
+                memory_bytes: std::collections::BTreeMap::from([(
+                    casa_imaging_runtime::CapacityDomainId::new("host-memory"),
+                    256 << 20,
+                )]),
+                workers: Some(1),
+                ..casa_imaging_runtime::ResourceOverride::default()
+            },
+        );
+    }
+
+    let result = execute_continuum(imaging).expect("direct Taylor AW CLEAN execution");
+    assert_eq!(result.actual_minor_iterations, 1);
+    let final_receipt = result
+        .outcome
+        .output
+        .final_major_receipt
+        .as_ref()
+        .expect("terminal AW gridded replay receipt");
+    if fixed_memory {
+        assert!(
+            final_receipt
+                .adaptation_identities()
+                .iter()
+                .filter_map(|id| final_receipt.adaptation_projection(id))
+                .any(|adaptation| {
+                    adaptation.was_applied() && adaptation.transition().to.recomputation
+                }),
+            "the fixed-memory policy must execute the actual AW recomputation route",
+        );
+    }
+    let normal = result.outcome.output.scientific.normal_state();
+    assert_eq!(normal.coefficient_term_count(), 2);
+    assert_eq!(normal.normal_moment_count(), 3);
+    let response = casa_imaging_reconstruction::MosaicSensitivity::new(
+        normal
+            .normal_moment(0)
+            .expect("principal normal")
+            .sensitivity(),
+    )
+    .expect("AW image response")
+    .with_normal_sum_weight(
+        normal
+            .normal_moment(0)
+            .expect("principal normal")
+            .sum_weight(),
+    )
+    .expect("normal response scale");
+    let model = result.outcome.output.scientific.final_model();
+    let policy = casa_imaging_model::PrimaryBeamValidityPolicy::new(
+        0.2,
+        casa_imaging_model::ProductSupportComparison::StrictlyGreater,
+        casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+    )
+    .expect("PB support");
+    for term in 0..2 {
+        let published_model = product_plane(&image_name, &format!(".model.tt{term}"));
+        for x in 0..16 {
+            for y in 0..16 {
+                let cell = casa_imaging_model::ModelCell::new(0, term, 0, [x, y]);
+                let index = model.shape().flat_index(cell).expect("model cell");
+                let physical = model.samples()[index].value().value();
+                let apparent = response
+                    .physical_to_apparent(
+                        f64::from(physical as f32),
+                        x * 16 + y,
+                        casa_imaging_model::ProductNormalization::FlatNoise,
+                        policy,
+                    )
+                    .expect("apparent model") as f32;
+                assert_eq!(published_model[[x, y, 0, 0]], apparent);
+            }
+        }
+    }
+    let published_mask = product_plane(&image_name, ".mask");
+    for y in 0..16 {
+        for x in 0..16 {
+            let selected = (3..=11).contains(&x) && (4..=12).contains(&y);
+            for cycle in &result.outcome.output.minor_cycles {
+                assert_eq!(cycle.mask_support[x * 16 + y], selected);
+            }
+            assert_eq!(published_mask[[x, y, 0, 0]], f32::from(selected));
+        }
+    }
+}
+
+#[test]
+fn t51_zero_iteration_mtmfs_executes_dirty_taylor_basis_and_publishes_products() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = four_spw_vla_measurement_set(root.path());
+    let cache = root.path().join("aw-cache");
+    write_aw_test_cache(&cache);
+    let image_name = root.path().join("dirty-mtmfs");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.channel_count = Some(8);
+    imaging.iterations = 0;
+    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
+    imaging.aw_projection = Some(aw_projection(cache, false));
+    imaging.task_requirements = vec![TaskRequirement::AwProjection];
+
+    let result = execute_continuum(imaging).expect("native zero-iteration MT-MFS execution");
+    assert_eq!(result.minor_iterations, 0);
+    assert_eq!(result.actual_minor_iterations, 0);
+    assert!(result.minor_cycles.is_empty());
+    assert_eq!(result.outcome.output.major_cycle_count, 1);
+    assert!(result.outcome.output.final_major_receipt.is_none());
+    let normal = result.outcome.output.scientific.normal_state();
+    assert_eq!(normal.coefficient_term_count(), 2);
+    assert_eq!(normal.normal_moment_count(), 3);
+    assert_ne!(
+        (normal.sum_weights()[0] as f32).to_bits(),
+        (normal.published_sum_weights()[0] as f32).to_bits(),
+        "direct AW Taylor completion keeps the WTCF normal sum distinct from CASA's published CFS statistic for coefficient terms"
+    );
+    assert_ne!(
+        (normal.sum_weights()[1] as f32).to_bits(),
+        (normal.published_sum_weights()[1] as f32).to_bits(),
+        "the AW fixture must distinguish the WTCF normal moment from the published CFS first-order Taylor statistic"
+    );
+    assert_eq!(
+        (normal.sum_weights()[2] as f32).to_bits(),
+        (normal.published_sum_weights()[2] as f32).to_bits(),
+        "direct AW Taylor completion retains the WTCF normal sum for the highest Taylor moment"
+    );
+    for moment in 0..3 {
+        let product = PagedImage::<f32>::open(PathBuf::from(format!(
+            "{}.sumwt.tt{moment}",
+            image_name.display()
+        )))
+        .expect("open Taylor sumweight product");
+        let value = product
+            .get_slice(&[0, 0, 0, 0], &[1, 1, 1, 1])
+            .expect("read Taylor sumweight scalar");
+        assert_eq!(
+            value
+                .iter()
+                .next()
+                .expect("Taylor sumweight scalar")
+                .to_bits(),
+            (normal.published_sum_weights()[moment] as f32).to_bits(),
+            "direct MT-MFS sumweight term {moment} must persist CASA's published hybrid statistic"
+        );
+    }
+
+    let expected = [
+        ".alpha",
+        ".alpha.error",
+        ".image.tt0",
+        ".image.tt1",
+        ".model.tt0",
+        ".model.tt1",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".weight.tt0",
+        ".weight.tt1",
+        ".weight.tt2",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        result
+            .product_names
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>(),
+        expected
+    );
+    for suffix in result.product_names {
+        assert!(
+            PathBuf::from(format!("{}{suffix}", image_name.display())).is_dir(),
+            "missing published MT-MFS product {suffix}"
+        );
+    }
+}
+
+#[test]
+fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contract() {
+    std::thread::Builder::new()
+        .name("t51-taylor-metadata".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(t51_taylor_publication_persists_casa_metadata_without_changing_logical_contract_impl)
+        .expect("spawn Taylor metadata test")
+        .join()
+        .expect("Taylor metadata test thread");
+}
+
+fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contract_impl() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = alma_primary_beam_measurement_set(root.path());
+    let image_name = root.path().join("taylor-metadata");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Mtmfs {
+            terms: 2,
+            scales_px: vec![0.0],
+            small_scale_bias: 0.0,
+        },
+    );
+    imaging.data_description = None;
+    imaging.image_size = 8;
+    imaging.channel_count = Some(1);
+    imaging.iterations = 0;
+    imaging.write_primary_beam = true;
+    imaging.task_requirements = vec![TaskRequirement::SerialCpu];
+
+    let result = execute_continuum(imaging).expect("native Taylor metadata execution");
+    let planned = &result.outcome.output.planned_products;
+    let published = &result.outcome.output.products;
+    assert_eq!(planned.graph_id(), published.graph_id());
+    assert_eq!(planned.members().len(), published.members().len());
+    for (planned, published) in planned.members().iter().zip(published.members()) {
+        assert_eq!(
+            planned.artifact_id(),
+            published.artifact_id(),
+            "{} identity",
+            planned.name()
+        );
+        assert_eq!(
+            planned.role(),
+            published.contract().role(),
+            "{} role",
+            planned.name()
+        );
+        assert_eq!(
+            planned.unit(),
+            published.contract().unit(),
+            "{} unit",
+            planned.name()
+        );
+        assert_eq!(
+            planned.beam_rule(),
+            published.contract().beam_rule(),
+            "{} beam rule",
+            planned.name()
+        );
+        assert_eq!(
+            planned.validity(),
+            published.contract().validity(),
+            "{} validity",
+            planned.name()
+        );
+        assert_eq!(
+            planned.axes(),
+            published.contract().axes(),
+            "{} axes",
+            planned.name()
+        );
+    }
+
+    let open = |suffix: &str| {
+        PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", image_name.display())))
+            .expect("reopen Taylor publication")
+    };
+    for suffix in [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".pb.tt0",
+        ".pb.tt1",
+        ".alpha",
+        ".alpha.error",
+    ] {
+        assert_eq!(open(suffix).units(), "", "{suffix} CASA unit");
+    }
+    for suffix in [".model.tt0", ".model.tt1"] {
+        assert_eq!(open(suffix).units(), "Jy/pixel", "{suffix} CASA unit");
+    }
+    for suffix in [".image.tt0", ".image.tt1"] {
+        assert_eq!(open(suffix).units(), "Jy/beam", "{suffix} CASA unit");
+    }
+    for suffix in [
+        ".image.tt0",
+        ".image.tt1",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".pb.tt0",
+        ".alpha",
+        ".alpha.error",
+    ] {
+        assert_eq!(
+            open(suffix).default_mask_name().as_deref(),
+            Some("mask0"),
+            "{suffix} explicit CASA mask"
+        );
+    }
+    {
+        let suffix = ".pb.tt0";
+        let product = open(suffix);
+        let shape = product.shape().to_vec();
+        let valid = product
+            .get_mask_slice(&vec![0; shape.len()], &shape, &vec![1; shape.len()])
+            .expect("primary-beam mask")
+            .expect("explicit primary-beam mask");
+        assert!(
+            valid.iter().all(|valid| *valid),
+            "{suffix} all-valid primary-beam mask remains explicit"
+        );
+    }
+    for suffix in [
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".model.tt0",
+        ".model.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+    ] {
+        assert_eq!(
+            open(suffix).default_mask_name(),
+            None,
+            "{suffix} remains implicitly all-valid"
+        );
+    }
+    for suffix in [".residual.tt0", ".residual.tt1"] {
+        assert!(
+            open(suffix)
+                .image_info()
+                .expect("residual ImageInfo")
+                .beam_set
+                .is_empty(),
+            "{suffix} Taylor residual does not persist a beam"
+        );
+    }
+
+    let psf = planned
+        .members()
+        .iter()
+        .find(|member| member.role() == ProductRole::Psf(ProductTerm::Taylor(0)))
+        .expect("Taylor PSF contract");
+    assert_eq!(psf.unit(), ProductUnit::JyPerBeam);
+    assert_eq!(psf.beam_rule(), ProductBeamRule::Fitted);
+    assert_eq!(psf.validity(), ProductValidityRule::All);
+    let residual = planned
+        .members()
+        .iter()
+        .find(|member| member.role() == ProductRole::Residual(ProductTerm::Taylor(0)))
+        .expect("Taylor residual contract");
+    assert_eq!(residual.unit(), ProductUnit::JyPerBeam);
+    assert_eq!(residual.beam_rule(), ProductBeamRule::Fitted);
+    assert!(matches!(
+        residual.validity(),
+        ProductValidityRule::PrimaryBeam(_)
+    ));
+    let primary_beam = planned
+        .members()
+        .iter()
+        .find(|member| member.role() == ProductRole::PrimaryBeam(ProductTerm::Taylor(0)))
+        .expect("Taylor primary-beam contract");
+    assert_eq!(primary_beam.unit(), ProductUnit::Dimensionless);
+    assert_eq!(primary_beam.beam_rule(), ProductBeamRule::None);
+    assert!(matches!(
+        primary_beam.validity(),
+        ProductValidityRule::PrimaryBeam(_)
+    ));
+}
+
+#[test]
 fn t49_plane_count_does_not_infer_w_projection() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
@@ -844,7 +860,7 @@ fn t49_plane_count_does_not_infer_w_projection() {
     assert!(
         error
             .to_string()
-            .contains("requires the explicit W-projection task capability"),
+            .contains("requires the explicit W- or AW-projection task capability"),
         "wrong explicit-W error: {error}"
     );
     assert!(!PathBuf::from(format!("{}.psf", image_name.display())).exists());

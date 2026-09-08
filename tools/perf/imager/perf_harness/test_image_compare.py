@@ -563,6 +563,12 @@ class ImageComparisonProtocolTests(unittest.TestCase):
             (root / "left.image.tt0").mkdir()
             (root / "left.extra").mkdir()
             (root / "right.image.tt0").mkdir()
+            cache = root / "right.cf"
+            cache.mkdir()
+            for name in ("CFS_one.im", "WTCFS_one.im"):
+                cell = cache / name
+                cell.mkdir()
+                (cell / "table.info").write_text("Type = Image\nSubType = \n")
 
             inventory = comparator.compare_product_inventory(
                 str(left_prefix),
@@ -575,6 +581,15 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         self.assertEqual([".residual.tt0"], inventory["left_missing"])
         self.assertEqual([".extra"], inventory["left_extra"])
         self.assertEqual([".residual.tt0"], inventory["right_missing"])
+        self.assertEqual([], inventory["right_extra"])
+
+    def test_cf_name_does_not_hide_an_image_product(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            image = root / "result.cf"
+            image.mkdir()
+            (image / "table.info").write_text("Type = Image\nSubType = \n")
+            self.assertEqual([".cf"], comparator.discover_product_inventory(root / "result"))
 
     def test_full_reducer_visits_every_element_within_chunk_budget(self) -> None:
         shape = (5, 4, 3)
@@ -623,6 +638,94 @@ class ImageComparisonProtocolTests(unittest.TestCase):
             result["difference"]["integrated_value"],
         )
         self.assertAlmostEqual(1.0, result["correlation"], places=12)
+
+    def test_full_reducer_correlation_is_bounded_for_large_nearconstant_values(
+        self,
+    ) -> None:
+        count = 4096
+        index = np.arange(count, dtype=np.float64)
+        left = 1.0e8 + (index % 2400.0)
+        right = left + 0.25 * ((index % 7.0) - 3.0)
+        masks = np.ones(count, dtype=bool)
+        factory = FakeImageFactory(
+            {"left": left, "right": right},
+            {"left": masks, "right": masks},
+        )
+
+        result = comparator.full_array_statistics(
+            "left", "right", max_elements=512, image_factory=factory
+        )
+        raw_left_variance = result["left"]["sum_squares"] - (
+            result["left"]["sum"] ** 2 / count
+        )
+        raw_right_variance = result["right"]["sum_squares"] - (
+            result["right"]["sum"] ** 2 / count
+        )
+        raw_correlation = (
+            result["cross_sum"]
+            - result["left"]["sum"] * result["right"]["sum"] / count
+        ) / np.sqrt(raw_left_variance * raw_right_variance)
+        centered_left = left - np.mean(left)
+        centered_right = right - np.mean(right)
+        expected = np.dot(centered_left, centered_right) / np.sqrt(
+            np.dot(centered_left, centered_left)
+            * np.dot(centered_right, centered_right)
+        )
+
+        self.assertGreater(raw_correlation, 1.0)
+        self.assertGreater(raw_left_variance, 0.0)
+        self.assertGreater(raw_right_variance, 0.0)
+        self.assertGreaterEqual(result["correlation"], -1.0)
+        self.assertLessEqual(result["correlation"], 1.0)
+        self.assertAlmostEqual(expected, result["correlation"], places=12)
+
+    def test_full_reducer_paired_centered_covariance_avoids_m2_cancellation(
+        self,
+    ) -> None:
+        left = np.asarray([-1.0e16, 1.0e16, -1.0e16, 1.0e16])
+        right = np.asarray([-1.0, 1.0, -1.0, 1.0])
+        masks = np.ones(4, dtype=bool)
+        factory = FakeImageFactory(
+            {"left": left, "right": right},
+            {"left": masks, "right": masks},
+        )
+
+        result = comparator.full_array_statistics(
+            "left", "right", max_elements=2, image_factory=factory
+        )
+
+        self.assertEqual("compared", result["status"])
+        self.assertEqual(1.0, result["correlation"])
+
+    def test_full_reducer_constant_operand_has_no_correlation(self) -> None:
+        left = np.full(3, 0.1)
+        right = left.copy()
+        masks = np.ones(3, dtype=bool)
+        factory = FakeImageFactory(
+            {"left": left, "right": right},
+            {"left": masks, "right": masks},
+        )
+
+        result = comparator.full_array_statistics(
+            "left", "right", max_elements=3, image_factory=factory
+        )
+
+        self.assertIsNone(result["correlation"])
+
+    def test_full_reducer_small_scale_correlation_avoids_product_underflow(self) -> None:
+        left = np.asarray([-1.0e-100, 1.0e-100])
+        right = left.copy()
+        masks = np.ones(2, dtype=bool)
+        factory = FakeImageFactory(
+            {"left": left, "right": right},
+            {"left": masks, "right": masks},
+        )
+
+        result = comparator.full_array_statistics(
+            "left", "right", max_elements=2, image_factory=factory
+        )
+
+        self.assertEqual(1.0, result["correlation"])
 
     def test_full_comparison_finds_sparse_overlap_missed_by_sample_stride(self) -> None:
         shape = (5, 5)

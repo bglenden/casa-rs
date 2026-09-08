@@ -572,6 +572,8 @@ def build_plan(
         "IMAGER_BENCH_INTERPOLATION": interpolation,
         "IMAGER_BENCH_FIELD": str_value(imaging, "field", "0"),
         "IMAGER_BENCH_STOKES": str_value(imaging, "stokes", "I"),
+        "IMAGER_BENCH_UVRANGE": str_value(imaging, "uvrange", ""),
+        "IMAGER_BENCH_INTENT": str_value(imaging, "intent", ""),
         "IMAGER_BENCH_USEPOINTING": boolean_env_value(
             imaging, "usepointing", gridder == "mosaic"
         ),
@@ -594,8 +596,13 @@ def build_plan(
         ),
         "IMAGER_BENCH_DECONVOLVER": str_value(imaging, "deconvolver", "hogbom"),
         "IMAGER_BENCH_USEMASK": str_value(imaging, "usemask", "user"),
+        "IMAGER_BENCH_MASK_IMAGE": str_value(imaging, "mask_image", ""),
         "IMAGER_BENCH_MASK_BOX": str_value(imaging, "mask_box", ""),
         "IMAGER_BENCH_SAVEMODEL": str_value(imaging, "savemodel", "none"),
+        "IMAGER_BENCH_SMALL_SCALE_BIAS": str(
+            float_value(imaging, "smallscalebias", 0.6)
+        ),
+        "IMAGER_BENCH_RESTORING_BEAM": str_value(imaging, "restoringbeam", ""),
         "IMAGER_BENCH_FITSPW": str_value(imaging, "fitspw", ""),
         "IMAGER_BENCH_FITORDER": str(int_value(imaging, "fitorder", 0)),
         "IMAGER_BENCH_SAVE_CONTINUUM_RESIDUAL": boolean_env_value(
@@ -604,9 +611,7 @@ def build_plan(
         "IMAGER_BENCH_SIDELOBETHRESHOLD": str(
             float_value(imaging, "sidelobethreshold", 3.0)
         ),
-        "IMAGER_BENCH_NOISETHRESHOLD": str(
-            float_value(imaging, "noisethreshold", 5.0)
-        ),
+        "IMAGER_BENCH_NOISETHRESHOLD": str(float_value(imaging, "noisethreshold", 5.0)),
         "IMAGER_BENCH_CASA_PBLIMIT": str(
             float_value(imaging, "casa_pblimit", float_value(imaging, "pblimit", 0.2))
         ),
@@ -651,6 +656,37 @@ def build_plan(
         "IMAGER_BENCH_SKIP_PROFILE": skip_profile,
         "IMAGER_BENCH_PROFILE_REPEATS": profile_repeats,
     }
+    prepared_aw_casa_cache = os.environ.get("CASA_RS_BENCH_PREPARED_AW_CASA_CACHE")
+    prepared_aw_output_prefix = os.environ.get(
+        "CASA_RS_BENCH_PREPARED_AW_OUTPUT_PREFIX"
+    )
+    if prepared_aw_casa_cache:
+        env["IMAGER_BENCH_PREPARED_AW_CASA_CACHE"] = prepared_aw_casa_cache
+        env["IMAGER_BENCH_AW_CF_RESIDENT_MB"] = os.environ.get(
+            "CASA_RS_BENCH_AW_CF_RESIDENT_MB"
+        ) or str(int_value(imaging, "cf_resident_mb", 384))
+        for imaging_key, env_key in {
+            "aterm": "IMAGER_BENCH_ATERM",
+            "psterm": "IMAGER_BENCH_PSTERM",
+            "wbawp": "IMAGER_BENCH_WBAWP",
+            "conjbeams": "IMAGER_BENCH_CONJBEAMS",
+            "computepastep": "IMAGER_BENCH_COMPUTEPASTEP",
+            "rotatepastep": "IMAGER_BENCH_ROTATEPASTEP",
+            "pointingoffsetsigdev": "IMAGER_BENCH_POINTINGOFFSETSIGDEV",
+            "normtype": "IMAGER_BENCH_NORMTYPE",
+            "mosweight": "IMAGER_BENCH_MOSWEIGHT",
+            "psfphasecenter": "IMAGER_BENCH_PSFPHASECENTER",
+            "vptable": "IMAGER_BENCH_VPTABLE",
+        }.items():
+            if imaging.get(imaging_key) is not None:
+                value = imaging[imaging_key]
+                env[env_key] = (
+                    boolean_env_value(imaging, imaging_key, False)
+                    if isinstance(value, bool)
+                    else str(value)
+                )
+    if prepared_aw_output_prefix:
+        env["IMAGER_BENCH_RUST_OUTPUT_PREFIX"] = prepared_aw_output_prefix
     if reuse_rust_prefix:
         env["IMAGER_BENCH_REUSE_RUST_PREFIX"] = reuse_rust_prefix
     if reuse_casa_prefix:
@@ -696,6 +732,8 @@ def build_plan(
         command_plan["evidence_storage"] = casa_tclean_workflow.storage_requirement(
             run, dataset
         )
+        command_plan["argv"] = command
+        command_plan["env"] = env
     else:
         command_plan = {"kind": "legacy_benchmark_script", "argv": command, "env": env}
     plan = {
@@ -986,6 +1024,17 @@ def review_panel_status(comparison: dict[str, Any]) -> tuple[str, str | None]:
 def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
     if plan.get("command", {}).get("kind") == "casa_tclean_protocol":
         return run_casa_recipe_plan(plan, log_path)
+    return run_benchmark_plan(plan, log_path)
+
+
+def run_benchmark_plan(
+    plan: dict[str, Any],
+    log_path: pathlib.Path,
+    *,
+    reused_casa_prefix: str | None = None,
+) -> dict[str, Any]:
+    """Execute the checked-in benchmark command and compare retained products."""
+
     env = os.environ.copy()
     env.update(plan["command"]["env"])
     if bool(plan.get("run", {}).get("stream_log", False)):
@@ -1020,6 +1069,13 @@ def run_plan(plan: dict[str, Any], log_path: pathlib.Path) -> dict[str, Any]:
         }
 
     parsed = parse_benchmark_log(completed.stdout)
+    if reused_casa_prefix is not None:
+        parsed["casa"] = {
+            "status": "reused",
+            "reason": "frozen CASA products were reused; CASA was not executed",
+            "timings_seconds": {"runs": [], "median": None},
+        }
+        parsed.setdefault("product_paths", {})["casa_prefix"] = reused_casa_prefix
     parsed["backend_plan_logs"] = parse_backend_plan_logs(completed.stdout)
     parsed["benchmark_features"] = build_benchmark_feature_summary(plan, parsed)
     attach_stage_breakdown(plan, parsed)
@@ -1050,6 +1106,18 @@ def run_casa_recipe_plan(
 ) -> dict[str, Any]:
     """Dispatch a recipe-backed plan through the shared tclean workflow."""
 
+    run = plan.get("run", {})
+    reused_casa_prefix = run.get("reuse_casa_prefix")
+    if boolean_flag(str(run.get("skip_casa", "0"))):
+        if not isinstance(reused_casa_prefix, str) or not reused_casa_prefix:
+            raise HarnessError(
+                "recipe run.skip_casa requires an exact run.reuse_casa_prefix"
+            )
+        casa_tclean_workflow.validate_reused_casa_prefix(
+            plan, reused_casa_prefix
+        )
+        plan["products"]["casa_prefix"] = reused_casa_prefix
+        return run_benchmark_plan(plan, log_path, reused_casa_prefix=reused_casa_prefix)
     return casa_tclean_workflow.run_recipe_plan(
         plan, log_path, services=recipe_execution_services()
     )
@@ -1259,7 +1327,9 @@ def parse_continuum_residual_comparison(text: str) -> dict[str, Any]:
         return {"status": "missing", "path": str(path)}
     receipt = json.loads(path.read_text(encoding="utf-8"))
     if receipt.get("schema") != "casa-rs-continuum-residual-comparison-v1":
-        raise HarnessError("continuum-residual comparison receipt has an unexpected schema")
+        raise HarnessError(
+            "continuum-residual comparison receipt has an unexpected schema"
+        )
     return {
         **receipt,
         "path": str(path),
@@ -1269,6 +1339,7 @@ def parse_continuum_residual_comparison(text: str) -> dict[str, Any]:
 
 def parse_backend_plan_logs(text: str) -> dict[str, Any]:
     """Extract compact backend/source-stream diagnostics from benchmark logs."""
+    terminal_peak_rss_bytes = None
     buckets = {
         "single_plane_execution_plan": [],
         "standard_mfs_runtime_plan": [],
@@ -1297,6 +1368,8 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
         "image_product_writes": [],
         "cube_plane_state_store": [],
         "visibility_geometry_cache": [],
+        "aw_cache_inventory": [],
+        "prepared_artifact_readers": [],
         "executor_limitations": [],
         "worker_diagnostics": [],
         "minor_cycle_diagnostics": [],
@@ -1341,6 +1414,26 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["frontend_progress"].append(parsed)
         elif name == "standard_mfs_profile_run":
             buckets["profile_runs"].append(parsed)
+        elif name == "imager_bench_process_resource":
+            fields = parsed["fields"]
+            if (
+                set(fields) == {
+                    "command", "pid", "exit_code", "peak_rss_bytes", "source", "scope"
+                }
+                and len(line.split()) == 7
+                and fields["command"] == "casars-imager"
+                and fields["source"] == "wait4"
+                and fields["scope"] == "terminal_child"
+                and type(fields["exit_code"]) is int
+                and fields["exit_code"] == 0
+                and type(fields["pid"]) is int
+                and fields["pid"] > 0
+                and type(fields["peak_rss_bytes"]) is int
+                and fields["peak_rss_bytes"] > 0
+            ):
+                terminal_peak_rss_bytes = max(
+                    terminal_peak_rss_bytes or 0, fields["peak_rss_bytes"]
+                )
         elif name == "spectral_slab_event":
             buckets["spectral_slab_events"].append(parsed)
         elif name == "spectral_slab_memory":
@@ -1372,6 +1465,10 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["cube_plane_state_store"].append(parsed)
         elif name == "visibility_geometry_cache_summary":
             buckets["visibility_geometry_cache"].append(parsed)
+        elif name == "imaging_aw_cache_inventory_summary":
+            buckets["aw_cache_inventory"].append(parsed)
+        elif name == "imaging_prepared_artifact_reader_summary":
+            buckets["prepared_artifact_readers"].append(parsed)
         elif name in {
             "cube_shared_direct_plane_executor_summary",
             "cube_shared_plane_executor_summary",
@@ -1410,7 +1507,9 @@ def parse_backend_plan_logs(text: str) -> dict[str, Any]:
             buckets["worker_diagnostics"].append(parsed)
         elif "metal" in name:
             buckets["metal_diagnostics"].append(parsed)
-    summary = summarize_backend_plan_logs(buckets)
+    summary = summarize_backend_plan_logs(
+        buckets, terminal_peak_rss_bytes=terminal_peak_rss_bytes
+    )
     retained_buckets: dict[str, list[dict[str, Any]]] = {}
     collection_stats: dict[str, dict[str, Any]] = {}
     for name, entries in buckets.items():
@@ -1484,12 +1583,15 @@ def parse_scalar_value(value: str) -> Any:
 
 def summarize_backend_plan_logs(
     buckets: dict[str, list[dict[str, Any]]],
+    *,
+    terminal_peak_rss_bytes: int | None = None,
 ) -> dict[str, Any]:
     runtime = last_fields(buckets.get("standard_mfs_runtime_plan", []))
     memory = last_fields(buckets.get("source_stream_memory_plan", []))
     source_read_ahead_entries = unique_entries_by_raw(
         buckets.get("imaging_source_read_ahead", [])
     )
+    selection = canonical_source_selection(source_read_ahead_entries)
     source_read_ahead = aggregate_source_read_ahead_fields(source_read_ahead_entries)
     source_read_ahead_modes = [
         entry.get("fields", {}).get("mode")
@@ -1807,8 +1909,13 @@ def summarize_backend_plan_logs(
             mosaic_cube_slab_executor_summaries, "product_write_ms"
         ),
         "row_block_rows": memory.get("row_block_rows"),
-        "selected_channels": memory.get("selected_channels"),
-        "active_rows": memory.get("rows_total"),
+        "canonical_source_selection": selection,
+        "selected_channels": selection["selected_channels"]
+        if selection is not None
+        else memory.get("selected_channels"),
+        "active_rows": selection["selected_rows"]
+        if selection is not None
+        else memory.get("rows_total"),
         "memory_target_bytes": memory.get("memory_target_bytes"),
         "planned_active_bytes": memory.get("planned_active_bytes"),
         "source_stream_buffer_bytes": memory.get("source_stream_buffer_bytes"),
@@ -1853,7 +1960,7 @@ def summarize_backend_plan_logs(
             "visibility_row_cache_overhead_bytes"
         ),
         "modeled_source_read_bytes": memory.get("modeled_source_read_bytes"),
-        "peak_rss_bytes": profile.get("peak_rss_bytes"),
+        "peak_rss_bytes": terminal_peak_rss_bytes,
         "frontend_io_time_ms": profile.get("io_time_ms"),
         "frontend_wall_to_io_ratio": profile.get("wall_to_io_ratio"),
         "gridded_samples": profile.get("gridded_samples"),
@@ -2277,6 +2384,73 @@ def last_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def canonical_source_selection(
+    entries: list[dict[str, Any]],
+) -> dict[str, int | None] | None:
+    """Use full density/replay evidence; partial-only diagnostics leave totals unknown."""
+    counts = None
+    canonical_seen = False
+    for entry in entries:
+        fields = entry.get("fields", {})
+        if fields.get("mode") != "bounded_spectral":
+            continue
+        canonical_seen = True
+        if fields.get("stage") in {"weighted-replay-channel-slab", "selected-output"}:
+            continue
+        label = "canonical selected-observation traversal"
+        if (
+            fields.get("stage") not in {"density", "weighted-replay"}
+            or fields.get("phase") not in {"initial-major", "final-major"}
+            or type(fields.get("ordinal")) is not int
+            or fields["ordinal"] < 0
+            or fields.get("measurement_state") == "missing"
+        ):
+            raise HarnessError(f"{label}: incomplete stage/pass evidence")
+        for name in (
+            "pass_count",
+            "row_blocks",
+            "stored_rows",
+            "stored_samples",
+            "selected_channel_runs",
+            "streamed_samples",
+        ):
+            if type(fields.get(name)) is not int or fields[name] <= 0:
+                raise HarnessError(f"{label}: {name} must be a positive integer")
+        current = (
+            fields["pass_count"],
+            fields["stored_rows"],
+            fields["stored_samples"],
+            fields["selected_channel_runs"],
+            fields["streamed_samples"],
+        )
+        _, rows, stored_samples, channel_runs, selected_samples = current
+        if not rows <= channel_runs <= selected_samples <= stored_samples:
+            raise HarnessError(f"{label}: inconsistent row/channel/correlation counters")
+        if counts is not None and current != counts:
+            raise HarnessError(f"{label}: selection counters disagree across traversals")
+        counts = current
+    if counts is None:
+        if canonical_seen:
+            return {
+                "selected_rows": None,
+                "selected_channels": None,
+                "correlations": None,
+                "visibility_work": None,
+            }
+        return None
+    _, rows, _, channel_runs, selected_samples = counts
+    return {
+        "selected_rows": rows,
+        "selected_channels": channel_runs // rows
+        if channel_runs % rows == 0
+        else None,
+        "correlations": selected_samples // channel_runs
+        if selected_samples % channel_runs == 0
+        else None,
+        "visibility_work": selected_samples,
+    }
+
+
 def aggregate_source_read_ahead_fields(entries: list[dict[str, Any]]) -> dict[str, Any]:
     fields = dict(last_fields(entries))
     if not fields:
@@ -2463,33 +2637,47 @@ def build_benchmark_feature_summary(
         if len(image_shape) > 1 and image_shape[1] is not None
         else imsize_x
     )
-    selected_channels = first_int(
-        backend_summary.get("selected_channels"),
-        source_channel_width(mode),
-        mode.get("channel_count"),
-    )
-    selected_rows = first_int(backend_summary.get("active_rows"))
-    gridded_samples = first_int(backend_summary.get("gridded_samples"))
-    correlations = planned_correlation_count(plan)
+    selection = backend_summary.get("canonical_source_selection")
     flagged_fraction = None
-    if (
-        gridded_samples is not None
-        and selected_rows
-        and selected_channels
-        and correlations
-    ):
-        denominator = selected_rows * selected_channels * correlations
-        if denominator > 0:
-            flagged_fraction = max(0.0, min(1.0, 1.0 - (gridded_samples / denominator)))
-    visibility_work = None
-    if (
-        selected_rows is not None
-        and selected_channels is not None
-        and correlations is not None
-    ):
-        visibility_work = selected_rows * selected_channels * correlations
-        if flagged_fraction is not None:
-            visibility_work = int(round(visibility_work * (1.0 - flagged_fraction)))
+    if selection is not None:
+        selected_rows = selection["selected_rows"]
+        selected_channels = selection["selected_channels"]
+        correlations = selection["correlations"]
+        visibility_work = selection["visibility_work"]
+        correlation_source = "selected-observation-traversal"
+        gridded_samples = None
+    else:
+        if "bounded_spectral" in backend_summary.get("source_read_ahead_modes", []):
+            raise HarnessError("canonical selected-observation summary is missing")
+        selected_channels = first_int(
+            backend_summary.get("selected_channels"),
+            source_channel_width(mode),
+            mode.get("channel_count"),
+        )
+        selected_rows = first_int(backend_summary.get("active_rows"))
+        gridded_samples = first_int(backend_summary.get("gridded_samples"))
+        correlations = planned_correlation_count(plan)
+        correlation_source = "scalar-plane-after-polarization-collapse"
+        if (
+            gridded_samples is not None
+            and selected_rows
+            and selected_channels
+            and correlations
+        ):
+            denominator = selected_rows * selected_channels * correlations
+            if denominator > 0:
+                flagged_fraction = max(
+                    0.0, min(1.0, 1.0 - (gridded_samples / denominator))
+                )
+        visibility_work = None
+        if (
+            selected_rows is not None
+            and selected_channels is not None
+            and correlations is not None
+        ):
+            visibility_work = selected_rows * selected_channels * correlations
+            if flagged_fraction is not None:
+                visibility_work = int(round(visibility_work * (1.0 - flagged_fraction)))
     product_count = len(comparison.get("products") or [])
     output_planes = planned_output_planes(mode)
     image_work = None
@@ -2511,7 +2699,7 @@ def build_benchmark_feature_summary(
             "selected_rows": selected_rows,
             "selected_channels": selected_channels,
             "correlations": correlations,
-            "correlation_source": "scalar-plane-after-polarization-collapse",
+            "correlation_source": correlation_source,
             "flagged_fraction": finite_float(flagged_fraction),
             "visibility_work": visibility_work,
             "gridded_samples": gridded_samples,

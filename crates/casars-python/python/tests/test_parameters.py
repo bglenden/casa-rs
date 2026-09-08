@@ -166,8 +166,9 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
         assert invocation.protocol_name == "casa_imager_task"
         assert invocation.protocol_version == 7
         assert json.loads(invocation.stdin or "null") == expected["request"]
-        assert {reason.id for reason in invocation.unsupported_reasons} >= {
-            "task.aw_projection",
+        unsupported = {reason.id for reason in invocation.unsupported_reasons}
+        assert "task.aw_projection" not in unsupported
+        assert unsupported >= {
             "task.grid_threads",
             "task.memory_target",
             "task.memory_pressure_policy",

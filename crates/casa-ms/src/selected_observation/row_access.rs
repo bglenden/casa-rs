@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
+use crate::subtables::SubTable;
 use crate::{MeasurementSet, MsError, MsReadPlan, MsResult, MsSelectionIoBudget};
 use casa_imaging_model::{
     AntennaSelection, DataDescriptionSelection, IdSelection, IntentSelection, ObservationSelection,
@@ -53,13 +54,14 @@ pub struct SelectedObservationRow {
     antenna2: i32,
     observation_id: i32,
     time_mjd_seconds: f64,
+    time_centroid_mjd_seconds: f64,
     flag_row: bool,
     uvw_m: [f64; 3],
 }
 
 impl SelectedObservationRow {
     /// Exact stored bytes read per MAIN row while evaluating the canonical predicate.
-    pub const STORAGE_BYTES_PER_ROW: usize = 65;
+    pub const STORAGE_BYTES_PER_ROW: usize = 73;
 
     /// Return the physical MAIN row index.
     #[must_use]
@@ -101,6 +103,12 @@ impl SelectedObservationRow {
     #[must_use]
     pub const fn time_mjd_seconds(self) -> f64 {
         self.time_mjd_seconds
+    }
+
+    /// Return the stored `TIME_CENTROID` in MJD seconds.
+    #[must_use]
+    pub const fn time_centroid_mjd_seconds(self) -> f64 {
+        self.time_centroid_mjd_seconds
     }
 
     /// Return the stored row-level flag.
@@ -258,6 +266,7 @@ impl MeasurementSet {
                         antenna2: fact.antenna2(),
                         observation_id: fact.observation_id(),
                         time_mjd_seconds: fact.time_mjd_seconds(),
+                        time_centroid_mjd_seconds: fact.time_centroid_mjd_seconds(),
                         flag_row: fact.flag_row(),
                         uvw_m: fact.uvw_m(),
                     });
@@ -311,16 +320,40 @@ fn selected_wavelengths(
     data_descriptions: &[DataDescriptionSelection],
 ) -> MsResult<Vec<(u32, f64)>> {
     let spectral_windows = measurement_set.spectral_window()?;
-    data_descriptions
+    let rows = data_descriptions
         .iter()
         .map(|description| {
-            let reference_frequency_hz = spectral_windows.ref_frequency(
-                usize::try_from(description.spectral_window_id()).map_err(|_| {
-                    MsError::InvalidInput(
-                        "SPECTRAL_WINDOW_ID exceeds host index domain".to_string(),
-                    )
-                })?,
-            )?;
+            usize::try_from(description.spectral_window_id()).map_err(|_| {
+                MsError::InvalidInput("SPECTRAL_WINDOW_ID exceeds host index domain".to_string())
+            })
+        })
+        .collect::<MsResult<Vec<_>>>()?;
+    let reference_frequencies = spectral_windows
+        .table()
+        .column_accessor("REF_FREQUENCY")?
+        .scalar_cells_owned_for_rows(&rows)?;
+    data_descriptions
+        .iter()
+        .zip(rows)
+        .zip(reference_frequencies)
+        .map(|((description, row), frequency)| {
+            let reference_frequency_hz = match frequency {
+                Some(casa_types::ScalarValue::Float64(value)) => value,
+                Some(other) => {
+                    return Err(MsError::ColumnTypeMismatch {
+                        column: "REF_FREQUENCY".to_string(),
+                        table: "SPECTRAL_WINDOW".to_string(),
+                        expected: "Float64".to_string(),
+                        found: format!("{:?}", other.primitive_type()),
+                    });
+                }
+                None => {
+                    return Err(MsError::MissingColumn {
+                        column: format!("REF_FREQUENCY[row={row}]"),
+                        table: "SPECTRAL_WINDOW".to_string(),
+                    });
+                }
+            };
             Ok((
                 description.data_description_id(),
                 SPEED_OF_LIGHT_M_PER_S / reference_frequency_hz,

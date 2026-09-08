@@ -3311,8 +3311,8 @@ mod tests {
         ImagerObservedResourceState, ImagerObservedStageKind, ImagerPlaneSelection,
         ImagerProgressDetail, ImagerProgressEvent, ImagerProgressRuntime, ImagerProjection,
         ImagerRestoringBeamMode, ImagerRunTaskRequest, ImagerSaveModel, ImagerSpectralMode,
-        ImagerTaskRequest, ImagerUnsupportedReason, ImagerUvTaper, ImagerUvTaperSize,
-        ImagerWTermMode, ImagerWeighting, imager_task_schema_bundle,
+        ImagerTaskRequest, ImagerUvTaper, ImagerUvTaperSize, ImagerWTermMode, ImagerWeighting,
+        imager_task_schema_bundle,
     };
     use crate::{
         AwProjectNormalization, CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper,
@@ -3342,14 +3342,8 @@ mod tests {
             .find(|entry| entry.id == "task.aw_projection")
             .expect("AWProject capability");
         assert_eq!(awproject.kind, "task");
-        assert!(!awproject.supported);
-        assert_eq!(
-            awproject.unsupported_reason.as_ref(),
-            Some(&ImagerUnsupportedReason {
-                kind: "task".to_string(),
-                id: "task.aw_projection".to_string(),
-            })
-        );
+        assert!(awproject.supported);
+        assert_eq!(awproject.unsupported_reason, None);
         assert!(bundle.projections.cli.is_some());
         assert_eq!(bundle.parameter_surfaces.len(), 1);
         assert_eq!(bundle.parameter_surfaces[0].surface.id(), "imager");

@@ -5,7 +5,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
-    fmt,
+    fmt, io,
     mem::align_of,
     sync::Arc,
 };
@@ -15,7 +15,9 @@ use casa_imaging_model::{
     SelectedObservationGenerationId, SelectedObservationSampleView, SelectedSpectralContribution,
     SelectedSpectralContributions, SelectedSpectralInterval, SequentialContinuumTransform,
 };
-use casa_imaging_reconstruction::runtime_adapter::WeightingReplayPhase;
+use casa_imaging_reconstruction::runtime_adapter::{
+    SpectralOperatorInitialPhaseResidency, WeightingReplayPhase,
+};
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
     WeightingDensityPhase, WeightingError, WeightingGenerationId, WeightingPlan,
@@ -28,17 +30,21 @@ use casa_imaging_reconstruction::{
 };
 use casa_ms::{
     BoundObservationSourceError, BoundSelectedObservation, BoundSelectedObservationError,
-    ResolvedSelectedObservationAccess, SelectedObservationBlock, SelectedObservationBlockConsumer,
-    SelectedObservationBlockSource, SelectedObservationCompletion, SelectedObservationReplayProof,
-    SelectedObservationResidencyCertificate, SelectedObservationTerminal,
-    SelectedObservationTraversalError, SelectedObservationTraversalMeasurements,
-    SelectedObservationTraversalSample,
+    DeferredSelectedObservationAccess, ResolvedSelectedObservationAccess, SelectedObservationBlock,
+    SelectedObservationBlockConsumer, SelectedObservationBlockSource,
+    SelectedObservationCompletion, SelectedObservationContentBudget,
+    SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
+    SelectedObservationTerminal, SelectedObservationTraversalError,
+    SelectedObservationTraversalMeasurements, SelectedObservationTraversalSample,
 };
 
 use crate::bounded_stream::{
     BlockIdentity, BoundedStreamError, BoundedStreamMeasurements, BoundedStreamPlan,
     KernelPartition, OrderedBlockSource, PartitionedKernel, SourcePoll, WorkIdentity,
     execute_bounded,
+};
+use crate::complete_data_operator::{
+    CompleteDataAllocation, CompleteDataPlanError, InitialPhaseWorkingSetBinding,
 };
 use crate::{
     AllocationAccess, AllocationId, AllocationLayout, AllocationLifetime, AllocationPurpose,
@@ -859,6 +865,69 @@ pub struct SelectedObservationSourceResources {
 }
 
 impl SelectedObservationSourceResources {
+    /// Bound pre-compilation source inspection until the compiled owner can
+    /// quote its complete initialization and traversal requirements.
+    #[must_use]
+    pub const fn bootstrap_content_budget() -> SelectedObservationContentBudget {
+        SelectedObservationContentBudget::new(64 << 20, 2, 4)
+    }
+
+    /// Finalize an unopened source's bounded execution envelope.
+    ///
+    /// The storage owner supplies the requirement curve; the runtime selects
+    /// at most 64 MiB of preferred growth beyond its mandatory minimum under
+    /// current policy, pressure, and active reservations. The returned budget
+    /// charges the actual bounded plan, not all available host RAM. This is a
+    /// quote only: no lease is acquired, and admission of the complete physical
+    /// plan remains authoritative before source opening.
+    pub fn finalize_access(
+        problem: &CompiledProblem,
+        access: ResolvedSelectedObservationAccess,
+        authority: &ResourceAuthority,
+        policy: &ResourcePolicy,
+    ) -> io::Result<ResolvedSelectedObservationAccess> {
+        let requirements = access
+            .content_requirements(problem)
+            .map_err(io::Error::other)?;
+        let maximum_live_blocks = access
+            .source_binding()
+            .content_budget()
+            .maximum_live_blocks();
+        let minimum = requirements
+            .minimum_bytes(maximum_live_blocks)
+            .map_err(io::Error::other)?;
+        let available = authority
+            .remaining_selected_source_memory_bytes(policy)
+            .map_err(io::Error::other)?;
+        let required = u64::try_from(minimum).map_err(io::Error::other)?;
+        if required > available {
+            return Err(io::Error::other(ResourceError::Infeasible {
+                resource: "selected-observation host memory".to_string(),
+                required,
+                available,
+            }));
+        }
+        let preferred = minimum
+            .checked_add(Self::bootstrap_content_budget().available_bytes())
+            .ok_or_else(|| {
+                io::Error::other("selected-observation preferred envelope overflowed")
+            })?;
+        let budget = SelectedObservationContentBudget::new(
+            preferred.min(usize::try_from(available).unwrap_or(usize::MAX)),
+            maximum_live_blocks,
+            requirements.maximum_pointing_polynomial_terms(),
+        );
+        let planned = requirements.plan(budget).map_err(io::Error::other)?;
+        let budget = SelectedObservationContentBudget::new(
+            planned.maximum_resident_bytes(),
+            maximum_live_blocks,
+            requirements.maximum_pointing_polynomial_terms(),
+        );
+        access
+            .with_content_budget(problem, &requirements, budget)
+            .map_err(io::Error::other)
+    }
+
     /// Bind owner-certified source residency to its exact logical allocations and queue.
     #[must_use]
     pub fn new(
@@ -889,6 +958,7 @@ pub struct WeightingPlanFragment<'a> {
     ids: WeightingPlanIds,
     streaming: Option<WeightingStreamingMode>,
     continuum_row_bytes: Option<u64>,
+    initial_working_set: Option<InitialPhaseWorkingSetBinding>,
 }
 
 /// Production selected-payload traversal shape for one continuum major pass.
@@ -948,6 +1018,7 @@ impl<'a> WeightingPlanFragment<'a> {
             ids: WeightingPlanIds::new(plan, pass),
             streaming: None,
             continuum_row_bytes: None,
+            initial_working_set: None,
         }
     }
 
@@ -972,7 +1043,75 @@ impl<'a> WeightingPlanFragment<'a> {
             ids: WeightingPlanIds::new(plan, pass),
             streaming: Some(mode),
             continuum_row_bytes,
+            initial_working_set: None,
         }
+    }
+
+    pub(crate) fn initial_phase_working_set(
+        &self,
+        problem: &CompiledProblem,
+        phase: SpectralOperatorInitialPhaseResidency,
+        allocation_id: String,
+        reconciliation: &WorkNodeId,
+    ) -> Result<Option<InitialPhaseWorkingSetBinding>, CompleteDataPlanError> {
+        if !matches!(
+            self.streaming,
+            Some(WeightingStreamingMode::NaturalInitial | WeightingStreamingMode::DensityInitial)
+        ) {
+            return Ok(None);
+        }
+        if self.initial_working_set.is_some()
+            || !self.source_resources.residency.matches_problem(problem)
+            || self.plan.commitment_id() != problem.weighting().commitment_id()
+        {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let mut specs = self
+            .allocation_specs()
+            .map_err(|_| CompleteDataPlanError::PlanMismatch)?;
+        let mut density = specs.remove(1);
+        if self.streaming == Some(WeightingStreamingMode::NaturalInitial) {
+            density.acquire_at = self.source_read.clone();
+            density.release_after = BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                self.source_read.clone(),
+                FenceKind::Io,
+            ))]);
+        }
+        // Grids exist before finish_into_stream consumes the density builder;
+        // only the separately reserved frozen weights survive into completion.
+        let bytes = phase
+            .accumulation_bytes()
+            .checked_add(
+                self.plan
+                    .planned_residency()
+                    .shared_density_accumulator_bytes(),
+            )
+            .ok_or(CompleteDataPlanError::ResidencyOverflow)?
+            .max(phase.completion_bytes())
+            .max(phase.retained_bytes());
+        Ok(Some(InitialPhaseWorkingSetBinding {
+            problem: problem.problem_id(),
+            allocation: CompleteDataAllocation::new(
+                allocation_id,
+                bytes,
+                "spectral-operator-initial-density-grid-primitive-working-set",
+                InitializationPolicy::OverwriteBeforeRead,
+                self.source_read.clone(),
+                BTreeSet::from([WorkDependency::Work(reconciliation.clone())]),
+            )?,
+            density: density.logical_allocation(),
+            density_slot: density.physical_slot(),
+            source_read: self.source_read.clone(),
+            replay_node: self.streaming_node().clone(),
+        }))
+    }
+
+    pub(crate) fn with_initial_working_set(
+        mut self,
+        binding: Option<&InitialPhaseWorkingSetBinding>,
+    ) -> Self {
+        self.initial_working_set = binding.cloned();
+        self
     }
 
     /// Return the sole terminal weighted payload traversal node.
@@ -1519,6 +1658,34 @@ impl<'a> WeightingPlanFragment<'a> {
                 replay_fence,
             )?);
         }
+        if let Some(binding) = &self.initial_working_set {
+            if !matches!(
+                self.streaming,
+                Some(
+                    WeightingStreamingMode::NaturalInitial | WeightingStreamingMode::DensityInitial
+                )
+            ) || self.source_read != binding.source_read
+                || self.streaming_node() != &binding.replay_node
+                || specs[1].allocation != binding.density.id
+                || specs[1].bytes != binding.density.bytes
+                || specs[1].slot != binding.density.physical_slot
+                || specs[1].compatibility != binding.density.compatibility
+            {
+                return Err(WeightingPlanFragmentError::InvalidSourceAuthority {
+                    node: self.source_read.clone(),
+                    reason: "initial working set does not match its weighting phase",
+                });
+            }
+            let allocation = &binding.allocation;
+            specs[1] = AllocationSpec {
+                allocation: allocation.allocation.clone(),
+                slot: allocation.slot.clone(),
+                bytes: allocation.bytes,
+                compatibility: allocation.compatibility.clone(),
+                acquire_at: allocation.acquire_at.clone(),
+                release_after: allocation.release_after.clone(),
+            };
+        }
         Ok(specs)
     }
 
@@ -1528,6 +1695,13 @@ impl<'a> WeightingPlanFragment<'a> {
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
     ) -> Result<&SelectedObservationResidencyCertificate, WeightingEvidenceError> {
+        if self
+            .initial_working_set
+            .as_ref()
+            .is_some_and(|binding| binding.problem != problem.problem_id())
+        {
+            return Err(WeightingEvidenceError);
+        }
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
@@ -1555,22 +1729,32 @@ impl<'a> WeightingPlanFragment<'a> {
         Ok(&self.source_resources.residency)
     }
 
-    fn authorize_source_observation(
+    pub(crate) fn authorize_source_observation(
         &self,
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
         actual: &SelectedObservationResidencyCertificate,
     ) -> Result<(), WeightingEvidenceError> {
-        if actual != &self.source_resources.residency || !actual.matches_problem(problem) {
+        if actual != &self.source_resources.residency
+            || !actual.matches_problem(problem)
+            || self
+                .initial_working_set
+                .as_ref()
+                .is_some_and(|binding| binding.problem != problem.problem_id())
+        {
             return Err(WeightingEvidenceError);
         }
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
+        let mut expected = vec![&specs[0]];
+        if self.initial_working_set.is_some() {
+            expected.push(&specs[1]);
+        }
         validate_work_authority(
             context,
             &self.source_read,
-            &[&specs[0]],
+            &expected,
             WeightingWorkContract::SelectedTraversal {
                 problem,
                 residency: actual,
@@ -1610,6 +1794,13 @@ impl<'a> WeightingPlanFragment<'a> {
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
     ) -> Result<WeightingGenerationBinding, WeightingEvidenceError> {
+        if self
+            .initial_working_set
+            .as_ref()
+            .is_some_and(|binding| binding.problem != problem.problem_id())
+        {
+            return Err(WeightingEvidenceError);
+        }
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
@@ -3483,9 +3674,9 @@ mod serial_compute_probe;
 impl FrozenWeightingArtifact {
     /// Rebind this artifact's pass-back-only selected proof through a fresh
     /// casa-ms owner access. No selected generation is exposed by the artifact.
-    pub fn rebind_selected(
+    pub(crate) fn rebind_selected(
         &self,
-        access: ResolvedSelectedObservationAccess,
+        access: DeferredSelectedObservationAccess,
         problem: &CompiledProblem,
     ) -> Result<BoundSelectedObservation, BoundSelectedObservationError> {
         let proof = self

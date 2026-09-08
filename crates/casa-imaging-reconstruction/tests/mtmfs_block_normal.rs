@@ -49,9 +49,8 @@ use casa_imaging_reconstruction::{
         GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
         GriddedNormalOperatorBlock, GriddedNormalOperatorCompiler, GriddedNormalOperatorProgram,
         GriddedNormalRoutingMeasurements, SourceCardinalityObservation, SpectralOperatorPass,
-        gridded_normal_execution_residency, gridded_normal_operator_record_bytes,
-        gridded_normal_route_capacity_bytes, prepare_spectral_operator, spectral_operator_workload,
-        standard_convolution_support,
+        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
+        prepare_spectral_operator, spectral_operator_workload, standard_convolution_support,
     },
 };
 
@@ -607,9 +606,11 @@ fn problem_with_shape_response_and_mosaic(
         ),
     );
     if primary_beam {
-        science = science.with_instrument_model(
-            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1,
-        );
+        science = science.with_instrument_model(if mosaic {
+            InstrumentModel::CasaAlmaAcaHeterogeneousInterferometricResponseV1
+        } else {
+            InstrumentModel::CasaAca7mInterferometricDirectPbV1
+        });
     }
     compile(ImagingRequest::new(
         ProblemSpecification::new(
@@ -788,6 +789,11 @@ fn mosaic_samples(problem: &casa_imaging_model::CompiledProblem) -> [SelectedObs
     let mut selected = samples(problem);
     for sample in &mut selected {
         sample.coordinates.uvw_law = UvwCoordinateLaw::MosaicPhaseTrackingCentre;
+        sample.metadata.antenna_responses = Some(casa_imaging_model::SelectedAntennaResponses {
+            antenna1: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            antenna2: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+            family_envelope: casa_imaging_model::AntennaResponseClass::CasaAca7m,
+        });
     }
     selected
 }
@@ -1313,6 +1319,9 @@ fn complete_frozen_taylor_operator(
 ) -> CompleteDataOwnerResult {
     let channels = match problem.reconstruction().basis() {
         ReconstructionBasis::TaylorViaChannelMajor { channels, .. } => channels,
+        ReconstructionBasis::JointContinuumLine { .. } => {
+            problem.geometry().spectral().output_channels()
+        }
         _ => 1,
     };
     complete_frozen_taylor_operator_slab(problem, frozen, preparation, pass, prior, 0, channels)
@@ -1527,12 +1536,18 @@ fn execute_compact_taylor(
     workers: usize,
 ) -> CompactTaylorResult {
     let specification = SpectralOperatorSpecification::new(problem).expect("Taylor operator");
-    let grid_residency = gridded_normal_execution_residency(
-        specification.grid_shape(),
-        program.accumulation_width(),
-        standard_convolution_support(),
-    )
-    .expect("exact Taylor compact grid residency");
+    let grid_residency = program
+        .storage_layout(standard_convolution_support())
+        .expect("storage layout")
+        .residency(
+            blocks
+                .iter()
+                .map(|block| {
+                    usize::try_from(block.record_count()).expect("record capacity fits usize")
+                })
+                .sum(),
+        )
+        .expect("exact Taylor compact grid residency");
     let workload = spectral_operator_workload(
         &specification,
         frozen.plan.limits().max_block_samples(),
@@ -1545,12 +1560,16 @@ fn execute_compact_taylor(
         .map(|block| usize::try_from(block.record_count()).expect("record capacity fits usize"))
         .collect::<Vec<_>>();
     let mut apply = program
-        .begin_apply_with_route_capacities(
+        .begin_apply_with_storage_plan(
             problem,
             preparation.final_model(),
             prior,
             prepared,
-            &capacities,
+            &program
+                .storage_layout(standard_convolution_support())
+                .expect("storage layout")
+                .plan(&capacities, capacities.iter().sum())
+                .expect("complete window storage"),
         )
         .expect("begin compact Taylor apply");
     assert_eq!(
@@ -2527,14 +2546,14 @@ fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel
 }
 
 #[test]
-fn t42_compact_v6_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
+fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     let problem = problem();
     let samples = samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &samples);
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.schema_version(), 6);
+    assert_eq!(program.schema_version(), 8);
     assert_eq!(
         gridded_normal_operator_record_bytes(&problem).expect("Taylor record width"),
         32,
@@ -2677,7 +2696,7 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
     let preparation = nonzero_taylor_model(&problem);
     let (program, blocks) = compile_compact_program(&problem, &frozen);
 
-    assert_eq!(program.record_bytes(), 32);
+    assert_eq!(program.record_bytes(), GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
     assert_eq!(program.prediction_width(), 1);
     let direct_prior = initial_normal_from_frozen(&problem, &frozen);
     let initial_content = direct_prior.content_identity();

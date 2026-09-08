@@ -1690,7 +1690,7 @@ fn schema_versions_record_the_t20_completion_records() {
     assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
     assert_eq!(
         casa_imaging_reconstruction::FinalNormalStateCompletionId::SCHEMA_VERSION,
-        2
+        3
     );
     assert_eq!(
         casa_imaging_reconstruction::MajorCycleCompletionId::SCHEMA_VERSION,

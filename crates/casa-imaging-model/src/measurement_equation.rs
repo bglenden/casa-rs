@@ -15,11 +15,11 @@ use sha2::{Digest, Sha256};
 use crate::{
     ProblemInputIdentities,
     compiled_problem::{
-        InstrumentModel, InstrumentResponse, LogicalIdentity, NumericsContractId,
-        PolarizationContract, ProductKind, ProductNormalization, ReconstructionBasis,
-        ReconstructionContract, RestoringBeamPolicy, ScientificContract, SpectralKernel,
-        SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope, WeightingContract,
-        WeightingScheme,
+        AwProjectionContract, InstrumentModel, InstrumentResponse, LogicalIdentity,
+        NumericsContractId, PolarizationContract, ProductKind, ProductNormalization,
+        ReconstructionBasis, ReconstructionContract, RestoringBeamPolicy, ScientificContract,
+        SpectralKernel, SpectralSamplingLaw, UvTaper, WProjectionContract, WeightDensityScope,
+        WeightingContract, WeightingScheme,
     },
     geometry::{CompiledGeometry, CompiledGeometryId, VisibilityPhaseConvention},
     observation::{
@@ -148,6 +148,8 @@ pub enum PairedTransformKind {
     ChannelIntegration,
     /// W-dependent convolution and its conjugate adjoint.
     WProjection,
+    /// Prepared convolution-function A/W response and its conjugate adjoint.
+    AwProjection,
 }
 
 /// One logical transform whose forward and adjoint directions cannot be separated.
@@ -189,6 +191,11 @@ pub enum PairedMeasurementTransform {
         /// Exact W envelope and plane identity compiled for this problem.
         contract: WProjectionContract,
     },
+    /// Apply one validated prepared-CF A/W family in both directions.
+    AwProjection {
+        /// Exact A/W terms and coordinate envelope compiled for this problem.
+        contract: AwProjectionContract,
+    },
 }
 
 impl PairedMeasurementTransform {
@@ -206,6 +213,7 @@ impl PairedMeasurementTransform {
             Self::SpectralResampling { .. } => PairedTransformKind::SpectralResampling,
             Self::ChannelIntegration { .. } => PairedTransformKind::ChannelIntegration,
             Self::WProjection { .. } => PairedTransformKind::WProjection,
+            Self::AwProjection { .. } => PairedTransformKind::AwProjection,
         }
     }
 }
@@ -573,6 +581,9 @@ pub(crate) fn compile_normal_equation(
     }
     if let Some(contract) = science.measurement_equation().w_projection() {
         transforms.push(PairedMeasurementTransform::WProjection { contract });
+    }
+    if let Some(contract) = science.measurement_equation().aw_projection() {
+        transforms.push(PairedMeasurementTransform::AwProjection { contract });
     }
     let measurement_operator = MeasurementOperatorContract {
         domain: domain.clone(),

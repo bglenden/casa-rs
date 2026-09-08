@@ -12009,6 +12009,32 @@ impl TiledArrayStorage {
             .put_aligned_fortran_order_tiles(data, start, shape)
     }
 
+    /// Read one pixel through the existing bounded tile cache without allocating
+    /// a slice array. Coordinates use the same axis order as [`Self::get_slice`].
+    /// Pixel type, rank, and coordinate bounds must match the stored array.
+    pub fn get_at<T: TilePixel>(&mut self, position: &[usize]) -> Result<T, StorageError> {
+        self.ensure_pixel_type::<T>()?;
+        if position.len() != self.inner.cube_shape.len()
+            || position
+                .iter()
+                .zip(&self.inner.cube_shape)
+                .any(|(index, extent)| index >= extent)
+        {
+            return Err(StorageError::FormatMismatch(
+                "tiled array pixel position is outside the stored shape".to_string(),
+            ));
+        }
+        let mut tile_index = 0;
+        let mut pixel_index = 0;
+        for (axis, &coordinate) in position.iter().enumerate() {
+            tile_index +=
+                coordinate / self.inner.tile_shape[axis] * self.inner.tiles_per_dim_strides[axis];
+            pixel_index += coordinate % self.inner.tile_shape[axis] * self.inner.tile_strides[axis];
+        }
+        let tile = self.inner.get_cached_tile(tile_index)?;
+        Ok(tile_as_typed::<T>(tile)[pixel_index])
+    }
+
     pub fn get_slice<T: TilePixel>(
         &mut self,
         start: &[usize],
@@ -13087,6 +13113,67 @@ mod tests {
         );
 
         reset_table_cache_budget_for_tests();
+    }
+
+    #[test]
+    fn typed_scalar_reads_match_slices_across_tiles_endian_and_cache_modes() {
+        let shape = [5, 7, 2, 1];
+        let values = (0..70)
+            .map(|index| num_complex::Complex32::new(index as f32, -(index as f32)))
+            .collect::<Vec<_>>();
+        for big_endian in [false, true] {
+            for budget in [64, 4096] {
+                let root = tempdir().unwrap();
+                let mut storage = TiledArrayStorage::create_with_cache::<num_complex::Complex32>(
+                    root.path(),
+                    &shape,
+                    &[2, 3, 1, 1],
+                    big_endian,
+                    0,
+                    "scalar",
+                    budget,
+                )
+                .unwrap();
+                storage
+                    .put_slice_fortran(&values, &[0, 0, 0, 0], &shape)
+                    .unwrap();
+                storage.flush().unwrap();
+                drop(storage);
+                let mut storage = TiledArrayStorage::open_with_cache::<num_complex::Complex32>(
+                    root.path(),
+                    0,
+                    budget,
+                )
+                .unwrap();
+                for x in 0..shape[0] {
+                    for y in 0..shape[1] {
+                        for z in 0..shape[2] {
+                            let position = [x, y, z, 0];
+                            let expected = values[x + shape[0] * (y + shape[1] * z)];
+                            let value =
+                                storage.get_at::<num_complex::Complex32>(&position).unwrap();
+                            assert_eq!(value.re.to_bits(), expected.re.to_bits());
+                            assert_eq!(value.im.to_bits(), expected.im.to_bits());
+                            let slice = storage
+                                .get_slice::<num_complex::Complex32>(&position, &[1; 4])
+                                .unwrap();
+                            assert_eq!(value, slice[[0, 0, 0, 0]]);
+                        }
+                    }
+                }
+                assert!(storage.get_at::<f32>(&[0; 4]).is_err());
+                for invalid in [
+                    &[0, 0, 0][..],
+                    &[5, 0, 0, 0],
+                    &[0, 7, 0, 0],
+                    &[0, 0, 2, 0],
+                    &[0, 0, 0, 1],
+                    &[usize::MAX, 0, 0, 0],
+                ] {
+                    assert!(storage.get_at::<num_complex::Complex32>(invalid).is_err());
+                }
+            }
+        }
     }
 
     #[test]

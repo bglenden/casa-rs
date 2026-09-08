@@ -72,12 +72,18 @@ pub use observation_transaction::{
     BoundObservationTransaction, ObservationTransactionPlanError,
     ObservationTransactionPublicationScope, ObservationTransactionWork,
 };
+pub use prepared_artifact::reload_probe;
 pub use prepared_artifact::{
-    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactDescriptor, PreparedArtifactError,
-    PreparedArtifactGenerator, PreparedArtifactKind, PreparedArtifactLoadSource,
-    PreparedArtifactOperation, PreparedArtifactOrder, PreparedArtifactPlanError,
-    PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor, PreparedArtifactPrecision,
-    PreparedArtifactRegistration, PreparedArtifactRejection, PreparedArtifactReservation,
+    PreparedArtifact, PreparedArtifactBudget, PreparedArtifactCatalogEntryOutcome,
+    PreparedArtifactCatalogPlanFragment, PreparedArtifactCatalogReuseOutcome,
+    PreparedArtifactConsumer, PreparedArtifactDescriptor, PreparedArtifactError,
+    PreparedArtifactExecutionBinding, PreparedArtifactGenerator, PreparedArtifactImportSegment,
+    PreparedArtifactImportSource, PreparedArtifactImporter, PreparedArtifactKind,
+    PreparedArtifactLoadSource, PreparedArtifactOperation, PreparedArtifactOrder,
+    PreparedArtifactPlanError, PreparedArtifactPlanFragment, PreparedArtifactPlaneDescriptor,
+    PreparedArtifactPrecision, PreparedArtifactReader, PreparedArtifactReaderFactory,
+    PreparedArtifactReaderPlan, PreparedArtifactReaderResidency, PreparedArtifactRegistration,
+    PreparedArtifactRejection, PreparedArtifactReservation, PreparedArtifactResidencyMeasurements,
     PreparedArtifactReuseOutcome, PreparedArtifactSegmentDescriptor, PreparedArtifactSourceSegment,
     PreparedArtifactStore, PreparedArtifactUvAffine,
 };

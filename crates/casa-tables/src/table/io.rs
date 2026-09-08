@@ -524,7 +524,7 @@ impl Table {
     ///
     /// If those conditions do not hold, use the normal save path instead.
     pub(crate) fn persist_selected_columns_in_place(
-        &self,
+        &mut self,
         changed_columns: &[&str],
     ) -> Result<(), TableError> {
         self.persist_selected_rows_in_place(changed_columns, &[])
@@ -536,7 +536,7 @@ impl Table {
     /// `changed_rows` may be empty, in which case the save falls back to
     /// column-only invalidation semantics.
     pub(crate) fn persist_selected_rows_in_place(
-        &self,
+        &mut self,
         changed_columns: &[&str],
         changed_rows: &[usize],
     ) -> Result<(), TableError> {
@@ -944,7 +944,7 @@ impl Table {
             profiler.mark("write_control_file");
         }
         crate::storage::tiled_stman::invalidate_shared_tile_cache_for_table(source_path);
-        Ok(())
+        self.inner.refresh_read_metadata(table_dat)
     }
 
     /// Drop successfully persisted lazy cell updates for a bounded write batch.
@@ -1140,7 +1140,7 @@ impl Table {
                 seq_nr: target_seq_nr,
                 columns: vec![target_column.to_string()],
             });
-            Ok(())
+            self.inner.refresh_read_metadata(table_dat)
         })();
         self.finish_write_operation(auto_unlock, result)
     }
@@ -1298,7 +1298,7 @@ impl Table {
                 seq_nr,
                 columns: vec![column.to_string()],
             });
-            Ok(())
+            self.inner.refresh_read_metadata(table_dat)
         })();
         self.finish_write_operation(auto_unlock, result)
     }

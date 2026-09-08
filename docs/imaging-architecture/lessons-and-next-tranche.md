@@ -164,6 +164,36 @@ The 45-minute clock pauses while a named gate is visibly running; record its
 command and start once, then its result. The post-repair closure check is not a
 second review and may not reopen design or inspect untouched work.
 
+#### Correctness-first execution and lean records
+
+For correctness tickets, performance measurement informs later acceleration; it
+does not add a speed gate. In particular, the serial reference contract in #448
+precedes acceleration. Before full correctness acceptance, a performance change
+requires measured evidence that pathological or unbounded behavior prevents
+practical completion of a required gate. Required memory/resource limits remain
+gates. Being slower than CASA alone is not a correctness blocker. If a forecast
+conflicts with an observer time ceiling, report the forecast and guard for a
+decision; do not silently make that ceiling or CASA runtime an acceptance target.
+Tickets whose approved outcome explicitly includes performance retain their
+named performance requirements.
+
+The 45-minute rule requires meaningful progress or a concrete blocker, not
+artificial micro-commits, repeated GitHub updates, or per-commit reviews. Keep one
+canonical current evidence summary on the issue or pull request and link from
+the other. Publish milestones, blockers, scope decisions, and final evidence;
+retain individual probes and hypotheses in diagnostic artifacts rather than
+mirroring a running transcript. Batch source-hash and registry maintenance where
+safe before affected gates and review; never weaken identity validation.
+
+Use the single consolidated contract review above, not a new review cycle for
+each diagnostic or optimization. Retry limits follow the same underlying problem
+across agents and handoffs. Routine progress monitoring belongs in scripts or
+product wait mechanisms, with model attention on actionable changes. Before an
+unattended overnight run, agree on a time or spending checkpoint and pause there
+with a concise restart handoff. Shared account usage is not exact ticket billing.
+None of these process rules reduces scientific, persistence, resource, deletion,
+or full-wave acceptance requirements.
+
 ### Representative scientific evidence
 
 Programme correctness is not inferred from toy fixtures, performance runs, or

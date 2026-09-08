@@ -8,6 +8,9 @@ use thiserror::Error;
 /// Exact reason product planning, production, or authorization failed closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ProductsError {
+    /// Shared reconstruction response normalization failed.
+    #[error(transparent)]
+    ImageResponse(#[from] casa_imaging_reconstruction::ImageResponseError),
     /// Production controls were outside their validated ranges.
     #[error("continuum production controls are invalid")]
     InvalidControls,

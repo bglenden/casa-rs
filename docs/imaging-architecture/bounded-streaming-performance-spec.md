@@ -933,7 +933,7 @@ lease into the sealed replay. Later plans bind the retained artifact by
 identity, storage domain, and ceiling, and therefore charge only their direct
 read rate, queue, descriptor, and bounded-buffer resources. The application
 moves the opaque artifact and never acquires a second lease. This is distinct
-from the still-open, unlinked AWProject spill described in `ARCHITECTURE.md`.
+from the bounded prepared-cell AWProject boundary described in `ARCHITECTURE.md`.
 
 Production retention still requires measured full-artifact bytes and peak
 residency, exact MS/artifact pass counts, the complete 32 GiB workload,

@@ -559,6 +559,7 @@ fn request(measurement_set: PathBuf, image_name: PathBuf) -> ContinuumImagingReq
         write_primary_beam: false,
         pbcor: false,
         w_projection_planes: None,
+        aw_projection: None,
         task_requirements: vec![
             TaskRequirement::PolarizationSelection,
             TaskRequirement::SerialCpu,

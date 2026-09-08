@@ -33,10 +33,14 @@ from .casa_tclean import (
     build_invocation_plan,
     canonical_sha256,
     cf_cache_parameter_identity as protocol_cf_cache_parameter_identity,
+    load_validated_recipe,
     normalize_archived_parameters,
     parse_literal_assignment_recipe,
     ProtocolError,
     summarize_completed_results,
+    product_inventory_identity,
+    validate_request,
+    validate_result_envelope,
     validate_result_for_request,
 )
 from .casa_runtime_identity import (
@@ -66,6 +70,7 @@ from .host_telemetry import (
     HostTelemetryError,
     validate_host_telemetry,
 )
+from .measurement_set_equivalence import validate_measurement_set_equivalence
 from .schema import RUN_RESULT_SCHEMA_VERSION, validate_run_result
 from .subprocesses import run_command
 from .tree_identity import sha256_file, tree_identity
@@ -79,6 +84,11 @@ CASA_ORACLE_VERSION = "6.7.5.9"
 # construction or applicability.  Deconvolution, mask, restoration, output,
 # and casa-rs execution-policy controls deliberately do not fragment this key.
 CF_CACHE_PARAMETER_FIELDS = PROTOCOL_CF_CACHE_PARAMETER_FIELDS
+
+# These invocation paths necessarily differ between a retained CASA result and
+# the current run.  All other effective tclean parameters remain part of the
+# reuse contract.
+REUSED_CASA_PATH_PARAMETERS = frozenset({"cfcache", "imagename"})
 
 
 @dataclass(frozen=True)
@@ -123,9 +133,12 @@ def recipe_run_support(
         "reason": "; ".join(missing) if missing else None,
         "missing_capabilities": missing,
     }
-    if skip_casa:
+    if skip_casa and missing:
         status = "dry_run_only"
-        reason = f"{workload_id}: CASA oracle is disabled for a recipe-backed run"
+        reason = (
+            f"{workload_id}: CASA oracle is disabled and casa-rs cannot execute "
+            "the frozen semantics: " + "; ".join(missing)
+        )
     elif missing and not skip_rust:
         status = "dry_run_only"
         reason = (
@@ -150,6 +163,8 @@ def recipe_run_support(
 
 
 def rust_missing_capabilities(imaging: dict[str, Any]) -> list[str]:
+    if _is_supported_paired_aw_request(imaging):
+        return []
     missing: list[str] = []
     if imaging.get("gridder") in {"awproject", "awp2", "awphpg"} and any(
         imaging.get(name) for name in ("aterm", "wbawp", "conjbeams")
@@ -167,6 +182,37 @@ def rust_missing_capabilities(imaging: dict[str, Any]) -> list[str]:
     if imaging.get("normtype") or imaging.get("restoringbeam"):
         missing.append("CASA normalization and common-beam restoration semantics")
     return list(dict.fromkeys(missing))
+
+
+def _is_supported_paired_aw_request(imaging: dict[str, Any]) -> bool:
+    """Recognize the exact production paired-AW surface implemented by T51."""
+
+    return all(
+        (
+            imaging.get("gridder") == "awproject",
+            imaging.get("wterm") == "wproject",
+            imaging.get("wprojplanes") == 32,
+            imaging.get("specmode") == "mfs",
+            imaging.get("stokes", "I") == "I",
+            imaging.get("facets", 1) == 1,
+            imaging.get("aterm") is True,
+            imaging.get("psterm") is False,
+            imaging.get("wbawp") is True,
+            imaging.get("conjbeams") is True,
+            imaging.get("usepointing") is True,
+            imaging.get("computepastep") == 360.0,
+            imaging.get("rotatepastep") == 360.0,
+            imaging.get("pointingoffsetsigdev", 0.0) == 0.0,
+            imaging.get("mosweight", False) is False,
+            imaging.get("vptable", "") == "",
+            imaging.get("deconvolver") == "mtmfs",
+            imaging.get("nterms") == 2,
+            imaging.get("normtype") == "flatnoise",
+            imaging.get("restoringbeam") == "common",
+            imaging.get("chanchunks", 1) == 1,
+            imaging.get("parallel", False) is False,
+        )
+    )
 
 
 def resolve_recipe_path(casa: dict[str, Any]) -> pathlib.Path:
@@ -187,6 +233,269 @@ def resolve_recipe_path(casa: dict[str, Any]) -> pathlib.Path:
         )
     return path
 
+
+def validate_reused_casa_prefix(
+    plan: dict[str, Any], prefix: str | pathlib.Path
+) -> None:
+    """Fail closed before Rust execution when reusing a CASA product bundle.
+
+    Retained bundles keep protocol sidecars next to the product prefix, but
+    their archived recipe path may point at the temporary checkout that
+    produced them.  Validate each sidecar on its own, then bind its effective
+    CASA call to the current checked-in recipe without requiring historical
+    recipe bytes or a historical recipe SHA to remain available.
+    """
+
+    prefix_path = pathlib.Path(prefix).expanduser()
+    if not prefix_path.is_absolute():
+        raise HarnessError(f"reused CASA prefix must be absolute: {prefix_path}")
+    if prefix_path.is_symlink():
+        raise HarnessError(f"reused CASA prefix must not be a symlink: {prefix_path}")
+    if prefix_path.name != "casa" or prefix_path.parent.parent.name != "casa":
+        raise HarnessError(
+            "reused CASA prefix must use the canonical casa/<call>/casa layout: "
+            + str(prefix_path)
+        )
+
+    product_parent = prefix_path.parent
+    if product_parent.is_symlink() or not product_parent.is_dir():
+        raise HarnessError(
+            f"reused CASA product directory is missing: {product_parent}"
+        )
+    product_siblings = sorted(
+        item
+        for item in product_parent.iterdir()
+        if item.name == prefix_path.name or item.name.startswith(prefix_path.name + ".")
+    )
+    if not product_siblings:
+        raise HarnessError(f"reused CASA prefix has no products: {prefix_path}")
+
+    call_name = prefix_path.parent.name
+    run_root = prefix_path.parent.parent.parent
+    call_root = run_root / "protocol" / call_name
+    if call_root.is_symlink() or not call_root.is_dir():
+        raise HarnessError(f"reused CASA protocol directory is missing: {call_root}")
+    request_path = call_root / "request.json"
+    result_path = call_root / "result.json"
+    request = _load_reused_casa_json(request_path, "request")
+    result = _load_reused_casa_json(result_path, "result")
+
+    try:
+        request = validate_request(request)
+        validate_result_envelope(result)
+        product_inventory_identity(result["products"]["after"])
+    except (KeyError, TypeError, ProtocolError) as error:
+        raise HarnessError(
+            f"reused CASA protocol provenance is invalid for {prefix_path}: {error}"
+        ) from error
+
+    if result.get("status") != "completed":
+        raise HarnessError(
+            f"reused CASA protocol result is not completed: {result.get('status')!r}"
+        )
+    current_recipe, expected_effective = _current_reused_casa_contract(plan)
+    expected_science = _reusable_effective_kwargs(expected_effective)
+    historical_science = _reusable_effective_kwargs(result["effective_kwargs"])
+    if expected_science.get("vis") != historical_science.get("vis"):
+        current_vis = expected_science.get("vis")
+        historical_vis = historical_science.get("vis")
+        if not isinstance(current_vis, str) or not isinstance(historical_vis, str):
+            raise HarnessError(
+                "reused CASA relocation requires one explicit MeasurementSet path"
+            )
+        proof = validate_measurement_set_equivalence(
+            pathlib.Path(current_vis),
+            pathlib.Path(historical_vis),
+            casa_python=plan["command"]["casa"]["python"],
+        )
+        print(
+            "reused_casa_ms_equivalence " + json.dumps(proof, sort_keys=True), flush=True
+        )
+        historical_science["vis"] = current_vis
+    if expected_science != historical_science:
+        differences = []
+        for name in sorted(set(expected_science) | set(historical_science)):
+            expected_value = expected_science.get(name, "<missing>")
+            historical_value = historical_science.get(name, "<missing>")
+            if expected_value != historical_value:
+                differences.append(
+                    f"{name}: current={expected_value!r}, reused={historical_value!r}"
+                )
+        raise HarnessError(
+            "reused CASA effective parameters do not match the current recipe: "
+            + "; ".join(differences)
+        )
+    _validate_reused_casa_result_binding(
+        request,
+        result,
+        expected_version=_current_casa_expected_version(plan),
+        current_recipe=current_recipe,
+        prefix=prefix_path,
+        product_siblings=product_siblings,
+    )
+
+
+def _load_reused_casa_json(path: pathlib.Path, label: str) -> dict[str, Any]:
+    if path.is_symlink() or not path.is_file():
+        raise HarnessError(f"reused CASA {label} sidecar is missing: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HarnessError(
+            f"cannot read reused CASA {label} sidecar {path}: {error}"
+        ) from error
+    if not isinstance(value, dict):
+        raise HarnessError(f"reused CASA {label} sidecar must be an object: {path}")
+    return value
+
+
+def _current_casa_expected_version(plan: dict[str, Any]) -> str:
+    casa = plan.get("command", {}).get("casa")
+    if not isinstance(casa, dict):
+        raise HarnessError("recipe plan has no CASA command metadata")
+    value = casa.get("expected_version")
+    if not isinstance(value, str) or not value:
+        raise HarnessError("recipe plan has no CASA expected version")
+    return value
+
+
+def _current_reused_casa_contract(
+    plan: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    casa = plan.get("command", {}).get("casa")
+    if not isinstance(casa, dict):
+        raise HarnessError("recipe plan has no CASA command metadata")
+    recipe_spec = casa.get("recipe")
+    base_overrides = casa.get("base_overrides")
+    if not isinstance(recipe_spec, dict) or not isinstance(base_overrides, dict):
+        raise HarnessError("recipe plan has no effective CASA recipe metadata")
+    try:
+        recipe = load_validated_recipe(recipe_spec)
+    except ProtocolError as error:
+        raise HarnessError(f"cannot load current CASA recipe: {error}") from error
+    effective_plan = casa.get("effective_plan")
+    if isinstance(effective_plan, dict) and isinstance(
+        effective_plan.get("effective_kwargs"), dict
+    ):
+        return recipe, copy.deepcopy(effective_plan["effective_kwargs"])
+    try:
+        effective, _, _ = normalize_archived_parameters(
+            recipe["archived_parameters"], base_overrides
+        )
+    except ProtocolError as error:
+        raise HarnessError(
+            f"cannot derive current CASA effective parameters: {error}"
+        ) from error
+    return recipe, effective
+
+
+def _reusable_effective_kwargs(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise HarnessError("CASA effective parameters must be an object")
+    return {
+        name: copy.deepcopy(parameter)
+        for name, parameter in value.items()
+        if name not in REUSED_CASA_PATH_PARAMETERS
+    }
+
+
+def _validate_reused_casa_result_binding(
+    request: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    expected_version: str,
+    current_recipe: dict[str, Any],
+    prefix: pathlib.Path,
+    product_siblings: list[pathlib.Path],
+) -> None:
+    request_recipe = request.get("recipe")
+    result_recipe = result.get("recipe")
+    recipe_identity_fields = ("path", "sha256", "task", "parameter_names")
+    if (
+        not isinstance(request_recipe, dict)
+        or not isinstance(result_recipe, dict)
+        or set(request_recipe) != set(recipe_identity_fields)
+        or set(result_recipe)
+        != set(recipe_identity_fields) | {"archived_parameters"}
+        or any(
+            result_recipe.get(field) != request_recipe.get(field)
+            for field in recipe_identity_fields
+        )
+        or not isinstance(result_recipe.get("archived_parameters"), dict)
+    ):
+        raise HarnessError(
+            "reused CASA result.recipe does not match its request sidecar"
+        )
+
+    request_cache = request.get("cache")
+    result_cache = result.get("cache")
+    if not isinstance(request_cache, dict) or not isinstance(result_cache, dict):
+        raise HarnessError("reused CASA cache sidecar binding is missing")
+    for field in ("plan", "plan_sha256"):
+        if result_cache.get(field) != request_cache.get(field):
+            raise HarnessError(
+                f"reused CASA result.cache.{field} does not match its request sidecar"
+            )
+
+    validation_request = copy.deepcopy(request)
+    validation_result = copy.deepcopy(result)
+    current_recipe_spec = {
+        field: current_recipe[field]
+        for field in ("path", "sha256", "task", "parameter_names")
+    }
+    validation_request["recipe"] = current_recipe_spec
+    validation_result["recipe"] = current_recipe
+    request_cache_plan = validation_request["cache"].get("plan")
+    result_cache = validation_result.get("cache")
+    if isinstance(request_cache_plan, dict) and isinstance(result_cache, dict):
+        request_cache_plan["recipe_sha256"] = current_recipe["sha256"]
+        plan_sha256 = canonical_sha256(request_cache_plan)
+        validation_request["cache"]["plan_sha256"] = plan_sha256
+        result_cache["plan"] = copy.deepcopy(request_cache_plan)
+        result_cache["plan_sha256"] = plan_sha256
+    try:
+        validate_result_for_request(validation_result, validation_request)
+    except ProtocolError as error:
+        raise HarnessError(
+            f"reused CASA protocol result does not bind to its request: {error}"
+        ) from error
+
+    if any(
+        validation_result["casa"].get(field) != expected_version
+        for field in ("expected_version", "actual_version")
+    ):
+        raise HarnessError(
+            "reused CASA result version does not match the current recipe plan"
+        )
+
+    effective = result["effective_kwargs"]
+    image_name = effective.get("imagename") if isinstance(effective, dict) else None
+    if not isinstance(image_name, str) or not pathlib.Path(image_name).is_absolute():
+        raise HarnessError("reused CASA result has no absolute effective imagename")
+    image_path = pathlib.Path(image_name)
+    if (
+        image_path.name != prefix.name
+        or image_path.parent.name != prefix.parent.name
+        or image_path.parent.parent.name != prefix.parent.parent.name
+    ):
+        raise HarnessError(
+            "reused CASA result imagename is not bound to the requested product call"
+        )
+
+    products = result.get("products", {}).get("after")
+    if not isinstance(products, list) or not products:
+        raise HarnessError("reused CASA result has no completed product inventory")
+    expected_suffixes = sorted(product["suffix"] for product in products)
+    actual_suffixes = sorted(
+        item.name[len(prefix.name) :]
+        for item in product_siblings
+        if item.name == prefix.name or item.name.startswith(prefix.name + ".")
+    )
+    if actual_suffixes != expected_suffixes:
+        raise HarnessError(
+            "reused CASA product siblings do not match the protocol result: "
+            f"expected={expected_suffixes!r}, actual={actual_suffixes!r}"
+        )
 
 def load_checked_identity(
     casa: dict[str, Any], *, path_key: str, digest_key: str
@@ -676,7 +985,7 @@ def attach_output_paths(
             "cache_plan_sha256": cache_plan_sha256,
         }
     )
-    plan["command"]["argv"] = [
+    plan["command"]["casa"]["planned_argv"] = [
         str(plan["command"]["casa"]["python"]),
         str(CASA_TCLEAN_PROTOCOL),
         str(planned_request_path),
@@ -684,7 +993,9 @@ def attach_output_paths(
     ]
     plan["products"] = {
         "root": None if dry_run else str(final_root),
-        "rust_prefix": None,
+        "rust_prefix": plan["command"]["env"].get(
+            "IMAGER_BENCH_RUST_OUTPUT_PREFIX"
+        ),
         "casa_prefix": None if dry_run else str(retained_prefix),
         "execution_root": str(execution_root),
         "execution_casa_prefix": str(execution_prefix),

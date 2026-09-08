@@ -107,12 +107,37 @@ impl BlockNormalPlan {
                 actual: coefficients.len(),
             });
         }
-        if self.coefficient_terms == 1 {
-            coefficients[0] = exact_constant_weight(imaging_weight)?;
-            return Ok(());
+        for (output, value) in coefficients
+            .iter_mut()
+            .zip(self.weighted_coefficients(frequency_hz, imaging_weight)?)
+        {
+            *output = value?;
         }
-        let casa_imaging_weight = casa_imaging_weight(imaging_weight)?;
-        self.fill_scaled_powers(frequency_hz, casa_imaging_weight, coefficients)
+        Ok(())
+    }
+
+    /// Stream the same CASA-rounded coefficients without a temporary lane buffer.
+    pub(crate) fn weighted_coefficients(
+        self,
+        frequency_hz: f64,
+        imaging_weight: f64,
+    ) -> Result<impl ExactSizeIterator<Item = Result<f64, BlockNormalError>>, BlockNormalError>
+    {
+        let (normalized, weight) = if self.coefficient_terms == 1 {
+            (0.0, exact_constant_weight(imaging_weight)?)
+        } else {
+            (
+                self.normalized_frequency(frequency_hz)? as f32,
+                f64::from(casa_imaging_weight(imaging_weight)?),
+            )
+        };
+        Ok((0..self.coefficient_terms).map(move |order| {
+            if self.coefficient_terms == 1 {
+                Ok(weight)
+            } else {
+                casa_scaled_taylor_power(normalized, weight as f32, order)
+            }
+        }))
     }
 
     pub(crate) fn fill_normal_moment_weights(

@@ -42,6 +42,8 @@ const EXECUTION_PLAN_IDENTITY_VERSION: u32 = 12;
 const RESOURCE_POLICY_IDENTITY_DOMAIN: &[u8] = b"casa-rs-resource-policy";
 const RESOURCE_POLICY_IDENTITY_VERSION: u32 = 1;
 
+mod work_control;
+
 macro_rules! digest_identity {
     ($name:ident, $summary:literal) => {
         #[doc = $summary]
@@ -2830,38 +2832,20 @@ impl RecordedInfeasibility {
     /// proof that the candidate's resource region is infeasible.
     fn from_store(store: &crate::ExecutionReceiptStore) -> Result<Self, ReceiptError> {
         let mut regions = Vec::new();
-        for attempt in store.attempts()? {
-            let receipt = store.open(attempt)?;
-            let status = receipt.status();
-            if !matches!(
-                status,
-                ReceiptStatus::Failed | ReceiptStatus::Aborted | ReceiptStatus::Infeasible
-            ) || receipt.failure_kind() != Some(ReceiptFailureKind::ResourceInfeasible)
-            {
-                continue;
-            }
-            let Some(crate::ReceiptInfeasibilityCertificate::Infeasible {
-                resource_identity,
-                required,
-                available,
-                ..
-            }) = receipt.infeasibility_certificate()
-            else {
-                // Capability gaps and references to earlier receipts are not
-                // quantitative pressure regions and cannot constrain a later
-                // Resource Authority decision.
+        for summary in store.summaries()? {
+            let Some(infeasibility) = summary.infeasibility else {
                 continue;
             };
             regions.push(RegionFailure {
-                problem: receipt.problem_identity(),
-                physical_work: receipt.dag_identity(),
-                resource_policy: receipt.resource_policy_identity(),
-                alternative: receipt.selected_alternative_projection().id,
-                attempt,
-                status,
-                resource_identity,
-                required,
-                available,
+                problem: infeasibility.problem,
+                physical_work: infeasibility.physical_work,
+                resource_policy: infeasibility.resource_policy,
+                alternative: infeasibility.alternative,
+                attempt: summary.attempt,
+                status: summary.status,
+                resource_identity: infeasibility.resource_identity,
+                required: infeasibility.required,
+                available: infeasibility.available,
             });
         }
         Ok(Self {
@@ -3045,6 +3029,13 @@ pub struct CompiledWorkContext<'a> {
 }
 
 impl<'a> CompiledWorkContext<'a> {
+    pub(crate) fn prepared_artifact_dependency_id(
+        self,
+        kind: casa_imaging_model::PreparedArtifactScientificKind,
+    ) -> casa_imaging_model::LogicalIdentity {
+        self.problem.prepared_artifact_dependency_id(kind)
+    }
+
     /// Return the stable compiled-problem identity.
     #[must_use]
     pub const fn problem_id(self) -> CompiledProblemId {
@@ -3114,6 +3105,7 @@ impl<'a> CompiledWorkContext<'a> {
 /// authority.
 #[derive(Clone, Copy, Debug)]
 pub struct WorkExecutionContext<'a> {
+    control: Option<&'a work_control::WorkControl<'a>>,
     attempt_id: ExecutionAttemptId,
     compiled: CompiledWorkContext<'a>,
     implementation_registry: ImplementationRegistryId,
@@ -3130,11 +3122,77 @@ pub struct WorkExecutionContext<'a> {
     completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
 }
 
+#[cfg(test)]
+pub(crate) struct WorkExecutionTestBindings<'a> {
+    problem: &'a CompiledProblem,
+    implementation_registry: ImplementationRegistryId,
+    completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+}
+
+#[cfg(test)]
+impl<'a> WorkExecutionTestBindings<'a> {
+    pub(crate) const fn new(
+        problem: &'a CompiledProblem,
+        implementation_registry: ImplementationRegistryId,
+        completed_observation_reads: &'a BTreeMap<WorkNodeId, AttemptBoundObservationCompletion>,
+    ) -> Self {
+        Self {
+            problem,
+            implementation_registry,
+            completed_observation_reads,
+        }
+    }
+}
+
 impl<'a> WorkExecutionContext<'a> {
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        attempt_id: ExecutionAttemptId,
+        bindings: WorkExecutionTestBindings<'a>,
+        scheduled: &'a crate::execution::WorkExecutionContext,
+        planned_artifacts: &'a [PlannedArtifact],
+        stage_prediction: &'a StagePrediction,
+        resource_alternative: &'a crate::DemandAlternative,
+    ) -> Self {
+        Self {
+            control: None,
+            attempt_id,
+            compiled: CompiledWorkContext {
+                problem: bindings.problem,
+            },
+            implementation_registry: bindings.implementation_registry,
+            scheduled,
+            planned_artifacts,
+            stage_prediction,
+            resource_alternative,
+            observation_consistency: None,
+            observation_reads: None,
+            visibility_writes: None,
+            publication: None,
+            publication_resources: None,
+            product_publication: None,
+            completed_observation_reads: bindings.completed_observation_reads,
+        }
+    }
+
     /// Return the execution attempt that dispatched this exact node call.
     #[must_use]
     pub const fn attempt_id(self) -> ExecutionAttemptId {
         self.attempt_id
+    }
+
+    /// Poll cooperative control between independently settled preparation units.
+    ///
+    /// This seam is enabled only for synchronous, fence-free Cache work before
+    /// publication. The controller sees the launch-time pressure snapshot and
+    /// no eligible adaptation while work is active. On `true`, settle local
+    /// resources and return partial failure measurements; the runtime owns
+    /// cancellation, validation, draining and terminal receipt classification.
+    /// A mid-work adaptation request stops work as an invalid scheduler request.
+    #[must_use]
+    pub fn stop_requested(self) -> bool {
+        self.control
+            .is_some_and(work_control::WorkControl::stop_requested)
     }
 
     /// Return compiled science common to every work node.
@@ -3209,8 +3267,9 @@ impl<'a> WorkExecutionContext<'a> {
 
     pub(crate) fn plan_artifact(self, identity: ArtifactIdentity) -> Option<&'a PlannedArtifact> {
         self.planned_artifacts
-            .iter()
-            .find(|artifact| artifact.identity() == identity)
+            .binary_search_by_key(&identity, PlannedArtifact::identity)
+            .ok()
+            .map(|index| &self.planned_artifacts[index])
     }
 
     /// Return the canonical prediction for this exact node.
@@ -4081,6 +4140,7 @@ fn work_execution_context<'a>(
                   visibility_writes,
                   publication,
                   publication_resources| WorkExecutionContext {
+        control: None,
         attempt_id,
         compiled,
         implementation_registry: plan.implementation_registry,
@@ -4344,6 +4404,7 @@ where
     let mut pending = None;
     let mut controller_stopped = false;
     loop {
+        let mut status_for_work = None;
         if pending.is_none() && !controller_stopped {
             let status = match (scheduler.lease_epoch(), scheduler.pressure_changed()) {
                 (Some(lease_epoch), Ok(Some(pressure_changed))) => ExecutionStatus {
@@ -4407,6 +4468,7 @@ where
                     }
                 }
             }
+            status_for_work = Some(status);
         }
         if pending.is_some() {
             let _ = abort_launched_work(&launched, &implementations);
@@ -4435,42 +4497,36 @@ where
                     defer_receipt_error(&mut scheduler, &mut pending, error);
                     controller_stopped = true;
                     let _ = receipt.work_failed(&node_id);
-                    if work.node().kind == WorkKind::Release {
-                        if scheduler.fail_release_work(&node_id).is_err() {
-                            return Err(terminal_drain_error(
-                                &mut scheduler,
-                                &mut pending,
-                                "receipt checkpoint failure is retained",
-                            ));
+                    // Receipt failure stops new work, but cannot substitute
+                    // for the concrete cleanup of already-live allocations.
+                    if work.node().kind != WorkKind::Release {
+                        match scheduler.finish_work(
+                            node_id,
+                            WorkResult::Failed {
+                                message: "execution receipt checkpoint failed".to_string(),
+                            },
+                        ) {
+                            Ok(fences) => {
+                                for fence in fences {
+                                    if scheduler.complete_fence(fence).is_err() {
+                                        return Err(terminal_drain_error(
+                                            &mut scheduler,
+                                            &mut pending,
+                                            "receipt checkpoint failure is retained",
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                return Err(terminal_drain_error(
+                                    &mut scheduler,
+                                    &mut pending,
+                                    "receipt checkpoint failure is retained",
+                                ));
+                            }
                         }
                         continue;
                     }
-                    match scheduler.finish_work(
-                        node_id,
-                        WorkResult::Failed {
-                            message: "execution receipt checkpoint failed".to_string(),
-                        },
-                    ) {
-                        Ok(fences) => {
-                            for fence in fences {
-                                if scheduler.complete_fence(fence).is_err() {
-                                    return Err(terminal_drain_error(
-                                        &mut scheduler,
-                                        &mut pending,
-                                        "receipt checkpoint failure is retained",
-                                    ));
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            return Err(terminal_drain_error(
-                                &mut scheduler,
-                                &mut pending,
-                                "receipt checkpoint failure is retained",
-                            ));
-                        }
-                    }
-                    continue;
                 }
                 let context = work_execution_context(
                     receipt.attempt_id(),
@@ -4479,7 +4535,52 @@ where
                     &work,
                     &completed_observation_reads,
                 );
-                match implementation.execute(context) {
+                let (execution, stop) = if !controller_stopped
+                    && pending.is_none()
+                    && work.node().kind == WorkKind::Cache
+                    && work.node().fences.is_empty()
+                {
+                    work_control::execute(
+                        implementation,
+                        context,
+                        controller,
+                        status_for_work.expect("active work follows controller admission"),
+                    )
+                } else {
+                    (implementation.execute(context), None)
+                };
+                let cooperative_cancel = stop == Some(RunDirective::Cancel);
+                if let Some(directive) = stop {
+                    controller_stopped = true;
+                    if let Err(source) = implementation.abort_node_io(&node_id) {
+                        pending = Some(PendingRunError::Execution {
+                            node: node_id.clone(),
+                            source,
+                        });
+                    }
+                    if let Err((node, source)) = abort_launched_work(&launched, &implementations)
+                        && pending.is_none()
+                    {
+                        pending = Some(PendingRunError::Execution { node, source });
+                    }
+                    match directive {
+                        RunDirective::Cancel => {
+                            if let Err(error) = scheduler.cancel() {
+                                defer_scheduler_error(&mut scheduler, &mut pending, error);
+                            }
+                        }
+                        RunDirective::Adapt(requested) => defer_scheduler_error(
+                            &mut scheduler,
+                            &mut pending,
+                            ExecutionError::IneligibleAdaptation {
+                                requested,
+                                eligible: Vec::new(),
+                            },
+                        ),
+                        RunDirective::Continue => unreachable!("only stop requests are retained"),
+                    }
+                }
+                match execution {
                     Ok(measurements) => {
                         if work.node().kind == WorkKind::Publication {
                             controller_stopped = true;
@@ -4728,9 +4829,12 @@ where
                                 )
                             }) {
                             Some((measurements, Ok(()))) => {
-                                if let Err(error) =
+                                let recorded = if cooperative_cancel {
+                                    receipt.work_cancelled_with_measurements(&node_id, measurements)
+                                } else {
                                     receipt.work_failed_with_measurements(&node_id, measurements)
-                                {
+                                };
+                                if let Err(error) = recorded {
                                     defer_receipt_error(&mut scheduler, &mut pending, error);
                                 }
                             }
@@ -4755,7 +4859,7 @@ where
                                 let _ = receipt.work_failed(&node_id);
                             }
                         }
-                        if pending.is_none() {
+                        if pending.is_none() && !cooperative_cancel {
                             pending = Some(PendingRunError::Execution {
                                 node: node_id.clone(),
                                 source,

@@ -1578,7 +1578,7 @@ fn normalize_domain_plane(
             normalize_plane(values, normalization, plane.sum_weight)
         }
         ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-            MosaicSensitivity::new(plane.sensitivity)?.normalize(values, normalization)
+            Ok(MosaicSensitivity::new(plane.sensitivity)?.normalize(values, normalization)?)
         }
     }
 }
@@ -1626,7 +1626,7 @@ fn restored_plane(
     Ok(restored)
 }
 
-fn reconstruction_mask_for_domain<'a>(
+pub(crate) fn reconstruction_mask_for_domain<'a>(
     inputs: &'a ContinuumProductInputs<'_>,
     role: &ImageDomainRole,
 ) -> Result<Option<&'a casa_imaging_reconstruction::ReconstructionMask>, ProductsError> {

@@ -2686,7 +2686,7 @@ impl CompositeStorage {
         })
     }
 
-    fn load_plain_scalar_column_rows(
+    pub(crate) fn load_plain_scalar_column_rows(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -2694,6 +2694,9 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ScalarValue>>, StorageError> {
+        if selected_rows.is_empty() {
+            return Ok(Vec::new());
+        }
         let desc_idx = table_dat
             .table_desc
             .columns
@@ -2957,7 +2960,7 @@ impl CompositeStorage {
         array_column_from_snapshot(&snapshot, column)
     }
 
-    fn load_plain_array_column_rows(
+    pub(crate) fn load_plain_array_column_rows(
         &self,
         table_path: &Path,
         table_dat: &TableDatContents,
@@ -2965,6 +2968,9 @@ impl CompositeStorage {
         selected_rows: &[usize],
         row_hint: Option<u64>,
     ) -> Result<Vec<Option<ArrayValue>>, StorageError> {
+        if selected_rows.is_empty() {
+            return Ok(Vec::new());
+        }
         let desc_idx = table_dat
             .table_desc
             .columns

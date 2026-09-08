@@ -153,6 +153,59 @@ class PolicyTests(unittest.TestCase):
                 checker.validate_forward_invariants(self.policy, metadata)
 
 
+class SelectedObservationResourceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        paths = {
+            "measures": "crates/casa-ms/src/selected_observation/measures.rs",
+            "bound": "crates/casa-ms/src/selected_observation/bound_observation.rs",
+            "access": "crates/casa-ms/src/selected_observation/access.rs",
+            "content_plan": "crates/casa-ms/src/selected_observation/content_plan.rs",
+            "engine": "crates/casa-ms/src/derived/engine.rs",
+            "provider": "crates/casa-types/src/measures/provider.rs",
+            "measures_runtime": "crates/casa-measures-data/src/lib.rs",
+            "observation": "crates/casa-imaging-model/src/observation.rs",
+        }
+        self.sources = {}
+        for name, relative in paths.items():
+            path = REPO_ROOT / relative
+            self.sources[name] = path.read_text(encoding="utf-8")
+            self.sources[f"{name}_path"] = path
+
+    def test_live_selected_pointing_resources_are_charged(self) -> None:
+        checker.validate_t17_selected_observation_resource_sources(**self.sources)
+
+    def test_missing_pointing_resource_charges_are_rejected(self) -> None:
+        replacements = {
+            "source_plan": (
+                ".checked_add(shared_bytes.shared_source_plan_retained_bytes)",
+                ".checked_add(0)",
+            ),
+            "catalog_retained": (
+                ".checked_add(pointing_catalog.map_or(0, |catalog| catalog.retained_bytes()))",
+                ".checked_add(0)",
+            ),
+            "catalog_construction": (
+                ".construction_peak_bytes()",
+                ".retained_bytes()",
+            ),
+            "initialization_overlap": (
+                ".max(catalog_initialization_scratch_bytes)",
+                ".min(catalog_initialization_scratch_bytes)",
+            ),
+        }
+        for name, (original, replacement) in replacements.items():
+            with self.subTest(charge=name):
+                self.assertEqual(self.sources["content_plan"].count(original), 1)
+                mutation = dict(self.sources)
+                mutation["content_plan"] = mutation["content_plan"].replace(
+                    original, replacement, 1
+                )
+                with self.assertRaisesRegex(
+                    checker.ArchitectureError, "must be charged exactly once"
+                ):
+                    checker.validate_t17_selected_observation_resource_sources(**mutation)
+
+
 class MatrixTests(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = load_json(POLICY_PATH)
@@ -160,6 +213,29 @@ class MatrixTests(unittest.TestCase):
 
     def test_live_matrix_is_valid(self) -> None:
         checker.validate_migration_matrix(self.matrix, self.policy)
+
+    def test_weighted_replay_requires_selected_aw_pointing_pixel(self) -> None:
+        paths = {
+            "model": "crates/casa-imaging-model/src/measurement_equation.rs",
+            "sample_model": "crates/casa-imaging-model/src/selected_observation_sample.rs",
+            "traversal_sample": "crates/casa-ms/src/selected_observation/spectral_evaluation.rs",
+            "bound_observation": "crates/casa-ms/src/selected_observation/bound_observation.rs",
+            "weighting": "crates/casa-imaging-reconstruction/src/weighting.rs",
+            "runtime_weighting": "crates/casa-imaging-runtime/src/weighting.rs",
+            "receipt": "crates/casa-imaging-runtime/src/receipt.rs",
+        }
+        sources = {}
+        for name, relative in paths.items():
+            path = REPO_ROOT / relative
+            sources[name] = path.read_text(encoding="utf-8")
+            sources[f"{name}_path"] = path
+        field = "    aw_pointing_pixel: Option<[f64; 2]>,\n"
+        self.assertEqual(sources["weighting"].count(field), 1)
+        sources["weighting"] = sources["weighting"].replace(field, "", 1)
+        with self.assertRaisesRegex(
+            checker.ArchitectureError, "T18 weighted replay does not project directly"
+        ):
+            checker.validate_t18_global_weighting_sources(**sources)
 
     def test_fallback_status_is_rejected(self) -> None:
         matrix = copy.deepcopy(self.matrix)
