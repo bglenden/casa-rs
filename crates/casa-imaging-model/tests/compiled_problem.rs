@@ -395,6 +395,130 @@ fn weighting() -> WeightingContract {
 }
 
 #[test]
+fn t52_native_aw_identity_covers_every_resolved_scientific_input() {
+    use casa_imaging_model::{
+        EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequest,
+        NativeAwRequestInput, NativeAwTerms,
+    };
+    let problem = compile_request(specification(false), inputs(false)).unwrap();
+    let surface = EvlaDishSurface::new(
+        (0..=1250)
+            .map(|n| {
+                let r = n as f64 / 100.0;
+                [r, 0.028 * r * r, 0.056 * r]
+            })
+            .collect(),
+    )
+    .unwrap();
+    let input = NativeAwRequestInput {
+        geometry: problem.geometry().geometry_id(),
+        surface,
+        antenna_diameter_m: 25.0,
+        frequencies: vec![
+            NativeAwFrequencyGroup {
+                spectral_window: 2,
+                channel_frequencies_hz: vec![2.0e9, 2.1e9],
+                cf_frequency_hz: 2.05e9,
+            },
+            NativeAwFrequencyGroup {
+                spectral_window: 7,
+                channel_frequencies_hz: vec![3.2e9, 3.3e9],
+                cf_frequency_hz: 3.25e9,
+            },
+        ],
+        w_values: vec![0.0, 100.0],
+        w_increment: 0.01,
+        pa_values: vec![0.3, 0.9],
+        mueller_elements: vec![0, 15],
+        reference_frequency_hz: 2.9e9,
+        grid: NativeAwGrid {
+            size: 128,
+            sky_increment_rad: [-0.001, 0.001],
+            oversampling: 4,
+        },
+        terms: NativeAwTerms {
+            aperture: true,
+            w_term: true,
+            prolate_spheroidal: true,
+            wideband: true,
+            conjugate_beams: true,
+        },
+        maximum_cells: 32,
+    };
+    let baseline = NativeAwRequest::new(input.clone()).unwrap();
+    assert_eq!(baseline.cell_count(), 16);
+    let first = baseline.cell(0).unwrap();
+    assert_eq!(first.0.conjugate_frequency_hz, 3.25e9);
+    assert_eq!(first.0.mueller, 0);
+    assert_eq!(baseline.cell(1).unwrap().0.mueller, 15);
+    assert_eq!(baseline.cell(4).unwrap().0.w_wavelengths, 100.0);
+    assert!(baseline.cell(16).is_none());
+    let repeated = NativeAwRequest::new(input.clone()).unwrap();
+    for index in 0..baseline.cell_count() {
+        assert_eq!(baseline.cell(index), repeated.cell(index));
+    }
+    let changes: &[fn(&mut NativeAwRequestInput)] = &[
+        |i| i.grid.size = 256,
+        |i| i.grid.sky_increment_rad = [-0.002, 0.002],
+        |i| i.grid.oversampling = 8,
+        |i| i.frequencies[0].spectral_window = 3,
+        |i| i.frequencies[0].channel_frequencies_hz[0] += 1e6,
+        |i| i.frequencies[0].cf_frequency_hz += 1e6,
+        |i| i.w_values[1] += 1.0,
+        |i| i.w_increment *= 2.0,
+        |i| i.pa_values[1] += 0.1,
+        |i| i.mueller_elements = vec![0],
+        |i| i.reference_frequency_hz += 1e6,
+        |i| i.terms.aperture = false,
+        |i| {
+            i.terms.w_term = false;
+            i.w_values = vec![0.0];
+        },
+        |i| i.terms.prolate_spheroidal = false,
+        |i| {
+            i.terms.wideband = false;
+            i.frequencies.truncate(1);
+            i.frequencies[0].cf_frequency_hz = i.reference_frequency_hz;
+        },
+        |i| i.terms.conjugate_beams = false,
+        |i| {
+            let mut s = i.surface.samples().to_vec();
+            s[20][1] += 1e-6;
+            i.surface = EvlaDishSurface::new(s).unwrap();
+        },
+    ];
+    for (index, change) in changes.iter().enumerate() {
+        let mut changed = input.clone();
+        change(&mut changed);
+        let changed = NativeAwRequest::new(changed).unwrap();
+        assert_ne!(
+            first.1,
+            changed.cell(0).unwrap().1,
+            "scientific mutation {index}"
+        );
+    }
+    let mut bounded = input.clone();
+    bounded.maximum_cells = 15;
+    assert!(NativeAwRequest::new(bounded).is_err());
+    let mut diameter = input.clone();
+    diameter.antenna_diameter_m = 24.0;
+    assert!(NativeAwRequest::new(diameter).is_err());
+    let mut duplicate = input.clone();
+    duplicate.frequencies[1].spectral_window = 2;
+    assert!(NativeAwRequest::new(duplicate).is_err());
+    let mut resource_only = input;
+    resource_only.maximum_cells = 64;
+    assert_eq!(
+        first.1,
+        NativeAwRequest::new(resource_only)
+            .unwrap()
+            .cell(0)
+            .unwrap()
+            .1
+    );
+}
+
+#[test]
 fn prepared_cf_dependencies_exclude_solve_controls_but_retain_operator_science() {
     use casa_imaging_model::PreparedArtifactScientificKind::{
         ConvolutionFunction, Kernel, SpectralMap,
