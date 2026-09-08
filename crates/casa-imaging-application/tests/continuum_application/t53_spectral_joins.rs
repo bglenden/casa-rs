@@ -3,13 +3,13 @@
 use super::*;
 
 #[test]
-#[ignore = "requires the CASA-staged T53 shared-phase tiled-UVW fixture"]
-fn t53_w_cube_reads_the_current_uvw_column_after_casa_storage_replacement() {
+#[ignore = "requires the T53 shared-phase fixture with its original IncrementalStMan UVW"]
+fn t53_w_cube_reads_original_incremental_uvw_without_rewriting_the_source() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let source = PathBuf::from(std::env::var("CASA_RS_T53_DATA_ROOT").expect("T53 fixture root"))
-        .join("refim-withline-shared-phase-tiled-v2.ms");
+        .join("refim-withline-shared-phase.ms");
     let staged = root.path().join("input.ms");
     assert!(
         std::process::Command::new("cp")
@@ -46,8 +46,7 @@ fn t53_w_cube_reads_the_current_uvw_column_after_casa_storage_replacement() {
         TaskRequirement::WProjection,
         TaskRequirement::WProjectionPlanes,
     ];
-    let output =
-        execute_continuum(imaging).expect("read current UVW binding, not its renamed origin");
+    let output = execute_continuum(imaging).expect("read original IncrementalStMan UVW");
     let weights = output
         .outcome
         .output

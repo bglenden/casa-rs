@@ -25,24 +25,6 @@ def main():
         raise FileExistsError(args.destination)
     shutil.copytree(args.source, args.destination)
     tb = table()
-    tb.open(str(args.destination), nomodify=False)
-    try:
-        description = tb.getcoldesc("UVW")
-        description.update(dataManagerType="TiledColumnStMan", dataManagerGroup="T53UVW")
-        tb.renamecol("UVW", "T53_ORIGINAL_UVW")
-        manager = {
-            "TYPE": "TiledColumnStMan", "NAME": "T53UVW", "COLUMNS": ["UVW"],
-            "SPEC": {"DEFAULTTILESHAPE": [3, 4096]},
-        }
-        tb.addcols({"UVW": description}, {"t53_uvw": manager})
-        for start in range(0, tb.nrows(), 4096):
-            count = min(4096, tb.nrows() - start)
-            values = tb.getcol("T53_ORIGINAL_UVW", start, count)
-            tb.putcol("UVW", values, start, count)
-            if not np.array_equal(values, tb.getcol("UVW", start, count)):
-                raise ValueError(f"UVW storage conversion changed values at row {start}")
-    finally:
-        tb.close()
     tb.open(str(args.destination / "FIELD"), nomodify=False)
     try:
         if tb.nrows() != 1:
@@ -80,9 +62,6 @@ def main():
         "field_rows": counts,
         "unique_integrations": len(by_time),
         "changed_columns": ["FIELD row 1 copied from row 0", "MAIN.FIELD_ID"],
-        "storage_change": "UVW copied losslessly to TiledColumnStMan; original retained as T53_ORIGINAL_UVW",
-        "uvw_values_equal": True,
-        "comparison_chunk_rows": 4096,
         "visibility_payload_changed": False,
     }
     args.destination.with_suffix(".staging.json").write_text(json.dumps(receipt, indent=2) + "\n")

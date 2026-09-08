@@ -6,7 +6,7 @@
   "dataset": {
     "key": "t53-refim-withline-shared-phase",
     "root_env": "CASA_RS_T53_DATA_ROOT",
-    "relative_path": "refim-withline-shared-phase-tiled-v2.ms"
+    "relative_path": "refim-withline-shared-phase.ms"
   },
   "imaging": {
     "mode": "dirty",

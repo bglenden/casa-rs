@@ -97,10 +97,10 @@ The representative workloads are `issue607-standard-cube-dirty-representative`,
 `t53-mosaic-cube-alma-representative`, and
 `t53-w-cube-shared-phase-representative`; the last uses the immutable-source
 copy produced by `tools/perf/imager/stage_t53_shared_phase.py` with CASA Python.
-The staged copy retains a bitwise-equal tiled UVW column plus its original
-audit column. Set `CASA_RS_T53_DATA_ROOT` to its directory and run the ignored
-`t53_w_cube_reads_the_current_uvw_column_after_casa_storage_replacement` test
-as the small application preflight for CASA-renamed column bindings.
+The staged copy preserves the original IncrementalStMan UVW layout and values.
+Set `CASA_RS_T53_DATA_ROOT` to its directory and run the ignored
+`t53_w_cube_reads_original_incremental_uvw_without_rewriting_the_source` test
+as the small native-reader application preflight.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.

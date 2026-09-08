@@ -848,6 +848,98 @@ pub(crate) fn read_ism_scalar_column_rows(
     Ok(Some(values))
 }
 
+/// Fill selected direct fixed-shape f64 cells from their original ISM buckets.
+/// The caller owns the packed output; only the current bucket is retained.
+pub(crate) fn fill_ism_f64_array_rows(
+    file_path: &Path,
+    dm_blob: &[u8],
+    col_descs: &[&ColumnDescContents],
+    target_col_idx: usize,
+    selected_rows: &[usize],
+    values: &mut Vec<f64>,
+) -> Result<usize, StorageError> {
+    let column = col_descs.get(target_col_idx).ok_or_else(|| {
+        StorageError::FormatMismatch("ISM array column binding is missing".into())
+    })?;
+    if !column.is_array
+        || column.option & 1 == 0
+        || column.nrdim != 1
+        || column.shape.len() != 1
+        || column.shape[0] <= 0
+        || column.require_primitive_type()? != casa_types::PrimitiveType::Float64
+    {
+        return Err(StorageError::FormatMismatch(format!(
+            "typed selected ISM reads require a direct fixed-shape f64 vector, got '{}'",
+            column.col_name
+        )));
+    }
+    let axis0_count = column.shape[0] as usize;
+    let output_count = selected_rows
+        .len()
+        .checked_mul(axis0_count)
+        .ok_or_else(|| StorageError::FormatMismatch("ISM selected array size overflow".into()))?;
+    let cell_bytes = axis0_count
+        .checked_mul(8)
+        .ok_or_else(|| StorageError::FormatMismatch("ISM array cell size overflow".into()))?;
+    values.resize(output_count, 0.0);
+    if selected_rows.is_empty() {
+        return Ok(axis0_count);
+    }
+    let _dm_name = parse_ism_dm_blob(dm_blob)?;
+    let mut file = File::open(file_path)?;
+    let header = parse_ism_header(&mut file)?;
+    let index = parse_ism_index(&mut file, &header)?;
+    let mut requests: Vec<_> = selected_rows.iter().copied().enumerate().collect();
+    requests.sort_unstable_by_key(|&(_, row)| row);
+    let mut cached_interval = None;
+    let mut cached_bucket = None;
+    for (output_row, row) in requests {
+        let interval = index.rows.partition_point(|&start| start <= row as u64);
+        if interval == 0 || interval >= index.rows.len() {
+            return Err(StorageError::FormatMismatch(format!(
+                "ISM index has no bucket for row {row}"
+            )));
+        }
+        let interval = interval - 1;
+        if cached_interval != Some(interval) {
+            let bucket_nr = *index.bucket_nrs.get(interval).ok_or_else(|| {
+                StorageError::FormatMismatch("ISM selected array bucket is missing".into())
+            })?;
+            let raw = read_ism_bucket(&mut file, &header, bucket_nr)?;
+            cached_bucket = Some(parse_ism_bucket(&raw, col_descs.len(), header.big_endian)?);
+            cached_interval = Some(interval);
+        }
+        let bucket = cached_bucket.as_ref().expect("selected ISM bucket loaded");
+        let column_index = bucket.col_indices.get(target_col_idx).ok_or_else(|| {
+            StorageError::FormatMismatch("ISM selected array value index is missing".into())
+        })?;
+        let relative_row = u32::try_from(row as u64 - index.rows[interval]).map_err(|_| {
+            StorageError::FormatMismatch("ISM selected array relative row overflow".into())
+        })?;
+        let value_interval = get_interval(column_index, relative_row);
+        let offset = *column_index.offsets.get(value_interval).ok_or_else(|| {
+            StorageError::FormatMismatch("ISM selected array value offset is missing".into())
+        })? as usize;
+        let end = offset.checked_add(cell_bytes).ok_or_else(|| {
+            StorageError::FormatMismatch("ISM selected array offset overflow".into())
+        })?;
+        let raw = bucket.data.get(offset..end).ok_or_else(|| {
+            StorageError::FormatMismatch("ISM selected array exceeds its bucket".into())
+        })?;
+        for (output, bytes) in values[output_row * axis0_count..(output_row + 1) * axis0_count]
+            .iter_mut()
+            .zip(raw.chunks_exact(8))
+        {
+            *output = if header.big_endian {
+                read_f64_be(bytes)
+            } else {
+                read_f64_le(bytes)
+            };
+        }
+    }
+    Ok(axis0_count)
+}
+
 /// Read selected required scalar columns without expanding every physical
 /// column or every row in an incremental bucket.
 pub(crate) fn read_ism_required_scalar_columns_rows(
