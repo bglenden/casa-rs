@@ -473,55 +473,47 @@ impl ReconstructionCycle {
                 },
             });
         }
-        let shared_cycle_threshold = shared_cycle_threshold(&self.program, normal)?;
-        let mut terms = Vec::<ModelDeltaTerm>::new();
-        let mut channels = Vec::with_capacity(normal.channel_count() * normal.polarization_count());
-        for polarization in 0..normal.polarization_count() {
-            for local_channel in 0..normal.channel_count() {
-                let plane = normal
-                    .polarization_plane(local_channel, polarization)
-                    .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
-                let validity = plane.validity();
-                let minor_cycle = if validity == SpectralChannelValidity::Valid {
-                    let program = self
-                        .program
-                        .clone()
-                        .with_fixed_cycle_threshold(shared_cycle_threshold)
-                        .on_model_plane(MinorCycleModelPlane::new(
-                            0,
-                            plane.output_channel(),
-                            polarization,
-                        ));
-                    let result = run_minor_cycle_plane(lifecycle, base, plane, mask, program)?;
-                    let (delta, evidence) = result.into_parts();
-                    if let Some(delta) = delta {
-                        terms.extend_from_slice(delta.terms());
-                    }
-                    Some(evidence)
-                } else {
-                    None
-                };
-                channels.push(ChannelCycleEvidence {
-                    output_channel: plane.output_channel(),
-                    polarization,
-                    validity,
-                    minor_cycle,
-                });
-            }
+        let mut work = self.prepare_independent(lifecycle, base, normal, mask)?;
+        for ordinal in 0..work.plane_count() {
+            let partial = work.execute_plane(ordinal)?;
+            work.commit_plane(partial)?;
         }
-        let delta = (!terms.is_empty())
-            .then(|| lifecycle.compile_delta(base, terms))
-            .transpose()?;
-        let evidence_id =
-            reconstruction_cycle_evidence_id(lifecycle, normal, self.policy, &channels);
-        Ok(ReconstructionCycleResult {
-            delta,
-            evidence: ReconstructionCycleEvidence {
-                evidence_id,
-                problem: lifecycle.problem(),
-                policy: self.policy,
-                channels: channels.into_boxed_slice(),
+        work.finish()
+    }
+
+    /// Prepare immutable independent-plane work for a resource-admitted executor.
+    ///
+    /// The reconstruction owner computes the common cycle threshold once. Each
+    /// plane may then execute independently, but only canonical, complete
+    /// collection can mint the combined Model Delta and cycle evidence.
+    #[doc(hidden)]
+    pub fn prepare_independent<'a>(
+        &'a self,
+        lifecycle: &'a ModelLifecycle,
+        base: &'a ModelGeneration,
+        normal: &'a FinalNormalState,
+        mask: &'a crate::ReconstructionMask,
+    ) -> Result<ReconstructionPlaneWork<'a>, ReconstructionCycleError> {
+        if self.policy != ChannelCyclePolicy::Independent {
+            return Err(ReconstructionCycleError::UnsupportedCoupledPolicy);
+        }
+        let plane_count = normal
+            .channel_count()
+            .checked_mul(normal.polarization_count())
+            .filter(|count| *count > 0)
+            .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
+        Ok(ReconstructionPlaneWork {
+            binding: ReconstructionPlaneBinding {
+                cycle: self,
+                lifecycle,
+                base,
+                normal,
+                mask,
             },
+            shared_cycle_threshold: shared_cycle_threshold(&self.program, normal)?,
+            plane_count,
+            terms: Vec::new(),
+            channels: Vec::with_capacity(plane_count),
         })
     }
 
@@ -562,6 +554,147 @@ impl ReconstructionCycle {
                 problem: lifecycle.problem(),
                 policy: self.policy,
                 channels: channels.into_boxed_slice(),
+            },
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReconstructionPlaneBinding<'a> {
+    cycle: &'a ReconstructionCycle,
+    lifecycle: &'a ModelLifecycle,
+    base: &'a ModelGeneration,
+    normal: &'a FinalNormalState,
+    mask: &'a crate::ReconstructionMask,
+}
+
+impl ReconstructionPlaneBinding<'_> {
+    fn same_inputs(self, other: Self) -> bool {
+        std::ptr::eq(self.cycle, other.cycle)
+            && std::ptr::eq(self.lifecycle, other.lifecycle)
+            && std::ptr::eq(self.base, other.base)
+            && std::ptr::eq(self.normal, other.normal)
+            && std::ptr::eq(self.mask, other.mask)
+    }
+}
+
+/// Reconstruction-owned independent plane execution and ordered collection.
+///
+/// Runtime may schedule immutable plane work concurrently. It must return each
+/// opaque partial once in polarization/channel order; no authoritative model
+/// state changes until the complete collection is finalized.
+pub struct ReconstructionPlaneWork<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    shared_cycle_threshold: Option<f64>,
+    plane_count: usize,
+    terms: Vec<ModelDeltaTerm>,
+    channels: Vec<ChannelCycleEvidence>,
+}
+
+/// Opaque result from exactly one admitted independent plane.
+pub struct ReconstructionPlanePartial<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    ordinal: usize,
+    delta: Option<ModelDelta>,
+    evidence: ChannelCycleEvidence,
+}
+
+impl<'a> ReconstructionPlaneWork<'a> {
+    /// Number of canonical plane slots, including explicit blank/unmapped slots.
+    #[must_use]
+    pub const fn plane_count(&self) -> usize {
+        self.plane_count
+    }
+
+    /// Execute one plane against the shared entry threshold without mutation.
+    pub fn execute_plane(
+        &self,
+        ordinal: usize,
+    ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
+        if ordinal >= self.plane_count {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        let ReconstructionPlaneBinding {
+            cycle,
+            lifecycle,
+            base,
+            normal,
+            mask,
+        } = self.binding;
+        let polarization = ordinal / normal.channel_count();
+        let local_channel = ordinal % normal.channel_count();
+        let plane = normal
+            .polarization_plane(local_channel, polarization)
+            .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
+        let validity = plane.validity();
+        let (delta, minor_cycle) = if validity == SpectralChannelValidity::Valid {
+            let program = cycle
+                .program
+                .clone()
+                .with_fixed_cycle_threshold(self.shared_cycle_threshold)
+                .on_model_plane(MinorCycleModelPlane::new(
+                    0,
+                    plane.output_channel(),
+                    polarization,
+                ));
+            let (delta, evidence) =
+                run_minor_cycle_plane(lifecycle, base, plane, mask, program)?.into_parts();
+            (delta, Some(evidence))
+        } else {
+            (None, None)
+        };
+        Ok(ReconstructionPlanePartial {
+            binding: self.binding,
+            ordinal,
+            delta,
+            evidence: ChannelCycleEvidence {
+                output_channel: plane.output_channel(),
+                polarization,
+                validity,
+                minor_cycle,
+            },
+        })
+    }
+
+    /// Consume the next canonical partial from these exact immutable inputs.
+    pub fn commit_plane(
+        &mut self,
+        partial: ReconstructionPlanePartial<'a>,
+    ) -> Result<(), ReconstructionCycleError> {
+        if !self.binding.same_inputs(partial.binding) || partial.ordinal != self.channels.len() {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        if let Some(delta) = partial.delta {
+            self.terms.extend_from_slice(delta.terms());
+        }
+        self.channels.push(partial.evidence);
+        Ok(())
+    }
+
+    /// Mint one combined delta and cycle evidence only after exact coverage.
+    pub fn finish(self) -> Result<ReconstructionCycleResult, ReconstructionCycleError> {
+        if self.channels.len() != self.plane_count {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        let ReconstructionPlaneBinding {
+            cycle,
+            lifecycle,
+            base,
+            normal,
+            ..
+        } = self.binding;
+        let delta = (!self.terms.is_empty())
+            .then(|| lifecycle.compile_delta(base, self.terms))
+            .transpose()?;
+        let evidence_id =
+            reconstruction_cycle_evidence_id(lifecycle, normal, cycle.policy, &self.channels);
+        Ok(ReconstructionCycleResult {
+            delta,
+            evidence: ReconstructionCycleEvidence {
+                evidence_id,
+                problem: lifecycle.problem(),
+                policy: cycle.policy,
+                channels: self.channels.into_boxed_slice(),
             },
         })
     }
@@ -783,6 +916,9 @@ pub enum ReconstructionCycleError {
     /// The normal-state slab cannot expose all of its declared core planes.
     #[error("normal-state slab storage does not match its declared channel interval")]
     InvalidNormalStateSlab,
+    /// Independent-plane results were foreign, missing, duplicated, or reordered.
+    #[error("reconstruction plane results do not exactly cover the ordered cycle")]
+    InvalidPlaneCoverage,
     /// A channel-local minor solve failed.
     #[error(transparent)]
     Minor(#[from] MinorCycleError),

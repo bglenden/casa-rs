@@ -82,6 +82,7 @@ pub mod runtime_adapter {
         SourceCardinalityObservation, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
+    pub use crate::reconstruction_cycle::{ReconstructionPlanePartial, ReconstructionPlaneWork};
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,
         CompleteDataOwnerState, FinalVisibilitySample, PreparedSpectralOperator,

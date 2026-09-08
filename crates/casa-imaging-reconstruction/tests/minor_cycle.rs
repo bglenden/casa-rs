@@ -1364,7 +1364,7 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
 }
 
 #[test]
-fn clark_uses_a_derived_bounded_patch_and_stops_at_threshold_equality() {
+fn clark_uses_a_derived_bounded_patch_and_stops_at_or_below_threshold() {
     let round = first_confirm_round(165, 166);
     let continuation = problem_with_model(
         167,
@@ -1378,32 +1378,35 @@ fn clark_uses_a_derived_bounded_patch_and_stops_at_threshold_equality() {
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
     let strength = residual_peak(round.normal_state.residual()) / psf_peak;
-    let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
-        ReconstructionAlgorithm::Clark,
-        ReconstructionControls::new(8, 0.5, strength),
-    )
-    .expect("Clark program");
+    for threshold in [strength, strength * 2.0] {
+        let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
+            ReconstructionAlgorithm::Clark,
+            ReconstructionControls::new(8, 0.5, threshold),
+        )
+        .expect("Clark program");
 
-    let result = hogbom_minor_cycle(
-        &lifecycle,
-        &round.final_model,
-        &round.normal_state,
-        &full_mask(&round.normal_state, &round.final_model),
-        program,
-    )
-    .expect("Clark threshold-boundary solve");
+        let result = hogbom_minor_cycle(
+            &lifecycle,
+            &round.final_model,
+            &round.normal_state,
+            &full_mask(&round.normal_state, &round.final_model),
+            program,
+        )
+        .expect("Clark threshold-boundary solve");
 
-    assert_eq!(result.evidence().iterations(), 0);
-    assert_eq!(
-        result.evidence().stop_reason(),
-        MinorCycleStopReason::ThresholdReached
-    );
-    let approximation = result
-        .evidence()
-        .clark_approximation()
-        .expect("Clark records its approximation");
-    assert!(approximation.radius().into_iter().all(|radius| radius > 0));
-    assert!(approximation.maximum_exterior_sidelobe().is_finite());
+        assert_eq!(result.evidence().iterations(), 0);
+        assert_eq!(
+            result.evidence().stop_reason(),
+            MinorCycleStopReason::ThresholdReached
+        );
+        let approximation = result
+            .evidence()
+            .clark_approximation()
+            .expect("Clark records its approximation");
+        assert!(approximation.radius().into_iter().all(|radius| radius > 0));
+        assert!(approximation.maximum_exterior_sidelobe().is_finite());
+        assert!(result.delta().is_none());
+    }
 }
 
 #[test]

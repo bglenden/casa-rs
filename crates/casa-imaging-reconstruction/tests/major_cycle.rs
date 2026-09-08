@@ -1206,6 +1206,145 @@ fn t38_blank_and_unmapped_channels_are_ordered_and_never_cleaned() {
 }
 
 #[test]
+fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage() {
+    for (algorithm, blank_second_channel) in [
+        (ReconstructionAlgorithm::Hogbom, false),
+        (ReconstructionAlgorithm::Hogbom, true),
+        (ReconstructionAlgorithm::Clark, false),
+        (ReconstructionAlgorithm::Clark, true),
+    ] {
+        let problem = reconstruction_problem(
+            240,
+            8,
+            3,
+            ReconstructionBasis::ChannelLocal { channels: 3 },
+            algorithm.clone(),
+            ReconstructionControls::new(8, 0.5, 0.0)
+                .with_noise_sigma(0.0)
+                .with_cycle_threshold(1.0, 0.05, 0.8),
+        );
+        let mut samples = fixture_samples(&problem);
+        if blank_second_channel {
+            samples[1].input_weight = 0.0;
+        }
+        let mut lifecycle = ModelLifecycle::bind(
+            ExecutableModelProblem::from_compiled(problem.clone()).expect("cube problem"),
+            attempt(241),
+            1,
+        )
+        .expect("cube lifecycle");
+        let initial = lifecycle.initial_empty().expect("empty cube model");
+        let preparation =
+            MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare model");
+        let complete = run_t19_complete_data_with_samples(&problem, Some(&preparation), &samples);
+        let joined = MajorCycleOwner::from_complete_data(complete, preparation)
+            .expect("major-cycle owner")
+            .reconcile(&mut lifecycle)
+            .expect("normal state");
+        let (normal, continuation) = joined.into_continuation();
+        let base = continuation.generation();
+        let mask = ReconstructionMask::full_plane(
+            problem.problem_id(),
+            base.generation_id(),
+            problem.geometry().domains()[0].direction(),
+            normal.shape(),
+        )
+        .expect("cube mask");
+        let program =
+            MinorCycleProgram::for_algorithm(algorithm, problem.reconstruction().controls())
+                .expect("point CLEAN program")
+                .record_component_sequence(16)
+                .expect("bounded diagnostics");
+        let cycle = ReconstructionCycle::new(ChannelCyclePolicy::Independent, program);
+        let serial = cycle
+            .run(&lifecycle, base, &normal, &mask)
+            .expect("serial cycle");
+        let thresholds = serial
+            .evidence()
+            .channels()
+            .iter()
+            .filter_map(|channel| channel.minor_cycle())
+            .map(|minor| minor.cycle_threshold().expect("common cycle threshold"))
+            .collect::<Vec<_>>();
+        assert!(!thresholds.is_empty());
+        assert!(
+            thresholds
+                .iter()
+                .all(|threshold| *threshold == thresholds[0])
+        );
+
+        for workers in [1, 2, 3] {
+            let mut work = cycle
+                .prepare_independent(&lifecycle, base, &normal, &mask)
+                .expect("prepared planes");
+            assert_eq!(work.plane_count(), 3);
+            for start in (0..work.plane_count()).step_by(workers) {
+                let end = (start + workers).min(work.plane_count());
+                let partials = std::thread::scope(|scope| {
+                    let work = &work;
+                    (start..end)
+                        .rev()
+                        .map(|ordinal| scope.spawn(move || work.execute_plane(ordinal)))
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .map(|worker| worker.join().expect("plane worker").expect("plane solve"))
+                        .collect::<Vec<_>>()
+                });
+                for partial in partials.into_iter().rev() {
+                    work.commit_plane(partial).expect("canonical plane commit");
+                }
+            }
+            let parallel = work.finish().expect("complete cube coverage");
+            assert_eq!(
+                parallel.evidence().evidence_id(),
+                serial.evidence().evidence_id()
+            );
+            assert_eq!(
+                parallel.evidence().iterations(),
+                serial.evidence().iterations()
+            );
+            assert_eq!(
+                parallel.delta().map(ModelDelta::delta_id),
+                serial.delta().map(ModelDelta::delta_id)
+            );
+            assert_eq!(
+                parallel.delta().map(ModelDelta::terms),
+                serial.delta().map(ModelDelta::terms)
+            );
+        }
+
+        use casa_imaging_reconstruction::ReconstructionCycleError::InvalidPlaneCoverage;
+        let mut work = cycle
+            .prepare_independent(&lifecycle, base, &normal, &mask)
+            .expect("prepared planes");
+        assert!(matches!(work.execute_plane(3), Err(InvalidPlaneCoverage)));
+        let out_of_order = work.execute_plane(1).expect("second plane");
+        assert!(matches!(
+            work.commit_plane(out_of_order),
+            Err(InvalidPlaneCoverage)
+        ));
+        let other_cycle = cycle.clone();
+        let foreign = other_cycle
+            .prepare_independent(&lifecycle, base, &normal, &mask)
+            .expect("different prepared inputs")
+            .execute_plane(0)
+            .expect("foreign partial");
+        assert!(matches!(
+            work.commit_plane(foreign),
+            Err(InvalidPlaneCoverage)
+        ));
+        let first = work.execute_plane(0).expect("first plane");
+        let duplicate = work.execute_plane(0).expect("duplicate first plane");
+        work.commit_plane(first).expect("first commit");
+        assert!(matches!(
+            work.commit_plane(duplicate),
+            Err(InvalidPlaneCoverage)
+        ));
+        assert!(matches!(work.finish(), Err(InvalidPlaneCoverage)));
+    }
+}
+
+#[test]
 fn t38_late_nsigma_floor_and_first_component_divergence_remain_per_channel() {
     let problem = t38_cube_problem(242);
     let mut lifecycle = ModelLifecycle::bind(

@@ -2511,10 +2511,13 @@ pub(crate) fn run_minor_cycle_plane(
         global_threshold.max(threshold)
     });
     let mut clark_state = clark.map(|approximation| {
-        let initial_peak = residual
-            .iter()
-            .fold(0.0_f64, |peak, value| peak.max(value.abs()))
-            / psf_peak;
+        let initial_peak = find_peak_abs(
+            &residual,
+            shape,
+            |value| *value,
+            |pixel| mask.contains(pixel) && valid_support(base, shape, model_plane, pixel),
+        )
+        .map_or(0.0, |index| residual[index].abs() / psf_peak);
         let cutoff = (initial_peak * approximation.maximum_exterior_sidelobe / psf_peak / 3.0)
             .max(effective_threshold);
         let active = residual
@@ -2579,8 +2582,16 @@ pub(crate) fn run_minor_cycle_plane(
                         && valid_support(base, shape, model_plane, pixel)
                         && clark_state.as_ref().is_none_or(|state| state.active[index])
                 },
-            )
-            .ok_or(MinorCycleError::EmptyValidSupport)?;
+            );
+            let Some(peak_index) = peak_index else {
+                if clark_state.is_none() {
+                    return Err(MinorCycleError::EmptyValidSupport);
+                }
+                // ClarkCleanLatModel::solve stops at the masked threshold
+                // before requiring an active candidate; support still exists.
+                controller.stop(MinorCycleStopReason::ThresholdReached);
+                break;
+            };
             (peak_index, residual[peak_index] / psf_peak, None)
         };
         let peak_pixel = plane_pixel(peak_index, shape);
@@ -2875,8 +2886,8 @@ fn subtract_psf(
     // clipped to the plane exactly like the reference cleaner's subregion.
     let x_range = overlap(peak[0], psf_peak[0], shape[0]);
     let y_range = overlap(peak[1], psf_peak[1], shape[1]);
-    for y in y_range.clone() {
-        for x in x_range.clone() {
+    for x in x_range {
+        for y in y_range.clone() {
             let source = [x + psf_peak[0] - peak[0], y + psf_peak[1] - peak[1]];
             let index = source[0] * shape[1] + source[1];
             let target = x * shape[1] + y;
@@ -4002,8 +4013,8 @@ fn subtract_psf_patch(
 ) -> Result<(), MinorCycleError> {
     let x_range = overlap(peak[0], psf_peak[0], shape[0]);
     let y_range = overlap(peak[1], psf_peak[1], shape[1]);
-    for y in y_range {
-        for x in x_range.clone() {
+    for x in x_range {
+        for y in y_range.clone() {
             let source = [x + psf_peak[0] - peak[0], y + psf_peak[1] - peak[1]];
             if source[0].abs_diff(psf_peak[0]) > radius[0]
                 || source[1].abs_diff(psf_peak[1]) > radius[1]
@@ -4546,9 +4557,139 @@ mod tests {
         MinorCycleStopReason, TaylorCandidate, TaylorSearchWindow, build_scale_kernels,
         minor_cycle_workspace_bytes, model_cell, multiscale_diverged, prefer_taylor_across_scales,
         prefer_taylor_within_scale, run_image_domain_hogbom_controllers, subtract_psf,
-        subtract_psf_circular, taylor_psf_peak_index, taylor_rows_nearly_dependent,
-        within_multiscale_border,
+        subtract_psf_circular, subtract_psf_patch, taylor_psf_peak_index,
+        taylor_rows_nearly_dependent, within_multiscale_border,
     };
+
+    #[test]
+    fn t55_point_psf_subtraction_preserves_clipping_patch_and_pixel_arithmetic() {
+        let shape = [7, 11];
+        let psf = (0..shape[0] * shape[1])
+            .map(|index| Complex64::new((index as f64 - 23.0) / 17.0, 0.25))
+            .collect::<Vec<_>>();
+        let original = (0..psf.len())
+            .map(|index| (index as f64 + 1.0) / 13.0)
+            .collect::<Vec<_>>();
+        for peak in [[0, 0], [3, 5], [6, 10], [1, 9]] {
+            for psf_peak in [[0, 0], [3, 5], [6, 10]] {
+                for radius in [None, Some([0, 0]), Some([1, 2]), Some(shape)] {
+                    let mut expected = original.clone();
+                    for (target, value) in expected.iter_mut().enumerate() {
+                        let pixel = [target / shape[1], target % shape[1]];
+                        let source = [
+                            pixel[0] as isize + psf_peak[0] as isize - peak[0] as isize,
+                            pixel[1] as isize + psf_peak[1] as isize - peak[1] as isize,
+                        ];
+                        if source[0] < 0
+                            || source[0] >= shape[0] as isize
+                            || source[1] < 0
+                            || source[1] >= shape[1] as isize
+                        {
+                            continue;
+                        }
+                        let source = [source[0] as usize, source[1] as usize];
+                        if radius.is_some_and(|radius| {
+                            source[0].abs_diff(psf_peak[0]) > radius[0]
+                                || source[1].abs_diff(psf_peak[1]) > radius[1]
+                        }) {
+                            continue;
+                        }
+                        *value -= 0.37 * psf[source[0] * shape[1] + source[1]].re;
+                    }
+                    let mut actual = original.clone();
+                    match radius {
+                        Some(radius) => subtract_psf_patch(
+                            &mut actual,
+                            &psf,
+                            shape,
+                            peak,
+                            psf_peak,
+                            radius,
+                            0.37,
+                        ),
+                        None => subtract_psf(&mut actual, &psf, shape, peak, psf_peak, 0.37),
+                    }
+                    .expect("finite point subtraction");
+                    assert!(
+                        actual
+                            .iter()
+                            .zip(&expected)
+                            .all(|(actual, expected)| actual.to_bits() == expected.to_bits()),
+                        "peak={peak:?}, psf_peak={psf_peak:?}, radius={radius:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded local timing probe; run in release mode for T55"]
+    fn t55_point_psf_subtraction_locality_probe() {
+        use std::{hint::black_box, time::Instant};
+
+        fn strided_parent(residual: &mut [f64], psf: &[Complex64], edge: usize, flux: f64) {
+            for y in 0..edge {
+                for x in 0..edge {
+                    let index = x * edge + y;
+                    let updated = residual[index] - flux * psf[index].re;
+                    assert!(updated.is_finite());
+                    residual[index] = updated;
+                }
+            }
+        }
+
+        let edge = 1024;
+        let psf = (0..edge * edge)
+            .map(|index| Complex64::new((index % 97) as f64 / 97.0, 0.0))
+            .collect::<Vec<_>>();
+        let mut parent_times = Vec::new();
+        let mut candidate_times = Vec::new();
+        for round in 0..6 {
+            let mut parent = vec![1.0; psf.len()];
+            let mut candidate = parent.clone();
+            let parent_first = round % 2 == 0;
+            for run_parent in [parent_first, !parent_first] {
+                let started = Instant::now();
+                for _ in 0..16 {
+                    if run_parent {
+                        strided_parent(black_box(&mut parent), black_box(&psf), edge, 0.001);
+                    } else {
+                        subtract_psf(
+                            black_box(&mut candidate),
+                            black_box(&psf),
+                            [edge, edge],
+                            [edge / 2, edge / 2],
+                            [edge / 2, edge / 2],
+                            0.001,
+                        )
+                        .expect("finite point subtraction");
+                    }
+                }
+                let elapsed = started.elapsed().as_nanos();
+                if round > 0 {
+                    if run_parent {
+                        parent_times.push(elapsed);
+                    } else {
+                        candidate_times.push(elapsed);
+                    }
+                }
+            }
+            assert!(
+                parent
+                    .iter()
+                    .zip(&candidate)
+                    .all(|(parent, candidate)| parent.to_bits() == candidate.to_bits())
+            );
+        }
+        parent_times.sort_unstable();
+        candidate_times.sort_unstable();
+        eprintln!(
+            "T55 PSF locality: shape={edge}x{edge}, components=16, warmup_pairs=1, measured_pairs=5, parent_median_ns={}, candidate_median_ns={}, speedup={:.3}; local kernel only",
+            parent_times[2],
+            candidate_times[2],
+            parent_times[2] as f64 / candidate_times[2] as f64
+        );
+    }
 
     fn point_domain_work<'a>(
         domain_ordinal: usize,
