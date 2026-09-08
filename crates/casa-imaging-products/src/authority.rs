@@ -49,7 +49,7 @@ pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT
 pub enum AnalyticPrimaryBeamModel {
     /// CASA's common EVLA primary-beam power polynomial with sampled radial lookup.
     CasaEvlaCommon,
-    /// CASA's frequency-selected legacy-VLA primary-beam family.
+    /// CASA's frequency-selected legacy-VLA L- and Q-band primary beams.
     CasaVlaBand,
     /// CASA's 10.7 m effective Airy aperture for homogeneous ALMA 12 m data.
     CasaAlma12mAiry,

@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 #[ignore = "requires the T53 shared-phase fixture with its original IncrementalStMan UVW"]
-fn t53_w_cube_reads_original_incremental_uvw_without_rewriting_the_source() {
+fn t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
@@ -31,6 +31,7 @@ fn t53_w_cube_reads_original_incremental_uvw_without_rewriting_the_source() {
     imaging.cell_arcsec = 8.0;
     imaging.spectral_window = Some("0:0~3".into());
     imaging.w_projection_planes = Some(8);
+    imaging.write_primary_beam = true;
     imaging.spectral_mode = SpectralImagingMode::Cube {
         axis: CubeAxisConfig {
             interpolation: casa_ms::CubeInterpolation::Linear,
@@ -55,6 +56,12 @@ fn t53_w_cube_reads_original_incremental_uvw_without_rewriting_the_source() {
         .sum_weights();
     assert_eq!(weights.len(), 2);
     assert!(weights.iter().all(|weight| *weight > 0.0));
+    let mut products = output.product_names;
+    products.sort();
+    assert_eq!(
+        products,
+        [".image", ".model", ".pb", ".psf", ".residual", ".sumwt"]
+    );
 }
 
 #[test]

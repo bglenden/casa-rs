@@ -797,11 +797,13 @@ fn evla_common_power_pattern(radius_rad: f64, frequency_hz: f64, coefficients: [
 }
 
 fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
-    // CASA PBMath::whichCommonPBtoUse() selects VLA_Q only inside the open
-    // 35--55 GHz interval. Other legacy-VLA bands remain unsupported until
-    // their distinct CASA models are implemented; never substitute the
-    // generic PBMath::VLA polynomial for telescope-driven selection.
-    if frequency_hz.is_finite() && frequency_hz > 35.0e9 && frequency_hz < 55.0e9 {
+    // CASA selects VLA_L and VLA_Q in these open intervals. Both use this
+    // aperture; SIMapper::addPB applies BeamSquint::NONE for PB images.
+    // Other legacy-VLA bands retain their explicit unsupported boundary.
+    if frequency_hz.is_finite()
+        && ((frequency_hz > 1.0e9 && frequency_hz < 2.0e9)
+            || (frequency_hz > 35.0e9 && frequency_hz < 55.0e9))
+    {
         Ok(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
     } else {
         Err(ProductsError::UnsupportedProblem)

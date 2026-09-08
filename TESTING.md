@@ -91,7 +91,10 @@ T53 spectral joins use the public compiled/prepared operator and normal
 application boundaries. Run the `t53_` tests in the `continuum_application`
 integration target, the `mtmfs_block_normal` integration target, spectral
 selection/sampling and typed availability regressions, and directly affected
-polarization/product checks. `tools/perf/imager/test_bench_cli.py` checks the
+polarization/product checks. The `casa-tables` integration target
+`selected_incremental_arrays` checks public typed UVW reads, sparse/repeated
+row order, output reuse and unmaterialized metadata in both byte orders.
+`tools/perf/imager/test_bench_cli.py` checks the
 benchmark command against a current release imager before opening a dataset.
 The representative workloads are `issue607-standard-cube-dirty-representative`,
 `t53-mosaic-cube-alma-representative`, and
@@ -99,8 +102,8 @@ The representative workloads are `issue607-standard-cube-dirty-representative`,
 copy produced by `tools/perf/imager/stage_t53_shared_phase.py` with CASA Python.
 The staged copy preserves the original IncrementalStMan UVW layout and values.
 Set `CASA_RS_T53_DATA_ROOT` to its directory and run the ignored
-`t53_w_cube_reads_original_incremental_uvw_without_rewriting_the_source` test
-as the small native-reader application preflight.
+`t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products` test
+as the small native-reader and complete-product application preflight.
 Current native-AW Taylor evidence may be reused only after checking code and
 input applicability. These rows retain the size, channel, complete-product,
 validity and resource limits above; diagnostic laws do not replace them.
