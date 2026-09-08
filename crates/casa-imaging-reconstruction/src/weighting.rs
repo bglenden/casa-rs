@@ -23,7 +23,7 @@ const REPLAY_DOMAIN: &[u8] = b"casa-rs-weighting-replay";
 const REPLAY_VERSION: u32 = 1;
 const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
 const COVERAGE_HASH_CHUNK_BYTES: usize = 256;
-const COVERAGE_VERSION: u32 = 2;
+const COVERAGE_VERSION: u32 = 3;
 const F32_MINIMUM_POWER: i16 = -149;
 const F32_SUPERACCUMULATOR_LIMBS: usize = 6;
 const CONSERVATIVE_TREE_ENTRY_BYTES: usize = 64;
@@ -693,7 +693,8 @@ impl WeightingDensityPhase {
         }
         let sample = sample.into();
         let density_owner = sample.input_weight_group().is_density_owner();
-        let sample = WeightingSelectedSample::from_selected(sample, output_frame_frequency_hz);
+        let sample =
+            WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
         for contribution in contributions.iter() {
             extend_frequency_range(
                 &mut self.frequency_range_hz,
@@ -833,7 +834,8 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample = WeightingSelectedSample::from_selected(sample, output_frame_frequency_hz);
+        let sample =
+            WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
         let source_imaging_weight = match problem.weighting().density_scope() {
             WeightDensityScope::PerOutputChannel => None,
             WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
@@ -1186,9 +1188,9 @@ impl WeightingSpectralValue {
 
 /// Compact kernel projection of one validated selected sample.
 ///
-/// Row-level geometry used only for source validation is absent. The bounded
-/// block retains the field, pointing, frequency, coordinates, flags,
-/// visibility, and address consumed by the scientific kernels.
+/// Row-level provenance used only for source validation is absent. The bounded
+/// block retains the field, pointing, selected spectral geometry, coordinates,
+/// flags, visibility, and address consumed by the scientific kernels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSelectedSample {
     pub(crate) address: SelectedSampleAddress,
@@ -1206,6 +1208,7 @@ pub struct WeightingSelectedSample {
     pub(crate) parallactic_angles_rad: [f64; 2],
     pub(crate) density_uvw_m: [f64; 3],
     output_frame_frequency_hz: f64,
+    row_spectral_geometry: Option<WeightingRowSpectralGeometry>,
     field_id: i32,
     pointing_directions: SelectedPointingDirections,
     aw_pointing_pixel: Option<[f64; 2]>,
@@ -1213,15 +1216,56 @@ pub struct WeightingSelectedSample {
     domain_projections: SelectedImageDomainProjections,
 }
 
+/// Spectral values remaining after the source descriptor's row/frame binding
+/// has been checked; no duplicate source-validation provenance enters a block.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct WeightingRowSpectralGeometry {
+    channels: usize,
+    first: (u32, f64),
+    second: Option<(u32, f64)>,
+}
+
+impl WeightingRowSpectralGeometry {
+    pub(crate) const fn selected_channels(self) -> usize {
+        self.channels
+    }
+
+    pub(crate) const fn first(self) -> (u32, f64) {
+        self.first
+    }
+
+    pub(crate) const fn second(self) -> Option<(u32, f64)> {
+        self.second
+    }
+
+    pub(crate) fn first_pair_hz(self) -> Option<[f64; 2]> {
+        self.second.map(|second| [self.first.1, second.1])
+    }
+}
+
 impl WeightingSelectedSample {
     fn from_selected(
+        problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'_>,
         output_frame_frequency_hz: f64,
-    ) -> Self {
+    ) -> Result<Self, WeightingError> {
+        let row_spectral_geometry = sample.row_spectral_geometry();
+        if row_spectral_geometry.is_some_and(|geometry| {
+            !geometry.matches_sample(sample, problem.geometry().spectral().output_frame())
+                || [Some(geometry.first()), geometry.second()]
+                    .into_iter()
+                    .flatten()
+                    .any(|(channel, frequency)| {
+                        channel == sample.address().channel_index
+                            && frequency.to_bits() != output_frame_frequency_hz.to_bits()
+                    })
+        }) {
+            return Err(WeightingError::RowSpectralGeometryMismatch);
+        }
         let coordinates = sample.coordinates();
         let input_weight_group = sample.input_weight_group();
         let domain_projections = sample.domain_projections().clone();
-        Self {
+        Ok(Self {
             address: sample.address(),
             visibility: sample.visibility(),
             channel_flag: sample.channel_flag(),
@@ -1236,12 +1280,19 @@ impl WeightingSelectedSample {
             parallactic_angles_rad: coordinates.parallactic_angles_rad,
             density_uvw_m: coordinates.density_uvw_m,
             output_frame_frequency_hz,
+            row_spectral_geometry: row_spectral_geometry.map(|geometry| {
+                WeightingRowSpectralGeometry {
+                    channels: geometry.selected_channels(),
+                    first: geometry.first(),
+                    second: geometry.second(),
+                }
+            }),
             field_id: sample.metadata().field_id,
             pointing_directions: coordinates.pointing_directions,
             aw_pointing_pixel: primary_aw_pointing_pixel(&domain_projections),
             antenna_responses: sample.metadata().antenna_responses,
             domain_projections,
-        }
+        })
     }
 
     /// Return the exact selected-sample address.
@@ -1290,6 +1341,12 @@ impl WeightingSelectedSample {
     #[must_use]
     pub const fn output_frame_frequency_hz(&self) -> f64 {
         self.output_frame_frequency_hz
+    }
+
+    /// Source-issued geometry of the complete selected native-channel vector.
+    #[must_use]
+    pub(crate) const fn row_spectral_geometry(&self) -> Option<WeightingRowSpectralGeometry> {
+        self.row_spectral_geometry
     }
 
     /// Return the two antenna pointing directions used by the mosaic response.
@@ -1367,7 +1424,24 @@ mod selected_sample_tests {
         SelectedPhaseCentreProjection,
     };
 
-    use super::primary_aw_pointing_pixel;
+    use super::{WeightingRowSpectralGeometry, WeightingSelectedSample, primary_aw_pointing_pixel};
+
+    #[test]
+    fn bounded_replay_retains_a_compact_kernel_projection_and_only_required_spectral_values() {
+        let weighted_bytes = size_of::<WeightingSelectedSample>();
+        let spectral_bytes = size_of::<Option<WeightingRowSpectralGeometry>>();
+        let source_bytes = size_of::<casa_imaging_model::SelectedObservationSample>();
+        assert!(weighted_bytes < source_bytes);
+        assert!(
+            (weighted_bytes - spectral_bytes) * 3 < source_bytes * 2,
+            "non-spectral kernel payload must retain the original compactness bound"
+        );
+        assert!(
+            spectral_bytes
+                < size_of::<Option<casa_imaging_model::SelectedRowSpectralGeometry>>() / 2,
+            "row/frame provenance must not be duplicated in every weighted sample"
+        );
+    }
 
     #[test]
     fn weighting_selects_the_main_chart_exact_aw_pointing_pixel() {
@@ -1505,8 +1579,11 @@ impl WeightingReplayPhase<'_> {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample =
-            WeightingSelectedSample::from_selected(sample.into(), output_frame_frequency_hz);
+        let sample = WeightingSelectedSample::from_selected(
+            problem,
+            sample.into(),
+            output_frame_frequency_hz,
+        )?;
         let source_imaging_weight = match problem.weighting().density_scope() {
             WeightDensityScope::PerOutputChannel => None,
             WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
@@ -1781,6 +1858,9 @@ pub enum WeightingError {
     /// An evaluated frequency cannot be assigned to the compiled density scope.
     #[error("selected sample is outside the compiled output-channel density scope")]
     OutputChannelMismatch,
+    /// The source-issued frequency geometry belongs to another row, frame or first pair.
+    #[error("selected row spectral geometry does not match the weighted sample")]
+    RowSpectralGeometryMismatch,
     /// The two global passes or a replay visited different selected content.
     #[error("weighting passes do not bind the same selected-observation generation")]
     SelectedGenerationMismatch,
@@ -2505,6 +2585,41 @@ impl CoverageEncoder {
             &mut used,
             &sample.address.correlation_index.to_be_bytes(),
         );
+        append_coverage_bytes(
+            self,
+            &mut chunk,
+            &mut used,
+            &sample.output_frame_frequency_hz.to_bits().to_be_bytes(),
+        );
+        match sample.row_spectral_geometry {
+            Some(geometry) => {
+                append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
+                append_coverage_bytes(
+                    self,
+                    &mut chunk,
+                    &mut used,
+                    &(geometry.selected_channels() as u128).to_be_bytes(),
+                );
+                let first = geometry.first();
+                append_coverage_bytes(self, &mut chunk, &mut used, &first.0.to_be_bytes());
+                append_coverage_bytes(
+                    self,
+                    &mut chunk,
+                    &mut used,
+                    &first.1.to_bits().to_be_bytes(),
+                );
+                if let Some(second) = geometry.second() {
+                    append_coverage_bytes(self, &mut chunk, &mut used, &second.0.to_be_bytes());
+                    append_coverage_bytes(
+                        self,
+                        &mut chunk,
+                        &mut used,
+                        &second.1.to_bits().to_be_bytes(),
+                    );
+                }
+            }
+            None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
+        }
         let mut count = 0_u8;
         for value in weighted.spectral_values() {
             count += 1;

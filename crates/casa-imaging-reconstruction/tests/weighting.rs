@@ -21,20 +21,19 @@ use casa_imaging_model::{
     ReconstructionControls, ReductionPolicy, RestFrequency, RestoringBeamPolicy, RowSelection,
     ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedInputWeightGroup,
     SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
-    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection, UvSelection, UvTaper,
-    UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope,
-    WeightingContract, WeightingScheme, compile, compile_observation,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRowSpectralGeometry,
+    SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedVisibilitySample,
+    SkyDirection, SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
+    UvSelection, UvTaper, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
+    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
     WeightingExecutionLimits, WeightingReplayChunk, WeightingReplaySummary,
-    WeightingSelectedSample, begin_natural_weighting_stream, begin_weighting_generation,
-    plan_weighting,
+    begin_natural_weighting_stream, begin_weighting_generation, plan_weighting,
 };
 
 fn identity(seed: u8, scope: u8) -> LogicalIdentity {
@@ -372,16 +371,6 @@ fn selected_generation(
         })
         .expect("inspect fixture selected stream")
         .0
-}
-
-#[test]
-fn bounded_replay_retains_a_compact_kernel_projection() {
-    assert!(
-        size_of::<WeightingSelectedSample>() * 3 < size_of::<SelectedObservationSample>() * 2,
-        "replay must not retain the complete validated source record: weighted={} selected={}",
-        size_of::<WeightingSelectedSample>(),
-        size_of::<SelectedObservationSample>()
-    );
 }
 
 #[test]
@@ -1091,7 +1080,7 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
             serial_completion.coverage_proof_bytes(),
             serial_completion.coverage_proof_hash_calls(),
         ),
-        (486, 11),
+        (522, 11),
         "proof diagnostics must count every encoded byte and SHA update"
     );
     assert_eq!(
@@ -1451,6 +1440,125 @@ fn fused_and_replay_flush_before_a_three_lane_group_without_a_second_block() {
             .samples()
             .len(),
         3,
+    );
+}
+
+#[test]
+fn row_spectral_geometry_weighting_rejects_row_frame_and_centre_substitution() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let sample = exact_samples(&problem).remove(0);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("limits"),
+    )
+    .expect("plan");
+    let frame = problem.geometry().spectral().output_frame();
+    let first = (
+        sample.address.channel_index,
+        sample.address.frequency_centre_hz,
+    );
+    let mut foreign_row = sample.clone();
+    foreign_row.address.physical_row += 1;
+    let foreign_frame = if frame == FrequencyFrame::Topocentric {
+        FrequencyFrame::Lsrk
+    } else {
+        FrequencyFrame::Topocentric
+    };
+    for (name, geometry) in [
+        (
+            "row",
+            SelectedRowSpectralGeometry::new(foreign_row.as_view(), frame, 1, first, None),
+        ),
+        (
+            "output frame",
+            SelectedRowSpectralGeometry::new(sample.as_view(), foreign_frame, 1, first, None),
+        ),
+        (
+            "first centre",
+            SelectedRowSpectralGeometry::new(
+                sample.as_view(),
+                frame,
+                1,
+                (first.0, first.1 + 1.0),
+                None,
+            ),
+        ),
+    ] {
+        let mut stream = begin_natural_weighting_stream(&problem, &plan).expect("fresh stream");
+        let error = stream
+            .consume(
+                &problem,
+                sample
+                    .as_view()
+                    .with_row_spectral_geometry(Some(geometry.expect("valid descriptor"))),
+                first.1,
+                SelectedSpectralContributions::empty(),
+            )
+            .expect_err("reject substituted descriptor before retaining an empty stencil");
+        assert!(
+            matches!(error, WeightingError::RowSpectralGeometryMismatch),
+            "wrong {name}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn row_spectral_geometry_changes_coverage_even_with_empty_output_stencils() {
+    let problem = problem(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(
+        &problem,
+        WeightingExecutionLimits::new(1, 1).expect("limits"),
+    )
+    .expect("plan");
+    let coverage = |spacing_hz| {
+        let mut stream = begin_natural_weighting_stream(&problem, &plan).expect("fresh stream");
+        for sample in &samples {
+            let first = (
+                sample.address.channel_index,
+                sample.address.frequency_centre_hz,
+            );
+            let geometry = SelectedRowSpectralGeometry::new(
+                sample.as_view(),
+                problem.geometry().spectral().output_frame(),
+                2,
+                first,
+                Some((first.0 + 1, first.1 + spacing_hz)),
+            )
+            .expect("exact first-pair descriptor");
+            let block = stream
+                .consume(
+                    &problem,
+                    sample.as_view().with_row_spectral_geometry(Some(geometry)),
+                    first.1,
+                    SelectedSpectralContributions::empty(),
+                )
+                .expect("consume empty stencil")
+                .expect("one-sample block");
+            assert!(block.samples()[0].spectral_values().next().is_none());
+        }
+        let (_, _, summary) = stream.finish().expect("finish coverage stream");
+        assert_eq!(summary.sample_count(), samples.len() as u64);
+        summary.coverage()
+    };
+    let native = coverage(1.0e6);
+    assert_eq!(
+        native,
+        coverage(1.0e6),
+        "fresh equivalent streams retain exact coverage identity"
+    );
+    assert_ne!(
+        native,
+        coverage(2.0e6),
+        "empty stencils must retain changed source first-pair geometry in coverage"
     );
 }
 

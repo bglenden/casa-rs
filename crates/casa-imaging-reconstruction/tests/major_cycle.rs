@@ -907,15 +907,33 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
 #[test]
 fn sealed_gridded_program_replays_channel_local_cross_channel_groups() {
     // The last native centre is exactly CASA's excluded upper halo boundary.
-    check_linear_cube_replay(&[1.0e9, 1.1e9, 1.2e9], 8);
+    check_linear_cube_replay(&[1.0e9, 1.1e9, 1.2e9], 1.0e8, Some(8));
 }
 
 #[test]
 fn t55_linear_cube_predicts_native_samples_just_beyond_image_channel_centres() {
-    check_linear_cube_replay(&[1.05e9, 1.15e9 + 3.09247875], 5);
+    check_linear_cube_replay(&[1.05e9, 1.15e9 + 3.09247875], 1.0e8, Some(5));
 }
 
-fn check_linear_cube_replay(native_frequencies: &[f64], records_per_row: usize) {
+#[test]
+fn t55_linear_native_prediction_uses_channel_centres_not_channel_width() {
+    let centres = [1.07e9, 1.12e9];
+    let (spacing_width_predictions, spacing_width_records) =
+        check_linear_cube_replay(&centres, 5.0e7, None);
+    let (different_width_predictions, different_width_records) =
+        check_linear_cube_replay(&centres, 1.0e8, None);
+    assert_eq!(
+        spacing_width_predictions, different_width_predictions,
+        "CASA native model prediction uses the first two selected centres, independently of CHAN_WIDTH"
+    );
+    assert_eq!(spacing_width_records, different_width_records);
+}
+
+fn check_linear_cube_replay(
+    native_frequencies: &[f64],
+    channel_width_hz: f64,
+    records_per_row: Option<usize>,
+) -> (Vec<num_complex::Complex64>, u64) {
     let channels = (0..native_frequencies.len() as u32).collect::<Vec<_>>();
     let problem = reconstruction_problem_with_sampling_and_model(
         source_with_channels(247, [channels.clone(), channels]),
@@ -941,9 +959,9 @@ fn check_linear_cube_replay(native_frequencies: &[f64], records_per_row: usize) 
                     let mut sample = row.clone();
                     sample.address.channel_index = channel as u32;
                     sample.address.frequency_centre_hz = frequency;
-                    sample.address.frequency_lower_hz = frequency - 5.0e7;
-                    sample.address.frequency_upper_hz = frequency + 5.0e7;
-                    sample.address.channel_width_hz = 1.0e8;
+                    sample.address.frequency_lower_hz = frequency - channel_width_hz * 0.5;
+                    sample.address.frequency_upper_hz = frequency + channel_width_hz * 0.5;
+                    sample.address.channel_width_hz = channel_width_hz;
                     sample
                 })
         })
@@ -1003,11 +1021,13 @@ fn check_linear_cube_replay(native_frequencies: &[f64], records_per_row: usize) 
     let program = compiler
         .complete(&summary, selected_generation, None)
         .expect("seal split-channel gridded program");
-    assert_eq!(
-        program.record_count(),
-        (samples.len() / native_frequencies.len() * records_per_row) as u64,
-        "the complete native prediction stencil and distinct accumulation stencil determine the retained record count"
-    );
+    if let Some(records_per_row) = records_per_row {
+        assert_eq!(
+            program.record_count(),
+            (samples.len() / native_frequencies.len() * records_per_row) as u64,
+            "the complete native prediction stencil and distinct accumulation stencil determine the retained record count"
+        );
+    }
 
     let prepare_case = || {
         let mut initial_lifecycle = bind_lifecycle(&problem, attempt(248));
@@ -1186,6 +1206,13 @@ fn check_linear_cube_replay(native_frequencies: &[f64], records_per_row: usize) 
         direct.normal_state().residual()[maximum_index],
         gridded_residual[maximum_index],
     );
+    (
+        predictions
+            .iter()
+            .map(|sample| sample.predicted())
+            .collect(),
+        program.record_count(),
+    )
 }
 
 #[test]
@@ -1718,7 +1745,7 @@ fn freeze_weighting_generation_with(
     for sample in samples {
         density.consume(
             problem,
-            sample,
+            selected_row_spectral_view(problem, samples, sample),
             sample.address.frequency_centre_hz,
             contributions(sample),
         )?;
@@ -1727,7 +1754,7 @@ fn freeze_weighting_generation_with(
     for sample in samples {
         sum_weight.consume(
             problem,
-            sample,
+            selected_row_spectral_view(problem, samples, sample),
             sample.address.frequency_centre_hz,
             contributions(sample),
         )?;
@@ -1759,7 +1786,7 @@ fn replay_with(
         if let Some(block) = phase
             .consume(
                 problem,
-                sample,
+                selected_row_spectral_view(problem, samples, sample),
                 sample.address.frequency_centre_hz,
                 contributions(sample),
             )
@@ -1773,6 +1800,54 @@ fn replay_with(
         blocks.push(block);
     }
     (blocks, completion)
+}
+
+fn selected_row_spectral_view<'a>(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: &[SelectedObservationSample],
+    sample: &'a SelectedObservationSample,
+) -> casa_imaging_model::SelectedObservationSampleView<'a> {
+    let view = sample.as_view();
+    if problem.science().spectral().sampling().kernel()
+        != casa_imaging_model::SpectralKernel::Linear
+    {
+        return view;
+    }
+    let address = sample.address;
+    let selection = problem
+        .inputs()
+        .observation_snapshot()
+        .sources()
+        .iter()
+        .find(|source| source.identity() == address.measurement_set)
+        .expect("fixture source")
+        .selection()
+        .spectral_windows()
+        .iter()
+        .find(|window| window.spectral_window_id() == address.spectral_window_id)
+        .expect("fixture spectral selection");
+    let centre = |channel| {
+        samples
+            .iter()
+            .find(|candidate| {
+                candidate.address.measurement_set == address.measurement_set
+                    && candidate.address.physical_row == address.physical_row
+                    && candidate.address.data_description_id == address.data_description_id
+                    && candidate.address.channel_index == channel
+            })
+            .map(|sample| (channel, sample.address.frequency_centre_hz))
+            .expect("the scalar fixture contains the complete selected row")
+    };
+    let channels = selection.channel_indices();
+    let geometry = casa_imaging_model::SelectedRowSpectralGeometry::new(
+        view,
+        problem.geometry().spectral().output_frame(),
+        channels.len(),
+        centre(channels[0]),
+        channels.get(1).copied().map(centre),
+    )
+    .expect("exact fixture row geometry");
+    view.with_row_spectral_geometry(Some(geometry))
 }
 
 /// Drive one exhaustive T19 complete-data replay and mint its paired evidence.

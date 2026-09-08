@@ -102,10 +102,10 @@ pub use selected_observation_sample::{
     SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationGenerationId,
     SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
     SelectedObservationSample, SelectedObservationSampleView, SelectedPhaseCentreProjection,
-    SelectedPointingDirections, SelectedPredictionTarget, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedSpectralEvaluation, SelectedSpectralInterval,
-    SelectedVisibilitySample,
+    SelectedPointingDirections, SelectedPredictionTarget, SelectedRowSpectralGeometry,
+    SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
+    SelectedSpectralInterval, SelectedVisibilitySample,
 };
 
 pub use product_graph::{

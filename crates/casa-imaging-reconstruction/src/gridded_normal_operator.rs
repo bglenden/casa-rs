@@ -49,7 +49,7 @@ use crate::{
 use crate::spectral_operator::{GriddedNormalLocalContribution, StandardConvolution};
 
 const RECORD_DOMAIN: &[u8] = b"casa-rs-gridded-normal-operator";
-const RECORD_VERSION: u32 = 9;
+const RECORD_VERSION: u32 = 10;
 const TAP_KEY_BITS: u32 = 24;
 const TAP_KEY_MASK: u64 = (1_u64 << TAP_KEY_BITS) - 1;
 const CHANNEL_KEY_BITS: u32 = 24;
@@ -3719,7 +3719,7 @@ mod tests {
     }
 
     #[test]
-    fn scalar_v9_roles_preserve_groups_and_separate_prediction_from_accumulation() {
+    fn scalar_v10_roles_preserve_groups_and_separate_prediction_from_accumulation() {
         let roles = [
             RecordRole::Prediction,
             RecordRole::Accumulation,
@@ -3747,7 +3747,7 @@ mod tests {
             &mut GriddedNormalOperatorBlockMeasurements::default(),
         )
         .unwrap();
-        assert_eq!(RECORD_VERSION, 9);
+        assert_eq!(RECORD_VERSION, 10);
         assert_eq!(encoded.len(), 3 * GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
         for (index, bytes) in encoded
             .chunks_exact(GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
@@ -3801,7 +3801,7 @@ mod tests {
     fn t42_taylor_v5_codec_has_dynamic_width_and_rejects_truncation_and_nonfinite_moments() {
         let plan = crate::block_normal::BlockNormalPlan::taylor(1.0e9, 3).unwrap();
         let layout = GriddedNormalRecordLayout::Taylor(plan);
-        assert_eq!(RECORD_VERSION, 9);
+        assert_eq!(RECORD_VERSION, 10);
         assert_eq!(layout.record_bytes().unwrap(), 48);
         assert_eq!(
             GriddedNormalRecordLayout::Taylor(
@@ -3919,7 +3919,7 @@ mod tests {
         assert_eq!(decoded[1].forward_scale, Complex64::new(1.75, -1.25));
         assert_eq!(decoded[1].imaging_weight, 6.0);
         assert!(decoded[1].group_end);
-        assert_eq!(RECORD_VERSION, 9);
+        assert_eq!(RECORD_VERSION, 10);
         assert_eq!(AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES, 96);
         assert!(matches!(
             decode_aw_record(&encoded[..88], 4),
@@ -3961,7 +3961,7 @@ mod tests {
         taylor_v4.usize(layout.record_bytes().unwrap());
         let taylor_v4 = LogicalIdentity::from_sha256(taylor_v4.finish());
 
-        assert_eq!(RECORD_VERSION, 9);
+        assert_eq!(RECORD_VERSION, 10);
         assert_eq!(layout.record_bytes().unwrap(), 32);
         assert_ne!(
             legacy_v2, taylor_v4,

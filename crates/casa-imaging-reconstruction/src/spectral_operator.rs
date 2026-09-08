@@ -527,7 +527,7 @@ pub struct SpectralOperatorSpecification {
     mosaic_response_selections: Box<[MosaicResponseSelection]>,
     mosaic_field_capacity: usize,
     mosaic_normal_entry_capacity: usize,
-    selected_spectral_channel_counts: BTreeMap<(MeasurementSetIdentity, u32), usize>,
+    selected_spectral_rows: BTreeMap<(MeasurementSetIdentity, u32), SelectedSpectralRowShape>,
     primary_beam_cutoff: f32,
     polarization_coordinates: Box<[PolarizationCoordinate]>,
     image_shape: [usize; 2],
@@ -547,6 +547,13 @@ pub struct SpectralOperatorSpecification {
 enum InitialModelClassification {
     Empty,
     Evaluated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectedSpectralRowShape {
+    channels: usize,
+    first: u32,
+    second: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1064,12 +1071,19 @@ impl SpectralOperatorSpecification {
             .first()
             .ok_or(SpectralOperatorError::UnsupportedProblem)?
             .geometry;
-        let mut selected_spectral_channel_counts = BTreeMap::new();
+        let mut selected_spectral_rows = BTreeMap::new();
         for source in problem.inputs().observation_snapshot().sources() {
             for spectral_window in source.selection().spectral_windows() {
-                selected_spectral_channel_counts.insert(
+                let channels = spectral_window.channel_indices();
+                selected_spectral_rows.insert(
                     (source.identity(), spectral_window.spectral_window_id()),
-                    spectral_window.channel_indices().len(),
+                    SelectedSpectralRowShape {
+                        channels: channels.len(),
+                        first: *channels
+                            .first()
+                            .ok_or(SpectralOperatorError::InvalidSample)?,
+                        second: channels.get(1).copied(),
+                    },
                 );
             }
         }
@@ -1153,7 +1167,7 @@ impl SpectralOperatorSpecification {
             mosaic_response_selections,
             mosaic_field_capacity,
             mosaic_normal_entry_capacity,
-            selected_spectral_channel_counts,
+            selected_spectral_rows,
             primary_beam_cutoff: problem.products().validity().primary_beam().cutoff(),
             polarization_coordinates: problem.reconstruction().polarization().coordinates().into(),
             image_shape: domains[0].image_shape,
@@ -1217,16 +1231,6 @@ impl SpectralOperatorSpecification {
         self.mosaic_selected_channel_capacity().saturating_mul(3)
     }
 
-    fn selected_spectral_channel_count(
-        &self,
-        measurement_set: MeasurementSetIdentity,
-        spectral_window_id: u32,
-    ) -> Option<usize> {
-        self.selected_spectral_channel_counts
-            .get(&(measurement_set, spectral_window_id))
-            .copied()
-    }
-
     pub(super) fn uses_casa_linear_resampling(
         &self,
         group: &[crate::weighting::WeightingSampleValue],
@@ -1241,13 +1245,26 @@ impl SpectralOperatorSpecification {
             .ok_or(SpectralOperatorError::InvalidSample)?
             .selected();
         let address = selected.address();
-        Ok(address.channel_width_hz.abs() > 0.0
-            && self
-                .selected_spectral_channel_count(
-                    address.measurement_set,
-                    address.spectral_window_id,
-                )
-                .is_some_and(|channels| channels > 1))
+        let shape = self
+            .selected_spectral_rows
+            .get(&(address.measurement_set, address.spectral_window_id))
+            .ok_or(SpectralOperatorError::InvalidSample)?;
+        if shape.channels == 1 {
+            return Ok(false);
+        }
+        let geometry = selected
+            .row_spectral_geometry()
+            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+        if geometry.selected_channels() != shape.channels
+            || geometry.first().0 != shape.first
+            || geometry.second().map(|second| second.0) != shape.second
+            || group
+                .iter()
+                .any(|weighted| weighted.selected().row_spectral_geometry() != Some(geometry))
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        Ok(true)
     }
 
     pub(super) fn casa_linear_output_grid(
@@ -1268,10 +1285,14 @@ impl SpectralOperatorSpecification {
             && self.uses_casa_linear_resampling(std::slice::from_ref(weighted))?
         {
             let selected = weighted.selected();
+            let first_pair = selected
+                .row_spectral_geometry()
+                .and_then(|geometry| geometry.first_pair_hz())
+                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
             return crate::spectral_sampling::casa_linear_prediction_terms(
                 &self.output_channel_frequencies_hz,
                 selected.output_frame_frequency_hz(),
-                selected.address().channel_width_hz,
+                first_pair,
             )
             .map_err(|_| SpectralOperatorError::InvalidSample);
         }
@@ -4959,25 +4980,40 @@ impl<P> CasaLinearRowResampler<P> {
         mut interpolate_prediction: impl FnMut(&P, &P, [f64; 2]) -> Result<P, SpectralOperatorError>,
         mut emit: impl FnMut(CasaResampledGroup<P>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
-        let Some(previous) = self.pending.take() else {
-            self.pending = Some(current);
-            return Ok(());
-        };
-        if previous.key != current.key {
-            self.grid = None;
+        let geometry = current
+            .samples
+            .first()
+            .and_then(|sample| sample.selected().row_spectral_geometry())
+            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+        if self
+            .pending
+            .as_ref()
+            .is_none_or(|previous| previous.key != current.key)
+        {
+            let pair = geometry
+                .first_pair_hz()
+                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+            self.grid = Some(
+                CasaLinearGrid::compile_for_output(output, pair[0], pair[1])
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
+            );
             self.next_fine_channel = 0;
             self.pending = Some(current);
             return Ok(());
         }
-        let grid = match self.grid {
-            Some(grid) => grid,
-            None => CasaLinearGrid::compile_for_output(
-                output,
-                previous.frequency_hz,
-                current.frequency_hz,
-            )
-            .ok_or(SpectralOperatorError::InvalidSample)?,
-        };
+        let previous = self
+            .pending
+            .take()
+            .ok_or(SpectralOperatorError::InvalidSample)?;
+        if previous
+            .samples
+            .first()
+            .and_then(|sample| sample.selected().row_spectral_geometry())
+            != Some(geometry)
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let grid = self.grid.ok_or(SpectralOperatorError::InvalidSample)?;
         let result = grid
             .samples_for_pair(
                 &mut self.next_fine_channel,
@@ -11594,6 +11630,9 @@ pub enum SpectralOperatorError {
     /// A weighted contribution contains an invalid numerical value.
     #[error("spectral operator sample is non-finite or outside its numerical domain")]
     InvalidSample,
+    /// Row interpolation was requested without source-issued selected-channel geometry.
+    #[error("spectral row interpolation requires exact selected-channel geometry")]
+    MissingRowSpectralGeometry,
     /// Selected row geometry did not provide one canonical projection per image domain.
     #[error("selected row image-domain projections do not match the compiled geometry")]
     DomainProjectionMismatch,

@@ -21,18 +21,128 @@ use casa_imaging_model::{
     SelectedImageDomainProjection, SelectedImageDomainProjections, SelectedMainRow,
     SelectedObservationGenerationId, SelectedObservationInspectionError,
     SelectedObservationPassError, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection, StageErrorBudget,
-    TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw, VisibilityColumn,
-    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
-    compile, compile_observation,
+    SelectedPredictionTarget, SelectedRowSpectralGeometry, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedVisibilitySample, SkyDirection,
+    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowSelection,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, UvwCoordinateLaw,
+    VisibilityColumn, VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract,
+    WeightingScheme, compile, compile_observation,
 };
 
 mod common;
 
 use common::{identity, observation_snapshot};
+
+#[test]
+fn selected_row_spectral_geometry_checks_count_indices_and_centres() {
+    let problem = compiled_problem();
+    let samples = exact_samples(&problem);
+    let sample = samples[0].as_view();
+    let frame = FrequencyFrame::Lsrk;
+    for (count, second) in [
+        (0, None),
+        (0, Some((3, 1.402e9))),
+        (1, Some((3, 1.402e9))),
+        (2, None),
+    ] {
+        assert!(
+            SelectedRowSpectralGeometry::new(sample, frame, count, (1, 1.4e9), second).is_none()
+        );
+    }
+    for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+        assert!(SelectedRowSpectralGeometry::new(sample, frame, 1, (1, invalid), None).is_none());
+        assert!(
+            SelectedRowSpectralGeometry::new(sample, frame, 2, (1, invalid), Some((3, 1.402e9)))
+                .is_none()
+        );
+        assert!(
+            SelectedRowSpectralGeometry::new(sample, frame, 2, (1, 1.4e9), Some((3, invalid)))
+                .is_none()
+        );
+    }
+    for second in [(3, 1.4e9), (1, 1.402e9), (0, 1.402e9)] {
+        assert!(
+            SelectedRowSpectralGeometry::new(sample, frame, 2, (1, 1.4e9), Some(second)).is_none()
+        );
+    }
+    let singleton = SelectedRowSpectralGeometry::new(sample, frame, 1, (7, 1.4e9), None)
+        .expect("singleton has no invented spacing");
+    assert_eq!(singleton.selected_channels(), 1);
+    assert_eq!(singleton.first(), (7, 1.4e9));
+    assert_eq!(singleton.second(), None);
+    assert_eq!(singleton.first_pair_hz(), None);
+    for count in [2, 4] {
+        for second_hz in [1.398e9, 1.402e9] {
+            let geometry = SelectedRowSpectralGeometry::new(
+                sample,
+                frame,
+                count,
+                (1, 1.4e9),
+                Some((3, second_hz)),
+            )
+            .expect("ordered indices allow either frequency direction and a retained prefix");
+            assert_eq!(geometry.selected_channels(), count);
+            assert_eq!(geometry.first_pair_hz(), Some([1.4e9, second_hz]));
+        }
+    }
+}
+
+#[test]
+fn selected_row_spectral_geometry_binds_exact_row_and_conversion_context() {
+    let problem = compiled_problem();
+    let samples = exact_samples(&problem);
+    let sample = &samples[0];
+    let frame = FrequencyFrame::Lsrk;
+    let geometry = SelectedRowSpectralGeometry::new(
+        sample.as_view(),
+        frame,
+        2,
+        (1, 1.4e9),
+        Some((3, 1.402e9)),
+    )
+    .expect("bound row geometry");
+    assert!(geometry.matches_sample(sample.as_view(), frame));
+    assert!(!geometry.matches_sample(sample.as_view(), FrequencyFrame::Barycentric));
+    type SampleChange = (&'static str, fn(&mut SelectedObservationSample));
+    let changes: [SampleChange; 8] = [
+        ("source", |sample| {
+            sample.address.measurement_set =
+                casa_imaging_model::MeasurementSetIdentity::new(identity(251))
+        }),
+        ("row", |sample| sample.address.physical_row += 1),
+        ("DDID", |sample| sample.address.data_description_id += 1),
+        ("SPW", |sample| sample.address.spectral_window_id += 1),
+        ("polarization", |sample| sample.address.polarization_id += 1),
+        ("field", |sample| sample.metadata.field_id += 1),
+        ("time", |sample| {
+            sample.coordinates.time =
+                Epoch::new(sample.coordinates.time.mjd_days() + 1.0, TimeScale::Utc)
+        }),
+        ("source frame", |sample| {
+            sample.address.frequency_frame = FrequencyFrame::Barycentric
+        }),
+    ];
+    for (name, change) in changes {
+        let mut changed = sample.clone();
+        change(&mut changed);
+        assert!(
+            !geometry.matches_sample(changed.as_view(), frame),
+            "substituted {name}"
+        );
+    }
+    let mut peer = sample.clone();
+    peer.address.channel_index += 1;
+    peer.address.frequency_centre_hz += 1.0e6;
+    peer.address.correlation_index += 1;
+    peer.channel_flag = true;
+    peer.row_flag = true;
+    peer.input_weight = 0.0;
+    assert!(
+        geometry.matches_sample(peer.as_view(), frame),
+        "geometry is shared across channels, correlations, and flag/weight changes in its row"
+    );
+}
 
 #[test]
 fn selected_observation_inspection_rejects_any_departure_from_compiled_coverage() {

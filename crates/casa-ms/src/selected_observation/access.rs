@@ -834,6 +834,7 @@ pub(crate) struct BoundObservationSamples<'a> {
 pub(super) struct ProjectedSelectedObservationSample {
     pub(super) selected: SelectedObservationSample,
     pub(super) input_weight_group: SelectedInputWeightGroup,
+    pub(super) spectral_selection: SelectedRowSpectralSelection,
 }
 
 impl Iterator for BoundObservationSamples<'_> {
@@ -926,6 +927,7 @@ impl BoundObservationSamples<'_> {
                         parallel_hand_group_flag,
                         &block.row_geometry[self.row_offset],
                     );
+                    let spectral_selection = coordinates.row_spectral_selection();
                     self.advance(coordinates.channels.len(), coordinates.products.len());
                     if sample.is_err() {
                         self.finished = true;
@@ -933,6 +935,7 @@ impl BoundObservationSamples<'_> {
                     return Some(sample.map(|selected| ProjectedSelectedObservationSample {
                         selected,
                         input_weight_group,
+                        spectral_selection,
                     }));
                 }
             }
@@ -1454,6 +1457,7 @@ impl SelectedObservationBlock {
             SelectedObservationRunChannel,
             &[SelectedObservationRunCorrelation],
             &MsCalEngine,
+            SelectedRowSpectralSelection,
         ) -> Result<(), E>,
     ) -> Result<(), BlockVisitError<E>> {
         let logical_source = self.logical_source.as_ref().ok_or(BlockVisitError::Source(
@@ -1545,6 +1549,7 @@ impl SelectedObservationBlock {
                     run_channel,
                     correlations.as_slice(),
                     geometry_engine,
+                    coordinates.row_spectral_selection(),
                 )
                 .map_err(BlockVisitError::Consumer)?;
             }
@@ -1788,6 +1793,27 @@ pub(super) struct SelectedCoordinates {
     products: Box<[CorrelationProduct]>,
     channel_start: usize,
     channel_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct SelectedRowSpectralSelection {
+    pub(super) channels: usize,
+    pub(super) first: (u32, f64),
+    pub(super) second: Option<(u32, f64)>,
+}
+
+impl SelectedCoordinates {
+    fn row_spectral_selection(&self) -> SelectedRowSpectralSelection {
+        let first = self.channels[0];
+        SelectedRowSpectralSelection {
+            channels: self.channels.len(),
+            first: (first.channel_index, first.centre_hz),
+            second: self
+                .channels
+                .get(1)
+                .map(|channel| (channel.channel_index, channel.centre_hz)),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

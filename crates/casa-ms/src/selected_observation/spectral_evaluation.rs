@@ -4,7 +4,8 @@
 use casa_imaging_model::{
     CompiledProblem, FrequencyFrame, SelectedInputWeightGroup, SelectedObservationRunChannel,
     SelectedObservationRunCorrelation, SelectedObservationRunRow, SelectedObservationSampleView,
-    SelectedSpectralEvaluation, SelectedSpectralInterval, SpectralWindowSelection,
+    SelectedRowSpectralGeometry, SelectedSpectralEvaluation, SelectedSpectralInterval,
+    SpectralWindowSelection,
 };
 
 use casa_types::measures::{direction::MDirection, frame::MeasFrame, frequency::FrequencyRef};
@@ -15,6 +16,7 @@ use crate::{
     spectral_selection::{PreparedFrequencyFrameConversion, convert_frequency_to_frame_with_frame},
 };
 
+use super::access::SelectedRowSpectralSelection;
 use super::{BoundObservationSourceError, SelectedObservationRowSelection};
 
 /// Bounded metadata measurements from one selected spectral-range reduction.
@@ -647,7 +649,7 @@ impl<'a> SelectedObservationTraversalSample<'a> {
         spectral_evaluation: SelectedSpectralEvaluation,
     ) -> Self {
         Self {
-            sample,
+            sample: sample.with_row_spectral_geometry(spectral_evaluation.row_geometry()),
             spectral_evaluation,
         }
     }
@@ -794,6 +796,7 @@ struct SpectralTransformKey {
 /// evaluation, while a row, channel interval, field, time, frame, weight, flag, SPW, or source
 /// change forces a fresh owner evaluation.
 pub(super) struct SpectralEvaluationProjector {
+    last_row_geometry: Option<(SelectedRowSpectralSelection, SelectedRowSpectralGeometry)>,
     last_source: Option<casa_imaging_model::MeasurementSetIdentity>,
     source_frame: Option<(i32, u64, MeasFrame)>,
     last_transform: Option<(SpectralTransformKey, PreparedFrequencyFrameConversion)>,
@@ -807,6 +810,7 @@ pub(super) struct SpectralEvaluationProjector {
 impl SpectralEvaluationProjector {
     pub(super) const fn new() -> Self {
         Self {
+            last_row_geometry: None,
             last_source: None,
             source_frame: None,
             last_transform: None,
@@ -819,6 +823,7 @@ impl SpectralEvaluationProjector {
         problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'a>,
         geometry_engine: &MsCalEngine,
+        selection: SelectedRowSpectralSelection,
     ) -> Result<SelectedObservationTraversalSample<'a>, BoundObservationSourceError> {
         let key = SpectralProjectionKey::from_sample(sample);
         let address = sample.address();
@@ -844,6 +849,35 @@ impl SpectralEvaluationProjector {
             intervals
         };
         let input_weight = sample.input_weight();
+        let output_frame = problem.geometry().spectral().output_frame();
+        let row_geometry = match self.last_row_geometry {
+            Some((cached_selection, geometry))
+                if cached_selection == selection
+                    && geometry.matches_sample(sample, output_frame) =>
+            {
+                geometry
+            }
+            _ => {
+                let conversion = prepared_frequency_conversion_cached(
+                    problem,
+                    sample,
+                    geometry_engine,
+                    &mut self.source_frame,
+                    &mut self.last_transform,
+                )?;
+                let convert = |(index, hz)| (index, conversion.convert_hz(hz));
+                let geometry = SelectedRowSpectralGeometry::new(
+                    sample,
+                    output_frame,
+                    selection.channels,
+                    convert(selection.first),
+                    selection.second.map(convert),
+                )
+                .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
+                self.last_row_geometry = Some((selection, geometry));
+                geometry
+            }
+        };
         let valid = !sample.channel_flag()
             && !sample.parallel_hand_group_flag()
             && !sample.row_flag()
@@ -855,7 +889,8 @@ impl SpectralEvaluationProjector {
             if valid { f64::from(input_weight) } else { 0.0 },
             valid,
         )
-        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
+        .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?
+        .with_row_geometry(row_geometry);
         Ok(SelectedObservationTraversalSample::with_spectral_evaluation(sample, evaluation))
     }
 }

@@ -203,7 +203,14 @@ impl CasaLinearGrid {
                 output_increment_hz,
             });
         }
-        let fine_channels_per_output = width.floor() as usize;
+        let fine_channels_per_output = width.floor();
+        // A float-to-integer cast saturates. Reject it, and the complete index
+        // product, before constructing an iterable grid.
+        if fine_channels_per_output >= usize::MAX as f64 {
+            return None;
+        }
+        let fine_channels_per_output = fine_channels_per_output as usize;
+        fine_channels_per_output.checked_mul(output.channels)?;
         let fine_increment_abs = output_increment_hz.abs() / fine_channels_per_output as f64;
         let first_edge_hz = output.first_hz - output_increment_hz / 2.0;
         let last_edge_hz = output_last_hz + output_increment_hz / 2.0;
@@ -215,6 +222,9 @@ impl CasaLinearGrid {
         } else {
             high_edge_hz - fine_increment_abs / 2.0
         };
+        if !fine_start_hz.is_finite() || !fine_increment_hz.is_finite() {
+            return None;
+        }
         Some(Self {
             fine_start_hz,
             fine_increment_hz,
@@ -716,14 +726,14 @@ fn casa_wide_channel_linear_terms(
 pub(crate) fn casa_linear_prediction_terms(
     centres: &[f64],
     native_frequency_hz: f64,
-    native_increment_hz: f64,
+    first_native_pair_hz: [f64; 2],
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
     let output = CasaLinearOutputGrid::compile(centres)
         .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
     let grid = CasaLinearGrid::compile_for_output(
         output,
-        native_frequency_hz,
-        native_frequency_hz + native_increment_hz,
+        first_native_pair_hz[0],
+        first_native_pair_hz[1],
     )
     .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
     let output_increment = output.second_hz - output.first_hz;
@@ -731,7 +741,7 @@ pub(crate) fn casa_linear_prediction_terms(
     let beyond_last = output.first_hz + output.channels as f64 * output_increment;
     let minimum = output.first_hz.min(beyond_last);
     let maximum = output.first_hz.max(beyond_last);
-    let width = native_increment_hz.abs();
+    let width = (first_native_pair_hz[1] - first_native_pair_hz[0]).abs();
     let mapped = (0.0..output.channels as f64).contains(&pixel)
         || (native_frequency_hz < maximum + 2.0 * width
             && native_frequency_hz > maximum - 0.5 * width)
@@ -876,6 +886,16 @@ fn sparse_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn t55_linear_grid_rejects_unrepresentable_fine_channel_counts_before_iteration() {
+        for width in [usize::MAX as f64, (usize::MAX as f64) / 2.0] {
+            assert!(
+                CasaLinearGrid::compile(&[width, 2.0 * width, 3.0 * width], 1.0, 2.0).is_none(),
+                "the fine-channel index must be representable before any row is iterated"
+            );
+        }
+    }
 
     #[test]
     fn t35_one_channel_identity_matches_constant_basis_and_is_exactly_paired() {
@@ -1271,44 +1291,46 @@ mod tests {
             SpectralInterpolationEdge, SpectralInterpolationMethod, SpectralInterpolationOracle,
         };
         for centres in [[10.0, 20.0, 30.0], [30.0, 20.0, 10.0]] {
-            for frequency in [9.9999, 10.0, 25.0, 30.0001] {
-                let terms = casa_linear_prediction_terms(&centres, frequency, 10.0)
-                    .expect("CASA forward stencil");
-                let prediction = SpectralInterpolationOracle::coefficients(
-                    &centres,
-                    frequency,
-                    SpectralInterpolationMethod::Linear,
-                    SpectralInterpolationEdge::Extrapolate,
-                )
-                .expect("unflagged CASA prediction interpolation");
-                let data = SpectralInterpolationOracle::coefficients(
-                    &centres,
-                    frequency,
-                    SpectralInterpolationMethod::Linear,
-                    SpectralInterpolationEdge::FlagOutside,
-                )
-                .expect("flagged CASA data interpolation");
-                let mut dense = [0.0; 3];
-                for term in terms {
-                    let channel = term.output_channel() as usize;
-                    assert_eq!(
-                        term.evaluation_frequency_hz(),
-                        centres[channel],
-                        "spatial degridding precedes spectral interpolation on coarse image frequencies"
-                    );
-                    dense[channel] += term.factor();
+            for native_pair in [[10.0, 20.0], [20.0, 10.0]] {
+                for frequency in [9.9999, 10.0, 25.0, 30.0001] {
+                    let terms = casa_linear_prediction_terms(&centres, frequency, native_pair)
+                        .expect("CASA forward stencil");
+                    let prediction = SpectralInterpolationOracle::coefficients(
+                        &centres,
+                        frequency,
+                        SpectralInterpolationMethod::Linear,
+                        SpectralInterpolationEdge::Extrapolate,
+                    )
+                    .expect("unflagged CASA prediction interpolation");
+                    let data = SpectralInterpolationOracle::coefficients(
+                        &centres,
+                        frequency,
+                        SpectralInterpolationMethod::Linear,
+                        SpectralInterpolationEdge::FlagOutside,
+                    )
+                    .expect("flagged CASA data interpolation");
+                    let mut dense = [0.0; 3];
+                    for term in terms {
+                        let channel = term.output_channel() as usize;
+                        assert_eq!(
+                            term.evaluation_frequency_hz(),
+                            centres[channel],
+                            "spatial degridding precedes spectral interpolation on coarse image frequencies"
+                        );
+                        dense[channel] += term.factor();
+                    }
+                    for (rust, casa) in dense.into_iter().zip(prediction.coefficients) {
+                        assert!((rust - casa).abs() < 1.0e-12);
+                    }
+                    assert!(prediction.valid);
+                    assert_eq!(data.valid, (10.0..=30.0).contains(&frequency));
                 }
-                for (rust, casa) in dense.into_iter().zip(prediction.coefficients) {
-                    assert!((rust - casa).abs() < 1.0e-12);
-                }
-                assert!(prediction.valid);
-                assert_eq!(data.valid, (10.0..=30.0).contains(&frequency));
+                assert!(
+                    casa_linear_prediction_terms(&centres, 100.0, native_pair)
+                        .unwrap()
+                        .is_empty()
+                );
             }
-            assert!(
-                casa_linear_prediction_terms(&centres, 100.0, 10.0)
-                    .unwrap()
-                    .is_empty()
-            );
         }
     }
 
