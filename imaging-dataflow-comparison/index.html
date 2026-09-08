@@ -966,7 +966,7 @@ projected onto.</p>
 
 <p><code>casars-imager</code> does not own MeasurementSet interpretation, scientific
 operators, planning, product generation, or persistence. Unsupported cube,
-mosaic, W/AW-projection, and backend choices fail as
+mosaic, projection specifics, and backend choices fail as
 <code>TemporarilyUnavailable</code>; they do not enter the pre-T23 runners described
 below.</p>
 <h3 id="t35t36-spectral-cutover-map">T35/T36 spectral cutover map<a class="headerlink" href="#t35t36-spectral-cutover-map" title="Permanent link">&para;</a></h3>
@@ -1327,10 +1327,10 @@ threaded resamplers.</p>
 </tr>
 <tr>
 <td>Mosaic/A/AW path</td>
-<td><code>MosaicGridderConfig</code>, <code>ScreenProjector</code>, PB products; AW-family rejected at task edge</td>
+<td>Mosaic response and PB products plus a distinct prepared-CF-backed EVLA/VLA paired AW operator; unsupported telescope, Mueller, cache, and control specifics reject typed</td>
 <td><code>MosaicFT</code>, <code>AWProjectFT</code>, <code>AWProjectWBFT</code>, PB/CF families</td>
 <td><code>MosaicFT</code>, <code>AWProjectFT</code>, <code>PBMosaicFT</code>, <code>nPBWProjectFT</code></td>
-<td>CASA/LibRA show the likely future class family; Rust should first stabilize a smaller projection-plan abstraction.</td>
+<td>Keep the Rust operator behind the compiled paired-transform and prepared-artifact boundaries; do not restore mode-specific runners or W-only aliases.</td>
 </tr>
 <tr>
 <td>Minor cycle</td>

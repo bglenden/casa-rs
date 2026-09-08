@@ -1,0 +1,1011 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Rust and Python APIs for CASA-compatible data and tasks">
+      
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>T51 paired AW operator mechanism map - casa-rs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#t51-paired-aw-operator-mechanism-map" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="casa-rs" class="md-header__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            casa-rs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              T51 paired AW operator mechanism map
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="casa-rs" class="md-nav__button md-logo" aria-label="casa-rs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    casa-rs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Parameters
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Task Parameters
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/task-parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Generated Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scientific Workbench
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Scientific Workbench
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../scientific-notebooks-and-assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Notebooks, Tutorials, Python, and AI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../mac-native-gui-spec/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Native macOS Product Spec
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../rust-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rust API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/data/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Data API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/tasks-calibrate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calibrate Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/versioning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../python/api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#old-to-current-mechanism-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Old-to-current mechanism map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#immutable-reuse-and-execution-binding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Immutable reuse and execution binding
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#catalog-scoped-preparation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog-scoped preparation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#campaign-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Campaign record
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="t51-paired-aw-operator-mechanism-map">T51 paired AW operator mechanism map<a class="headerlink" href="#t51-paired-aw-operator-mechanism-map" title="Permanent link">&para;</a></h1>
+<p>Truth class: implementation reconnaissance and campaign record<br />
+Work issue: #537<br />
+Parent revision: <code>fea9ef9c65ff3638bd186bd69d5ca83381e59750</code>
+Historical revision: <code>fff9c2d553eace4b6a57b1df9ded4773f2263ceb</code></p>
+<h2 id="old-to-current-mechanism-map">Old-to-current mechanism map<a class="headerlink" href="#old-to-current-mechanism-map" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Proven mechanism</th>
+<th>Historical/upstream evidence</th>
+<th>Current owner</th>
+<th>T51 disposition</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>One paired imaging/weight CF key over frequency, W, Mueller/polarization, parallactic angle, antenna/PB identity, conjugate beam, support, sampling, UV coordinates, precision, and normalization</td>
+<td>Historical <code>casa-imaging::AwConvolutionFunctionCache</code>; CASA <code>CFStore2</code>, <code>CFBuffer</code>, and <code>VB2CFBMap</code></td>
+<td><code>casa-imaging-model::prepared_artifact</code> science identity plus <code>casa-imaging-runtime::PreparedArtifactDescriptor</code></td>
+<td>Adapt into one validated CASA-import/private-cache/operator boundary; imaging and weight roles remain distinct and asymmetric.</td>
+</tr>
+<tr>
+<td>One CF selection drives prediction and adjoint gridding</td>
+<td>Historical <code>AwProjector</code>; CASA <code>AWProjectFT::findConvFunction</code>, <code>put</code>, and <code>get</code></td>
+<td><code>casa-imaging-reconstruction</code> paired measurement and convolution operators</td>
+<td>Retain as one AW variant with conjugate-transposed degridding; never compose an A side path with the W operator or alias AW to W-only.</td>
+</tr>
+<tr>
+<td>Fused sample placement, oversampled taps, discrete complex normalization, and W-sign conjugation</td>
+<td>Historical <code>AwProjector::sample_plan</code>, packed/literal tap compilation; CASA/LibRA <code>AWVisResampler</code></td>
+<td><code>casa-imaging-reconstruction::spectral_operator</code> and compact gridded-normal records</td>
+<td>Adapt the mathematical mechanism to the current compact record owner and reject missing/nonfinite/out-of-grid/unsupported cells specifically.</td>
+</tr>
+<tr>
+<td>Row-local feed/parallactic response and pointing phase gradient</td>
+<td>CASA <code>PolOuterProduct</code>, <code>PointingOffsets</code>, <code>VB2CFBMap</code>; casacore <code>MSPointingColumns</code> and <code>ParAngleMachine</code></td>
+<td>selected-observation row coordinates plus reconstruction polarization and spectral operators</td>
+<td>Consume the already evaluated row PA/pointing values. Apply the pointing phase in both directions; do not duplicate a pointing-specific A-term cache.</td>
+</tr>
+<tr>
+<td>Wideband spectral and conjugate-beam lookup</td>
+<td>CASA/LibRA <code>makeFreqValList</code>, <code>makeWValList</code>, and <code>CFBuffer::initMaps</code>; conjugate frequency is <code>sqrt(2 f_ref^2 - f^2)</code></td>
+<td>compiled spectral sampling plus prepared-CF catalog</td>
+<td>Resolve the nearest validated direct/conjugate cells from exact output-frame frequency, endpoint-clamp frequency and quadratic W indices like CASA, and fail typed on an invalid conjugate domain or missing product tuple.</td>
+</tr>
+<tr>
+<td>Weight CF supplies sensitivity/PB normalization through the same sample selection</td>
+<td>Historical paired <code>CFS_</code>/<code>WTCFS_</code> cells; CASA <code>AWProjectWBFT</code> average-PB accumulation</td>
+<td>reconstruction Normal State and products normalization boundary</td>
+<td>Use the paired weight plane for normal-state weight/PB accumulation. Frontends do no normalization calculation.</td>
+</tr>
+<tr>
+<td>Bounded shared CF residency and source-major reuse</td>
+<td>Historical resident LRU and source-major/AOT tap deduplication; LibRA <code>MakeCFArray</code> and bounded visibility buckets</td>
+<td>runtime prepared-artifact store plus reconstruction compact replay</td>
+<td>Share immutable cells and compact taps across workers, account reads/residency/passes/copies, and retain deterministic source order. Never allocate a full grid per worker.</td>
+</tr>
+<tr>
+<td>Cold import and warm reuse converge before numerical work</td>
+<td>CASA dry-grid/fill/reload cache sequence; T50 plan-listed load/reuse operations</td>
+<td>runtime prepared-artifact store</td>
+<td>Cold CASA import and warm private reuse produce the same typed prepared cell/catalog consumed by the same AW operator. Cache disposition is receipt evidence, not operator dispatch.</td>
+</tr>
+</tbody>
+</table>
+<p>The displaced <code>casa-imaging</code> crate, whole-run AW pipeline, mmap/packed experimental
+formats, environment-selected fast paths, and mode-specific worker architecture
+remain deleted. LibRA's batching and CF packing are retained as techniques, but
+its environment-controlled process/bucket policy is rejected. CASA's known
+diagonal-dominance shortcuts are not generalized: unsupported Mueller layouts,
+telescopes, disabled required terms, or absent CF coverage fail specifically.</p>
+<h2 id="immutable-reuse-and-execution-binding">Immutable reuse and execution binding<a class="headerlink" href="#immutable-reuse-and-execution-binding" title="Permanent link">&para;</a></h2>
+<p>The model owns a kind-tagged preparation-dependency identity. For paired CFs it
+retains the exact observation snapshot, geometry, numerics, reference data,
+visibility transform, spectral/instrument/W/AW response, operator basis and
+polarization, and weighting laws and source generations. Solver algorithms and
+stopping controls, model-lifecycle authorization, and product publication do not
+key immutable CF bytes. Spectral maps and generic kernels remain fully
+problem-scoped until their owners establish a narrower dependency contract.</p>
+<p>The runtime combines that dependency identity with the existing exact paired-cell
+semantics and representation into immutable compatibility. A separately bound
+descriptor always retains the full current <code>CompiledProblemId</code>; manifest decoding
+cannot mint that execution authority. Catalog operations and reader activation,
+attachment, close, and release require the current problem binding even when two
+problems share artifact/content identities. A new CLEAN descriptor and reader may
+reuse DIRTY bytes; a DIRTY-bound descriptor or reader cannot execute as CLEAN.</p>
+<p>Private cache schema/identity version 7 rejects previous manifests without a
+migration reader. The cold/warm acceptance starts with a fresh private store and
+requires unchanged payload and manifest bytes, inodes, and modification times.
+Resource, decoded-pool, and decoder-workspace checks remain in force;
+execution-seal metadata is charged beside the retained reader snapshot.</p>
+<p>Payload hashes are checked on the first successful read of each artifact in a
+reader session, then reused while the cooperative store lock excludes mutation.
+Concurrent first reads may both validate; a new session validates again. Every
+read still checks byte length, finite values, and declared representation. This
+deliberately no longer promises detection of same-length, finite external
+modification after successful validation in that session. Verification flags are
+charged to the reader snapshot; no payload cache or persistent format is added.
+The regression checks actual hashed bytes independently of timing, including
+new-session corruption rejection and retained per-read finite/length rejection.</p>
+<p>The cross-problem regression uses the canonical source-free prepared prephase for
+both single and catalog operations. It supplies current-problem plans and registry
+metadata, then injects only a foreign bound descriptor. Both directions require
+the typed scientific-binding failure at the cache node, with no successful cache
+outcome or mutation. The unrelated general publication fixture currently applies
+a nonzero model delta to a certified-zero initial major pass; this regression does
+not change that fixture or weaken the production model check.</p>
+<h2 id="catalog-scoped-preparation">Catalog-scoped preparation<a class="headerlink" href="#catalog-scoped-preparation" title="Permanent link">&para;</a></h2>
+<p>AW preparation now performs one ordered catalog-reuse execution, followed by
+one ordered cold-import execution only when cells are missing: two preparation
+receipts for a cold or mixed cache, one for a completely warm cache. The initial
+cold probe retains its expected rejected-artifact evidence. No per-cell AW
+plan/run route remains. Genuine single-artifact clients retain their existing
+operation API.</p>
+<p><code>PreparedArtifactCatalogPlanFragment::with_import_sources</code> selects a complete
+ordered mixed catalog: a present source imports that cell, and <code>None</code> requires
+revalidation/reuse without opening an importer. Warm members therefore remain
+plan-listed inside the cold phase, not just handles retained by the application.
+The fragment instance supplies operation-distinct work and implementation IDs.
+<code>PreparedArtifactStore::import_catalog</code> opens one application-owned importer at
+a time and uses the same store-owned publication transaction as single-artifact
+preparation. Source identity and inode/root checks remain per object. Admission
+groups sequential source traffic by storage domain, root, and calibration, with
+one source lane plus one cache lane in the same-domain fixture. Payload workspace
+is the maximum active-cell requirement; descriptor/source/outcome and worst-case
+receipt workspace remain explicit O(N) metadata. The required retained catalog
+must fit the private cache. This phase excludes all selected members from its
+own evictions, including already-warm members and its completed import prefix.
+It does not pin objects against another execution between per-cell locks.
+Cache-inventory scans still occur per cell.</p>
+<p>Each object is independently durable under the existing per-object lock. A
+later failure or cooperative cancellation keeps the completed prefix and its
+measurements, without claiming unreached cells. The runtime checks stop requests
+between cells and owns release/terminal classification; it does not add an
+application scheduler or permit in-node adaptation. Receipt progress is written
+at phase lifecycle boundaries, not after each cell. A hard kill may leave an old
+Running receipt while settled objects exist. A fresh attempt revalidates them
+and reconciles recognized, byte-bounded private staging under the cache lock;
+foreign files remain rejected. Protected nonterminal receipts are not evicted
+or treated as evidence of completion. Receipt schema 22 and cache schema 7 are
+unchanged.</p>
+<p>The ignored <code>t51_cold_catalog_receipt_boundaries</code> control exercises 1, 32 and
+1,024 cells with fixed seeded history. Its opt-in
+<code>CASA_RS_T51_RECEIPT_BOUNDARY_PROBE</code> logs full-body encodings, history boundaries,
+and current-byte comparisons without changing execution or trust policy. Run it
+in release mode under its documented 120-second / 2-GiB external guard. Ordinary
+tests cover grouped admission, failed prefixes, early/mid/late cancellation,
+source replacement, oversized-receipt rejection before dispatch and staging
+recovery. Measured timing and acceptance artifacts belong in the
+<a href="https://github.com/bglenden/casa-rs/issues/537#issuecomment-5553500652">canonical T51 record</a>.</p>
+<h2 id="campaign-record">Campaign record<a class="headerlink" href="#campaign-record" title="Permanent link">&para;</a></h2>
+<p>Single candidate: current-owner paired AW consumption of validated CASA-imported
+prepared CF cells.</p>
+<ul>
+<li>Parent/candidate: <code>fea9ef9c65ff3638bd186bd69d5ca83381e59750</code> to
+  <code>codex/t51-aw-projection</code>.</li>
+<li>Causal hypothesis: replacing the typed-unavailable boundary with one
+  prepared-cell-backed paired convolution operator recovers the frozen EVLA
+  A/W/pointing response without reviving the displaced runner or changing the
+  generic scheduler.</li>
+<li>Discriminators: prepared-cell identity and corrupt/mismatch rejection; cold and
+  warm operator identity equality; weighted adjoint law; first divergent grid,
+  degrid, weight/PB, and product metric; deterministic serial replay digest.</li>
+<li>Scientific ceiling: every ticket-relevant frozen CASA product has normalized
+  RMS at most <code>1e-3</code>, with exact topology, WCS, validity/support, mask, and
+  independently required beam/flux/centroid checks.</li>
+<li>Resource ceiling: planned and observed peak below 32 GiB; no full-MS
+  materialization, full grid per worker, sustained swap growth, or opaque stage
+  longer than three minutes. Serial CPU must pass independently.</li>
+<li>Turnaround limit: run a mode-faithful bounded discriminator before any run
+  projected beyond 30 minutes. Runs beyond 90 minutes are final evidence only.</li>
+<li>Automatic falsifiers: unequal cold/warm operator identity, adjoint failure,
+  missing/extra prepared cell, wrong CF role, nonfinite normalization, serial
+  scientific failure, or resource receipt above the ceiling.</li>
+<li>Fallback: none. A falsified candidate remains typed unavailable while its
+  evidence is retained; W projection remains a distinct explicit capability.</li>
+<li>Artifact retention: frozen CASA products and accepted comparison/receipt
+  bundles are durable; reduced diagnostics and failed local cache entries are
+  rebuildable campaign artifacts.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": [], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

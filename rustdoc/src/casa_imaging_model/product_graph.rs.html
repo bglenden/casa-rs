@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-model/src/product_graph.rs`."><title>product_graph.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_model" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.0 (88d9e12ae 2026-08-18)" data-channel="1.98.0" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_model/</div>product_graph.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `crates/casa-imaging-model/src/product_graph.rs`."><title>product_graph.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-1ed95124.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="casa_imaging_model" data-themes="" data-resource-suffix="" data-rustdoc-version="1.98.1 (48a229cea 2026-09-01)" data-channel="1.98.1" data-search-js="search-9944d736.js" data-stringdex-js="stringdex-2da4960a.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../../static.files/src-script-813739b1.js"></script><script defer src="../../src-files.js"></script><script defer src="../../static.files/main-417ebf0a.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">casa_imaging_model/</div>product_graph.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="comment">// SPDX-License-Identifier: LGPL-3.0-or-later
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="doccomment">//! Compiler-owned product meaning, topology, and independently atomic publication contract.
 <a href=#4 id=4 data-nosnippet>4</a>
@@ -642,7 +642,7 @@
 <a href=#642 id=642 data-nosnippet>642</a>            }
 <a href=#643 id=643 data-nosnippet>643</a>            ProductKind::PrimaryBeam =&gt; {
 <a href=#644 id=644 data-nosnippet>644</a>                <span class="kw">let </span><span class="kw-2">mut </span>primary_beam = <span class="prelude-val">None</span>;
-<a href=#645 id=645 data-nosnippet>645</a>                <span class="kw">for </span>term <span class="kw">in </span><span class="self">self</span>.image_terms() {
+<a href=#645 id=645 data-nosnippet>645</a>                <span class="kw">for </span>term <span class="kw">in </span><span class="self">self</span>.primary_beam_terms() {
 <a href=#646 id=646 data-nosnippet>646</a>                    <span class="kw">let </span>validity = <span class="kw">if </span>term == <span class="self">self</span>.primary_beam_term() {
 <a href=#647 id=647 data-nosnippet>647</a>                        ProductValidityRule::PrimaryBeam(<span class="self">self</span>.products.validity().primary_beam())
 <a href=#648 id=648 data-nosnippet>648</a>                    } <span class="kw">else </span>{
@@ -1017,428 +1017,436 @@
 <a href=#1017 id=1017 data-nosnippet>1017</a>        }
 <a href=#1018 id=1018 data-nosnippet>1018</a>    }
 <a href=#1019 id=1019 data-nosnippet>1019</a>
-<a href=#1020 id=1020 data-nosnippet>1020</a>    <span class="kw">fn </span>image_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
-<a href=#1021 id=1021 data-nosnippet>1021</a>        <span class="kw">match </span><span class="self">self</span>.reconstruction.basis() {
-<a href=#1022 id=1022 data-nosnippet>1022</a>            ReconstructionBasis::Taylor { terms }
-<a href=#1023 id=1023 data-nosnippet>1023</a>            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } =&gt; {
-<a href=#1024 id=1024 data-nosnippet>1024</a>                (<span class="number">0</span>..terms).map(ProductTerm::Taylor).collect()
-<a href=#1025 id=1025 data-nosnippet>1025</a>            }
-<a href=#1026 id=1026 data-nosnippet>1026</a>            ReconstructionBasis::JointContinuumLine {
-<a href=#1027 id=1027 data-nosnippet>1027</a>                continuum_terms, ..
-<a href=#1028 id=1028 data-nosnippet>1028</a>            } =&gt; (<span class="number">0</span>..continuum_terms)
-<a href=#1029 id=1029 data-nosnippet>1029</a>                .map(ProductTerm::Continuum)
-<a href=#1030 id=1030 data-nosnippet>1030</a>                .chain([ProductTerm::Line, ProductTerm::Total])
-<a href=#1031 id=1031 data-nosnippet>1031</a>                .collect(),
-<a href=#1032 id=1032 data-nosnippet>1032</a>            ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } =&gt; {
-<a href=#1033 id=1033 data-nosnippet>1033</a>                <span class="macro">vec!</span>[ProductTerm::Single]
-<a href=#1034 id=1034 data-nosnippet>1034</a>            }
-<a href=#1035 id=1035 data-nosnippet>1035</a>        }
-<a href=#1036 id=1036 data-nosnippet>1036</a>    }
-<a href=#1037 id=1037 data-nosnippet>1037</a>
-<a href=#1038 id=1038 data-nosnippet>1038</a>    <span class="kw">fn </span>residual_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
-<a href=#1039 id=1039 data-nosnippet>1039</a>        <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#1040 id=1040 data-nosnippet>1040</a>            <span class="self">self</span>.reconstruction.basis(),
-<a href=#1041 id=1041 data-nosnippet>1041</a>            ReconstructionBasis::JointContinuumLine { .. }
-<a href=#1042 id=1042 data-nosnippet>1042</a>        ) {
-<a href=#1043 id=1043 data-nosnippet>1043</a>            <span class="macro">vec!</span>[ProductTerm::Total]
-<a href=#1044 id=1044 data-nosnippet>1044</a>        } <span class="kw">else </span>{
-<a href=#1045 id=1045 data-nosnippet>1045</a>            <span class="self">self</span>.image_terms()
-<a href=#1046 id=1046 data-nosnippet>1046</a>        }
-<a href=#1047 id=1047 data-nosnippet>1047</a>    }
-<a href=#1048 id=1048 data-nosnippet>1048</a>
-<a href=#1049 id=1049 data-nosnippet>1049</a>    <span class="kw">fn </span>restored_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
-<a href=#1050 id=1050 data-nosnippet>1050</a>        <span class="kw">if </span><span class="macro">matches!</span>(
-<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="self">self</span>.reconstruction.basis(),
-<a href=#1052 id=1052 data-nosnippet>1052</a>            ReconstructionBasis::JointContinuumLine { .. }
-<a href=#1053 id=1053 data-nosnippet>1053</a>        ) {
-<a href=#1054 id=1054 data-nosnippet>1054</a>            <span class="macro">vec!</span>[ProductTerm::Line, ProductTerm::Total]
-<a href=#1055 id=1055 data-nosnippet>1055</a>        } <span class="kw">else </span>{
-<a href=#1056 id=1056 data-nosnippet>1056</a>            <span class="self">self</span>.image_terms()
-<a href=#1057 id=1057 data-nosnippet>1057</a>        }
-<a href=#1058 id=1058 data-nosnippet>1058</a>    }
-<a href=#1059 id=1059 data-nosnippet>1059</a>
-<a href=#1060 id=1060 data-nosnippet>1060</a>    <span class="kw">fn </span>convolution_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
-<a href=#1061 id=1061 data-nosnippet>1061</a>        <span class="kw">match </span><span class="self">self</span>.reconstruction.basis() {
-<a href=#1062 id=1062 data-nosnippet>1062</a>            ReconstructionBasis::Taylor { terms }
-<a href=#1063 id=1063 data-nosnippet>1063</a>            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } =&gt; {
-<a href=#1064 id=1064 data-nosnippet>1064</a>                (<span class="number">0</span>..terms.saturating_mul(<span class="number">2</span>).saturating_sub(<span class="number">1</span>))
-<a href=#1065 id=1065 data-nosnippet>1065</a>                    .map(ProductTerm::Taylor)
-<a href=#1066 id=1066 data-nosnippet>1066</a>                    .collect()
-<a href=#1067 id=1067 data-nosnippet>1067</a>            }
-<a href=#1068 id=1068 data-nosnippet>1068</a>            ReconstructionBasis::JointContinuumLine {
-<a href=#1069 id=1069 data-nosnippet>1069</a>                continuum_terms,
-<a href=#1070 id=1070 data-nosnippet>1070</a>                line_terms,
-<a href=#1071 id=1071 data-nosnippet>1071</a>            } =&gt; {
-<a href=#1072 id=1072 data-nosnippet>1072</a>                <span class="kw">let </span>terms = continuum_terms + line_terms;
-<a href=#1073 id=1073 data-nosnippet>1073</a>                (<span class="number">0</span>..terms)
-<a href=#1074 id=1074 data-nosnippet>1074</a>                    .flat_map(|row| {
-<a href=#1075 id=1075 data-nosnippet>1075</a>                        (<span class="number">0</span>..terms).map(<span class="kw">move </span>|column| ProductTerm::JointNormal { row, column })
-<a href=#1076 id=1076 data-nosnippet>1076</a>                    })
-<a href=#1077 id=1077 data-nosnippet>1077</a>                    .collect()
-<a href=#1078 id=1078 data-nosnippet>1078</a>            }
-<a href=#1079 id=1079 data-nosnippet>1079</a>            ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } =&gt; {
-<a href=#1080 id=1080 data-nosnippet>1080</a>                <span class="macro">vec!</span>[ProductTerm::Single]
-<a href=#1081 id=1081 data-nosnippet>1081</a>            }
-<a href=#1082 id=1082 data-nosnippet>1082</a>        }
-<a href=#1083 id=1083 data-nosnippet>1083</a>    }
-<a href=#1084 id=1084 data-nosnippet>1084</a>}
-<a href=#1085 id=1085 data-nosnippet>1085</a>
-<a href=#1086 id=1086 data-nosnippet>1086</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>compile_product_graph(
-<a href=#1087 id=1087 data-nosnippet>1087</a>    geometry: <span class="kw-2">&amp;</span>CompiledGeometry,
-<a href=#1088 id=1088 data-nosnippet>1088</a>    reconstruction: <span class="kw-2">&amp;</span>ReconstructionContract,
-<a href=#1089 id=1089 data-nosnippet>1089</a>    products: <span class="kw-2">&amp;</span>ProductRequirements,
-<a href=#1090 id=1090 data-nosnippet>1090</a>) -&gt; ProductGraph {
-<a href=#1091 id=1091 data-nosnippet>1091</a>    GraphBuilder {
-<a href=#1092 id=1092 data-nosnippet>1092</a>        geometry,
-<a href=#1093 id=1093 data-nosnippet>1093</a>        reconstruction,
-<a href=#1094 id=1094 data-nosnippet>1094</a>        products,
-<a href=#1095 id=1095 data-nosnippet>1095</a>        nodes: Vec::new(),
-<a href=#1096 id=1096 data-nosnippet>1096</a>        node_ids: BTreeMap::new(),
-<a href=#1097 id=1097 data-nosnippet>1097</a>    }
-<a href=#1098 id=1098 data-nosnippet>1098</a>    .compile()
-<a href=#1099 id=1099 data-nosnippet>1099</a>}
-<a href=#1100 id=1100 data-nosnippet>1100</a>
-<a href=#1101 id=1101 data-nosnippet>1101</a><span class="kw">fn </span>graph_id(
-<a href=#1102 id=1102 data-nosnippet>1102</a>    normalization_boundary: <span class="kw-2">&amp;</span>ProductNormalizationBoundary,
-<a href=#1103 id=1103 data-nosnippet>1103</a>    nodes: <span class="kw-2">&amp;</span>[ProductNode],
-<a href=#1104 id=1104 data-nosnippet>1104</a>    publication_members: <span class="kw-2">&amp;</span>[ProductNodeId],
-<a href=#1105 id=1105 data-nosnippet>1105</a>) -&gt; ProductGraphId {
-<a href=#1106 id=1106 data-nosnippet>1106</a>    <span class="kw">let </span><span class="kw-2">mut </span>encoder = CanonicalEncoder::new();
-<a href=#1107 id=1107 data-nosnippet>1107</a>    encoder.bytes(PRODUCT_GRAPH_IDENTITY_DOMAIN);
-<a href=#1108 id=1108 data-nosnippet>1108</a>    encoder.u32(PRODUCT_GRAPH_IDENTITY_VERSION);
-<a href=#1109 id=1109 data-nosnippet>1109</a>    encode_normalization_boundary(<span class="kw-2">&amp;mut </span>encoder, normalization_boundary);
-<a href=#1110 id=1110 data-nosnippet>1110</a>    encoder.usize(nodes.len());
-<a href=#1111 id=1111 data-nosnippet>1111</a>    <span class="kw">for </span>node <span class="kw">in </span>nodes {
-<a href=#1112 id=1112 data-nosnippet>1112</a>        encode_node(<span class="kw-2">&amp;mut </span>encoder, node);
-<a href=#1113 id=1113 data-nosnippet>1113</a>    }
-<a href=#1114 id=1114 data-nosnippet>1114</a>    encoder.u8(<span class="number">0</span>);
-<a href=#1115 id=1115 data-nosnippet>1115</a>    encoder.usize(publication_members.len());
-<a href=#1116 id=1116 data-nosnippet>1116</a>    <span class="kw">for </span>member <span class="kw">in </span>publication_members {
-<a href=#1117 id=1117 data-nosnippet>1117</a>        encoder.usize(member.ordinal());
-<a href=#1118 id=1118 data-nosnippet>1118</a>    }
-<a href=#1119 id=1119 data-nosnippet>1119</a>    ProductGraphId(LogicalIdentity::from_sha256(encoder.finish()))
-<a href=#1120 id=1120 data-nosnippet>1120</a>}
-<a href=#1121 id=1121 data-nosnippet>1121</a>
-<a href=#1122 id=1122 data-nosnippet>1122</a><span class="kw">fn </span>encode_normalization_boundary(
-<a href=#1123 id=1123 data-nosnippet>1123</a>    encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder,
-<a href=#1124 id=1124 data-nosnippet>1124</a>    boundary: <span class="kw-2">&amp;</span>ProductNormalizationBoundary,
-<a href=#1125 id=1125 data-nosnippet>1125</a>) {
-<a href=#1126 id=1126 data-nosnippet>1126</a>    encoder.u8(<span class="kw">match </span>boundary.input() {
-<a href=#1127 id=1127 data-nosnippet>1127</a>        NormalStateNormalization::Unnormalized =&gt; <span class="number">0</span>,
-<a href=#1128 id=1128 data-nosnippet>1128</a>    });
-<a href=#1129 id=1129 data-nosnippet>1129</a>    encoder.usize(boundary.operations().len());
-<a href=#1130 id=1130 data-nosnippet>1130</a>    <span class="kw">for </span>operation <span class="kw">in </span>boundary.operations() {
-<a href=#1131 id=1131 data-nosnippet>1131</a>        <span class="kw">match </span>operation {
-<a href=#1132 id=1132 data-nosnippet>1132</a>            ProductBoundaryOperation::Normalize(normalization) =&gt; {
-<a href=#1133 id=1133 data-nosnippet>1133</a>                encoder.u8(<span class="number">0</span>);
-<a href=#1134 id=1134 data-nosnippet>1134</a>                encode_normalization(encoder, <span class="kw-2">*</span>normalization);
-<a href=#1135 id=1135 data-nosnippet>1135</a>            }
-<a href=#1136 id=1136 data-nosnippet>1136</a>            ProductBoundaryOperation::ScaleResidual =&gt; encoder.u8(<span class="number">1</span>),
-<a href=#1137 id=1137 data-nosnippet>1137</a>            ProductBoundaryOperation::Restore(policy) =&gt; {
-<a href=#1138 id=1138 data-nosnippet>1138</a>                encoder.u8(<span class="number">2</span>);
-<a href=#1139 id=1139 data-nosnippet>1139</a>                encode_restoring_beam(encoder, <span class="kw-2">*</span>policy);
-<a href=#1140 id=1140 data-nosnippet>1140</a>            }
-<a href=#1141 id=1141 data-nosnippet>1141</a>            ProductBoundaryOperation::CorrectPrimaryBeam =&gt; encoder.u8(<span class="number">3</span>),
-<a href=#1142 id=1142 data-nosnippet>1142</a>            ProductBoundaryOperation::BlankInvalid =&gt; encoder.u8(<span class="number">4</span>),
-<a href=#1143 id=1143 data-nosnippet>1143</a>            ProductBoundaryOperation::ConvertUnits =&gt; encoder.u8(<span class="number">5</span>),
-<a href=#1144 id=1144 data-nosnippet>1144</a>        }
-<a href=#1145 id=1145 data-nosnippet>1145</a>    }
-<a href=#1146 id=1146 data-nosnippet>1146</a>}
-<a href=#1147 id=1147 data-nosnippet>1147</a>
-<a href=#1148 id=1148 data-nosnippet>1148</a><span class="kw">fn </span>encode_node(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, node: <span class="kw-2">&amp;</span>ProductNode) {
-<a href=#1149 id=1149 data-nosnippet>1149</a>    encoder.usize(node.node_id.ordinal());
-<a href=#1150 id=1150 data-nosnippet>1150</a>    encode_role(encoder, node.role);
-<a href=#1151 id=1151 data-nosnippet>1151</a>    <span class="kw">match </span><span class="kw-2">&amp;</span>node.name {
-<a href=#1152 id=1152 data-nosnippet>1152</a>        <span class="prelude-val">Some</span>(name) =&gt; {
-<a href=#1153 id=1153 data-nosnippet>1153</a>            encoder.u8(<span class="number">1</span>);
-<a href=#1154 id=1154 data-nosnippet>1154</a>            encoder.bytes(name.as_bytes());
-<a href=#1155 id=1155 data-nosnippet>1155</a>        }
-<a href=#1156 id=1156 data-nosnippet>1156</a>        <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
-<a href=#1157 id=1157 data-nosnippet>1157</a>    }
-<a href=#1158 id=1158 data-nosnippet>1158</a>    encoder.u8(<span class="kw">match </span>node.axes.kind {
-<a href=#1159 id=1159 data-nosnippet>1159</a>        ProductAxisKind::SkyImage =&gt; <span class="number">0</span>,
-<a href=#1160 id=1160 data-nosnippet>1160</a>        ProductAxisKind::PlaneState =&gt; <span class="number">1</span>,
-<a href=#1161 id=1161 data-nosnippet>1161</a>        ProductAxisKind::Metadata =&gt; <span class="number">2</span>,
-<a href=#1162 id=1162 data-nosnippet>1162</a>        ProductAxisKind::CoefficientImage =&gt; <span class="number">3</span>,
-<a href=#1163 id=1163 data-nosnippet>1163</a>        ProductAxisKind::CoefficientPlaneState =&gt; <span class="number">4</span>,
-<a href=#1164 id=1164 data-nosnippet>1164</a>    });
-<a href=#1165 id=1165 data-nosnippet>1165</a>    encoder.digest(node.axes.geometry_id.as_bytes());
-<a href=#1166 id=1166 data-nosnippet>1166</a>    <span class="kw">match </span><span class="kw-2">&amp;</span>node.axes.domain {
-<a href=#1167 id=1167 data-nosnippet>1167</a>        ImageDomainRole::Main =&gt; encoder.u8(<span class="number">0</span>),
-<a href=#1168 id=1168 data-nosnippet>1168</a>        ImageDomainRole::Outlier(name) =&gt; {
-<a href=#1169 id=1169 data-nosnippet>1169</a>            encoder.u8(<span class="number">1</span>);
-<a href=#1170 id=1170 data-nosnippet>1170</a>            encoder.bytes(name.as_bytes());
-<a href=#1171 id=1171 data-nosnippet>1171</a>        }
-<a href=#1172 id=1172 data-nosnippet>1172</a>    }
-<a href=#1173 id=1173 data-nosnippet>1173</a>    <span class="kw">for </span>axis <span class="kw">in </span>node.axes.order.positions() {
-<a href=#1174 id=1174 data-nosnippet>1174</a>        encoder.u8(<span class="kw">match </span>axis {
-<a href=#1175 id=1175 data-nosnippet>1175</a>            ImageAxis::DirectionLongitude =&gt; <span class="number">0</span>,
-<a href=#1176 id=1176 data-nosnippet>1176</a>            ImageAxis::DirectionLatitude =&gt; <span class="number">1</span>,
-<a href=#1177 id=1177 data-nosnippet>1177</a>            ImageAxis::Polarization =&gt; <span class="number">2</span>,
-<a href=#1178 id=1178 data-nosnippet>1178</a>            ImageAxis::Spectral =&gt; <span class="number">3</span>,
-<a href=#1179 id=1179 data-nosnippet>1179</a>        });
+<a href=#1020 id=1020 data-nosnippet>1020</a>    <span class="kw">fn </span>primary_beam_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
+<a href=#1021 id=1021 data-nosnippet>1021</a>        <span class="kw">if </span><span class="self">self</span>.products.contains(ProductKind::Weight) {
+<a href=#1022 id=1022 data-nosnippet>1022</a>            <span class="macro">vec!</span>[<span class="self">self</span>.primary_beam_term()]
+<a href=#1023 id=1023 data-nosnippet>1023</a>        } <span class="kw">else </span>{
+<a href=#1024 id=1024 data-nosnippet>1024</a>            <span class="self">self</span>.image_terms()
+<a href=#1025 id=1025 data-nosnippet>1025</a>        }
+<a href=#1026 id=1026 data-nosnippet>1026</a>    }
+<a href=#1027 id=1027 data-nosnippet>1027</a>
+<a href=#1028 id=1028 data-nosnippet>1028</a>    <span class="kw">fn </span>image_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
+<a href=#1029 id=1029 data-nosnippet>1029</a>        <span class="kw">match </span><span class="self">self</span>.reconstruction.basis() {
+<a href=#1030 id=1030 data-nosnippet>1030</a>            ReconstructionBasis::Taylor { terms }
+<a href=#1031 id=1031 data-nosnippet>1031</a>            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } =&gt; {
+<a href=#1032 id=1032 data-nosnippet>1032</a>                (<span class="number">0</span>..terms).map(ProductTerm::Taylor).collect()
+<a href=#1033 id=1033 data-nosnippet>1033</a>            }
+<a href=#1034 id=1034 data-nosnippet>1034</a>            ReconstructionBasis::JointContinuumLine {
+<a href=#1035 id=1035 data-nosnippet>1035</a>                continuum_terms, ..
+<a href=#1036 id=1036 data-nosnippet>1036</a>            } =&gt; (<span class="number">0</span>..continuum_terms)
+<a href=#1037 id=1037 data-nosnippet>1037</a>                .map(ProductTerm::Continuum)
+<a href=#1038 id=1038 data-nosnippet>1038</a>                .chain([ProductTerm::Line, ProductTerm::Total])
+<a href=#1039 id=1039 data-nosnippet>1039</a>                .collect(),
+<a href=#1040 id=1040 data-nosnippet>1040</a>            ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } =&gt; {
+<a href=#1041 id=1041 data-nosnippet>1041</a>                <span class="macro">vec!</span>[ProductTerm::Single]
+<a href=#1042 id=1042 data-nosnippet>1042</a>            }
+<a href=#1043 id=1043 data-nosnippet>1043</a>        }
+<a href=#1044 id=1044 data-nosnippet>1044</a>    }
+<a href=#1045 id=1045 data-nosnippet>1045</a>
+<a href=#1046 id=1046 data-nosnippet>1046</a>    <span class="kw">fn </span>residual_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
+<a href=#1047 id=1047 data-nosnippet>1047</a>        <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#1048 id=1048 data-nosnippet>1048</a>            <span class="self">self</span>.reconstruction.basis(),
+<a href=#1049 id=1049 data-nosnippet>1049</a>            ReconstructionBasis::JointContinuumLine { .. }
+<a href=#1050 id=1050 data-nosnippet>1050</a>        ) {
+<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="macro">vec!</span>[ProductTerm::Total]
+<a href=#1052 id=1052 data-nosnippet>1052</a>        } <span class="kw">else </span>{
+<a href=#1053 id=1053 data-nosnippet>1053</a>            <span class="self">self</span>.image_terms()
+<a href=#1054 id=1054 data-nosnippet>1054</a>        }
+<a href=#1055 id=1055 data-nosnippet>1055</a>    }
+<a href=#1056 id=1056 data-nosnippet>1056</a>
+<a href=#1057 id=1057 data-nosnippet>1057</a>    <span class="kw">fn </span>restored_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
+<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="kw">if </span><span class="macro">matches!</span>(
+<a href=#1059 id=1059 data-nosnippet>1059</a>            <span class="self">self</span>.reconstruction.basis(),
+<a href=#1060 id=1060 data-nosnippet>1060</a>            ReconstructionBasis::JointContinuumLine { .. }
+<a href=#1061 id=1061 data-nosnippet>1061</a>        ) {
+<a href=#1062 id=1062 data-nosnippet>1062</a>            <span class="macro">vec!</span>[ProductTerm::Line, ProductTerm::Total]
+<a href=#1063 id=1063 data-nosnippet>1063</a>        } <span class="kw">else </span>{
+<a href=#1064 id=1064 data-nosnippet>1064</a>            <span class="self">self</span>.image_terms()
+<a href=#1065 id=1065 data-nosnippet>1065</a>        }
+<a href=#1066 id=1066 data-nosnippet>1066</a>    }
+<a href=#1067 id=1067 data-nosnippet>1067</a>
+<a href=#1068 id=1068 data-nosnippet>1068</a>    <span class="kw">fn </span>convolution_terms(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;ProductTerm&gt; {
+<a href=#1069 id=1069 data-nosnippet>1069</a>        <span class="kw">match </span><span class="self">self</span>.reconstruction.basis() {
+<a href=#1070 id=1070 data-nosnippet>1070</a>            ReconstructionBasis::Taylor { terms }
+<a href=#1071 id=1071 data-nosnippet>1071</a>            | ReconstructionBasis::TaylorViaChannelMajor { terms, .. } =&gt; {
+<a href=#1072 id=1072 data-nosnippet>1072</a>                (<span class="number">0</span>..terms.saturating_mul(<span class="number">2</span>).saturating_sub(<span class="number">1</span>))
+<a href=#1073 id=1073 data-nosnippet>1073</a>                    .map(ProductTerm::Taylor)
+<a href=#1074 id=1074 data-nosnippet>1074</a>                    .collect()
+<a href=#1075 id=1075 data-nosnippet>1075</a>            }
+<a href=#1076 id=1076 data-nosnippet>1076</a>            ReconstructionBasis::JointContinuumLine {
+<a href=#1077 id=1077 data-nosnippet>1077</a>                continuum_terms,
+<a href=#1078 id=1078 data-nosnippet>1078</a>                line_terms,
+<a href=#1079 id=1079 data-nosnippet>1079</a>            } =&gt; {
+<a href=#1080 id=1080 data-nosnippet>1080</a>                <span class="kw">let </span>terms = continuum_terms + line_terms;
+<a href=#1081 id=1081 data-nosnippet>1081</a>                (<span class="number">0</span>..terms)
+<a href=#1082 id=1082 data-nosnippet>1082</a>                    .flat_map(|row| {
+<a href=#1083 id=1083 data-nosnippet>1083</a>                        (<span class="number">0</span>..terms).map(<span class="kw">move </span>|column| ProductTerm::JointNormal { row, column })
+<a href=#1084 id=1084 data-nosnippet>1084</a>                    })
+<a href=#1085 id=1085 data-nosnippet>1085</a>                    .collect()
+<a href=#1086 id=1086 data-nosnippet>1086</a>            }
+<a href=#1087 id=1087 data-nosnippet>1087</a>            ReconstructionBasis::Constant | ReconstructionBasis::ChannelLocal { .. } =&gt; {
+<a href=#1088 id=1088 data-nosnippet>1088</a>                <span class="macro">vec!</span>[ProductTerm::Single]
+<a href=#1089 id=1089 data-nosnippet>1089</a>            }
+<a href=#1090 id=1090 data-nosnippet>1090</a>        }
+<a href=#1091 id=1091 data-nosnippet>1091</a>    }
+<a href=#1092 id=1092 data-nosnippet>1092</a>}
+<a href=#1093 id=1093 data-nosnippet>1093</a>
+<a href=#1094 id=1094 data-nosnippet>1094</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>compile_product_graph(
+<a href=#1095 id=1095 data-nosnippet>1095</a>    geometry: <span class="kw-2">&amp;</span>CompiledGeometry,
+<a href=#1096 id=1096 data-nosnippet>1096</a>    reconstruction: <span class="kw-2">&amp;</span>ReconstructionContract,
+<a href=#1097 id=1097 data-nosnippet>1097</a>    products: <span class="kw-2">&amp;</span>ProductRequirements,
+<a href=#1098 id=1098 data-nosnippet>1098</a>) -&gt; ProductGraph {
+<a href=#1099 id=1099 data-nosnippet>1099</a>    GraphBuilder {
+<a href=#1100 id=1100 data-nosnippet>1100</a>        geometry,
+<a href=#1101 id=1101 data-nosnippet>1101</a>        reconstruction,
+<a href=#1102 id=1102 data-nosnippet>1102</a>        products,
+<a href=#1103 id=1103 data-nosnippet>1103</a>        nodes: Vec::new(),
+<a href=#1104 id=1104 data-nosnippet>1104</a>        node_ids: BTreeMap::new(),
+<a href=#1105 id=1105 data-nosnippet>1105</a>    }
+<a href=#1106 id=1106 data-nosnippet>1106</a>    .compile()
+<a href=#1107 id=1107 data-nosnippet>1107</a>}
+<a href=#1108 id=1108 data-nosnippet>1108</a>
+<a href=#1109 id=1109 data-nosnippet>1109</a><span class="kw">fn </span>graph_id(
+<a href=#1110 id=1110 data-nosnippet>1110</a>    normalization_boundary: <span class="kw-2">&amp;</span>ProductNormalizationBoundary,
+<a href=#1111 id=1111 data-nosnippet>1111</a>    nodes: <span class="kw-2">&amp;</span>[ProductNode],
+<a href=#1112 id=1112 data-nosnippet>1112</a>    publication_members: <span class="kw-2">&amp;</span>[ProductNodeId],
+<a href=#1113 id=1113 data-nosnippet>1113</a>) -&gt; ProductGraphId {
+<a href=#1114 id=1114 data-nosnippet>1114</a>    <span class="kw">let </span><span class="kw-2">mut </span>encoder = CanonicalEncoder::new();
+<a href=#1115 id=1115 data-nosnippet>1115</a>    encoder.bytes(PRODUCT_GRAPH_IDENTITY_DOMAIN);
+<a href=#1116 id=1116 data-nosnippet>1116</a>    encoder.u32(PRODUCT_GRAPH_IDENTITY_VERSION);
+<a href=#1117 id=1117 data-nosnippet>1117</a>    encode_normalization_boundary(<span class="kw-2">&amp;mut </span>encoder, normalization_boundary);
+<a href=#1118 id=1118 data-nosnippet>1118</a>    encoder.usize(nodes.len());
+<a href=#1119 id=1119 data-nosnippet>1119</a>    <span class="kw">for </span>node <span class="kw">in </span>nodes {
+<a href=#1120 id=1120 data-nosnippet>1120</a>        encode_node(<span class="kw-2">&amp;mut </span>encoder, node);
+<a href=#1121 id=1121 data-nosnippet>1121</a>    }
+<a href=#1122 id=1122 data-nosnippet>1122</a>    encoder.u8(<span class="number">0</span>);
+<a href=#1123 id=1123 data-nosnippet>1123</a>    encoder.usize(publication_members.len());
+<a href=#1124 id=1124 data-nosnippet>1124</a>    <span class="kw">for </span>member <span class="kw">in </span>publication_members {
+<a href=#1125 id=1125 data-nosnippet>1125</a>        encoder.usize(member.ordinal());
+<a href=#1126 id=1126 data-nosnippet>1126</a>    }
+<a href=#1127 id=1127 data-nosnippet>1127</a>    ProductGraphId(LogicalIdentity::from_sha256(encoder.finish()))
+<a href=#1128 id=1128 data-nosnippet>1128</a>}
+<a href=#1129 id=1129 data-nosnippet>1129</a>
+<a href=#1130 id=1130 data-nosnippet>1130</a><span class="kw">fn </span>encode_normalization_boundary(
+<a href=#1131 id=1131 data-nosnippet>1131</a>    encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder,
+<a href=#1132 id=1132 data-nosnippet>1132</a>    boundary: <span class="kw-2">&amp;</span>ProductNormalizationBoundary,
+<a href=#1133 id=1133 data-nosnippet>1133</a>) {
+<a href=#1134 id=1134 data-nosnippet>1134</a>    encoder.u8(<span class="kw">match </span>boundary.input() {
+<a href=#1135 id=1135 data-nosnippet>1135</a>        NormalStateNormalization::Unnormalized =&gt; <span class="number">0</span>,
+<a href=#1136 id=1136 data-nosnippet>1136</a>    });
+<a href=#1137 id=1137 data-nosnippet>1137</a>    encoder.usize(boundary.operations().len());
+<a href=#1138 id=1138 data-nosnippet>1138</a>    <span class="kw">for </span>operation <span class="kw">in </span>boundary.operations() {
+<a href=#1139 id=1139 data-nosnippet>1139</a>        <span class="kw">match </span>operation {
+<a href=#1140 id=1140 data-nosnippet>1140</a>            ProductBoundaryOperation::Normalize(normalization) =&gt; {
+<a href=#1141 id=1141 data-nosnippet>1141</a>                encoder.u8(<span class="number">0</span>);
+<a href=#1142 id=1142 data-nosnippet>1142</a>                encode_normalization(encoder, <span class="kw-2">*</span>normalization);
+<a href=#1143 id=1143 data-nosnippet>1143</a>            }
+<a href=#1144 id=1144 data-nosnippet>1144</a>            ProductBoundaryOperation::ScaleResidual =&gt; encoder.u8(<span class="number">1</span>),
+<a href=#1145 id=1145 data-nosnippet>1145</a>            ProductBoundaryOperation::Restore(policy) =&gt; {
+<a href=#1146 id=1146 data-nosnippet>1146</a>                encoder.u8(<span class="number">2</span>);
+<a href=#1147 id=1147 data-nosnippet>1147</a>                encode_restoring_beam(encoder, <span class="kw-2">*</span>policy);
+<a href=#1148 id=1148 data-nosnippet>1148</a>            }
+<a href=#1149 id=1149 data-nosnippet>1149</a>            ProductBoundaryOperation::CorrectPrimaryBeam =&gt; encoder.u8(<span class="number">3</span>),
+<a href=#1150 id=1150 data-nosnippet>1150</a>            ProductBoundaryOperation::BlankInvalid =&gt; encoder.u8(<span class="number">4</span>),
+<a href=#1151 id=1151 data-nosnippet>1151</a>            ProductBoundaryOperation::ConvertUnits =&gt; encoder.u8(<span class="number">5</span>),
+<a href=#1152 id=1152 data-nosnippet>1152</a>        }
+<a href=#1153 id=1153 data-nosnippet>1153</a>    }
+<a href=#1154 id=1154 data-nosnippet>1154</a>}
+<a href=#1155 id=1155 data-nosnippet>1155</a>
+<a href=#1156 id=1156 data-nosnippet>1156</a><span class="kw">fn </span>encode_node(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, node: <span class="kw-2">&amp;</span>ProductNode) {
+<a href=#1157 id=1157 data-nosnippet>1157</a>    encoder.usize(node.node_id.ordinal());
+<a href=#1158 id=1158 data-nosnippet>1158</a>    encode_role(encoder, node.role);
+<a href=#1159 id=1159 data-nosnippet>1159</a>    <span class="kw">match </span><span class="kw-2">&amp;</span>node.name {
+<a href=#1160 id=1160 data-nosnippet>1160</a>        <span class="prelude-val">Some</span>(name) =&gt; {
+<a href=#1161 id=1161 data-nosnippet>1161</a>            encoder.u8(<span class="number">1</span>);
+<a href=#1162 id=1162 data-nosnippet>1162</a>            encoder.bytes(name.as_bytes());
+<a href=#1163 id=1163 data-nosnippet>1163</a>        }
+<a href=#1164 id=1164 data-nosnippet>1164</a>        <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
+<a href=#1165 id=1165 data-nosnippet>1165</a>    }
+<a href=#1166 id=1166 data-nosnippet>1166</a>    encoder.u8(<span class="kw">match </span>node.axes.kind {
+<a href=#1167 id=1167 data-nosnippet>1167</a>        ProductAxisKind::SkyImage =&gt; <span class="number">0</span>,
+<a href=#1168 id=1168 data-nosnippet>1168</a>        ProductAxisKind::PlaneState =&gt; <span class="number">1</span>,
+<a href=#1169 id=1169 data-nosnippet>1169</a>        ProductAxisKind::Metadata =&gt; <span class="number">2</span>,
+<a href=#1170 id=1170 data-nosnippet>1170</a>        ProductAxisKind::CoefficientImage =&gt; <span class="number">3</span>,
+<a href=#1171 id=1171 data-nosnippet>1171</a>        ProductAxisKind::CoefficientPlaneState =&gt; <span class="number">4</span>,
+<a href=#1172 id=1172 data-nosnippet>1172</a>    });
+<a href=#1173 id=1173 data-nosnippet>1173</a>    encoder.digest(node.axes.geometry_id.as_bytes());
+<a href=#1174 id=1174 data-nosnippet>1174</a>    <span class="kw">match </span><span class="kw-2">&amp;</span>node.axes.domain {
+<a href=#1175 id=1175 data-nosnippet>1175</a>        ImageDomainRole::Main =&gt; encoder.u8(<span class="number">0</span>),
+<a href=#1176 id=1176 data-nosnippet>1176</a>        ImageDomainRole::Outlier(name) =&gt; {
+<a href=#1177 id=1177 data-nosnippet>1177</a>            encoder.u8(<span class="number">1</span>);
+<a href=#1178 id=1178 data-nosnippet>1178</a>            encoder.bytes(name.as_bytes());
+<a href=#1179 id=1179 data-nosnippet>1179</a>        }
 <a href=#1180 id=1180 data-nosnippet>1180</a>    }
-<a href=#1181 id=1181 data-nosnippet>1181</a>    <span class="kw">for </span>extent <span class="kw">in </span>node.axes.shape {
-<a href=#1182 id=1182 data-nosnippet>1182</a>        encoder.usize(extent);
-<a href=#1183 id=1183 data-nosnippet>1183</a>    }
-<a href=#1184 id=1184 data-nosnippet>1184</a>    encoder.usize(node.axes.polarization.len());
-<a href=#1185 id=1185 data-nosnippet>1185</a>    <span class="kw">for </span>coordinate <span class="kw">in </span><span class="kw-2">&amp;</span>node.axes.polarization {
-<a href=#1186 id=1186 data-nosnippet>1186</a>        encoder.u8(polarization_tag(<span class="kw-2">*</span>coordinate));
-<a href=#1187 id=1187 data-nosnippet>1187</a>    }
-<a href=#1188 id=1188 data-nosnippet>1188</a>    encoder.u8(<span class="kw">match </span>node.unit {
-<a href=#1189 id=1189 data-nosnippet>1189</a>        ProductUnit::NotApplicable =&gt; <span class="number">0</span>,
-<a href=#1190 id=1190 data-nosnippet>1190</a>        ProductUnit::JyPerBeam =&gt; <span class="number">1</span>,
-<a href=#1191 id=1191 data-nosnippet>1191</a>        ProductUnit::JyPerPixel =&gt; <span class="number">2</span>,
-<a href=#1192 id=1192 data-nosnippet>1192</a>        ProductUnit::Dimensionless =&gt; <span class="number">3</span>,
-<a href=#1193 id=1193 data-nosnippet>1193</a>        ProductUnit::VisibilityWeight =&gt; <span class="number">4</span>,
-<a href=#1194 id=1194 data-nosnippet>1194</a>    });
-<a href=#1195 id=1195 data-nosnippet>1195</a>    <span class="kw">match </span>node.normalization {
-<a href=#1196 id=1196 data-nosnippet>1196</a>        <span class="prelude-val">Some</span>(normalization) =&gt; {
-<a href=#1197 id=1197 data-nosnippet>1197</a>            encoder.u8(<span class="number">1</span>);
-<a href=#1198 id=1198 data-nosnippet>1198</a>            encode_normalization(encoder, normalization);
-<a href=#1199 id=1199 data-nosnippet>1199</a>        }
-<a href=#1200 id=1200 data-nosnippet>1200</a>        <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
-<a href=#1201 id=1201 data-nosnippet>1201</a>    }
-<a href=#1202 id=1202 data-nosnippet>1202</a>    encode_beam_rule(encoder, node.beam);
-<a href=#1203 id=1203 data-nosnippet>1203</a>    encode_validity_rule(encoder, node.validity);
-<a href=#1204 id=1204 data-nosnippet>1204</a>    encoder.u8(<span class="kw">match </span>node.schema {
-<a href=#1205 id=1205 data-nosnippet>1205</a>        ProductSchema::ImageF32V1 =&gt; <span class="number">0</span>,
-<a href=#1206 id=1206 data-nosnippet>1206</a>        ProductSchema::LogicalCollectionV1 =&gt; <span class="number">1</span>,
-<a href=#1207 id=1207 data-nosnippet>1207</a>        ProductSchema::EmbeddedImageMetadataV1 =&gt; <span class="number">2</span>,
-<a href=#1208 id=1208 data-nosnippet>1208</a>        ProductSchema::InternalImageF32V1 =&gt; <span class="number">3</span>,
-<a href=#1209 id=1209 data-nosnippet>1209</a>    });
-<a href=#1210 id=1210 data-nosnippet>1210</a>    encoder.usize(node.dependencies.len());
-<a href=#1211 id=1211 data-nosnippet>1211</a>    <span class="kw">for </span>dependency <span class="kw">in </span><span class="kw-2">&amp;</span>node.dependencies {
-<a href=#1212 id=1212 data-nosnippet>1212</a>        encoder.usize(dependency.ordinal());
-<a href=#1213 id=1213 data-nosnippet>1213</a>    }
-<a href=#1214 id=1214 data-nosnippet>1214</a>}
-<a href=#1215 id=1215 data-nosnippet>1215</a>
-<a href=#1216 id=1216 data-nosnippet>1216</a><span class="kw">fn </span>encode_role(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, role: ProductRole) {
-<a href=#1217 id=1217 data-nosnippet>1217</a>    <span class="kw">match </span>role {
-<a href=#1218 id=1218 data-nosnippet>1218</a>        ProductRole::Psf(term) =&gt; encode_term_role(encoder, <span class="number">0</span>, term),
-<a href=#1219 id=1219 data-nosnippet>1219</a>        ProductRole::Residual(term) =&gt; encode_term_role(encoder, <span class="number">1</span>, term),
-<a href=#1220 id=1220 data-nosnippet>1220</a>        ProductRole::Model(term) =&gt; encode_term_role(encoder, <span class="number">2</span>, term),
-<a href=#1221 id=1221 data-nosnippet>1221</a>        ProductRole::RestoredImage(term) =&gt; encode_term_role(encoder, <span class="number">3</span>, term),
-<a href=#1222 id=1222 data-nosnippet>1222</a>        ProductRole::SumWeights(term) =&gt; encode_term_role(encoder, <span class="number">4</span>, term),
-<a href=#1223 id=1223 data-nosnippet>1223</a>        ProductRole::CleanMask =&gt; encoder.u8(<span class="number">5</span>),
-<a href=#1224 id=1224 data-nosnippet>1224</a>        ProductRole::Weight(term) =&gt; encode_term_role(encoder, <span class="number">6</span>, term),
-<a href=#1225 id=1225 data-nosnippet>1225</a>        ProductRole::PrimaryBeam(term) =&gt; encode_term_role(encoder, <span class="number">7</span>, term),
-<a href=#1226 id=1226 data-nosnippet>1226</a>        ProductRole::PrimaryBeamSpectralIndex =&gt; encoder.u8(<span class="number">8</span>),
-<a href=#1227 id=1227 data-nosnippet>1227</a>        ProductRole::Sensitivity =&gt; encoder.u8(<span class="number">9</span>),
-<a href=#1228 id=1228 data-nosnippet>1228</a>        ProductRole::PbCorrectedImage(term) =&gt; encode_term_role(encoder, <span class="number">10</span>, term),
-<a href=#1229 id=1229 data-nosnippet>1229</a>        ProductRole::TaylorCoefficientSet =&gt; encoder.u8(<span class="number">11</span>),
-<a href=#1230 id=1230 data-nosnippet>1230</a>        ProductRole::SpectralIndex =&gt; encoder.u8(<span class="number">12</span>),
-<a href=#1231 id=1231 data-nosnippet>1231</a>        ProductRole::SpectralIndexError =&gt; encoder.u8(<span class="number">13</span>),
-<a href=#1232 id=1232 data-nosnippet>1232</a>        ProductRole::PbCorrectedSpectralIndex =&gt; encoder.u8(<span class="number">14</span>),
-<a href=#1233 id=1233 data-nosnippet>1233</a>        ProductRole::BeamMetadata =&gt; encoder.u8(<span class="number">15</span>),
-<a href=#1234 id=1234 data-nosnippet>1234</a>        ProductRole::ContinuumCleanMask =&gt; encoder.u8(<span class="number">16</span>),
-<a href=#1235 id=1235 data-nosnippet>1235</a>        ProductRole::LineCleanMask =&gt; encoder.u8(<span class="number">17</span>),
-<a href=#1236 id=1236 data-nosnippet>1236</a>    }
-<a href=#1237 id=1237 data-nosnippet>1237</a>}
-<a href=#1238 id=1238 data-nosnippet>1238</a>
-<a href=#1239 id=1239 data-nosnippet>1239</a><span class="kw">fn </span>encode_term_role(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, tag: u8, term: ProductTerm) {
-<a href=#1240 id=1240 data-nosnippet>1240</a>    encoder.u8(tag);
-<a href=#1241 id=1241 data-nosnippet>1241</a>    <span class="kw">match </span>term {
-<a href=#1242 id=1242 data-nosnippet>1242</a>        ProductTerm::Single =&gt; encoder.u8(<span class="number">0</span>),
-<a href=#1243 id=1243 data-nosnippet>1243</a>        ProductTerm::Taylor(term) =&gt; {
-<a href=#1244 id=1244 data-nosnippet>1244</a>            encoder.u8(<span class="number">1</span>);
-<a href=#1245 id=1245 data-nosnippet>1245</a>            encoder.usize(term);
-<a href=#1246 id=1246 data-nosnippet>1246</a>        }
-<a href=#1247 id=1247 data-nosnippet>1247</a>        ProductTerm::Continuum(term) =&gt; {
-<a href=#1248 id=1248 data-nosnippet>1248</a>            encoder.u8(<span class="number">2</span>);
-<a href=#1249 id=1249 data-nosnippet>1249</a>            encoder.usize(term);
-<a href=#1250 id=1250 data-nosnippet>1250</a>        }
-<a href=#1251 id=1251 data-nosnippet>1251</a>        ProductTerm::Line =&gt; encoder.u8(<span class="number">3</span>),
-<a href=#1252 id=1252 data-nosnippet>1252</a>        ProductTerm::Total =&gt; encoder.u8(<span class="number">4</span>),
-<a href=#1253 id=1253 data-nosnippet>1253</a>        ProductTerm::JointNormal { row, column } =&gt; {
-<a href=#1254 id=1254 data-nosnippet>1254</a>            encoder.u8(<span class="number">5</span>);
-<a href=#1255 id=1255 data-nosnippet>1255</a>            encoder.usize(row);
-<a href=#1256 id=1256 data-nosnippet>1256</a>            encoder.usize(column);
-<a href=#1257 id=1257 data-nosnippet>1257</a>        }
-<a href=#1258 id=1258 data-nosnippet>1258</a>    }
-<a href=#1259 id=1259 data-nosnippet>1259</a>}
-<a href=#1260 id=1260 data-nosnippet>1260</a>
-<a href=#1261 id=1261 data-nosnippet>1261</a><span class="kw">fn </span>encode_beam_rule(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, beam: ProductBeamRule) {
-<a href=#1262 id=1262 data-nosnippet>1262</a>    <span class="kw">match </span>beam {
-<a href=#1263 id=1263 data-nosnippet>1263</a>        ProductBeamRule::None =&gt; encoder.u8(<span class="number">0</span>),
-<a href=#1264 id=1264 data-nosnippet>1264</a>        ProductBeamRule::Fitted =&gt; encoder.u8(<span class="number">1</span>),
-<a href=#1265 id=1265 data-nosnippet>1265</a>        ProductBeamRule::Restoring(policy) =&gt; {
-<a href=#1266 id=1266 data-nosnippet>1266</a>            encoder.u8(<span class="number">2</span>);
-<a href=#1267 id=1267 data-nosnippet>1267</a>            encode_restoring_beam(encoder, policy);
-<a href=#1268 id=1268 data-nosnippet>1268</a>        }
-<a href=#1269 id=1269 data-nosnippet>1269</a>        ProductBeamRule::Inherit(node) =&gt; {
-<a href=#1270 id=1270 data-nosnippet>1270</a>            encoder.u8(<span class="number">3</span>);
-<a href=#1271 id=1271 data-nosnippet>1271</a>            encoder.usize(node.ordinal());
-<a href=#1272 id=1272 data-nosnippet>1272</a>        }
-<a href=#1273 id=1273 data-nosnippet>1273</a>        ProductBeamRule::Metadata(policy) =&gt; {
-<a href=#1274 id=1274 data-nosnippet>1274</a>            encoder.u8(<span class="number">4</span>);
+<a href=#1181 id=1181 data-nosnippet>1181</a>    <span class="kw">for </span>axis <span class="kw">in </span>node.axes.order.positions() {
+<a href=#1182 id=1182 data-nosnippet>1182</a>        encoder.u8(<span class="kw">match </span>axis {
+<a href=#1183 id=1183 data-nosnippet>1183</a>            ImageAxis::DirectionLongitude =&gt; <span class="number">0</span>,
+<a href=#1184 id=1184 data-nosnippet>1184</a>            ImageAxis::DirectionLatitude =&gt; <span class="number">1</span>,
+<a href=#1185 id=1185 data-nosnippet>1185</a>            ImageAxis::Polarization =&gt; <span class="number">2</span>,
+<a href=#1186 id=1186 data-nosnippet>1186</a>            ImageAxis::Spectral =&gt; <span class="number">3</span>,
+<a href=#1187 id=1187 data-nosnippet>1187</a>        });
+<a href=#1188 id=1188 data-nosnippet>1188</a>    }
+<a href=#1189 id=1189 data-nosnippet>1189</a>    <span class="kw">for </span>extent <span class="kw">in </span>node.axes.shape {
+<a href=#1190 id=1190 data-nosnippet>1190</a>        encoder.usize(extent);
+<a href=#1191 id=1191 data-nosnippet>1191</a>    }
+<a href=#1192 id=1192 data-nosnippet>1192</a>    encoder.usize(node.axes.polarization.len());
+<a href=#1193 id=1193 data-nosnippet>1193</a>    <span class="kw">for </span>coordinate <span class="kw">in </span><span class="kw-2">&amp;</span>node.axes.polarization {
+<a href=#1194 id=1194 data-nosnippet>1194</a>        encoder.u8(polarization_tag(<span class="kw-2">*</span>coordinate));
+<a href=#1195 id=1195 data-nosnippet>1195</a>    }
+<a href=#1196 id=1196 data-nosnippet>1196</a>    encoder.u8(<span class="kw">match </span>node.unit {
+<a href=#1197 id=1197 data-nosnippet>1197</a>        ProductUnit::NotApplicable =&gt; <span class="number">0</span>,
+<a href=#1198 id=1198 data-nosnippet>1198</a>        ProductUnit::JyPerBeam =&gt; <span class="number">1</span>,
+<a href=#1199 id=1199 data-nosnippet>1199</a>        ProductUnit::JyPerPixel =&gt; <span class="number">2</span>,
+<a href=#1200 id=1200 data-nosnippet>1200</a>        ProductUnit::Dimensionless =&gt; <span class="number">3</span>,
+<a href=#1201 id=1201 data-nosnippet>1201</a>        ProductUnit::VisibilityWeight =&gt; <span class="number">4</span>,
+<a href=#1202 id=1202 data-nosnippet>1202</a>    });
+<a href=#1203 id=1203 data-nosnippet>1203</a>    <span class="kw">match </span>node.normalization {
+<a href=#1204 id=1204 data-nosnippet>1204</a>        <span class="prelude-val">Some</span>(normalization) =&gt; {
+<a href=#1205 id=1205 data-nosnippet>1205</a>            encoder.u8(<span class="number">1</span>);
+<a href=#1206 id=1206 data-nosnippet>1206</a>            encode_normalization(encoder, normalization);
+<a href=#1207 id=1207 data-nosnippet>1207</a>        }
+<a href=#1208 id=1208 data-nosnippet>1208</a>        <span class="prelude-val">None </span>=&gt; encoder.u8(<span class="number">0</span>),
+<a href=#1209 id=1209 data-nosnippet>1209</a>    }
+<a href=#1210 id=1210 data-nosnippet>1210</a>    encode_beam_rule(encoder, node.beam);
+<a href=#1211 id=1211 data-nosnippet>1211</a>    encode_validity_rule(encoder, node.validity);
+<a href=#1212 id=1212 data-nosnippet>1212</a>    encoder.u8(<span class="kw">match </span>node.schema {
+<a href=#1213 id=1213 data-nosnippet>1213</a>        ProductSchema::ImageF32V1 =&gt; <span class="number">0</span>,
+<a href=#1214 id=1214 data-nosnippet>1214</a>        ProductSchema::LogicalCollectionV1 =&gt; <span class="number">1</span>,
+<a href=#1215 id=1215 data-nosnippet>1215</a>        ProductSchema::EmbeddedImageMetadataV1 =&gt; <span class="number">2</span>,
+<a href=#1216 id=1216 data-nosnippet>1216</a>        ProductSchema::InternalImageF32V1 =&gt; <span class="number">3</span>,
+<a href=#1217 id=1217 data-nosnippet>1217</a>    });
+<a href=#1218 id=1218 data-nosnippet>1218</a>    encoder.usize(node.dependencies.len());
+<a href=#1219 id=1219 data-nosnippet>1219</a>    <span class="kw">for </span>dependency <span class="kw">in </span><span class="kw-2">&amp;</span>node.dependencies {
+<a href=#1220 id=1220 data-nosnippet>1220</a>        encoder.usize(dependency.ordinal());
+<a href=#1221 id=1221 data-nosnippet>1221</a>    }
+<a href=#1222 id=1222 data-nosnippet>1222</a>}
+<a href=#1223 id=1223 data-nosnippet>1223</a>
+<a href=#1224 id=1224 data-nosnippet>1224</a><span class="kw">fn </span>encode_role(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, role: ProductRole) {
+<a href=#1225 id=1225 data-nosnippet>1225</a>    <span class="kw">match </span>role {
+<a href=#1226 id=1226 data-nosnippet>1226</a>        ProductRole::Psf(term) =&gt; encode_term_role(encoder, <span class="number">0</span>, term),
+<a href=#1227 id=1227 data-nosnippet>1227</a>        ProductRole::Residual(term) =&gt; encode_term_role(encoder, <span class="number">1</span>, term),
+<a href=#1228 id=1228 data-nosnippet>1228</a>        ProductRole::Model(term) =&gt; encode_term_role(encoder, <span class="number">2</span>, term),
+<a href=#1229 id=1229 data-nosnippet>1229</a>        ProductRole::RestoredImage(term) =&gt; encode_term_role(encoder, <span class="number">3</span>, term),
+<a href=#1230 id=1230 data-nosnippet>1230</a>        ProductRole::SumWeights(term) =&gt; encode_term_role(encoder, <span class="number">4</span>, term),
+<a href=#1231 id=1231 data-nosnippet>1231</a>        ProductRole::CleanMask =&gt; encoder.u8(<span class="number">5</span>),
+<a href=#1232 id=1232 data-nosnippet>1232</a>        ProductRole::Weight(term) =&gt; encode_term_role(encoder, <span class="number">6</span>, term),
+<a href=#1233 id=1233 data-nosnippet>1233</a>        ProductRole::PrimaryBeam(term) =&gt; encode_term_role(encoder, <span class="number">7</span>, term),
+<a href=#1234 id=1234 data-nosnippet>1234</a>        ProductRole::PrimaryBeamSpectralIndex =&gt; encoder.u8(<span class="number">8</span>),
+<a href=#1235 id=1235 data-nosnippet>1235</a>        ProductRole::Sensitivity =&gt; encoder.u8(<span class="number">9</span>),
+<a href=#1236 id=1236 data-nosnippet>1236</a>        ProductRole::PbCorrectedImage(term) =&gt; encode_term_role(encoder, <span class="number">10</span>, term),
+<a href=#1237 id=1237 data-nosnippet>1237</a>        ProductRole::TaylorCoefficientSet =&gt; encoder.u8(<span class="number">11</span>),
+<a href=#1238 id=1238 data-nosnippet>1238</a>        ProductRole::SpectralIndex =&gt; encoder.u8(<span class="number">12</span>),
+<a href=#1239 id=1239 data-nosnippet>1239</a>        ProductRole::SpectralIndexError =&gt; encoder.u8(<span class="number">13</span>),
+<a href=#1240 id=1240 data-nosnippet>1240</a>        ProductRole::PbCorrectedSpectralIndex =&gt; encoder.u8(<span class="number">14</span>),
+<a href=#1241 id=1241 data-nosnippet>1241</a>        ProductRole::BeamMetadata =&gt; encoder.u8(<span class="number">15</span>),
+<a href=#1242 id=1242 data-nosnippet>1242</a>        ProductRole::ContinuumCleanMask =&gt; encoder.u8(<span class="number">16</span>),
+<a href=#1243 id=1243 data-nosnippet>1243</a>        ProductRole::LineCleanMask =&gt; encoder.u8(<span class="number">17</span>),
+<a href=#1244 id=1244 data-nosnippet>1244</a>    }
+<a href=#1245 id=1245 data-nosnippet>1245</a>}
+<a href=#1246 id=1246 data-nosnippet>1246</a>
+<a href=#1247 id=1247 data-nosnippet>1247</a><span class="kw">fn </span>encode_term_role(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, tag: u8, term: ProductTerm) {
+<a href=#1248 id=1248 data-nosnippet>1248</a>    encoder.u8(tag);
+<a href=#1249 id=1249 data-nosnippet>1249</a>    <span class="kw">match </span>term {
+<a href=#1250 id=1250 data-nosnippet>1250</a>        ProductTerm::Single =&gt; encoder.u8(<span class="number">0</span>),
+<a href=#1251 id=1251 data-nosnippet>1251</a>        ProductTerm::Taylor(term) =&gt; {
+<a href=#1252 id=1252 data-nosnippet>1252</a>            encoder.u8(<span class="number">1</span>);
+<a href=#1253 id=1253 data-nosnippet>1253</a>            encoder.usize(term);
+<a href=#1254 id=1254 data-nosnippet>1254</a>        }
+<a href=#1255 id=1255 data-nosnippet>1255</a>        ProductTerm::Continuum(term) =&gt; {
+<a href=#1256 id=1256 data-nosnippet>1256</a>            encoder.u8(<span class="number">2</span>);
+<a href=#1257 id=1257 data-nosnippet>1257</a>            encoder.usize(term);
+<a href=#1258 id=1258 data-nosnippet>1258</a>        }
+<a href=#1259 id=1259 data-nosnippet>1259</a>        ProductTerm::Line =&gt; encoder.u8(<span class="number">3</span>),
+<a href=#1260 id=1260 data-nosnippet>1260</a>        ProductTerm::Total =&gt; encoder.u8(<span class="number">4</span>),
+<a href=#1261 id=1261 data-nosnippet>1261</a>        ProductTerm::JointNormal { row, column } =&gt; {
+<a href=#1262 id=1262 data-nosnippet>1262</a>            encoder.u8(<span class="number">5</span>);
+<a href=#1263 id=1263 data-nosnippet>1263</a>            encoder.usize(row);
+<a href=#1264 id=1264 data-nosnippet>1264</a>            encoder.usize(column);
+<a href=#1265 id=1265 data-nosnippet>1265</a>        }
+<a href=#1266 id=1266 data-nosnippet>1266</a>    }
+<a href=#1267 id=1267 data-nosnippet>1267</a>}
+<a href=#1268 id=1268 data-nosnippet>1268</a>
+<a href=#1269 id=1269 data-nosnippet>1269</a><span class="kw">fn </span>encode_beam_rule(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, beam: ProductBeamRule) {
+<a href=#1270 id=1270 data-nosnippet>1270</a>    <span class="kw">match </span>beam {
+<a href=#1271 id=1271 data-nosnippet>1271</a>        ProductBeamRule::None =&gt; encoder.u8(<span class="number">0</span>),
+<a href=#1272 id=1272 data-nosnippet>1272</a>        ProductBeamRule::Fitted =&gt; encoder.u8(<span class="number">1</span>),
+<a href=#1273 id=1273 data-nosnippet>1273</a>        ProductBeamRule::Restoring(policy) =&gt; {
+<a href=#1274 id=1274 data-nosnippet>1274</a>            encoder.u8(<span class="number">2</span>);
 <a href=#1275 id=1275 data-nosnippet>1275</a>            encode_restoring_beam(encoder, policy);
 <a href=#1276 id=1276 data-nosnippet>1276</a>        }
-<a href=#1277 id=1277 data-nosnippet>1277</a>    }
-<a href=#1278 id=1278 data-nosnippet>1278</a>}
-<a href=#1279 id=1279 data-nosnippet>1279</a>
-<a href=#1280 id=1280 data-nosnippet>1280</a><span class="kw">fn </span>encode_validity_rule(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, validity: ProductValidityRule) {
-<a href=#1281 id=1281 data-nosnippet>1281</a>    <span class="kw">match </span>validity {
-<a href=#1282 id=1282 data-nosnippet>1282</a>        ProductValidityRule::All =&gt; encoder.u8(<span class="number">0</span>),
-<a href=#1283 id=1283 data-nosnippet>1283</a>        ProductValidityRule::FinalNormalState =&gt; encoder.u8(<span class="number">1</span>),
-<a href=#1284 id=1284 data-nosnippet>1284</a>        ProductValidityRule::PrimaryBeam(policy) =&gt; {
-<a href=#1285 id=1285 data-nosnippet>1285</a>            encoder.u8(<span class="number">2</span>);
-<a href=#1286 id=1286 data-nosnippet>1286</a>            encode_primary_beam_validity(encoder, policy);
-<a href=#1287 id=1287 data-nosnippet>1287</a>        }
-<a href=#1288 id=1288 data-nosnippet>1288</a>        ProductValidityRule::Taylor(policy) =&gt; {
-<a href=#1289 id=1289 data-nosnippet>1289</a>            encoder.u8(<span class="number">3</span>);
-<a href=#1290 id=1290 data-nosnippet>1290</a>            encode_taylor_validity(encoder, policy);
-<a href=#1291 id=1291 data-nosnippet>1291</a>        }
-<a href=#1292 id=1292 data-nosnippet>1292</a>        ProductValidityRule::TaylorAndPrimaryBeam {
-<a href=#1293 id=1293 data-nosnippet>1293</a>            taylor,
-<a href=#1294 id=1294 data-nosnippet>1294</a>            primary_beam,
-<a href=#1295 id=1295 data-nosnippet>1295</a>        } =&gt; {
-<a href=#1296 id=1296 data-nosnippet>1296</a>            encoder.u8(<span class="number">4</span>);
-<a href=#1297 id=1297 data-nosnippet>1297</a>            encode_taylor_validity(encoder, taylor);
-<a href=#1298 id=1298 data-nosnippet>1298</a>            encode_primary_beam_validity(encoder, primary_beam);
+<a href=#1277 id=1277 data-nosnippet>1277</a>        ProductBeamRule::Inherit(node) =&gt; {
+<a href=#1278 id=1278 data-nosnippet>1278</a>            encoder.u8(<span class="number">3</span>);
+<a href=#1279 id=1279 data-nosnippet>1279</a>            encoder.usize(node.ordinal());
+<a href=#1280 id=1280 data-nosnippet>1280</a>        }
+<a href=#1281 id=1281 data-nosnippet>1281</a>        ProductBeamRule::Metadata(policy) =&gt; {
+<a href=#1282 id=1282 data-nosnippet>1282</a>            encoder.u8(<span class="number">4</span>);
+<a href=#1283 id=1283 data-nosnippet>1283</a>            encode_restoring_beam(encoder, policy);
+<a href=#1284 id=1284 data-nosnippet>1284</a>        }
+<a href=#1285 id=1285 data-nosnippet>1285</a>    }
+<a href=#1286 id=1286 data-nosnippet>1286</a>}
+<a href=#1287 id=1287 data-nosnippet>1287</a>
+<a href=#1288 id=1288 data-nosnippet>1288</a><span class="kw">fn </span>encode_validity_rule(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, validity: ProductValidityRule) {
+<a href=#1289 id=1289 data-nosnippet>1289</a>    <span class="kw">match </span>validity {
+<a href=#1290 id=1290 data-nosnippet>1290</a>        ProductValidityRule::All =&gt; encoder.u8(<span class="number">0</span>),
+<a href=#1291 id=1291 data-nosnippet>1291</a>        ProductValidityRule::FinalNormalState =&gt; encoder.u8(<span class="number">1</span>),
+<a href=#1292 id=1292 data-nosnippet>1292</a>        ProductValidityRule::PrimaryBeam(policy) =&gt; {
+<a href=#1293 id=1293 data-nosnippet>1293</a>            encoder.u8(<span class="number">2</span>);
+<a href=#1294 id=1294 data-nosnippet>1294</a>            encode_primary_beam_validity(encoder, policy);
+<a href=#1295 id=1295 data-nosnippet>1295</a>        }
+<a href=#1296 id=1296 data-nosnippet>1296</a>        ProductValidityRule::Taylor(policy) =&gt; {
+<a href=#1297 id=1297 data-nosnippet>1297</a>            encoder.u8(<span class="number">3</span>);
+<a href=#1298 id=1298 data-nosnippet>1298</a>            encode_taylor_validity(encoder, policy);
 <a href=#1299 id=1299 data-nosnippet>1299</a>        }
-<a href=#1300 id=1300 data-nosnippet>1300</a>    }
-<a href=#1301 id=1301 data-nosnippet>1301</a>}
-<a href=#1302 id=1302 data-nosnippet>1302</a>
-<a href=#1303 id=1303 data-nosnippet>1303</a><span class="kw">fn </span>encode_primary_beam_validity(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, policy: PrimaryBeamValidityPolicy) {
-<a href=#1304 id=1304 data-nosnippet>1304</a>    encoder.u32(policy.cutoff().to_bits());
-<a href=#1305 id=1305 data-nosnippet>1305</a>    encode_support_comparison(encoder, policy.comparison());
-<a href=#1306 id=1306 data-nosnippet>1306</a>    encode_blanking(encoder, policy.blanking());
-<a href=#1307 id=1307 data-nosnippet>1307</a>}
-<a href=#1308 id=1308 data-nosnippet>1308</a>
-<a href=#1309 id=1309 data-nosnippet>1309</a><span class="kw">fn </span>encode_taylor_validity(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, policy: TaylorValidityPolicy) {
-<a href=#1310 id=1310 data-nosnippet>1310</a>    encoder.u8(<span class="kw">match </span>policy.reference() {
-<a href=#1311 id=1311 data-nosnippet>1311</a>        TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum =&gt; <span class="number">0</span>,
-<a href=#1312 id=1312 data-nosnippet>1312</a>    });
-<a href=#1313 id=1313 data-nosnippet>1313</a>    encoder.u32(policy.peak_fraction().to_bits());
-<a href=#1314 id=1314 data-nosnippet>1314</a>    encode_support_comparison(encoder, policy.comparison());
-<a href=#1315 id=1315 data-nosnippet>1315</a>    encode_blanking(encoder, policy.blanking());
-<a href=#1316 id=1316 data-nosnippet>1316</a>}
-<a href=#1317 id=1317 data-nosnippet>1317</a>
-<a href=#1318 id=1318 data-nosnippet>1318</a><span class="kw">fn </span>encode_support_comparison(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, comparison: ProductSupportComparison) {
-<a href=#1319 id=1319 data-nosnippet>1319</a>    encoder.u8(<span class="kw">match </span>comparison {
-<a href=#1320 id=1320 data-nosnippet>1320</a>        ProductSupportComparison::StrictlyGreater =&gt; <span class="number">0</span>,
-<a href=#1321 id=1321 data-nosnippet>1321</a>    });
-<a href=#1322 id=1322 data-nosnippet>1322</a>}
-<a href=#1323 id=1323 data-nosnippet>1323</a>
-<a href=#1324 id=1324 data-nosnippet>1324</a><span class="kw">fn </span>encode_blanking(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, blanking: ProductBlankingPolicy) {
-<a href=#1325 id=1325 data-nosnippet>1325</a>    encoder.u8(<span class="kw">match </span>blanking {
-<a href=#1326 id=1326 data-nosnippet>1326</a>        ProductBlankingPolicy::ZeroAndFalseMask =&gt; <span class="number">0</span>,
-<a href=#1327 id=1327 data-nosnippet>1327</a>    });
-<a href=#1328 id=1328 data-nosnippet>1328</a>}
-<a href=#1329 id=1329 data-nosnippet>1329</a>
-<a href=#1330 id=1330 data-nosnippet>1330</a><span class="kw">fn </span>encode_normalization(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, normalization: ProductNormalization) {
-<a href=#1331 id=1331 data-nosnippet>1331</a>    encoder.u8(<span class="kw">match </span>normalization {
-<a href=#1332 id=1332 data-nosnippet>1332</a>        ProductNormalization::UnitResponse =&gt; <span class="number">0</span>,
-<a href=#1333 id=1333 data-nosnippet>1333</a>        ProductNormalization::FlatNoise =&gt; <span class="number">1</span>,
-<a href=#1334 id=1334 data-nosnippet>1334</a>        ProductNormalization::FlatSky =&gt; <span class="number">2</span>,
+<a href=#1300 id=1300 data-nosnippet>1300</a>        ProductValidityRule::TaylorAndPrimaryBeam {
+<a href=#1301 id=1301 data-nosnippet>1301</a>            taylor,
+<a href=#1302 id=1302 data-nosnippet>1302</a>            primary_beam,
+<a href=#1303 id=1303 data-nosnippet>1303</a>        } =&gt; {
+<a href=#1304 id=1304 data-nosnippet>1304</a>            encoder.u8(<span class="number">4</span>);
+<a href=#1305 id=1305 data-nosnippet>1305</a>            encode_taylor_validity(encoder, taylor);
+<a href=#1306 id=1306 data-nosnippet>1306</a>            encode_primary_beam_validity(encoder, primary_beam);
+<a href=#1307 id=1307 data-nosnippet>1307</a>        }
+<a href=#1308 id=1308 data-nosnippet>1308</a>    }
+<a href=#1309 id=1309 data-nosnippet>1309</a>}
+<a href=#1310 id=1310 data-nosnippet>1310</a>
+<a href=#1311 id=1311 data-nosnippet>1311</a><span class="kw">fn </span>encode_primary_beam_validity(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, policy: PrimaryBeamValidityPolicy) {
+<a href=#1312 id=1312 data-nosnippet>1312</a>    encoder.u32(policy.cutoff().to_bits());
+<a href=#1313 id=1313 data-nosnippet>1313</a>    encode_support_comparison(encoder, policy.comparison());
+<a href=#1314 id=1314 data-nosnippet>1314</a>    encode_blanking(encoder, policy.blanking());
+<a href=#1315 id=1315 data-nosnippet>1315</a>}
+<a href=#1316 id=1316 data-nosnippet>1316</a>
+<a href=#1317 id=1317 data-nosnippet>1317</a><span class="kw">fn </span>encode_taylor_validity(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, policy: TaylorValidityPolicy) {
+<a href=#1318 id=1318 data-nosnippet>1318</a>    encoder.u8(<span class="kw">match </span>policy.reference() {
+<a href=#1319 id=1319 data-nosnippet>1319</a>        TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum =&gt; <span class="number">0</span>,
+<a href=#1320 id=1320 data-nosnippet>1320</a>    });
+<a href=#1321 id=1321 data-nosnippet>1321</a>    encoder.u32(policy.peak_fraction().to_bits());
+<a href=#1322 id=1322 data-nosnippet>1322</a>    encode_support_comparison(encoder, policy.comparison());
+<a href=#1323 id=1323 data-nosnippet>1323</a>    encode_blanking(encoder, policy.blanking());
+<a href=#1324 id=1324 data-nosnippet>1324</a>}
+<a href=#1325 id=1325 data-nosnippet>1325</a>
+<a href=#1326 id=1326 data-nosnippet>1326</a><span class="kw">fn </span>encode_support_comparison(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, comparison: ProductSupportComparison) {
+<a href=#1327 id=1327 data-nosnippet>1327</a>    encoder.u8(<span class="kw">match </span>comparison {
+<a href=#1328 id=1328 data-nosnippet>1328</a>        ProductSupportComparison::StrictlyGreater =&gt; <span class="number">0</span>,
+<a href=#1329 id=1329 data-nosnippet>1329</a>    });
+<a href=#1330 id=1330 data-nosnippet>1330</a>}
+<a href=#1331 id=1331 data-nosnippet>1331</a>
+<a href=#1332 id=1332 data-nosnippet>1332</a><span class="kw">fn </span>encode_blanking(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, blanking: ProductBlankingPolicy) {
+<a href=#1333 id=1333 data-nosnippet>1333</a>    encoder.u8(<span class="kw">match </span>blanking {
+<a href=#1334 id=1334 data-nosnippet>1334</a>        ProductBlankingPolicy::ZeroAndFalseMask =&gt; <span class="number">0</span>,
 <a href=#1335 id=1335 data-nosnippet>1335</a>    });
 <a href=#1336 id=1336 data-nosnippet>1336</a>}
 <a href=#1337 id=1337 data-nosnippet>1337</a>
-<a href=#1338 id=1338 data-nosnippet>1338</a><span class="kw">fn </span>encode_restoring_beam(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, policy: RestoringBeamPolicy) {
-<a href=#1339 id=1339 data-nosnippet>1339</a>    encoder.u8(<span class="kw">match </span>policy {
-<a href=#1340 id=1340 data-nosnippet>1340</a>        RestoringBeamPolicy::None =&gt; <span class="number">0</span>,
-<a href=#1341 id=1341 data-nosnippet>1341</a>        RestoringBeamPolicy::PerPlane =&gt; <span class="number">1</span>,
-<a href=#1342 id=1342 data-nosnippet>1342</a>        RestoringBeamPolicy::Common =&gt; <span class="number">2</span>,
+<a href=#1338 id=1338 data-nosnippet>1338</a><span class="kw">fn </span>encode_normalization(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, normalization: ProductNormalization) {
+<a href=#1339 id=1339 data-nosnippet>1339</a>    encoder.u8(<span class="kw">match </span>normalization {
+<a href=#1340 id=1340 data-nosnippet>1340</a>        ProductNormalization::UnitResponse =&gt; <span class="number">0</span>,
+<a href=#1341 id=1341 data-nosnippet>1341</a>        ProductNormalization::FlatNoise =&gt; <span class="number">1</span>,
+<a href=#1342 id=1342 data-nosnippet>1342</a>        ProductNormalization::FlatSky =&gt; <span class="number">2</span>,
 <a href=#1343 id=1343 data-nosnippet>1343</a>    });
 <a href=#1344 id=1344 data-nosnippet>1344</a>}
 <a href=#1345 id=1345 data-nosnippet>1345</a>
-<a href=#1346 id=1346 data-nosnippet>1346</a><span class="kw">fn </span>product_axes(
-<a href=#1347 id=1347 data-nosnippet>1347</a>    geometry: <span class="kw-2">&amp;</span>CompiledGeometry,
-<a href=#1348 id=1348 data-nosnippet>1348</a>    domain: <span class="kw-2">&amp;</span>CompiledImageDomain,
-<a href=#1349 id=1349 data-nosnippet>1349</a>    reconstruction: <span class="kw-2">&amp;</span>ReconstructionContract,
-<a href=#1350 id=1350 data-nosnippet>1350</a>    kind: ProductAxisKind,
-<a href=#1351 id=1351 data-nosnippet>1351</a>) -&gt; ProductAxes {
-<a href=#1352 id=1352 data-nosnippet>1352</a>    <span class="kw">let </span>direction_pixels = <span class="kw">match </span>kind {
-<a href=#1353 id=1353 data-nosnippet>1353</a>        ProductAxisKind::SkyImage | ProductAxisKind::CoefficientImage =&gt; domain.shape().pixels(),
-<a href=#1354 id=1354 data-nosnippet>1354</a>        ProductAxisKind::PlaneState | ProductAxisKind::CoefficientPlaneState =&gt; [<span class="number">1</span>, <span class="number">1</span>],
-<a href=#1355 id=1355 data-nosnippet>1355</a>        ProductAxisKind::Metadata =&gt; [<span class="number">0</span>, <span class="number">0</span>],
-<a href=#1356 id=1356 data-nosnippet>1356</a>    };
-<a href=#1357 id=1357 data-nosnippet>1357</a>    <span class="kw">let </span>polarization = reconstruction.polarization().coordinates();
-<a href=#1358 id=1358 data-nosnippet>1358</a>    <span class="kw">let </span>spectral = <span class="kw">match </span>kind {
-<a href=#1359 id=1359 data-nosnippet>1359</a>        ProductAxisKind::Metadata =&gt; <span class="number">0</span>,
-<a href=#1360 id=1360 data-nosnippet>1360</a>        ProductAxisKind::CoefficientImage | ProductAxisKind::CoefficientPlaneState =&gt; <span class="number">1</span>,
-<a href=#1361 id=1361 data-nosnippet>1361</a>        ProductAxisKind::SkyImage | ProductAxisKind::PlaneState =&gt; <span class="kw">match </span>reconstruction.basis() {
-<a href=#1362 id=1362 data-nosnippet>1362</a>            ReconstructionBasis::TaylorViaChannelMajor { .. } =&gt; <span class="number">1</span>,
-<a href=#1363 id=1363 data-nosnippet>1363</a>            <span class="kw">_ </span>=&gt; geometry.spectral().output_channels(),
-<a href=#1364 id=1364 data-nosnippet>1364</a>        },
-<a href=#1365 id=1365 data-nosnippet>1365</a>    };
-<a href=#1366 id=1366 data-nosnippet>1366</a>    <span class="kw">let </span><span class="kw-2">mut </span>shape = [<span class="number">0</span>; <span class="number">4</span>];
-<a href=#1367 id=1367 data-nosnippet>1367</a>    <span class="kw">for </span>(position, axis) <span class="kw">in </span>domain.axes().positions().iter().enumerate() {
-<a href=#1368 id=1368 data-nosnippet>1368</a>        shape[position] = <span class="kw">match </span>axis {
-<a href=#1369 id=1369 data-nosnippet>1369</a>            ImageAxis::DirectionLongitude =&gt; direction_pixels[<span class="number">0</span>],
-<a href=#1370 id=1370 data-nosnippet>1370</a>            ImageAxis::DirectionLatitude =&gt; direction_pixels[<span class="number">1</span>],
-<a href=#1371 id=1371 data-nosnippet>1371</a>            ImageAxis::Polarization <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; polarization.len(),
-<a href=#1372 id=1372 data-nosnippet>1372</a>            ImageAxis::Spectral <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; spectral,
-<a href=#1373 id=1373 data-nosnippet>1373</a>            ImageAxis::Polarization | ImageAxis::Spectral =&gt; <span class="number">0</span>,
-<a href=#1374 id=1374 data-nosnippet>1374</a>        };
-<a href=#1375 id=1375 data-nosnippet>1375</a>    }
-<a href=#1376 id=1376 data-nosnippet>1376</a>    ProductAxes {
-<a href=#1377 id=1377 data-nosnippet>1377</a>        kind,
-<a href=#1378 id=1378 data-nosnippet>1378</a>        geometry_id: geometry.geometry_id(),
-<a href=#1379 id=1379 data-nosnippet>1379</a>        domain: domain.role().clone(),
-<a href=#1380 id=1380 data-nosnippet>1380</a>        order: domain.axes().clone(),
-<a href=#1381 id=1381 data-nosnippet>1381</a>        shape,
-<a href=#1382 id=1382 data-nosnippet>1382</a>        direction: domain.direction(),
-<a href=#1383 id=1383 data-nosnippet>1383</a>        spectral: geometry.spectral().clone(),
-<a href=#1384 id=1384 data-nosnippet>1384</a>        polarization: polarization.into(),
-<a href=#1385 id=1385 data-nosnippet>1385</a>    }
-<a href=#1386 id=1386 data-nosnippet>1386</a>}
-<a href=#1387 id=1387 data-nosnippet>1387</a>
-<a href=#1388 id=1388 data-nosnippet>1388</a><span class="kw">fn </span>product_name(stem: <span class="kw-2">&amp;</span>str, term: ProductTerm, pb_corrected: bool) -&gt; String {
-<a href=#1389 id=1389 data-nosnippet>1389</a>    <span class="kw">match </span>(term, pb_corrected) {
-<a href=#1390 id=1390 data-nosnippet>1390</a>        (ProductTerm::Single, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}"</span>),
-<a href=#1391 id=1391 data-nosnippet>1391</a>        (ProductTerm::Single, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.pbcor"</span>),
-<a href=#1392 id=1392 data-nosnippet>1392</a>        (ProductTerm::Taylor(term), <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}"</span>),
-<a href=#1393 id=1393 data-nosnippet>1393</a>        (ProductTerm::Taylor(term), <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}.pbcor"</span>),
-<a href=#1394 id=1394 data-nosnippet>1394</a>        (ProductTerm::Continuum(term), <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".continuum.{stem}.ct{term}"</span>),
-<a href=#1395 id=1395 data-nosnippet>1395</a>        (ProductTerm::Continuum(term), <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".continuum.{stem}.ct{term}.pbcor"</span>),
-<a href=#1396 id=1396 data-nosnippet>1396</a>        (ProductTerm::Line, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".line.{stem}"</span>),
-<a href=#1397 id=1397 data-nosnippet>1397</a>        (ProductTerm::Line, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".line.{stem}.pbcor"</span>),
-<a href=#1398 id=1398 data-nosnippet>1398</a>        (ProductTerm::Total, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".total.{stem}"</span>),
-<a href=#1399 id=1399 data-nosnippet>1399</a>        (ProductTerm::Total, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".total.{stem}.pbcor"</span>),
-<a href=#1400 id=1400 data-nosnippet>1400</a>        (ProductTerm::JointNormal { row, column }, <span class="bool-val">false</span>) =&gt; {
-<a href=#1401 id=1401 data-nosnippet>1401</a>            <span class="macro">format!</span>(<span class="string">".{stem}.joint{row}_{column}"</span>)
-<a href=#1402 id=1402 data-nosnippet>1402</a>        }
-<a href=#1403 id=1403 data-nosnippet>1403</a>        (ProductTerm::JointNormal { row, column }, <span class="bool-val">true</span>) =&gt; {
-<a href=#1404 id=1404 data-nosnippet>1404</a>            <span class="macro">format!</span>(<span class="string">".{stem}.joint{row}_{column}.pbcor"</span>)
-<a href=#1405 id=1405 data-nosnippet>1405</a>        }
-<a href=#1406 id=1406 data-nosnippet>1406</a>    }
-<a href=#1407 id=1407 data-nosnippet>1407</a>}
-<a href=#1408 id=1408 data-nosnippet>1408</a>
-<a href=#1409 id=1409 data-nosnippet>1409</a><span class="kw">fn </span>is_zeroth(term: ProductTerm) -&gt; bool {
-<a href=#1410 id=1410 data-nosnippet>1410</a>    <span class="macro">matches!</span>(
-<a href=#1411 id=1411 data-nosnippet>1411</a>        term,
-<a href=#1412 id=1412 data-nosnippet>1412</a>        ProductTerm::Single
-<a href=#1413 id=1413 data-nosnippet>1413</a>            | ProductTerm::Taylor(<span class="number">0</span>)
-<a href=#1414 id=1414 data-nosnippet>1414</a>            | ProductTerm::Continuum(<span class="number">0</span>)
-<a href=#1415 id=1415 data-nosnippet>1415</a>            | ProductTerm::Total
-<a href=#1416 id=1416 data-nosnippet>1416</a>            | ProductTerm::JointNormal { row: <span class="number">0</span>, column: <span class="number">0 </span>}
-<a href=#1417 id=1417 data-nosnippet>1417</a>    )
-<a href=#1418 id=1418 data-nosnippet>1418</a>}
-<a href=#1419 id=1419 data-nosnippet>1419</a>
-<a href=#1420 id=1420 data-nosnippet>1420</a><span class="kw">fn </span>axis_kind_for_term(term: ProductTerm) -&gt; ProductAxisKind {
-<a href=#1421 id=1421 data-nosnippet>1421</a>    <span class="kw">match </span>term {
-<a href=#1422 id=1422 data-nosnippet>1422</a>        ProductTerm::Continuum(<span class="kw">_</span>) | ProductTerm::JointNormal { .. } =&gt; {
-<a href=#1423 id=1423 data-nosnippet>1423</a>            ProductAxisKind::CoefficientImage
-<a href=#1424 id=1424 data-nosnippet>1424</a>        }
-<a href=#1425 id=1425 data-nosnippet>1425</a>        ProductTerm::Single | ProductTerm::Taylor(<span class="kw">_</span>) | ProductTerm::Line | ProductTerm::Total =&gt; {
-<a href=#1426 id=1426 data-nosnippet>1426</a>            ProductAxisKind::SkyImage
-<a href=#1427 id=1427 data-nosnippet>1427</a>        }
-<a href=#1428 id=1428 data-nosnippet>1428</a>    }
-<a href=#1429 id=1429 data-nosnippet>1429</a>}
-<a href=#1430 id=1430 data-nosnippet>1430</a>
-<a href=#1431 id=1431 data-nosnippet>1431</a><span class="kw">fn </span>canonical_ids&lt;T: Ord&gt;(values: <span class="kw">impl </span>IntoIterator&lt;Item = T&gt;) -&gt; Box&lt;[T]&gt; {
-<a href=#1432 id=1432 data-nosnippet>1432</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = values.into_iter().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#1433 id=1433 data-nosnippet>1433</a>    values.sort_unstable();
-<a href=#1434 id=1434 data-nosnippet>1434</a>    values.dedup();
-<a href=#1435 id=1435 data-nosnippet>1435</a>    values.into_boxed_slice()
-<a href=#1436 id=1436 data-nosnippet>1436</a>}
-<a href=#1437 id=1437 data-nosnippet>1437</a>
-<a href=#1438 id=1438 data-nosnippet>1438</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
-<a href=#1439 id=1439 data-nosnippet>1439</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
-<a href=#1440 id=1440 data-nosnippet>1440</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
-<a href=#1441 id=1441 data-nosnippet>1441</a>    }
-<a href=#1442 id=1442 data-nosnippet>1442</a>    <span class="prelude-val">Ok</span>(())
-<a href=#1443 id=1443 data-nosnippet>1443</a>}
+<a href=#1346 id=1346 data-nosnippet>1346</a><span class="kw">fn </span>encode_restoring_beam(encoder: <span class="kw-2">&amp;mut </span>CanonicalEncoder, policy: RestoringBeamPolicy) {
+<a href=#1347 id=1347 data-nosnippet>1347</a>    encoder.u8(<span class="kw">match </span>policy {
+<a href=#1348 id=1348 data-nosnippet>1348</a>        RestoringBeamPolicy::None =&gt; <span class="number">0</span>,
+<a href=#1349 id=1349 data-nosnippet>1349</a>        RestoringBeamPolicy::PerPlane =&gt; <span class="number">1</span>,
+<a href=#1350 id=1350 data-nosnippet>1350</a>        RestoringBeamPolicy::Common =&gt; <span class="number">2</span>,
+<a href=#1351 id=1351 data-nosnippet>1351</a>    });
+<a href=#1352 id=1352 data-nosnippet>1352</a>}
+<a href=#1353 id=1353 data-nosnippet>1353</a>
+<a href=#1354 id=1354 data-nosnippet>1354</a><span class="kw">fn </span>product_axes(
+<a href=#1355 id=1355 data-nosnippet>1355</a>    geometry: <span class="kw-2">&amp;</span>CompiledGeometry,
+<a href=#1356 id=1356 data-nosnippet>1356</a>    domain: <span class="kw-2">&amp;</span>CompiledImageDomain,
+<a href=#1357 id=1357 data-nosnippet>1357</a>    reconstruction: <span class="kw-2">&amp;</span>ReconstructionContract,
+<a href=#1358 id=1358 data-nosnippet>1358</a>    kind: ProductAxisKind,
+<a href=#1359 id=1359 data-nosnippet>1359</a>) -&gt; ProductAxes {
+<a href=#1360 id=1360 data-nosnippet>1360</a>    <span class="kw">let </span>direction_pixels = <span class="kw">match </span>kind {
+<a href=#1361 id=1361 data-nosnippet>1361</a>        ProductAxisKind::SkyImage | ProductAxisKind::CoefficientImage =&gt; domain.shape().pixels(),
+<a href=#1362 id=1362 data-nosnippet>1362</a>        ProductAxisKind::PlaneState | ProductAxisKind::CoefficientPlaneState =&gt; [<span class="number">1</span>, <span class="number">1</span>],
+<a href=#1363 id=1363 data-nosnippet>1363</a>        ProductAxisKind::Metadata =&gt; [<span class="number">0</span>, <span class="number">0</span>],
+<a href=#1364 id=1364 data-nosnippet>1364</a>    };
+<a href=#1365 id=1365 data-nosnippet>1365</a>    <span class="kw">let </span>polarization = reconstruction.polarization().coordinates();
+<a href=#1366 id=1366 data-nosnippet>1366</a>    <span class="kw">let </span>spectral = <span class="kw">match </span>kind {
+<a href=#1367 id=1367 data-nosnippet>1367</a>        ProductAxisKind::Metadata =&gt; <span class="number">0</span>,
+<a href=#1368 id=1368 data-nosnippet>1368</a>        ProductAxisKind::CoefficientImage | ProductAxisKind::CoefficientPlaneState =&gt; <span class="number">1</span>,
+<a href=#1369 id=1369 data-nosnippet>1369</a>        ProductAxisKind::SkyImage | ProductAxisKind::PlaneState =&gt; <span class="kw">match </span>reconstruction.basis() {
+<a href=#1370 id=1370 data-nosnippet>1370</a>            ReconstructionBasis::TaylorViaChannelMajor { .. } =&gt; <span class="number">1</span>,
+<a href=#1371 id=1371 data-nosnippet>1371</a>            <span class="kw">_ </span>=&gt; geometry.spectral().output_channels(),
+<a href=#1372 id=1372 data-nosnippet>1372</a>        },
+<a href=#1373 id=1373 data-nosnippet>1373</a>    };
+<a href=#1374 id=1374 data-nosnippet>1374</a>    <span class="kw">let </span><span class="kw-2">mut </span>shape = [<span class="number">0</span>; <span class="number">4</span>];
+<a href=#1375 id=1375 data-nosnippet>1375</a>    <span class="kw">for </span>(position, axis) <span class="kw">in </span>domain.axes().positions().iter().enumerate() {
+<a href=#1376 id=1376 data-nosnippet>1376</a>        shape[position] = <span class="kw">match </span>axis {
+<a href=#1377 id=1377 data-nosnippet>1377</a>            ImageAxis::DirectionLongitude =&gt; direction_pixels[<span class="number">0</span>],
+<a href=#1378 id=1378 data-nosnippet>1378</a>            ImageAxis::DirectionLatitude =&gt; direction_pixels[<span class="number">1</span>],
+<a href=#1379 id=1379 data-nosnippet>1379</a>            ImageAxis::Polarization <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; polarization.len(),
+<a href=#1380 id=1380 data-nosnippet>1380</a>            ImageAxis::Spectral <span class="kw">if </span>kind != ProductAxisKind::Metadata =&gt; spectral,
+<a href=#1381 id=1381 data-nosnippet>1381</a>            ImageAxis::Polarization | ImageAxis::Spectral =&gt; <span class="number">0</span>,
+<a href=#1382 id=1382 data-nosnippet>1382</a>        };
+<a href=#1383 id=1383 data-nosnippet>1383</a>    }
+<a href=#1384 id=1384 data-nosnippet>1384</a>    ProductAxes {
+<a href=#1385 id=1385 data-nosnippet>1385</a>        kind,
+<a href=#1386 id=1386 data-nosnippet>1386</a>        geometry_id: geometry.geometry_id(),
+<a href=#1387 id=1387 data-nosnippet>1387</a>        domain: domain.role().clone(),
+<a href=#1388 id=1388 data-nosnippet>1388</a>        order: domain.axes().clone(),
+<a href=#1389 id=1389 data-nosnippet>1389</a>        shape,
+<a href=#1390 id=1390 data-nosnippet>1390</a>        direction: domain.direction(),
+<a href=#1391 id=1391 data-nosnippet>1391</a>        spectral: geometry.spectral().clone(),
+<a href=#1392 id=1392 data-nosnippet>1392</a>        polarization: polarization.into(),
+<a href=#1393 id=1393 data-nosnippet>1393</a>    }
+<a href=#1394 id=1394 data-nosnippet>1394</a>}
+<a href=#1395 id=1395 data-nosnippet>1395</a>
+<a href=#1396 id=1396 data-nosnippet>1396</a><span class="kw">fn </span>product_name(stem: <span class="kw-2">&amp;</span>str, term: ProductTerm, pb_corrected: bool) -&gt; String {
+<a href=#1397 id=1397 data-nosnippet>1397</a>    <span class="kw">match </span>(term, pb_corrected) {
+<a href=#1398 id=1398 data-nosnippet>1398</a>        (ProductTerm::Single, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}"</span>),
+<a href=#1399 id=1399 data-nosnippet>1399</a>        (ProductTerm::Single, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.pbcor"</span>),
+<a href=#1400 id=1400 data-nosnippet>1400</a>        (ProductTerm::Taylor(term), <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}"</span>),
+<a href=#1401 id=1401 data-nosnippet>1401</a>        (ProductTerm::Taylor(term), <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".{stem}.tt{term}.pbcor"</span>),
+<a href=#1402 id=1402 data-nosnippet>1402</a>        (ProductTerm::Continuum(term), <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".continuum.{stem}.ct{term}"</span>),
+<a href=#1403 id=1403 data-nosnippet>1403</a>        (ProductTerm::Continuum(term), <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".continuum.{stem}.ct{term}.pbcor"</span>),
+<a href=#1404 id=1404 data-nosnippet>1404</a>        (ProductTerm::Line, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".line.{stem}"</span>),
+<a href=#1405 id=1405 data-nosnippet>1405</a>        (ProductTerm::Line, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".line.{stem}.pbcor"</span>),
+<a href=#1406 id=1406 data-nosnippet>1406</a>        (ProductTerm::Total, <span class="bool-val">false</span>) =&gt; <span class="macro">format!</span>(<span class="string">".total.{stem}"</span>),
+<a href=#1407 id=1407 data-nosnippet>1407</a>        (ProductTerm::Total, <span class="bool-val">true</span>) =&gt; <span class="macro">format!</span>(<span class="string">".total.{stem}.pbcor"</span>),
+<a href=#1408 id=1408 data-nosnippet>1408</a>        (ProductTerm::JointNormal { row, column }, <span class="bool-val">false</span>) =&gt; {
+<a href=#1409 id=1409 data-nosnippet>1409</a>            <span class="macro">format!</span>(<span class="string">".{stem}.joint{row}_{column}"</span>)
+<a href=#1410 id=1410 data-nosnippet>1410</a>        }
+<a href=#1411 id=1411 data-nosnippet>1411</a>        (ProductTerm::JointNormal { row, column }, <span class="bool-val">true</span>) =&gt; {
+<a href=#1412 id=1412 data-nosnippet>1412</a>            <span class="macro">format!</span>(<span class="string">".{stem}.joint{row}_{column}.pbcor"</span>)
+<a href=#1413 id=1413 data-nosnippet>1413</a>        }
+<a href=#1414 id=1414 data-nosnippet>1414</a>    }
+<a href=#1415 id=1415 data-nosnippet>1415</a>}
+<a href=#1416 id=1416 data-nosnippet>1416</a>
+<a href=#1417 id=1417 data-nosnippet>1417</a><span class="kw">fn </span>is_zeroth(term: ProductTerm) -&gt; bool {
+<a href=#1418 id=1418 data-nosnippet>1418</a>    <span class="macro">matches!</span>(
+<a href=#1419 id=1419 data-nosnippet>1419</a>        term,
+<a href=#1420 id=1420 data-nosnippet>1420</a>        ProductTerm::Single
+<a href=#1421 id=1421 data-nosnippet>1421</a>            | ProductTerm::Taylor(<span class="number">0</span>)
+<a href=#1422 id=1422 data-nosnippet>1422</a>            | ProductTerm::Continuum(<span class="number">0</span>)
+<a href=#1423 id=1423 data-nosnippet>1423</a>            | ProductTerm::Total
+<a href=#1424 id=1424 data-nosnippet>1424</a>            | ProductTerm::JointNormal { row: <span class="number">0</span>, column: <span class="number">0 </span>}
+<a href=#1425 id=1425 data-nosnippet>1425</a>    )
+<a href=#1426 id=1426 data-nosnippet>1426</a>}
+<a href=#1427 id=1427 data-nosnippet>1427</a>
+<a href=#1428 id=1428 data-nosnippet>1428</a><span class="kw">fn </span>axis_kind_for_term(term: ProductTerm) -&gt; ProductAxisKind {
+<a href=#1429 id=1429 data-nosnippet>1429</a>    <span class="kw">match </span>term {
+<a href=#1430 id=1430 data-nosnippet>1430</a>        ProductTerm::Continuum(<span class="kw">_</span>) | ProductTerm::JointNormal { .. } =&gt; {
+<a href=#1431 id=1431 data-nosnippet>1431</a>            ProductAxisKind::CoefficientImage
+<a href=#1432 id=1432 data-nosnippet>1432</a>        }
+<a href=#1433 id=1433 data-nosnippet>1433</a>        ProductTerm::Single | ProductTerm::Taylor(<span class="kw">_</span>) | ProductTerm::Line | ProductTerm::Total =&gt; {
+<a href=#1434 id=1434 data-nosnippet>1434</a>            ProductAxisKind::SkyImage
+<a href=#1435 id=1435 data-nosnippet>1435</a>        }
+<a href=#1436 id=1436 data-nosnippet>1436</a>    }
+<a href=#1437 id=1437 data-nosnippet>1437</a>}
+<a href=#1438 id=1438 data-nosnippet>1438</a>
+<a href=#1439 id=1439 data-nosnippet>1439</a><span class="kw">fn </span>canonical_ids&lt;T: Ord&gt;(values: <span class="kw">impl </span>IntoIterator&lt;Item = T&gt;) -&gt; Box&lt;[T]&gt; {
+<a href=#1440 id=1440 data-nosnippet>1440</a>    <span class="kw">let </span><span class="kw-2">mut </span>values = values.into_iter().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#1441 id=1441 data-nosnippet>1441</a>    values.sort_unstable();
+<a href=#1442 id=1442 data-nosnippet>1442</a>    values.dedup();
+<a href=#1443 id=1443 data-nosnippet>1443</a>    values.into_boxed_slice()
+<a href=#1444 id=1444 data-nosnippet>1444</a>}
+<a href=#1445 id=1445 data-nosnippet>1445</a>
+<a href=#1446 id=1446 data-nosnippet>1446</a><span class="kw">fn </span>write_hex(formatter: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;, bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; fmt::Result {
+<a href=#1447 id=1447 data-nosnippet>1447</a>    <span class="kw">for </span>byte <span class="kw">in </span>bytes {
+<a href=#1448 id=1448 data-nosnippet>1448</a>        <span class="macro">write!</span>(formatter, <span class="string">"{byte:02x}"</span>)<span class="question-mark">?</span>;
+<a href=#1449 id=1449 data-nosnippet>1449</a>    }
+<a href=#1450 id=1450 data-nosnippet>1450</a>    <span class="prelude-val">Ok</span>(())
+<a href=#1451 id=1451 data-nosnippet>1451</a>}
 </code></pre></div></section></main></body></html>
