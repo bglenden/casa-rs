@@ -37,7 +37,7 @@ use crate::{
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 9;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 10;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
 ///
@@ -202,6 +202,7 @@ pub struct MinorCycleProgram {
     gain: f64,
     threshold: f64,
     noise_sigma: Option<f64>,
+    check_global_convergence: bool,
     max_iterations: usize,
     hogbom_iteration_accounting: HogbomIterationAccounting,
     validity: MinorCycleValidity,
@@ -448,6 +449,7 @@ impl MinorCycleProgram {
             gain,
             threshold,
             noise_sigma: None,
+            check_global_convergence: false,
             max_iterations,
             hogbom_iteration_accounting: HogbomIterationAccounting::Strict,
             validity,
@@ -563,6 +565,18 @@ impl MinorCycleProgram {
         self
     }
 
+    pub(crate) fn with_global_convergence_check(mut self) -> Self {
+        self.check_global_convergence = true;
+        self
+    }
+
+    fn globally_converged(&self, peak: f64, threshold: f64) -> bool {
+        // CASA cleanComplete (CAS-11278) tolerates 1% only at the global check.
+        self.check_global_convergence
+            && (peak <= threshold
+                || (threshold > 0.0 && (peak - threshold).abs() / threshold < 0.01))
+    }
+
     pub(crate) fn cycle_threshold_for(
         &self,
         initial_peak: f64,
@@ -616,13 +630,9 @@ struct MinorCycleController {
 }
 
 impl MinorCycleController {
-    fn new(
-        controls: &MinorCycleProgram,
-        effective_threshold: f64,
-        has_valid_support: bool,
-    ) -> Self {
+    fn new(controls: &MinorCycleProgram, effective_threshold: f64, may_iterate: bool) -> Self {
         Self {
-            iteration_limit: if has_valid_support {
+            iteration_limit: if may_iterate {
                 controls.actual_iteration_limit()
             } else {
                 0
@@ -631,7 +641,7 @@ impl MinorCycleController {
             effective_threshold,
             iterations: 0,
             total_flux: 0.0,
-            stop_reason: (!has_valid_support).then_some(MinorCycleStopReason::ThresholdReached),
+            stop_reason: (!may_iterate).then_some(MinorCycleStopReason::ThresholdReached),
         }
     }
 
@@ -759,6 +769,8 @@ pub enum MinorCycleStopReason {
     /// The normalized residual peak fell strictly below the explicit
     /// threshold (the casacore HOGBOM convention; a peak exactly at the
     /// threshold still cleans one component).
+    /// A coupled Taylor reconstruction cycle also stops before any update
+    /// when its fresh residual meets CASA's 1% global convergence tolerance.
     ThresholdReached,
     /// The policy-derived loop bound was reached with work potentially remaining.
     IterationBound,
@@ -1387,7 +1399,7 @@ pub(crate) fn run_image_domain_minor_cycle(
         }
         let noise_rms = controls
             .noise_sigma()
-            .map(|_| robust_masked_rms(&residual, shape, base, model_plane, mask))
+            .map(|_| robust_supported_rms(&residual, shape, base, model_plane))
             .transpose()?
             .map(|rms| rms / psf_peak);
         let psf = plane
@@ -1786,12 +1798,11 @@ fn run_joint_block_minor_cycle(
     let noise_rms = controls
         .noise_sigma()
         .map(|_| {
-            robust_masked_rms(
+            robust_supported_rms(
                 &residuals[0],
                 shape,
                 base,
                 MinorCycleModelPlane::new(primary.domain(), 0, primary.polarization()),
-                masks.continuum(),
             )
             .map(|rms| rms / psf_peak)
         })
@@ -2115,7 +2126,7 @@ fn run_taylor_minor_cycle(
     let noise_rms = controls
         .noise_sigma()
         .map(|_| {
-            robust_masked_rms(&residuals[0], shape, base, primary_plane, mask)
+            robust_supported_rms(&residuals[0], shape, base, primary_plane)
                 .map(|rms| rms / scale_systems[0].h00)
         })
         .transpose()?;
@@ -2141,7 +2152,11 @@ fn run_taylor_minor_cycle(
         cycle_threshold.map_or(global_threshold, |value| value.max(global_threshold));
     let mut model_terms = BTreeMap::<usize, f64>::new();
     let mut recorded = Vec::new();
-    let mut controller = MinorCycleController::new(&controls, effective_threshold, true);
+    let mut controller = MinorCycleController::new(
+        &controls,
+        effective_threshold,
+        !controls.globally_converged(initial_peak, global_threshold),
+    );
     let mut search_window = None;
 
     for _ in 0..controller.iteration_limit() {
@@ -2463,7 +2478,7 @@ pub(crate) fn run_minor_cycle_plane(
     let noise_rms = controls
         .noise_sigma()
         .map(|_| {
-            robust_masked_rms(&residual, shape, base, model_plane, mask).map(|rms| rms / psf_peak)
+            robust_supported_rms(&residual, shape, base, model_plane).map(|rms| rms / psf_peak)
         })
         .transpose()?;
     let global_threshold = noise_rms
@@ -2946,20 +2961,20 @@ fn refresh_circular_residual(
     Ok(())
 }
 
-fn robust_masked_rms(
+// CASA's fast-noise estimate uses valid image support, independently of the
+// CLEAN mask that limits component placement (SIImageStore::calcRobustRMS).
+fn robust_supported_rms(
     residual: &[f64],
     shape: [usize; 2],
     base: &ModelGeneration,
     model_plane: MinorCycleModelPlane,
-    mask: &ReconstructionMask,
 ) -> Result<f64, MinorCycleError> {
     let mut values = residual
         .iter()
         .enumerate()
         .filter_map(|(index, value)| {
             let pixel = plane_pixel(index, shape);
-            (mask.contains(pixel) && valid_support(base, shape, model_plane, pixel))
-                .then_some(*value)
+            valid_support(base, shape, model_plane, pixel).then_some(*value)
         })
         .collect::<Vec<_>>();
     if values.is_empty() {
@@ -4092,6 +4107,7 @@ fn minor_cycle_evidence_id(
     }
     encoder.u64(crate::canonical_f64_bits(controls.gain()));
     encoder.u64(crate::canonical_f64_bits(controls.threshold()));
+    encoder.u8(u8::from(controls.check_global_convergence));
     match controls.noise_sigma() {
         Some(sigma) => {
             encoder.u8(1);

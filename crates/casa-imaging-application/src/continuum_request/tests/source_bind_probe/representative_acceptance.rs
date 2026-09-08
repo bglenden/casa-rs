@@ -267,7 +267,14 @@ fn run_full_products(require_cold_dirty: bool) {
                     last.actual_iterations, 0,
                     "early terminal solve must observe a refreshed converged state"
                 );
-                assert!(last.final_peak_flux <= last.effective_threshold);
+                assert!(
+                    last.final_peak_flux <= last.global_threshold
+                        || (last.global_threshold > 0.0
+                            && (last.final_peak_flux - last.global_threshold).abs()
+                                / last.global_threshold
+                                < 0.01),
+                    "fresh terminal residual must satisfy CASA's global convergence check"
+                );
                 "threshold_reached"
             }
         }
@@ -333,6 +340,11 @@ fn run_full_products(require_cold_dirty: bool) {
         "cycle_threshold": cycle.cycle_threshold, "noise_rms": cycle.noise_rms,
         "stop_reason": format!("{:?}", cycle.stop_reason), "total_flux": cycle.total_flux,
         "associated_replay_ordinal": cycle.associated_replay_ordinal,
+        "recorded_components": cycle.recorded_components.iter().map(|component| serde_json::json!({
+            "domain": component.cell().domain(), "coefficient": component.cell().coefficient(),
+            "polarization": component.cell().polarization(), "pixel": component.cell().pixel(),
+            "flux": component.flux(), "scale_px": component.scale_px(),
+        })).collect::<Vec<_>>(),
     })).collect::<Vec<_>>();
     eprintln!(
         "t51_subset_full_products_complete {}",
