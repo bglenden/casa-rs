@@ -3124,9 +3124,8 @@ fn requested_products(
     if weight_image {
         products.push(ProductKind::Weight);
     }
-    // AW keeps sensitivity internal and publishes its normalization as `.weight`.
-    let aw_weight_image = weight_image && !mosaic;
-    if !matches!(normalization, ProductNormalization::UnitResponse) && !aw_weight_image {
+    // Mosaic and AW publish the sensitivity normalization through `.weight`.
+    if !matches!(normalization, ProductNormalization::UnitResponse) && !weight_image {
         products.push(ProductKind::Sensitivity);
     }
     if write_primary_beam || pbcor {
@@ -3810,10 +3809,10 @@ mod tests {
         );
         for product in [
             casa_imaging_model::ProductKind::Weight,
-            casa_imaging_model::ProductKind::Sensitivity,
             casa_imaging_model::ProductKind::PbCorrectedSpectralIndex,
         ] {
             assert!(products.contains(&product));
         }
+        assert!(!products.contains(&casa_imaging_model::ProductKind::Sensitivity));
     }
 }

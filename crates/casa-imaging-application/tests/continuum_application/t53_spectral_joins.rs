@@ -3,6 +3,59 @@
 use super::*;
 
 #[test]
+fn t53_mosaic_cube_publishes_the_complete_casa_product_inventory() {
+    if !isolated_case(
+        "t53_mosaic_cube_publishes_the_complete_casa_product_inventory",
+        "mosaic",
+    ) {
+        return;
+    }
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let mut imaging = request(
+        two_pointing_alma_spectral_measurement_set(root.path()),
+        root.path().join("mosaic"),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.field_ids = Some(vec![0, 1]);
+    imaging.spectral_window = Some("0:0~3".into());
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            interpolation: casa_ms::CubeInterpolation::Nearest,
+            start: Some(CubeAxisValue::Channel(1)),
+            width: Some(CubeAxisValue::Channel(1)),
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(2),
+    };
+    imaging.task_requirements.extend([
+        TaskRequirement::SpectralCube,
+        TaskRequirement::MosaicGridder,
+    ]);
+    imaging.normalization = casa_imaging_model::ProductNormalization::FlatNoise;
+    imaging.write_primary_beam = true;
+    imaging.pbcor = true;
+    let mut products = execute_continuum(imaging)
+        .expect("mosaic spectral application")
+        .product_names;
+    products.sort();
+    assert_eq!(
+        products,
+        [
+            ".image",
+            ".image.pbcor",
+            ".model",
+            ".pb",
+            ".psf",
+            ".residual",
+            ".sumwt",
+            ".weight"
+        ]
+    );
+}
+
+#[test]
 fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
     if !isolated_case(
         "t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis",
@@ -21,7 +74,7 @@ fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
         axis: CubeAxisConfig {
             outframe: FrequencyRef::LSRK,
             interpolation: casa_ms::CubeInterpolation::Nearest,
-            start: Some(CubeAxisValue::Channel(1)),
+            start: Some(CubeAxisValue::Channel(0)),
             width: Some(CubeAxisValue::Channel(1)),
             ..CubeAxisConfig::default()
         },

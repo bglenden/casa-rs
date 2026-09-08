@@ -87,6 +87,33 @@ and a 30-minute/32-GiB process-scope guard. Supply its explicit absolute paths
 from the retained run request; generation workspace admission is a separate
 accounted bound, not a claim about total process RSS.
 
+T53 spectral joins use the public compiled/prepared operator and normal
+application boundaries. Run the `t53_` tests in the `continuum_application`
+integration target, the `mtmfs_block_normal` integration target, spectral
+selection/sampling and typed availability regressions, and directly affected
+polarization/product checks. `tools/perf/imager/test_bench_cli.py` checks the
+benchmark command against a current release imager before opening a dataset.
+The representative workloads are `issue607-standard-cube-dirty-representative`,
+`t53-mosaic-cube-alma-representative`, and
+`t53-w-cube-shared-phase-representative`; the last uses the immutable-source
+copy produced by `tools/perf/imager/stage_t53_shared_phase.py` with CASA Python.
+Current native-AW Taylor evidence may be reused only after checking code and
+input applicability. These rows retain the size, channel, complete-product,
+validity and resource limits above; diagnostic laws do not replace them.
+
+T53 preserves the #478 named join gates
+`wproject_dirty_cube_products_track_casa_on_refim_point_withline_shared_phase_multifield`
+and `wproject_dirty_cube_products_track_casa_on_n2403_source_backed_calibrator_multifield`.
+Their pinned source is `crates/casars-imager/tests/imager_casa_parity.rs` at
+`376c7d87bb995f295a696995ad8292bc39582529`. A selected FIELD metadata row with no
+MAIN rows is not evidence of a multifield join. The original #445/#448
+single-field DIRTY, single-field deterministic CLEAN, 63-field DIRTY and
+63-field deterministic CLEAN gates remain named obligations under the
+[VLASS acceptance recipe](docs/imaging-architecture/t51-aw-vlass-acceptance.md).
+The owner-approved representative T53 boundary does not claim their full-size
+or performance acceptance. Current results and restart authority live in the
+[T53 work record](https://github.com/bglenden/casa-rs/issues/539#issuecomment-5579521124).
+
 ## Required discipline
 
 - Every approved work item defines falsifiable acceptance checks and ships verification evidence.
