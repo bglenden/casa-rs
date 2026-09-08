@@ -35,6 +35,13 @@ pub(super) fn vla_aw_measurement_set(root: &Path) -> PathBuf {
     )
 }
 
+pub(super) fn native_evla_measurement_set(root: &Path) -> PathBuf {
+    let mut options = MeasurementSetFixtureOptions::new(true, false, 2, 2, 2, 8, false)
+        .with_vla_observation_metadata();
+    options.native_evla_cf = true;
+    measurement_set_fixture(root, "native-evla-input.ms", options)
+}
+
 pub(super) fn two_pointing_vla_aw_measurement_set(root: &Path) -> PathBuf {
     let path = measurement_set_fixture(
         root,
@@ -187,6 +194,7 @@ pub(super) struct MeasurementSetFixtureOptions {
     telescope_name: Option<&'static str>,
     dish_diameter_m: f64,
     field_count: usize,
+    native_evla_cf: bool,
 }
 
 impl MeasurementSetFixtureOptions {
@@ -212,6 +220,7 @@ impl MeasurementSetFixtureOptions {
             telescope_name: None,
             dish_diameter_m: 25.0,
             field_count: 1,
+            native_evla_cf: false,
         }
     }
 
@@ -424,7 +433,11 @@ pub(super) fn populate_fixture(
         .expect("add POLARIZATION row");
 
     for spw in 0..spectral_window_count {
-        let first_frequency_hz = 44.0e9 + spw as f64 * 100.0e6;
+        let first_frequency_hz = if options.native_evla_cf {
+            3.0e9
+        } else {
+            44.0e9
+        } + spw as f64 * 100.0e6;
         let frequency = Value::Array(ArrayValue::Float64(
             ArrayD::from_shape_vec(
                 vec![channel_count],
@@ -473,6 +486,32 @@ pub(super) fn populate_fixture(
                 ],
             ))
             .expect("add DATA_DESCRIPTION row");
+    }
+
+    if options.native_evla_cf {
+        for antenna in 0..antenna_count {
+            measurement_set
+                .subtable_mut(SubtableId::Feed)
+                .expect("FEED")
+                .add_row(required_row(
+                    schema::feed::REQUIRED_COLUMNS,
+                    &[
+                        ("ANTENNA_ID", int(antenna as i32)),
+                        ("FEED_ID", int(0)),
+                        ("SPECTRAL_WINDOW_ID", int(-1)),
+                        ("NUM_RECEPTORS", int(2)),
+                        ("TIME", float(0.0)),
+                        ("INTERVAL", float(0.0)),
+                        (
+                            "RECEPTOR_ANGLE",
+                            Value::Array(ArrayValue::Float64(
+                                ArrayD::from_shape_vec(vec![2], vec![0.0, 0.0]).unwrap(),
+                            )),
+                        ),
+                    ],
+                ))
+                .unwrap();
+        }
     }
 
     let visibilities = (0..correlation_count * channel_count)
@@ -745,7 +784,7 @@ pub(super) fn write_aw_test_cache(root: &Path) {
 
 pub(super) fn aw_projection(casa_cache: PathBuf, use_pointing: bool) -> ContinuumAwProjection {
     ContinuumAwProjection {
-        casa_cache,
+        source: casa_imaging_application::ContinuumAwCfSource::CasaImport(casa_cache),
         resident_bytes: 1 << 20,
         w_plane_count: Some(32),
         psf_phase_center_direction_rad: None,

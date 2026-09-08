@@ -2,6 +2,8 @@
 
 //! Plan/run-owned preparation of a complete AW convolution-function catalog.
 
+mod native;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     io,
@@ -24,14 +26,14 @@ use casa_imaging_runtime::{
 };
 
 use crate::{
-    ApplicationAwPreparation, ApplicationError, ApplicationRuntime, CasaAwCache,
-    CasaAwPreparedCell, PreparedAwCellProvider, boxed,
+    ApplicationAwPreparation, ApplicationError, ApplicationRuntime, CasaAwCache, PreparedAwCell,
+    PreparedAwCellProvider, boxed,
 };
 
 /// Complete pre-phase result retained by every later major cycle.
 pub(crate) struct PreparedAwPhase {
     catalog: casa_imaging_reconstruction::AwPreparedCatalog,
-    prepared: Vec<CasaAwPreparedCell>,
+    prepared: Vec<PreparedAwCell>,
     reader: PreparedArtifactReaderFactory,
     conjugate_beams: bool,
     resident_bytes: usize,
@@ -67,20 +69,31 @@ impl PreparedAwPhase {
 enum CatalogOutcome {
     Reused(PreparedArtifactCatalogReuseOutcome),
     Imported(Vec<PreparedArtifact>),
+    Native(casa_imaging_runtime::PreparedArtifactNativeCatalogOutcome),
 }
 
 struct ColdCatalog {
     cache: Arc<CasaAwCache>,
-    cells: Vec<CasaAwPreparedCell>,
+    cells: Vec<PreparedAwCell>,
     sources: Vec<Option<PreparedArtifactImportSource>>,
 }
 
 struct CatalogAdapter {
     id: WorkImplementationId,
     store: Arc<PreparedArtifactStore>,
-    descriptors: Vec<casa_imaging_runtime::PreparedArtifactDescriptor>,
-    cold: Option<ColdCatalog>,
+    input: CatalogOperation,
     result: Mutex<Option<CatalogOutcome>>,
+}
+
+enum CatalogOperation {
+    Exact {
+        descriptors: Vec<casa_imaging_runtime::PreparedArtifactDescriptor>,
+        cold: Option<ColdCatalog>,
+    },
+    Native {
+        request: Box<casa_imaging_runtime::PreparedArtifactNativeRequest>,
+        operation: casa_imaging_runtime::PreparedArtifactNativeOperation,
+    },
 }
 
 enum PhaseImplementation {
@@ -95,7 +108,7 @@ enum CatalogInput<'a> {
     Reuse(Vec<casa_imaging_runtime::PreparedArtifactDescriptor>),
     Import {
         cache: Arc<CasaAwCache>,
-        cells: Vec<CasaAwPreparedCell>,
+        cells: Vec<PreparedAwCell>,
         reusable: BTreeSet<casa_imaging_runtime::ArtifactIdentity>,
         source_domain: &'a StorageDomain,
     },
@@ -103,7 +116,8 @@ enum CatalogInput<'a> {
 
 enum CatalogPhaseResult {
     Reused(PreparedArtifactCatalogReuseOutcome),
-    Imported(Vec<(CasaAwPreparedCell, PreparedArtifact)>),
+    Imported(Vec<(PreparedAwCell, PreparedArtifact)>),
+    Native(casa_imaging_runtime::PreparedArtifactNativeCatalogOutcome),
 }
 
 impl WorkImplementation for PhaseImplementation {
@@ -121,22 +135,39 @@ impl WorkImplementation for PhaseImplementation {
             Self::Base { sources, .. } => return base_measurements(context, sources),
             Self::Catalog(op) => op,
         };
-        let (result, measurements) = if let Some(cold) = &op.cold {
-            let (artifacts, measurements) = op
-                .store
-                .import_catalog(&context, &op.descriptors, &cold.sources, |index| {
-                    cold.cache.importer(&cold.cells[index]).map_err(|_| {
-                        casa_imaging_runtime::PreparedArtifactError::SourceIdentityMismatch
+        let (result, measurements) = match &op.input {
+            CatalogOperation::Exact {
+                descriptors,
+                cold: Some(cold),
+            } => {
+                let (artifacts, measurements) = op
+                    .store
+                    .import_catalog(&context, descriptors, &cold.sources, |index| {
+                        cold.cache.importer(&cold.cells[index]).map_err(|_| {
+                            casa_imaging_runtime::PreparedArtifactError::SourceIdentityMismatch
+                        })
                     })
-                })
+                    .map_err(io::Error::other)?;
+                (CatalogOutcome::Imported(artifacts), measurements)
+            }
+            CatalogOperation::Exact {
+                descriptors,
+                cold: None,
+            } => {
+                let (outcome, measurements) = op
+                    .store
+                    .reuse_catalog(&context, descriptors)
+                    .map_err(io::Error::other)?;
+                (CatalogOutcome::Reused(outcome), measurements)
+            }
+            CatalogOperation::Native { request, operation } => {
+                let mut generator = native::NativeGenerator::new(request.request());
+                let (outcome, measurements) = op.store.prepare_native_catalog(&context, request, *operation,
+                (*operation != casa_imaging_runtime::PreparedArtifactNativeOperation::Reuse)
+                    .then_some(&mut generator as &mut dyn casa_imaging_runtime::PreparedArtifactNativeGenerator))
                 .map_err(io::Error::other)?;
-            (CatalogOutcome::Imported(artifacts), measurements)
-        } else {
-            let (outcome, measurements) = op
-                .store
-                .reuse_catalog(&context, &op.descriptors)
-                .map_err(io::Error::other)?;
-            (CatalogOutcome::Reused(outcome), measurements)
+                (CatalogOutcome::Native(outcome), measurements)
+            }
         };
         *op.result
             .lock()
@@ -271,9 +302,16 @@ impl PhaseRegistry {
             .into_inner()
             .map_err(|_| boxed("AW catalog result state poisoned"))?
             .ok_or_else(|| boxed("AW catalog operation did not complete"))?;
-        match (catalog.cold, result) {
-            (None, CatalogOutcome::Reused(outcome)) => Ok(CatalogPhaseResult::Reused(outcome)),
-            (Some(cold), CatalogOutcome::Imported(artifacts)) => {
+        match (catalog.input, result) {
+            (CatalogOperation::Exact { cold: None, .. }, CatalogOutcome::Reused(outcome)) => {
+                Ok(CatalogPhaseResult::Reused(outcome))
+            }
+            (
+                CatalogOperation::Exact {
+                    cold: Some(cold), ..
+                },
+                CatalogOutcome::Imported(artifacts),
+            ) => {
                 if cold.cells.len() != artifacts.len()
                     || cold
                         .cells
@@ -287,6 +325,9 @@ impl PhaseRegistry {
                     cold.cells.into_iter().zip(artifacts).collect(),
                 ))
             }
+            (CatalogOperation::Native { .. }, CatalogOutcome::Native(outcome)) => {
+                Ok(CatalogPhaseResult::Native(outcome))
+            }
             _ => Err(boxed(
                 "AW catalog result did not match its planned operation",
             )),
@@ -299,8 +340,17 @@ pub(crate) fn prepare_aw_projection(
     deployment: ApplicationAwPreparation,
     runtime: &ApplicationRuntime,
 ) -> Result<PreparedAwPhase, ApplicationError> {
+    if matches!(
+        deployment.source,
+        crate::ApplicationAwSource::NativeEvla { .. }
+    ) {
+        return native::prepare(problem, deployment, runtime);
+    }
     std::fs::create_dir_all(&deployment.private_root)?;
-    let cache = Arc::new(CasaAwCache::open(&deployment.casa_cache)?);
+    let crate::ApplicationAwSource::CasaImport(path) = &deployment.source else {
+        unreachable!("native source dispatched above")
+    };
+    let cache = Arc::new(CasaAwCache::open(path)?);
     let catalog = cache.prepared_catalog()?;
     let inventory = cache.inventory();
     let entries = inventory.paired_cells;
@@ -327,7 +377,7 @@ pub(crate) fn prepare_aw_projection(
     let prepared = cache.prepared_cells(&store, &owner, &runtime.implementation, problem)?;
     let largest_cell = prepared
         .iter()
-        .map(CasaAwPreparedCell::decoded_resident_bytes)
+        .map(PreparedAwCell::decoded_resident_bytes)
         .collect::<Option<Vec<_>>>()
         .and_then(|bytes| bytes.into_iter().max())
         .ok_or_else(|| boxed("AW decoded cell residency overflowed"))?;
@@ -339,7 +389,7 @@ pub(crate) fn prepare_aw_projection(
     }
     let decoder_workspace_bytes = prepared
         .iter()
-        .map(CasaAwPreparedCell::decoder_workspace_bytes)
+        .map(PreparedAwCell::decoder_workspace_bytes)
         .collect::<Option<Vec<_>>>()
         .and_then(|bytes| bytes.into_iter().max())
         .ok_or_else(|| boxed("AW decoder workspace overflowed"))?;
@@ -442,7 +492,7 @@ fn run_catalog(
                 .iter()
                 .map(|cell| {
                     (!reusable.contains(&cell.descriptor().identity()))
-                        .then(|| cell.import_source(&cache, source_domain, producer.clone()))
+                        .then(|| cache.import_source(cell, source_domain, producer.clone()))
                         .transpose()
                 })
                 .collect::<Result<Vec<_>, _>>()?;
@@ -488,8 +538,7 @@ fn run_catalog(
                 PhaseImplementation::Catalog(Box::new(CatalogAdapter {
                     id,
                     store: Arc::clone(&store),
-                    descriptors,
-                    cold,
+                    input: CatalogOperation::Exact { descriptors, cold },
                     result: Mutex::new(None),
                 })),
             ),
@@ -504,26 +553,47 @@ fn run_catalog(
         prepared_artifact: crate::prepared_aw_registration(runtime.implementation.clone()),
     };
     let catalog = registry.catalog();
+    let CatalogOperation::Exact { descriptors, cold } = &catalog.input else {
+        unreachable!("exact catalog constructed above")
+    };
     let base = PreparedArtifactPlanFragment::standalone_base(
         problem,
         &registry,
         runtime.implementation.clone(),
-        &catalog.descriptors[0],
+        &descriptors[0],
         &store,
         runtime.stage_nanos,
         runtime.confidence_parts_per_million,
     )?;
     let mut fragment = PreparedArtifactCatalogPlanFragment::new(
-        &catalog.descriptors,
+        descriptors,
         &store,
         producer,
         commit,
         runtime.implementation.clone(),
     )?;
-    if let Some(cold) = &catalog.cold {
+    if let Some(cold) = cold {
         fragment = fragment.with_import_sources(&cold.sources)?;
     }
     let physical = fragment.compose(&base)?;
+    run_phase(
+        problem,
+        runtime,
+        registry,
+        physical,
+        reuse,
+        u64::from(!reuse),
+    )
+}
+
+fn run_phase(
+    problem: &CompiledProblem,
+    runtime: &ApplicationRuntime,
+    registry: PhaseRegistry,
+    physical: casa_imaging_runtime::PhysicalWorkBinding,
+    reuse: bool,
+    phase: u64,
+) -> Result<(CatalogPhaseResult, ExecutionReceipt), ApplicationError> {
     let execution_plan = plan(
         problem,
         PlanningBindings::new(
@@ -543,7 +613,7 @@ fn run_catalog(
         &runtime.resource_policy,
         runtime.cost_model.profile_id(),
     );
-    let attempt = aw_attempt(runtime.attempts[0], u64::from(!reuse));
+    let attempt = aw_attempt(runtime.attempts[0], phase);
     let execution = run(
         &executable,
         &execution_plan,
@@ -580,6 +650,7 @@ fn aw_attempt(base: ExecutionAttemptId, phase: u64) -> ExecutionAttemptId {
 mod tests {
     mod catalog_scale_probe;
     mod cold_load_probe;
+    mod native_generation;
 
     use std::{collections::BTreeSet, path::Path};
 
@@ -633,7 +704,7 @@ mod tests {
         let cold_runtime = runtime(root.path(), &profile);
         let problem = problem();
         let deployment = ApplicationAwPreparation {
-            casa_cache: casa,
+            source: crate::ApplicationAwSource::CasaImport(casa),
             private_root,
             storage_domain: profile.storage_domain(),
             resident_bytes: 1 << 20,
@@ -775,7 +846,7 @@ mod tests {
             .with_measured_operations_rate(root.path())
             .expect("measured test storage operations");
             let deployment = ApplicationAwPreparation {
-                casa_cache: casa,
+                source: crate::ApplicationAwSource::CasaImport(casa),
                 private_root: root.path().join("prepared"),
                 storage_domain: profile.storage_domain(),
                 resident_bytes: 1 << 20,
@@ -844,7 +915,7 @@ mod tests {
         .expect("measured test storage operations");
         let mut runtime = runtime(root.path(), &profile);
         let deployment = ApplicationAwPreparation {
-            casa_cache: casa,
+            source: crate::ApplicationAwSource::CasaImport(casa),
             private_root,
             storage_domain: profile.storage_domain(),
             resident_bytes: 1 << 20,

@@ -11,7 +11,7 @@
     "kind": "run",
     "request": {
       "auto_mask": {"cut_threshold": 0.01, "do_grow_prune": true, "fast_noise": true, "grow_iterations": 75, "low_noise_threshold": 1.5, "min_beam_frac": 0.3, "min_percent_change": -1.0, "negative_threshold": 0.0, "noise_threshold": 5.0, "sidelobe_threshold": 3.0, "smooth_factor": 1.0},
-      "aw_project": {"a_term": true, "cf_cache": "cf-cache/vlass-spw2-17", "cf_resident_mb": 512, "compute_pa_step_deg": 360.0, "conjugate_beams": true, "mosaic_weighting": false, "normalization": "flatnoise", "pointing_offset_sigdev": [0.0], "ps_term": false, "psf_phase_center_direction_rad": null, "rotate_pa_step_deg": 360.0, "vp_table": null, "wb_awp": true},
+      "aw_project": {"a_term": true, "source": {"kind": "casa-import", "cf_cache": "cf-cache/vlass-spw2-17"}, "cf_resident_mb": 512, "compute_pa_step_deg": 360.0, "conjugate_beams": true, "mosaic_weighting": false, "normalization": "flatnoise", "pointing_offset_sigdev": [0.0], "ps_term": false, "psf_phase_center_direction_rad": null, "rotate_pa_step_deg": 360.0, "vp_table": null, "wb_awp": true},
       "cell_arcsec": 0.6,
       "chanchunks": null,
       "channel_count": 64,

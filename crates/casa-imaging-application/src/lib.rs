@@ -20,7 +20,7 @@ pub use availability::{
     validate_installed_implementation,
 };
 pub use aw_cache::{
-    CasaAwCache, CasaAwCacheError, CasaAwCacheInventory, CasaAwCellImporter, CasaAwPreparedCell,
+    CasaAwCache, CasaAwCacheError, CasaAwCacheInventory, CasaAwCellImporter, PreparedAwCell,
     PreparedAwCellProvider,
 };
 pub use casa_imaging_model::{
@@ -29,10 +29,11 @@ pub use casa_imaging_model::{
 pub use casa_imaging_runtime::{ResourceOverride, ResourcePolicy};
 pub use casa_product_sink::{CasaImageDomainOutput, CasaImageProductSink};
 pub use continuum_request::{
-    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwProjection, ContinuumBeamPolicy,
-    ContinuumImagingRequest, ContinuumImagingResult, ContinuumMask, ContinuumMaskBox,
-    ContinuumStopReason, ContinuumWeighting, SpectralImagingMode, VisibilityContinuumSubtraction,
-    execute_continuum, resource_policy_for_task_requirements,
+    ContinuumAlgorithm, ContinuumAutoMaskControls, ContinuumAwCfSource, ContinuumAwProjection,
+    ContinuumBeamPolicy, ContinuumImagingRequest, ContinuumImagingResult, ContinuumMask,
+    ContinuumMaskBox, ContinuumStopReason, ContinuumWeighting, NativeAwCachePolicy,
+    NativeEvlaAwCache, SpectralImagingMode, VisibilityContinuumSubtraction, execute_continuum,
+    resource_policy_for_task_requirements,
 };
 
 use std::{error::Error, fmt, io, path::PathBuf, sync::Arc};
@@ -148,11 +149,21 @@ pub struct ApplicationNative<S> {
 /// Deployment-only inputs for the AW prepared-artifact pre-phase.
 #[derive(Clone)]
 pub struct ApplicationAwPreparation {
-    casa_cache: PathBuf,
+    source: ApplicationAwSource,
     private_root: PathBuf,
     storage_domain: casa_imaging_runtime::StorageDomain,
     resident_bytes: usize,
     conjugate_beams: bool,
+}
+
+#[derive(Clone)]
+enum ApplicationAwSource {
+    CasaImport(PathBuf),
+    NativeEvla {
+        input: Box<casa_imaging_model::NativeAwRequestInput>,
+        policy: NativeAwCachePolicy,
+        cache_bytes: u64,
+    },
 }
 
 /// Product-generation controls, deployment resources, and sole storage sink.

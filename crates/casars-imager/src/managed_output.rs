@@ -557,7 +557,9 @@ mod tests {
         let tempdir = tempdir().unwrap();
         let mut config = sample_cli_config(tempdir.path().join("awproject-output"));
         config.aw_project = Some(AwProjectControls {
-            cf_cache: PathBuf::from("/tmp/vlass-cf-cache"),
+            source: casa_imaging_application::ContinuumAwCfSource::CasaImport(PathBuf::from(
+                "/tmp/vlass-cf-cache",
+            )),
             cf_resident_bytes: 512 * 1024 * 1024,
             w_plane_count: Some(32),
             psf_phase_center_direction_rad: None,

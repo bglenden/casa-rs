@@ -6,6 +6,7 @@ mod accounting;
 mod catalog;
 mod codec;
 mod filesystem;
+mod native;
 mod planning;
 mod reader;
 pub mod reload_probe;
@@ -15,6 +16,12 @@ use accounting::*;
 use catalog::*;
 use codec::*;
 use filesystem::*;
+pub use native::{
+    PreparedArtifactNativeCatalogOutcome, PreparedArtifactNativeEntryOutcome,
+    PreparedArtifactNativeGenerator, PreparedArtifactNativeLayout, PreparedArtifactNativeOperation,
+    PreparedArtifactNativePlanFragment, PreparedArtifactNativePlaneLayout,
+    PreparedArtifactNativeRequest,
+};
 pub use planning::{
     PreparedArtifactCatalogPlanFragment, PreparedArtifactPlanError, PreparedArtifactPlanFragment,
 };
@@ -846,6 +853,17 @@ impl PreparedArtifactDescriptor {
     #[must_use]
     pub const fn identity(&self) -> ArtifactIdentity {
         self.compatibility.identity
+    }
+
+    /// Check the model owner's scientific identity without minting authority
+    /// from persisted descriptor metadata.
+    #[must_use]
+    pub fn matches_scientific_identity(
+        &self,
+        identity: PreparedArtifactScientificIdentity,
+    ) -> bool {
+        decode_digest(&self.compatibility.scientific.owner_scientific_identity)
+            == Some(identity.as_bytes())
     }
 
     /// Return the owner-derived canonical cache identity.

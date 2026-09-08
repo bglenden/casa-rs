@@ -24,16 +24,16 @@ use serde::{Deserialize, Serialize};
 use crate::{
     AutoMultiThresholdConfig, AwProjectControls, AwProjectNormalization, CleanMaskMode,
     CleanStopReason, CliConfig, Deconvolver, GaussianUvTaper, HogbomIterationMode,
-    ImagingFftBackendPolicy, ImagingFftPrecisionPolicy, ImagingMemoryPressurePolicy,
-    RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode, StandardMfsAccelerationPolicy,
-    UvTaperSize, WTermMode, WeightingMode, apply_parallel_runtime_control, run_from_request,
-    validate_parallel_acceleration,
+    ImagerAwCfSource, ImagingFftBackendPolicy, ImagingFftPrecisionPolicy,
+    ImagingMemoryPressurePolicy, RestoringBeamMode, RunSummary, SaveModelMode, SpectralMode,
+    StandardMfsAccelerationPolicy, UvTaperSize, WTermMode, WeightingMode,
+    apply_parallel_runtime_control, run_from_request, validate_parallel_acceleration,
 };
 
 /// Stable protocol name advertised by `casars-imager --protocol-info`.
 pub const IMAGER_TASK_PROTOCOL_NAME: &str = "casa_imager_task";
 /// Stable protocol version advertised by `casars-imager --protocol-info`.
-pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 7;
+pub const IMAGER_TASK_PROTOCOL_VERSION: u32 = 8;
 /// Version of the newline-delimited imager progress-event payload.
 pub const IMAGER_PROGRESS_EVENT_SCHEMA_VERSION: u32 = 1;
 /// Version of the authoritative observability snapshot embedded in progress events.
@@ -305,6 +305,14 @@ const IMAGER_PROJECTED_PARAMETERS: &[&str] = &[
     "uvrange",
     "intent",
     "cfcache",
+    "aw_cf_source",
+    "native_cf_cache",
+    "evla_surface",
+    "native_cf_policy",
+    "native_cf_working_size",
+    "native_cf_oversampling",
+    "native_cf_cache_bytes",
+    "native_cf_maximum_cells",
     "cf_resident_mb",
     "facets",
     "psfphasecenter",
@@ -2003,8 +2011,8 @@ impl From<ImagerAwProjectNormalization> for AwProjectNormalization {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImagerAwProjectConfig {
-    /// Existing CASA `CFS_`/`WTCFS_` convolution-function cache directory.
-    pub cf_cache: PathBuf,
+    /// Exactly one source of paired cells and its explicit cache lifecycle.
+    pub source: ImagerAwCfSource,
     /// Per-allocation full-cell LRU and compact source-order tap ceiling in MiB.
     #[serde(default = "default_aw_cf_resident_mb")]
     pub cf_resident_mb: usize,
@@ -2048,7 +2056,7 @@ pub struct ImagerAwProjectConfig {
 impl From<&AwProjectControls> for ImagerAwProjectConfig {
     fn from(value: &AwProjectControls) -> Self {
         Self {
-            cf_cache: value.cf_cache.clone(),
+            source: (&value.source).into(),
             cf_resident_mb: value.cf_resident_bytes.div_ceil(1024 * 1024),
             psf_phase_center_direction_rad: value.psf_phase_center_direction_rad,
             vp_table: value.vp_table.clone(),
@@ -2076,7 +2084,7 @@ impl ImagerAwProjectConfig {
             .checked_mul(1024 * 1024)
             .ok_or_else(|| "aw_project.cf_resident_mb exceeds addressable memory".to_string())?;
         Ok(AwProjectControls {
-            cf_cache: self.cf_cache,
+            source: self.source.into_application()?,
             cf_resident_bytes,
             w_plane_count,
             psf_phase_center_direction_rad: self.psf_phase_center_direction_rad,
@@ -3737,7 +3745,12 @@ mod tests {
         assert!(decoded.use_pointing);
         assert_eq!(decoded.w_project_planes, Some(32));
         let aw = decoded.aw_project.as_ref().unwrap();
-        assert_eq!(aw.cf_cache, PathBuf::from("cf-cache/vlass-spw2-17"));
+        assert_eq!(
+            aw.source,
+            crate::ImagerAwCfSource::CasaImport {
+                cf_cache: PathBuf::from("cf-cache/vlass-spw2-17")
+            }
+        );
         assert_eq!(aw.cf_resident_mb, 384);
 
         let restored = decoded.to_cli_config().unwrap();
@@ -3745,7 +3758,12 @@ mod tests {
         assert_eq!(controls.w_plane_count, Some(32));
         assert!(controls.use_pointing);
         assert_eq!(controls.cf_resident_bytes, 384 * 1024 * 1024);
-        assert_eq!(controls.cf_cache, PathBuf::from("cf-cache/vlass-spw2-17"));
+        assert_eq!(
+            controls.source,
+            casa_imaging_application::ContinuumAwCfSource::CasaImport(PathBuf::from(
+                "cf-cache/vlass-spw2-17"
+            ))
+        );
 
         let mut unsupported = serde_json::to_value(decoded).unwrap();
         unsupported["projection"] = serde_json::Value::String("TAN".to_string());

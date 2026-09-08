@@ -20,9 +20,9 @@ use casa_imaging_model::{
     SelectedVisibilitySample, SpectralKernel, SpectralWcs, SpectralWindowCoordinateCatalog,
     UvwCoordinateLaw, WProjectionContract, WeightingCommitmentId,
 };
-use ndarray::{Array2, Axis};
-use num_complex::{Complex32, Complex64};
-use rustfft::{Fft, FftPlanner};
+use ndarray::{Array2, ArrayBase, Axis, DataMut, Ix2};
+use num_complex::{Complex, Complex32, Complex64};
+use rustfft::{Fft, FftNum, FftPlanner};
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -11218,19 +11218,19 @@ fn convolution_sinc(index: usize, size: usize, oversampling: usize) -> f64 {
     f64::from(argument.sin() / argument)
 }
 
-pub(crate) struct PreparedFft {
-    forward: [Arc<dyn Fft<f64>>; 2],
-    inverse: [Arc<dyn Fft<f64>>; 2],
-    lane: Vec<Complex64>,
-    scratch: Vec<Complex64>,
+pub(crate) struct PreparedFft<T: FftNum = f64> {
+    forward: [Arc<dyn Fft<T>>; 2],
+    inverse: [Arc<dyn Fft<T>>; 2],
+    lane: Vec<Complex<T>>,
+    scratch: Vec<Complex<T>>,
 }
 
-impl PreparedFft {
+impl<T: FftNum> PreparedFft<T> {
     pub(crate) fn new(
         shape: [usize; 2],
         reserved_complex_values: usize,
     ) -> Result<Self, SpectralOperatorError> {
-        let mut planner = FftPlanner::<f64>::new();
+        let mut planner = FftPlanner::<T>::new();
         let forward = [
             planner.plan_fft_forward(shape[0]),
             planner.plan_fft_forward(shape[1]),
@@ -11264,18 +11264,26 @@ impl PreparedFft {
         Ok(Self {
             forward,
             inverse,
-            lane: vec![Complex64::default(); lane_values],
-            scratch: vec![Complex64::default(); scratch_values],
+            lane: vec![Complex::new(T::zero(), T::zero()); lane_values],
+            scratch: vec![Complex::new(T::zero(), T::zero()); scratch_values],
         })
     }
 
-    pub(crate) fn transform(&mut self, data: &mut Array2<Complex64>, inverse: bool) {
+    pub(crate) fn transform<S: DataMut<Elem = Complex<T>>>(
+        &mut self,
+        data: &mut ArrayBase<S, Ix2>,
+        inverse: bool,
+    ) {
         shift_even(data);
         self.transform_unshifted(data, inverse);
         shift_even(data);
     }
 
-    fn transform_unshifted(&mut self, data: &mut Array2<Complex64>, inverse: bool) {
+    fn transform_unshifted<S: DataMut<Elem = Complex<T>>>(
+        &mut self,
+        data: &mut ArrayBase<S, Ix2>,
+        inverse: bool,
+    ) {
         for axis in 0..2 {
             let fft = if inverse {
                 &self.inverse[axis]
@@ -11287,18 +11295,18 @@ impl PreparedFft {
     }
 }
 
-impl fmt::Debug for PreparedFft {
+impl<T: FftNum> fmt::Debug for PreparedFft<T> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("PreparedFft")
     }
 }
 
-fn transform_axis(
-    data: &mut Array2<Complex64>,
+fn transform_axis<T: FftNum, S: DataMut<Elem = Complex<T>>>(
+    data: &mut ArrayBase<S, Ix2>,
     axis: Axis,
-    fft: &Arc<dyn Fft<f64>>,
-    lane_workspace: &mut [Complex64],
-    scratch_workspace: &mut [Complex64],
+    fft: &Arc<dyn Fft<T>>,
+    lane_workspace: &mut [Complex<T>],
+    scratch_workspace: &mut [Complex<T>],
 ) {
     let length = data.len_of(axis);
     let values = &mut lane_workspace[..length];
@@ -11314,7 +11322,7 @@ fn transform_axis(
     }
 }
 
-fn shift_even(data: &mut Array2<Complex64>) {
+fn shift_even<T, S: DataMut<Elem = T>>(data: &mut ArrayBase<S, Ix2>) {
     let [width, height] = [data.shape()[0], data.shape()[1]];
     debug_assert_eq!(width % 2, 0);
     debug_assert_eq!(height % 2, 0);
@@ -11382,7 +11390,7 @@ fn spheroidal_kernel(distance: f64, support: f64) -> f64 {
     (1.0 - nu * nu) * grdsf(nu)
 }
 
-fn grdsf(nu: f64) -> f64 {
+pub(crate) fn grdsf(nu: f64) -> f64 {
     const P0: [f64; 5] = [
         8.203_343e-2,
         -3.644_705e-1,

@@ -1,0 +1,311 @@
+{
+  "comparison": {
+    "all_values_finite": true,
+    "dirty_products": {
+      "count": 18,
+      "exact_validity": true,
+      "maximum_normalized_rms": 8.11030826777918e-7
+    },
+    "exact": {
+      "topology": true,
+      "validity": false,
+      "wcs": true
+    },
+    "mask_mismatches": {
+      ".alpha": {
+        "count": 2,
+        "samples": [
+          {
+            "left_mask": true,
+            "left_value": 0.7764726877212524,
+            "location": [
+              333,
+              384,
+              0,
+              0
+            ],
+            "right_mask": false,
+            "right_value": 0
+          },
+          {
+            "left_mask": false,
+            "left_value": 0,
+            "location": [
+              459,
+              275,
+              0,
+              0
+            ],
+            "right_mask": true,
+            "right_value": -4.697171688079834
+          }
+        ],
+        "total": 262144
+      },
+      ".alpha.error": {
+        "count": 2,
+        "samples": [
+          {
+            "left_mask": true,
+            "left_value": 1.0980981588363647,
+            "location": [
+              333,
+              384,
+              0,
+              0
+            ],
+            "right_mask": false,
+            "right_value": 0
+          },
+          {
+            "left_mask": false,
+            "left_value": 0,
+            "location": [
+              459,
+              275,
+              0,
+              0
+            ],
+            "right_mask": true,
+            "right_value": 6.64280366897583
+          }
+        ],
+        "total": 262144
+      }
+    },
+    "maximum_normalized_rms": 0.0008369504720921274,
+    "metadata_policy": "Coordinates, shape, unit and mask topology are compared through the frozen comparator. Restoring-beam angle roundoff is accepted only by its existing scientific beam-equivalence tests.",
+    "normalized_rms": {
+      ".alpha": 0.0003210894447084284,
+      ".alpha.error": 0.0003224572986404561,
+      ".image.tt0": 0.00044472935439481725,
+      ".image.tt1": 0.0008298159639645579,
+      ".mask": 0,
+      ".model.tt0": 0.0000030670454752582416,
+      ".model.tt1": 0.000035577395720021525,
+      ".pb.tt0": 4.8289031784485655e-8,
+      ".psf.tt0": 5.961242693207495e-7,
+      ".psf.tt1": 4.5773037801497984e-7,
+      ".psf.tt2": 8.11030826777918e-7,
+      ".residual.tt0": 0.0005465576936255712,
+      ".residual.tt1": 0.0008369504720921274,
+      ".sumwt.tt0": 0,
+      ".sumwt.tt1": 1.629231940147232e-7,
+      ".sumwt.tt2": 8.183381058811668e-8,
+      ".weight.tt0": 7.593269460781714e-8,
+      ".weight.tt1": 1.29039676575706e-7,
+      ".weight.tt2": 9.563552899627972e-8
+    },
+    "other_product_validity_exact": true,
+    "product_inventory": {
+      "observed": [
+        ".alpha",
+        ".alpha.error",
+        ".image.tt0",
+        ".image.tt1",
+        ".mask",
+        ".model.tt0",
+        ".model.tt1",
+        ".pb.tt0",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".weight.tt0",
+        ".weight.tt1",
+        ".weight.tt2"
+      ],
+      "required": [
+        ".alpha",
+        ".alpha.error",
+        ".image.tt0",
+        ".image.tt1",
+        ".mask",
+        ".model.tt0",
+        ".model.tt1",
+        ".pb.tt0",
+        ".psf.tt0",
+        ".psf.tt1",
+        ".psf.tt2",
+        ".residual.tt0",
+        ".residual.tt1",
+        ".sumwt.tt0",
+        ".sumwt.tt1",
+        ".sumwt.tt2",
+        ".weight.tt0",
+        ".weight.tt1",
+        ".weight.tt2"
+      ]
+    },
+    "visual_review": "All 18 DIRTY and 19 CLEAN panels inspected. Run-3 full numerical/topology metrics equal the reviewed run-2 comparison-recheck. CLEAN diagonal residual differences satisfy unchanged structure limits; two explicitly approved alpha mask pixels cause raw unmasked spikes and are reported above."
+  },
+  "contract_digest": "6e3ead0f60d27468cb52613c3f92bf25f7c5c8c002bc3dc59ec34e479027fe4b",
+  "dataset": {
+    "correlations": 4,
+    "identity_sha256": "74cd6c51c18f6c6b72ce8fe83d9f6ff97de4f84b4584e81bf5ce2f9779cf653d",
+    "image_shape": [
+      512,
+      512,
+      1,
+      1
+    ],
+    "selected_channels": 64,
+    "selected_rows": 23400,
+    "selected_samples": 5990400
+  },
+  "dimensions": [
+    "native_evla_paired_cf",
+    "nine_overlapping_fields",
+    "four_spw",
+    "nonzero_w",
+    "rr_ll",
+    "nterms_2",
+    "dirty_and_deterministic_clean",
+    "cold_generation_and_warm_reuse",
+    "bounded_workspace",
+    "complete_products"
+  ],
+  "execution": {
+    "clean_seconds": 62.520363333,
+    "cold_generation": {
+      "cells": 256,
+      "charged_workspace_bytes": 213925888,
+      "note": "Genuine cold generation completed all pairs before a reporting-only receipt assertion failed. Its validated native catalog is reused by later runs; no cold end-to-end success is claimed.",
+      "root": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t52-native-acceptance.CRUrlY/run-1"
+    },
+    "dirty_seconds": 18.020412708,
+    "generation_workspace_peak_bytes": 0,
+    "guard": {
+      "attempts": 1,
+      "complete": true,
+      "exit_code": 0,
+      "rss_cap_bytes": 34359738368,
+      "rss_scope": "initial process group plus observed descendants",
+      "sampled_scope_peak_rss_bytes": 638402560,
+      "stop_reason": null,
+      "total_seconds": 108.48916945897508,
+      "wall_cap_seconds": 1800
+    },
+    "input_and_source_hashes_unchanged": true,
+    "native_binary_sha256": "078c99572a6f82675b970a4cb33f7dc275dea280671a41e40af4380b883d8cee",
+    "warm_cache": {
+      "excluded_names": [
+        "table.lock"
+      ],
+      "file_count": 513,
+      "size_bytes": 108883456,
+      "tree_sha256": "dc49b2bc35a7f61a2fe540df07c7c30800bbe8dbfda900688fc4aefd9fe18363"
+    }
+  },
+  "external_receipts": [
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t52-native-acceptance.CRUrlY/run-3/dirty-comparison.json",
+      "role": "dirty full product comparison",
+      "sha256": "04b0fc5dc3a852c913c365f6dcf5ea94b650a94f144ff2f8bcba862021ebf225"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t52-native-acceptance.CRUrlY/run-3/clean-comparison.json",
+      "role": "clean full product comparison",
+      "sha256": "2eb42bf0fefec7baf8e3a6bab565c7f67b33b6ba78680a8dc5e2ff0046fbba46"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t52-native-acceptance.CRUrlY/run-3/result.json",
+      "role": "production results",
+      "sha256": "3ebb00cf612d33958912acffb963a2eafec178744249e55ece2b1b740e9caa62"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t52-native-acceptance.CRUrlY/run-3/request.json",
+      "role": "frozen inputs and source identity",
+      "sha256": "8ab38714e3bda32ec13ae9dd30d9128fd4b3d26be1b4eb9df74523b570b0194c"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t52-native-acceptance.CRUrlY/run-3/guard.json",
+      "role": "bounded process-scope execution",
+      "sha256": "58a4cbd1789f1210d1ff4ffca4616ebac54e443a339d1acaaea10eb7007467ac"
+    },
+    {
+      "locator": "/Volumes/GLENDENNING/casa-rs-vlass/issue-446/t52-native-acceptance.CRUrlY/run-3/clean-cache.json",
+      "role": "unchanged warm catalog payload",
+      "sha256": "bd98eb00f72187b6e39a44417efb6b38e4972855ef2f2b749b699a7936587e99"
+    }
+  ],
+  "frozen_cell_laws": {
+    "cells": 24,
+    "frequencies": 4,
+    "log": {
+      "locator": "/private/tmp/t52-frozen-cohort-complete.log",
+      "sha256": "1d7186000379f723346ac2f9f4efd1a083d2d39b28ea2c9cb1fbf75fb1e9d829"
+    },
+    "maxima": {
+      "peak_scaled_max": 4.046265658659e-7,
+      "relative_energy": 3.907691964455e-7,
+      "relative_l2": 2.333990716311e-7,
+      "relative_normalization": 1.951815353657e-7
+    },
+    "mueller": [
+      0,
+      15
+    ],
+    "shape_and_support_exact": true,
+    "tolerance": 0.00001,
+    "w_indices": [
+      0,
+      18,
+      31
+    ]
+  },
+  "mode": {
+    "actual_minor_iterations": 30,
+    "aterm": true,
+    "clean_product_count": 19,
+    "conjbeams": true,
+    "dirty_product_count": 18,
+    "gridder": "awproject",
+    "major_cycles": 11,
+    "native_runtime_uses_casa": false,
+    "nterms": 2,
+    "pointings": 9,
+    "psterm": false,
+    "scales": [
+      0,
+      5,
+      12
+    ],
+    "source": "native-evla",
+    "spectral_windows": 4,
+    "usepointing": true,
+    "w_planes": 32,
+    "warm_generation_cells": 0,
+    "wideband": true,
+    "workers": 1
+  },
+  "production_path": true,
+  "reference": {
+    "casa_version": "6.7.6-14 CASAtools:v1.0.0",
+    "identity_sha256": "8ab38714e3bda32ec13ae9dd30d9128fd4b3d26be1b4eb9df74523b570b0194c",
+    "kind": "casa",
+    "paired_cell_cache_version": "6.7.5.9",
+    "surface_sha256": "fe927c848d4be23bcfc7c7b35997fdd4b746b4d5d7e263d3236c452e1b591f80",
+    "working_extent_provenance": "2048 is the recorded-source CASA default; the original cache run did not independently log absence of a runtime override. Frozen paired numerical agreement supports the reconstruction."
+  },
+  "repository_evidence": [
+    "tools/perf/imager/perf_harness/t52_native_acceptance.py",
+    "tools/perf/imager/test_t52_native_acceptance.py",
+    "crates/casa-imaging-model/tests/compiled_problem.rs",
+    "crates/casa-imaging-reconstruction/src/aw_generation/paired.rs",
+    "crates/casa-imaging-runtime/tests/compile_plan_run/prepared_artifact/native_catalog.rs",
+    "crates/casa-imaging-application/src/continuum_request/tests/source_bind_probe/native_acceptance.rs",
+    "crates/casa-imaging-application/tests/continuum_application.rs",
+    "crates/casars-imager/src/aw_source.rs"
+  ],
+  "scenario_id": "native-aw-evla",
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "status": "pass",
+  "tested_commit": "577640281759a631527857798b9533f529b089b6",
+  "validity_rule": "Owner-approved T52 exception: alpha and alpha.error mask mismatch fraction is at most 1e-5, with every differing pixel reported. All other validity and numerical requirements are unchanged.",
+  "work_record": "https://github.com/bglenden/casa-rs/issues/538#issuecomment-5577836559"
+}

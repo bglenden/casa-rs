@@ -252,7 +252,7 @@ pub(crate) fn application_request(config: &CliConfig) -> Result<ContinuumImaging
             .aw_project
             .as_ref()
             .map(|controls| ContinuumAwProjection {
-                casa_cache: controls.cf_cache.clone(),
+                source: controls.source.clone(),
                 resident_bytes: controls.cf_resident_bytes,
                 w_plane_count: controls.w_plane_count,
                 psf_phase_center_direction_rad: controls.psf_phase_center_direction_rad,

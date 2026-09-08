@@ -2,6 +2,8 @@
 
 //! MeasurementSet-facing application request for the native continuum surface.
 
+mod native_aw;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::CString,
@@ -193,11 +195,80 @@ pub struct ContinuumAutoMaskControls {
     pub minimum_percent_change: f64,
 }
 
+/// Explicit native-cache lifecycle requested before imaging can consume cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NativeAwCachePolicy {
+    /// Validate and consume an already complete private catalog; never generate.
+    ReuseOnly,
+    /// Generate absent cells, preserving every valid completed member.
+    GenerateMissing,
+    /// Explicitly regenerate every requested member, including rejected cells.
+    Regenerate,
+}
+
+/// Deployment and sampling controls for the native EVLA prepared-cell owner.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeEvlaAwCache {
+    /// Private native-cache directory; it need not be readable by CASA.
+    pub root: PathBuf,
+    /// Explicit radius/height/slope data, not an implicitly located CASA install.
+    pub surface: PathBuf,
+    /// Requested cache operation, never inferred from missing files.
+    pub policy: NativeAwCachePolicy,
+    /// Full even FFT extent before support selection.
+    pub working_size: usize,
+    /// Integer oversampling of the convolution plane.
+    pub oversampling: usize,
+    /// Catalog-wide durable-storage cap, independently of output crop sizes.
+    pub cache_bytes: u64,
+    /// Maximum metadata-only cell count admitted by this request.
+    pub maximum_cells: usize,
+}
+
+impl NativeEvlaAwCache {
+    /// Validate explicit deployment and sampling controls without filesystem
+    /// access. Frontends use the same check before opening a MeasurementSet;
+    /// the model owner subsequently validates data-derived scientific inputs.
+    pub fn validate(&self) -> Result<(), crate::ApplicationError> {
+        if self.root.as_os_str().is_empty() || self.surface.as_os_str().is_empty() {
+            return Err(boxed(
+                "native EVLA CFs require explicit surface and private-cache paths",
+            ));
+        }
+        if self.working_size < 8
+            || self.working_size % 2 != 0
+            || self
+                .working_size
+                .checked_mul(self.working_size)
+                .and_then(|pixels| pixels.checked_mul(6 * 8))
+                .is_none()
+            || self.oversampling == 0
+            || self.oversampling > self.working_size / 4
+            || self.maximum_cells == 0
+            || self.cache_bytes == 0
+        {
+            return Err(boxed(
+                "native AW requires a bounded even working grid, oversampling and cache",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Exactly one source of paired AW cells, with no implicit fallback.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ContinuumAwCfSource {
+    /// Read-only import of an explicitly selected CASA `CFS_`/`WTCFS_` cache.
+    CasaImport(PathBuf),
+    /// Native generation/reuse using the private prepared-artifact store.
+    NativeEvla(NativeEvlaAwCache),
+}
+
 /// Complete native AW-projection request retained through application preparation.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContinuumAwProjection {
-    /// Read-only CASA `CFS_`/`WTCFS_` cache root.
-    pub casa_cache: PathBuf,
+    /// Explicit cell origin and cache lifecycle.
+    pub source: ContinuumAwCfSource,
     /// Hard ceiling for simultaneously resident paired convolution cells.
     pub resident_bytes: usize,
     /// Explicit W-plane count, when supplied by the task surface.
@@ -1125,6 +1196,7 @@ fn prepare(
     let mut selected_fields = BTreeSet::new();
     let mut selected_observation_ids = BTreeSet::new();
     let mut first_selected_time_mjd_seconds = None;
+    let mut first_aw_row = None;
     let mut selected_time_bounds_mjd_seconds = [f64::INFINITY, f64::NEG_INFINITY];
     let mut maximum_selected_abs_w_m = 0.0_f64;
     let main_table = ms.main_table();
@@ -1158,6 +1230,9 @@ fn prepare(
             selected_fields.insert(row.field_id());
             selected_observation_ids.insert(row.observation_id());
             first_selected_time_mjd_seconds.get_or_insert(row.time_mjd_seconds());
+            if !row.flag_row() && row.antenna1() != row.antenna2() {
+                first_aw_row.get_or_insert(row);
+            }
             selected_time_bounds_mjd_seconds[0] =
                 selected_time_bounds_mjd_seconds[0].min(row.time_mjd_seconds());
             selected_time_bounds_mjd_seconds[1] =
@@ -1627,9 +1702,33 @@ fn prepare(
                         .parent()
                         .unwrap_or_else(|| Path::new("."))
                         .canonicalize()?;
+                    let (source, private_root) = match &controls.source {
+                        ContinuumAwCfSource::CasaImport(path) => (
+                            crate::ApplicationAwSource::CasaImport(path.clone()),
+                            output_directory.join(".casa-rs-aw-prepared"),
+                        ),
+                        ContinuumAwCfSource::NativeEvla(native) => (
+                            crate::ApplicationAwSource::NativeEvla {
+                                input: Box::new(native_aw::resolve(
+                                    &request,
+                                    native,
+                                    &ms,
+                                    &spectral_windows,
+                                    &prepared_spectral,
+                                    first_aw_row.ok_or_else(|| {
+                                        boxed("native AW has no unflagged cross-correlation row")
+                                    })?,
+                                    &frame_engine,
+                                )?),
+                                policy: native.policy,
+                                cache_bytes: native.cache_bytes,
+                            },
+                            native.root.clone(),
+                        ),
+                    };
                     Ok::<_, crate::ApplicationError>(crate::ApplicationAwPreparation {
-                        casa_cache: controls.casa_cache.clone(),
-                        private_root: output_directory.join(".casa-rs-aw-prepared"),
+                        source,
+                        private_root,
                         storage_domain: profile.storage_domain(),
                         resident_bytes: controls.resident_bytes,
                         conjugate_beams: controls.conjugate_beams,
@@ -2156,6 +2255,24 @@ fn analytic_primary_beam_model_for_telescopes(
 }
 
 fn validate_request(request: &ContinuumImagingRequest) -> Result<(), crate::ApplicationError> {
+    if let Some(ContinuumAwProjection {
+        source: ContinuumAwCfSource::NativeEvla(controls),
+        w_plane_count,
+        ..
+    }) = &request.aw_projection
+    {
+        controls.validate()?;
+        if !w_plane_count.is_some_and(|planes| planes > 1) {
+            return Err(boxed(
+                "native production AW currently requires at least two W planes",
+            ));
+        }
+        if w_plane_count.is_some_and(|planes| planes > controls.maximum_cells) {
+            return Err(boxed(
+                "native AW W planes exceed the explicit cell-count bound",
+            ));
+        }
+    }
     if request.phase_center_field.is_some() && request.phase_center.is_some() {
         return Err(boxed(
             "phase_center and phase_center_field are mutually exclusive",

@@ -8,6 +8,9 @@ mod aw_metadata_residency;
 #[path = "prepared_artifact/catalog_import.rs"]
 mod catalog_import;
 
+#[path = "prepared_artifact/native_catalog.rs"]
+mod native_catalog;
+
 const PREPARED_PAYLOAD_BYTES: u64 = (3 * 3 + 5 * 5) * 8;
 
 fn prepared_storage_domain() -> &'static StorageDomain {
@@ -443,6 +446,7 @@ enum PreparedSuiteImplementation {
     Base(Box<RecordingExecutor>),
     Prepared(Box<PreparedOperationAdapter>),
     Catalog(Box<PreparedCatalogAdapter>),
+    Native(Box<native_catalog::NativeAdapter>),
     Failure(Box<PreparedFailureAdapter>),
 }
 
@@ -454,6 +458,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.implementation_id(),
             Self::Prepared(adapter) => adapter.implementation_id(),
             Self::Catalog(adapter) => adapter.implementation_id(),
+            Self::Native(adapter) => adapter.implementation_id(),
             Self::Failure(adapter) => adapter.implementation_id(),
         }
     }
@@ -463,6 +468,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.execute(context),
             Self::Prepared(adapter) => adapter.execute(context),
             Self::Catalog(adapter) => adapter.execute(context),
+            Self::Native(adapter) => adapter.execute(context),
             Self::Failure(adapter) => adapter.execute(context),
         }
     }
@@ -475,6 +481,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.failure_measurements(error),
             Self::Prepared(adapter) => adapter.failure_measurements(error),
             Self::Catalog(adapter) => adapter.failure_measurements(error),
+            Self::Native(adapter) => adapter.failure_measurements(error),
             Self::Failure(adapter) => adapter.failure_measurements(error),
         }
     }
@@ -488,6 +495,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.wait_for_fence(context, fence),
             Self::Prepared(adapter) => adapter.wait_for_fence(context, fence),
             Self::Catalog(adapter) => adapter.wait_for_fence(context, fence),
+            Self::Native(adapter) => adapter.wait_for_fence(context, fence),
             Self::Failure(adapter) => adapter.wait_for_fence(context, fence),
         }
     }
@@ -500,6 +508,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.complete_observation_read(completion),
             Self::Prepared(adapter) => adapter.complete_observation_read(completion),
             Self::Catalog(adapter) => adapter.complete_observation_read(completion),
+            Self::Native(adapter) => adapter.complete_observation_read(completion),
             Self::Failure(adapter) => adapter.complete_observation_read(completion),
         }
     }
@@ -512,6 +521,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.complete_product_generation(context),
             Self::Prepared(adapter) => adapter.complete_product_generation(context),
             Self::Catalog(adapter) => adapter.complete_product_generation(context),
+            Self::Native(adapter) => adapter.complete_product_generation(context),
             Self::Failure(adapter) => adapter.complete_product_generation(context),
         }
     }
@@ -521,6 +531,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.publish(context),
             Self::Prepared(adapter) => adapter.publish(context),
             Self::Catalog(adapter) => adapter.publish(context),
+            Self::Native(adapter) => adapter.publish(context),
             Self::Failure(adapter) => adapter.publish(context),
         }
     }
@@ -534,6 +545,7 @@ impl WorkImplementation for PreparedSuiteImplementation {
             Self::Base(adapter) => adapter.publish_product_member(context, entry),
             Self::Prepared(adapter) => adapter.publish_product_member(context, entry),
             Self::Catalog(adapter) => adapter.publish_product_member(context, entry),
+            Self::Native(adapter) => adapter.publish_product_member(context, entry),
             Self::Failure(adapter) => adapter.publish_product_member(context, entry),
         }
     }

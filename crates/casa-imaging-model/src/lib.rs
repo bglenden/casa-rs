@@ -6,6 +6,7 @@ mod compiled_problem;
 mod geometry;
 mod measurement_equation;
 mod model_state;
+mod native_aw;
 mod observation;
 mod prepared_artifact;
 mod product_graph;
@@ -84,6 +85,11 @@ pub use prepared_artifact::{
     PreparedArtifactKernelAlgorithm, PreparedArtifactKernelSemantics,
     PreparedArtifactScientificIdentity, PreparedArtifactScientificIdentityError,
     PreparedArtifactScientificKind, PreparedArtifactSpectralMapSemantics,
+};
+
+pub use native_aw::{
+    EvlaAwCellRequest, EvlaDishSurface, NativeAwFrequencyGroup, NativeAwGrid, NativeAwRequest,
+    NativeAwRequestError, NativeAwRequestInput, NativeAwTerms,
 };
 
 pub use selected_observation::{

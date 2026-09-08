@@ -6,6 +6,7 @@ use super::super::*;
 use std::{fs, os::unix::fs::MetadataExt, process::Command, time::Instant};
 
 mod model_export;
+mod native_acceptance;
 mod representative_acceptance;
 
 fn subset_aw_request(
@@ -739,7 +740,7 @@ pub(super) fn full_aw_request(
         pbcor: false,
         w_projection_planes: Some(32),
         aw_projection: Some(ContinuumAwProjection {
-            casa_cache,
+            source: ContinuumAwCfSource::CasaImport(casa_cache),
             resident_bytes: 384 << 20,
             w_plane_count: Some(32),
             psf_phase_center_direction_rad: None,

@@ -32,6 +32,14 @@ pub struct PreparedArtifactScientificIdentity {
 }
 
 impl PreparedArtifactScientificIdentity {
+    pub(crate) fn native_evla_cell(request: [u8; 32], cell: &crate::EvlaAwCellRequest) -> Self {
+        let mut hasher = start_hash(4);
+        hasher.update(b"native-EVLA-AW-cell/v1\0");
+        hasher.update(request);
+        cell.hash(&mut hasher);
+        Self::finish(PreparedArtifactScientificKind::ConvolutionFunction, hasher)
+    }
+
     /// Mint a convolution-function identity from complete paired-operator semantics.
     pub fn convolution_function(
         semantics: PreparedArtifactCellSemantics,

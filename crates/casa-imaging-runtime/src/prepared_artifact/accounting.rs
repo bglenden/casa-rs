@@ -114,6 +114,23 @@ pub(super) fn validate_catalog_plan_binding(
         .first()
         .ok_or(PreparedArtifactError::InvalidDescriptor)?;
     let demand_id = store.storage_demand_id(first);
+    validate_catalog_resources(
+        context,
+        store,
+        demand_id,
+        catalog_source_demands(sources.unwrap_or_default()),
+        reservation,
+    )
+}
+
+pub(super) fn validate_catalog_resources(
+    context: WorkExecutionContext<'_>,
+    store: &PreparedArtifactStore,
+    demand_id: String,
+    source_demands: BTreeMap<String, StorageDomainId>,
+    reservation: PreparedArtifactReservation,
+) -> Result<(), PreparedArtifactError> {
+    let node = context.node();
     let matching = context
         .resource_alternative()
         .demand
@@ -147,7 +164,7 @@ pub(super) fn validate_catalog_plan_binding(
             "catalog private staging",
         )?;
     }
-    for (source_demand, domain) in catalog_source_demands(sources.unwrap_or_default()) {
+    for (source_demand, domain) in source_demands {
         let demands = context
             .resource_alternative()
             .demand

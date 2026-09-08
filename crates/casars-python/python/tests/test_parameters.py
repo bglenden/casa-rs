@@ -164,7 +164,7 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
     if surface == "imager":
         invocation = loaded.provider_invocation()
         assert invocation.protocol_name == "casa_imager_task"
-        assert invocation.protocol_version == 7
+        assert invocation.protocol_version == 8
         assert json.loads(invocation.stdin or "null") == expected["request"]
         unsupported = {reason.id for reason in invocation.unsupported_reasons}
         assert "task.aw_projection" not in unsupported
@@ -189,11 +189,28 @@ def test_shared_cross_surface_profile_matches_canonical_expected_values(
             },
             None,
         ),
-            (
-                "mosaic",
-                {"gridder": "mosaic", "usepointing": True, "write_preview_pngs": False},
-                None,
-            ),
+        (
+            "mosaic",
+            {"gridder": "mosaic", "usepointing": True, "write_preview_pngs": False},
+            None,
+        ),
+        (
+            "native-aw",
+            {
+                "gridder": "awproject",
+                "aw_cf_source": "native-evla",
+                "native_cf_cache": "native-cache",
+                "evla_surface": "models/EVLA.surface",
+                "native_cf_policy": "generate-missing",
+                "native_cf_working_size": 256,
+                "native_cf_oversampling": 20,
+                "native_cf_cache_bytes": 2147483648,
+                "native_cf_maximum_cells": 1024,
+                "wprojplanes": 32,
+                "write_preview_pngs": False,
+            },
+            None,
+        ),
     ],
 )
 def test_imager_python_profiles_round_trip_exact_provider_requests(
@@ -212,8 +229,16 @@ def test_imager_python_profiles_round_trip_exact_provider_requests(
 
     assert before == after
     assert before.protocol_name == "casa_imager_task"
-    assert before.protocol_version == 7
-    assert json.loads(before.stdin or "null")["request"]["measurement_set"] == f"{name}.ms"
+    assert before.protocol_version == 8
+    request = json.loads(before.stdin or "null")["request"]
+    assert request["measurement_set"] == f"{name}.ms"
+    if name == "native-aw":
+        assert request["aw_project"]["source"] == {
+            "kind": "native-evla", "root": "native-cache",
+            "surface": "models/EVLA.surface", "policy": "generate-missing",
+            "working_size": 256, "oversampling": 20,
+            "cache_bytes": 2147483648, "maximum_cells": 1024,
+        }
     assert [reason.id for reason in before.unsupported_reasons] == (
         [] if expected_reason is None else [expected_reason]
     )

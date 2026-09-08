@@ -32,6 +32,7 @@ use num_complex::Complex64;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+mod aw_generation;
 mod aw_projection;
 mod block_normal;
 mod continuum_transform;
@@ -49,6 +50,10 @@ mod spectral_operator;
 mod spectral_sampling;
 mod weighting;
 
+pub use aw_generation::{
+    EvlaApertureGrid, EvlaApertureModel, EvlaAwWorkspace, NativeAwGenerationError, NativeAwPair,
+    NativeAwPlane,
+};
 pub use aw_projection::{
     AwConvolutionCell, AwConvolutionKernel, AwKernelLayout, AwOperatorDiagnostics, AwOperatorError,
     AwPreparedCatalog, AwPreparedCellDisposition, AwPreparedCellLease, AwPreparedCellMetadata,

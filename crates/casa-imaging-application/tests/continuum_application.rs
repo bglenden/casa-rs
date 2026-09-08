@@ -378,6 +378,100 @@ fn t51_lazy_aw_reader_executes_real_science_and_closes_at_its_io_fence() {
 }
 
 #[test]
+fn t52_native_evla_dirty_and_clean_without_a_casa_cache_or_runtime() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().unwrap();
+    let measurement_set = native_evla_measurement_set(root.path());
+    let surface = root.path().join("evla.surface");
+    let text = (0..=125)
+        .map(|i| {
+            let r = i as f64 / 10.0;
+            format!("{r} {} {}\n", r * r / 36.0, r / 18.0)
+        })
+        .collect::<String>();
+    std::fs::write(&surface, text).unwrap();
+    let cache = root.path().join("native-cf");
+    for (role, algorithm, receipts) in [
+        ("dirty", ContinuumAlgorithm::Dirty, 2),
+        ("clean", ContinuumAlgorithm::Hogbom, 1),
+    ] {
+        let image_name = root.path().join(role);
+        let mut imaging = request(measurement_set.clone(), image_name.clone(), algorithm);
+        imaging.image_size = 64;
+        imaging.cell_arcsec = 60.0;
+        imaging.data_description = None;
+        imaging.channel_count = Some(2);
+        let mut aw = aw_projection(PathBuf::new(), false);
+        aw.source = casa_imaging_application::ContinuumAwCfSource::NativeEvla(
+            casa_imaging_application::NativeEvlaAwCache {
+                root: cache.clone(),
+                surface: surface.clone(),
+                policy: casa_imaging_application::NativeAwCachePolicy::GenerateMissing,
+                working_size: 128,
+                oversampling: 4,
+                cache_bytes: 64 << 20,
+                maximum_cells: 128,
+            },
+        );
+        imaging.aw_projection = Some(aw);
+        imaging.task_requirements = vec![TaskRequirement::SerialCpu, TaskRequirement::AwProjection];
+        imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
+            casa_imaging_runtime::ResourceOverride {
+                workers: Some(1),
+                ..casa_imaging_runtime::ResourceOverride::default()
+            },
+        );
+        imaging.write_primary_beam = true;
+        let result = execute_continuum(imaging).unwrap();
+        assert_eq!(
+            result.outcome.output.aw_preparation_receipts.len(),
+            receipts
+        );
+        for (index, receipt) in result
+            .outcome
+            .output
+            .aw_preparation_receipts
+            .iter()
+            .enumerate()
+        {
+            if role == "dirty" && index == 0 {
+                assert_eq!(
+                    receipt.status(),
+                    casa_imaging_runtime::ReceiptStatus::Failed
+                );
+                assert_eq!(
+                    receipt.failure_kind(),
+                    Some(casa_imaging_runtime::ReceiptFailureKind::EvidenceContract)
+                );
+            } else {
+                assert_eq!(
+                    receipt.status(),
+                    casa_imaging_runtime::ReceiptStatus::Completed
+                );
+            }
+        }
+        assert!(
+            result
+                .outcome
+                .output
+                .scientific
+                .normal_state()
+                .sum_weights()
+                .iter()
+                .all(|v| v.is_finite() && *v > 0.0)
+        );
+        let mut suffixes = if role == "dirty" {
+            DIRTY_PRODUCT_SUFFIXES.to_vec()
+        } else {
+            PRODUCT_SUFFIXES.to_vec()
+        };
+        suffixes.extend([".weight", ".pb"]);
+        assert_products(&image_name, &result.product_names, &suffixes);
+    }
+}
+
+#[test]
 fn t51_aw_use_pointing_applies_distinct_nonzero_field_phase_gradients() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();

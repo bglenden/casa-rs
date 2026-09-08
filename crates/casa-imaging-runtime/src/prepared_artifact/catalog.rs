@@ -312,14 +312,14 @@ impl PreparedArtifactStore {
     }
 }
 
-struct CatalogMeasurements {
+pub(super) struct CatalogMeasurements {
     resources: Vec<ResourceMeasurement>,
     io: IoCounter,
     artifacts: Vec<ArtifactMeasurement>,
 }
 
 impl CatalogMeasurements {
-    fn new(context: WorkExecutionContext<'_>, entries: usize) -> Self {
+    pub(super) fn new(context: WorkExecutionContext<'_>, entries: usize) -> Self {
         Self {
             resources: context
                 .resources()
@@ -337,7 +337,10 @@ impl CatalogMeasurements {
         }
     }
 
-    fn record(&mut self, observed: WorkMeasurements) -> Result<(), PreparedArtifactError> {
+    pub(super) fn record(
+        &mut self,
+        observed: WorkMeasurements,
+    ) -> Result<(), PreparedArtifactError> {
         for (total, current) in self.resources.iter_mut().zip(observed.resources()) {
             *total = ResourceMeasurement::new(
                 total.resource().clone(),
@@ -361,7 +364,7 @@ impl CatalogMeasurements {
         Ok(())
     }
 
-    fn finish(self) -> WorkMeasurements {
+    pub(super) fn finish(self) -> WorkMeasurements {
         WorkMeasurements::new(
             self.resources,
             vec![IoMeasurement::new(
