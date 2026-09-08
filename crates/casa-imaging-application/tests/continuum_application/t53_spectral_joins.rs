@@ -3,6 +3,55 @@
 use super::*;
 
 #[test]
+fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
+    if !isolated_case(
+        "t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis",
+        "standard",
+    ) {
+        return;
+    }
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = thirty_two_channel_multi_row_measurement_set(root.path());
+    let prefix = root.path().join("selected-rest-frequency");
+    let mut imaging = request(measurement_set, prefix.clone(), ContinuumAlgorithm::Dirty);
+    imaging.spectral_window = Some("0:0~3".into());
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::LSRK,
+            interpolation: casa_ms::CubeInterpolation::Nearest,
+            start: Some(CubeAxisValue::Channel(1)),
+            width: Some(CubeAxisValue::Channel(1)),
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(2),
+    };
+    imaging
+        .task_requirements
+        .push(TaskRequirement::SpectralCube);
+    let result = execute_continuum(imaging).expect("selected spectral application");
+    for suffix in result.product_names {
+        let product =
+            PagedImage::<f32>::open(PathBuf::from(format!("{}{suffix}", prefix.display())))
+                .expect("spectral product");
+        let coordinates = product.coordinates();
+        let rest_hz = (0..coordinates.n_coordinates())
+            .find_map(|index| match coordinates.coordinate(index) {
+                casa_coordinates::CoordinateModel::Spectral(spectral) => {
+                    Some(spectral.rest_frequency())
+                }
+                _ => None,
+            })
+            .expect("published spectral coordinate");
+        assert_eq!(
+            rest_hz, 44_001_500_000.0,
+            "{suffix}: midpoint of selected native channels zero through three"
+        );
+    }
+}
+
+#[test]
 fn t53_one_channel_standard_w_and_mosaic_cubes_preserve_all_products() {
     if !isolated_case(
         "t53_one_channel_standard_w_and_mosaic_cubes_preserve_all_products",
