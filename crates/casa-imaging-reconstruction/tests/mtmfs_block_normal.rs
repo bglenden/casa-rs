@@ -15,26 +15,27 @@ use casa_imaging_model::{
     MeasurementSetIdentity, MetadataGeneration, MetadataTableKind, MissingPointingPolicy,
     ModelBounds, ModelCell, ModelColumnState, ModelColumnWrite, ModelDeltaTerm,
     ModelExecutionAttemptId, ModelInnerProduct, ModelInputCommitment, ModelLifecycleRequirements,
-    ModelStateIdentity, ModelValue, MsColumnKind, NumericPrecision, NumericalStage,
-    NumericsContract, ObservationPointingLaw, ObservationSelection, ObservationSnapshotInput,
-    ObservationSourceInput, ObservationSourceProvenance, ObservationTransactionRequirements,
-    PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn, PointingDirectionSemantic,
-    PointingExtrapolation, PointingInterpolation, PointingTimeSampling, PolarizationContract,
-    PolarizationCoordinate, PrimaryBeamValidityPolicy, ProblemInputIdentities,
-    ProblemSpecification, ProductBlankingPolicy, ProductKind, ProductNormalization,
-    ProductRequirements, ProductSupportComparison, ProductValidityPolicies, Projection,
-    ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract, ReconstructionControls,
-    ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy, RowSelection,
-    ScientificContract, SelectedColumns, SelectedImageDomainProjections, SelectedMainRow,
-    SelectedObservationGenerationId, SelectedObservationSample, SelectedPhaseCentreProjection,
-    SelectedPredictionTarget, SelectedRows, SelectedSampleAddress, SelectedSampleCoordinates,
-    SelectedSampleMetadata, SelectedSpectralContributions, SelectedSpectralEvaluation,
-    SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection, SourceGenerations,
-    SpectralContract, SpectralCoordinateSpec, SpectralCoupling, SpectralFrameAnchor,
-    SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog, SpectralWindowSelection,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, TimeScale, TimeSelection,
-    UvSelection, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
-    WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
+    ModelSample, ModelStateIdentity, ModelSupport, ModelValue, MsColumnKind, NumericPrecision,
+    NumericalStage, NumericsContract, ObservationPointingLaw, ObservationSelection,
+    ObservationSnapshotInput, ObservationSourceInput, ObservationSourceProvenance,
+    ObservationTransactionRequirements, PhaseCentreLaw, PointingCentreLaw, PointingDirectionColumn,
+    PointingDirectionSemantic, PointingExtrapolation, PointingInterpolation, PointingTimeSampling,
+    PolarizationContract, PolarizationCoordinate, PrimaryBeamValidityPolicy,
+    ProblemInputIdentities, ProblemSpecification, ProductBlankingPolicy, ProductKind,
+    ProductNormalization, ProductRequirements, ProductSupportComparison, ProductValidityPolicies,
+    Projection, ReconstructionAlgorithm, ReconstructionBasis, ReconstructionContract,
+    ReconstructionControls, ReductionPolicy, ReferenceDataKind, RestFrequency, RestoringBeamPolicy,
+    RowSelection, ScientificContract, SelectedColumns, SelectedImageDomainProjections,
+    SelectedMainRow, SelectedObservationGenerationId, SelectedObservationSample,
+    SelectedPhaseCentreProjection, SelectedPredictionTarget, SelectedRows, SelectedSampleAddress,
+    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContributions,
+    SelectedSpectralEvaluation, SelectedSpectralInterval, SelectedVisibilitySample, SkyDirection,
+    SourceGenerations, SpectralContract, SpectralCoordinateSpec, SpectralCoupling,
+    SpectralFrameAnchor, SpectralSamplingLaw, SpectralWcs, SpectralWindowCoordinateCatalog,
+    SpectralWindowSelection, StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy,
+    TimeScale, TimeSelection, UvSelection, UvwCoordinateLaw, VisibilityColumn,
+    VisibilityInnerProduct, WeightColumn, WeightDensityScope, WeightingContract, WeightingScheme,
+    compile, compile_observation,
 };
 use casa_imaging_reconstruction::{
     ChannelCyclePolicy, CoupledReconstructionMask, ExecutableModelProblem, FinalNormalState,
@@ -43,7 +44,8 @@ use casa_imaging_reconstruction::{
     ReconstructionCycleError, ReconstructionMask, ReconstructionMaskPlan, SpectralChannelValidity,
     SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralStencilValidity,
     WeightingAlgorithmState, WeightingExecutionLimits, WeightingPlan, WeightingReplayChunk,
-    WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil, plan_weighting,
+    WeightingReplaySummary, begin_weighting_generation, compile_spectral_stencil,
+    model_support_identity, plan_weighting,
     runtime_adapter::{
         CompleteDataOwnerResult, CompleteDataOwnerSlabFold, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalExecutionResidency,
@@ -469,6 +471,7 @@ fn problem_with_shape_and_response(
         image_shape,
         primary_beam,
         false,
+        ModelInputCommitment::Empty,
     )
 }
 
@@ -478,6 +481,7 @@ fn problem_with_shape_response_and_mosaic(
     image_shape: ImageShape,
     primary_beam: bool,
     mosaic: bool,
+    model_input: ModelInputCommitment,
 ) -> casa_imaging_model::CompiledProblem {
     let is_joint = matches!(
         reconstruction.basis(),
@@ -588,7 +592,11 @@ fn problem_with_shape_response_and_mosaic(
         .into_iter()
         .flatten()
         .collect(),
-        ModelStateIdentity::Empty,
+        match &model_input {
+            ModelInputCommitment::Empty => ModelStateIdentity::Empty,
+            ModelInputCommitment::AlignedSeed { source, .. } => ModelStateIdentity::Seed(*source),
+            _ => panic!("this fixture requires an empty or aligned seed"),
+        },
     ))
     .expect("compile T42 observation");
     let mut science = ScientificContract::new(
@@ -654,7 +662,7 @@ fn problem_with_shape_response_and_mosaic(
             )
             .expect("T42 model bounds"),
             NumericPrecision::F64,
-            ModelInputCommitment::Empty,
+            model_input,
         ),
     ))
     .expect("compile T42 MT-MFS problem")
@@ -690,6 +698,7 @@ fn mosaic_taylor_problem() -> casa_imaging_model::CompiledProblem {
         ImageShape::new(128, 128),
         true,
         true,
+        ModelInputCommitment::Empty,
     )
 }
 
@@ -713,7 +722,33 @@ fn channel_major_problem_with_shape(
     channels: usize,
     image_shape: ImageShape,
 ) -> casa_imaging_model::CompiledProblem {
-    problem_with_shape(
+    channel_major_problem_with_input(channels, image_shape, ModelInputCommitment::Empty)
+}
+
+fn seeded_channel_major_problem(
+    channels: usize,
+    image_shape: ImageShape,
+) -> casa_imaging_model::CompiledProblem {
+    let [width, height] = image_shape.pixels();
+    channel_major_problem_with_input(
+        channels,
+        image_shape,
+        ModelInputCommitment::AlignedSeed {
+            source: identity(42, 124),
+            support: model_support_identity(std::iter::repeat_n(
+                ModelSupport::Valid,
+                width * height * 2,
+            )),
+        },
+    )
+}
+
+fn channel_major_problem_with_input(
+    channels: usize,
+    image_shape: ImageShape,
+    model_input: ModelInputCommitment,
+) -> casa_imaging_model::CompiledProblem {
+    problem_with_shape_response_and_mosaic(
         ReconstructionContract::new(
             ReconstructionBasis::TaylorViaChannelMajor { terms: 2, channels },
             ReconstructionAlgorithm::Mtmfs {
@@ -725,6 +760,9 @@ fn channel_major_problem_with_shape(
         ),
         channels,
         image_shape,
+        false,
+        false,
+        model_input,
     )
 }
 
@@ -1440,9 +1478,22 @@ fn nonzero_taylor_model(problem: &casa_imaging_model::CompiledProblem) -> MajorC
         2,
     )
     .expect("bind compact residual lifecycle");
-    let initial = lifecycle
-        .initial_empty()
-        .expect("empty compact source model");
+    let initial = match lifecycle.contract().input() {
+        ModelInputCommitment::AlignedSeed { source, .. } => lifecycle
+            .ingest_aligned(
+                *source,
+                lifecycle.contract().target(),
+                std::iter::repeat_n(
+                    Ok::<_, Infallible>(ModelSample::valid(ModelValue::new(0.0).unwrap())),
+                    lifecycle.contract().target().sample_count(),
+                ),
+            )
+            .expect("read aligned model seed")
+            .expect("ingest aligned model seed"),
+        _ => lifecycle
+            .initial_empty()
+            .expect("empty compact source model"),
+    };
     let delta = lifecycle
         .compile_delta(
             &initial,
@@ -1745,7 +1796,7 @@ fn t41_channel_major_sampling_fold_and_residency_preserve_all_channels() {
 
 #[test]
 fn t41_channel_major_ordered_slab_fold_matches_one_window() {
-    let problem = channel_major_problem_with_shape(4, ImageShape::new(256, 256));
+    let problem = seeded_channel_major_problem(4, ImageShape::new(256, 256));
     let selected = channel_major_samples(&problem);
     let frozen = freeze_taylor_replay(&problem, &selected);
     let preparation = nonzero_taylor_model(&problem);
@@ -1805,7 +1856,7 @@ fn t41_channel_major_ordered_slab_fold_matches_one_window() {
 
 #[test]
 fn t41_channel_major_supported_slab_then_zero_weight_gap_retains_completion() {
-    let problem = channel_major_problem(4);
+    let problem = seeded_channel_major_problem(4, ImageShape::new(IMAGE_WIDTH, IMAGE_WIDTH));
     let mut selected = channel_major_samples(&problem);
     for sample in &mut selected[2..] {
         sample.channel_flag = true;

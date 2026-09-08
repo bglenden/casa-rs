@@ -44,6 +44,9 @@ static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 mod continuum_fixture;
 use continuum_fixture::*;
 
+#[path = "continuum_application/t53_spectral_joins.rs"]
+mod t53_spectral_joins;
+
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
 }

@@ -1,0 +1,217 @@
+{
+  "schema": "casa-rs-representative-science-evidence-v1",
+  "scenario_id": "w-multifield-cube-vla",
+  "status": "pass",
+  "production_path": true,
+  "tested_commit": "9001569aebfc6f852eb75247cd2d6480951fdde5",
+  "contract_digest": "3da267870afe4d4219d11e02e755926913d2799f47bd266190afe0d0fa389cee",
+  "dimensions": [
+    "sixteen_output_channels",
+    "eighteen_selected_source_channels",
+    "two_populated_shared_phase_fields",
+    "linear_spectral_sampling",
+    "nonzero_w",
+    "eight_w_planes",
+    "native_incremental_uvw",
+    "legacy_vla_l_band_primary_beam",
+    "complete_products",
+    "exact_validity",
+    "read_only_source"
+  ],
+  "dataset": {
+    "identity_sha256": "a6abc56f1a120311fa0c8913527ceeb87591c9a5ea65e039cf7c138964459c4b",
+    "selected_rows": 168480,
+    "selected_channels": 18,
+    "correlations": 2,
+    "selected_samples": 6065280,
+    "image_shape": [
+      512,
+      512,
+      1,
+      16
+    ]
+  },
+  "mode": {
+    "gridder": "wproject",
+    "specmode": "cube",
+    "output_channels": 16,
+    "selected_source_channels": 18,
+    "field_ids": [
+      0,
+      1
+    ],
+    "rows_per_field": [
+      84240,
+      84240
+    ],
+    "shared_phase_center": true,
+    "interpolation": "linear",
+    "weighting": "natural",
+    "w_projection_planes": 8,
+    "cell_arcsec": 8,
+    "workers": 1,
+    "fft_backend": "rustfft",
+    "source_uvw": "original IncrementalStMan direct fixed-shape Float64",
+    "source_unchanged": true
+  },
+  "reference": {
+    "kind": "casa",
+    "casa_version": "6.7.6.14",
+    "identity_sha256": "8502e1c5e037c1b9a2309a2b5fe149bfd01cdb682ba7afe6a0ed79b3fa284f1a",
+    "prefix": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/w-cube-3/artifacts/products/20260908T135221Z-t53-w-cube-shared-phase-representative-5581365f/casa/casa",
+    "note": "Frozen complete CASA products from W3; reused unchanged for the corrected native run. W3 native output failed and is not acceptance evidence."
+  },
+  "comparison": {
+    "maximum_normalized_rms": 0.0000015281617692606167,
+    "normalized_rms": {
+      ".image": 1.7552525068645102e-7,
+      ".model": 0,
+      ".pb": 0.0000015281617692606167,
+      ".psf": 7.521562260580993e-7,
+      ".residual": 1.7552525068645102e-7,
+      ".sumwt": 9.709165762158981e-8
+    },
+    "all_values_finite": true,
+    "exact": {
+      "topology": true,
+      "wcs": true,
+      "validity": true
+    },
+    "product_inventory": {
+      "required": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ],
+      "observed": [
+        ".image",
+        ".model",
+        ".pb",
+        ".psf",
+        ".residual",
+        ".sumwt"
+      ]
+    },
+    "beam_kernel_nrmse": 1.8187299704171697e-7,
+    "beam_area_relative": 2.476005622753519e-7,
+    "metadata_policy": "Coordinates, shapes, units and masks match. Raw restoring-beam records differ at roundoff scale; the existing scientific beam-equivalence limits pass without amendment.",
+    "full_array_coverage": true,
+    "pb_valid_elements": 1465896,
+    "pb_masked_elements": 2728408,
+    "mask_mismatches": 0,
+    "nonfinite_values": 0,
+    "visual_review": "All six shared-scale panels with labelled differences inspected. Off-axis PSF/residual rings now agree at numerical roundoff scale; the zero model is exact. Numerical comparison covers all sixteen channels, not only the displayed plane."
+  },
+  "execution": {
+    "guard": {
+      "exit_code": 0,
+      "stop_reason": null,
+      "total_seconds": 15.181134667014703,
+      "wall_cap_seconds": 1800,
+      "rss_cap_bytes": 34359738368,
+      "sampled_scope_peak_rss_bytes": 1223606272,
+      "rss_scope": "initial process group plus observed descendants",
+      "complete": true,
+      "attempts": 1
+    },
+    "repository_dirty": false,
+    "source_hash_before_after": "a6abc56f1a120311fa0c8913527ceeb87591c9a5ea65e039cf7c138964459c4b",
+    "source_file_count": 63,
+    "source_bytes": 87474572,
+    "excluded_source_names": [
+      "table.lock"
+    ],
+    "no_speed_acceptance": true
+  },
+  "supporting_joins": [
+    {
+      "family": "standard",
+      "tested_commit": "a7ff506d4fbc7fd6cc9d3ac2928746c659e46a89",
+      "result": "pass",
+      "image_shape": [
+        512,
+        512,
+        1,
+        24
+      ],
+      "selected_samples": 6284304,
+      "maximum_normalized_rms": 0.0000019687908802189238,
+      "reference_role": "T53 standard cube full product comparison",
+      "current_applicability": "Subsequent changes affect mosaic publication, IncrementalStMan direct UVW, legacy-VLA L-band PB, and W-specific screen construction. The standard route and its 1.2 padding value are unchanged."
+    },
+    {
+      "family": "mosaic",
+      "tested_commit": "554cd50a99ba08449b688b8c1d5b2224eaedc09d",
+      "result": "pass",
+      "image_shape": [
+        512,
+        512,
+        1,
+        16
+      ],
+      "selected_samples": 9427320,
+      "pointings": 7,
+      "maximum_normalized_rms": 3.3670068812202616e-7,
+      "reference_role": "T53 mosaic cube full product comparison",
+      "current_applicability": "Later changes affect native direct ISM UVW, legacy-VLA L-band PB and W-specific screen construction; the ALMA mosaic route and eight-product inventory are unchanged."
+    },
+    {
+      "family": "native_aw",
+      "result": "reused T52 DIRTY and CLEAN pass under its exact approved validity rule",
+      "receipt": "resources/imaging-architecture/representative-science-evidence/native-aw-evla.json",
+      "current_applicability": "The T53 singleton-Cubic row law and selected cube rest-frequency change do not execute for the T52 Linear two-term Taylor request. Mosaic publication and the legacy-VLA PB route do not replace native EVLA AW products. WProjectionConvolution is not the paired AW operator. Native AW generation, catalog, paired cells, Taylor weighting and normalization are unchanged.",
+      "validity_scope": "Only the exact T52 alpha/alpha.error exception in its receipt applies; no T53 validity exception is introduced."
+    }
+  ],
+  "external_receipts": [
+    {
+      "role": "W full product comparison",
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/w-cube-4/results/20260908T142205Z-t53-w-cube-shared-phase-representative-4cb6fad6.comparison.json",
+      "sha256": "f38df01dd3f8d470cff789f60a4ca99119dbb7e5cde1fef3522dc91c047f895a"
+    },
+    {
+      "role": "W production results",
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/w-cube-4/results/20260908T142205Z-t53-w-cube-shared-phase-representative-4cb6fad6.json",
+      "sha256": "2e72f5ee7fe41a096529f1f46238625e8b095fc58a2df2be528731e651f9067f"
+    },
+    {
+      "role": "W bounded process execution",
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/w-cube-4/guard.json",
+      "sha256": "95b1bbba661be3cea59f153fc3da36ca9855cdde8d15ad89f95906fa801f0876"
+    },
+    {
+      "role": "W immutable source proof",
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/w-cube-4/source-immutability.json",
+      "sha256": "3a66fabd1c24235e2c68bf3d5434557b4efd1cc6fa3032077804a3da8ca07faa"
+    },
+    {
+      "role": "frozen CASA reference provenance",
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/w-cube-3/results/20260908T135221Z-t53-w-cube-shared-phase-representative-5581365f.json",
+      "sha256": "8502e1c5e037c1b9a2309a2b5fe149bfd01cdb682ba7afe6a0ed79b3fa284f1a"
+    },
+    {
+      "role": "T53 standard cube full product comparison",
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/standard-current-2/results/20260908T054127Z-issue607-standard-cube-dirty-representative-6eb7cb88.comparison.json",
+      "sha256": "27253b222be08fd3a34af55aa0b935699bea552c4ce091a5f931f315ddf3d5a0"
+    },
+    {
+      "role": "T53 mosaic cube full product comparison",
+      "locator": "/Volumes/GLENDENNING/casa-rs-science-evidence/t53/mosaic-cube-3/results/20260908T130650Z-t53-mosaic-cube-alma-representative-166548a3.comparison.json",
+      "sha256": "d30b5c58552f500a08477b633a1c9b8f32814ef033ed73b9f7ea606dbfa2c4e1"
+    }
+  ],
+  "repository_evidence": [
+    "tools/perf/imager/workloads/t53-w-cube-shared-phase-representative.json",
+    "tools/perf/imager/workloads/t53-mosaic-cube-alma-representative.json",
+    "tools/perf/imager/stage_t53_shared_phase.py",
+    "crates/casa-imaging-application/tests/continuum_application/t53_spectral_joins.rs",
+    "crates/casa-tables/tests/selected_incremental_arrays.rs",
+    "crates/casa-imaging-reconstruction/src/spectral_operator.rs",
+    "resources/imaging-architecture/representative-science-evidence/native-aw-evla.json",
+    "TESTING.md"
+  ],
+  "work_record": "https://github.com/bglenden/casa-rs/issues/539#issuecomment-5579521124"
+}

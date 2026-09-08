@@ -680,8 +680,9 @@ fn prepare_spectral_axis(
                 frame_engine,
             )?;
             let mut selected_source_channels = support.indices;
-            if let Some(explicit) = explicit_spw_channels(request, window.spw_id, frequencies_hz)? {
-                let explicit = explicit.into_iter().collect::<BTreeSet<_>>();
+            let explicit_channels = explicit_spw_channels(request, window.spw_id, frequencies_hz)?
+                .map(|channels| channels.into_iter().collect::<BTreeSet<_>>());
+            if let Some(explicit) = &explicit_channels {
                 selected_source_channels.retain(|channel| explicit.contains(channel));
             }
             if selected_source_channels.is_empty() {
@@ -702,8 +703,12 @@ fn prepare_spectral_axis(
             }
             let output_frequency_reference = setup.output_freq_ref;
             let output_frame = imaging_frequency_frame(output_frequency_reference)?;
-            let (resolved_rest_frequency_hz, image_rest_frequency_hz) =
-                cube_rest_frequency_hz(axis.rest_frequency_hz, source_rest_frequency_hz, window);
+            let (resolved_rest_frequency_hz, image_rest_frequency_hz) = cube_rest_frequency_hz(
+                axis.rest_frequency_hz,
+                source_rest_frequency_hz,
+                window,
+                explicit_channels.as_ref(),
+            );
             let (rest_frequency, doppler) = match resolved_rest_frequency_hz {
                 None => (
                     RestFrequency::NotApplicable,
@@ -2041,12 +2046,24 @@ fn cube_rest_frequency_hz(
     explicit_hz: Option<f64>,
     source_hz: Option<f64>,
     spectral_window: &SourceSpectralWindow,
+    selected_channels: Option<&BTreeSet<usize>>,
 ) -> (Option<f64>, f64) {
     let resolved = explicit_hz.or(source_hz);
-    (
-        resolved,
-        resolved.unwrap_or_else(|| spectral_window_midpoint_hz(spectral_window)),
-    )
+    let image_hz = resolved.unwrap_or_else(|| {
+        let (lower, upper) = spectral_window
+            .frequencies_hz
+            .iter()
+            .zip(&spectral_window.channel_widths_hz)
+            .enumerate()
+            .filter(|(index, _)| selected_channels.is_none_or(|channels| channels.contains(index)))
+            .map(|(_, (&centre, &width))| (centre - width.abs() / 2.0, centre + width.abs() / 2.0))
+            .fold(
+                (f64::INFINITY, f64::NEG_INFINITY),
+                |(lower, upper), (lo, hi)| (lower.min(lo), upper.max(hi)),
+            );
+        lower + (upper - lower) / 2.0
+    });
+    (resolved, image_hz)
 }
 
 fn attached_field_ephemerides(
@@ -3107,9 +3124,8 @@ fn requested_products(
     if weight_image {
         products.push(ProductKind::Weight);
     }
-    // AW keeps sensitivity internal and publishes its normalization as `.weight`.
-    let aw_weight_image = weight_image && !mosaic;
-    if !matches!(normalization, ProductNormalization::UnitResponse) && !aw_weight_image {
+    // Mosaic and AW publish the sensitivity normalization through `.weight`.
+    if !matches!(normalization, ProductNormalization::UnitResponse) && !weight_image {
         products.push(ProductKind::Sensitivity);
     }
     if write_primary_beam || pbcor {
@@ -3573,15 +3589,15 @@ mod tests {
         };
 
         assert_eq!(
-            cube_rest_frequency_hz(Some(115.0e9), Some(110.0e9), &window),
+            cube_rest_frequency_hz(Some(115.0e9), Some(110.0e9), &window, None),
             (Some(115.0e9), 115.0e9)
         );
         assert_eq!(
-            cube_rest_frequency_hz(None, Some(110.0e9), &window),
+            cube_rest_frequency_hz(None, Some(110.0e9), &window, None),
             (Some(110.0e9), 110.0e9)
         );
         assert_eq!(
-            cube_rest_frequency_hz(None, None, &window),
+            cube_rest_frequency_hz(None, None, &window, None),
             (None, 76.704e9)
         );
     }
@@ -3793,10 +3809,10 @@ mod tests {
         );
         for product in [
             casa_imaging_model::ProductKind::Weight,
-            casa_imaging_model::ProductKind::Sensitivity,
             casa_imaging_model::ProductKind::PbCorrectedSpectralIndex,
         ] {
             assert!(products.contains(&product));
         }
+        assert!(!products.contains(&casa_imaging_model::ProductKind::Sensitivity));
     }
 }

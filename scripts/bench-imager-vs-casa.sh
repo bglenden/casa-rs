@@ -641,9 +641,11 @@ build_rust_cli_args() {
     --channel-count "$channel_count"
     --specmode "$specmode"
     --gridder "$gridder"
-    --facets "$facets"
     --interpolation "$interpolation"
   )
+  if [[ "$gridder" == "widefield" || "$gridder" == "awproject" || "$facets" != "1" ]]; then
+    rust_cli_args+=(--facets "$facets")
+  fi
   rust_cli_args+=(${rust_cube_axis_flags[@]+"${rust_cube_axis_flags[@]}"})
   rust_cli_args+=(
     --datacolumn DATA

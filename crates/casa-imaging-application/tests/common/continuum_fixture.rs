@@ -50,11 +50,29 @@ pub(super) fn two_pointing_vla_aw_measurement_set(root: &Path) -> PathBuf {
             .with_vla_observation_metadata()
             .with_two_fields(),
     );
+    add_two_field_pointings(&path);
+    path
+}
+
+pub(super) fn two_pointing_alma_spectral_measurement_set(root: &Path) -> PathBuf {
+    let path = measurement_set_fixture(
+        root,
+        "two-pointing-alma-spectral-input.ms",
+        MeasurementSetFixtureOptions::new(false, false, 32, 1, 2, 8, false)
+            .with_alma_observation_metadata()
+            .with_two_fields(),
+    );
+    add_two_field_pointings(&path);
+    path
+}
+
+fn add_two_field_pointings(path: &Path) {
     let mut measurement_set = MeasurementSet::open(&path).expect("open two-pointing fixture");
-    for field in 0..2 {
+    for row in 0..measurement_set.row_count() {
+        let field = row % 2;
         let sign = if field == 0 { 1.0 } else { -1.0 };
         let field_direction = [1.0 + field as f64 * 1.0e-4, 0.5];
-        let time = 59_000.0 * 86_400.0 + field as f64 * 10.0;
+        let time = 59_000.0 * 86_400.0 + row as f64 * 10.0;
         for antenna in 0..2 {
             let antenna_delta = if antenna == 0 { -2.0e-6 } else { 2.0e-6 };
             let direction = Value::Array(ArrayValue::Float64(
@@ -88,7 +106,6 @@ pub(super) fn two_pointing_vla_aw_measurement_set(root: &Path) -> PathBuf {
         }
     }
     measurement_set.save().expect("save two-pointing fixture");
-    path
 }
 
 pub(super) fn four_spw_vla_measurement_set(root: &Path) -> PathBuf {

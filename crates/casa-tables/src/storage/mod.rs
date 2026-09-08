@@ -3398,8 +3398,7 @@ impl CompositeStorage {
         let dm_seq_nr = table_dat
             .column_set
             .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
+            .get(desc_idx)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "array column '{column}' missing ColumnSet binding"
@@ -3425,6 +3424,19 @@ impl CompositeStorage {
             .collect();
 
         match dm.type_name.as_str() {
+            "IncrementalStMan" => {
+                let mut values = Vec::new();
+                let shape = self.fill_plain_array_column_rows_1d_typed(
+                    table_path,
+                    table_dat,
+                    read_metadata,
+                    request,
+                    SelectedArray1DCellsMut::Float64(&mut values),
+                )?;
+                Ok(SelectedArray1DCells::Float64(
+                    crate::table::SelectedArray1D::new(shape.row_count, shape.axis0_count, values),
+                ))
+            }
             "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::load_tiled_column_rows_1d_typed(
                 table_path,
                 read_metadata,
@@ -3435,7 +3447,7 @@ impl CompositeStorage {
                 request.selected_rows,
             ),
             other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' require TiledColumnStMan or TiledShapeStMan, found {other}",
+                "typed selected 1-D reads for column '{}' do not support {other}",
                 request.column
             ))),
         }
@@ -3477,8 +3489,7 @@ impl CompositeStorage {
         let dm_seq_nr = table_dat
             .column_set
             .columns
-            .iter()
-            .find(|entry| entry.original_name == column)
+            .get(desc_idx)
             .ok_or_else(|| {
                 StorageError::FormatMismatch(format!(
                     "array column '{column}' missing ColumnSet binding"
@@ -3503,6 +3514,33 @@ impl CompositeStorage {
             .filter(|(_, pc)| pc.dm_seq_nr == dm.seq_nr)
             .collect();
         match dm.type_name.as_str() {
+            "IncrementalStMan" => {
+                let SelectedArray1DCellsMut::Float64(values) = destination else {
+                    return Err(StorageError::FormatMismatch(format!(
+                        "typed selected ISM reads for '{column}' require an f64 destination"
+                    )));
+                };
+                let group_columns: Vec<_> = bound_cols
+                    .iter()
+                    .map(|(index, _)| &table_dat.table_desc.columns[*index])
+                    .collect();
+                let target = bound_cols
+                    .iter()
+                    .position(|(index, _)| *index == desc_idx)
+                    .expect("selected ISM column belongs to its data manager");
+                let axis0_count = incremental_stman::fill_ism_f64_array_rows(
+                    &table_path.join(format!("{TABLE_DATA_FILE_PREFIX}{}", dm.seq_nr)),
+                    &dm.data,
+                    &group_columns,
+                    target,
+                    request.selected_rows,
+                    values,
+                )?;
+                Ok(SelectedArray1DShape {
+                    row_count: request.selected_rows.len(),
+                    axis0_count,
+                })
+            }
             "TiledColumnStMan" | "TiledShapeStMan" => tiled_stman::fill_tiled_column_rows_1d_typed(
                 table_path,
                 read_metadata,
@@ -3514,7 +3552,7 @@ impl CompositeStorage {
                 destination,
             ),
             other => Err(StorageError::FormatMismatch(format!(
-                "typed selected 1-D reads for column '{}' require TiledColumnStMan or TiledShapeStMan, found {other}",
+                "typed selected 1-D reads for column '{}' do not support {other}",
                 request.column
             ))),
         }
