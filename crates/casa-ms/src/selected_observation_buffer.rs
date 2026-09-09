@@ -398,19 +398,7 @@ impl SelectedObservationBuffer {
         row_offset: usize,
         correlation_offset: usize,
     ) -> Option<SelectedStoredSample> {
-        if channel_offset >= self.channel_range.count
-            || row_offset >= self.row_count()
-            || correlation_offset >= self.correlation_count
-        {
-            return None;
-        }
-        let sample_index = packed_sample_index(
-            channel_offset,
-            row_offset,
-            correlation_offset,
-            self.row_count(),
-            self.correlation_count,
-        );
+        let sample_index = self.sample_index(channel_offset, row_offset, correlation_offset)?;
         let row_weight_index = row_offset * self.correlation_count + correlation_offset;
         let visibility = match self.visibility.as_ref()? {
             SelectedStoredVisibilities::Float32(values) => {
@@ -449,6 +437,50 @@ impl SelectedObservationBuffer {
             observation_id: *self.observation_ids.get(row_offset)?,
             array_id: *self.array_ids.get(row_offset)?,
         })
+    }
+
+    /// Read a selected flag without constructing visibility or row metadata.
+    pub(crate) fn channel_flag(
+        &self,
+        channel: usize,
+        row: usize,
+        correlation: usize,
+    ) -> Option<bool> {
+        self.flags
+            .get(self.sample_index(channel, row, correlation)?)
+            .copied()
+    }
+
+    /// Read the configured weight column without constructing a complete sample.
+    pub(crate) fn input_weight(
+        &self,
+        channel: usize,
+        row: usize,
+        correlation: usize,
+    ) -> Option<f32> {
+        let index = self.sample_index(channel, row, correlation)?;
+        match self.weights.as_ref()? {
+            SelectedStoredWeights::PerRow(values) => values
+                .get(row * self.correlation_count + correlation)
+                .copied(),
+            SelectedStoredWeights::PerChannel(values) => values.get(index).copied(),
+        }
+    }
+
+    fn sample_index(&self, channel: usize, row: usize, correlation: usize) -> Option<usize> {
+        if channel >= self.channel_range.count
+            || row >= self.row_count()
+            || correlation >= self.correlation_count
+        {
+            return None;
+        }
+        Some(packed_sample_index(
+            channel,
+            row,
+            correlation,
+            self.row_count(),
+            self.correlation_count,
+        ))
     }
 }
 
@@ -1070,6 +1102,61 @@ mod tests {
         SelectedObservationBufferRequest, SelectedStoredVisibility, SelectedVisibilityColumn,
         SelectedWeightColumn, VisibilityChannelReadRange, test_helpers::default_value,
     };
+
+    #[test]
+    fn flag_and_weight_access_match_full_samples_in_both_weight_layouts() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("selected-statistics.ms");
+        let mut ms = MeasurementSet::create(
+            &path,
+            MeasurementSetBuilder::new()
+                .with_main_column(OptionalMainColumn::Data)
+                .with_main_column(OptionalMainColumn::WeightSpectrum),
+        )
+        .unwrap();
+        add_row(&mut ms, 0);
+        add_row(&mut ms, 1);
+        ms.save().unwrap();
+        drop(ms);
+        let ms = MeasurementSet::open(&path).unwrap();
+        let mut buffer = SelectedObservationBuffer::default();
+        for weight in [
+            SelectedWeightColumn::Weight,
+            SelectedWeightColumn::WeightSpectrum,
+        ] {
+            let request = SelectedObservationBufferRequest::new(
+                SelectedVisibilityColumn::Data,
+                weight,
+                &[1, 0],
+                VisibilityChannelReadRange::new(1, 2),
+            );
+            ms.fill_selected_observation_buffer(&request, &mut buffer)
+                .unwrap();
+            for channel in 0..2 {
+                for row in 0..2 {
+                    for correlation in 0..2 {
+                        let sample = buffer.sample(channel, row, correlation).unwrap();
+                        assert_eq!(
+                            buffer.channel_flag(channel, row, correlation),
+                            Some(sample.channel_flag())
+                        );
+                        assert_eq!(
+                            buffer
+                                .input_weight(channel, row, correlation)
+                                .unwrap()
+                                .to_bits(),
+                            sample.input_weight().to_bits()
+                        );
+                    }
+                }
+            }
+            for (channel, row, correlation) in [(2, 0, 0), (0, 2, 0), (0, 0, 2)] {
+                assert_eq!(buffer.channel_flag(channel, row, correlation), None);
+                assert_eq!(buffer.input_weight(channel, row, correlation), None);
+                assert!(buffer.sample(channel, row, correlation).is_none());
+            }
+        }
+    }
 
     #[test]
     fn selected_observation_buffer_reads_exact_closed_content_and_provenance() {
