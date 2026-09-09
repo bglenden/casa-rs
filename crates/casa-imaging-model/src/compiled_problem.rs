@@ -3659,7 +3659,7 @@ impl CanonicalEncoder {
         }
     }
 
-    fn update(&mut self, value: impl AsRef<[u8]>) {
+    pub(crate) fn update(&mut self, value: impl AsRef<[u8]>) {
         let value = value.as_ref();
         self.proof_bytes = self
             .proof_bytes
@@ -3710,6 +3710,7 @@ impl CanonicalEncoder {
         self.update(bits.to_le_bytes());
     }
 
+    #[cfg(test)]
     pub(crate) fn f32(&mut self, value: f32) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
         self.update(bits.to_le_bytes());

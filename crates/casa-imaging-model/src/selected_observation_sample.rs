@@ -1445,7 +1445,6 @@ impl SelectedObservationGenerationEncoder {
         let channel = GenerationChannelContent::from_view(sample);
         if self.channel_run != Some(channel) {
             self.finish_channel_run();
-            self.encoder.u8(GENERATION_CHANNEL_RUN_MARKER);
             encode_generation_channel_content(&mut self.encoder, &channel);
             self.channel_run = Some(channel);
             self.channel_run_count = self
@@ -1453,7 +1452,6 @@ impl SelectedObservationGenerationEncoder {
                 .checked_add(1)
                 .expect("selected-observation channel-run count fits u64");
         }
-        self.encoder.u8(GENERATION_CORRELATION_MARKER);
         encode_generation_correlation_content(
             &mut self.encoder,
             GenerationCorrelationContent::from_view(sample),
@@ -1497,7 +1495,6 @@ impl SelectedObservationGenerationEncoder {
         let channel_content = GenerationChannelContent::from_run(channel);
         if self.channel_run != Some(channel_content) {
             self.finish_channel_run();
-            self.encoder.u8(GENERATION_CHANNEL_RUN_MARKER);
             encode_generation_channel_content(&mut self.encoder, &channel_content);
             self.channel_run = Some(channel_content);
             self.channel_run_count = self
@@ -1506,7 +1503,6 @@ impl SelectedObservationGenerationEncoder {
                 .expect("selected-observation channel-run count fits u64");
         }
         for correlation in correlations {
-            self.encoder.u8(GENERATION_CORRELATION_MARKER);
             encode_generation_correlation_content(
                 &mut self.encoder,
                 GenerationCorrelationContent::from_run(correlation),
@@ -1668,34 +1664,54 @@ fn encode_generation_channel_content(
     encoder: &mut CanonicalEncoder,
     content: &GenerationChannelContent,
 ) {
-    encoder.u32(content.channel_index);
-    encoder.f64(content.frequency_centre_hz);
-    encoder.f64(content.frequency_lower_hz);
-    encoder.f64(content.frequency_upper_hz);
-    encoder.f64(content.channel_width_hz);
-    encoder.u8(frequency_frame_tag(content.frequency_frame));
+    let mut bytes = [0_u8; 38];
+    bytes[0] = GENERATION_CHANNEL_RUN_MARKER;
+    bytes[1..5].copy_from_slice(&content.channel_index.to_le_bytes());
+    for (destination, value) in bytes[5..37].chunks_exact_mut(8).zip([
+        content.frequency_centre_hz,
+        content.frequency_lower_hz,
+        content.frequency_upper_hz,
+        content.channel_width_hz,
+    ]) {
+        let bits = if value == 0.0 { 0 } else { value.to_bits() };
+        destination.copy_from_slice(&bits.to_le_bytes());
+    }
+    bytes[37] = frequency_frame_tag(content.frequency_frame);
+    encoder.update(bytes);
 }
 
 fn encode_generation_correlation_content(
     encoder: &mut CanonicalEncoder,
     content: GenerationCorrelationContent,
 ) {
-    encoder.u32(content.correlation_index);
-    encoder.u8(correlation_type_tag(content.correlation_type));
-    match content.visibility {
+    let mut bytes = [0_u8; 21];
+    bytes[0] = GENERATION_CORRELATION_MARKER;
+    bytes[1..5].copy_from_slice(&content.correlation_index.to_le_bytes());
+    bytes[5] = correlation_type_tag(content.correlation_type);
+    let (values, count) = match content.visibility {
         SelectedVisibilitySample::Float32(value) => {
-            encoder.u8(0);
-            encoder.f32(value);
+            bytes[6] = 0;
+            ([value, 0.0], 1)
         }
-        SelectedVisibilitySample::Complex32([real, imaginary]) => {
-            encoder.u8(1);
-            encoder.f32(real);
-            encoder.f32(imaginary);
+        SelectedVisibilitySample::Complex32(values) => {
+            bytes[6] = 1;
+            (values, 2)
         }
+    };
+    let flags_start = 7 + count * 4;
+    for (destination, value) in bytes[7..flags_start].chunks_exact_mut(4).zip(values) {
+        let bits = if value == 0.0 { 0 } else { value.to_bits() };
+        destination.copy_from_slice(&bits.to_le_bytes());
     }
-    encoder.u8(u8::from(content.channel_flag));
-    encoder.u8(u8::from(content.parallel_hand_group_flag));
-    encoder.f32(content.input_weight);
+    bytes[flags_start] = u8::from(content.channel_flag);
+    bytes[flags_start + 1] = u8::from(content.parallel_hand_group_flag);
+    let weight_bits = if content.input_weight == 0.0 {
+        0
+    } else {
+        content.input_weight.to_bits()
+    };
+    bytes[flags_start + 2..flags_start + 6].copy_from_slice(&weight_bits.to_le_bytes());
+    encoder.update(&bytes[..flags_start + 6]);
 }
 
 fn encode_epoch(encoder: &mut CanonicalEncoder, epoch: Epoch) {
@@ -2170,8 +2186,96 @@ mod tests {
 
         assert_eq!(
             (encoder.proof_bytes(), encoder.proof_hash_calls()),
-            (525, 98),
+            (525, 70),
         );
+    }
+
+    #[test]
+    fn generation_chunks_preserve_scalar_bytes_and_signed_zero() {
+        for frequency_frame in [
+            FrequencyFrame::Rest,
+            FrequencyFrame::Topocentric,
+            FrequencyFrame::Barycentric,
+            FrequencyFrame::Lsrk,
+        ] {
+            for value in [
+                0.0,
+                -0.0,
+                -2.25,
+                f64::from_bits(1),
+                f64::INFINITY,
+                f64::from_bits(0x7ff8_0000_0000_0123),
+            ] {
+                let content = GenerationChannelContent {
+                    channel_index: u32::MAX,
+                    frequency_centre_hz: value,
+                    frequency_lower_hz: -5.25,
+                    frequency_upper_hz: 1.0e9,
+                    channel_width_hz: -value,
+                    frequency_frame,
+                };
+                let mut scalar = CanonicalEncoder::new();
+                scalar.u8(GENERATION_CHANNEL_RUN_MARKER);
+                scalar.u32(content.channel_index);
+                scalar.f64(content.frequency_centre_hz);
+                scalar.f64(content.frequency_lower_hz);
+                scalar.f64(content.frequency_upper_hz);
+                scalar.f64(content.channel_width_hz);
+                scalar.u8(frequency_frame_tag(content.frequency_frame));
+                let mut chunk = CanonicalEncoder::new();
+                encode_generation_channel_content(&mut chunk, &content);
+                assert_eq!((chunk.proof_bytes(), chunk.proof_hash_calls()), (38, 1));
+                assert_eq!(chunk.proof_bytes(), scalar.proof_bytes());
+                assert_eq!(chunk.finish(), scalar.finish());
+            }
+        }
+        for value in [
+            0.0,
+            -0.0,
+            -2.25,
+            f32::from_bits(1),
+            f32::INFINITY,
+            f32::from_bits(0x7fc0_0123),
+        ] {
+            for visibility in [
+                SelectedVisibilitySample::Float32(value),
+                SelectedVisibilitySample::Complex32([value, -0.0]),
+            ] {
+                for flags in [[false, false], [false, true], [true, false], [true, true]] {
+                    let content = GenerationCorrelationContent {
+                        correlation_index: u32::MAX,
+                        correlation_type: CorrelationType::CircularLl,
+                        visibility,
+                        channel_flag: flags[0],
+                        parallel_hand_group_flag: flags[1],
+                        input_weight: -value,
+                    };
+                    let mut scalar = CanonicalEncoder::new();
+                    scalar.u8(GENERATION_CORRELATION_MARKER);
+                    scalar.u32(content.correlation_index);
+                    scalar.u8(correlation_type_tag(content.correlation_type));
+                    match visibility {
+                        SelectedVisibilitySample::Float32(value) => {
+                            scalar.u8(0);
+                            scalar.f32(value);
+                        }
+                        SelectedVisibilitySample::Complex32([real, imaginary]) => {
+                            scalar.u8(1);
+                            scalar.f32(real);
+                            scalar.f32(imaginary);
+                        }
+                    }
+                    scalar.u8(u8::from(content.channel_flag));
+                    scalar.u8(u8::from(content.parallel_hand_group_flag));
+                    scalar.f32(content.input_weight);
+                    let mut chunk = CanonicalEncoder::new();
+                    encode_generation_correlation_content(&mut chunk, content);
+                    assert_eq!(chunk.proof_hash_calls(), 1);
+                    assert_eq!(chunk.proof_bytes(), scalar.proof_bytes());
+                    assert_eq!(chunk.finish(), scalar.finish());
+                }
+            }
+        }
     }
 
     #[test]
