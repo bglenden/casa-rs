@@ -3839,6 +3839,14 @@ fn project_residency(
     let forward_workspace_bytes = workload
         .forward_complex_values()
         .checked_mul(complex_bytes)
+        .and_then(|bytes| {
+            bytes.checked_add(match execution_role {
+                CompleteDataExecutionRole::SelectedObservation => {
+                    workload.source_row_workspace_bytes()
+                }
+                CompleteDataExecutionRole::GriddedArtifact => 0,
+            })
+        })
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
     let response_workspace_bytes = workload
         .response_f32_values()

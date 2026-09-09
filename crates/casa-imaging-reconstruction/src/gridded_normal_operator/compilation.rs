@@ -126,6 +126,9 @@ impl GriddedNormalCompilationPlan {
             crate::weighting::native_row_heap_bytes(maximum_correlations, maximum_spectral_terms)
                 .map_err(|_| SpectralOperatorError::ResidencyOverflow)?
                 .checked_add(carried_projections)
+                .and_then(|bytes| {
+                    bytes.checked_add(CasaLinearRowResampler::<usize>::retained_group_bytes())
+                })
                 .ok_or(SpectralOperatorError::ResidencyOverflow)?
         } else {
             0

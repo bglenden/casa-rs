@@ -10268,6 +10268,34 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
 }
 
 #[test]
+fn native_row_workspace_is_reserved_only_for_multichannel_sources() {
+    for channels in [1, 2, 8] {
+        let problem = compile(channel_local_request(237, channels)).unwrap();
+        let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+        for pass in [
+            SpectralOperatorPass::InitialMajor,
+            SpectralOperatorPass::ResidualRefresh,
+        ] {
+            let workload = spectral_operator_workload(&specification, 4, pass).unwrap();
+            let fragment = CompleteDataPlanFragment::new(
+                &problem,
+                4,
+                WorkNodeId::new("native-row-reservation"),
+                pass,
+            )
+            .unwrap();
+            assert_eq!(workload.source_row_workspace_bytes() > 0, channels > 1);
+            assert_eq!(
+                fragment.residency().forward_workspace_bytes(),
+                workload.forward_complex_values() * size_of::<num_complex::Complex64>()
+                    + workload.source_row_workspace_bytes(),
+                "the source owner must be charged in both initial and refresh passes"
+            );
+        }
+    }
+}
+
+#[test]
 fn t37_runtime_residency_tracks_core_and_sampler_halo_depth() {
     let problem = compile(channel_local_request(237, 8)).expect("channel-local problem");
     let replay = WorkNodeId::new("t37-weighted-replay");

@@ -2019,6 +2019,7 @@ pub struct SpectralOperatorWorkload {
     fft_resident_complex_values: usize,
     fft_planning_words: usize,
     forward_complex_values: usize,
+    source_row_workspace_bytes: usize,
     primitive_complex_values: usize,
     primitive_f64_values: usize,
     fold_accumulator_complex_values: usize,
@@ -2123,6 +2124,13 @@ impl SpectralOperatorWorkload {
     #[must_use]
     pub const fn forward_complex_values(self) -> usize {
         self.forward_complex_values
+    }
+
+    /// Return the bounded previous-row owner and simultaneous resampling buffers.
+    /// The current weighted source slice remains covered by its source owner.
+    #[must_use]
+    pub const fn source_row_workspace_bytes(self) -> usize {
+        self.source_row_workspace_bytes
     }
 
     #[must_use]
@@ -2344,6 +2352,44 @@ pub fn spectral_operator_workload(
                 .checked_add(total)
                 .ok_or(SpectralOperatorError::ResidencyOverflow)
         })?;
+    let source_row_workspace_bytes = if specification.spectral_kernel == SpectralKernel::Linear
+        && specification.output_channel_frequencies_hz.len() >= 2
+        && specification
+            .selected_spectral_rows
+            .iter()
+            .any(|row| row.shape.channels > 1)
+    {
+        let correlations = specification
+            .direction_independent_polarizations
+            .iter()
+            .map(|operator| operator.correlations().len())
+            .max()
+            .unwrap_or(1);
+        let sample_and_observed = crate::weighting::native_row_heap_bytes(correlations, 2)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        // Previous, current, and interpolated predictions coexist during emission.
+        let predictions = crate::weighting::smallvec_heap_bytes::<Complex64>(correlations)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?
+            .checked_mul(3)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let carried_projections =
+            casa_imaging_model::SelectedImageDomainProjections::retained_heap_bytes_for_len(
+                specification.chart_count(),
+            )
+            .and_then(|bytes| bytes.checked_mul(correlations))
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        sample_and_observed
+            .checked_add(predictions)
+            .and_then(|bytes| bytes.checked_add(carried_projections))
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    CasaLinearRowResampler::<SmallVec<[Complex64; 4]>>::retained_group_bytes(),
+                )
+            })
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?
+    } else {
+        0
+    };
     let chart_count = specification.charts.len();
     let maximum_chart_cells = specification
         .charts
@@ -2486,6 +2532,7 @@ pub fn spectral_operator_workload(
         fft_resident_complex_values,
         fft_planning_words,
         forward_complex_values,
+        source_row_workspace_bytes,
         primitive_complex_values: image_cells
             .checked_mul(parent_complex_planes)
             .and_then(|values| {
@@ -4963,12 +5010,19 @@ fn selected_address_key(
     )
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct NativeSpectralGroup<P = SmallVec<[Complex64; 4]>> {
+#[derive(Debug)]
+pub(super) struct NativeSpectralGroup<'a, P = SmallVec<[Complex64; 4]>> {
     pub(super) frequency_hz: f64,
-    pub(super) samples: SmallVec<[crate::weighting::WeightingSampleValue; 4]>,
-    pub(super) observed: SmallVec<[Complex64; 4]>,
+    pub(super) samples: &'a [crate::weighting::WeightingSampleValue],
+    pub(super) observed: &'a [Complex64],
     pub(super) predicted: P,
+}
+
+#[derive(Debug)]
+struct RetainedNativeSpectralGroup<P> {
+    samples: SmallVec<[crate::weighting::WeightingSampleValue; 4]>,
+    observed: SmallVec<[Complex64; 4]>,
+    predicted: P,
 }
 
 #[derive(Debug)]
@@ -4985,11 +5039,15 @@ pub(super) struct CasaResampledGroup<P = SmallVec<[Complex64; 4]>> {
 
 #[derive(Debug)]
 pub(super) struct CasaLinearRowResampler<P = SmallVec<[Complex64; 4]>> {
-    pending: Option<NativeSpectralGroup<P>>,
+    pending: Option<Box<RetainedNativeSpectralGroup<P>>>,
     cursor: CasaLinearRowCursor,
 }
 
 impl<P> CasaLinearRowResampler<P> {
+    pub(super) const fn retained_group_bytes() -> usize {
+        std::mem::size_of::<RetainedNativeSpectralGroup<P>>()
+    }
+
     pub(super) const fn new() -> Self {
         Self {
             pending: None,
@@ -4999,7 +5057,7 @@ impl<P> CasaLinearRowResampler<P> {
 
     pub(super) fn push<T>(
         &mut self,
-        current: NativeSpectralGroup<P>,
+        current: NativeSpectralGroup<'_, P>,
         output: CasaLinearOutputGrid,
         finite_values: FiniteValuePolicy,
         cube_native_weight_transfer: bool,
@@ -5021,16 +5079,16 @@ impl<P> CasaLinearRowResampler<P> {
             )
             .map_err(spectral_row_error)?;
         let Some(samples) = samples else {
-            self.pending = Some(current);
+            self.retain_current(current);
             return Ok(());
         };
         let previous = self
             .pending
-            .take()
+            .as_ref()
             .ok_or(SpectralOperatorError::InvalidSample)?;
         let result = samples.into_iter().try_for_each(|sample| {
             emit(resample_native_pair(
-                &previous,
+                previous,
                 &current,
                 sample,
                 finite_values,
@@ -5038,8 +5096,24 @@ impl<P> CasaLinearRowResampler<P> {
                 &mut interpolate_prediction,
             )?)
         });
-        self.pending = Some(current);
+        self.retain_current(current);
         result
+    }
+
+    fn retain_current(&mut self, current: NativeSpectralGroup<'_, P>) {
+        if let Some(previous) = &mut self.pending {
+            previous.samples.clear();
+            previous.samples.extend(current.samples.iter().cloned());
+            previous.observed.clear();
+            previous.observed.extend_from_slice(current.observed);
+            previous.predicted = current.predicted;
+        } else {
+            self.pending = Some(Box::new(RetainedNativeSpectralGroup {
+                samples: current.samples.iter().cloned().collect(),
+                observed: current.observed.iter().copied().collect(),
+                predicted: current.predicted,
+            }));
+        }
     }
 
     pub(super) fn finish(&mut self) -> Result<(), SpectralOperatorError> {
@@ -5062,8 +5136,8 @@ fn spectral_row_error(error: crate::SpectralStencilError) -> SpectralOperatorErr
 }
 
 fn resample_native_pair<P, T>(
-    left: &NativeSpectralGroup<P>,
-    right: &NativeSpectralGroup<P>,
+    left: &RetainedNativeSpectralGroup<P>,
+    right: &NativeSpectralGroup<'_, P>,
     fine: CasaLinearSample,
     finite_values: FiniteValuePolicy,
     cube_native_weight_transfer: bool,
@@ -5081,7 +5155,7 @@ fn resample_native_pair<P, T>(
     let mut weights = SmallVec::new();
     let mut flags = SmallVec::new();
     for (ordinal, (left_weighted, right_weighted)) in
-        left.samples.iter().zip(&right.samples).enumerate()
+        left.samples.iter().zip(right.samples).enumerate()
     {
         let left_selected = left_weighted.selected();
         let right_selected = right_weighted.selected();
@@ -6153,8 +6227,8 @@ impl CompleteDataOwnerState {
         let frequency_hz = selected.output_frame_frequency_hz();
         let native = NativeSpectralGroup {
             frequency_hz,
-            samples: group.iter().cloned().collect(),
-            observed,
+            samples: group,
+            observed: &observed,
             predicted,
         };
         let output = self.specification.casa_linear_output_grid()?;
@@ -11791,6 +11865,44 @@ mod tests {
     };
 
     #[test]
+    fn native_row_retention_reuses_one_stable_slot_across_owner_moves() {
+        let mut rows = super::CasaLinearRowResampler::<usize>::new();
+        let first = [Complex64::new(1.0, -2.0); 5];
+        rows.retain_current(super::NativeSpectralGroup {
+            frequency_hz: 100.0,
+            samples: &[],
+            observed: &first,
+            predicted: 7,
+        });
+        let original = rows.pending.as_deref().unwrap();
+        let slot = std::ptr::from_ref(original);
+        let observed = original.observed.as_ptr();
+        let capacity = original.observed.capacity();
+        for predicted in 8..12 {
+            let mut moved = std::mem::replace(&mut rows, super::CasaLinearRowResampler::new());
+            moved.retain_current(super::NativeSpectralGroup {
+                frequency_hz: 100.0 + predicted as f64,
+                samples: &[],
+                observed: &[Complex64::new(predicted as f64, 1.0); 5],
+                predicted,
+            });
+            let retained = moved.pending.as_deref().unwrap();
+            assert_eq!(std::ptr::from_ref(retained), slot);
+            assert_eq!(retained.observed.as_ptr(), observed);
+            assert_eq!(retained.observed.capacity(), capacity);
+            assert_eq!(retained.observed[0], Complex64::new(predicted as f64, 1.0));
+            assert_eq!(retained.predicted, predicted);
+            rows = moved;
+        }
+        assert!(
+            std::mem::size_of_val(&rows)
+                < super::CasaLinearRowResampler::<usize>::retained_group_bytes()
+        );
+        rows.finish().unwrap();
+        assert!(rows.pending.is_none());
+    }
+
+    #[test]
     fn aw_pointing_phase_requires_exact_pixel_and_uses_the_integer_image_centre() {
         assert_eq!(
             super::aw_pointing_phase_gradient(None, [9, 7]),
@@ -12410,6 +12522,7 @@ mod tests {
             resident_model_terms,
             total_model_terms,
             max_replay_block_samples: 3,
+            source_row_workspace_bytes: 0,
             initial_phase_residency: None,
         }
     }
@@ -12809,6 +12922,7 @@ mod tests {
             resident_model_terms,
             total_model_terms,
             max_replay_block_samples: 4,
+            source_row_workspace_bytes: 0,
             initial_phase_residency: None,
         };
         let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)

@@ -175,7 +175,7 @@ pub(crate) fn maximum_spectral_terms(problem: &CompiledProblem) -> usize {
 }
 
 // SmallVec's collect, clone and push paths round spilled capacity to a power of two.
-fn smallvec_heap_bytes<T>(maximum_len: usize) -> Result<usize, WeightingError> {
+pub(crate) fn smallvec_heap_bytes<T>(maximum_len: usize) -> Result<usize, WeightingError> {
     if maximum_len <= 4 {
         return Ok(0);
     }
@@ -191,19 +191,20 @@ pub(crate) fn native_row_heap_bytes(
 ) -> Result<usize, WeightingError> {
     let spectral = smallvec_heap_bytes::<WeightingSpectralValue>(maximum_terms)?
         .checked_mul(maximum_correlations)
-        .and_then(|bytes| bytes.checked_mul(2))
         .ok_or(WeightingError::ResidencyOverflow)?;
     let native_samples = smallvec_heap_bytes::<WeightingSampleValue>(maximum_correlations)?;
+    // A growth step may hold the new backing and its preceding power-of-two capacity.
+    let sample_growth_overlap =
+        smallvec_heap_bytes::<WeightingSampleValue>(maximum_correlations.div_ceil(2))?;
     let observed = smallvec_heap_bytes::<num_complex::Complex64>(maximum_correlations)?;
     let correlations =
         smallvec_heap_bytes::<casa_imaging_model::CorrelationType>(maximum_correlations)?;
     let weights = smallvec_heap_bytes::<f64>(maximum_correlations)?;
     let flags = smallvec_heap_bytes::<bool>(maximum_correlations)?;
     native_samples
-        .checked_add(observed)
-        .and_then(|bytes| bytes.checked_mul(2))
+        .checked_add(sample_growth_overlap)
+        .and_then(|bytes| bytes.checked_add(observed.checked_mul(3)?))
         .and_then(|bytes| bytes.checked_add(spectral))
-        .and_then(|bytes| bytes.checked_add(observed))
         .and_then(|bytes| bytes.checked_add(correlations))
         .and_then(|bytes| bytes.checked_add(weights))
         .and_then(|bytes| bytes.checked_add(flags))
@@ -1819,24 +1820,213 @@ mod selected_sample_tests {
     }
 
     #[test]
-    fn native_row_heap_counts_two_sample_banks_and_resampled_vectors() {
+    fn native_row_heap_counts_one_sample_bank_and_all_observed_vectors() {
         use super::{WeightingSampleValue, WeightingSpectralValue, native_row_heap_bytes};
         assert_eq!(native_row_heap_bytes(4, 4).unwrap(), 0);
         assert_eq!(
             native_row_heap_bytes(4, 5).unwrap(),
-            2 * 4 * 8 * size_of::<WeightingSpectralValue>()
+            4 * 8 * size_of::<WeightingSpectralValue>()
         );
         let q_capacity = (0..5)
             .collect::<smallvec::SmallVec<[usize; 4]>>()
             .capacity();
         let vectors = q_capacity
-            * (2 * size_of::<WeightingSampleValue>()
+            * (size_of::<WeightingSampleValue>()
                 + 3 * size_of::<num_complex::Complex64>()
                 + size_of::<casa_imaging_model::CorrelationType>()
                 + size_of::<f64>()
                 + size_of::<bool>());
         assert_eq!(native_row_heap_bytes(5, 4).unwrap(), vectors);
+        assert_eq!(
+            native_row_heap_bytes(9, 4).unwrap(),
+            24 * size_of::<WeightingSampleValue>()
+                + 16 * (3 * size_of::<num_complex::Complex64>()
+                    + size_of::<casa_imaging_model::CorrelationType>()
+                    + size_of::<f64>()
+                    + size_of::<bool>())
+        );
         assert!(native_row_heap_bytes(usize::MAX, 5).is_err());
+    }
+
+    fn native_row_sample(channel: u32, row: u64) -> super::WeightingSampleValue {
+        use casa_imaging_model::{
+            CorrelationType, DirectionFrame, FrequencyFrame, LogicalIdentity,
+            MeasurementSetIdentity, SkyDirection,
+        };
+        let direction = SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5);
+        let frequency = 100.0 + f64::from(channel) * 100.0;
+        super::WeightingSampleValue {
+            sample: WeightingSelectedSample {
+                address: super::SelectedSampleAddress {
+                    measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256(
+                        [1; 32],
+                    )),
+                    physical_row: row,
+                    data_description_id: 0,
+                    spectral_window_id: 0,
+                    channel_index: channel,
+                    frequency_centre_hz: frequency,
+                    frequency_lower_hz: frequency - 50.0,
+                    frequency_upper_hz: frequency + 50.0,
+                    channel_width_hz: 100.0,
+                    frequency_frame: FrequencyFrame::Topocentric,
+                    polarization_id: 0,
+                    correlation_index: 0,
+                    correlation_type: CorrelationType::StokesI,
+                },
+                visibility: super::SelectedVisibilitySample::Complex32([1.0, 0.0]),
+                channel_flag: false,
+                parallel_hand_group_flag: false,
+                input_weight_group_flag: false,
+                row_flag: false,
+                input_weight: 1.0,
+                raw_input_weight: 1.0,
+                starts_correlation_group: true,
+                ends_correlation_group: true,
+                correlation_group_size: 1,
+                parallactic_angles_rad: [0.0; 2],
+                density_uvw_m: [0.0; 3],
+                output_frame_frequency_hz: frequency,
+                row_spectral_geometry: Some(NativeRowSpectralGeometry {
+                    channels: 3,
+                    first: (0, 100.0),
+                    second: Some((1, 200.0)),
+                }),
+                field_id: 0,
+                pointing_directions: super::SelectedPointingDirections {
+                    antenna1: direction,
+                    antenna2: direction,
+                },
+                aw_pointing_pixel: None,
+                antenna_responses: None,
+                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                    SelectedPhaseCentreProjection::new([0.0; 3], 0.0).unwrap(),
+                ),
+            },
+            source_imaging_weight: Some(4.0 + f64::from(channel) * 6.0),
+            spectral_values: smallvec::SmallVec::new(),
+        }
+    }
+
+    #[test]
+    fn native_row_retains_previous_input_and_current_input_after_callback_errors() {
+        use super::{CasaLinearOutputGrid, FiniteValuePolicy};
+        use crate::spectral_operator::{
+            CasaLinearRowResampler, NativeSpectralGroup, SpectralOperatorError,
+        };
+        use num_complex::Complex64;
+        let output = CasaLinearOutputGrid::compile(&[100.0, 150.0, 200.0, 250.0, 300.0]).unwrap();
+        for failure in 0..3 {
+            let mut rows = CasaLinearRowResampler::<usize>::new();
+            let mut samples = [native_row_sample(0, 0)];
+            let mut observed = [Complex64::new(10.0, 0.0)];
+            rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 100.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 1,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |_, _, _| -> Result<(), SpectralOperatorError> {
+                    unreachable!("first input cannot interpolate")
+                },
+                |_| unreachable!("first input cannot emit"),
+            )
+            .unwrap();
+            assert!(matches!(
+                rows.finish(),
+                Err(SpectralOperatorError::IncompleteCoverage)
+            ));
+            samples[0] = native_row_sample(1, 0);
+            samples[0].sample.channel_flag = true;
+            observed[0] = Complex64::new(22.0, 0.0);
+            let mut emitted = Vec::new();
+            let result = rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 200.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 2,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |left, right, _| {
+                    assert_eq!((*left, *right), (1, 2));
+                    if failure == 1 {
+                        Err(SpectralOperatorError::InvalidSample)
+                    } else {
+                        Ok(())
+                    }
+                },
+                |group| {
+                    if failure == 2 {
+                        return Err(SpectralOperatorError::InvalidSample);
+                    }
+                    emitted.push((
+                        group.frequency_hz,
+                        group.observed[0].re,
+                        group.weights[0],
+                        group.flags[0],
+                    ));
+                    Ok(())
+                },
+            );
+            if failure == 0 {
+                result.unwrap();
+                assert!(emitted.contains(&(100.0, 10.0, 4.0, false)));
+                assert!(emitted.contains(&(150.0, 16.0, 4.0, true)));
+            } else {
+                assert!(matches!(result, Err(SpectralOperatorError::InvalidSample)));
+            }
+            samples[0] = native_row_sample(2, 0);
+            observed[0] = Complex64::new(34.0, 0.0);
+            let mut pairs = 0;
+            rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 300.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 3,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |left, right, _| {
+                    assert_eq!((*left, *right), (2, 3));
+                    pairs += 1;
+                    Ok(())
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+            assert!(pairs > 0);
+            rows.finish().unwrap();
+            samples[0] = native_row_sample(0, 1);
+            rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 100.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 4,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |_, _, _| -> Result<(), SpectralOperatorError> {
+                    unreachable!("new row cannot interpolate")
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+            assert!(matches!(
+                rows.finish(),
+                Err(SpectralOperatorError::IncompleteCoverage)
+            ));
+        }
     }
 
     #[test]

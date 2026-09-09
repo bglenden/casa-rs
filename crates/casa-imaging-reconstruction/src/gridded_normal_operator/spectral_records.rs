@@ -135,11 +135,12 @@ impl GriddedNormalOperatorCompiler {
                     .specification
                     .uses_casa_linear_resampling(correlations)?
                 {
+                    let observed = std::iter::repeat_n(Complex64::default(), correlations.len())
+                        .collect::<SmallVec<[_; 4]>>();
                     let native = NativeSpectralGroup {
                         frequency_hz: first.selected().output_frame_frequency_hz(),
-                        samples: correlations.iter().cloned().collect(),
-                        observed: std::iter::repeat_n(Complex64::default(), correlations.len())
-                            .collect(),
+                        samples: correlations,
+                        observed: &observed,
                         predicted: bank,
                     };
                     scratch.next_bank ^= 1;
