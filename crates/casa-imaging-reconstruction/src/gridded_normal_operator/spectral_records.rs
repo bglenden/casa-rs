@@ -293,8 +293,24 @@ impl GriddedNormalOperatorCompiler {
             .direction_independent_polarization(&resampled.correlations)?;
         let flags = polarization_effective_flags(&operator, resampled.flags);
         let columns = operator.model_coordinates().len();
+        let mut previous_row: Option<usize> = None;
         for (row, flagged) in flags.into_iter().enumerate() {
             if flagged {
+                continue;
+            }
+            let coefficients = &operator.coefficients()[row * columns..(row + 1) * columns];
+            // Native prediction banks differ across rows only by these coefficients.
+            if let Some(previous) = previous_row
+                && resampled.weights[previous].to_bits() == resampled.weights[row].to_bits()
+                && operator.coefficients()[previous * columns..(previous + 1) * columns]
+                    .iter()
+                    .zip(coefficients)
+                    .all(|(left, right)| {
+                        left.re.to_bits() == right.re.to_bits()
+                            && left.im.to_bits() == right.im.to_bits()
+                    })
+            {
+                emit_prepared_atom(&scratch.atom, emit, cardinality)?;
                 continue;
             }
             scratch.atom.clear();
@@ -332,9 +348,10 @@ impl GriddedNormalOperatorCompiler {
                     role: RecordRole::Accumulation,
                     imaging_weight: resampled.weights[row],
                 },
-                &operator.coefficients()[row * columns..(row + 1) * columns],
+                coefficients,
             )?;
-            emit_atom(&mut scratch.atom, prediction_len, emit, cardinality)?;
+            previous_row =
+                emit_atom(&mut scratch.atom, prediction_len, emit, cardinality)?.then_some(row);
         }
         Ok(())
     }
@@ -406,10 +423,10 @@ fn emit_atom(
     prediction_len: usize,
     emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
     cardinality: &mut GriddedNormalSourceCardinality,
-) -> Result<(), SpectralOperatorError> {
+) -> Result<bool, SpectralOperatorError> {
     let accumulation_len = atom.len() - prediction_len;
     if prediction_len == 0 || accumulation_len == 0 {
-        return Ok(());
+        return Ok(false);
     }
     let same_stencil = prediction_len == accumulation_len
         && atom[..prediction_len]
@@ -429,6 +446,15 @@ fn emit_atom(
             record.role = RecordRole::Both;
         }
     }
+    emit_prepared_atom(atom, emit, cardinality)?;
+    Ok(true)
+}
+
+fn emit_prepared_atom(
+    atom: &[ReducedRecordKey],
+    emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
+    cardinality: &mut GriddedNormalSourceCardinality,
+) -> Result<(), SpectralOperatorError> {
     cardinality.groups = cardinality
         .groups
         .checked_add(1)
@@ -511,6 +537,33 @@ mod tests {
                 records: 1
             }
         );
+        assert_eq!(atom.capacity(), 2);
+        let prepared = atom.clone();
+        emit_prepared_atom(
+            &atom,
+            &mut |records| {
+                calls += 1;
+                assert_eq!(records, prepared);
+                Ok(())
+            },
+            &mut cardinality,
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(cardinality.groups, 2);
+        assert_eq!(cardinality.records, 2);
+        atom.clear();
+        push_fixed(&mut atom, prediction).unwrap();
+        assert!(
+            !emit_atom(
+                &mut atom,
+                1,
+                &mut |_| panic!("prediction without accumulation must not emit"),
+                &mut cardinality,
+            )
+            .unwrap()
+        );
+        assert_eq!(cardinality.groups, 2);
         assert_eq!(atom.capacity(), 2);
     }
 }
