@@ -104,7 +104,8 @@ pub mod runtime_adapter {
         prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::weighting::{
-        FusedWeightingPhase, WeightingReplayPhase, begin_natural_weighting_stream,
+        FusedWeightingPhase, WeightingReplayPhase, WeightingSpectralCache,
+        begin_natural_weighting_stream,
     };
 }
 

@@ -2549,6 +2549,37 @@ fn production_weighting_fragment_owns_generation_replay_and_release_lifetimes() 
         dag.physical_slots().len() - base.execution_dag().physical_slots().len(),
         5
     );
+    let cache = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("weighting-spectral-stencil-cache-")
+        })
+        .expect("bounded spectral cache allocation");
+    assert_eq!(
+        cache.bytes,
+        plan.planned_residency().spectral_cache_bytes() as u64
+    );
+    assert!(cache.bytes > 0);
+    assert_eq!(cache.lifetime.acquire_at, source);
+    assert_eq!(
+        cache.lifetime.release_after,
+        BTreeSet::from([WorkDependency::Fence(FenceId::new(
+            replay.clone(),
+            FenceKind::Io
+        ))])
+    );
+    for node in [&source, &generation, &replay] {
+        assert!(
+            dag.nodes()[node]
+                .allocations
+                .iter()
+                .any(|usage| { usage.allocation == cache.id && usage.lifetime == source_lifetime })
+        );
+    }
     assert_eq!(
         dag.logical_allocations()[&frozen].lifetime.release_after,
         BTreeSet::from([WorkDependency::Work(release.clone())])
@@ -2705,6 +2736,39 @@ fn spectral_cycle_initial_plan_contains_resource_accounted_minor_cycle() {
     for physical in candidates {
         let minor = WorkNodeId::new("spectral-cycle-minor-cycle");
         let dag = physical.execution_dag();
+        let cache = dag
+            .logical_allocations()
+            .values()
+            .find(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("weighting-spectral-stencil-cache-")
+            })
+            .expect("streaming plan preserves the spectral cache reservation");
+        assert_eq!(
+            cache.bytes,
+            plan.weighting_plan()
+                .planned_residency()
+                .spectral_cache_bytes() as u64
+        );
+        assert!(
+            dag.nodes()[&cache.lifetime.acquire_at]
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == cache.id)
+        );
+        for release in &cache.lifetime.release_after {
+            let WorkDependency::Fence(fence) = release else {
+                panic!("spectral cache must retire at the terminal traversal fence");
+            };
+            assert!(
+                dag.nodes()[fence.node()]
+                    .allocations
+                    .iter()
+                    .any(|usage| usage.allocation == cache.id)
+            );
+        }
         let node = &dag.nodes()[&minor];
         assert_eq!(node.kind, WorkKind::Compute);
         assert!(

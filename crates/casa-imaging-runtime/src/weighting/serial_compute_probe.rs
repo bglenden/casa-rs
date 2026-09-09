@@ -491,7 +491,7 @@ fn rebuild_density_for_stage_local_probe(
         problem,
         consumer,
         density: begin_weighting_generation(problem, plan)?,
-        spectral_contributions: SpectralContributionCache::new(),
+        spectral_contributions: WeightingSpectralCache::new(problem)?,
     };
     for block in blocks {
         kernel.consume_selected_block(block)?;
@@ -578,7 +578,7 @@ impl InitialWeightedProbe<'_> {
                     weights: initial_weights,
                     continuum: None,
                     spectral_support_sample_count: 0,
-                    spectral_contributions: SpectralContributionCache::new(),
+                    spectral_contributions: WeightingSpectralCache::new(problem)?,
                     emit: &mut emit,
                 },
                 blocks,
@@ -1244,7 +1244,7 @@ where
             weights: initial_weights,
             continuum: None,
             spectral_support_sample_count: 0,
-            spectral_contributions: SpectralContributionCache::new(),
+            spectral_contributions: WeightingSpectralCache::new(&problem)?,
             emit: &mut initial_emit,
         };
         let WeightingBlockKernelCompletion {
@@ -1383,7 +1383,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
             weights: replay,
             continuum: None,
             spectral_support_sample_count: 0,
-            spectral_contributions: SpectralContributionCache::new(),
+            spectral_contributions: WeightingSpectralCache::new(&problem)?,
             emit: &mut emit,
         };
         let replay_started = Instant::now();
@@ -1981,7 +1981,7 @@ fn freeze_density<'a>(
         problem,
         consumer,
         density,
-        spectral_contributions: SpectralContributionCache::new(),
+        spectral_contributions: WeightingSpectralCache::new(problem)?,
     };
     for block in blocks {
         kernel.consume_selected_block(block)?;

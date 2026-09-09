@@ -2,6 +2,9 @@
 
 //! Frozen global weighting generations and bounded weighted replay.
 
+mod spectral_cache;
+pub use spectral_cache::WeightingSpectralCache;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, fmt, mem::size_of};
 
@@ -154,6 +157,7 @@ pub struct WeightingResidency {
     weighted_block_bytes: usize,
     weighted_sample_bytes: usize,
     simultaneous_selected_weighted_bytes: usize,
+    spectral_cache_bytes: usize,
     peak_bytes: usize,
 }
 
@@ -280,6 +284,12 @@ impl WeightingResidency {
         self.simultaneous_selected_weighted_bytes
     }
 
+    /// Return the bounded source-channel stencil cache and miss workspace.
+    #[must_use]
+    pub const fn spectral_cache_bytes(self) -> usize {
+        self.spectral_cache_bytes
+    }
+
     /// Conservative total weighting-owner residency.
     #[must_use]
     pub const fn peak_bytes(self) -> usize {
@@ -376,6 +386,7 @@ pub fn plan_weighting(
         .checked_mul(weighted_sample_bytes)
         .ok_or(WeightingError::ResidencyOverflow)?;
     let simultaneous_selected_weighted_bytes = weighted_block_bytes;
+    let spectral_cache_bytes = WeightingSpectralCache::planned_bytes(problem)?;
     let peak_bytes = density_grid_bytes
         .checked_add(density_layout_bytes)
         .and_then(|bytes| bytes.checked_add(robust_factor_bytes))
@@ -383,6 +394,7 @@ pub fn plan_weighting(
         .and_then(|bytes| bytes.checked_add(shared_density_accumulator_bytes))
         .and_then(|bytes| bytes.checked_add(sum_weight_accumulator_bytes))
         .and_then(|bytes| bytes.checked_add(simultaneous_selected_weighted_bytes))
+        .and_then(|bytes| bytes.checked_add(spectral_cache_bytes))
         .ok_or(WeightingError::ResidencyOverflow)?;
     Ok(WeightingPlan {
         problem: problem.problem_id(),
@@ -400,6 +412,7 @@ pub fn plan_weighting(
             weighted_block_bytes,
             weighted_sample_bytes,
             simultaneous_selected_weighted_bytes,
+            spectral_cache_bytes,
             peak_bytes,
         },
     })
@@ -1295,6 +1308,7 @@ impl WeightingSumWeightPhase {
                 weighted_block_bytes: 0,
                 weighted_sample_bytes: self.planned_residency.weighted_sample_bytes,
                 simultaneous_selected_weighted_bytes: 0,
+                spectral_cache_bytes: 0,
                 peak_bytes,
             },
             next_replay: AtomicU64::new(0),
@@ -1444,6 +1458,7 @@ impl FusedWeightingPhase {
                 weighted_block_bytes,
                 weighted_sample_bytes: state.planned_residency.weighted_sample_bytes,
                 simultaneous_selected_weighted_bytes: weighted_block_bytes,
+                spectral_cache_bytes: 0,
                 peak_bytes,
             },
         };
@@ -2341,6 +2356,7 @@ impl WeightingReplayPhase<'_> {
                     weighted_block_bytes,
                     weighted_sample_bytes: self.generation.planned_residency.weighted_sample_bytes,
                     simultaneous_selected_weighted_bytes,
+                    spectral_cache_bytes: 0,
                     peak_bytes,
                 },
             },
