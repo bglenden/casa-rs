@@ -86,8 +86,9 @@ const EXPECTED_INITIAL_WEIGHTED_NORMAL_STATE_IDENTITY: &str =
     "29697a529f90bfa832a45461469fd7a20ddbb0688ec4f4cb52ec5ce816807f8a";
 const EXPECTED_INITIAL_WEIGHTED_ARTIFACT_IDENTITY: &str =
     "e622ef9bd43c09136f8bd58953beaec608326232001a29c111bc405f71647404";
+// Independently reconstructed from the v2 file/frame-header transcript.
 const EXPECTED_INITIAL_WEIGHTED_ARTIFACT_SHA256: &str =
-    "8ba96df08553820c4441f3a87fd84d90f324b21d14c8d8c7985e6164934ce154";
+    "babf4d4db5b8ad181543460ba7a74f923a461dd7b38c70b3645c81195b717dd9";
 const EXPECTED_INITIAL_WEIGHTING_GENERATION: &str =
     "7c777736897881dc952ad18ec490d23f70351f8b78419ba0e960cb59c22e8808";
 const EXPECTED_INITIAL_WEIGHTING_REPLAY: &str =
@@ -848,7 +849,6 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     assert_eq!(
         write.sha256_bytes(),
         write.artifact_bytes() - admission.spill.serialization_buffer_bytes()
-            + write.payload_bytes()
     );
     assert_eq!(
         [
@@ -1002,6 +1002,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
                 "normal_state": signature.normal_state_identity,
                 "artifact": signature.artifact_identity,
                 "artifact_sha256": sha256_hex(seal.global_sha256()),
+                "artifact_digest_scheme": "managed-spill-v2/header-transcript-sha256",
             },
             "residency": {
                 "weighting_peak_bytes": signature.weighting_residency_bytes,

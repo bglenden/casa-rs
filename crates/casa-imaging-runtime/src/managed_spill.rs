@@ -10,15 +10,22 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use sha2::{Digest, Sha256};
+use sha2::Digest;
+#[cfg(not(test))]
+use sha2::Sha256;
 use tempfile::{Builder, NamedTempFile, TempPath};
+#[cfg(test)]
+use tests::MeasuredSha256 as Sha256;
 use thiserror::Error;
 
 use crate::bounded_stream::{OrderedBlockSource, SourceFillCancellation, SourcePoll};
 use crate::execution_bindings::IoMeasurement;
 use crate::resource_authority::{IoBufferKind, ResourceAuthority, StorageIoResourceBinding};
 
-const FORMAT_VERSION: u32 = 1;
+// V2 commits to the versioned file header and fixed-width frame headers. Each
+// frame header binds its payload checksum; completion still requires the
+// original in-memory seal, not a digest reconstructed from the stored footer.
+const FORMAT_VERSION: u32 = 2;
 const FILE_HEADER_MAGIC: [u8; 8] = *b"CASPHDR\0";
 const FRAME_MAGIC: [u8; 8] = *b"CASPFRM\0";
 const FOOTER_MAGIC: [u8; 8] = *b"CASPFTR\0";
@@ -776,7 +783,7 @@ impl ManagedSpillWriter {
             record_count: self.record_count,
             transferred_bytes: self.bytes_written,
             operations: self.write_operations,
-            sha256_bytes: self.bytes_written.saturating_add(self.payload_bytes),
+            sha256_bytes: self.bytes_written,
             sha256_calls: self.frame_count,
             peak_buffer_bytes: self.budget.io_buffer_bytes,
             payload_copy_bytes: self.payload_bytes,
@@ -907,8 +914,7 @@ impl ManagedSpillWriter {
     }
 
     fn commit_prepared_frame(&mut self, prepared: &PreparedFrame) {
-        self.global_hasher
-            .update(&self.buffer[..prepared.encoded_bytes]);
+        self.global_hasher.update(prepared.header);
         self.payload_bytes = prepared.prospective_payload_bytes;
         self.record_count = prepared.prospective_record_count;
         self.frame_count = prepared.prospective_frame_count;
@@ -967,13 +973,9 @@ impl ManagedSpillWriter {
                 actual: actual_bytes,
             });
         }
-        let sha256_bytes = self
-            .bytes_written
-            .checked_sub(footer_bytes)
-            .and_then(|bytes| bytes.checked_add(self.payload_bytes))
-            .ok_or(ManagedSpillError::ArithmeticOverflow(
-                "artifact checksum bytes",
-            ))?;
+        let sha256_bytes = self.bytes_written.checked_sub(footer_bytes).ok_or(
+            ManagedSpillError::ArithmeticOverflow("artifact checksum bytes"),
+        )?;
         let sha256_calls =
             self.frame_count
                 .checked_add(1)
@@ -1456,7 +1458,6 @@ impl ManagedSpillBlockSource {
                 .measurements
                 .transferred_bytes
                 .checked_sub(if ready { 0 } else { FOOTER_BYTES as u64 })
-                .and_then(|bytes| bytes.checked_add(payload_bytes))
                 .ok_or(ManagedSpillError::ArithmeticOverflow(
                     "prefetched checksum bytes",
                 ))?,
@@ -1638,7 +1639,7 @@ impl ManagedSpillBlockSource {
             ManagedSpillError::ArithmeticOverflow("replayed payload bytes"),
         )?;
         self.global_hasher
-            .update(&storage.bytes[frame_start..payload_end]);
+            .update(&storage.bytes[frame_start..header_end]);
         self.offset = next_offset;
         self.frame_count = next_frame_count;
         self.record_count = next_record_count;
@@ -1743,7 +1744,6 @@ impl ManagedSpillBlockSource {
             .seal
             .artifact_bytes
             .checked_sub(FOOTER_BYTES as u64)
-            .and_then(|bytes| bytes.checked_add(self.payload_bytes))
             .ok_or(ManagedSpillError::ArithmeticOverflow(
                 "artifact checksum bytes",
             ))?;
@@ -1837,11 +1837,18 @@ impl OrderedBlockSource for ManagedSpillBlockSource {
         let block_index = usize::try_from(self.blocks_filled)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("artifact source block index"))?;
         let Some(&maximum_frames) = self.frame_counts.get(block_index) else {
-            return match self.read_next(storage)? {
-                None => Ok(SourcePoll::Exhausted),
-                Some(_) => Err(ManagedSpillError::InvalidBudget(
-                    "the source window plan ended before the sealed artifact",
-                )),
+            return match self.read_next(storage) {
+                Ok(None) => Ok(SourcePoll::Exhausted),
+                Err(error) => {
+                    self.poisoned = true;
+                    Err(error)
+                }
+                Ok(Some(_)) => {
+                    self.poisoned = true;
+                    Err(ManagedSpillError::InvalidBudget(
+                        "the source window plan ended before the sealed artifact",
+                    ))
+                }
             };
         };
         while storage.frame_count < maximum_frames && !cancellation.is_cancelled() {
@@ -2355,6 +2362,7 @@ fn system_page_bytes() -> Result<u64, ManagedSpillError> {
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::Cell,
         collections::{BTreeMap, BTreeSet},
         convert::Infallible,
         fs::OpenOptions,
@@ -2374,6 +2382,268 @@ mod tests {
 
     const TEST_CAPACITY_BYTES: u64 = 4_096;
     const TEST_FRAME_PAYLOAD_BYTES: usize = 64;
+
+    thread_local! {
+        static HASH_INPUT_BYTES: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+    }
+
+    /// Test-only replacement at the SHA call boundary, independent of reported
+    /// measurement arithmetic. Production uses sha2 directly.
+    #[derive(Clone, Debug)]
+    pub(super) struct MeasuredSha256(sha2::Sha256);
+
+    impl MeasuredSha256 {
+        pub(super) fn new() -> Self {
+            Self(sha2::Sha256::new())
+        }
+
+        pub(super) fn update(&mut self, bytes: impl AsRef<[u8]>) {
+            let bytes = bytes.as_ref();
+            HASH_INPUT_BYTES.with(|counts| {
+                let (payload, global) = counts.get();
+                counts.set((payload, global + bytes.len()));
+            });
+            self.0.update(bytes);
+        }
+
+        pub(super) fn digest(bytes: impl AsRef<[u8]>) -> sha2::digest::Output<sha2::Sha256> {
+            let bytes = bytes.as_ref();
+            HASH_INPUT_BYTES.with(|counts| {
+                let (payload, global) = counts.get();
+                counts.set((payload + bytes.len(), global));
+            });
+            sha2::Sha256::digest(bytes)
+        }
+
+        pub(super) fn finalize(self) -> sha2::digest::Output<sha2::Sha256> {
+            self.0.finalize()
+        }
+    }
+
+    fn take_hash_input_bytes() -> (usize, usize) {
+        HASH_INPUT_BYTES.with(|counts| counts.replace((0, 0)))
+    }
+
+    // Deliberately independent of production framing helpers and constants.
+    fn transcript_digest(bytes: &[u8]) -> [u8; 32] {
+        let mut transcript = bytes[..16].to_vec();
+        let mut offset = 16;
+        while offset < bytes.len() - 80 {
+            transcript.extend_from_slice(&bytes[offset..offset + 72]);
+            let payload_len =
+                u64::from_le_bytes(bytes[offset + 32..offset + 40].try_into().unwrap());
+            offset += 72 + payload_len as usize;
+        }
+        assert_eq!(offset, bytes.len() - 80);
+        sha2::Sha256::digest(transcript).into()
+    }
+
+    fn repair_footer_digest(bytes: &mut [u8]) {
+        let digest = transcript_digest(bytes);
+        let end = bytes.len();
+        bytes[end - 32..].copy_from_slice(&digest);
+    }
+
+    fn drain_source<S>(source: &mut S) -> Result<(), ManagedSpillError>
+    where
+        S: OrderedBlockSource<Storage = ManagedSpillWindowStorage, Error = ManagedSpillError>,
+    {
+        let cancelled = AtomicBool::new(false);
+        let mut storage = source.create_storage(0);
+        for ordinal in 0.. {
+            if matches!(
+                source.fill(
+                    ordinal,
+                    &mut storage,
+                    SourceFillCancellation::new(&cancelled)
+                )?,
+                SourcePoll::Exhausted
+            ) {
+                return Ok(());
+            }
+        }
+        unreachable!()
+    }
+
+    #[test]
+    fn v2_hashes_each_payload_once_and_only_headers_globally() {
+        let root = tempfile::tempdir().unwrap();
+        let (_, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
+        for observed in [false, true] {
+            for payloads in [
+                vec![],
+                vec![b"".as_slice(), b""],
+                vec![b"abc".as_slice(), b"", b"longer"],
+            ] {
+                take_hash_input_bytes();
+                let mut writer =
+                    ManagedSpillWriter::create(&storage, budget(TEST_CAPACITY_BYTES)).unwrap();
+                for (sequence, payload) in payloads.iter().enumerate() {
+                    if observed {
+                        writer
+                            .append_frame_observed(sequence as u64, sequence as u64 + 1, payload)
+                            .unwrap();
+                    } else {
+                        writer
+                            .append_frame(sequence as u64, sequence as u64 + 1, payload)
+                            .unwrap();
+                    }
+                }
+                let payload_bytes = payloads.iter().map(|p| p.len()).sum::<usize>();
+                let expected = (payload_bytes, 16 + 72 * payloads.len());
+                assert_eq!(
+                    writer.measurements().sha256_bytes(),
+                    (expected.0 + expected.1) as u64
+                );
+                let artifact = writer.seal().unwrap();
+                assert_eq!(take_hash_input_bytes(), expected);
+                let bytes = std::fs::read(&artifact.path).unwrap();
+                assert_eq!(&bytes[8..12], &2_u32.to_le_bytes());
+                let digest = transcript_digest(&bytes);
+                assert_eq!(artifact.seal().global_sha256(), digest);
+                assert_eq!(&bytes[bytes.len() - 32..], &digest);
+                for prefetch in [false, true] {
+                    let mut source = artifact.block_source(1).unwrap();
+                    take_hash_input_bytes();
+                    if prefetch {
+                        let measurement = source.prefetch_first_window().unwrap();
+                        let prefix = take_hash_input_bytes();
+                        let expected_prefix = if payloads.is_empty() {
+                            (0, 16)
+                        } else {
+                            (payloads[0].len(), 88)
+                        };
+                        assert_eq!(prefix, expected_prefix);
+                        assert_eq!(measurement.sha256_bytes(), (prefix.0 + prefix.1) as u64);
+                        HASH_INPUT_BYTES.with(|counts| counts.set(prefix));
+                    }
+                    drain_source(&mut source).unwrap();
+                    assert_eq!(take_hash_input_bytes(), expected);
+                    let (mut source, completion) = source.complete_rewound().unwrap();
+                    assert_eq!(
+                        completion.measurements().sha256_bytes(),
+                        (expected.0 + expected.1) as u64
+                    );
+                    assert_eq!(
+                        completion.measurements().sha256_calls(),
+                        payloads.len() as u64 + 1
+                    );
+                    drain_source(&mut source).unwrap();
+                    assert_eq!(take_hash_input_bytes(), expected);
+                    assert_eq!(source.complete().unwrap().seal(), artifact.seal());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repaired_payload_and_footer_cannot_replace_the_trusted_seal() {
+        for repair_footer in [false, true] {
+            let (_root, artifact) = sealed_two_frame_artifact();
+            let mut source = artifact.block_source(1).unwrap();
+            drain_source(&mut source).unwrap();
+            let (mut source, _) = source.complete_rewound().unwrap();
+            let mut bytes = std::fs::read(&artifact.path).unwrap();
+            bytes[88] ^= 0xff;
+            let digest = sha2::Sha256::digest(&bytes[88..99]);
+            bytes[56..88].copy_from_slice(&digest);
+            if repair_footer {
+                repair_footer_digest(&mut bytes);
+            }
+            write_all_at(&artifact_file(&artifact), &bytes, 0);
+            assert!(matches!(
+                artifact_source_error(&artifact),
+                ManagedSpillError::GlobalChecksumMismatch
+            ));
+            assert!(matches!(
+                drain_source(&mut source),
+                Err(ManagedSpillError::GlobalChecksumMismatch)
+            ));
+            assert!(matches!(
+                source.complete_rewound(),
+                Err(ManagedSpillError::ReaderPoisoned)
+            ));
+            let slot_bytes = artifact.budget.source_slot_bytes(1).unwrap();
+            assert!(matches!(
+                artifact.load_retained_block_source(Arc::from([1, 1]), slot_bytes),
+                Err(ManagedSpillError::GlobalChecksumMismatch)
+            ));
+        }
+    }
+
+    #[test]
+    fn repaired_frame_order_and_record_counts_remain_bound_to_the_seal() {
+        for reorder in [false, true] {
+            let (_root, artifact) = sealed_numbered_artifact(2);
+            let mut bytes = std::fs::read(&artifact.path).unwrap();
+            if reorder {
+                let first = bytes[16..89].to_vec();
+                bytes.copy_within(89..162, 16);
+                bytes[89..162].copy_from_slice(&first);
+                bytes[32..40].copy_from_slice(&0_u64.to_le_bytes());
+                bytes[105..113].copy_from_slice(&1_u64.to_le_bytes());
+            } else {
+                bytes[40..48].copy_from_slice(&0_u64.to_le_bytes());
+                bytes[113..121].copy_from_slice(&2_u64.to_le_bytes());
+            }
+            repair_footer_digest(&mut bytes);
+            write_all_at(&artifact_file(&artifact), &bytes, 0);
+            assert!(matches!(
+                artifact_source_error(&artifact),
+                ManagedSpillError::GlobalChecksumMismatch
+            ));
+        }
+    }
+
+    #[test]
+    fn v1_and_mixed_version_artifacts_are_rejected() {
+        for versions in [[1, 1, 1], [1, 2, 2], [2, 1, 2], [2, 2, 1]] {
+            let (_root, artifact) = sealed_numbered_artifact(1);
+            let mut bytes = std::fs::read(&artifact.path).unwrap();
+            for (offset, version) in [8, 24, 97].into_iter().zip(versions) {
+                bytes[offset..offset + 4].copy_from_slice(&u32::to_le_bytes(version));
+            }
+            repair_footer_digest(&mut bytes);
+            write_all_at(&artifact_file(&artifact), &bytes, 0);
+            assert!(matches!(
+                artifact_source_error(&artifact),
+                ManagedSpillError::InvalidFormat { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn footer_failure_permanently_poisons_exhausted_schedule_reader() {
+        let (_root, artifact) = sealed_numbered_artifact(1);
+        let mut source = artifact.block_source(1).unwrap();
+        let mut storage = source.create_storage(0);
+        let cancelled = AtomicBool::new(false);
+        assert!(matches!(
+            source
+                .fill(0, &mut storage, SourceFillCancellation::new(&cancelled))
+                .unwrap(),
+            SourcePoll::Ready { .. }
+        ));
+        let offset = artifact.seal.artifact_bytes - 32;
+        write_all_at(&artifact_file(&artifact), &[0; 32], offset);
+        assert!(matches!(
+            source.fill(1, &mut storage, SourceFillCancellation::new(&cancelled)),
+            Err(ManagedSpillError::GlobalChecksumMismatch)
+        ));
+        write_all_at(
+            &artifact_file(&artifact),
+            &artifact.seal.global_sha256,
+            offset,
+        );
+        assert!(matches!(
+            source.fill(1, &mut storage, SourceFillCancellation::new(&cancelled)),
+            Err(ManagedSpillError::ReaderPoisoned)
+        ));
+        assert!(matches!(
+            source.complete(),
+            Err(ManagedSpillError::ReaderPoisoned)
+        ));
+    }
 
     #[test]
     fn aggregate_read_measurements_sum_pass_work_but_retain_artifact_size() {
@@ -2724,7 +2994,7 @@ mod tests {
         assert_eq!(write.buffer_reuses(), 1);
         assert_eq!(
             write.sha256_bytes(),
-            expected_artifact_bytes - FOOTER_BYTES as u64 + 17
+            expected_artifact_bytes - FOOTER_BYTES as u64
         );
         assert_eq!(
             write.peak_buffer_bytes(),
@@ -2883,6 +3153,8 @@ mod tests {
         );
         let replay = outcome.source_completion.measurements();
         assert_eq!(replay.io_measurement().actual(), Some((0, 0)));
+        assert_eq!(replay.sha256_bytes(), 0);
+        assert_eq!(replay.sha256_calls(), 0);
         assert_eq!(replay.payload_copy_bytes(), 0);
         assert_eq!(replay.payload_copy_operations(), 0);
         assert_eq!(replay.peak_buffer_bytes(), retained_bytes);
@@ -2966,6 +3238,7 @@ mod tests {
         ));
         let mut first = None;
         for _ in 0..3 {
+            take_hash_input_bytes();
             let values = read(&mut cached);
             assert_eq!(first.get_or_insert_with(|| values.clone()), &values);
             let (next, completion) = cached.complete_rewound().unwrap();
@@ -2974,6 +3247,9 @@ mod tests {
                 Some((0, 0))
             );
             assert_eq!(completion.measurements().payload_copy_bytes(), 0);
+            assert_eq!(completion.measurements().sha256_bytes(), 0);
+            assert_eq!(completion.measurements().sha256_calls(), 0);
+            assert_eq!(take_hash_input_bytes(), (0, 0));
             cached = next;
         }
     }
