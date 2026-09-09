@@ -11424,18 +11424,12 @@ impl StandardConvolution {
     }
 
     pub(crate) fn degrid(&self, grid: &Array2<Complex64>, taps: SampleTaps) -> Complex64 {
-        let row_stride = grid.ncols();
-        let grid = grid
-            .as_slice()
-            .expect("spectral grids use standard contiguous layout");
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
         let mut value = Complex64::new(0.0, 0.0);
         for (x, x_weight) in x_weights.into_iter().enumerate() {
-            let start = (taps.x.start + x) * row_stride + taps.y.start;
-            let grid_row = &grid[start..start + y_weights.len()];
-            for (grid_cell, y_weight) in grid_row.iter().zip(y_weights) {
-                value += *grid_cell * x_weight * y_weight;
+            for (y, y_weight) in y_weights.into_iter().enumerate() {
+                value += grid[(taps.x.start + x, taps.y.start + y)] * x_weight * y_weight;
             }
         }
         value
@@ -12123,51 +12117,6 @@ mod tests {
         let coordinate = [0.25, -0.5, 0.0];
         assert_eq!(standard.taps(coordinate), zero_w.taps(coordinate));
         assert!(matches!(zero_w, ConvolutionOperator::Standard(_)));
-    }
-
-    #[test]
-    fn standard_degrid_preserves_scalar_order_at_rectangular_grid_edges() {
-        let mut geometry = geometry();
-        geometry.grid_shape = [19, 23];
-        let operator = StandardConvolution::new(&geometry);
-        let values = [0.0, -0.0, 1.0e16, -1.0e16, 0.75, -0.25, 1.0e-16];
-        let grid = Array2::from_shape_fn((19, 23), |(x, y)| {
-            Complex64::new(
-                values[(x * 3 + y) % values.len()],
-                values[(x + y * 5) % values.len()],
-            )
-        });
-        for x_start in [0, 5, 12] {
-            for y_start in [0, 7, 16] {
-                for weight_index in 0..operator.weights.len() {
-                    let taps = SampleTaps {
-                        x: TapSpan {
-                            start: x_start,
-                            weight_index,
-                        },
-                        y: TapSpan {
-                            start: y_start,
-                            weight_index: operator.weights.len() - 1 - weight_index,
-                        },
-                    };
-                    let mut expected = Complex64::new(0.0, 0.0);
-                    for (x, x_weight) in operator.weights[taps.x.weight_index]
-                        .into_iter()
-                        .enumerate()
-                    {
-                        for (y, y_weight) in operator.weights[taps.y.weight_index]
-                            .into_iter()
-                            .enumerate()
-                        {
-                            expected += grid[(x_start + x, y_start + y)] * x_weight * y_weight;
-                        }
-                    }
-                    let actual = operator.degrid(&grid, taps);
-                    assert_eq!(actual.re.to_bits(), expected.re.to_bits(), "{taps:?}");
-                    assert_eq!(actual.im.to_bits(), expected.im.to_bits(), "{taps:?}");
-                }
-            }
-        }
     }
 
     #[test]
