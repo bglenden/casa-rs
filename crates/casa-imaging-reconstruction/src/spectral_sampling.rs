@@ -679,14 +679,23 @@ fn channel_local_terms(
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
     let law = problem.science().spectral().sampling();
     let spectral = problem.geometry().spectral();
-    let centres = (0..spectral.output_channels())
-        .map(|channel| spectral.channel_centre_hz(channel))
-        .collect::<Option<Vec<_>>>()
-        .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
-    let boundaries = (0..=spectral.output_channels())
-        .map(|boundary| spectral.channel_boundary_hz(boundary))
-        .collect::<Option<Vec<_>>>()
-        .ok_or(SpectralStencilError::InvalidOutputGeometry)?;
+    let channels = spectral.output_channels();
+    let mut centres = Vec::with_capacity(channels);
+    for channel in 0..channels {
+        centres.push(
+            spectral
+                .channel_centre_hz(channel)
+                .ok_or(SpectralStencilError::InvalidOutputGeometry)?,
+        );
+    }
+    let mut boundaries = Vec::with_capacity(channels + 1);
+    for boundary in 0..=channels {
+        boundaries.push(
+            spectral
+                .channel_boundary_hz(boundary)
+                .ok_or(SpectralStencilError::InvalidOutputGeometry)?,
+        );
+    }
     validate_axis(&centres, &boundaries)?;
     match law.kernel() {
         SpectralKernel::Identity => identity_terms(problem, sample, frequency_hz),
