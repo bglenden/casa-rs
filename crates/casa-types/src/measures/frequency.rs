@@ -543,7 +543,15 @@ pub(super) fn geo_topo_beta(frame: &MeasFrame) -> Result<f64, MeasureError> {
     let pos = frame.position().ok_or(MeasureError::MissingFrameData {
         what: "position (for diurnal velocity)",
     })?;
-    let last = epoch.convert_to(EpochRef::LAST, frame)?.value().frac() * std::f64::consts::TAU;
+    // MCFrame::getLASTr extracts the fraction only after MVEpoch::get has
+    // combined the day and fraction into one double. Keeping the split
+    // fraction here can move a converted channel edge by one frequency ULP.
+    let last = epoch
+        .convert_to(EpochRef::LAST, frame)?
+        .value()
+        .as_mjd()
+        .fract()
+        * std::f64::consts::TAU;
     let tdb_mjd = epoch.convert_to(EpochRef::TDB, frame)?.value().as_mjd();
     let lat = pos.geocentric_latitude_rad();
     let radius = {
@@ -783,6 +791,42 @@ mod tests {
             let parsed: FrequencyRef = r.as_str().parse().unwrap();
             assert_eq!(parsed, r);
         }
+    }
+
+    #[test]
+    fn topo_geocentric_channel_edge_uses_casacore_scalar_sidereal_time() {
+        use crate::measures::position::MPosition;
+
+        // CASA 6.7.6 MCFrequency/MCFrame values at refim_point_withline's
+        // first integration. Pin APP and DUT1 to isolate the diurnal hop
+        // from direction-conversion and external EOP-table differences.
+        let frame = MeasFrame::new()
+            .with_measures(test_measures())
+            .with_epoch(MEpoch::from_mjd(54_793.790_280_962_98, EpochRef::UTC))
+            .with_dut1(-0.553_816_432_367_572)
+            .with_position(MPosition::new_itrf(
+                -1_601_185.365_000_001_9,
+                -5_041_977.546_999_999,
+                3_554_875.870_000_000_6,
+            ))
+            .with_direction(MDirection::from_cosines(
+                [
+                    0.378_060_949_421_031_24,
+                    -0.656_335_950_100_960_8,
+                    0.652_911_203_095_748_5,
+                ],
+                DirectionRef::APP,
+            ));
+        let expected_hz = 1_549_998_692.440_578_f64;
+        let converted = MFrequency::new(1.55e9, FrequencyRef::TOPO)
+            .convert_to(FrequencyRef::GEO, &frame)
+            .unwrap();
+        assert_eq!(converted.hz().to_bits(), expected_hz.to_bits());
+
+        let converted = MFrequencyConverter::new(FrequencyRef::TOPO, FrequencyRef::GEO)
+            .convert_hz(1.55e9, &frame)
+            .unwrap();
+        assert_eq!(converted.hz().to_bits(), expected_hz.to_bits());
     }
 
     #[test]
