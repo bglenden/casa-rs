@@ -107,7 +107,8 @@ def image_case(binary, directory, config, *, profile=False):
 
 
 def measure(root, config, directory):
-    before = tree_identity(config["measurement_set"], excluded_names={"table.lock"})
+    measurement_set = Path(config["measurement_set"])
+    before = tree_identity(measurement_set, excluded_names={"table.lock"})
     binary = build_application(directory)
     context = controller_context(config)
     if context is None:
@@ -145,7 +146,7 @@ def measure(root, config, directory):
         "input_identity": before,
         "cache_policy": "OS cache not purged; both binaries warmed; fresh outputs and backings per call"}
     assert hashes == {"parent": sha256_file(parent), "candidate": sha256_file(binary)}
-    assert before == tree_identity(config["measurement_set"], excluded_names={"table.lock"})
+    assert before == tree_identity(measurement_set, excluded_names={"table.lock"})
     save(directory / "measurement.json", result)
 
 
