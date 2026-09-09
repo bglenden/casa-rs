@@ -766,6 +766,12 @@ impl ModelSampleStorage for PagedModelSamples {
             destination.len(),
             arrays.support.io_stats().delta_since(before_support),
         );
+        let values = values
+            .as_slice()
+            .ok_or_else(|| storage_error("model value window is not contiguous"))?;
+        let support = support
+            .as_slice()
+            .ok_or_else(|| storage_error("model support window is not contiguous"))?;
         for ((destination, value), supported) in destination
             .iter_mut()
             .zip(values.iter().copied())

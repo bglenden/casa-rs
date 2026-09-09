@@ -5,7 +5,7 @@ use casa_imaging_products::{
     ProductWindow, ProductWindowLayout, ProductsError,
 };
 use casa_lattices::{Lattice, LatticeMut, PagedArray, TiledArrayStorageLayout, TiledShape};
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{ArrayD, ArrayViewMut, IxDyn};
 use std::{path::PathBuf, sync::Mutex};
 use tempfile::TempDir;
 
@@ -168,9 +168,9 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.0.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        for (target, source) in values.iter_mut().zip(window.iter().copied()) {
-            *target = source;
-        }
+        ArrayViewMut::from_shape(IxDyn(&shape), values)
+            .map_err(error)?
+            .assign(&window);
         Ok(())
     }
     fn read_validity(
@@ -181,9 +181,9 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.1.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        for (target, source) in values.iter_mut().zip(window.iter().copied()) {
-            *target = source;
-        }
+        ArrayViewMut::from_shape(IxDyn(&shape), values)
+            .map_err(error)?
+            .assign(&window);
         Ok(())
     }
     fn write(&mut self, window: &ProductWindow) -> Result<(), ProductsError> {
@@ -237,7 +237,11 @@ mod tests {
             shape,
             _directory: directory,
         };
-        for (start, extent) in [([0; 4], shape), ([1, 1, 0, 1], [2, 2, 2, 3])] {
+        for (start, extent) in [
+            ([0; 4], shape),
+            ([1, 1, 0, 1], [2, 2, 2, 3]),
+            ([1, 0, 1, 0], [1, 4, 1, 5]),
+        ] {
             let count = extent.iter().product();
             let mut actual = vec![0.0; count];
             let mut actual_support = vec![false; count];
