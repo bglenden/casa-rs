@@ -5026,11 +5026,11 @@ impl<P> CasaLinearRowResampler<P> {
         };
         let previous = self
             .pending
-            .as_ref()
+            .take()
             .ok_or(SpectralOperatorError::InvalidSample)?;
         let result = samples.into_iter().try_for_each(|sample| {
             emit(resample_native_pair(
-                previous,
+                &previous,
                 &current,
                 sample,
                 finite_values,
