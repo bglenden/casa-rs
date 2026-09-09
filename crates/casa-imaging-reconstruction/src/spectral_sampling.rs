@@ -6,10 +6,77 @@
 use casa_imaging_model::{
     CompiledProblem, ReconstructionBasis, SelectedObservationSampleView, SelectedSampleAddress,
     SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
-    SpectralCovariance, SpectralEdgePolicy, SpectralKernel,
+    SpectralCoordinateSpec, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralWcs,
 };
 use smallvec::SmallVec;
 use thiserror::Error;
+
+/// Borrow compiled tabular values or evaluate the exact linear WCS on demand.
+#[derive(Clone, Copy)]
+enum FrequencyAxis<'a> {
+    Linear {
+        spectral: &'a SpectralCoordinateSpec,
+        boundaries: bool,
+    },
+    Tabular(&'a [f64]),
+}
+
+impl<'a> FrequencyAxis<'a> {
+    fn from_spectral(spectral: &'a SpectralCoordinateSpec) -> (Self, Self) {
+        match spectral.wcs() {
+            SpectralWcs::Linear { .. } => (
+                Self::Linear {
+                    spectral,
+                    boundaries: false,
+                },
+                Self::Linear {
+                    spectral,
+                    boundaries: true,
+                },
+            ),
+            SpectralWcs::Tabular {
+                channel_centres_hz,
+                channel_boundaries_hz,
+            } => (
+                Self::Tabular(channel_centres_hz),
+                Self::Tabular(channel_boundaries_hz),
+            ),
+        }
+    }
+
+    fn len(self) -> usize {
+        match self {
+            Self::Linear {
+                spectral,
+                boundaries,
+            } => spectral.output_channels() + usize::from(boundaries),
+            Self::Tabular(values) => values.len(),
+        }
+    }
+
+    fn value(self, index: usize) -> f64 {
+        match self {
+            Self::Linear {
+                spectral,
+                boundaries,
+            } => if boundaries {
+                spectral.channel_boundary_hz(index)
+            } else {
+                spectral.channel_centre_hz(index)
+            }
+            .expect("in-range compiled spectral coordinate"),
+            Self::Tabular(values) => values[index],
+        }
+    }
+
+    fn iter(self) -> impl Iterator<Item = f64> {
+        (0..self.len()).map(move |index| self.value(index))
+    }
+
+    fn pairs(self) -> impl Iterator<Item = [f64; 2]> {
+        (1..self.len()).map(move |index| [self.value(index - 1), self.value(index)])
+    }
+}
 
 /// One CASA fine-channel interpolation point between adjacent native channels.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -144,11 +211,18 @@ impl CasaLinearOutputGrid {
         (pixel >= 0.0 && pixel < self.channels as f64).then_some(pixel as usize)
     }
     pub(crate) fn compile(output_centres_hz: &[f64]) -> Option<Self> {
+        Self::from_axis(FrequencyAxis::Tabular(output_centres_hz))
+    }
+
+    fn from_axis(centres: FrequencyAxis<'_>) -> Option<Self> {
+        if centres.len() < 2 {
+            return None;
+        }
         Some(Self {
-            first_hz: *output_centres_hz.first()?,
-            second_hz: *output_centres_hz.get(1)?,
-            last_hz: *output_centres_hz.last()?,
-            channels: output_centres_hz.len(),
+            first_hz: centres.value(0),
+            second_hz: centres.value(1),
+            last_hz: centres.value(centres.len() - 1),
+            channels: centres.len(),
         })
     }
 }
@@ -332,6 +406,7 @@ impl Iterator for CasaLinearPairSamples<'_> {
 
 impl CasaLinearGrid {
     /// Compile CASA's direct or synchronized-fine interpolation grid.
+    #[cfg(test)]
     pub(crate) fn compile(
         output_centres_hz: &[f64],
         first_native_frequency_hz: f64,
@@ -679,39 +754,24 @@ fn channel_local_terms(
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
     let law = problem.science().spectral().sampling();
     let spectral = problem.geometry().spectral();
-    let channels = spectral.output_channels();
-    let mut centres = Vec::with_capacity(channels);
-    for channel in 0..channels {
-        centres.push(
-            spectral
-                .channel_centre_hz(channel)
-                .ok_or(SpectralStencilError::InvalidOutputGeometry)?,
-        );
-    }
-    let mut boundaries = Vec::with_capacity(channels + 1);
-    for boundary in 0..=channels {
-        boundaries.push(
-            spectral
-                .channel_boundary_hz(boundary)
-                .ok_or(SpectralStencilError::InvalidOutputGeometry)?,
-        );
-    }
-    validate_axis(&centres, &boundaries)?;
+    // CompiledProblem owns immutable geometry whose compiler already checked
+    // positive, finite, strictly monotonic centres and boundaries.
+    let (centres, boundaries) = FrequencyAxis::from_spectral(spectral);
     match law.kernel() {
         SpectralKernel::Identity => identity_terms(problem, sample, frequency_hz),
-        SpectralKernel::Nearest => Ok(nearest_terms(&centres, &boundaries, frequency_hz)),
+        SpectralKernel::Nearest => Ok(nearest_terms(centres, boundaries, frequency_hz)),
         SpectralKernel::Linear => Ok(linear_terms(
-            &centres,
-            &boundaries,
+            centres,
+            boundaries,
             evaluation.output_frame().boundaries_hz(),
             frequency_hz,
         )),
         SpectralKernel::Cubic if centres.len() == 1 => {
-            Ok(nearest_terms(&centres, &boundaries, frequency_hz))
+            Ok(nearest_terms(centres, boundaries, frequency_hz))
         }
-        SpectralKernel::Cubic => Ok(cubic_terms(&centres, frequency_hz)),
+        SpectralKernel::Cubic => Ok(cubic_terms(centres, frequency_hz)),
         SpectralKernel::ChannelIntegration { maximum_terms } => integration_terms(
-            &boundaries,
+            boundaries,
             evaluation.output_frame().boundaries_hz(),
             law.edge_policy(),
             maximum_terms,
@@ -732,28 +792,6 @@ fn receipt(
         validity,
         covariance,
     }
-}
-
-fn validate_axis(centres: &[f64], boundaries: &[f64]) -> Result<(), SpectralStencilError> {
-    if centres.is_empty()
-        || boundaries.len() != centres.len() + 1
-        || centres
-            .iter()
-            .chain(boundaries)
-            .any(|value| !value.is_finite() || *value <= 0.0)
-    {
-        return Err(SpectralStencilError::InvalidOutputGeometry);
-    }
-    let direction = (centres[centres.len() - 1] - centres[0]).signum();
-    if centres.len() > 1
-        && (direction == 0.0
-            || centres
-                .windows(2)
-                .any(|pair| (pair[1] - pair[0]).signum() != direction))
-    {
-        return Err(SpectralStencilError::InvalidOutputGeometry);
-    }
-    Ok(())
 }
 
 fn identity_terms(
@@ -801,8 +839,8 @@ fn identity_terms(
 }
 
 fn nearest_terms(
-    centres: &[f64],
-    boundaries: &[f64],
+    centres: FrequencyAxis<'_>,
+    boundaries: FrequencyAxis<'_>,
     frequency_hz: f64,
 ) -> SmallVec<[SelectedSpectralContribution; 4]> {
     let Some((index, _)) = centres.iter().enumerate().min_by(|(_, left), (_, right)| {
@@ -812,8 +850,8 @@ fn nearest_terms(
     }) else {
         return SmallVec::new();
     };
-    let low = boundaries[index].min(boundaries[index + 1]);
-    let high = boundaries[index].max(boundaries[index + 1]);
+    let low = boundaries.value(index).min(boundaries.value(index + 1));
+    let high = boundaries.value(index).max(boundaries.value(index + 1));
     if !(low..=high).contains(&frequency_hz) {
         return SmallVec::new();
     }
@@ -821,8 +859,8 @@ fn nearest_terms(
 }
 
 fn linear_terms(
-    centres: &[f64],
-    boundaries: &[f64],
+    centres: FrequencyAxis<'_>,
+    boundaries: FrequencyAxis<'_>,
     source_boundaries_hz: [f64; 2],
     frequency_hz: f64,
 ) -> SmallVec<[SelectedSpectralContribution; 4]> {
@@ -835,8 +873,8 @@ fn linear_terms(
     }
     interpolation_interval(centres, frequency_hz)
         .and_then(|index| {
-            let first = centres[index];
-            let second = centres[index + 1];
+            let first = centres.value(index);
+            let second = centres.value(index + 1);
             let upper = (frequency_hz - first) / (second - first);
             sparse_terms([(index, 1.0 - upper), (index + 1, upper)], frequency_hz)
         })
@@ -850,17 +888,18 @@ fn linear_terms(
 /// It is intentionally distinct from data gridding, which interpolates
 /// adjacent native visibilities, weights, and flags onto the fine grid first.
 fn casa_wide_channel_linear_terms(
-    output_centres_hz: &[f64],
+    output_centres_hz: FrequencyAxis<'_>,
     source_boundaries_hz: [f64; 2],
     source_frequency_hz: f64,
 ) -> Option<SmallVec<[SelectedSpectralContribution; 4]>> {
     let source_increment_hz = source_boundaries_hz[1] - source_boundaries_hz[0];
-    let output_increment_hz = output_centres_hz.get(1)? - output_centres_hz[0];
+    let output = CasaLinearOutputGrid::from_axis(output_centres_hz)?;
+    let output_increment_hz = output.second_hz - output.first_hz;
     if output_increment_hz.abs() / source_increment_hz.abs() <= 1.0 {
         return None;
     }
-    let grid = CasaLinearGrid::compile(
-        output_centres_hz,
+    let grid = CasaLinearGrid::compile_for_output(
+        output,
         source_frequency_hz,
         source_frequency_hz + source_increment_hz,
     )?;
@@ -973,7 +1012,10 @@ pub(crate) fn casa_linear_prediction_terms(
     Ok(terms)
 }
 
-fn cubic_terms(centres: &[f64], frequency_hz: f64) -> SmallVec<[SelectedSpectralContribution; 4]> {
+fn cubic_terms(
+    centres: FrequencyAxis<'_>,
+    frequency_hz: f64,
+) -> SmallVec<[SelectedSpectralContribution; 4]> {
     if centres.len() < 4 {
         return SmallVec::new();
     }
@@ -993,7 +1035,8 @@ fn cubic_terms(centres: &[f64], frequency_hz: f64) -> SmallVec<[SelectedSpectral
         let mut coefficient = 1.0;
         for other in start..start + 4 {
             if other != index {
-                coefficient *= (frequency_hz - centres[other]) / (centres[index] - centres[other]);
+                coefficient *= (frequency_hz - centres.value(other))
+                    / (centres.value(index) - centres.value(other));
             }
         }
         terms.push((index, coefficient));
@@ -1002,7 +1045,7 @@ fn cubic_terms(centres: &[f64], frequency_hz: f64) -> SmallVec<[SelectedSpectral
 }
 
 fn integration_terms(
-    output_boundaries_hz: &[f64],
+    output_boundaries_hz: FrequencyAxis<'_>,
     source_boundaries_hz: [f64; 2],
     edge_policy: SpectralEdgePolicy,
     maximum_terms: usize,
@@ -1010,16 +1053,16 @@ fn integration_terms(
 ) -> Result<SmallVec<[SelectedSpectralContribution; 4]>, SpectralStencilError> {
     let source_low = source_boundaries_hz[0].min(source_boundaries_hz[1]);
     let source_high = source_boundaries_hz[0].max(source_boundaries_hz[1]);
-    let axis_end = output_boundaries_hz[output_boundaries_hz.len() - 1];
-    let axis_low = output_boundaries_hz[0].min(axis_end);
-    let axis_high = output_boundaries_hz[0].max(axis_end);
+    let axis_end = output_boundaries_hz.value(output_boundaries_hz.len() - 1);
+    let axis_low = output_boundaries_hz.value(0).min(axis_end);
+    let axis_high = output_boundaries_hz.value(0).max(axis_end);
     if edge_policy == SpectralEdgePolicy::CompleteSupport
         && (source_low < axis_low || source_high > axis_high)
     {
         return Ok(SmallVec::new());
     }
     let mut terms = SmallVec::<[SelectedSpectralContribution; 4]>::new();
-    for (output_channel, pair) in output_boundaries_hz.windows(2).enumerate() {
+    for (output_channel, pair) in output_boundaries_hz.pairs().enumerate() {
         let output_low = pair[0].min(pair[1]);
         let output_high = pair[0].max(pair[1]);
         let overlap = source_high.min(output_high) - source_low.max(output_low);
@@ -1041,8 +1084,8 @@ fn integration_terms(
     Ok(terms)
 }
 
-fn interpolation_interval(centres: &[f64], frequency_hz: f64) -> Option<usize> {
-    centres.windows(2).position(|pair| {
+fn interpolation_interval(centres: FrequencyAxis<'_>, frequency_hz: f64) -> Option<usize> {
+    centres.pairs().position(|pair| {
         pair[0].min(pair[1]) <= frequency_hz && frequency_hz <= pair[0].max(pair[1])
     })
 }
@@ -1076,6 +1119,109 @@ fn sparse_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use FrequencyAxis::Tabular;
+
+    #[test]
+    fn indexed_spectral_axes_preserve_materialized_kernel_values_and_edges() {
+        use casa_imaging_model::{
+            DopplerConvention, FrequencyFrame, RestFrequency, SpectralFrameAnchor,
+        };
+
+        let mut axes = Vec::new();
+        for channels in [1, 4, 17] {
+            for increment_hz in [0.1, -0.1, 64.0, -64.0] {
+                axes.push(SpectralWcs::Linear {
+                    channels,
+                    reference_pixel: 1.75,
+                    reference_frequency_hz: 1.0e9,
+                    increment_hz,
+                });
+            }
+        }
+        for descending in [false, true] {
+            let mut channel_centres_hz = vec![10.0, 19.0, 31.0, 40.0];
+            let mut channel_boundaries_hz = vec![5.0, 15.0, 25.0, 35.0, 45.0];
+            if descending {
+                channel_centres_hz.reverse();
+                channel_boundaries_hz.reverse();
+            }
+            axes.push(SpectralWcs::Tabular {
+                channel_centres_hz,
+                channel_boundaries_hz,
+            });
+        }
+        for wcs in axes {
+            let spectral = SpectralCoordinateSpec::new(
+                FrequencyFrame::Topocentric,
+                FrequencyFrame::Topocentric,
+                SpectralFrameAnchor::NotApplicable,
+                wcs,
+                RestFrequency::NotApplicable,
+                DopplerConvention::NotApplicable,
+            );
+            let channels = spectral.output_channels();
+            let centres = (0..channels)
+                .map(|index| spectral.channel_centre_hz(index).unwrap())
+                .collect::<Vec<_>>();
+            let boundaries = (0..=channels)
+                .map(|index| spectral.channel_boundary_hz(index).unwrap())
+                .collect::<Vec<_>>();
+            let (indexed_centres, indexed_boundaries) = FrequencyAxis::from_spectral(&spectral);
+            assert_eq!(indexed_centres.iter().collect::<Vec<_>>(), centres);
+            assert_eq!(indexed_boundaries.iter().collect::<Vec<_>>(), boundaries);
+            let width = (boundaries[1] - boundaries[0]).abs();
+            for frequency_hz in centres
+                .iter()
+                .chain(&boundaries)
+                .flat_map(|&frequency| [frequency.next_down(), frequency, frequency.next_up()])
+            {
+                assert_eq!(
+                    nearest_terms(indexed_centres, indexed_boundaries, frequency_hz),
+                    nearest_terms(Tabular(&centres), Tabular(&boundaries), frequency_hz)
+                );
+                assert_eq!(
+                    cubic_terms(indexed_centres, frequency_hz),
+                    cubic_terms(Tabular(&centres), frequency_hz)
+                );
+                for source_width in [width / 4.0, width * 2.0] {
+                    let source = [
+                        frequency_hz - source_width / 2.0,
+                        frequency_hz + source_width / 2.0,
+                    ];
+                    assert_eq!(
+                        linear_terms(indexed_centres, indexed_boundaries, source, frequency_hz),
+                        linear_terms(
+                            Tabular(&centres),
+                            Tabular(&boundaries),
+                            source,
+                            frequency_hz
+                        )
+                    );
+                    for edge in [
+                        SpectralEdgePolicy::PartialOverlap,
+                        SpectralEdgePolicy::CompleteSupport,
+                    ] {
+                        assert_eq!(
+                            integration_terms(
+                                indexed_boundaries,
+                                source,
+                                edge,
+                                channels,
+                                frequency_hz
+                            ),
+                            integration_terms(
+                                Tabular(&boundaries),
+                                source,
+                                edge,
+                                channels,
+                                frequency_hz
+                            )
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn t55_cube_density_keeps_the_nominal_active_extent() {
@@ -1166,7 +1312,12 @@ mod tests {
     #[test]
     fn t35_dense_oracle_matches_sparse_linear_and_signed_cubic_stencils() {
         let centres = [10.0, 20.0, 30.0, 40.0];
-        let linear = linear_terms(&centres, &[5.0, 15.0, 25.0, 35.0, 45.0], [20.0, 30.0], 25.0);
+        let linear = linear_terms(
+            Tabular(&centres),
+            Tabular(&[5.0, 15.0, 25.0, 35.0, 45.0]),
+            [20.0, 30.0],
+            25.0,
+        );
         assert_eq!(
             linear
                 .iter()
@@ -1175,7 +1326,7 @@ mod tests {
             vec![(1, 0.5), (2, 0.5)]
         );
 
-        let cubic = cubic_terms(&centres, 25.0);
+        let cubic = cubic_terms(Tabular(&centres), 25.0);
         let dense = cubic.iter().fold([0.0; 4], |mut dense, term| {
             dense[term.output_channel() as usize] = term.factor();
             dense
@@ -1194,8 +1345,8 @@ mod tests {
     #[test]
     fn t40_one_channel_linear_sampling_degenerates_to_its_exact_constant_stencil() {
         let inside = linear_terms(
-            &[44.001e9],
-            &[44.0005e9, 44.0015e9],
+            Tabular(&[44.001e9]),
+            Tabular(&[44.0005e9, 44.0015e9]),
             [44.0005e9, 44.0015e9],
             44.001e9,
         );
@@ -1208,8 +1359,8 @@ mod tests {
         );
         assert!(
             linear_terms(
-                &[44.001e9],
-                &[44.0005e9, 44.0015e9],
+                Tabular(&[44.001e9]),
+                Tabular(&[44.0005e9, 44.0015e9]),
                 [44.0015e9, 44.0025e9],
                 44.002e9,
             )
@@ -1220,8 +1371,8 @@ mod tests {
     #[test]
     fn t41_wide_linear_channel_interior_is_not_splatted_between_coarse_centres() {
         let terms = linear_terms(
-            &[132.0, 196.0],
-            &[100.0, 164.0, 228.0],
+            Tabular(&[132.0, 196.0]),
+            Tabular(&[100.0, 164.0, 228.0]),
             [132.0, 133.0],
             132.5,
         );
@@ -1234,8 +1385,8 @@ mod tests {
         );
 
         let edge = linear_terms(
-            &[132.0, 196.0],
-            &[100.0, 164.0, 228.0],
+            Tabular(&[132.0, 196.0]),
+            Tabular(&[100.0, 164.0, 228.0]),
             [163.5, 164.5],
             164.0,
         );
@@ -1428,8 +1579,8 @@ mod tests {
         for native in 0..1_024 {
             let frequency_hz = 1_000.0 + native as f64;
             let predicted = linear_terms(
-                &output_centres,
-                &output_boundaries,
+                Tabular(&output_centres),
+                Tabular(&output_boundaries),
                 [frequency_hz - 0.5, frequency_hz + 0.5],
                 frequency_hz,
             )
@@ -1457,7 +1608,7 @@ mod tests {
     fn t36_descending_partial_overlap_and_planner_bounds_are_explicit() {
         let descending = [45.0, 35.0, 25.0, 15.0, 5.0];
         let terms = integration_terms(
-            &descending,
+            Tabular(&descending),
             [42.0, 28.0],
             SpectralEdgePolicy::PartialOverlap,
             2,
@@ -1473,7 +1624,7 @@ mod tests {
         );
         assert_eq!(
             integration_terms(
-                &descending,
+                Tabular(&descending),
                 [42.0, 18.0],
                 SpectralEdgePolicy::PartialOverlap,
                 2,
@@ -1487,8 +1638,8 @@ mod tests {
     fn t36_edge_validity_and_source_channel_order_are_deterministic() {
         assert!(
             linear_terms(
-                &[30.0, 20.0, 10.0],
-                &[35.0, 25.0, 15.0, 5.0],
+                Tabular(&[30.0, 20.0, 10.0]),
+                Tabular(&[35.0, 25.0, 15.0, 5.0]),
                 [30.0, 40.0],
                 35.0,
             )
@@ -1496,8 +1647,8 @@ mod tests {
         );
         assert_eq!(
             linear_terms(
-                &[30.0, 20.0, 10.0],
-                &[35.0, 25.0, 15.0, 5.0],
+                Tabular(&[30.0, 20.0, 10.0]),
+                Tabular(&[35.0, 25.0, 15.0, 5.0]),
                 [20.0, 30.0],
                 25.0,
             )
@@ -1506,7 +1657,7 @@ mod tests {
             .collect::<Vec<_>>(),
             vec![0, 1]
         );
-        assert!(cubic_terms(&[10.0, 20.0, 30.0], 15.0).is_empty());
+        assert!(cubic_terms(Tabular(&[10.0, 20.0, 30.0]), 15.0).is_empty());
     }
 
     #[cfg(feature = "cpp-interop-tests")]
@@ -1572,17 +1723,17 @@ mod tests {
         let cases = [
             (
                 SpectralInterpolationMethod::Nearest,
-                nearest_terms(&centres, &boundaries, 26.0),
+                nearest_terms(Tabular(&centres), Tabular(&boundaries), 26.0),
                 26.0,
             ),
             (
                 SpectralInterpolationMethod::Linear,
-                linear_terms(&centres, &boundaries, [20.0, 30.0], 25.0),
+                linear_terms(Tabular(&centres), Tabular(&boundaries), [20.0, 30.0], 25.0),
                 25.0,
             ),
             (
                 SpectralInterpolationMethod::Cubic,
-                cubic_terms(&centres, 25.0),
+                cubic_terms(Tabular(&centres), 25.0),
                 25.0,
             ),
         ];
@@ -1621,12 +1772,14 @@ mod tests {
                     .all(|coefficient| *coefficient == 0.0)
             );
         }
-        assert!(nearest_terms(&centres, &boundaries, 45.1).is_empty());
-        assert!(linear_terms(&centres, &boundaries, [40.1, 50.1], 45.1).is_empty());
-        assert!(cubic_terms(&centres, 45.1).is_empty());
+        assert!(nearest_terms(Tabular(&centres), Tabular(&boundaries), 45.1).is_empty());
+        assert!(
+            linear_terms(Tabular(&centres), Tabular(&boundaries), [40.1, 50.1], 45.1).is_empty()
+        );
+        assert!(cubic_terms(Tabular(&centres), 45.1).is_empty());
 
         let integrated = integration_terms(
-            &boundaries,
+            Tabular(&boundaries),
             [12.0, 28.0],
             SpectralEdgePolicy::PartialOverlap,
             3,
