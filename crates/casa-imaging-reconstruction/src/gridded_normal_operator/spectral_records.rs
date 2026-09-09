@@ -283,7 +283,7 @@ impl GriddedNormalOperatorCompiler {
 
     fn resampled_record_groups(
         &self,
-        resampled: CasaResampledGroup<'_, InterpolatedPredictions>,
+        resampled: CasaResampledGroup<InterpolatedPredictions>,
         scratch: &mut StandardRecordScratch,
         emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
         cardinality: &mut GriddedNormalSourceCardinality,
@@ -324,7 +324,7 @@ impl GriddedNormalOperatorCompiler {
             let prediction_len = scratch.atom.len();
             self.append_standard_stencil(
                 &mut scratch.atom,
-                resampled.selected,
+                &resampled.selected,
                 RecordStencil {
                     output_channel: resampled.output_channel,
                     frequency_hz: resampled.frequency_hz,

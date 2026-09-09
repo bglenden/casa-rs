@@ -4972,10 +4972,10 @@ pub(super) struct NativeSpectralGroup<P = SmallVec<[Complex64; 4]>> {
 }
 
 #[derive(Debug)]
-pub(super) struct CasaResampledGroup<'a, P = SmallVec<[Complex64; 4]>> {
+pub(super) struct CasaResampledGroup<P = SmallVec<[Complex64; 4]>> {
     pub(super) output_channel: usize,
     pub(super) frequency_hz: f64,
-    pub(super) selected: &'a crate::weighting::WeightingSelectedSample,
+    pub(super) selected: crate::weighting::WeightingSelectedSample,
     pub(super) correlations: SmallVec<[casa_imaging_model::CorrelationType; 4]>,
     pub(super) observed: SmallVec<[Complex64; 4]>,
     pub(super) predicted: P,
@@ -5004,7 +5004,7 @@ impl<P> CasaLinearRowResampler<P> {
         finite_values: FiniteValuePolicy,
         cube_native_weight_transfer: bool,
         mut interpolate_prediction: impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
-        mut emit: impl FnMut(CasaResampledGroup<'_, T>) -> Result<(), SpectralOperatorError>,
+        mut emit: impl FnMut(CasaResampledGroup<T>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         let geometry = current
             .samples
@@ -5061,14 +5061,14 @@ fn spectral_row_error(error: crate::SpectralStencilError) -> SpectralOperatorErr
     }
 }
 
-fn resample_native_pair<'a, P, T>(
-    left: &'a NativeSpectralGroup<P>,
+fn resample_native_pair<P, T>(
+    left: &NativeSpectralGroup<P>,
     right: &NativeSpectralGroup<P>,
     fine: CasaLinearSample,
     finite_values: FiniteValuePolicy,
     cube_native_weight_transfer: bool,
     interpolate_prediction: &mut impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
-) -> Result<CasaResampledGroup<'a, T>, SpectralOperatorError> {
+) -> Result<CasaResampledGroup<T>, SpectralOperatorError> {
     if left.samples.len() != right.samples.len()
         || left.observed.len() != left.samples.len()
         || right.observed.len() != right.samples.len()
@@ -5134,7 +5134,8 @@ fn resample_native_pair<'a, P, T>(
         .samples
         .first()
         .ok_or(SpectralOperatorError::InvalidSample)?
-        .selected();
+        .selected()
+        .clone();
     Ok(CasaResampledGroup {
         output_channel: fine.output_channel(),
         frequency_hz: fine.frequency_hz(),
@@ -6182,13 +6183,13 @@ impl CompleteDataOwnerState {
 
     fn accumulate_casa_resampled_group(
         &mut self,
-        resampled: CasaResampledGroup<'_>,
+        resampled: CasaResampledGroup,
         predicts_residual: bool,
     ) -> Result<(), SpectralOperatorError> {
         if self.specification.aw_projection.is_some() {
             return self.accumulate_casa_resampled_aw_group(resampled, predicts_residual);
         }
-        let mosaic_response = self.mosaic_response(resampled.selected)?;
+        let mosaic_response = self.mosaic_response(&resampled.selected)?;
         let polarization = self
             .specification
             .direction_independent_polarization(&resampled.correlations)?;
@@ -6205,7 +6206,7 @@ impl CompleteDataOwnerState {
         for chart_ordinal in 0..self.operators.len() {
             let chart = &self.specification.charts[chart_ordinal];
             let (uvw_m, phase_shift_m) = selected_model_projection(
-                resampled.selected,
+                &resampled.selected,
                 self.specification.chart_count(),
                 chart.domain_ordinal,
                 chart.facet_ordinal,
@@ -6265,10 +6266,10 @@ impl CompleteDataOwnerState {
 
     fn accumulate_casa_resampled_aw_group(
         &mut self,
-        resampled: CasaResampledGroup<'_>,
+        resampled: CasaResampledGroup,
         predicts_residual: bool,
     ) -> Result<(), SpectralOperatorError> {
-        let mosaic_response = self.mosaic_response(resampled.selected)?;
+        let mosaic_response = self.mosaic_response(&resampled.selected)?;
         let polarization = self
             .specification
             .direction_independent_polarization(&resampled.correlations)?;
@@ -6287,13 +6288,13 @@ impl CompleteDataOwnerState {
         for chart_ordinal in 0..self.operators.len() {
             let chart = &self.specification.charts[chart_ordinal];
             let (uvw_m, phase_shift_m) = selected_model_projection(
-                resampled.selected,
+                &resampled.selected,
                 self.specification.chart_count(),
                 chart.domain_ordinal,
                 chart.facet_ordinal,
             )?;
             let (pa, pointing) =
-                aw_row_coordinates(resampled.selected, chart.geometry, contract.use_pointing())?;
+                aw_row_coordinates(&resampled.selected, chart.geometry, contract.use_pointing())?;
             for row in 0..resampled.correlations.len() {
                 let Some(mueller) = aw_stokes_i_mueller(resampled.correlations[row])? else {
                     continue;
