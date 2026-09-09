@@ -4,7 +4,7 @@
 
 use std::{cmp::Reverse, mem::size_of, ops::Range, sync::Mutex};
 
-use ndarray::Array2;
+use ndarray::{Array2, Zip, s};
 use num_complex::Complex64;
 
 use super::*;
@@ -570,6 +570,32 @@ impl GriddedNormalTileAccumulator {
                 .map_err(|_| SpectralOperatorError::UnsupportedGeometry)?;
         }
         Ok(())
+    }
+
+    fn commit_into(
+        &self,
+        geometry: GriddedNormalTileGeometry,
+        grids: &mut [Array2<Complex64>],
+        compensations: &mut [Array2<Complex64>],
+    ) {
+        let [x, y] = geometry.origin;
+        let [width, height] = geometry.shape;
+        let destination = s![x..x + width, y..y + height];
+        let source = s![..width, ..height];
+        for plane in 0..grids.len() {
+            Zip::from(grids[plane].slice_mut(destination))
+                .and(compensations[plane].slice_mut(destination))
+                .and(self.grids[plane].slice(source))
+                .and(self.compensations[plane].slice(source))
+                .for_each(|cell, compensation, &value, &local_compensation| {
+                    if value != Complex64::default() {
+                        let contribution = value - local_compensation;
+                        let updated = *cell + contribution;
+                        *compensation = (updated - *cell) - contribution;
+                        *cell = updated;
+                    }
+                });
+        }
     }
 }
 
@@ -1791,26 +1817,11 @@ impl GriddedNormalOperatorApply {
                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?]
                 .lock()
                 .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-                for plane in 0..self.normal_grids[domain_ordinal].len() {
-                    for local_x in 0..geometry.shape[0] {
-                        for local_y in 0..geometry.shape[1] {
-                            let value = accumulator.grids[plane][(local_x, local_y)];
-                            if value == Complex64::default() {
-                                continue;
-                            }
-                            let target =
-                                (geometry.origin[0] + local_x, geometry.origin[1] + local_y);
-                            let cell = &mut self.normal_grids[domain_ordinal][plane][target];
-                            let compensation =
-                                &mut self.normal_compensations[domain_ordinal][plane][target];
-                            let contribution =
-                                value - accumulator.compensations[plane][(local_x, local_y)];
-                            let updated = *cell + contribution;
-                            *compensation = (updated - *cell) - contribution;
-                            *cell = updated;
-                        }
-                    }
-                }
+                accumulator.commit_into(
+                    geometry,
+                    &mut self.normal_grids[domain_ordinal],
+                    &mut self.normal_compensations[domain_ordinal],
+                );
             }
         }
         let applied_records = self
@@ -1923,6 +1934,69 @@ mod tests {
             let (values, offset) = plane.into_raw_vec_and_offset();
             assert_eq!(offset, Some(0));
             assert_eq!(values.capacity(), 24);
+        }
+    }
+
+    #[test]
+    fn tile_commit_matches_scalar_arithmetic_for_overlapping_clipped_tiles() {
+        let grid_shape = [75, 69];
+        let mut grids: Vec<_> = (0..2)
+            .map(|plane| {
+                Array2::from_shape_fn((grid_shape[0], grid_shape[1]), |(x, y)| {
+                    Complex64::new((x + plane) as f64 * 0.25, -(y as f64) * 0.125)
+                })
+            })
+            .collect();
+        let mut compensations =
+            vec![Array2::from_elem((grid_shape[0], grid_shape[1]), Complex64::new(0.125, -0.5)); 2];
+        let mut expected_grids = grids.clone();
+        let mut expected_compensations = compensations.clone();
+        let mut accumulator = GriddedNormalTileAccumulator::new(38 * 38, 2);
+        for key in [
+            GriddedNormalTileKey { x: 0, y: 0 },
+            GriddedNormalTileKey { x: 1, y: 0 },
+            GriddedNormalTileKey { x: 0, y: 1 },
+            GriddedNormalTileKey { x: 0, y: 0 },
+        ] {
+            let geometry = GriddedNormalTileGeometry::new(grid_shape, key, 3).unwrap();
+            accumulator.bind_geometry(geometry.shape).unwrap();
+            for plane in 0..2 {
+                for ((x, y), value) in accumulator.grids[plane].indexed_iter_mut() {
+                    *value = [
+                        Complex64::new(-0.0, 0.0),
+                        Complex64::new(1.0e16, -1.0e16),
+                        Complex64::new(-1.0e16, 1.0e16),
+                        Complex64::new(0.125, -0.25),
+                    ][(x + y + plane) % 4];
+                    accumulator.compensations[plane][(x, y)] =
+                        Complex64::new((x + 1) as f64 * 1.0e-10, -(y as f64) * 1.0e-10);
+                }
+                for x in 0..geometry.shape[0] {
+                    for y in 0..geometry.shape[1] {
+                        let value = accumulator.grids[plane][(x, y)];
+                        if value == Complex64::default() {
+                            continue;
+                        }
+                        let target = (geometry.origin[0] + x, geometry.origin[1] + y);
+                        let cell = &mut expected_grids[plane][target];
+                        let contribution = value - accumulator.compensations[plane][(x, y)];
+                        let updated = *cell + contribution;
+                        expected_compensations[plane][target] = (updated - *cell) - contribution;
+                        *cell = updated;
+                    }
+                }
+            }
+            accumulator.commit_into(geometry, &mut grids, &mut compensations);
+            for (actual, expected) in grids
+                .iter()
+                .chain(&compensations)
+                .zip(expected_grids.iter().chain(&expected_compensations))
+            {
+                for (actual, expected) in actual.iter().zip(expected.iter()) {
+                    assert_eq!(actual.re.to_bits(), expected.re.to_bits());
+                    assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+                }
+            }
         }
     }
 
