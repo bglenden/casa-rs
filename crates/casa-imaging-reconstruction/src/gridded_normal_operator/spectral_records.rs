@@ -243,10 +243,21 @@ impl GriddedNormalOperatorCompiler {
         } else {
             SmallVec::new()
         };
-        for coefficients in operator
-            .coefficients()
-            .chunks_exact(operator.model_coordinates().len())
-        {
+        let columns = operator.model_coordinates().len();
+        for (row, coefficients) in operator.coefficients().chunks_exact(columns).enumerate() {
+            if let Some(previous) = operator.coefficients()[..row * columns]
+                .chunks_exact(columns)
+                .position(|previous| {
+                    previous.iter().zip(coefficients).all(|(left, right)| {
+                        left.re.to_bits() == right.re.to_bits()
+                            && left.im.to_bits() == right.im.to_bits()
+                    })
+                })
+            {
+                let range = bank.correlations[previous].clone();
+                push_fixed(&mut bank.correlations, range)?;
+                continue;
+            }
             let start = bank.records.len();
             let mut append = |contribution: casa_imaging_model::SelectedSpectralContribution| {
                 self.append_standard_stencil(
