@@ -2,6 +2,9 @@
 
 //! Production serial product staging and independently atomic publication.
 
+mod backing;
+pub use backing::SerialProductBackingPlan;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     error::Error,
@@ -122,6 +125,7 @@ pub struct SerialProductPublicationPolicy {
     stage_nanos: u64,
     confidence_parts_per_million: u32,
     output_file_descriptor_bound: u64,
+    backing_directory: std::path::PathBuf,
 }
 
 impl SerialProductPublicationPolicy {
@@ -132,6 +136,7 @@ impl SerialProductPublicationPolicy {
         storage_io: StorageIoResourceBinding,
         stage_nanos: u64,
         confidence_parts_per_million: u32,
+        backing_storage: ManagedSpillStorage,
     ) -> Self {
         Self {
             implementation,
@@ -139,6 +144,7 @@ impl SerialProductPublicationPolicy {
             stage_nanos,
             confidence_parts_per_million,
             output_file_descriptor_bound: OUTPUT_FILE_DESCRIPTOR_BOUND,
+            backing_directory: backing_storage.directory().to_path_buf(),
         }
     }
 }
@@ -147,6 +153,7 @@ impl SerialProductPublicationPolicy {
 pub struct SerialProductPublicationPlan {
     physical: PhysicalWorkBinding,
     publication: ProductPublicationPlan,
+    backing: SerialProductBackingPlan,
 }
 
 impl SerialProductPublicationPlan {
@@ -160,16 +167,24 @@ impl SerialProductPublicationPlan {
         policy: SerialProductPublicationPolicy,
     ) -> Result<Self, SerialProductPublicationPlanError> {
         let publication = ProductPublicationPlan::bind(problem, planned)?;
+        let backing = SerialProductBackingPlan::new(
+            planned,
+            generation_demand.storage_plan(),
+            policy.backing_directory.clone(),
+        )
+        .map_err(SerialProductPublicationPlanError::Products)?;
         let physical = build_physical(
             registry,
             &policy,
             &publication,
             generation_demand,
             staging_residency_bytes,
+            &backing,
         )?;
         Ok(Self {
             physical,
             publication,
+            backing,
         })
     }
 
@@ -187,8 +202,14 @@ impl SerialProductPublicationPlan {
 
     /// Consume into ordinary planning and execution construction parts.
     #[must_use]
-    pub fn into_parts(self) -> (PhysicalWorkBinding, ProductPublicationPlan) {
-        (self.physical, self.publication)
+    pub fn into_parts(
+        self,
+    ) -> (
+        PhysicalWorkBinding,
+        ProductPublicationPlan,
+        SerialProductBackingPlan,
+    ) {
+        (self.physical, self.publication, self.backing)
     }
 }
 
@@ -198,6 +219,7 @@ fn build_physical<R: ImplementationRegistry>(
     publication: &ProductPublicationPlan,
     generation_demand: &ContinuumGenerationDemand,
     staging_residency_bytes: u64,
+    backing: &SerialProductBackingPlan,
 ) -> Result<PhysicalWorkBinding, SerialProductPublicationPlanError> {
     let check = WorkNodeId::new(CHECK);
     let generate = WorkNodeId::new(GENERATE);
@@ -220,10 +242,20 @@ fn build_physical<R: ImplementationRegistry>(
                 .checked_add(entry.payload_bytes())
                 .ok_or(SerialProductPublicationPlanError::Overflow)
         })?;
-    let scratch_bytes = generation_demand.algorithm_scratch_bytes();
+    let scratch_bytes = generation_demand
+        .algorithm_scratch_bytes()
+        .checked_add(backing.scratch_bytes)
+        .ok_or(SerialProductPublicationPlanError::Overflow)?;
     let produced_bytes = generation_demand.produced_residency_bytes();
-    let sealed_bytes = generation_demand.sealed_residency_bytes();
-    let writer_bytes = staging_residency_bytes.max(payload_bytes).max(1);
+    let sealed_bytes = generation_demand
+        .sealed_residency_bytes()
+        .checked_add(generation_demand.maximum_window_payload_bytes())
+        .and_then(|bytes| bytes.checked_add(backing.scratch_bytes))
+        .ok_or(SerialProductPublicationPlanError::Overflow)?;
+    let member_writer_bytes = staging_residency_bytes.max(1);
+    let writer_bytes = member_writer_bytes
+        .checked_mul(publication.entries().len() as u64)
+        .ok_or(SerialProductPublicationPlanError::Overflow)?;
     let first_slot_bytes = scratch_bytes.max(sealed_bytes).max(1);
     let second_slot_bytes = produced_bytes.max(writer_bytes).max(1);
     let publication_lifetime =
@@ -274,7 +306,7 @@ fn build_physical<R: ImplementationRegistry>(
             publication_lifetime.clone(),
         ),
     ];
-    let nodes = vec![
+    let mut nodes = vec![
         WorkNode {
             id: check.clone(),
             kind: WorkKind::DataCensus,
@@ -392,7 +424,7 @@ fn build_physical<R: ImplementationRegistry>(
     };
     let residency_compat = compatibility("product-owner-residency");
     let commit_compat = compatibility("product-publication-commit");
-    let allocations = vec![
+    let mut allocations = vec![
         allocation(
             scratch_allocation,
             scratch_bytes.max(1),
@@ -445,7 +477,7 @@ fn build_physical<R: ImplementationRegistry>(
             },
         },
     ];
-    let slots = vec![
+    let mut slots = vec![
         slot(
             first_residency_slot,
             LeaseResource::Memory {
@@ -471,6 +503,55 @@ fn build_physical<R: ImplementationRegistry>(
             commit_compat,
         ),
     ];
+    let backing_allocation = AllocationId::new("product-paged-backing");
+    let backing_slot = PhysicalSlotId::new("product-paged-backing-slot");
+    let backing_compat = compatibility("product-paged-backing");
+    for node in &mut nodes {
+        if [GENERATE, SEAL, STAGE].contains(&node.id.as_str()) {
+            node.allocations.push(AllocationUse {
+                allocation: backing_allocation.clone(),
+                lifetime: ClaimLifetime::Work,
+            });
+            if let Some(descriptors) = node
+                .claims
+                .iter_mut()
+                .find(|claim| claim.resource == LeaseResource::FileDescriptors)
+            {
+                descriptors.amount += backing.descriptors();
+            } else {
+                node.claims.push(claim(
+                    LeaseResource::FileDescriptors,
+                    backing.descriptors(),
+                    ClaimLifetime::Work,
+                ));
+            }
+            node.claims.push(claim(
+                LeaseResource::Storage {
+                    demand_id: storage_demand.clone(),
+                    use_kind: StorageUseKind::Temporary,
+                },
+                backing.storage_bytes,
+                ClaimLifetime::Work,
+            ));
+        }
+    }
+    allocations.push(allocation(
+        backing_allocation,
+        backing.heap_bytes.max(1),
+        AllocationPurpose::Data,
+        backing_compat.clone(),
+        backing_slot.clone(),
+        generate.clone(),
+        WorkDependency::Work(stage.clone()),
+    ));
+    slots.push(slot(
+        backing_slot,
+        LeaseResource::Memory {
+            allocation_id: "product-paged-backing".into(),
+        },
+        backing.heap_bytes.max(1),
+        backing_compat,
+    ));
     let alternative = DemandAlternative {
         id: AlternativeId::new("serial-product-publication"),
         capabilities: CapabilityPredicate::default(),
@@ -480,13 +561,14 @@ fn build_physical<R: ImplementationRegistry>(
                 memory("product-generation-residency-a", first_slot_bytes),
                 memory("product-generation-residency-b", second_slot_bytes),
                 memory("product-publication-commit", 1),
+                memory("product-paged-backing", backing.heap_bytes.max(1)),
             ],
             workers: CountDemand::new(1, 1),
             overhead: RuntimeOverheadDemand::zero(),
             storage: vec![StorageDemand {
                 demand_id: storage_demand,
                 domain: policy.storage_io.domain().clone(),
-                temporary_bytes: 0,
+                temporary_bytes: backing.storage_bytes,
                 staged_output_bytes: payload_bytes,
                 final_output_bytes: payload_bytes,
                 persistent_cache_bytes: 0,
@@ -505,8 +587,8 @@ fn build_physical<R: ImplementationRegistry>(
             // The serial sink stages or promotes one output member at a time.
             // This is a declared capacity bound, not an exact OS-FD count.
             file_descriptors: CountDemand::new(
-                policy.output_file_descriptor_bound,
-                policy.output_file_descriptor_bound,
+                policy.output_file_descriptor_bound + backing.descriptors(),
+                policy.output_file_descriptor_bound + backing.descriptors(),
             ),
             queues: vec![QueueDemand {
                 demand_id: output_queue_demand,
@@ -550,7 +632,7 @@ fn build_physical<R: ImplementationRegistry>(
             if node == &stage {
                 prediction.with_io(vec![IoPrediction::new(
                     IoBufferKind::Serialization,
-                    payload_bytes,
+                    payload_bytes.max(writer_bytes),
                     u64::try_from(publication.entries().len()).unwrap_or(u64::MAX),
                 )])
             } else if node == &commit {
@@ -598,7 +680,7 @@ fn build_physical<R: ImplementationRegistry>(
                     PublicationResourceBounds::new(
                         entry.payload_bytes(),
                         entry.payload_bytes(),
-                        entry.payload_bytes(),
+                        member_writer_bytes,
                         0,
                     )
                     .expect("planned payload is nonzero"),
@@ -679,6 +761,8 @@ fn layout_id(artifact: ArtifactIdentity) -> PhysicalLayoutId {
 /// Planning failure for serial product publication.
 #[derive(Debug)]
 pub enum SerialProductPublicationPlanError {
+    /// Physical product backing could not be prepared.
+    Products(casa_imaging_products::ProductsError),
     /// A resource or payload calculation overflowed.
     Overflow,
     /// Planned product authority rejected the generation.
@@ -757,6 +841,7 @@ pub struct SerialProductPublicationExecutor<S> {
     publication: ProductPublicationPlan,
     state: Mutex<SerialProductPublicationState>,
     sink: S,
+    backing: SerialProductBackingPlan,
 }
 
 impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
@@ -769,6 +854,7 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
         scientific: MajorCycleCompletion,
         reconstruction_masks: Option<ReconstructionMaskSet>,
         sink: S,
+        backing: SerialProductBackingPlan,
     ) -> Result<Self, SerialProductPublicationExecutionError<S::Error>> {
         if publication.problem_id() != problem.problem_id()
             || publication.graph_id() != problem.product_graph().graph_id()
@@ -793,6 +879,7 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
                 staged_measurements: None,
             }),
             sink,
+            backing,
         })
     }
 
@@ -858,7 +945,7 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                             .map_err(SerialProductPublicationExecutionError::Products)?,
                     };
                 }
-                produce_continuum_members(planned, &inputs)
+                produce_continuum_members(planned, &inputs, self.backing.window, &self.backing)
                     .map_err(SerialProductPublicationExecutionError::Products)?
             };
             state.reconstruction_masks = None;

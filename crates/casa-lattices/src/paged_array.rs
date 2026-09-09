@@ -3,11 +3,11 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use casa_tables::{
     ColumnSchema, DEFAULT_TILED_ARRAY_CACHE_BYTES, DataManagerKind, Table, TableOptions,
-    TableSchema, TilePixel, TiledArrayStorage,
+    TableSchema, TilePixel, TiledArrayStorage, TiledArrayStorageLayout, TiledFileIoStats,
 };
 use casa_types::{Complex32, Complex64, PrimitiveType, RecordField, RecordValue, Value};
 use ndarray::{ArrayD, IxDyn};
@@ -64,7 +64,8 @@ pub struct PagedArray<T: LatticeElement> {
     shape: Vec<usize>,
     tile_shape: Vec<usize>,
     max_cache_bytes: Cell<usize>,
-    path: Option<PathBuf>,
+    explicitly_temp_closed: Cell<bool>,
+    path: Option<Box<Path>>,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -314,74 +315,147 @@ impl<T: LatticeElement> PagedArray<T> {
     /// The table is created immediately on disk. The array is initialized
     /// with zero/default values.
     pub fn create(tiled_shape: TiledShape, path: impl AsRef<Path>) -> Result<Self, LatticeError> {
-        let path = path.as_ref();
-        let shape = tiled_shape.shape().to_vec();
-        let tile_shape = tiled_shape.tile_shape().to_vec();
-        let ndim = shape.len();
+        Self::create_with_cache(tiled_shape, path, DEFAULT_TILED_ARRAY_CACHE_BYTES)
+    }
 
-        let schema = TableSchema::new(vec![ColumnSchema::array_variable(
-            COLUMN_NAME,
+    /// Creates a persistent array with an explicit tile-cache budget in bytes.
+    ///
+    /// The logical array is allocated on disk, not in memory. Construction
+    /// retains only tile-sized table metadata and the cache selected by this
+    /// budget; it never installs the default cache first. The budget must be
+    /// positive. Tiled storage retains at least one tile, even when that tile
+    /// exceeds the requested budget, so resource planners must admit both the
+    /// tile size and the cache budget. Slice result buffers are additional to
+    /// the cache and are owned by the caller.
+    pub fn create_with_cache(
+        tiled_shape: TiledShape,
+        path: impl AsRef<Path>,
+        cache_budget_bytes: usize,
+    ) -> Result<Self, LatticeError> {
+        let layout = Self::storage_layout(tiled_shape, cache_budget_bytes)?;
+        Self::create_planned(&layout, path)
+    }
+
+    /// Prepare exact standard-table metadata and physical backing capacities.
+    ///
+    /// This performs no filesystem I/O and allocates no pixel payload. Retain
+    /// and account for the returned layout while creating an admitted array.
+    pub fn storage_layout(
+        tiled_shape: TiledShape,
+        cache_budget_bytes: usize,
+    ) -> Result<TiledArrayStorageLayout, LatticeError> {
+        TiledArrayStorageLayout::new(
+            tiled_shape.shape(),
+            tiled_shape.tile_shape(),
             T::PRIMITIVE_TYPE,
-            Some(ndim),
-        )])
-        .map_err(|e| LatticeError::Table(e.to_string()))?;
-
-        let mut table = Table::with_schema(schema);
-
-        // The row is only a schema placeholder. The typed tiled seam below
-        // installs the real cube shape without allocating the full lattice.
-        let data = ArrayD::from_elem(IxDyn(&tile_shape), T::default_value());
-        let array_value = value_bridge::to_array_value(&data);
-        let row = RecordValue::new(vec![RecordField::new(
+            cfg!(target_endian = "big"),
+            0,
             COLUMN_NAME,
-            Value::Array(array_value),
-        )]);
-        table.add_row(row).map_err(table_err)?;
+            cache_budget_bytes,
+        )
+        .map_err(tiled_io_err)
+    }
 
-        table
-            .save(
-                TableOptions::new(path)
-                    .with_data_manager(DataManagerKind::TiledCellStMan)
-                    .with_tile_shape(if ndim > 0 {
-                        tile_shape.clone()
-                    } else {
-                        Vec::new()
-                    }),
-            )
-            .map_err(table_err)?;
-
-        let tiled_io = if Self::supports_tiled_io() {
-            Some(
-                TiledArrayStorage::create_for_pixel_type(
-                    path,
-                    &shape,
-                    &tile_shape,
-                    T::PRIMITIVE_TYPE,
-                    cfg!(target_endian = "big"),
-                    0,
-                    COLUMN_NAME,
-                    DEFAULT_TILED_ARRAY_CACHE_BYTES,
-                )
-                .map_err(tiled_io_err)?,
-            )
-        } else {
-            return Err(LatticeError::Table(format!(
-                "PagedArray does not support tiled storage for {:?}",
-                T::PRIMITIVE_TYPE
-            )));
-        };
-
+    /// Create a persistent array directly from its prepared metadata and layout.
+    ///
+    /// No placeholder cell or generic Table row/cache is allocated or retained.
+    /// The layout remains borrowed across cache/index construction.
+    pub fn create_planned(
+        layout: &TiledArrayStorageLayout,
+        path: impl AsRef<Path>,
+    ) -> Result<Self, LatticeError> {
+        if layout.pixel_type() != T::PRIMITIVE_TYPE {
+            return Err(LatticeError::Table(
+                "PagedArray layout pixel type mismatch".into(),
+            ));
+        }
+        let path = path.as_ref();
+        let tiled_io =
+            TiledArrayStorage::create_planned_table(path, layout).map_err(tiled_io_err)?;
         Ok(Self {
-            table: RefCell::new(Some(table)),
-            tiled_io: RefCell::new(tiled_io),
-            shape,
-            tile_shape,
-            max_cache_bytes: Cell::new(DEFAULT_TILED_ARRAY_CACHE_BYTES),
-            path: Some(path.to_path_buf()),
+            table: RefCell::new(None),
+            tiled_io: RefCell::new(Some(tiled_io)),
+            shape: layout.cube_shape().to_vec(),
+            tile_shape: layout.tile_shape().to_vec(),
+            max_cache_bytes: Cell::new(layout.cache_budget_bytes()),
+            explicitly_temp_closed: Cell::new(false),
+            path: Some(path.into()),
             _phantom: std::marker::PhantomData,
         })
     }
 
+    /// Maximum persistent heap for the prepared cache, indexes, dimensions and paths.
+    ///
+    /// This excludes the inline `PagedArray<T>` owner, the separately retained
+    /// prepared layout, and caller-owned ndarray windows. Its cache component
+    /// includes the lazily allocated flat cache at its largest state.
+    pub fn planned_persistent_heap_bytes(
+        layout: &TiledArrayStorageLayout,
+        path: &Path,
+    ) -> Result<usize, LatticeError> {
+        if layout.pixel_type() != T::PRIMITIVE_TYPE {
+            return Err(LatticeError::Table(
+                "PagedArray layout pixel type mismatch".into(),
+            ));
+        }
+        let storage = layout.retained_heap_bytes(path).map_err(tiled_io_err)?;
+        layout
+            .cube_shape()
+            .len()
+            .checked_mul(2 * size_of::<usize>())
+            .and_then(|bytes| bytes.checked_add(path.as_os_str().len()))
+            .and_then(|bytes| bytes.checked_add(storage))
+            .ok_or_else(|| LatticeError::Table("PagedArray metadata size overflow".into()))
+    }
+
+    /// Exact currently owned persistent heap, including cache/index/path metadata.
+    ///
+    /// Returns an error for scratch arrays, whose generic Table owner is not a
+    /// typed storage capability. Inline object sizes and caller slice buffers
+    /// are deliberately separate from this heap projection.
+    pub fn owned_persistent_heap_bytes(&self) -> Result<usize, LatticeError> {
+        let Some(path) = &self.path else {
+            return Err(LatticeError::Table(
+                "scratch array has no typed persistent ledger".into(),
+            ));
+        };
+        let dimensions = self
+            .shape
+            .capacity()
+            .checked_add(self.tile_shape.capacity())
+            .and_then(|count| count.checked_mul(size_of::<usize>()))
+            .ok_or_else(|| LatticeError::Table("PagedArray metadata size overflow".into()))?;
+        let storage = self
+            .tiled_io
+            .borrow()
+            .as_ref()
+            .map(TiledArrayStorage::owned_heap_bytes)
+            .transpose()
+            .map_err(tiled_io_err)?
+            .unwrap_or(0);
+        dimensions
+            .checked_add(path.as_os_str().len())
+            .and_then(|bytes| bytes.checked_add(storage))
+            .ok_or_else(|| LatticeError::Table("PagedArray metadata size overflow".into()))
+    }
+
+    /// Typed storage I/O counters, or zero while the array is temporarily closed.
+    pub fn io_stats(&self) -> TiledFileIoStats {
+        self.tiled_io
+            .borrow()
+            .as_ref()
+            .map(TiledArrayStorage::io_stats)
+            .unwrap_or_default()
+    }
+
+    /// File descriptors retained by this typed array at the observation point.
+    pub fn owned_file_handles(&self) -> usize {
+        self.tiled_io
+            .borrow()
+            .as_ref()
+            .map(TiledArrayStorage::owned_file_handles)
+            .unwrap_or(0)
+    }
     /// Creates a scratch (temporary) `PagedArray` that is not persisted.
     ///
     /// The data lives in a memory-backed table. Equivalent to C++
@@ -413,6 +487,7 @@ impl<T: LatticeElement> PagedArray<T> {
             shape,
             tile_shape,
             max_cache_bytes: Cell::new(0),
+            explicitly_temp_closed: Cell::new(false),
             path: None,
             _phantom: std::marker::PhantomData,
         })
@@ -446,15 +521,17 @@ impl<T: LatticeElement> PagedArray<T> {
         let tio = tiled_io.as_ref().expect("supported tiled PagedArray");
         let shape = tio.cube_shape().to_vec();
         let tile_shape = tio.tile_shape().to_vec();
-        let table = Table::open_metadata_only(TableOptions::new(path)).map_err(table_err)?;
+        // Validate the standard table control file, without retaining its generic row owner.
+        let _ = Table::open_metadata_only(TableOptions::new(path)).map_err(table_err)?;
 
         Ok(Self {
-            table: RefCell::new(Some(table)),
+            table: RefCell::new(None),
             tiled_io: RefCell::new(tiled_io),
             shape,
             tile_shape,
             max_cache_bytes: Cell::new(max_cache_bytes),
-            path: Some(path.to_path_buf()),
+            explicitly_temp_closed: Cell::new(false),
+            path: Some(path.into()),
             _phantom: std::marker::PhantomData,
         })
     }
@@ -516,7 +593,7 @@ impl<T: LatticeElement> PagedArray<T> {
 
     /// Returns `true` if the array has been temp-closed.
     pub fn is_temp_closed(&self) -> bool {
-        self.table.borrow().is_none()
+        self.explicitly_temp_closed.get()
     }
 
     /// Releases the in-memory table, flushing to disk first if persistent.
@@ -530,6 +607,7 @@ impl<T: LatticeElement> PagedArray<T> {
         self.flush()?;
         *self.table.get_mut() = None;
         *self.tiled_io.get_mut() = None;
+        self.explicitly_temp_closed.set(true);
         Ok(())
     }
 
@@ -537,9 +615,8 @@ impl<T: LatticeElement> PagedArray<T> {
     ///
     /// No-op if the table is already open or if this is a scratch array.
     pub fn reopen(&mut self) -> Result<(), LatticeError> {
-        if (self.table.get_mut().is_some() && self.tiled_io.get_mut().is_some())
-            || self.path.is_none()
-        {
+        if self.tiled_io.get_mut().is_some() || self.path.is_none() {
+            self.explicitly_temp_closed.set(false);
             return Ok(());
         }
         self.auto_reopen()
@@ -550,6 +627,11 @@ impl<T: LatticeElement> PagedArray<T> {
     /// Uses interior mutability so that `&self` read methods can
     /// transparently reopen after `temp_close()`.
     fn auto_reopen(&self) -> Result<(), LatticeError> {
+        if self.path.is_some() && Self::supports_tiled_io() {
+            self.auto_reopen_tiled_io()?;
+            self.explicitly_temp_closed.set(false);
+            return Ok(());
+        }
         let needs_tiled_io = self.path.is_some() && Self::supports_tiled_io();
         if self.table.borrow().is_none() || (needs_tiled_io && self.tiled_io.borrow().is_none()) {
             let Some(path) = &self.path else {
@@ -558,7 +640,8 @@ impl<T: LatticeElement> PagedArray<T> {
                 ));
             };
             if self.table.borrow().is_none() {
-                let table = Table::open(TableOptions::new(path)).map_err(table_err)?;
+                let table =
+                    Table::open_metadata_only(TableOptions::new(path)).map_err(table_err)?;
                 *self.table.borrow_mut() = Some(table);
             }
             if needs_tiled_io && self.tiled_io.borrow().is_none() {
@@ -843,18 +926,20 @@ impl<T: LatticeElement> LatticeMut<T> for PagedArray<T> {
                 got: start.len(),
             });
         }
-        let end: Vec<usize> = start
+        if start
             .iter()
-            .zip(data.shape().iter())
-            .map(|(&s, &n)| s + n)
-            .collect();
-        for (&limit, &dim) in end.iter().zip(self.shape.iter()) {
-            if limit > dim {
-                return Err(LatticeError::ShapeMismatch {
-                    expected: self.shape.clone(),
-                    got: end,
-                });
-            }
+            .zip(data.shape())
+            .zip(&self.shape)
+            .any(|((&s, &n), &dim)| s.checked_add(n).is_none_or(|end| end > dim))
+        {
+            return Err(LatticeError::ShapeMismatch {
+                expected: self.shape.clone(),
+                got: start
+                    .iter()
+                    .zip(data.shape())
+                    .map(|(&s, &n)| s.saturating_add(n))
+                    .collect(),
+            });
         }
 
         if self.path.is_some() {
@@ -1111,6 +1196,80 @@ mod tests {
                     assert_eq!(slice[[x, y, z]], (src_x + src_y + src_z) % 3 == 0);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn creation_uses_the_explicit_cache_before_any_array_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bounded_creation.table");
+        let ts = TiledShape::with_tile_shape(vec![16, 16, 257], vec![8, 4, 1]).unwrap();
+        let cache_bytes = 2 * 8 * 4 * std::mem::size_of::<f64>();
+        assert!(PagedArray::<f64>::create_with_cache(ts.clone(), &path, 0).is_err());
+        assert!(!path.exists());
+        let mut pa = PagedArray::<f64>::create_with_cache(ts, &path, cache_bytes).unwrap();
+        assert_eq!(pa.maximum_cache_size_pixels(), 64);
+        assert_eq!(
+            pa.tiled_io.borrow().as_ref().unwrap().cache_budget_bytes(),
+            cache_bytes
+        );
+
+        let plane = ArrayD::from_shape_fn(IxDyn(&[16, 16, 1]), |index| {
+            (index[0] * 16 + index[1]) as f64
+        });
+        pa.put_slice(&plane, &[0, 0, 256]).unwrap();
+        pa.temp_close().unwrap();
+        pa.reopen().unwrap();
+        assert_eq!(pa.maximum_cache_size_pixels(), 64);
+        assert!(pa.table.borrow().is_none());
+        assert_eq!(
+            pa.get_slice(&[0, 0, 256], &[16, 16, 1], &[1, 1, 1])
+                .unwrap(),
+            plane
+        );
+        assert_eq!(pa.get_at(&[15, 15, 0]).unwrap(), 0.0);
+    }
+
+    #[test]
+    fn prepared_storage_accounts_files_and_retained_heap_without_table_rows() {
+        let root = tempfile::tempdir().unwrap();
+        for cache_bytes in [8, 80] {
+            let path = root.path().join(format!("bool_{cache_bytes}"));
+            let shape = TiledShape::with_tile_shape(vec![9, 5], vec![4, 2]).unwrap();
+            let layout = PagedArray::<bool>::storage_layout(shape, cache_bytes).unwrap();
+            let maximum_heap =
+                PagedArray::<bool>::planned_persistent_heap_bytes(&layout, &path).unwrap();
+            let mut array = PagedArray::<bool>::create_planned(&layout, &path).unwrap();
+            assert!(array.table.borrow().is_none());
+            let values =
+                ArrayD::from_shape_fn(IxDyn(&[9, 5]), |index| (index[0] + index[1]) % 3 == 0);
+            array.put_slice(&values, &[0, 0]).unwrap();
+            assert_eq!(array.owned_persistent_heap_bytes().unwrap(), maximum_heap);
+            assert!(array.owned_file_handles() <= layout.file_handles());
+            array.flush().unwrap();
+            let file_bytes = std::fs::read_dir(&path)
+                .unwrap()
+                .map(|entry| entry.unwrap().metadata().unwrap().len())
+                .sum::<u64>();
+            assert_eq!(file_bytes, layout.storage_bytes().unwrap() as u64);
+            assert_eq!(
+                std::fs::metadata(path.join("table.f0_TSM0")).unwrap().len(),
+                9
+            );
+            let table = Table::open(TableOptions::new(&path)).unwrap();
+            let cell = table.cell_accessor(0, COLUMN_NAME).unwrap();
+            let Value::Array(casa_types::ArrayValue::Bool(actual)) = cell.value().unwrap().unwrap()
+            else {
+                panic!("boolean table cell")
+            };
+            assert_eq!(actual, &values);
+            drop(table);
+            array.temp_close().unwrap();
+            assert!(array.is_temp_closed());
+            array.reopen().unwrap();
+            assert!(array.table.borrow().is_none());
+            assert_eq!(array.get_slice(&[0, 0], &[9, 5], &[1, 1]).unwrap(), values);
+            assert_eq!(array.owned_persistent_heap_bytes().unwrap(), maximum_heap);
         }
     }
 

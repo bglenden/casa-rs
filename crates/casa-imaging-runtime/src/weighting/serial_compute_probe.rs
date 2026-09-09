@@ -520,6 +520,8 @@ impl InitialWeightedProbe<'_> {
             ExecutableModelProblem::from_compiled(problem.clone())?,
             attempt(3),
             3,
+            casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+                .expect("positive model window"),
         )?;
         let initial_model = lifecycle.initial_empty()?;
         let initial_preparation = MajorCyclePreparation::prepare(&lifecycle, initial_model, None)?;
@@ -1205,6 +1207,8 @@ where
         ExecutableModelProblem::from_compiled(problem.clone())?,
         attempt(1),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )?;
     let initial_model = lifecycle.initial_empty()?;
     let delta = lifecycle.compile_delta(
@@ -1259,6 +1263,13 @@ where
         selected_samples,
         None,
     )?;
+    let normal_storage = casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+        initial_complete.primitives().slab().total_channels(),
+    )
+    .expect("fixture normal window");
+    let initial_complete = initial_complete
+        .seal(&normal_storage)
+        .expect("seal fixture normal state");
     let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)?
         .reconcile(&mut lifecycle)?;
     let (prior_normal_state, continuation) = initial_join.into_continuation();
@@ -1267,6 +1278,8 @@ where
         attempt(2),
         2,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )?;
     let preparation = MajorCyclePreparation::prepare(&continued_lifecycle, carried_model, None)?;
     Ok(PreparedReplayCohort {

@@ -561,6 +561,8 @@ fn bind_lifecycle(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         attempt(attempt_byte),
         epoch,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind model lifecycle")
 }
@@ -739,11 +741,27 @@ fn first_confirm_round_scaled(
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prepare final model");
     let evidence = run_t19_complete_data(&problem, Some(&preparation), &samples);
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle)
-        .expect("atomic Major-Cycle reconciliation");
-    let residual_peak = residual_peak(joined.normal_state().residual());
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner from T19")
+    .reconcile(&mut lifecycle)
+    .expect("atomic Major-Cycle reconciliation");
+    let residual_peak = residual_peak(
+        joined
+            .normal_state()
+            .read_window(0..1)
+            .expect("single-plane fixture window")
+            .residual(),
+    );
     let (normal_state, model_completion, final_model) = joined.into_parts();
     // The completed lifecycle cannot reopen or finalize its model again.
     assert!(matches!(
@@ -857,10 +875,16 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
     );
     let mut lifecycle = bind_lifecycle(&continuation, 44, 8);
 
-    let residual_before = round.normal_state.residual().to_vec();
+    let residual_before = round
+        .normal_state
+        .read_window(0..1)
+        .expect("single-plane fixture window")
+        .residual()
+        .to_vec();
     let model_before = round
         .final_model
-        .samples()
+        .read_samples(0..round.final_model.sample_count())
+        .expect("read fixture model")
         .iter()
         .map(|sample| (sample.value().value(), sample.support()))
         .collect::<Vec<_>>();
@@ -904,10 +928,18 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
     );
 
     // Authoritative state is untouched by the solve.
-    assert_eq!(round.normal_state.residual(), residual_before);
+    assert_eq!(
+        round
+            .normal_state
+            .read_window(0..1)
+            .expect("single-plane fixture window")
+            .residual(),
+        residual_before
+    );
     let model_after = round
         .final_model
-        .samples()
+        .read_samples(0..round.final_model.sample_count())
+        .expect("read fixture model")
         .iter()
         .map(|sample| (sample.value().value(), sample.support()))
         .collect::<Vec<_>>();
@@ -953,21 +985,23 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
 
     // Recorded components carry the CASA normalization: gain times the
     // PSF-normalized residual peak, and the first lands on the global peak.
-    let psf_peak = round
+    let window = round
         .normal_state
+        .read_window(0..1)
+        .expect("single-plane fixture window");
+    let psf_peak = window
         .normal_approximation()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let residual_peak_pixel = maximal_pixel(round.normal_state.residual());
+    let residual_peak_pixel = maximal_pixel(window.residual());
     assert_eq!(
         recorded[0].cell().pixel(),
         residual_peak_pixel,
         "the first component sits on the residual peak inside the window"
     );
-    let expected_first_flux = controls().gain()
-        * round.normal_state.residual()[plane_index(residual_peak_pixel)].re
-        / psf_peak;
+    let expected_first_flux =
+        controls().gain() * window.residual()[plane_index(residual_peak_pixel)].re / psf_peak;
     assert!((recorded[0].flux() - expected_first_flux).abs() <= 1.0e-12);
     assert!(
         (evidence.total_flux() - recorded.iter().map(|c| c.flux().abs()).sum::<f64>()).abs()
@@ -982,10 +1016,20 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
     // replays the identically valued stream bound to that identity.
     let continuation_samples = fixture_samples(&continuation);
     let evidence2 = run_t19_complete_data(&continuation, Some(&preparation), &continuation_samples);
-    let joined2 = MajorCycleOwner::from_complete_data(evidence2, preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle)
-        .expect("second-round reconciliation");
+    let joined2 = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence2.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence2.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner from T19")
+    .reconcile(&mut lifecycle)
+    .expect("second-round reconciliation");
     let model_completion2 = joined2.model_completion();
     assert_eq!(model_completion2.delta(), Some(delta_id));
     assert_eq!(model_completion2.base(), final_generation);
@@ -999,11 +1043,21 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         }
     );
     for (flat, increment) in &terms {
-        let updated = final2.samples()[*flat].value().value();
+        let updated = final2
+            .read_samples(0..final2.sample_count())
+            .expect("read fixture model")[*flat]
+            .value()
+            .value();
         let base_value = model_before[*flat].0;
         assert!((updated - (base_value + increment)).abs() <= 1.0e-12);
     }
-    let peak2 = residual_peak(joined2.normal_state().residual());
+    let peak2 = residual_peak(
+        joined2
+            .normal_state()
+            .read_window(0..1)
+            .expect("single-plane fixture window")
+            .residual(),
+    );
     assert!(
         peak2 < round.residual_peak,
         "one clean-and-reconcile round must reduce the residual peak: {peak2} !< {}",
@@ -1030,13 +1084,28 @@ fn completed_nonempty_model_is_carried_affinely_into_the_next_major_cycle() {
     let preparation = MajorCyclePreparation::prepare(&initial, empty, Some(seed_delta))
         .expect("prepare non-empty initial model");
     let complete_data = run_t19_complete_data(&problem, Some(&preparation), &samples);
-    let initial_completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("initial Major Cycle owner")
-        .reconcile(&mut initial)
-        .expect("initial non-empty Major Cycle");
+    let initial_completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("initial Major Cycle owner")
+    .reconcile(&mut initial)
+    .expect("initial non-empty Major Cycle");
     let carried_id = initial_completion.final_model().generation_id();
     assert_eq!(
-        initial_completion.final_model().samples()[9]
+        initial_completion
+            .final_model()
+            .read_samples(0..initial_completion.final_model().sample_count())
+            .expect("read fixture model")[9]
             .value()
             .value(),
         2.5
@@ -1049,10 +1118,19 @@ fn completed_nonempty_model_is_carried_affinely_into_the_next_major_cycle() {
         attempt(47),
         10,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("consume completed model continuation exactly once");
     assert_eq!(carried.generation_id(), carried_id);
-    assert_eq!(carried.samples()[9].value().value(), 2.5);
+    assert_eq!(
+        carried
+            .read_samples(0..carried.sample_count())
+            .expect("read fixture model")[9]
+            .value()
+            .value(),
+        2.5
+    );
 
     let next_delta = continued
         .compile_delta(
@@ -1066,13 +1144,30 @@ fn completed_nonempty_model_is_carried_affinely_into_the_next_major_cycle() {
     let preparation = MajorCyclePreparation::prepare(&continued, carried, Some(next_delta))
         .expect("prepare continued final model");
     let complete_data = run_t19_complete_data(&problem, Some(&preparation), &samples);
-    let final_completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("continued Major Cycle owner")
-        .reconcile(&mut continued)
-        .expect("continued Major Cycle");
+    let final_completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("continued Major Cycle owner")
+    .reconcile(&mut continued)
+    .expect("continued Major Cycle");
     assert_eq!(final_completion.model_completion().base(), carried_id);
     assert_eq!(
-        final_completion.final_model().samples()[9].value().value(),
+        final_completion
+            .final_model()
+            .read_samples(0..final_completion.final_model().sample_count())
+            .expect("read fixture model")[9]
+            .value()
+            .value(),
         2.0
     );
     assert!(matches!(
@@ -1240,7 +1335,13 @@ fn returned_deltas_never_exceed_the_accepted_view_envelope() {
         ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
     );
     let lifecycle = bind_lifecycle(&continuation, 64, 12);
-    let envelope = residual_peak(round.normal_state.residual()) * 0.75;
+    let envelope = residual_peak(
+        round
+            .normal_state
+            .read_window(0..1)
+            .expect("single-plane fixture window")
+            .residual(),
+    ) * 0.75;
     let bounded = HogbomControls::new_bounded(0.5, 0.0, 64, envelope)
         .expect("valid controls")
         .record_component_sequence(64)
@@ -1294,13 +1395,16 @@ fn threshold_boundary_follows_the_casa_hogbom_convention() {
 
     // Recompute the solver's first normalized peak exactly: same scan over
     // the same private copy, so the equality case is bit-exact.
-    let psf_peak = round
+    let window = round
         .normal_state
+        .read_window(0..1)
+        .expect("single-plane fixture window");
+    let psf_peak = window
         .normal_approximation()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let strength = residual_peak(round.normal_state.residual()) / psf_peak;
+    let strength = residual_peak(window.residual()) / psf_peak;
 
     let solve = |threshold: f64| {
         hogbom_minor_cycle(
@@ -1371,13 +1475,16 @@ fn clark_uses_a_derived_bounded_patch_and_stops_at_or_below_threshold() {
         ModelStateIdentity::Generation(round.final_model.generation_id().identity()),
     );
     let lifecycle = bind_lifecycle(&continuation, 168, 13);
-    let psf_peak = round
+    let window = round
         .normal_state
+        .read_window(0..1)
+        .expect("single-plane fixture window");
+    let psf_peak = window
         .normal_approximation()
         .iter()
         .map(|value| value.re.abs())
         .fold(0.0_f64, f64::max);
-    let strength = residual_peak(round.normal_state.residual()) / psf_peak;
+    let strength = residual_peak(window.residual()) / psf_peak;
     for threshold in [strength, strength * 2.0] {
         let program = casa_imaging_reconstruction::MinorCycleProgram::for_algorithm(
             ReconstructionAlgorithm::Clark,
@@ -1506,17 +1613,30 @@ fn window_and_valid_support_constrain_component_placement() {
         .expect("aligned stream")
         .expect("aligned seed ingest");
     assert_eq!(
-        seeded.samples()[invalid_flat].support(),
+        seeded
+            .read_samples(0..seeded.sample_count())
+            .expect("read fixture model")[invalid_flat]
+            .support(),
         ModelSupport::Invalid
     );
 
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, seeded, None).expect("prepare seeded model");
     let evidence = run_t19_complete_data(&problem, Some(&preparation), &samples);
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle)
-        .expect("seeded reconciliation");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner from T19")
+    .reconcile(&mut lifecycle)
+    .expect("seeded reconciliation");
     let (normal_state, _, final_model) = joined.into_parts();
 
     // The solve needs an open owner: continue through a fresh lifecycle whose

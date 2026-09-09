@@ -24,19 +24,20 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{
     FinalNormalState, MajorCyclePreparation, PreparedAwProjection, SpectralChannelValidity,
-    SpectralOperatorError, SpectralOperatorPrimitives, SpectralOperatorSpecification,
-    SpectralPrimitiveCatalog, WeightingAlgorithmState, WeightingGenerationId,
-    WeightingReplayCoverageId, WeightingReplayId,
+    SpectralOperatorError, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
+    WeightingAlgorithmState, WeightingGenerationId, WeightingReplayCoverageId, WeightingReplayId,
     runtime_adapter::{
-        CompleteDataOwnerResult, CompleteDataOwnerSlabFold, CompleteDataOwnerState,
-        GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalCompilationPlan,
+        CompleteDataNormalState, CompleteDataNormalWindow, CompleteDataOwnerResult,
+        CompleteDataOwnerSlabFold, CompleteDataOwnerState, GRIDDED_NORMAL_LANE_COUNT,
+        GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalCompilationPlan,
         GriddedNormalExecutionResidency, GriddedNormalOperatorApply, GriddedNormalOperatorCompiler,
         GriddedNormalOperatorFrame, GriddedNormalOperatorProgram, GriddedNormalPartial,
-        GriddedNormalRoutingMeasurements, GriddedNormalStorageLayout, GriddedNormalStoragePlan,
-        GriddedNormalWork, PreparedSpectralOperator, PreparedSpectralOperatorRecycle,
-        SourceCardinalityObservation, SpectralOperatorPass, SpectralOperatorWorkload,
-        gridded_normal_operator_record_bytes, gridded_normal_route_capacity_bytes,
-        prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
+        GriddedNormalReplaySource as GriddedNormalPrior, GriddedNormalRoutingMeasurements,
+        GriddedNormalStorageLayout, GriddedNormalStoragePlan, GriddedNormalWork, NormalStoragePlan,
+        PreparedSpectralOperator, PreparedSpectralOperatorRecycle, SourceCardinalityObservation,
+        SpectralOperatorPass, SpectralOperatorWorkload, gridded_normal_operator_record_bytes,
+        gridded_normal_route_capacity_bytes, prepare_spectral_operator,
+        reprepare_spectral_operator, spectral_operator_workload,
     },
 };
 
@@ -129,6 +130,7 @@ struct GriddedNormalReplayBatchSchedule {
 impl GriddedNormalReplayWindowPlan {
     fn for_program(
         program: &GriddedNormalOperatorProgram,
+        core_channels: usize,
         capacity: GriddedNormalReplayPlanningCapacity,
         convolution_support: usize,
         working_set_limit: Option<u64>,
@@ -161,7 +163,7 @@ impl GriddedNormalReplayWindowPlan {
                 .min(working_set_limit.unwrap_or(u64::MAX)),
             usize::try_from(record_bytes).map_err(|_| CompleteDataPlanError::ResidencyOverflow)?,
             prediction_width,
-            program.storage_layout(convolution_support)?,
+            program.storage_layout(core_channels, convolution_support)?,
         )
     }
 
@@ -531,6 +533,11 @@ pub struct FrozenGriddedNormalReplay {
     latest_read: Option<ManagedSpillMeasurements>,
     latest_stream: Option<BoundedStreamMeasurements>,
     latest_routing: Option<GriddedNormalRoutingMeasurements>,
+    aggregate_read: Option<ManagedSpillMeasurements>,
+    aggregate_stream: Option<BoundedStreamMeasurements>,
+    aggregate_routing: Option<GriddedNormalRoutingMeasurements>,
+    artifact_pass_count: u64,
+    failed_window: bool,
     window_plan: Option<GriddedNormalReplayWindowPlan>,
     prepared_source: Option<GriddedNormalReplaySource>,
     prepared_batch_size: Option<usize>,
@@ -557,7 +564,7 @@ enum GriddedNormalReplaySourceKind {
 
 impl OrderedBlockSource for GriddedNormalReplaySource {
     type Storage = ManagedSpillWindowStorage;
-    type Completion = ManagedSpillReadCompletion;
+    type Completion = (Self, ManagedSpillReadCompletion);
     type Error = ManagedSpillError;
 
     fn create_storage(&self, slot: usize) -> Self::Storage {
@@ -584,12 +591,23 @@ impl OrderedBlockSource for GriddedNormalReplaySource {
     }
 
     fn complete(self) -> Result<Self::Completion, Self::Error> {
-        let result = match self.source {
-            GriddedNormalReplaySourceKind::Managed(source) => source.complete(),
-            GriddedNormalReplaySourceKind::Retained(source) => source.complete(),
+        let (source, completion) = match self.source {
+            GriddedNormalReplaySourceKind::Managed(source) => {
+                let (source, completion) = source.complete_rewound()?;
+                (GriddedNormalReplaySourceKind::Managed(source), completion)
+            }
+            GriddedNormalReplaySourceKind::Retained(source) => {
+                let (source, completion) = source.complete_rewound()?;
+                (GriddedNormalReplaySourceKind::Retained(source), completion)
+            }
         };
-        drop(self.backing);
-        result
+        Ok((
+            Self {
+                source,
+                backing: self.backing,
+            },
+            completion,
+        ))
     }
 }
 
@@ -598,14 +616,21 @@ impl OrderedBlockSource for GriddedNormalReplaySource {
 pub struct GriddedNormalReplayDescriptor {
     identity: crate::ArtifactIdentity,
     bytes: u64,
+    frame_count: u64,
 }
 
 impl GriddedNormalReplayDescriptor {
+    pub(crate) fn retained_source_capacity_bytes(self) -> Result<u64, CompleteDataPlanError> {
+        crate::managed_spill::retained_source_capacity_bytes(self.bytes, self.frame_count)
+            .map_err(|_| CompleteDataPlanError::ResidencyOverflow)
+    }
+
     #[cfg(test)]
     pub(crate) const fn planning_fixture(bytes: u64) -> Self {
         Self {
             identity: crate::ArtifactIdentity::from_owner_digest([53; 32]),
             bytes,
+            frame_count: 1,
         }
     }
 
@@ -891,6 +916,11 @@ impl GriddedNormalReplayCompilation {
             latest_read: None,
             latest_stream: None,
             latest_routing: None,
+            aggregate_read: None,
+            aggregate_stream: None,
+            aggregate_routing: None,
+            artifact_pass_count: 0,
+            failed_window: false,
             window_plan: None,
             prepared_source: None,
             prepared_batch_size: None,
@@ -1083,6 +1113,13 @@ fn gridded_buffer_claim_satisfies(
 }
 
 impl FrozenGriddedNormalReplay {
+    pub(crate) fn bind_prior(
+        &self,
+        prior: FinalNormalState,
+    ) -> Result<GriddedNormalPrior, CompleteDataPlanError> {
+        Ok(self.backing.program.bind_prior(prior)?)
+    }
+
     #[cfg(test)]
     pub(crate) fn assert_retained_backing_lifetime(self, mut check_charge: impl FnMut(bool)) {
         assert!(self.backing.retention.get().is_some());
@@ -1121,16 +1158,38 @@ impl FrozenGriddedNormalReplay {
 
     pub(crate) fn preview_windows(
         &self,
+        core_channels: usize,
         capacity: GriddedNormalReplayPlanningCapacity,
         convolution_support: usize,
         working_set_limit: Option<u64>,
     ) -> Result<GriddedNormalReplayWindowPlan, CompleteDataPlanError> {
         GriddedNormalReplayWindowPlan::for_program(
             &self.backing.program,
+            core_channels,
             capacity,
             convolution_support,
             working_set_limit,
         )
+    }
+
+    pub(crate) fn spectral_windows(
+        &self,
+        problem: &CompiledProblem,
+        core_depth: usize,
+    ) -> Result<Box<[SpectralOperatorSpecification]>, CompleteDataPlanError> {
+        let channels = problem.geometry().spectral().output_channels();
+        if core_depth == 0 || core_depth > channels {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        (0..channels)
+            .step_by(core_depth)
+            .map(|start| {
+                self.backing
+                    .program
+                    .specification_for_slab(problem, start, core_depth.min(channels - start))
+                    .map_err(CompleteDataPlanError::from)
+            })
+            .collect()
     }
 
     pub(crate) fn bind_window_plan(
@@ -1144,6 +1203,11 @@ impl FrozenGriddedNormalReplay {
         self.latest_read = None;
         self.latest_stream = None;
         self.latest_routing = None;
+        self.aggregate_read = None;
+        self.aggregate_stream = None;
+        self.aggregate_routing = None;
+        self.artifact_pass_count = 0;
+        self.failed_window = false;
         self.latest_prefetch = None;
         self.latest_cache_load = None;
         self.latest_cache_resident_bytes = None;
@@ -1153,7 +1217,7 @@ impl FrozenGriddedNormalReplay {
     pub(crate) fn release_completed_window_plan(&mut self) -> Result<(), CompleteDataPlanError> {
         if self.window_plan.is_none()
             || self.prepared_batch_size.is_none()
-            || self.prepared_source.is_some()
+            || self.prepared_source.is_none()
             || self.latest_read.is_none()
             || self.latest_stream.is_none()
         {
@@ -1161,6 +1225,7 @@ impl FrozenGriddedNormalReplay {
         }
         self.window_plan = None;
         self.prepared_batch_size = None;
+        self.prepared_source = None;
         Ok(())
     }
 
@@ -1222,6 +1287,7 @@ impl FrozenGriddedNormalReplay {
                 self.backing.program.identity(),
             ),
             bytes: self.backing.spill.seal().artifact_bytes(),
+            frame_count: self.backing.spill.seal().frame_count(),
         }
     }
 
@@ -1233,10 +1299,36 @@ impl FrozenGriddedNormalReplay {
         self.latest_stream.as_ref()
     }
 
+    pub(crate) const fn aggregate_read_measurements(&self) -> Option<ManagedSpillMeasurements> {
+        if self.failed_window {
+            None
+        } else {
+            self.aggregate_read
+        }
+    }
+
+    pub(crate) const fn artifact_pass_count(&self) -> u64 {
+        self.artifact_pass_count
+    }
+
+    pub(crate) const fn aggregate_stream_measurements(&self) -> Option<&BoundedStreamMeasurements> {
+        self.aggregate_stream.as_ref()
+    }
+
     pub(crate) const fn latest_routing_measurements(
         &self,
     ) -> Option<GriddedNormalRoutingMeasurements> {
         self.latest_routing
+    }
+
+    pub(crate) const fn aggregate_routing_measurements(
+        &self,
+    ) -> Option<GriddedNormalRoutingMeasurements> {
+        if self.failed_window {
+            None
+        } else {
+            self.aggregate_routing
+        }
     }
 
     pub(crate) const fn window_plan(&self) -> Option<&GriddedNormalReplayWindowPlan> {
@@ -1288,7 +1380,11 @@ impl FrozenGriddedNormalReplay {
                     .then_some(claim.amount)
             })
             .ok_or_else(|| io::Error::other("retained replay read buffer missing"))?;
-        if cache_capacity < self.descriptor().bytes()
+        if cache_capacity
+            < self
+                .descriptor()
+                .retained_source_capacity_bytes()
+                .map_err(io::Error::other)?
             || read_buffer < schedule.source_slot_bytes
             || !context
                 .node()
@@ -1399,7 +1495,7 @@ impl FrozenGriddedNormalReplay {
         pass_ordinal: u32,
         state: GriddedNormalOperatorState,
         route_capacity_bytes: u64,
-    ) -> io::Result<CompleteDataOperatorResult> {
+    ) -> io::Result<(CompleteDataSlabResult, PreparedSpectralOperatorRecycle)> {
         let budget = self.backing.spill.budget();
         let window_plan = self.window_plan.as_ref().ok_or_else(|| {
             io::Error::other("gridded-normal replay lacks its sealed window plan")
@@ -1482,6 +1578,11 @@ impl FrozenGriddedNormalReplay {
             .take()
             .ok_or_else(|| io::Error::other("gridded-normal replay backing was not selected"))?;
         let record_bytes = self.backing.program.record_bytes();
+        self.artifact_pass_count = self
+            .artifact_pass_count
+            .checked_add(1)
+            .ok_or_else(|| io::Error::other("gridded-normal pass count overflow"))?;
+        self.failed_window = true;
         let outcome = execute_bounded(
             plan,
             pass_ordinal,
@@ -1491,37 +1592,75 @@ impl FrozenGriddedNormalReplay {
                 record_bytes,
                 timings: GriddedNormalReplayTimings::new(pass_ordinal, workers),
             },
-        )
-        .map_err(|failure| match *failure.cause {
-            BoundedStreamError::Source(error) => io::Error::other(error),
-            BoundedStreamError::Kernel(error) => io::Error::other(error),
-            BoundedStreamError::MeasurementOverflow => {
-                io::Error::other("gridded-normal stream measurement overflow")
+        );
+        let outcome = match outcome {
+            Ok(outcome) => outcome,
+            Err(failure) => {
+                let measurements = *failure.measurements;
+                self.latest_stream = Some(measurements.clone());
+                self.aggregate_stream = Some(
+                    BoundedStreamMeasurements::aggregate_window(
+                        self.aggregate_stream.take(),
+                        pass_ordinal as u64,
+                        measurements,
+                    )
+                    .ok_or_else(|| {
+                        io::Error::other("gridded-normal stream measurement overflow")
+                    })?,
+                );
+                return Err(match *failure.cause {
+                    BoundedStreamError::Source(error) => io::Error::other(error),
+                    BoundedStreamError::Kernel(error) => io::Error::other(error),
+                    BoundedStreamError::MeasurementOverflow => {
+                        io::Error::other("gridded-normal stream measurement overflow")
+                    }
+                    BoundedStreamError::InvalidKernelPlan => {
+                        io::Error::other("invalid gridded-normal kernel plan")
+                    }
+                    BoundedStreamError::ResidencyExceeded => {
+                        io::Error::other("gridded-normal stream exceeded planned residency")
+                    }
+                    BoundedStreamError::ProducerPanicked => {
+                        io::Error::other("gridded-normal source producer panicked")
+                    }
+                    BoundedStreamError::ProducerDisconnected => {
+                        io::Error::other("gridded-normal source producer disconnected")
+                    }
+                });
             }
-            BoundedStreamError::InvalidKernelPlan => {
-                io::Error::other("invalid gridded-normal kernel plan")
-            }
-            BoundedStreamError::ResidencyExceeded => {
-                io::Error::other("gridded-normal stream exceeded planned residency")
-            }
-            BoundedStreamError::ProducerPanicked => {
-                io::Error::other("gridded-normal source producer panicked")
-            }
-            BoundedStreamError::ProducerDisconnected => {
-                io::Error::other("gridded-normal source producer disconnected")
-            }
-        })?;
-        let completion = outcome.source_completion;
+        };
+        let (source, completion) = outcome.source_completion;
         if completion.seal() != self.backing.spill.seal() {
             return Err(io::Error::other(
                 "gridded-normal read completion changed the sealed artifact",
             ));
         }
-        self.latest_read = Some(completion.measurements());
-        self.latest_stream = Some(outcome.measurements);
-        let (result, routing) = outcome.kernel_completion;
+        let read_measurements = completion.measurements();
+        let stream_measurements = outcome.measurements;
+        let (result, routing, recycle) = outcome.kernel_completion;
+        self.aggregate_read = ManagedSpillMeasurements::aggregate_window(
+            self.aggregate_read.take(),
+            read_measurements,
+        )
+        .map_err(io::Error::other)?;
+        self.aggregate_stream = Some(
+            BoundedStreamMeasurements::aggregate_window(
+                self.aggregate_stream.take(),
+                pass_ordinal as u64,
+                stream_measurements.clone(),
+            )
+            .ok_or_else(|| io::Error::other("gridded-normal stream measurement overflow"))?,
+        );
+        self.aggregate_routing = Some(
+            aggregate_routing_measurements(self.aggregate_routing, routing)
+                .ok_or_else(|| io::Error::other("gridded-normal routing measurement overflow"))?,
+        );
+        self.latest_read = Some(read_measurements);
+        self.prepared_source = Some(source);
+        self.latest_stream = Some(stream_measurements);
         self.latest_routing = Some(routing);
-        Ok(result)
+        self.failed_window = false;
+        Ok((result, recycle))
     }
 }
 
@@ -1537,6 +1676,33 @@ fn bind_gridded_replay_window_plan(
             Ok(plan)
         }
     }
+}
+
+fn aggregate_routing_measurements(
+    previous: Option<GriddedNormalRoutingMeasurements>,
+    window: GriddedNormalRoutingMeasurements,
+) -> Option<GriddedNormalRoutingMeasurements> {
+    let Some(previous) = previous else {
+        return Some(window);
+    };
+    Some(GriddedNormalRoutingMeasurements {
+        frames_routed: previous.frames_routed.checked_add(window.frames_routed)?,
+        encoded_records: previous
+            .encoded_records
+            .checked_add(window.encoded_records)?,
+        routed_record_memberships: previous
+            .routed_record_memberships
+            .checked_add(window.routed_record_memberships)?,
+        prediction_groups: previous
+            .prediction_groups
+            .checked_add(window.prediction_groups)?,
+        degrid_records: previous.degrid_records.checked_add(window.degrid_records)?,
+        grid_records: previous.grid_records.checked_add(window.grid_records)?,
+        sector_rescans: previous.sector_rescans.checked_add(window.sector_rescans)?,
+        peak_physical_route_capacity_bytes: previous
+            .peak_physical_route_capacity_bytes
+            .max(window.peak_physical_route_capacity_bytes),
+    })
 }
 
 struct GriddedNormalReplayKernel {
@@ -1601,7 +1767,11 @@ impl GriddedNormalReplayTimings {
 impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel {
     type Partition = GriddedNormalWork;
     type Partial = GriddedNormalPartial;
-    type Completion = (CompleteDataOperatorResult, GriddedNormalRoutingMeasurements);
+    type Completion = (
+        CompleteDataSlabResult,
+        GriddedNormalRoutingMeasurements,
+        PreparedSpectralOperatorRecycle,
+    );
     type Error = CompleteDataOperatorError;
 
     fn partition_count(
@@ -1899,6 +2069,69 @@ pub struct CompleteDataResidency {
 }
 
 impl CompleteDataResidency {
+    /// Reserve each physical owner for its largest scheduled window. Different
+    /// native prediction envelopes can peak in different channel windows.
+    fn envelope(self, other: Self) -> Result<Self, CompleteDataPlanError> {
+        let mut result = Self {
+            grid_bytes: self.grid_bytes.max(other.grid_bytes),
+            convolution_cache_bytes: self
+                .convolution_cache_bytes
+                .max(other.convolution_cache_bytes),
+            fft_resident_bytes: self.fft_resident_bytes.max(other.fft_resident_bytes),
+            fft_planning_bytes: self.fft_planning_bytes.max(other.fft_planning_bytes),
+            forward_workspace_bytes: self
+                .forward_workspace_bytes
+                .max(other.forward_workspace_bytes),
+            response_workspace_bytes: self
+                .response_workspace_bytes
+                .max(other.response_workspace_bytes),
+            mosaic_state_bytes: self.mosaic_state_bytes.max(other.mosaic_state_bytes),
+            mosaic_workspace_bytes: self
+                .mosaic_workspace_bytes
+                .max(other.mosaic_workspace_bytes),
+            gridded_route_bytes: self.gridded_route_bytes.max(other.gridded_route_bytes),
+            gridded_replay_schedule_bytes: self
+                .gridded_replay_schedule_bytes
+                .max(other.gridded_replay_schedule_bytes),
+            aw_prepared_pool_bytes: self
+                .aw_prepared_pool_bytes
+                .max(other.aw_prepared_pool_bytes),
+            aw_catalog_metadata_bytes: self
+                .aw_catalog_metadata_bytes
+                .max(other.aw_catalog_metadata_bytes),
+            primitive_output_bytes: self
+                .primitive_output_bytes
+                .max(other.primitive_output_bytes),
+            sequential_fold_accumulator_bytes: self
+                .sequential_fold_accumulator_bytes
+                .max(other.sequential_fold_accumulator_bytes),
+            major_cycle_model_bytes: self
+                .major_cycle_model_bytes
+                .max(other.major_cycle_model_bytes),
+            peak_bytes: 0,
+        };
+        result.peak_bytes = [
+            result.grid_bytes,
+            result.convolution_cache_bytes,
+            result.fft_resident_bytes,
+            result.fft_planning_bytes,
+            result.forward_workspace_bytes,
+            result.response_workspace_bytes,
+            result.mosaic_state_bytes,
+            result.mosaic_workspace_bytes,
+            result.gridded_route_bytes,
+            result.gridded_replay_schedule_bytes,
+            result.aw_prepared_pool_bytes,
+            result.aw_catalog_metadata_bytes,
+            result.primitive_output_bytes,
+            result.major_cycle_model_bytes,
+        ]
+        .into_iter()
+        .try_fold(0_usize, usize::checked_add)
+        .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
+        Ok(result)
+    }
+
     fn with_sequential_fold_accumulator(
         mut self,
         accumulator_bytes: usize,
@@ -2038,6 +2271,7 @@ pub struct CompleteDataPlanFragment {
     aw_projection: Option<PreparedAwProjection>,
     aw_reader: Option<PreparedArtifactReaderPlan>,
     initial_working_set: Option<InitialPhaseWorkingSetBinding>,
+    pub(crate) cube_state: Option<Arc<crate::cube_state_plan::CubeStatePlan>>,
 }
 
 #[derive(Debug, Clone)]
@@ -2150,7 +2384,7 @@ impl CompleteDataPlanFragment {
             max_replay_block_samples,
             SpectralOperatorPass::InitialMajor,
         )?;
-        let fold_accumulator_bytes = project_fold_accumulator_bytes(full_workload)?;
+        let fold_accumulator_bytes = project_fold_accumulator_bytes(problem, full_workload)?;
         let mut admitted_depth = 1;
         for depth in 1..=total_channels {
             let specification = SpectralOperatorSpecification::for_slab(problem, 0, depth)?;
@@ -2177,6 +2411,33 @@ impl CompleteDataPlanFragment {
             }
             admitted_depth = depth;
         }
+        Self::channel_major_at_depth(
+            problem,
+            max_replay_block_samples,
+            replay_node,
+            preparation_node,
+            admitted_depth,
+        )
+    }
+
+    pub(crate) fn channel_major_at_depth(
+        problem: &CompiledProblem,
+        max_replay_block_samples: usize,
+        replay_node: WorkNodeId,
+        preparation_node: WorkNodeId,
+        admitted_depth: usize,
+    ) -> Result<Self, CompleteDataPlanError> {
+        let full = SpectralOperatorSpecification::new(problem)?;
+        let total_channels = full.slab().total_channels();
+        if admitted_depth == 0 || admitted_depth > total_channels {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let full_workload = spectral_operator_workload(
+            &full,
+            max_replay_block_samples,
+            SpectralOperatorPass::InitialMajor,
+        )?;
+        let fold_accumulator_bytes = project_fold_accumulator_bytes(problem, full_workload)?;
         let mut specifications = Vec::new();
         let mut workloads = Vec::new();
         let mut peak_residency = None;
@@ -2200,14 +2461,10 @@ impl CompleteDataPlanFragment {
             if admitted_depth < total_channels {
                 residency = residency.with_sequential_fold_accumulator(fold_accumulator_bytes)?;
             }
-            if peak_residency
-                .as_ref()
-                .is_none_or(|peak: &CompleteDataResidency| {
-                    residency.peak_bytes() > peak.peak_bytes()
-                })
-            {
-                peak_residency = Some(residency);
-            }
+            peak_residency = Some(match peak_residency {
+                Some(peak) => CompleteDataResidency::envelope(peak, residency)?,
+                None => residency,
+            });
             specifications.push(specification);
             workloads.push(workload);
         }
@@ -2234,6 +2491,7 @@ impl CompleteDataPlanFragment {
             aw_projection: None,
             aw_reader: None,
             initial_working_set: None,
+            cube_state: None,
         })
     }
 
@@ -2243,16 +2501,49 @@ impl CompleteDataPlanFragment {
         replay_node: WorkNodeId,
         preparation_node: WorkNodeId,
         window_plan: &GriddedNormalReplayWindowPlan,
+        specifications: &[SpectralOperatorSpecification],
     ) -> Result<Self, CompleteDataPlanError> {
-        let specification = SpectralOperatorSpecification::new(problem)?;
-        Self::from_specification(
-            problem,
-            max_replay_block_samples,
-            replay_node,
-            preparation_node,
-            specification,
-            CompleteDataExecution::Gridded(window_plan),
-        )
+        let mut next_channel = 0;
+        let mut fragments = Vec::with_capacity(specifications.len());
+        for specification in specifications {
+            let slab = specification.slab();
+            if specification.problem_id() != problem.problem_id()
+                || slab.core_range().start != next_channel
+                || slab.total_channels() != problem.geometry().spectral().output_channels()
+            {
+                return Err(CompleteDataPlanError::PlanMismatch);
+            }
+            next_channel = slab.core_range().end;
+            fragments.push(Self::from_specification(
+                problem,
+                max_replay_block_samples,
+                replay_node.clone(),
+                preparation_node.clone(),
+                specification.clone(),
+                CompleteDataExecution::Gridded(window_plan),
+            )?);
+        }
+        if next_channel != problem.geometry().spectral().output_channels() {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        let mut fragments = fragments.into_iter();
+        let mut first = fragments
+            .next()
+            .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        let mut workloads = vec![first.workload];
+        for next in fragments {
+            first.residency = first.residency.envelope(next.residency)?;
+            workloads.push(next.workload);
+        }
+        first.slab_specifications = specifications.into();
+        first.slab_workloads = workloads.into();
+        first.admitted_slab_depth = specifications
+            .iter()
+            .map(|specification| specification.slab().core_depth())
+            .max()
+            .ok_or(CompleteDataPlanError::PlanMismatch)?;
+        first.sequential_channel_major = specifications.len() > 1;
+        Ok(first)
     }
 
     fn from_specification(
@@ -2311,6 +2602,7 @@ impl CompleteDataPlanFragment {
             aw_projection: None,
             aw_reader: None,
             initial_working_set: None,
+            cube_state: None,
         })
     }
 
@@ -2575,7 +2867,7 @@ impl CompleteDataPlanFragment {
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
         preparation: &MajorCyclePreparation,
-        prior: FinalNormalState,
+        prior: &mut GriddedNormalPrior,
         prepared: CompleteDataPreparedState,
         artifact: &FrozenGriddedNormalReplay,
     ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
@@ -3582,13 +3874,13 @@ fn project_residency(
     let pending_delta_terms = if specification.is_initial_certified_zero(workload.pass()) {
         0
     } else {
-        model.bounds().max_delta_terms().min(model_samples)
+        model.bounds().max_delta_terms().min(total_model_samples)
     };
     let major_cycle_model_bytes = model_samples
         .checked_mul(size_of::<ModelSample>())
         .and_then(|bytes| {
             pending_delta_terms
-                .checked_mul(size_of::<ModelDeltaTerm>())
+                .checked_mul(2 * size_of::<ModelDeltaTerm>())
                 .and_then(|delta_bytes| bytes.checked_add(delta_bytes))
         })
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
@@ -3626,8 +3918,17 @@ fn project_residency(
 }
 
 fn project_fold_accumulator_bytes(
+    problem: &CompiledProblem,
     workload: SpectralOperatorWorkload,
 ) -> Result<usize, CompleteDataPlanError> {
+    if matches!(
+        problem.reconstruction().basis(),
+        casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+    ) {
+        // The physical cube-state owner reserves the paged fold, including
+        // its cache and complete-axis metadata. There is no resident cube.
+        return Ok(0);
+    }
     workload
         .fold_accumulator_complex_values()
         .checked_mul(size_of::<num_complex::Complex64>())
@@ -3963,7 +4264,7 @@ impl CompleteDataPreparedState {
         context: WorkExecutionContext<'_>,
         problem: &CompiledProblem,
         preparation: &MajorCyclePreparation,
-        prior: FinalNormalState,
+        prior: &mut GriddedNormalPrior,
         artifact: &FrozenGriddedNormalReplay,
         fragment: &CompleteDataPlanFragment,
     ) -> Result<GriddedNormalOperatorState, CompleteDataPlanError> {
@@ -3988,6 +4289,17 @@ impl CompleteDataPreparedState {
                     .map_err(|_| CompleteDataPlanError::PlanMismatch)?,
             )
             .map_err(|_| CompleteDataPlanError::PlanMismatch)?;
+        let storage = artifact
+            .backing
+            .program
+            .storage_layout(
+                self.owner.slab().core_depth(),
+                schedule.storage.layout().convolution_support(),
+            )?
+            .plan(
+                schedule.storage.route_slot_record_capacities(),
+                schedule.storage.maximum_window_records(),
+            )?;
         let state = artifact
             .backing
             .program
@@ -3996,7 +4308,7 @@ impl CompleteDataPreparedState {
                 preparation.final_model(),
                 prior,
                 self.owner,
-                &schedule.storage,
+                &storage,
             )
             .map_err(|error| {
                 CompleteDataPlanError::Operator(CompleteDataOperatorError::Owner(error))
@@ -4026,10 +4338,14 @@ impl GriddedNormalOperatorState {
     pub(crate) fn complete(
         self,
     ) -> Result<
-        (CompleteDataOperatorResult, GriddedNormalRoutingMeasurements),
+        (
+            CompleteDataSlabResult,
+            GriddedNormalRoutingMeasurements,
+            PreparedSpectralOperatorRecycle,
+        ),
         CompleteDataOperatorError,
     > {
-        let (evidence, routing) = self
+        let (evidence, routing, recycle) = self
             .state
             .finish_with_routing_measurements()
             .map_err(CompleteDataOperatorError::Owner)?;
@@ -4038,15 +4354,12 @@ impl GriddedNormalOperatorState {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
         Ok((
-            CompleteDataOperatorResult {
+            CompleteDataSlabResult {
                 evidence,
-                attempt: self.binding.attempt,
-                replay_node: self.binding.replay_node,
-                reconciliation_node: self.binding.reconciliation_node,
-                lease_epoch: self.binding.lease_epoch,
-                observation_predecessor_required: self.binding.observation_predecessor_required,
+                binding: self.binding,
             },
             routing,
+            recycle,
         ))
     }
 }
@@ -4086,7 +4399,7 @@ impl GriddedNormalOperatorState {
 /// ```
 #[derive(Debug)]
 pub struct CompleteDataOperatorResult {
-    evidence: CompleteDataOwnerResult,
+    evidence: CompleteDataNormalState,
     attempt: ExecutionAttemptId,
     replay_node: WorkNodeId,
     reconciliation_node: WorkNodeId,
@@ -4095,10 +4408,13 @@ pub struct CompleteDataOperatorResult {
 }
 
 impl CompleteDataOperatorResult {
-    /// Return reconstruction-owned unnormalized primitives.
-    #[must_use]
-    pub fn primitives(&self) -> &SpectralOperatorPrimitives {
-        self.evidence.primitives()
+    /// Load an explicit unnormalized diagnostic window without minting a
+    /// Final Normal State completion or publication authority.
+    pub fn read_window(
+        &self,
+        channels: std::ops::Range<usize>,
+    ) -> Result<CompleteDataNormalWindow<'_>, CompleteDataOperatorError> {
+        Ok(self.evidence.read_window(channels)?)
     }
 
     /// Return the exact Compiled Problem executed by this operator.
@@ -4198,7 +4514,7 @@ impl CompleteDataOperatorResult {
     /// Consume the envelope into its intact reconstruction evidence for the
     /// Major-Cycle owner; the pairing is never split outside this crate.
     #[must_use]
-    pub(crate) fn into_evidence(self) -> CompleteDataOwnerResult {
+    pub(crate) fn into_evidence(self) -> CompleteDataNormalState {
         self.evidence
     }
 }
@@ -4248,15 +4564,32 @@ pub(crate) struct PendingCompleteDataSlabFold {
 impl CompleteDataSlabResult {
     pub(crate) fn begin_fold(
         self,
+        normal_storage: &NormalStoragePlan,
     ) -> Result<PendingCompleteDataSlabFold, CompleteDataOperatorError> {
         Ok(PendingCompleteDataSlabFold {
-            evidence: CompleteDataOwnerSlabFold::begin(self.evidence)?,
+            evidence: CompleteDataOwnerSlabFold::begin(self.evidence, normal_storage)?,
             binding: self.binding,
         })
     }
 }
 
 impl PendingCompleteDataSlabFold {
+    pub(crate) fn complete_gridded(
+        self,
+    ) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
+        if self.binding.observation_predecessor_required {
+            return Err(CompleteDataOperatorError::ExecutionBinding);
+        }
+        Ok(CompleteDataOperatorResult {
+            evidence: self.evidence.finish()?,
+            attempt: self.binding.attempt,
+            replay_node: self.binding.replay_node,
+            reconciliation_node: self.binding.reconciliation_node,
+            lease_epoch: self.binding.lease_epoch,
+            observation_predecessor_required: false,
+        })
+    }
+
     pub(crate) fn fold(
         self,
         next: CompleteDataSlabResult,
@@ -4266,6 +4599,8 @@ impl PendingCompleteDataSlabFold {
             || self.binding.replay_node != next.binding.replay_node
             || self.binding.reconciliation_node != next.binding.reconciliation_node
             || self.binding.lease_epoch != next.binding.lease_epoch
+            || self.binding.observation_predecessor_required
+                != next.binding.observation_predecessor_required
         {
             return Err(CompleteDataOperatorError::ExecutionBinding);
         }
@@ -4394,6 +4729,7 @@ impl SpectralOperatorState {
     pub fn complete(
         self,
         replay: &WeightingReplayCompletion,
+        normal_storage: &NormalStoragePlan,
     ) -> Result<CompleteDataOperatorResult, CompleteDataOperatorError> {
         if self.binding.problem != replay.problem_id()
             || self.binding.attempt != replay.attempt_id()
@@ -4410,7 +4746,7 @@ impl SpectralOperatorState {
                 .map(|completion| completion.generation_id()),
         )?;
         Ok(CompleteDataOperatorResult {
-            evidence,
+            evidence: evidence.seal(normal_storage)?,
             attempt: self.binding.attempt,
             replay_node: self.binding.replay_node,
             reconciliation_node: self.binding.reconciliation_node,
@@ -4442,7 +4778,7 @@ impl SpectralOperatorState {
 }
 
 /// Exact reason T19 rejected an operator problem, block, or terminal proof.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompleteDataOperatorError {
     /// Blocks or terminal proof disagree on the frozen W generation.
     WeightingGeneration,

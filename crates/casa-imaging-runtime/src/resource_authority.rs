@@ -1884,6 +1884,7 @@ struct LeaseRecord {
 enum ArtifactCapacity {
     Memory(Box<[CapacityDomainId]>),
     Storage(StorageDomainId),
+    FileDescriptors,
 }
 
 #[derive(Debug)]
@@ -2733,14 +2734,16 @@ impl ResourceLease {
                         "artifact storage permit references unknown demand {demand_id}",
                     )))
             }
+            LeaseResource::FileDescriptors => Ok(ArtifactCapacity::FileDescriptors),
             _ => Err(ResourceError::Invalid(
-                "artifact retention may keep only temporary storage and scheduler-exported immutable memory".to_string(),
+                "artifact retention may keep only temporary storage, file descriptors, and scheduler-exported immutable memory".to_string(),
             )),
         }
     }
 
-    /// Release execution resources while preserving live temporary storage and
-    /// the dedicated immutable memory allocations exported by the scheduler.
+    /// Release execution resources while preserving live temporary storage,
+    /// dedicated immutable memory allocations, and file-descriptor permits
+    /// exported by the scheduler.
     /// Artifacts dropped before finalization leave no retained reservation.
     pub(crate) fn release_retaining_artifact_resources(
         mut self,
@@ -2795,6 +2798,12 @@ impl ResourceLease {
                         *amount,
                         "artifact-retained storage",
                     )?;
+                }
+                ArtifactCapacity::FileDescriptors => {
+                    retained.file_descriptors =
+                        retained.file_descriptors.checked_add(*amount).ok_or(
+                            ResourceError::Overflow("artifact-retained file descriptors"),
+                        )?;
                 }
             }
         }
@@ -2966,6 +2975,7 @@ impl ResourcePermit {
                 use_kind: StorageUseKind::Temporary,
                 ..
             } => Some(storage_domain.len()),
+            LeaseResource::FileDescriptors => Some(0),
             _ => None,
         }
     }
@@ -3186,6 +3196,17 @@ fn release_permit(
                             "artifact storage reservation underflowed".to_string(),
                         )
                     })?;
+                }
+                ArtifactCapacity::FileDescriptors => {
+                    record.reserved.file_descriptors = record
+                        .reserved
+                        .file_descriptors
+                        .checked_sub(amount)
+                        .ok_or_else(|| {
+                            ResourceError::Invalid(
+                                "artifact file descriptor reservation underflowed".to_string(),
+                            )
+                        })?;
                 }
             }
         }

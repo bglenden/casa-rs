@@ -1120,7 +1120,7 @@ where
                 }
             };
         }
-        planned_products.demand(&inputs)?
+        planned_products.demand(&inputs, casa_imaging_products::ProductStoragePlan::new(1)?)?
     };
     let staging_residency_bytes = publication_config
         .sink
@@ -1153,9 +1153,10 @@ where
             runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
+            runtime.gridded_normal_storage.clone(),
         ),
     )?;
-    let (physical, publication) = publication_plan.into_parts();
+    let (physical, publication, backing) = publication_plan.into_parts();
     // Admission covers production, validity, sealing overlap, and staging.
     // Obtain it before allocating any product payload.
     let execution_plan = plan(
@@ -1178,6 +1179,7 @@ where
         scientific,
         reconstruction_masks,
         publication_config.sink,
+        backing,
     )?;
     let registry = SerialProductPublicationRegistry::new(
         runtime.registry,

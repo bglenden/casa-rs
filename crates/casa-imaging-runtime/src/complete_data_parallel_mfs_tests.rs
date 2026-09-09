@@ -807,12 +807,16 @@ fn execute_complete_data_mfs_with_policy(
         .take_gridded_normal_replay()
         .expect("sealed gridded-normal replay");
     let final_input = minor.into_final_major_input();
-    let dirty = final_input.evidence().normal_state().residual().to_vec();
-    let psf = final_input
-        .evidence()
-        .normal_state()
-        .normal_approximation()
-        .to_vec();
+    let (dirty, psf) = {
+        let normal = final_input.evidence().normal_state();
+        let window = normal
+            .read_window(normal.slab().core_range())
+            .expect("coupled MFS fixture window");
+        (
+            window.residual().to_vec(),
+            window.normal_approximation().to_vec(),
+        )
+    };
 
     drop(resolution);
     let final_planned = SpectralCyclePlan::final_major(
@@ -890,6 +894,7 @@ fn execute_complete_data_mfs_with_policy(
     assert!(completed_replay.release_completed_window_plan().is_err());
     let next_window = completed_replay
         .preview_windows(
+            1,
             crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Unknown,
             casa_imaging_reconstruction::runtime_adapter::standard_convolution_support(),
             None,
@@ -924,8 +929,17 @@ fn execute_complete_data_mfs_with_policy(
     RunEvidence {
         dirty,
         psf,
-        model: completion.final_model().samples().to_vec(),
-        residual: completion.normal_state().residual().to_vec(),
+        model: completion
+            .final_model()
+            .read_samples(0..completion.final_model().sample_count())
+            .expect("read fixture model")
+            .to_vec(),
+        residual: completion
+            .normal_state()
+            .read_window(completion.normal_state().slab().core_range())
+            .expect("coupled MFS fixture window")
+            .residual()
+            .to_vec(),
         sum_weights: completion.normal_state().sum_weights().to_vec(),
         initial_stream,
         final_stream,

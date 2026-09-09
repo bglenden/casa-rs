@@ -40,11 +40,11 @@ use crate::{
     spectral_operator::{
         AwReplayCoordinates, CasaLinearRowResampler, CasaResampledGroup,
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, ConvolutionOperator,
-        NativeSpectralGroup, PreparedSpectralOperator, ReusableNormalState, SPEED_OF_LIGHT_M_PER_S,
-        SUPPORT, SampleTaps, SpectralOperatorError, SpectralOperatorPass,
-        SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabOperator, TapSpan,
-        WProjectionDiagnostics, accept_polarization_input, accept_weighted_input,
-        aw_replay_coordinates, aw_stokes_i_mueller, combine_chart_updates,
+        NativeSpectralGroup, PreparedSpectralOperator, PreparedSpectralOperatorRecycle,
+        ReusableNormalState, SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps, SpectralOperatorError,
+        SpectralOperatorPass, SpectralOperatorSpecification, SpectralPrimitiveCatalog,
+        SpectralSlabOperator, TapSpan, WProjectionDiagnostics, accept_polarization_input,
+        accept_weighted_input, aw_replay_coordinates, aw_stokes_i_mueller, combine_chart_updates,
         polarization_effective_flags, selected_model_projection,
     },
     weighting::{
@@ -166,7 +166,7 @@ impl GriddedNormalRecordLayout {
                 coefficient_terms, ..
             } => coefficient_terms + output_channels,
             Self::Scalar => 1,
-            Self::ChannelLocal { channels } => channels,
+            Self::ChannelLocal { .. } => output_channels,
             Self::TaylorViaChannelMajor { channels, .. } => channels,
             Self::Taylor(plan) | Self::TaylorWithCoordinates(plan) => plan.coefficient_term_count(),
         }
@@ -655,6 +655,7 @@ pub struct GriddedNormalOperatorBlockMeasurements {
 #[doc(hidden)]
 pub struct GriddedNormalOperatorCompiler {
     specification: SpectralOperatorSpecification,
+    prediction_support: Box<[std::ops::Range<usize>]>,
     record_layout: GriddedNormalRecordLayout,
     finite_values: casa_imaging_model::FiniteValuePolicy,
     gridders: Vec<ConvolutionOperator>,
@@ -864,6 +865,16 @@ impl GriddedNormalOperatorCompiler {
         }
         Ok(Self {
             finite_values: specification.finite_values(),
+            prediction_support: if matches!(
+                record_layout,
+                GriddedNormalRecordLayout::ChannelLocal { .. }
+            ) {
+                (0..specification.slab().total_channels())
+                    .map(|c| c..c + 1)
+                    .collect()
+            } else {
+                Box::new([])
+            },
             gridders,
             w_projection_diagnostics,
             specification,
@@ -918,6 +929,8 @@ impl GriddedNormalOperatorCompiler {
             == SourceCardinalityObservation::Enabled)
             .then(Instant::now);
         let before = frames.timings();
+        let mut prediction_support = std::mem::take(&mut self.prediction_support);
+        let polarizations = self.specification.polarization_count();
         let result = (|| {
             if block.sequence() != self.next_block_sequence {
                 return Err(SpectralOperatorError::BlockSequence);
@@ -948,10 +961,12 @@ impl GriddedNormalOperatorCompiler {
                         self.observe_aw_weighting(block)?;
                     }
                     self.construct_aw_record_keys(block, &mut |group| {
+                        observe_prediction_support(&mut prediction_support, polarizations, group)?;
                         frames.push_group(group, sink)
                     })?
                 } else {
                     self.construct_standard_record_keys(block, &mut |group| {
+                        observe_prediction_support(&mut prediction_support, polarizations, group)?;
                         frames.push_group(group, sink)
                     })?
                 };
@@ -999,6 +1014,7 @@ impl GriddedNormalOperatorCompiler {
             self.timings.encoding_checksum = after.encoding_checksum;
         }
         self.frames = Some(frames);
+        self.prediction_support = prediction_support;
         if result.is_err() {
             self.poisoned = true;
         }
@@ -1399,6 +1415,7 @@ impl GriddedNormalOperatorCompiler {
                 retained_metadata_bytes,
                 identity,
                 specification: self.specification,
+                prediction_support: self.prediction_support,
                 weighting_generation: replay.weighting_generation(),
                 replay: replay.replay_id(),
                 coverage,
@@ -1445,6 +1462,7 @@ struct GriddedNormalOperatorManifest {
     retained_metadata_bytes: usize,
     identity: LogicalIdentity,
     specification: SpectralOperatorSpecification,
+    prediction_support: Box<[std::ops::Range<usize>]>,
     weighting_generation: crate::WeightingGenerationId,
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
@@ -1459,6 +1477,43 @@ struct GriddedNormalOperatorManifest {
     w_projection_diagnostics: Box<[WProjectionDiagnostics]>,
 }
 
+fn observe_prediction_support(
+    support: &mut [std::ops::Range<usize>],
+    polarizations: usize,
+    group: &[ReducedRecordKey],
+) -> Result<(), SpectralOperatorError> {
+    if support.is_empty() {
+        return Ok(());
+    }
+    let mut prediction = None::<std::ops::Range<usize>>;
+    for record in group
+        .iter()
+        .filter(|record| record.role != RecordRole::Accumulation)
+    {
+        let channel = record.output_channel as usize / polarizations;
+        if channel >= support.len() {
+            return Err(SpectralOperatorError::InvalidGriddedRecord);
+        }
+        prediction = Some(prediction.map_or(channel..channel + 1, |range| {
+            range.start.min(channel)..range.end.max(channel + 1)
+        }));
+    }
+    if let Some(prediction) = prediction {
+        for record in group
+            .iter()
+            .filter(|record| record.role != RecordRole::Prediction)
+        {
+            let channel = record.output_channel as usize / polarizations;
+            let range = support
+                .get_mut(channel)
+                .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+            range.start = range.start.min(prediction.start);
+            range.end = range.end.max(prediction.end);
+        }
+    }
+    Ok(())
+}
+
 /// Sealed manifest for one exhaustive private gridded replay artifact.
 #[doc(hidden)]
 #[derive(Clone)]
@@ -1467,6 +1522,31 @@ pub struct GriddedNormalOperatorProgram {
 }
 
 impl GriddedNormalOperatorProgram {
+    /// Compile a core window with the complete native-atom prediction support
+    /// certified during this program's exhaustive source compilation.
+    pub fn specification_for_slab(
+        &self,
+        problem: &CompiledProblem,
+        core_start: usize,
+        core_depth: usize,
+    ) -> Result<SpectralOperatorSpecification, SpectralOperatorError> {
+        if problem.problem_id() != self.manifest.specification.problem_id() {
+            return Err(SpectralOperatorError::ProblemMismatch);
+        }
+        let specification =
+            SpectralOperatorSpecification::for_slab(problem, core_start, core_depth)?;
+        if self.manifest.prediction_support.is_empty() {
+            return Ok(specification);
+        }
+        let core = specification.slab().core_range();
+        let resident = self.manifest.prediction_support[core.clone()]
+            .iter()
+            .fold(core, |range, next| {
+                range.start.min(next.start)..range.end.max(next.end)
+            });
+        specification.with_prediction_range(resident)
+    }
+
     /// Return the scientific specification binding certified during compilation.
     #[must_use]
     pub fn compilation_binding(&self) -> LogicalIdentity {
@@ -1484,11 +1564,22 @@ impl GriddedNormalOperatorProgram {
     /// Derive the shared physical storage layout from this program's science dimensions.
     pub fn storage_layout(
         &self,
+        core_channels: usize,
         convolution_support: usize,
     ) -> Result<GriddedNormalStorageLayout, SpectralOperatorError> {
+        if core_channels == 0 || core_channels > self.manifest.specification.slab().total_channels()
+        {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
+        let planes = self
+            .manifest
+            .record_layout
+            .accumulation_width(core_channels)
+            .checked_mul(self.manifest.specification.polarization_count())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         GriddedNormalStorageLayout::new(
             self.manifest.specification.chart_grid_shapes(),
-            self.accumulation_width(),
+            planes,
             convolution_support,
             self.manifest.aw_projection,
         )
@@ -1573,51 +1664,13 @@ impl GriddedNormalOperatorProgram {
             .checked_mul(self.record_bytes())
     }
 
-    /// Bind a model and prior invariant normal state to the gridded apply owner.
-    pub fn begin_apply(
+    /// Certify the complete prior generation once, retaining its bounded backing
+    /// across every channel window of this replay.
+    pub fn bind_prior(
         &self,
-        problem: &CompiledProblem,
-        model: &ModelGeneration,
         prior: FinalNormalState,
-        prepared: PreparedSpectralOperator,
-    ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
-        let maximum_records = usize::try_from(
-            self.manifest
-                .descriptors
-                .iter()
-                .map(|descriptor| descriptor.record_count)
-                .max()
-                .unwrap_or(0),
-        )
-        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-        let storage = self
-            .storage_layout(prepared.convolution_maximum_support())?
-            .plan(&[maximum_records], maximum_records)?;
-        self.begin_apply_with_storage_plan(problem, model, prior, prepared, &storage)
-    }
-
-    /// Construct exactly the admitted task pool and retained route-slot capacities.
-    #[doc(hidden)]
-    pub fn begin_apply_with_storage_plan(
-        &self,
-        problem: &CompiledProblem,
-        model: &ModelGeneration,
-        prior: FinalNormalState,
-        prepared: PreparedSpectralOperator,
-        storage: &GriddedNormalStoragePlan,
-    ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
-        require_supported_basis(&problem.reconstruction().basis())?;
-        if storage.layout != self.storage_layout(prepared.convolution_maximum_support())? {
-            return Err(SpectralOperatorError::GriddedRecordMismatch);
-        }
-        let (prepared_specification, workload, mut ffts, aw_projection) = prepared.into_parts();
-        if prepared_specification.aw_projection().is_some() != aw_projection.is_some() {
-            return Err(SpectralOperatorError::GriddedRecordMismatch);
-        }
-        if problem.problem_id() != self.manifest.specification.problem_id()
-            || prepared_specification != self.manifest.specification
-            || workload.pass() != SpectralOperatorPass::ResidualRefresh
-            || prior.problem_id() != self.manifest.specification.problem_id()
+    ) -> Result<GriddedNormalReplaySource, SpectralOperatorError> {
+        if prior.problem_id() != self.manifest.specification.problem_id()
             || prior.geometry_id() != self.manifest.specification.geometry_id()
             || prior.numerics_id() != self.manifest.specification.numerics_id()
             || prior.weighting_commitment_id()
@@ -1655,11 +1708,79 @@ impl GriddedNormalOperatorProgram {
         {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
+        Ok(GriddedNormalReplaySource {
+            program: self.identity(),
+            prior: Some(prior),
+        })
+    }
+
+    /// Bind one admitted model/normal window to the gridded apply owner.
+    pub fn begin_apply(
+        &self,
+        problem: &CompiledProblem,
+        model: &ModelGeneration,
+        prior: &mut GriddedNormalReplaySource,
+        prepared: PreparedSpectralOperator,
+    ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
+        let maximum_records = usize::try_from(
+            self.manifest
+                .descriptors
+                .iter()
+                .map(|descriptor| descriptor.record_count)
+                .max()
+                .unwrap_or(0),
+        )
+        .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        let storage = self
+            .storage_layout(
+                prepared.slab().core_depth(),
+                prepared.convolution_maximum_support(),
+            )?
+            .plan(&[maximum_records], maximum_records)?;
+        self.begin_apply_with_storage_plan(problem, model, prior, prepared, &storage)
+    }
+
+    /// Construct exactly the admitted task pool and retained route-slot capacities.
+    #[doc(hidden)]
+    pub fn begin_apply_with_storage_plan(
+        &self,
+        problem: &CompiledProblem,
+        model: &ModelGeneration,
+        prior: &mut GriddedNormalReplaySource,
+        prepared: PreparedSpectralOperator,
+        storage: &GriddedNormalStoragePlan,
+    ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
+        require_supported_basis(&problem.reconstruction().basis())?;
+        if storage.layout
+            != self.storage_layout(
+                prepared.slab().core_depth(),
+                prepared.convolution_maximum_support(),
+            )?
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let (prepared_specification, workload, mut ffts, aw_projection) = prepared.into_parts();
+        if prepared_specification.aw_projection().is_some() != aw_projection.is_some() {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        let slab = prepared_specification.slab();
+        if prior.program != self.identity()
+            || problem.problem_id() != self.manifest.specification.problem_id()
+            || prepared_specification
+                != self.specification_for_slab(
+                    problem,
+                    slab.core_range().start,
+                    slab.core_depth(),
+                )?
+            || workload.pass() != SpectralOperatorPass::ResidualRefresh
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
         if ffts.len() != prepared_specification.chart_count() {
             return Err(SpectralOperatorError::GriddedRecordMismatch);
         }
         let model_generation = model.generation_id();
-        let reusable_domains = prior.into_reusable_domains()?;
+        let reusable_domains = prior.take_window(slab.core_range())?;
         if reusable_domains.len() != prepared_specification.domain_count() {
             return Err(SpectralOperatorError::ReusableNormalStateMismatch);
         }
@@ -1678,7 +1799,12 @@ impl GriddedNormalOperatorProgram {
                 .prepare_gridded_normal_model(model, &reusable_domains[chart.domain_ordinal()])?;
             operators.push(operator);
         }
-        let core_depth = self.accumulation_width();
+        let core_depth = self
+            .manifest
+            .record_layout
+            .accumulation_width(slab.core_depth())
+            .checked_mul(prepared_specification.polarization_count())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let convolution_support = operators
             .iter()
             .map(SpectralSlabOperator::convolution_maximum_support)
@@ -1719,6 +1845,11 @@ impl GriddedNormalOperatorProgram {
         let primary_grid_shape = self.manifest.specification.grid_shape();
         Ok(GriddedNormalOperatorApply {
             program: self.clone(),
+            specification: prepared_specification,
+            recycle: PreparedSpectralOperatorRecycle {
+                ffts,
+                aw_projection,
+            },
             operators,
             reusable_domains,
             model_generation,
@@ -1749,10 +1880,40 @@ impl GriddedNormalOperatorProgram {
     }
 }
 
+/// Certified prior generation retained across a complete replay. Channel-local
+/// windows borrow its backing; a coupled coefficient family is moved once.
+#[doc(hidden)]
+pub struct GriddedNormalReplaySource {
+    program: LogicalIdentity,
+    prior: Option<FinalNormalState>,
+}
+
+impl GriddedNormalReplaySource {
+    fn take_window(
+        &mut self,
+        channels: std::ops::Range<usize>,
+    ) -> Result<Vec<ReusableNormalState>, SpectralOperatorError> {
+        let prior = self
+            .prior
+            .as_ref()
+            .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?;
+        if prior.catalog() == crate::NormalStateCatalog::UnnormalizedChannelSlabV1 {
+            prior.read_reusable_window(channels)
+        } else {
+            self.prior
+                .take()
+                .ok_or(SpectralOperatorError::ReusableNormalStateMismatch)?
+                .into_reusable_domains()
+        }
+    }
+}
+
 /// Model-bound owner that applies only sealed gridded records.
 #[doc(hidden)]
 pub struct GriddedNormalOperatorApply {
     program: GriddedNormalOperatorProgram,
+    specification: Arc<SpectralOperatorSpecification>,
+    recycle: PreparedSpectralOperatorRecycle,
     operators: Vec<SpectralSlabOperator>,
     reusable_domains: Vec<ReusableNormalState>,
     model_generation: crate::ModelGenerationId,
@@ -2704,14 +2865,20 @@ impl GriddedNormalOperatorApply {
     /// Finish `dirty - A* W A x` and return ordinary Major-Cycle input.
     pub fn finish(self) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
         self.finish_with_routing_measurements()
-            .map(|(result, _measurements)| result)
+            .map(|(result, _measurements, _recycle)| result)
     }
 
     /// Finish and return the final immutable route-once measurement snapshot.
     pub fn finish_with_routing_measurements(
         mut self,
-    ) -> Result<(CompleteDataOwnerResult, GriddedNormalRoutingMeasurements), SpectralOperatorError>
-    {
+    ) -> Result<
+        (
+            CompleteDataOwnerResult,
+            GriddedNormalRoutingMeasurements,
+            PreparedSpectralOperatorRecycle,
+        ),
+        SpectralOperatorError,
+    > {
         let active_frames = self
             .two_domain
             .read()
@@ -2730,6 +2897,8 @@ impl GriddedNormalOperatorApply {
         let measurements = self.routing_measurements();
         let Self {
             program,
+            specification,
+            mut recycle,
             operators,
             reusable_domains,
             model_generation,
@@ -2737,13 +2906,16 @@ impl GriddedNormalOperatorApply {
             ..
         } = self;
         let domains = combine_chart_updates(
-            &program.manifest.specification,
+            &specification,
             reusable_domains,
             operators
                 .into_iter()
                 .zip(normal_grids)
                 .map(|(operator, grids)| {
-                    operator.finish_gridded_normal_from_grids(model_generation, grids)
+                    let (update, fft) =
+                        operator.finish_gridded_normal_from_grids(model_generation, grids)?;
+                    recycle.ffts.push(fft);
+                    Ok(update)
                 }),
         )?;
         let primitive_catalog = match program.manifest.record_layout {
@@ -2781,6 +2953,7 @@ impl GriddedNormalOperatorApply {
                 },
             },
             measurements,
+            recycle,
         ))
     }
 }

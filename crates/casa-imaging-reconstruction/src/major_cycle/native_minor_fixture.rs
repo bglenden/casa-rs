@@ -6,7 +6,9 @@ use casa_imaging_model::*;
 use num_complex::Complex64;
 
 use super::*;
-use crate::spectral_operator::{SpectralDomainPrimitives, SpectralOperatorPrimitives};
+use crate::spectral_operator::{
+    SpectralDomainPrimitives, SpectralOperatorPrimitives, SpectralPrimitiveDomains,
+};
 
 const REFERENCE_FREQUENCY_HZ: f64 = 1.0e9;
 const IMAGE_WIDTH: usize = 512;
@@ -328,6 +330,7 @@ pub(crate) fn build(
         crate::ExecutableModelProblem::from_compiled(problem.clone()).expect("executable fixture"),
         ModelExecutionAttemptId::new(identity(51, 100)),
         1,
+        crate::ModelStoragePlan::resident(usize::MAX).expect("positive model window"),
     )
     .expect("fixture lifecycle");
     let base = lifecycle.initial_empty().expect("zero fixture model");
@@ -375,7 +378,9 @@ pub(crate) fn build(
         continuum_transform_generation: None,
         coupled_mask_generation: None,
         image_domain_mask_generation: None,
-        primitives,
+        primitives: crate::spectral_operator::normal_storage::NormalStatePrimitives::Coupled(
+            primitives,
+        ),
     };
     (problem, lifecycle, base, normal)
 }

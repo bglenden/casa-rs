@@ -4,6 +4,9 @@
 
 use std::convert::Infallible;
 
+mod common;
+use common::{MemoryStorageFactory, SealedMemberFixtureRead, full_window};
+
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
@@ -661,8 +664,18 @@ fn run_round_with_terms(
         let evidence: CompleteDataOwnerResult = state
             .complete(&summary, selected, None)
             .expect("complete normal state");
-        let mut owner =
-            MajorCycleOwner::from_complete_data(evidence, preparation).expect("major-cycle owner");
+        let mut owner = MajorCycleOwner::from_complete_data(
+            {
+                let storage =
+                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                        evidence.primitives().slab().total_channels(),
+                    )
+                    .expect("fixture normal window");
+                evidence.seal(&storage).expect("seal fixture normal state")
+            },
+            preparation,
+        )
+        .expect("major-cycle owner");
         if matches!(
             problem.reconstruction().basis(),
             ReconstructionBasis::JointContinuumLine { .. }
@@ -679,6 +692,8 @@ fn run_round_with_terms(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         attempt(seed),
         7,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("model lifecycle");
     let empty = lifecycle.initial_empty().expect("empty model");
@@ -694,6 +709,8 @@ fn run_round_with_terms(
         attempt(seed),
         8,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continued lifecycle");
     let delta = lifecycle
@@ -731,7 +748,13 @@ fn seal_with_controls(
         .plan(&catalog, &controls)
         .expect("T44 Taylor plan");
     let inputs = ContinuumProductInputs::from_major_cycle(problem, join).expect("Taylor inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("T44 Taylor product family");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("T44 Taylor product family");
     authority
         .authorize(&planned, &produced)
         .expect("Taylor seal")
@@ -789,7 +812,13 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
         .expect("joint inputs")
         .with_coupled_reconstruction_masks(&masks)
         .expect("bind joint masks");
-    let produced = produce_continuum_members(&planned, &inputs).expect("joint product family");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("joint product family");
     let sealed = authority
         .authorize(&planned, &produced)
         .expect("joint product seal");
@@ -822,10 +851,14 @@ fn t46_joint_products_publish_one_lineage_without_component_residuals() {
         member(&sealed, ".line.mask").payload(),
         "distinct coupled supports must remain distinct published members"
     );
+    let normal = join.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled joint fixture window");
     let mut expected_residual = (0..2)
         .flat_map(|channel| {
             let weight = join.normal_state().channel_sum_weights()[channel];
-            join.normal_state()
+            window
                 .joint_common_residual(channel)
                 .expect("common residual")
                 .iter()
@@ -895,9 +928,12 @@ fn joint_publication_rejects_unimplemented_primary_beam_masks_at_planning() {
 
 fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
     let normal = join.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
     let cells = SHAPE[0] * SHAPE[1];
     let moments = (0..3)
-        .map(|term| normal.normal_moment(term).expect("Taylor normal moment"))
+        .map(|term| window.normal_moment(term).expect("Taylor normal moment"))
         .collect::<Vec<_>>();
     let peak = moments[0]
         .normal_approximation()
@@ -911,8 +947,8 @@ fn principal_residuals(join: &MajorCycleCompletion) -> [Vec<f32>; TERMS] {
     let h11 = moments[2].normal_approximation()[peak].re;
     let determinant = h00 * h11 - h01 * h01;
     assert!(determinant.is_finite() && determinant.abs() > f64::EPSILON);
-    let residual0 = normal.coefficient_term(0).expect("residual tt0").residual();
-    let residual1 = normal.coefficient_term(1).expect("residual tt1").residual();
+    let residual0 = window.coefficient_term(0).expect("residual tt0").residual();
+    let residual1 = window.coefficient_term(1).expect("residual tt1").residual();
     let mut principal = [vec![0.0; cells], vec![0.0; cells]];
     for index in 0..cells {
         principal[0][index] =
@@ -954,20 +990,23 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
     );
 
     let normal = join.normal_state();
-    let principal_weight = normal.normal_moment(0).expect("moment zero").sum_weight();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let principal_weight = window.normal_moment(0).expect("moment zero").sum_weight();
     for term in 0..3 {
         let psf = member(&sealed, &format!(".psf.tt{term}"));
         let sumwt = member(&sealed, &format!(".sumwt.tt{term}"));
         assert_eq!(psf.contract().unit(), ProductUnit::JyPerBeam);
         assert_eq!(sumwt.contract().unit(), ProductUnit::VisibilityWeight);
-        let moment = normal.normal_moment(term).expect("normal moment");
+        let moment = window.normal_moment(term).expect("normal moment");
         assert_eq!(sumwt.payload(), &[moment.sum_weight() as f32]);
         for (actual, raw) in psf.payload().iter().zip(moment.normal_approximation()) {
             assert_close(*actual, (raw.re / principal_weight) as f32, "Taylor PSF");
         }
     }
     for term in 0..TERMS {
-        let raw = normal
+        let raw = window
             .coefficient_term(term)
             .expect("raw Taylor residual")
             .residual();
@@ -1000,7 +1039,7 @@ fn t44_taylor_families_preserve_raw_state_and_share_one_restoring_beam() {
         let model = member(&sealed, &format!(".model.tt{term}"));
         let restored = member(&sealed, &format!(".image.tt{term}"));
         let convolved = fft_convolve(
-            model.payload(),
+            &model.payload(),
             kernel.as_slice().expect("contiguous kernel"),
             SHAPE,
         );
@@ -1204,13 +1243,15 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
     let alpha_pbcor = member(&sealed, ".alpha.pbcor");
 
     assert!(weight0.payload().iter().any(|value| *value > 0.0));
-    let principal_sum_weight = join
-        .normal_state()
+    let normal = join.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let principal_sum_weight = window
         .normal_moment(0)
         .expect("principal normal moment")
         .sum_weight() as f32;
-    let raw_sensitivity = join
-        .normal_state()
+    let raw_sensitivity = window
         .normal_moment(0)
         .expect("principal normal moment")
         .sensitivity();
@@ -1227,8 +1268,7 @@ fn t47_mosaic_taylor_products_publish_weight_and_pb_corrected_alpha() {
         sensitivity.payload(),
         "normalized Weight must not alias raw Sensitivity"
     );
-    let raw_weight1 = join
-        .normal_state()
+    let raw_weight1 = window
         .normal_moment(1)
         .expect("first signed normal moment")
         .sensitivity();
@@ -1316,7 +1356,9 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
         .plan(&catalog, &ContinuumProductControls::default())
         .expect("Taylor plan");
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("Taylor inputs");
-    let demand = planned.demand(&inputs).expect("Taylor demand");
+    let demand = planned
+        .demand(&inputs, full_window(&planned))
+        .expect("Taylor demand");
     let values = planned
         .members()
         .iter()
@@ -1328,17 +1370,25 @@ fn taylor_generation_demand_charges_retained_families_and_algorithm_scratch() {
         .map(|member| member.payload_values() as u64)
         .max()
         .expect("Taylor members");
-    assert_eq!(demand.produced_residency_bytes(), values * 5);
-    assert_eq!(demand.sealed_residency_bytes(), values * 5);
+    assert_eq!(demand.backing_payload_bytes(), values * 5);
+    assert!(demand.produced_residency_bytes() > 0);
+    assert!(demand.sealed_residency_bytes() > 0);
     assert_eq!(demand.maximum_member_payload_bytes(), maximum * 4);
     assert_eq!(demand.maximum_member_validity_bytes(), maximum);
+    assert_eq!(demand.maximum_window_payload_bytes(), maximum * 4);
+    assert_eq!(demand.maximum_window_validity_bytes(), maximum);
     assert_eq!(
         demand.algorithm_scratch_bytes(),
-        9_100,
-        "8x8, two-term Taylor owner retains exact families, solve and rustfft buffers"
+        9_100 + maximum * 10,
+        "coupled Taylor scratch additionally overlaps its emitted member and bounded backing-write window"
     );
     assert_eq!(
         demand.peak_residency_bytes(),
-        (values * 10).max(values * 5 + 9_100)
+        demand.produced_residency_bytes()
+            + demand.algorithm_scratch_bytes().max(
+                demand
+                    .sealed_residency_bytes()
+                    .max(demand.maximum_window_payload_bytes())
+            )
     );
 }

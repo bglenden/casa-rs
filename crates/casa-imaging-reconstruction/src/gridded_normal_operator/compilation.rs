@@ -269,6 +269,19 @@ pub(super) fn retained_manifest_bytes(
                 .and_then(|diagnostics| bytes.checked_add(diagnostics))
         })
         .and_then(|bytes| bytes.checked_add(specification_bytes))
+        .and_then(|bytes| {
+            let channels = if matches!(
+                GriddedNormalRecordLayout::for_specification(specification),
+                GriddedNormalRecordLayout::ChannelLocal { .. }
+            ) {
+                specification.slab().total_channels()
+            } else {
+                0
+            };
+            channels
+                .checked_mul(size_of::<std::ops::Range<usize>>())
+                .and_then(|support| bytes.checked_add(support))
+        })
         .ok_or(SpectralOperatorError::ResidencyOverflow)
 }
 

@@ -20,7 +20,7 @@ use casa_imaging_runtime::{
     SerialProductPublicationSink,
 };
 use casa_types::{RecordField, RecordValue, ScalarValue, Value};
-use ndarray::{Array4, ArrayD, IxDyn};
+use ndarray::{ArrayD, IxDyn};
 
 struct StagedProduct {
     observed: ArtifactIdentity,
@@ -121,9 +121,11 @@ impl SerialProductPublicationSink for CasaImageProductSink {
                 .ok_or_else(|| std::io::Error::other("product registry residency overflow"))
         })?;
         demand
-            .maximum_member_payload_bytes()
-            .checked_mul(2)
-            .and_then(|bytes| bytes.checked_add(demand.maximum_member_validity_bytes()))
+            .maximum_window_payload_bytes()
+            .checked_mul(4)
+            .and_then(|bytes| {
+                bytes.checked_add(demand.maximum_window_validity_bytes().checked_mul(2)?)
+            })
             .and_then(|bytes| bytes.checked_add(IMAGE_ADAPTER_ENVELOPE_BYTES))
             .and_then(|bytes| bytes.checked_add(registry_bytes))
             .ok_or_else(|| std::io::Error::other("product staging residency overflow"))
@@ -153,25 +155,47 @@ impl SerialProductPublicationSink for CasaImageProductSink {
         if staging.exists() {
             fs::remove_dir_all(&staging)?;
         }
-        let data =
-            Array4::from_shape_vec(member.contract().axes().shape(), member.payload().to_vec())
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let mut image =
-            PagedImage::<f32>::create(data.shape().to_vec(), output.coordinates.clone(), &staging)
-                .map_err(|error| std::io::Error::other(error.to_string()))?;
-        image
-            .put_slice_view(data.view().into_dyn(), &[0, 0, 0, 0])
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let layout = member.window_layout();
+        let mut tile = layout.shape();
+        tile[layout.spectral_axis()] = 1;
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            layout.shape().to_vec(),
+            tile.to_vec(),
+            output.coordinates.clone(),
+            &staging,
+            layout
+                .maximum_values()
+                .checked_mul(4)
+                .ok_or_else(|| std::io::Error::other("image cache overflow"))?,
+        )
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
         let storage = member.contract().storage();
-        if matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_)) {
-            let validity = ArrayD::from_shape_vec(
-                IxDyn(&member.contract().axes().shape()),
-                member.validity().to_vec(),
-            )
-            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        let explicit_mask = matches!(storage.pixel_mask(), ProductPixelMask::Explicit(_));
+        for start in (0..layout.shape()[layout.spectral_axis()]).step_by(layout.maximum_channels())
+        {
+            let end =
+                (start + layout.maximum_channels()).min(layout.shape()[layout.spectral_axis()]);
+            let window = member
+                .read_window(start..end)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            let (start, shape, payload, validity) = window.into_parts();
+            let data =
+                ArrayD::from_shape_vec(IxDyn(&shape), payload).map_err(std::io::Error::other)?;
             image
-                .put_mask("mask0", &validity)
-                .and_then(|()| image.set_default_mask("mask0"))
+                .put_slice_view(data.view(), &start)
+                .map_err(|error| std::io::Error::other(error.to_string()))?;
+            drop(data);
+            if explicit_mask {
+                let validity = ArrayD::from_shape_vec(IxDyn(&shape), validity)
+                    .map_err(std::io::Error::other)?;
+                image
+                    .put_mask_slice("mask0", &validity, &start)
+                    .map_err(|error| std::io::Error::other(error.to_string()))?;
+            }
+        }
+        if explicit_mask {
+            image
+                .set_default_mask("mask0")
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
         }
         image

@@ -324,6 +324,8 @@ fn bind_direct(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem"),
         attempt,
         epoch,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind model lifecycle")
 }
@@ -482,7 +484,10 @@ fn final_model_restores_highest_ordinal_domain_across_overlaps() {
         .expect("restore canonical overlap ownership");
     let shape = update.generation().shape();
     let sample = |domain, x| {
-        update.generation().samples()[shape
+        update
+            .generation()
+            .read_samples(0..update.generation().sample_count())
+            .expect("read fixture model")[shape
             .flat_index(ModelCell::new(domain, 0, 0, [x, 0]))
             .expect("model cell")]
         .value()
@@ -493,6 +498,58 @@ fn final_model_restores_highest_ordinal_domain_across_overlaps() {
     assert_eq!(sample(1, 1), 30.0, "later owner is restored transitively");
     assert_eq!(sample(0, 2), 2.0, "non-overlapping model remains unchanged");
     assert_eq!(sample(2, 2), 30.0, "owner model remains unchanged");
+}
+
+#[test]
+fn t55_model_windows_preserve_generation_delta_and_support_identities() {
+    let compiled = problem_with_geometry(
+        1,
+        geometry(5),
+        ModelStateIdentity::Empty,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let mut expected = None;
+    for window in [5, 1, 2, 3] {
+        let mut owner = ModelLifecycle::bind(
+            ExecutableModelProblem::from_compiled(compiled.clone()).unwrap(),
+            attempt(90),
+            1,
+            casa_imaging_reconstruction::ModelStoragePlan::resident(window).unwrap(),
+        )
+        .unwrap();
+        let base = owner.initial_empty().unwrap();
+        if window < 5 {
+            assert!(base.read_samples(0..5).is_err());
+        }
+        let initial = base.generation_id();
+        let delta = owner
+            .compile_delta(
+                &base,
+                [
+                    ModelDeltaTerm::new(cell(0), value(-0.25)),
+                    ModelDeltaTerm::new(cell(4), value(1.5)),
+                ],
+            )
+            .unwrap();
+        let delta_id = delta.delta_id();
+        let update = owner.apply_final_delta(base, delta).unwrap();
+        let samples = (0..5)
+            .map(|index| update.generation().read_samples(index..index + 1).unwrap()[0])
+            .collect::<Vec<_>>();
+        let actual = (
+            initial,
+            delta_id,
+            update.generation().generation_id(),
+            update.completion().completion_id(),
+            samples,
+        );
+        if let Some(expected) = &expected {
+            assert_eq!(&actual, expected);
+        } else {
+            expected = Some(actual);
+        }
+    }
 }
 
 #[test]
@@ -529,7 +586,15 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
     let update = owner
         .apply_final_delta(base, delta)
         .expect("apply final affine update");
-    assert_eq!(update.generation().samples()[0].value().value(), 1.5);
+    assert_eq!(
+        update
+            .generation()
+            .read_samples(0..update.generation().sample_count())
+            .expect("read fixture model")[0]
+            .value()
+            .value(),
+        1.5
+    );
     assert_eq!(
         update.completion().generation(),
         update.generation().generation_id()
@@ -573,8 +638,21 @@ fn aligned_ingest_preserves_support_and_rejects_wrong_evidence() {
         .ingest_aligned(seed, &target_shape, samples.into_iter().map(Ok::<_, ()>))
         .expect("aligned source stream")
         .expect("ingest aligned seed");
-    assert_eq!(generation.samples()[1].support(), ModelSupport::Invalid);
-    assert_eq!(generation.samples()[1].value().value(), 0.0);
+    assert_eq!(
+        generation
+            .read_samples(0..generation.sample_count())
+            .expect("read fixture model")[1]
+            .support(),
+        ModelSupport::Invalid
+    );
+    assert_eq!(
+        generation
+            .read_samples(0..generation.sample_count())
+            .expect("read fixture model")[1]
+            .value()
+            .value(),
+        0.0
+    );
 
     let other_space = problem_with_geometry(
         1,
@@ -691,12 +769,32 @@ fn reprojection_is_owner_derived_streamed_support_aware_and_golden_pinned() {
     let executable = prepared
         .bind_compiled_problem(compiled)
         .expect("bind owner-derived preparation");
-    let mut owner = ModelLifecycle::bind(executable, attempt(92), 1).expect("bind owner");
+    let mut owner = ModelLifecycle::bind(
+        executable,
+        attempt(92),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("bind owner");
     let generation = owner
         .initial_reprojected()
         .expect("consume derived reprojection");
-    assert_eq!(generation.samples()[0].value().value(), 5.0);
-    assert_eq!(generation.samples()[1].support(), ModelSupport::Invalid);
+    assert_eq!(
+        generation
+            .read_samples(0..generation.sample_count())
+            .expect("read fixture model")[0]
+            .value()
+            .value(),
+        5.0
+    );
+    assert_eq!(
+        generation
+            .read_samples(0..generation.sample_count())
+            .expect("read fixture model")[1]
+            .support(),
+        ModelSupport::Invalid
+    );
 
     let wrong_source_space = problem_with_geometry(
         3,
@@ -849,13 +947,20 @@ fn reprojection_converts_taylor_coefficients_to_channel_coordinates() {
     let executable = prepared
         .bind_compiled_problem(compiled)
         .expect("bind owner-derived preparation");
-    let generation = ModelLifecycle::bind(executable, attempt(124), 1)
-        .expect("bind basis-conversion owner")
-        .initial_reprojected()
-        .expect("consume owner-derived basis conversion");
+    let generation = ModelLifecycle::bind(
+        executable,
+        attempt(124),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("bind basis-conversion owner")
+    .initial_reprojected()
+    .expect("consume owner-derived basis conversion");
     assert_eq!(
         generation
-            .samples()
+            .read_samples(0..generation.sample_count())
+            .expect("read fixture model")
             .iter()
             .map(|sample| sample.value().value())
             .collect::<Vec<_>>(),
@@ -911,13 +1016,20 @@ fn reprojection_converts_stokes_to_linear_parallel_hands() {
     let executable = prepared
         .bind_compiled_problem(compiled)
         .expect("bind owner-derived preparation");
-    let generation = ModelLifecycle::bind(executable, attempt(126), 1)
-        .expect("bind polarization owner")
-        .initial_reprojected()
-        .expect("consume owner-derived polarization conversion");
+    let generation = ModelLifecycle::bind(
+        executable,
+        attempt(126),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("bind polarization owner")
+    .initial_reprojected()
+    .expect("consume owner-derived polarization conversion");
     assert_eq!(
         generation
-            .samples()
+            .read_samples(0..generation.sample_count())
+            .expect("read fixture model")
             .iter()
             .map(|sample| sample.value().value())
             .collect::<Vec<_>>(),
@@ -1164,8 +1276,22 @@ fn compiled_precision_governs_delta_arithmetic() {
     let f64_next = f64_owner
         .apply_delta(f64_base, f64_delta)
         .expect("f64 apply");
-    assert_eq!(f32_next.samples()[0].value().value(), 16_777_216.0);
-    assert_eq!(f64_next.samples()[0].value().value(), 16_777_217.0);
+    assert_eq!(
+        f32_next
+            .read_samples(0..f32_next.sample_count())
+            .expect("read fixture model")[0]
+            .value()
+            .value(),
+        16_777_216.0
+    );
+    assert_eq!(
+        f64_next
+            .read_samples(0..f64_next.sample_count())
+            .expect("read fixture model")[0]
+            .value()
+            .value(),
+        16_777_217.0
+    );
 }
 
 #[test]
@@ -1200,7 +1326,13 @@ fn resume_preserves_named_generation_then_enters_new_owner() {
     let next = resumed_owner
         .apply_delta(resumed, delta)
         .expect("apply resumed delta");
-    assert_eq!(next.samples()[0].value().value(), 1.0);
+    assert_eq!(
+        next.read_samples(0..next.sample_count())
+            .expect("read fixture model")[0]
+            .value()
+            .value(),
+        1.0
+    );
     assert!(matches!(
         next.origin(),
         ModelGenerationOrigin::Delta { base, .. } if base == generation_id

@@ -577,6 +577,7 @@ impl GriddedNormalTileAccumulator {
 pub(super) struct GriddedNormalGroupSpan {
     frame_ordinal: u32,
     records: Range<u32>,
+    prediction_needed: bool,
     prediction_lane: u8,
     prediction_index: u32,
 }
@@ -805,17 +806,23 @@ impl PreparedGriddedNormalTwoDomainWindow {
                     | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                     | GriddedNormalRecordLayout::Joint { .. } => {
                         let mut group_start = 0usize;
+                        let mut group_needed = false;
+                        let mut group_prediction_records = 0_u64;
                         for (record_ordinal, bytes) in
                             encoded.chunks_exact(self.record_bytes).enumerate()
                         {
                             let record = decode_domain_record(bytes, catalogs, output_channels)?;
+                            let owns_plane = operators
+                                .get(record.chart_ordinal)
+                                .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
+                                .owns_gridded_plane(record.output_channel);
                             if record.role != RecordRole::Accumulation {
-                                self.prediction_record_count = self
-                                    .prediction_record_count
+                                group_prediction_records = group_prediction_records
                                     .checked_add(1)
                                     .ok_or(SpectralOperatorError::CoverageOverflow)?;
                             }
-                            if record.role != RecordRole::Prediction {
+                            if record.role != RecordRole::Prediction && owns_plane {
+                                group_needed = true;
                                 self.accumulation_record_count = self
                                     .accumulation_record_count
                                     .checked_add(1)
@@ -847,7 +854,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                 record_ordinal: u32::try_from(record_ordinal)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
                                 tap_count: u32::try_from(
-                                    if record.role == RecordRole::Prediction {
+                                    if record.role == RecordRole::Prediction || !owns_plane {
                                         0
                                     } else {
                                         tap_count
@@ -859,16 +866,25 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                 .checked_add(1)
                                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
                             if record.group_end {
+                                if group_needed {
+                                    self.prediction_record_count = self
+                                        .prediction_record_count
+                                        .checked_add(group_prediction_records)
+                                        .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                                }
                                 self.groups.push(GriddedNormalGroupSpan {
                                     frame_ordinal: frame_ordinal_u32,
                                     records: u32::try_from(group_start)
                                         .map_err(|_| SpectralOperatorError::CoverageOverflow)?
                                         ..u32::try_from(record_ordinal + 1)
                                             .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                                    prediction_needed: group_needed,
                                     prediction_lane: 0,
                                     prediction_index: 0,
                                 });
                                 group_start = record_ordinal + 1;
+                                group_needed = false;
+                                group_prediction_records = 0;
                             }
                         }
                         if group_start != record_count {
@@ -912,6 +928,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                 .ok_or(SpectralOperatorError::CoverageOverflow)?;
                             self.groups.push(GriddedNormalGroupSpan {
                                 frame_ordinal: frame_ordinal_u32,
+                                prediction_needed: true,
                                 records: u32::try_from(record_ordinal)
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?
                                     ..u32::try_from(record_ordinal + 1)
@@ -1470,6 +1487,10 @@ impl GriddedNormalOperatorApply {
                     | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                     | GriddedNormalRecordLayout::Joint { .. } => {
                         for (local, group) in prepared.groups[group_range].iter().enumerate() {
+                            if !group.prediction_needed {
+                                owner.values[local] = Complex64::default();
+                                continue;
+                            }
                             let frame_ordinal = usize::try_from(group.frame_ordinal)
                                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
                             let (sequence, encoded) = frame_at(frame_ordinal)
@@ -1655,6 +1676,11 @@ impl GriddedNormalOperatorApply {
                                         self.program.output_plane_count()?,
                                     )?;
                                     if record.role == RecordRole::Prediction {
+                                        continue;
+                                    }
+                                    if !self.operators[record.chart_ordinal]
+                                        .owns_gridded_plane(record.output_channel)
+                                    {
                                         continue;
                                     }
                                     if record.chart_ordinal != domain_ordinal {
@@ -2167,6 +2193,7 @@ mod tests {
             .extend((0..record_count).map(|record| GriddedNormalGroupSpan {
                 frame_ordinal: 0,
                 records: record as u32..record as u32 + 1,
+                prediction_needed: true,
                 prediction_lane: 0,
                 prediction_index: 0,
             }));
@@ -2326,6 +2353,7 @@ mod tests {
                         prepared.groups.push(GriddedNormalGroupSpan {
                             frame_ordinal: 0,
                             records: start as u32..record as u32,
+                            prediction_needed: true,
                             prediction_lane: 0,
                             prediction_index: 0,
                         });
@@ -2366,6 +2394,7 @@ mod tests {
                 (0..GRIDDED_NORMAL_LANE_COUNT).map(|record| GriddedNormalGroupSpan {
                     frame_ordinal: 0,
                     records: record as u32..record as u32 + 1,
+                    prediction_needed: true,
                     prediction_lane: 0,
                     prediction_index: 0,
                 }),

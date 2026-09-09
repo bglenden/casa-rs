@@ -3362,6 +3362,7 @@ fn runtime(
             total
                 .checked_add(planned_minor_cycle_bytes(
                     domain.image_size,
+                    request.polarizations.len(),
                     &request.algorithm,
                     request.iterations,
                 ))
@@ -3386,6 +3387,7 @@ fn runtime(
 
 fn planned_minor_cycle_bytes(
     image_size: usize,
+    polarizations: usize,
     algorithm: &ContinuumAlgorithm,
     maximum_iterations: usize,
 ) -> u64 {
@@ -3403,6 +3405,7 @@ fn planned_minor_cycle_bytes(
     };
     minor_cycle_workspace_bytes(
         [image_size, image_size],
+        polarizations,
         basis,
         &reconstruction_algorithm(algorithm),
         maximum_iterations,
@@ -3730,8 +3733,8 @@ mod tests {
         };
 
         assert!(
-            planned_minor_cycle_bytes(128, &higher_order, 8)
-                > planned_minor_cycle_bytes(128, &point, 8)
+            planned_minor_cycle_bytes(128, 1, &higher_order, 8)
+                > planned_minor_cycle_bytes(128, 1, &point, 8)
         );
     }
 

@@ -66,6 +66,7 @@ impl Encoder {
 }
 
 /// Digest one canonical `f32` plane in storage order.
+#[cfg(test)]
 pub(crate) fn plane_digest(values: &[f32]) -> [u8; 32] {
     let mut encoder = Encoder::new(b"casa-rs-product-plane-content", 1);
     encoder.usize(values.len());
@@ -76,6 +77,7 @@ pub(crate) fn plane_digest(values: &[f32]) -> [u8; 32] {
 }
 
 /// Digest one product member's numeric payload and exact validity topology.
+#[cfg(test)]
 pub(crate) fn member_content_digest(values: &[f32], validity: &[bool]) -> [u8; 32] {
     let mut encoder = Encoder::new(b"casa-rs-product-member-content", 1);
     encoder.identity(plane_digest(values));

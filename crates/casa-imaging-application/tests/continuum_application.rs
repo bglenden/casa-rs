@@ -38,6 +38,24 @@ use ndarray::ArrayD;
 const PRODUCT_SUFFIXES: [&str; 6] = [".psf", ".residual", ".model", ".image", ".sumwt", ".mask"];
 const DIRTY_PRODUCT_SUFFIXES: [&str; 5] = [".psf", ".residual", ".model", ".image", ".sumwt"];
 
+fn fixture_model_samples(
+    model: &casa_imaging_reconstruction::ModelGeneration,
+) -> Vec<casa_imaging_model::ModelSample> {
+    let mut samples = Vec::with_capacity(model.sample_count());
+    for domain in 0..model.shape().domains().len() {
+        for coefficient in 0..model.shape().coefficients() {
+            for polarization in 0..model.shape().polarizations() {
+                samples.extend_from_slice(
+                    &model
+                        .read_plane(domain, coefficient, polarization)
+                        .expect("fixture model plane"),
+                );
+            }
+        }
+    }
+    samples
+}
+
 static EXECUTION_LOCK: Mutex<()> = Mutex::new(());
 
 // Production admits one immutable storage calibration per process. AW adds a
@@ -649,6 +667,7 @@ fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
     let normal = result.outcome.output.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
+    let normal = normal.read_window(0..1).expect("coupled normal window");
     let response = casa_imaging_reconstruction::MosaicSensitivity::new(
         normal
             .normal_moment(0)
@@ -676,7 +695,9 @@ fn execute_taylor_aw_clean_with_memory_policy(fixed_memory: bool) {
             for y in 0..16 {
                 let cell = casa_imaging_model::ModelCell::new(0, term, 0, [x, y]);
                 let index = model.shape().flat_index(cell).expect("model cell");
-                let physical = model.samples()[index].value().value();
+                let physical = model.read_samples(index..index + 1).unwrap()[0]
+                    .value()
+                    .value();
                 let apparent = response
                     .physical_to_apparent(
                         f64::from(physical as f32),
@@ -1474,12 +1495,7 @@ fn t31_application_executes_recentered_domains_through_one_scientific_route() {
             }
         }
 
-        let model_nonzero = result
-            .outcome
-            .output
-            .scientific
-            .final_model()
-            .samples()
+        let model_nonzero = fixture_model_samples(result.outcome.output.scientific.final_model())
             .iter()
             .filter(|sample| sample.value().value() != 0.0)
             .count();
@@ -1535,6 +1551,8 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
         .output
         .scientific
         .normal_state()
+        .read_window(0..1)
+        .expect("fixture domain window")
         .domains()
         .map(|domain| domain.role().clone())
         .collect::<Vec<_>>();

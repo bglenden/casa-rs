@@ -5,7 +5,8 @@ use std::io;
 use casa_imaging_reconstruction::{
     ReconstructionCycleError, ReconstructionCycleResult,
     runtime_adapter::{
-        ReconstructionPlanePartial, ReconstructionPlaneWork, ReconstructionPlaneWorkspace,
+        ReconstructionPlaneInput, ReconstructionPlanePartial, ReconstructionPlaneWork,
+        ReconstructionPlaneWorkspace,
     },
 };
 
@@ -30,11 +31,10 @@ impl PlaneExecutionPlan {
             .worker_bytes()
             .checked_mul(workers as u64)
             .ok_or_else(|| io::Error::other("plane workspace overflow"))?;
-        let kernel = BoundedKernelPlan::new::<usize, ReconstructionPlanePartial<'_>>(
-            workers,
-            workspace.plane_count(),
-            dynamic_bytes,
-        )
+        let kernel = BoundedKernelPlan::new::<
+            ReconstructionPlaneInput<'_>,
+            ReconstructionPlanePartial<'_>,
+        >(workers, workspace.plane_count(), dynamic_bytes)
         .map_err(|error| io::Error::other(format!("invalid plane kernel plan: {error:?}")))?;
         let stack_bytes = if workers == 1 {
             0
@@ -124,7 +124,7 @@ struct PlaneKernel<'a> {
 }
 
 impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
-    type Partition = usize;
+    type Partition = ReconstructionPlaneInput<'a>;
     type Partial = ReconstructionPlanePartial<'a>;
     type Completion = ReconstructionCycleResult;
     type Error = ReconstructionCycleError;
@@ -138,26 +138,30 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
         _: BlockIdentity,
         _: &(),
         ordinal: usize,
-    ) -> Result<KernelPartition<usize>, Self::Error> {
+    ) -> Result<KernelPartition<Self::Partition>, Self::Error> {
         Ok(KernelPartition::ordered(
             ordinal as u64,
             0,
             ordinal as u64,
-            ordinal,
+            self.work.prepare_plane(ordinal)?,
         ))
     }
 
-    fn execution_dynamic_capacity_bytes(&self, _: &usize) -> u64 {
-        self.worker_bytes
+    fn partition_dynamic_capacity_bytes(&self, input: &Self::Partition) -> u64 {
+        input.owned_bytes()
+    }
+
+    fn execution_dynamic_capacity_bytes(&self, input: &Self::Partition) -> u64 {
+        self.worker_bytes.saturating_sub(input.owned_bytes())
     }
 
     fn execute(
         &self,
         _: WorkIdentity,
         _: &(),
-        ordinal: &usize,
+        input: &Self::Partition,
     ) -> Result<Self::Partial, Self::Error> {
-        self.work.execute_plane(*ordinal)
+        self.work.execute_plane(input)
     }
 
     fn partial_dynamic_capacity_bytes(&self, partial: &Self::Partial) -> u64 {

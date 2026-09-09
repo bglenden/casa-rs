@@ -61,7 +61,8 @@ pub use model_state::{
     ModelReprojectedSeedProjection, ModelReprojectionPolicy, ModelSample, ModelSourceShape,
     ModelStateEncoding, ModelSupport, ModelSupportSemantics, ModelUncoveredTargetPolicy,
     ModelValue, model_reprojected_seed_mapping_identity, model_support_identity,
-    validate_model_lifecycle_contract_identity, validate_model_reprojection_contract_identity,
+    try_model_support_identity, validate_model_lifecycle_contract_identity,
+    validate_model_reprojection_contract_identity,
 };
 
 pub use observation::{

@@ -3,10 +3,7 @@
 //! Stream complete correlation atoms using two native prediction banks.
 
 use super::*;
-use crate::{
-    spectral_operator::direction_independent_polarization,
-    weighting::{WeightingSampleValue, WeightingSelectedSample},
-};
+use crate::weighting::{WeightingSampleValue, WeightingSelectedSample};
 use std::ops::Range;
 
 #[derive(Debug, Default)]
@@ -121,8 +118,7 @@ impl GriddedNormalOperatorCompiler {
                 let first = correlations
                     .first()
                     .ok_or(SpectralOperatorError::InvalidSample)?;
-                let operator = direction_independent_polarization(
-                    self.specification.polarization_coordinates(),
+                let operator = self.specification.direction_independent_polarization(
                     &correlations
                         .iter()
                         .map(|sample| sample.selected().address().correlation_type)
@@ -292,10 +288,9 @@ impl GriddedNormalOperatorCompiler {
         emit: &mut impl FnMut(&[ReducedRecordKey]) -> Result<(), SpectralOperatorError>,
         cardinality: &mut GriddedNormalSourceCardinality,
     ) -> Result<(), SpectralOperatorError> {
-        let operator = direction_independent_polarization(
-            self.specification.polarization_coordinates(),
-            &resampled.correlations,
-        )?;
+        let operator = self
+            .specification
+            .direction_independent_polarization(&resampled.correlations)?;
         let flags = polarization_effective_flags(&operator, resampled.flags);
         let columns = operator.model_coordinates().len();
         for (row, flagged) in flags.into_iter().enumerate() {

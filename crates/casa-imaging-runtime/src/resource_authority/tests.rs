@@ -273,6 +273,59 @@ fn t55_artifact_fixture() -> (ResourceAuthority, DemandEnvelope) {
 }
 
 #[test]
+fn t55_artifact_file_descriptors_stay_reserved_until_the_backing_drops() {
+    let (authority, demand) = t55_artifact_fixture();
+    let lease = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand.clone()),
+        )
+        .unwrap();
+    let lease_id = lease.lease_id;
+    let resource = LeaseResource::FileDescriptors;
+    let permit = lease
+        .prepare_artifact_retention(lease.permit(resource.clone(), 3).unwrap())
+        .unwrap();
+    assert_eq!(
+        ResourcePermit::artifact_retention_heap_bytes(&resource, "host-memory", "artifact-storage",),
+        Some(0)
+    );
+    lease
+        .release_retaining_artifact_resources(&BTreeSet::from([resource]))
+        .unwrap();
+    assert_eq!(
+        authority.inner.state.lock().unwrap().leases[&lease_id]
+            .reserved
+            .file_descriptors,
+        3
+    );
+    let mut competitor = lock_only_demand();
+    let descriptor_capacity = authority
+        .inner
+        .state
+        .lock()
+        .unwrap()
+        .pressure
+        .available_file_descriptors;
+    competitor.file_descriptors =
+        CountDemand::new(descriptor_capacity - 2, descriptor_capacity - 2);
+    assert!(matches!(
+        authority.acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(competitor.clone())
+        ),
+        Err(ResourceError::NoFeasibleAlternative(_))
+    ));
+    drop(permit);
+    assert!(authority.inner.state.lock().unwrap().leases.is_empty());
+    authority
+        .acquire(ResourcePolicy::Exclusive, single_alternative(competitor))
+        .unwrap()
+        .release()
+        .unwrap();
+}
+
+#[test]
 fn t55_artifact_memory_and_storage_survive_finalization_and_release_independently() {
     for memory_first in [true, false] {
         let (authority, demand) = t55_artifact_fixture();

@@ -117,14 +117,34 @@ fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
 
 #[test]
 fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() {
+    compare_clark_cube_cases(&[(1, None), (2, None), (3, None)], false);
+}
+
+#[test]
+fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_channel_windows() {
+    compare_clark_cube_cases(
+        &[
+            (1, None),
+            (1, Some(9 << 20)),
+            (1, Some(10 << 20)),
+            (1, Some(11 << 20)),
+        ],
+        true,
+    );
+}
+
+fn compare_clark_cube_cases(cases: &[(u64, Option<u64>)], require_window_variation: bool) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     let measurement_set = spectral_line_measurement_set(root.path());
     for weighting in [ContinuumWeighting::Natural, ContinuumWeighting::Briggs(0.5)] {
         let mut baseline = None;
-        for workers in [1, 2, 3] {
-            let image_name = root.path().join(format!("clark-{weighting:?}-{workers}"));
+        let mut depths = std::collections::BTreeSet::new();
+        for &(workers, memory_bytes) in cases {
+            let image_name = root
+                .path()
+                .join(format!("clark-{weighting:?}-{workers}-{memory_bytes:?}"));
             let mut imaging = request(
                 measurement_set.clone(),
                 image_name.clone(),
@@ -153,10 +173,26 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() 
             imaging.resource_policy = casa_imaging_runtime::ResourcePolicy::Explicit(
                 casa_imaging_runtime::ResourceOverride {
                     workers: Some(workers),
+                    memory_bytes: memory_bytes
+                        .map(|bytes| {
+                            (
+                                casa_imaging_runtime::CapacityDomainId::new("host-memory"),
+                                bytes,
+                            )
+                        })
+                        .into_iter()
+                        .collect(),
                     ..casa_imaging_runtime::ResourceOverride::default()
                 },
             );
+            let started = std::time::Instant::now();
             let result = execute_continuum(imaging).expect("bounded production Clark cube");
+            eprintln!(
+                "t55_canonical_cube_timing image_size=64 channels=4 weighting={weighting:?} requested_workers={workers} memory_bytes={memory_bytes:?} execute_continuum_seconds={:.9} major_cycles={} minor_iterations={}",
+                started.elapsed().as_secs_f64(),
+                result.outcome.output.major_cycle_count,
+                result.actual_minor_iterations
+            );
             assert_standard_products(&image_name, &result.product_names);
             assert!(result.outcome.output.major_cycle_count > 1);
             assert!(
@@ -165,6 +201,24 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() 
             );
             assert!(result.actual_minor_iterations > 0);
             let receipt = &result.outcome.output.initial_receipt;
+            let depth = receipt
+                .selected_alternative_projection()
+                .demand
+                .memory
+                .iter()
+                .find(|allocation| {
+                    allocation
+                        .allocation_id
+                        .starts_with("spectral-operator-grids-")
+                })
+                .and_then(|allocation| allocation.allocation_id.rsplit('-').next())
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            depths.insert(depth);
+            eprintln!(
+                "t55_canonical_cube_window weighting={weighting:?} memory_bytes={memory_bytes:?} initial_core_depth={depth}"
+            );
             assert_eq!(
                 receipt
                     .selected_alternative_projection()
@@ -249,8 +303,17 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() 
             let science = &result.outcome.output.scientific;
             let evidence = (
                 products,
-                science.final_model().samples().to_vec(),
-                science.normal_state().residual().to_vec(),
+                fixture_model_samples(science.final_model()),
+                (0..science.normal_state().sum_weights().len())
+                    .flat_map(|channel| {
+                        science
+                            .normal_state()
+                            .read_window(channel..channel + 1)
+                            .unwrap()
+                            .residual()
+                            .to_vec()
+                    })
+                    .collect::<Vec<_>>(),
                 science.normal_state().sum_weights().to_vec(),
                 result.actual_minor_iterations,
                 result.outcome.output.major_cycle_count,
@@ -258,10 +321,17 @@ fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() 
             match &baseline {
                 Some(baseline) => assert_eq!(
                     baseline, &evidence,
-                    "worker count changed scientific products"
+                    "physical partition changed scientific products"
                 ),
                 None => baseline = Some(evidence),
             }
+        }
+        if require_window_variation {
+            assert_eq!(
+                depths,
+                std::collections::BTreeSet::from([1, 2, 3, 4]),
+                "fixture must execute each bounded channel depth"
+            );
         }
     }
 }

@@ -253,6 +253,7 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         .map_err(SpectralCyclePlanError::from)
     };
     let preferred = preview(Some(minimum_bytes * 4)).unwrap();
+    let gridded_spectral_windows = [SpectralOperatorSpecification::new(&problem).unwrap()];
     let phase = SpectralCyclePhasePlanning {
         pass: SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, 1),
         include_minor: true,
@@ -265,6 +266,8 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         gridded_replay_descriptor: Some(GriddedNormalReplayDescriptor::planning_fixture(
             16_106_938_800,
         )),
+        gridded_spectral_windows: Some(&gridded_spectral_windows),
+        initial_channel_depth: None,
     };
     let compose = |window: &GriddedNormalReplayWindowPlan| {
         compose_major_physical(

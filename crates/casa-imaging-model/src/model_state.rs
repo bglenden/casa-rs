@@ -110,22 +110,32 @@ impl ModelSample {
 /// invalid coefficient can never alias a valid numeric zero.
 #[must_use]
 pub fn model_support_identity(support: impl IntoIterator<Item = ModelSupport>) -> LogicalIdentity {
+    try_model_support_identity(support.into_iter().map(Ok::<_, std::convert::Infallible>))
+        .unwrap_or_else(|never| match never {})
+}
+
+/// Compute the same canonical support identity from a fallible, bounded stream.
+/// Reader errors prevent publication of any partial identity.
+pub fn try_model_support_identity<E>(
+    support: impl IntoIterator<Item = Result<ModelSupport, E>>,
+) -> Result<LogicalIdentity, E> {
     let mut encoder = CanonicalEncoder::new();
     encoder.bytes(MODEL_SUPPORT_IDENTITY_DOMAIN);
     encoder.u32(MODEL_SUPPORT_IDENTITY_VERSION);
     let mut count = 0usize;
     for value in support {
-        encoder.u8(match value {
+        encoder.u8(match value? {
             ModelSupport::Valid => 1,
             ModelSupport::Invalid => 0,
         });
         count += 1;
     }
     encoder.usize(count);
-    LogicalIdentity::from_sha256(encoder.finish())
+    Ok(LogicalIdentity::from_sha256(encoder.finish()))
 }
 
-/// Explicit residency and numeric ceilings for one model lifecycle.
+/// Explicit logical cardinality and numeric ceilings for one model lifecycle.
+/// Physical residency is independently bounded by the execution storage plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelBounds {
     max_model_samples: usize,
@@ -167,7 +177,7 @@ impl ModelBounds {
         })
     }
 
-    /// Return the maximum resident target-model sample count.
+    /// Return the maximum logical target-model sample count.
     #[must_use]
     pub const fn max_model_samples(self) -> usize {
         self.max_model_samples

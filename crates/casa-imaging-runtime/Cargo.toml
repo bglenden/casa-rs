@@ -14,6 +14,8 @@ workspace = true
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-imaging-products = { path = "../casa-imaging-products" }
 casa-imaging-reconstruction = { path = "../casa-imaging-reconstruction" }
+casa-lattices = { path = "../casa-lattices" }
+ndarray.workspace = true
 num-complex.workspace = true
 rayon = "1"
 casa-ms = { path = "../casa-ms" }

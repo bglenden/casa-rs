@@ -1831,6 +1831,8 @@ impl RecordingExecutor {
             ExecutableModelProblem::from_compiled(problem.clone()).map_err(io::Error::other)?,
             canonical_attempt,
             epoch,
+            casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+                .expect("positive model window"),
         )
         .map_err(io::Error::other)?;
         let named = lifecycle.initial_empty().map_err(io::Error::other)?;
@@ -1841,6 +1843,8 @@ impl RecordingExecutor {
                         .map_err(io::Error::other)?,
                     canonical_attempt,
                     epoch,
+                    casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+                        .expect("positive model window"),
                 )
                 .map_err(io::Error::other)?;
                 MajorCyclePreparation::prepare(
@@ -2336,7 +2340,12 @@ impl WorkImplementation for RecordingExecutor {
                         let replay = state
                             .replay_completion()
                             .expect("completed replay retains terminal proof");
-                        let result = operator.complete(replay).map_err(io::Error::other)?;
+                        let normal_storage = casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                            self.complete_data_plan.as_ref().expect("fixture complete-data plan").slab().total_channels(),
+                        ).expect("fixture normal window");
+                        let result = operator
+                            .complete(replay, &normal_storage)
+                            .map_err(io::Error::other)?;
                         *self
                             .complete_data_result
                             .lock()
@@ -4474,7 +4483,8 @@ fn execute_dirty_channel_local_slabs(
             SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
             authority().clone(),
             ResourcePolicy::Balanced,
-        ),
+        )
+        .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("resource-bounded dirty-cube plan");
     let directory = tempfile::tempdir().expect("dirty-cube receipt directory");
@@ -4886,7 +4896,7 @@ fn t607_runtime_executes_resource_bounded_channel_local_slabs() {
 }
 
 #[test]
-fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
+fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
     let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
         .lock()
         .expect("T607 execution lock");
@@ -4900,25 +4910,72 @@ fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
         [implementation(80)],
     );
     let channel_count = problem.geometry().spectral().output_channels();
-    let policy = SpectralCycleExecutionPolicy::new(
-        implementation(80),
-        WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
-        residency,
-        serial_storage_io(),
-        SpectralCyclePlanningLimits::new(
-            1_000,
-            (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
-            900_000,
-        ),
-        authority().clone(),
-        ResourcePolicy::Balanced,
-    )
-    .with_gridded_normal_storage(artifact_storage());
+    let make_policy = |resource_policy| {
+        SpectralCycleExecutionPolicy::new(
+            implementation(80),
+            WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
+            residency.clone(),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(
+                1_000,
+                (channel_count * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() * 3) as u64,
+                900_000,
+            ),
+            authority().clone(),
+            resource_policy,
+        )
+        .with_gridded_normal_storage(artifact_storage())
+    };
 
-    let planned = SpectralCyclePlan::initial(&problem, &planning_registry, policy)
-        .expect("retain the fully charged minimum cube candidate for admission");
-    let candidates = planned.physical_candidates();
-    assert!(!candidates.is_empty());
+    let planned = SpectralCyclePlan::initial(
+        &problem,
+        &planning_registry,
+        make_policy(ResourcePolicy::Exclusive),
+    )
+    .expect("admit a resource-bounded channel-local CLEAN candidate");
+    let directory = tempfile::tempdir().expect("admission receipts");
+    let receipts = ExecutionReceiptStore::new(
+        directory.path(),
+        ReceiptRetention::new(1, 1_048_576).unwrap(),
+    )
+    .unwrap();
+    let selected = runtime_plan(
+        &problem,
+        PlanningBindings::new(
+            registry(80),
+            ResourcePolicy::Exclusive,
+            planning_profile(80),
+        ),
+        authority(),
+        &planning_registry,
+        &receipts,
+        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+    )
+    .expect("the bounded channel-local candidate fits authoritative admission");
+    let selected_depth = selected.execution_dag().initial_knobs().slab_depth;
+    let parts = planned
+        .into_parts(&selected)
+        .expect("transfer the admitted channel-local candidate");
+    assert!(selected_depth > 0 && selected_depth < channel_count as u64);
+    assert_eq!(
+        parts.complete_data.slab().core_depth(),
+        selected_depth as usize
+    );
+    assert_eq!(
+        parts
+            .complete_data
+            .residency()
+            .sequential_fold_accumulator_bytes(),
+        0,
+        "ChannelLocal folding is retained by the paged cube-state owner"
+    );
+    let dag = parts.physical.execution_dag();
+    assert!(
+        dag.resource_alternative()
+            .quiescence_points
+            .contains(&QuiescencePoint::Slab),
+        "bounded CLEAN must expose ordered slab quiescence"
+    );
     let full = CompleteDataPlanFragment::for_slab(
         &problem,
         1,
@@ -4928,49 +4985,126 @@ fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
         SpectralOperatorPass::InitialMajor,
     )
     .expect("full-cube CLEAN resource comparison");
-    for physical in &candidates {
-        let dag = physical.execution_dag();
-        assert!(
-            !dag.resource_alternative()
-                .quiescence_points
-                .contains(&QuiescencePoint::Slab),
-            "cube CLEAN must not fold independently planned channel slabs"
-        );
-        for (prefix, expected_bytes) in [
-            ("spectral-operator-grids-", full.residency().grid_bytes()),
-            (
-                "spectral-operator-primitives-",
-                full.residency().primitive_output_bytes(),
-            ),
-        ] {
-            let allocations = dag
-                .logical_allocations()
-                .values()
-                .filter(|allocation| allocation.id.as_str().starts_with(prefix))
-                .collect::<Vec<_>>();
-            assert_eq!(allocations.len(), 1);
-            assert!(
-                allocations[0]
-                    .id
-                    .as_str()
-                    .ends_with(&format!("-ch0-{channel_count}"))
-            );
-            assert_eq!(allocations[0].bytes, expected_bytes as u64);
-        }
-    }
-    let directory = tempfile::tempdir().expect("rejection receipts");
-    let receipts = ExecutionReceiptStore::new(
-        directory.path(),
-        ReceiptRetention::new(1, 1_048_576).unwrap(),
+    let bounded = CompleteDataPlanFragment::for_slab(
+        &problem,
+        1,
+        WorkNodeId::new("t607-clean-bounded-depth"),
+        0,
+        selected_depth as usize,
+        SpectralOperatorPass::InitialMajor,
     )
-    .unwrap();
+    .expect("matching bounded channel-slab resource comparison");
+    let operator_allocations = dag
+        .logical_allocations()
+        .values()
+        .filter(|allocation| allocation.id.as_str().starts_with("spectral-operator-"))
+        .collect::<Vec<_>>();
+    assert!(!operator_allocations.is_empty());
+    assert!(operator_allocations.iter().all(|allocation| {
+        allocation
+            .id
+            .as_str()
+            .ends_with(&format!("-ch0-{selected_depth}"))
+    }));
+    for (prefix, expected_bytes) in [
+        ("spectral-operator-grids-", bounded.residency().grid_bytes()),
+        (
+            "spectral-operator-primitives-",
+            bounded.residency().primitive_output_bytes(),
+        ),
+    ] {
+        let allocations = operator_allocations
+            .iter()
+            .filter(|allocation| allocation.id.as_str().starts_with(prefix))
+            .collect::<Vec<_>>();
+        assert_eq!(allocations.len(), 1);
+        assert_eq!(allocations[0].bytes, expected_bytes as u64);
+    }
+    let operator_peak = operator_allocations
+        .iter()
+        .map(|allocation| allocation.bytes)
+        .sum::<u64>()
+        + dag
+            .resource_alternative()
+            .demand
+            .overhead
+            .fft_workspace_bytes;
+    assert!(
+        operator_peak < full.residency().peak_bytes() as u64,
+        "bounded channel slabs must not retain the full cube operator"
+    );
+
+    // Release the successful admission before probing the genuine minimum
+    // candidate so the rejection below is caused by its own ceiling.
+    drop(parts);
+    drop(selected);
+    let minimum_probe_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 1)]),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
+    let minimum_planned = SpectralCyclePlan::initial(
+        &problem,
+        &planning_registry,
+        make_policy(minimum_probe_policy),
+    )
+    .expect("retain the fully charged one-channel candidate for rejection");
+    let minimum_candidates = minimum_planned.physical_candidates();
+    assert_eq!(minimum_candidates.len(), 1);
+    let minimum_candidate = &minimum_candidates[0];
+    assert_eq!(
+        minimum_candidate.execution_dag().initial_knobs().slab_depth,
+        1,
+        "below-minimum planning must retain the one-channel candidate"
+    );
+    let alternative = minimum_candidate.execution_dag().resource_alternative();
+    let declared_memory = alternative
+        .demand
+        .memory
+        .iter()
+        .map(|demand| demand.hard_bytes)
+        .sum::<u64>();
+    let declared_overhead = [
+        alternative.demand.overhead.thread_stack_bytes,
+        alternative.demand.overhead.allocator_fragmentation_bytes,
+        alternative.demand.overhead.external_library_bytes,
+        alternative.demand.overhead.fft_workspace_bytes,
+        alternative.demand.overhead.driver_bytes,
+        alternative.demand.overhead.jit_bytes,
+        alternative.demand.overhead.command_buffer_bytes,
+    ]
+    .into_iter()
+    .sum::<u64>();
+    let host_domain = CapacityDomainId::new("host-memory");
+    let minimum_required = declared_memory
+        .checked_add(declared_overhead)
+        .and_then(|bytes| bytes.checked_add(alternative.demand.caches.hard_resident_bytes))
+        .and_then(|bytes| {
+            bytes.checked_add(
+                alternative
+                    .headroom
+                    .memory_bytes
+                    .get(&host_domain)
+                    .copied()
+                    .unwrap_or_default(),
+            )
+        })
+        .and_then(|bytes| bytes.checked_add(alternative.headroom.cache_bytes))
+        .expect("one-channel memory demand fits u64");
+    assert!(minimum_required > 1);
+    let below_minimum = minimum_required - 1;
+    let rejection_policy = ResourcePolicy::Explicit(ResourceOverride {
+        memory_bytes: BTreeMap::from([(host_domain, below_minimum)]),
+        workers: Some(1),
+        ..ResourceOverride::default()
+    });
     let result = runtime_plan(
         &problem,
-        PlanningBindings::new(registry(80), ResourcePolicy::Balanced, planning_profile(80)),
+        PlanningBindings::new(registry(80), rejection_policy, planning_profile(80)),
         authority(),
         &planning_registry,
         &receipts,
-        move |_, _| Ok::<_, io::Error>(candidates),
+        move |_, _| Ok::<_, io::Error>(minimum_candidates),
     );
     assert!(
         matches!(result,
@@ -4979,10 +5113,12 @@ fn t607_clean_cycle_rejects_a_plan_that_cannot_retain_every_cube_plane() {
                     && certificate.rejections().iter().all(|rejection| matches!(
                         rejection.reason(),
                         AlternativeRejectionReason::Infeasible { resource, required, available }
-                            if resource.starts_with("memory-domain:") && required > available
+                            if resource.starts_with("memory-domain:")
+                                && *required == minimum_required
+                                && *available == below_minimum
                     ))
         ),
-        "no complete cube candidate may execute beyond the unchanged memory ceiling"
+        "the authority must reject a ceiling below the one-channel demand"
     );
 }
 
@@ -7355,7 +7491,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             performance_cpu_cores: CpuClassCapacity::Known(4),
             cache_capacity_bytes: 1_048_576,
             lock_capacity: 4,
-            file_descriptor_capacity: 16,
+            file_descriptor_capacity: 32,
         },
         pressure: ExternalPressure {
             memory_available_bytes: BTreeMap::from([(domain, 1_048_576)]),
@@ -7373,7 +7509,7 @@ fn runtime_inventory(available_locks: u64) -> HostInventory {
             accelerator_available_slots: BTreeMap::new(),
             cache_available_bytes: 1_048_576,
             available_locks,
-            available_file_descriptors: 16,
+            available_file_descriptors: 32,
         },
     }
 }
@@ -10506,7 +10642,8 @@ fn t607_production_plan_bounds_channel_local_cube_with_ordered_slabs() {
             SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
             authority().clone(),
             ResourcePolicy::Balanced,
-        ),
+        )
+        .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("resource-bounded channel-local plan");
     let candidates = plan.physical_candidates();
@@ -10553,10 +10690,10 @@ fn t607_production_plan_bounds_channel_local_cube_with_ordered_slabs() {
             allocation_bytes("spectral-operator-grids-"),
             slab.residency().grid_bytes() as u64
         );
-        assert!(
-            allocation_bytes("spectral-operator-primitives-")
-                > slab.residency().primitive_output_bytes() as u64,
-            "ordered slabs must also retain the complete-axis fold accumulator"
+        assert_eq!(
+            allocation_bytes("spectral-operator-primitives-"),
+            slab.residency().primitive_output_bytes() as u64,
+            "the paged cube-state owner reserves the ordered fold backing"
         );
         let operator_peak = operator_allocations
             .iter()
@@ -10816,8 +10953,11 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         executor.weighted_sample_count.load(Ordering::SeqCst) as u64
     );
     assert_eq!(complete_data.block_count(), complete_data.sample_count());
-    assert_eq!(complete_data.primitives().shape(), [8, 8]);
-    assert!(complete_data.primitives().sum_weight() > 0.0);
+    let window = complete_data
+        .read_window(0..1)
+        .expect("single-plane fixture window");
+    assert_eq!(window.primitives().shape(), [8, 8]);
+    assert!(window.primitives().sum_weight() > 0.0);
     assert!(
         executor
             .complete_data_prediction_count
@@ -10849,7 +10989,7 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
     );
     let weighted_adjoint_right = complete_data_adjoint_model()
         .iter()
-        .zip(complete_data.primitives().dirty())
+        .zip(window.primitives().dirty())
         .map(|(model, dirty)| model.conj() * dirty)
         .sum::<num_complex::Complex64>();
     let adjoint_scale = laws
@@ -13220,6 +13360,8 @@ fn sealed_products_round(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         ModelExecutionAttemptId::new(identity(attempt_byte)),
         7,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind model lifecycle");
     let named = lifecycle.initial_empty().expect("empty named generation");
@@ -13266,10 +13408,20 @@ fn sealed_products_round(
     let evidence: CompleteDataOwnerResult = state
         .complete(&summary, selected_generation, None)
         .expect("complete T19 evidence");
-    MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("T20 owner")
-        .reconcile(&mut lifecycle)
-        .expect("atomic reconciliation")
+    MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner")
+    .reconcile(&mut lifecycle)
+    .expect("atomic reconciliation")
 }
 
 fn sealed_generation_for_problem(
@@ -13286,7 +13438,15 @@ fn sealed_generation_for_problem(
         .plan(&catalog, &ContinuumProductControls::default())
         .expect("planned generation");
     let inputs = ContinuumProductInputs::from_major_cycle(problem, &join).expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced members");
+    let window = casa_imaging_products::ProductStoragePlan::new(1).unwrap();
+    let backing = casa_imaging_runtime::SerialProductBackingPlan::prepare(
+        &planned,
+        window,
+        &artifact_storage(),
+    )
+    .unwrap();
+    let produced =
+        produce_continuum_members(&planned, &inputs, window, &backing).expect("produced members");
     let sealed = authority.authorize(&planned, &produced).expect("sealed");
     (planned, sealed)
 }
@@ -13305,7 +13465,12 @@ fn pending_generation_for_problem(
         .plan(&catalog, &ContinuumProductControls::default())
         .expect("planned generation");
     let inputs = ContinuumProductInputs::from_major_cycle(problem, &join).expect("inputs");
-    let demand = planned.demand(&inputs).expect("product generation demand");
+    let demand = planned
+        .demand(
+            &inputs,
+            casa_imaging_products::ProductStoragePlan::new(1).unwrap(),
+        )
+        .expect("product generation demand");
     (planned, join, demand)
 }
 
@@ -13357,7 +13522,15 @@ fn product_publication_plans_before_member_production_and_sealing() {
     assert_eq!(publication.generation_id(), planned.generation_id());
 
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &join).expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced members");
+    let window = casa_imaging_products::ProductStoragePlan::new(1).unwrap();
+    let backing = casa_imaging_runtime::SerialProductBackingPlan::prepare(
+        &planned,
+        window,
+        &artifact_storage(),
+    )
+    .unwrap();
+    let produced =
+        produce_continuum_members(&planned, &inputs, window, &backing).expect("produced members");
     let sealed = authority.authorize(&planned, &produced).expect("sealed");
     let projection = PublicationProjection::from_sealed(&sealed).expect("projection");
     let authorized = publication
@@ -13447,7 +13620,13 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         &generation_demand,
         staging_residency_bytes,
         &planning_registry,
-        SerialProductPublicationPolicy::new(implementation(77), storage_io.clone(), 1_000, 900_000),
+        SerialProductPublicationPolicy::new(
+            implementation(77),
+            storage_io.clone(),
+            1_000,
+            900_000,
+            artifact_storage(),
+        ),
     )
     .expect("production publication plan");
     let publication_dag = planned_runtime.physical_work().execution_dag();
@@ -13481,8 +13660,8 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
     assert_eq!(demand.locks.hard(), 0);
     assert_eq!(
         demand.file_descriptors.hard(),
-        1,
-        "one serial output descriptor is distinct from zero observation descriptors"
+        1 + 2 * planned.members().len() as u64,
+        "bounded product arrays and one serial output descriptor are distinct from observation descriptors"
     );
     for node in ["product-publication-stage", "product-publication-commit"] {
         assert!(
@@ -13490,7 +13669,13 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
                 .claims
                 .iter()
                 .any(|claim| {
-                    claim.resource == LeaseResource::FileDescriptors && claim.amount == 1
+                    claim.resource == LeaseResource::FileDescriptors
+                        && claim.amount
+                            == if node == "product-publication-stage" {
+                                1 + 2 * planned.members().len() as u64
+                            } else {
+                                1
+                            }
                 })
         );
     }
@@ -13506,16 +13691,10 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         "product-publication-output-queue"
     );
     assert_eq!(demand.io_buffers.source_read_ahead_bytes, 0);
-    let payload_bytes = planned_runtime
-        .publication()
-        .entries()
-        .iter()
-        .map(|entry| entry.payload_bytes())
-        .sum::<u64>();
-    let writer_residency_bytes = payload_bytes.max(staging_residency_bytes);
+    let writer_residency_bytes = staging_residency_bytes * planned.members().len() as u64;
     assert_eq!(
         demand.io_buffers.serialization_bytes, writer_residency_bytes,
-        "publication charges the larger of the serialized payload and sink-owned staging envelope"
+        "publication charges bounded sink-owned staging independently of complete payload"
     );
     assert_eq!(
         publication_dag.logical_allocations()
@@ -13524,19 +13703,19 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         generation_demand.produced_residency_bytes(),
         "generation charges the product-owner produced residency"
     );
-    assert_eq!(
+    assert!(
         publication_dag.logical_allocations()
             [&casa_imaging_runtime::AllocationId::new("product-generation-sealed")]
-            .bytes,
-        generation_demand.sealed_residency_bytes(),
-        "sealing charges the product-owner sealed residency"
+            .bytes
+            >= generation_demand.sealed_residency_bytes(),
+        "sealing charges owner metadata plus active hash and backing scratch"
     );
-    assert_eq!(
+    assert!(
         publication_dag.logical_allocations()
             [&casa_imaging_runtime::AllocationId::new("product-generation-scratch")]
-            .bytes,
-        generation_demand.algorithm_scratch_bytes(),
-        "generation charges the product-owner algorithm scratch"
+            .bytes
+            >= generation_demand.algorithm_scratch_bytes(),
+        "generation charges owner algorithm and physical slice scratch"
     );
     assert_eq!(
         publication_dag.logical_allocations()
@@ -13551,7 +13730,7 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         "publication must reserve only output write throughput"
     );
     let expected_members = planned_runtime.publication().entries().len();
-    let (physical, publication) = planned_runtime.into_parts();
+    let (physical, publication, backing) = planned_runtime.into_parts();
     let expected_layouts = physical.publication_layouts().entries().to_vec();
     let executor = SerialProductPublicationExecutor::new(
         implementation(77),
@@ -13561,6 +13740,7 @@ fn serial_product_publication_stages_privately_then_publishes_once() {
         scientific,
         None,
         sink,
+        backing,
     )
     .expect("sealed publication executor");
     let runtime_registry =
@@ -13741,10 +13921,11 @@ fn production_storage_profile_admits_serial_scientific_and_publication_plans() {
             storage.io_resources(),
             1_000,
             900_000,
+            artifact_storage(),
         ),
     )
     .expect("production publication plan");
-    let (physical, _) = planned_runtime.into_parts();
+    let (physical, _, _) = planned_runtime.into_parts();
     let directory = tempfile::tempdir().expect("receipt directory");
     let receipts = ExecutionReceiptStore::new(
         directory.path(),
@@ -13878,7 +14059,13 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
             &generation_demand,
             staging_residency_bytes,
             &planning_registry,
-            SerialProductPublicationPolicy::new(implementation(82), substitution, 1_000, 900_000),
+            SerialProductPublicationPolicy::new(
+                implementation(82),
+                substitution,
+                1_000,
+                900_000,
+                artifact_storage(),
+            ),
         )
         .expect("publication plan construction");
         let publication = publication.into_parts().0;
@@ -13925,6 +14112,7 @@ fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition)
             serial_storage_io(),
             1_000,
             900_000,
+            artifact_storage(),
         ),
     )
     .expect("member publication plan");
@@ -13933,7 +14121,7 @@ fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition)
         entries.len() > 2,
         "fixture needs a published prefix and remainder"
     );
-    let (physical, publication) = planned_runtime.into_parts();
+    let (physical, publication, backing) = planned_runtime.into_parts();
     let executor = SerialProductPublicationExecutor::new(
         implementation(81),
         problem.clone(),
@@ -13942,6 +14130,7 @@ fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition)
         scientific,
         None,
         sink,
+        backing,
     )
     .expect("sealed publication executor");
     let runtime_registry =
@@ -14015,6 +14204,12 @@ fn serial_product_publication_rejects_foreign_scientific_generation() {
     let (planned, _, _) = pending_generation_for_problem(&problem);
     let (_, foreign_scientific, _) = pending_generation_for_problem(&foreign);
     let publication = ProductPublicationPlan::bind(&problem, &planned).expect("publication plan");
+    let backing = casa_imaging_runtime::SerialProductBackingPlan::prepare(
+        &planned,
+        casa_imaging_products::ProductStoragePlan::new(1).unwrap(),
+        &artifact_storage(),
+    )
+    .unwrap();
     let error = match SerialProductPublicationExecutor::new(
         implementation(80),
         problem.clone(),
@@ -14023,6 +14218,7 @@ fn serial_product_publication_rejects_foreign_scientific_generation() {
         foreign_scientific,
         None,
         InMemoryProductSink::default(),
+        backing,
     ) {
         Ok(_) => panic!("foreign scientific generation must be rejected before staging"),
         Err(error) => error,

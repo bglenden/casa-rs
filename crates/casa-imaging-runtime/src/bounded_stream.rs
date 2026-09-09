@@ -604,6 +604,174 @@ struct ProcessMeasurements {
 }
 
 impl BoundedStreamMeasurements {
+    pub(crate) fn aggregate_window(
+        aggregate: Option<Self>,
+        window_ordinal: u64,
+        window: Self,
+    ) -> Option<Self> {
+        match aggregate {
+            None => Some(window),
+            Some(previous) => previous.combine_window(window_ordinal, window),
+        }
+    }
+
+    fn combine_window(mut self, window_ordinal: u64, window: Self) -> Option<Self> {
+        if self.worker_slots.len() != window.worker_slots.len()
+            || self.source_slots != window.source_slots
+            || self.workers != window.workers
+            || self.maximum_logical_units_per_block != window.maximum_logical_units_per_block
+            || self.maximum_partitions_per_block != window.maximum_partitions_per_block
+            || self.planned_source_capacity_bytes != window.planned_source_capacity_bytes
+            || self.planned_kernel_dynamic_capacity_bytes
+                != window.planned_kernel_dynamic_capacity_bytes
+            || self.planned_kernel_window_capacity_bytes
+                != window.planned_kernel_window_capacity_bytes
+        {
+            return None;
+        }
+        self.blocks_filled = self.blocks_filled.checked_add(window.blocks_filled)?;
+        self.logical_units_filled = self
+            .logical_units_filled
+            .checked_add(window.logical_units_filled)?;
+        self.logical_source_bytes = self
+            .logical_source_bytes
+            .checked_add(window.logical_source_bytes)?;
+        self.source_read_operations = self
+            .source_read_operations
+            .checked_add(window.source_read_operations)?;
+        self.source_fill_nanos = self
+            .source_fill_nanos
+            .checked_add(window.source_fill_nanos)?;
+        self.prepare_nanos = self.prepare_nanos.checked_add(window.prepare_nanos)?;
+        self.execute_nanos = self.execute_nanos.checked_add(window.execute_nanos)?;
+        self.commit_nanos = self.commit_nanos.checked_add(window.commit_nanos)?;
+        self.partitions_executed = self
+            .partitions_executed
+            .checked_add(window.partitions_executed)?;
+        self.commits_completed = self
+            .commits_completed
+            .checked_add(window.commits_completed)?;
+        self.worker_threads_started = self
+            .worker_threads_started
+            .checked_add(window.worker_threads_started)?;
+        self.dispatch_waves = self.dispatch_waves.checked_add(window.dispatch_waves)?;
+        self.producer_wait_nanos = self
+            .producer_wait_nanos
+            .checked_add(window.producer_wait_nanos)?;
+        self.consumer_wait_nanos = self
+            .consumer_wait_nanos
+            .checked_add(window.consumer_wait_nanos)?;
+        self.source_starved_nanos = self
+            .source_starved_nanos
+            .checked_add(window.source_starved_nanos)?;
+        self.terminal_wait_nanos = self
+            .terminal_wait_nanos
+            .checked_add(window.terminal_wait_nanos)?;
+        self.lease_return_nanos = self
+            .lease_return_nanos
+            .checked_add(window.lease_return_nanos)?;
+        self.overlap_nanos = self.overlap_nanos.checked_add(window.overlap_nanos)?;
+        self.wall_nanos = self.wall_nanos.checked_add(window.wall_nanos)?;
+        self.peak_logical_units_per_block = self
+            .peak_logical_units_per_block
+            .max(window.peak_logical_units_per_block);
+        self.ready_queue_high_water = self
+            .ready_queue_high_water
+            .max(window.ready_queue_high_water);
+        self.ready_queue_current_bytes_high_water = self
+            .ready_queue_current_bytes_high_water
+            .max(window.ready_queue_current_bytes_high_water);
+        self.ready_queue_capacity_bytes_high_water = self
+            .ready_queue_capacity_bytes_high_water
+            .max(window.ready_queue_capacity_bytes_high_water);
+        self.peak_live_source_blocks = self
+            .peak_live_source_blocks
+            .max(window.peak_live_source_blocks);
+        self.peak_live_source_current_bytes = self
+            .peak_live_source_current_bytes
+            .max(window.peak_live_source_current_bytes);
+        self.peak_live_source_capacity_bytes = self
+            .peak_live_source_capacity_bytes
+            .max(window.peak_live_source_capacity_bytes);
+        self.peak_partial_dynamic_capacity_bytes = self
+            .peak_partial_dynamic_capacity_bytes
+            .max(window.peak_partial_dynamic_capacity_bytes);
+        self.peak_worker_stack_capacity_bytes = self
+            .peak_worker_stack_capacity_bytes
+            .max(window.peak_worker_stack_capacity_bytes);
+        self.peak_kernel_window_capacity_bytes = self
+            .peak_kernel_window_capacity_bytes
+            .max(window.peak_kernel_window_capacity_bytes);
+        self.process_peak_rss_bytes =
+            match (self.process_peak_rss_bytes, window.process_peak_rss_bytes) {
+                (Some(previous), Some(current)) => Some(previous.max(current)),
+                (previous, current) => previous.or(current),
+            };
+        self.executed_work_identity_digest = extend_window_work_identity_digest(
+            b"casa-rs-bounded-work-aggregate-v1",
+            self.executed_work_identity_digest,
+            window_ordinal,
+            window.executed_work_identity_digest,
+            window.partitions_executed,
+        );
+        self.committed_work_identity_digest = extend_window_work_identity_digest(
+            b"casa-rs-bounded-work-aggregate-v1",
+            self.committed_work_identity_digest,
+            window_ordinal,
+            window.committed_work_identity_digest,
+            window.commits_completed,
+        );
+        for (worker_index, (worker, incoming)) in self
+            .worker_slots
+            .iter_mut()
+            .zip(window.worker_slots.into_vec())
+            .enumerate()
+        {
+            worker.work_units = worker.work_units.checked_add(incoming.work_units)?;
+            worker.samples = worker.samples.checked_add(incoming.samples)?;
+            worker.taps = worker.taps.checked_add(incoming.taps)?;
+            worker.active_nanos = worker.active_nanos.checked_add(incoming.active_nanos)?;
+            worker.ready_wait_nanos = worker
+                .ready_wait_nanos
+                .checked_add(incoming.ready_wait_nanos)?;
+            worker.backpressure_wait_nanos = worker
+                .backpressure_wait_nanos
+                .checked_add(incoming.backpressure_wait_nanos)?;
+            worker.reduction_nanos = worker
+                .reduction_nanos
+                .checked_add(incoming.reduction_nanos)?;
+            worker.work_identity_digest = extend_worker_window_identity_digest(
+                worker.work_identity_digest,
+                window_ordinal,
+                worker_index,
+                incoming.work_identity_digest,
+                incoming.work_units,
+            );
+            worker.wave_first_start_nanos = None;
+            worker.wave_active_nanos = 0;
+        }
+        let mut minimum = u64::MAX;
+        let mut active = 0;
+        let mut maximum = 0;
+        for work_units in self.worker_slots.iter().map(|worker| worker.work_units) {
+            if work_units > 0 {
+                active += 1;
+                minimum = minimum.min(work_units);
+                maximum = maximum.max(work_units);
+            }
+        }
+        self.workers_with_nonzero_partitions = active;
+        self.minimum_partitions_per_active_worker = if active == 0 { 0 } else { minimum };
+        self.maximum_partitions_per_active_worker = maximum;
+        #[cfg(test)]
+        {
+            self.external_pool_installs = self
+                .external_pool_installs
+                .checked_add(window.external_pool_installs)?;
+        }
+        Some(self)
+    }
+
     fn record_process(&mut self, process: ProcessMeasurements) -> Option<()> {
         let prepare_nanos = self.prepare_nanos.checked_add(process.prepare_nanos)?;
         let execute_nanos = self.execute_nanos.checked_add(process.execute_nanos)?;
@@ -685,6 +853,39 @@ fn extend_work_identity_digest(
     hasher.update(previous);
     hasher.update(work_units.to_be_bytes());
     hasher.update(block);
+    hasher.finalize().into()
+}
+
+fn extend_window_work_identity_digest(
+    domain: &[u8],
+    previous: [u8; 32],
+    window_ordinal: u64,
+    window: [u8; 32],
+    work_units: u64,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(previous);
+    hasher.update(window_ordinal.to_be_bytes());
+    hasher.update(work_units.to_be_bytes());
+    hasher.update(window);
+    hasher.finalize().into()
+}
+
+fn extend_worker_window_identity_digest(
+    previous: [u8; 32],
+    window_ordinal: u64,
+    worker_index: usize,
+    window: [u8; 32],
+    work_units: u64,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs-bounded-worker-work-aggregate-v1");
+    hasher.update(previous);
+    hasher.update(window_ordinal.to_be_bytes());
+    hasher.update((worker_index as u64).to_be_bytes());
+    hasher.update(work_units.to_be_bytes());
+    hasher.update(window);
     hasher.finalize().into()
 }
 
@@ -2436,6 +2637,66 @@ mod tests {
             slots,
             workers,
         )
+    }
+
+    #[test]
+    fn aggregate_windows_sums_work_and_preserves_single_window_digest() {
+        let worker = |work_units, samples, digest| BoundedWorkerMeasurements {
+            work_units,
+            samples,
+            work_identity_digest: digest,
+            ..BoundedWorkerMeasurements::default()
+        };
+        let mut first = BoundedStreamMeasurements {
+            source_slots: 2,
+            workers: 2,
+            maximum_logical_units_per_block: 4,
+            maximum_partitions_per_block: 3,
+            planned_source_capacity_bytes: 64,
+            planned_kernel_dynamic_capacity_bytes: 128,
+            planned_kernel_window_capacity_bytes: 256,
+            blocks_filled: 2,
+            logical_units_filled: 5,
+            partitions_executed: 3,
+            commits_completed: 3,
+            peak_logical_units_per_block: 3,
+            peak_partial_dynamic_capacity_bytes: 11,
+            executed_work_identity_digest: [1; 32],
+            committed_work_identity_digest: [2; 32],
+            worker_slots: vec![worker(2, 10, [3; 32]), worker(1, 5, [4; 32])].into_boxed_slice(),
+            ..BoundedStreamMeasurements::default()
+        };
+        first.workers_with_nonzero_partitions = 2;
+        first.minimum_partitions_per_active_worker = 1;
+        first.maximum_partitions_per_active_worker = 2;
+        let single = BoundedStreamMeasurements::aggregate_window(None, 7, first.clone())
+            .expect("first window is accepted unchanged");
+        assert_eq!(single, first);
+
+        let mut second = first.clone();
+        second.blocks_filled = 4;
+        second.logical_units_filled = 6;
+        second.partitions_executed = 2;
+        second.commits_completed = 2;
+        second.peak_logical_units_per_block = 4;
+        second.peak_partial_dynamic_capacity_bytes = 17;
+        second.executed_work_identity_digest = [5; 32];
+        second.committed_work_identity_digest = [6; 32];
+        let aggregate = BoundedStreamMeasurements::aggregate_window(Some(single), 8, second)
+            .expect("compatible windows aggregate");
+        assert_eq!(aggregate.blocks_filled, 6);
+        assert_eq!(aggregate.logical_units_filled, 11);
+        assert_eq!(aggregate.partitions_executed, 5);
+        assert_eq!(aggregate.commits_completed, 5);
+        assert_eq!(aggregate.peak_logical_units_per_block, 4);
+        assert_eq!(aggregate.peak_partial_dynamic_capacity_bytes, 17);
+        assert_eq!(aggregate.worker_slots[0].work_units, 4);
+        assert_eq!(aggregate.worker_slots[1].work_units, 2);
+        assert_eq!(aggregate.workers_with_nonzero_partitions, 2);
+        assert_eq!(aggregate.minimum_partitions_per_active_worker, 2);
+        assert_eq!(aggregate.maximum_partitions_per_active_worker, 4);
+        assert_ne!(aggregate.executed_work_identity_digest, [1; 32]);
+        assert_ne!(aggregate.committed_work_identity_digest, [2; 32]);
     }
 
     #[test]

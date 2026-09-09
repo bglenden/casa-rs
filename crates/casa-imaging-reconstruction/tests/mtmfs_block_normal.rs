@@ -1143,16 +1143,30 @@ fn run_final_normal_state(
         executable,
         ModelExecutionAttemptId::new(identity(42, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind Taylor model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty Taylor model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare Taylor model");
     let (complete_data, expected, _) = run_operator(problem, samples, 1, 1, Some(&preparation));
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join Taylor complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile Taylor normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join Taylor complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile Taylor normal state");
     let (normal, model_completion, final_model) = completion.into_parts();
     assert_eq!(
         normal.input_model_generation(),
@@ -1177,16 +1191,30 @@ fn run_joint_final_normal_state(
         executable,
         ModelExecutionAttemptId::new(identity(46, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind joint model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty joint model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare joint model");
     let (complete_data, _, _) = run_operator(problem, selected, 1, 1, Some(&preparation));
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join joint complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile joint normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join joint complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile joint normal state");
     let (normal, _, model) = completion.into_parts();
     (lifecycle, normal, model)
 }
@@ -1455,6 +1483,8 @@ fn initial_normal_from_frozen(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable Taylor problem"),
         ModelExecutionAttemptId::new(identity(42, 121)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind compact initial lifecycle");
     let initial = lifecycle.initial_empty().expect("empty compact model");
@@ -1467,12 +1497,22 @@ fn initial_normal_from_frozen(
         SpectralOperatorPass::InitialMajor,
         None,
     );
-    MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("join compact initial evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile compact initial state")
-        .into_parts()
-        .0
+    MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join compact initial evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile compact initial state")
+    .into_parts()
+    .0
 }
 
 fn nonzero_taylor_model(problem: &casa_imaging_model::CompiledProblem) -> MajorCyclePreparation {
@@ -1480,6 +1520,8 @@ fn nonzero_taylor_model(problem: &casa_imaging_model::CompiledProblem) -> MajorC
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable Taylor problem"),
         ModelExecutionAttemptId::new(identity(42, 122)),
         2,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind compact residual lifecycle");
     let initial = match lifecycle.contract().input() {
@@ -1522,6 +1564,8 @@ fn empty_model(problem: &casa_imaging_model::CompiledProblem) -> MajorCyclePrepa
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         ModelExecutionAttemptId::new(identity(42, 123)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind compact cube lifecycle");
     let initial = lifecycle.initial_empty().expect("empty compact cube model");
@@ -1614,7 +1658,10 @@ fn execute_compact_taylor(
 ) -> CompactTaylorResult {
     let specification = SpectralOperatorSpecification::new(problem).expect("Taylor operator");
     let grid_residency = program
-        .storage_layout(standard_convolution_support())
+        .storage_layout(
+            specification.slab().core_depth(),
+            standard_convolution_support(),
+        )
         .expect("storage layout")
         .residency(
             blocks
@@ -1640,10 +1687,13 @@ fn execute_compact_taylor(
         .begin_apply_with_storage_plan(
             problem,
             preparation.final_model(),
-            prior,
+            &mut program.bind_prior(prior).unwrap(),
             prepared,
             &program
-                .storage_layout(standard_convolution_support())
+                .storage_layout(
+                    problem.geometry().spectral().output_channels(),
+                    standard_convolution_support(),
+                )
                 .expect("storage layout")
                 .plan(&capacities, capacities.iter().sum())
                 .expect("complete window storage"),
@@ -1716,7 +1766,7 @@ fn execute_compact_taylor(
         }
     }
 
-    let (complete, routing) = apply
+    let (complete, routing, _recycle) = apply
         .finish_with_routing_measurements()
         .expect("finish compact Taylor apply");
     CompactTaylorResult {
@@ -2034,12 +2084,18 @@ fn t607_channel_local_ordered_slab_fold_matches_one_window() {
         first.completion().primitive_catalog(),
         SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1
     );
-    let folded = CompleteDataOwnerSlabFold::begin(first)
+    let storage = casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(4)
+        .expect("four-channel fixture window");
+    let folded = CompleteDataOwnerSlabFold::begin(first, &storage)
         .expect("begin channel-local fold")
         .extend(second)
         .expect("append adjacent channel-local slab")
         .finish()
         .expect("complete channel-local coverage");
+
+    let folded = folded
+        .read_window(0..4)
+        .expect("four-channel fixture window");
 
     assert_eq!(folded.primitives().slab().core_range(), 0..4);
     assert_eq!(folded.primitives().dirty(), full.primitives().dirty());
@@ -2068,7 +2124,7 @@ fn t607_channel_local_ordered_slab_fold_matches_one_window() {
 
     let first = run_slab(0, 2);
     let gap = run_slab(3, 1);
-    let error = CompleteDataOwnerSlabFold::begin(first)
+    let error = CompleteDataOwnerSlabFold::begin(first, &storage)
         .expect("begin channel-local prefix")
         .extend(gap)
         .expect_err("a channel gap cannot be folded");
@@ -2136,9 +2192,12 @@ fn t41_channel_major_two_cycle_feedback_and_gridded_replay_stay_dual_space() {
     let preparation = nonzero_taylor_model(&problem);
 
     let initial = initial_normal_from_frozen(&problem, &frozen);
+    let initial_window = initial
+        .read_window(initial.slab().core_range())
+        .expect("coupled Taylor fixture window");
     let initial_residual = (0..2)
         .flat_map(|term| {
-            initial
+            initial_window
                 .coefficient_term(term)
                 .expect("initial Taylor term")
                 .residual()
@@ -2211,14 +2270,20 @@ fn t41_primary_beam_channel_major_replays_one_model_update_with_bounded_state() 
     let scalar_selected = channel_major_samples(&scalar_problem);
     let scalar_frozen = freeze_taylor_replay(&scalar_problem, &scalar_selected);
     let scalar_initial = initial_normal_from_frozen(&scalar_problem, &scalar_frozen);
-    let residual_nrms = complex_nrms(initial.residual(), scalar_initial.residual());
+    let initial_window = initial
+        .read_window(initial.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let scalar_window = scalar_initial
+        .read_window(scalar_initial.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let residual_nrms = complex_nrms(initial_window.residual(), scalar_window.residual());
     assert!(
         residual_nrms <= 1.0e-15,
         "CASA MVC removes the frequency-dependent PB before folding the residual family: NRMS={residual_nrms:e}",
     );
     let psf_nrms = complex_nrms(
-        initial.normal_approximation(),
-        scalar_initial.normal_approximation(),
+        initial_window.normal_approximation(),
+        scalar_window.normal_approximation(),
     );
     assert!(
         psf_nrms > 1.0e-8,
@@ -2401,6 +2466,8 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
         executable,
         ModelExecutionAttemptId::new(identity(47, 120)),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind mosaic model lifecycle");
     let initial = lifecycle.initial_empty().expect("empty mosaic model");
@@ -2408,12 +2475,27 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare mosaic model");
     let (complete_data, _, _) =
         run_operator(&problem, &selected, selected.len(), 1, Some(&preparation));
-    let completion = MajorCycleOwner::from_complete_data(complete_data, preparation)
-        .expect("join mosaic complete-data evidence")
-        .reconcile(&mut lifecycle)
-        .expect("reconcile mosaic normal state");
+    let completion = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete_data.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete_data
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("join mosaic complete-data evidence")
+    .reconcile(&mut lifecycle)
+    .expect("reconcile mosaic normal state");
     let (normal, _, model) = completion.into_parts();
-    let principal_sensitivity = normal
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
+    let principal_sensitivity = window
         .normal_moment(0)
         .expect("principal mosaic normal moment")
         .sensitivity();
@@ -2589,37 +2671,40 @@ fn t42_final_normal_state_exposes_taylor_terms_and_hankel_blocks_without_channel
         normal.support_validity(),
         Some(SpectralChannelValidity::Valid)
     );
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
     assert!(
-        normal.polarization_plane(0, 0).is_none(),
+        window.polarization_plane(0, 0).is_none(),
         "Taylor terms are not channels"
     );
 
     for coefficient in 0..2 {
-        let term = normal
+        let term = window
             .coefficient_term(coefficient)
             .expect("Taylor coefficient view");
         assert_eq!(term.coefficient(), coefficient);
         assert_eq!(term.residual().len(), IMAGE_WIDTH * IMAGE_WIDTH);
     }
-    assert!(normal.coefficient_term(2).is_none());
+    assert!(window.coefficient_term(2).is_none());
 
     for (moment, expected_sum_weight) in expected.into_iter().enumerate() {
-        let view = normal.normal_moment(moment).expect("Taylor moment view");
+        let view = window.normal_moment(moment).expect("Taylor moment view");
         assert_eq!(view.moment(), moment);
         assert_eq!(view.sum_weight().to_bits(), expected_sum_weight.to_bits());
         assert_eq!(view.normal_approximation().len(), IMAGE_WIDTH * IMAGE_WIDTH);
         assert_eq!(view.sensitivity().len(), IMAGE_WIDTH * IMAGE_WIDTH);
     }
-    assert!(normal.normal_moment(3).is_none());
+    assert!(window.normal_moment(3).is_none());
 
-    let upper = normal.normal_block(0, 1).expect("upper cross block");
-    let lower = normal.normal_block(1, 0).expect("lower cross block");
+    let upper = window.normal_block(0, 1).expect("upper cross block");
+    let lower = window.normal_block(1, 0).expect("lower cross block");
     assert_eq!(upper.moment(), 1);
     assert_eq!(lower.moment(), 1);
     assert_eq!(upper.normal_approximation(), lower.normal_approximation());
     assert_eq!(upper.sensitivity(), lower.sensitivity());
     assert_eq!(upper.sum_weight().to_bits(), lower.sum_weight().to_bits());
-    assert!(normal.normal_block(2, 0).is_none());
+    assert!(window.normal_block(2, 0).is_none());
 }
 
 #[test]

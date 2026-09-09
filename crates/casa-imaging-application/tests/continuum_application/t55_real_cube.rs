@@ -153,6 +153,37 @@ fn t55_full_dataset_clark_timing() {
 #[test]
 #[ignore = "requires explicit real T55 MS, fresh artifact root, memory ceiling, and production measures"]
 fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
+    real_clark_worker_cases(
+        "tools/perf/imager/workloads/t55-clark-cube-development.json",
+        128,
+        8,
+        4,
+        &[
+            ("natural", ContinuumWeighting::Natural),
+            ("briggs-0.5", ContinuumWeighting::Briggs(0.5)),
+        ],
+    );
+}
+
+#[test]
+#[ignore = "requires local real T55 MS, explicit resources, fresh artifacts, and external wall/RSS guard"]
+fn t55_intermediate_clark_cube_worker_scaling() {
+    real_clark_worker_cases(
+        "t55-intermediate-256-square-16-channel-natural-clark",
+        256,
+        2,
+        16,
+        &[("natural", ContinuumWeighting::Natural)],
+    );
+}
+
+fn real_clark_worker_cases(
+    workload: &str,
+    image_size: usize,
+    first_channel: usize,
+    channels: usize,
+    weightings: &[(&str, ContinuumWeighting)],
+) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let measurement_set = required_path("CASA_RS_T55_REAL_MS")
         .canonicalize()
@@ -188,14 +219,16 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
     fs::write(
         root.join("request.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "workload": "tools/perf/imager/workloads/t55-clark-cube-development.json",
+            "workload": workload,
             "measurement_set": measurement_set,
             "native_memory_bytes": memory_bytes,
-            "workers": worker_counts, "repetitions": repetitions, "weightings": ["natural", "briggs-0.5"],
+            "workers": worker_counts, "repetitions": repetitions,
+            "weightings": weightings.iter().map(|(label, _)| *label).collect::<Vec<_>>(),
             "timing_boundary": "execute_continuum: selection and preparation through final product publication; excludes fixture staging and post-run comparison",
             "measures": "production casa_ms::open_measures_runtime",
-            "imsize": 128, "cell_arcsec": 8, "field": "0", "spw": "0:8~11",
-            "channel_start": 0, "channel_count": 4, "start": 8, "width": 1,
+            "imsize": image_size, "cell_arcsec": 8, "field": "0",
+            "spw": format!("0:{first_channel}~{}", first_channel + channels - 1),
+            "channel_start": 0, "channel_count": channels, "start": first_channel, "width": 1,
             "outframe": "LSRK", "interpolation": "linear", "gridder": "standard",
             "perchanweightdensity": true,
             "deconvolver": "clark", "niter": 9, "cycle_iterations": 1,
@@ -221,10 +254,7 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
         if repetition % 2 == 1 {
             round_workers.reverse();
         }
-        for (label, weighting) in [
-            ("natural", ContinuumWeighting::Natural),
-            ("briggs-0.5", ContinuumWeighting::Briggs(0.5)),
-        ] {
+        for &(label, weighting) in weightings {
             let mut baseline: Option<(Vec<ProductSnapshot>, _)> = None;
             for workers in round_workers.iter().copied() {
                 let directory = root.join(format!("{label}-w{workers}"));
@@ -235,20 +265,25 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
                     image_name.clone(),
                     ContinuumAlgorithm::Clark,
                 );
-                imaging.image_size = 128;
+                imaging.image_size = image_size;
                 imaging.cell_arcsec = 8.0;
                 imaging.data_description = None;
                 imaging.weighting = weighting;
-                imaging.spectral_window = Some("0:8~11".into());
-                imaging.channel_count = Some(4);
+                imaging.spectral_window = Some(format!(
+                    "0:{first_channel}~{}",
+                    first_channel + channels - 1
+                ));
+                imaging.channel_count = Some(channels);
                 imaging.spectral_mode = SpectralImagingMode::Cube {
                     axis: CubeAxisConfig {
                         outframe: FrequencyRef::LSRK,
-                        start: Some(CubeAxisValue::Channel(8)),
+                        start: Some(CubeAxisValue::Channel(
+                            i32::try_from(first_channel).unwrap(),
+                        )),
                         width: Some(CubeAxisValue::Channel(1)),
                         ..CubeAxisConfig::default()
                     },
-                    output_channels: Some(4),
+                    output_channels: Some(channels),
                 };
                 imaging.iterations = 9;
                 imaging.cycle_iterations = 1;
@@ -323,7 +358,7 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
                         } else {
                             Some("1")
                         },
-                        "the four-channel single-field LSRK cube binds CASA nominal density padding"
+                        "the single-field LSRK cube binds CASA nominal density padding"
                     );
                     let peaks = receipt
                         .plan_node_identities()
@@ -419,13 +454,13 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
                         assert_eq!(
                             shape,
                             if suffix == ".sumwt" {
-                                vec![1, 1, 1, 4]
+                                vec![1, 1, 1, channels]
                             } else {
-                                vec![128, 128, 1, 4]
+                                vec![image_size, image_size, 1, channels]
                             },
                             "{suffix} cube topology"
                         );
-                        for channel in 0..4 {
+                        for channel in 0..channels {
                             for x in [0, shape[0] - 1] {
                                 for y in [0, shape[1] - 1] {
                                     let world = product
@@ -488,14 +523,31 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
                 assert!(publication_identities.is_empty());
                 let science = &output.scientific;
                 let normal = science.normal_state();
+                let windows = (0..normal.sum_weights().len())
+                    .map(|channel| {
+                        normal
+                            .read_window(channel..channel + 1)
+                            .expect("fixture normal window")
+                    })
+                    .collect::<Vec<_>>();
                 let mut evidence = (
-                    science.final_model().samples().to_vec(),
-                    normal.residual().to_vec(),
-                    normal.normal_approximation().to_vec(),
+                    fixture_model_samples(science.final_model()),
+                    windows
+                        .iter()
+                        .flat_map(|window| window.residual().iter().copied())
+                        .collect::<Vec<_>>(),
+                    windows
+                        .iter()
+                        .flat_map(|window| window.normal_approximation().iter().copied())
+                        .collect::<Vec<_>>(),
                     normal.sum_weights().to_vec(),
                     normal.published_sum_weights().to_vec(),
                     normal.channel_sum_weights().to_vec(),
-                    normal.primary_beam_weighted_sum().map(<[f64]>::to_vec),
+                    windows
+                        .iter()
+                        .map(|window| window.primary_beam_weighted_sum().map(<[f64]>::to_vec))
+                        .collect::<Option<Vec<_>>>()
+                        .map(|planes| planes.into_iter().flatten().collect::<Vec<_>>()),
                     output.minor_cycles.clone(),
                     output.major_cycle_count,
                     result.minor_iterations,

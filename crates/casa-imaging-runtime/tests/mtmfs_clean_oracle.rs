@@ -294,11 +294,18 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
         cycles,
     } = execute_four_cycle_clean(false)?;
 
-    let model = final_completion.final_model().samples();
+    let model = final_completion
+        .final_model()
+        .read_samples(0..final_completion.final_model().sample_count())
+        .expect("read fixture model");
     if model.len() != 2 * CELLS {
         return Err(format!("T43 final model has {} samples", model.len()).into());
     }
+    let model = model.as_ref();
     let normal = final_completion.normal_state();
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("coupled Taylor fixture window");
     let divisor = *normal
         .sum_weights()
         .first()
@@ -306,7 +313,7 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
         .ok_or("T43 principal Taylor sum weight is not positive")?;
     let residual = (0..2)
         .map(|term| {
-            normal
+            window
                 .coefficient_term(term)
                 .map(|view| {
                     view.residual()
@@ -532,7 +539,9 @@ fn cycle_summary_from_evidence(
 }
 
 fn model_tt0_sum(model: &ModelGeneration) -> f64 {
-    model.samples()[..CELLS]
+    model
+        .read_samples(0..model.sample_count())
+        .expect("read fixture model")[..CELLS]
         .iter()
         .map(|sample| sample.value().value())
         .sum()

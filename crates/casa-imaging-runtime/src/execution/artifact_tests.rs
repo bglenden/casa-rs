@@ -287,6 +287,35 @@ fn t55_artifact_export_rejects_mutable_nonhost_oversized_and_reused_slots() {
 }
 
 #[test]
+fn t55_artifact_claim_rejects_workers_but_accepts_file_descriptors() {
+    let mut workers = artifact_specification();
+    workers.nodes[0].claims.push(ResourceClaim {
+        resource: LeaseResource::Workers,
+        amount: 1,
+        lifetime: ClaimLifetime::Artifact,
+    });
+    assert!(
+        ExecutionDag::new(workers).is_err(),
+        "workers cannot be retained by an immutable artifact"
+    );
+
+    let mut file_descriptors = artifact_specification();
+    file_descriptors
+        .resource_alternative
+        .demand
+        .file_descriptors = CountDemand::new(1, 1);
+    file_descriptors.nodes[0].claims.push(ResourceClaim {
+        resource: LeaseResource::FileDescriptors,
+        amount: 1,
+        lifetime: ClaimLifetime::Artifact,
+    });
+    assert!(
+        ExecutionDag::new(file_descriptors).is_ok(),
+        "file descriptors are valid artifact-retained external handles"
+    );
+}
+
+#[test]
 fn t55_artifact_export_drains_work_fence_sealing_and_transfer_failures() {
     for failed_stage in 0..4 {
         let dag = ExecutionDag::new(artifact_specification()).expect("immutable export plan");

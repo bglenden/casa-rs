@@ -29,6 +29,7 @@ mod error;
 mod projection;
 mod restore;
 mod source;
+mod storage;
 mod taylor;
 mod visibility;
 
@@ -48,6 +49,10 @@ pub use restore::{
     rescale_residual_to_beam,
 };
 pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};
+pub use storage::{
+    ProductArrayStorage, ProductStorageFactory, ProductStoragePlan, ProductWindow,
+    ProductWindowLayout,
+};
 pub use visibility::{
     ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,
     VisibilityProductCompletion, VisibilityProductError,

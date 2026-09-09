@@ -44,9 +44,10 @@ use casa_imaging_reconstruction::{
     WeightingReplayChunk, WeightingReplaySummary, begin_weighting_generation,
     compile_spectral_stencil, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, GriddedNormalCompilationPlan, GriddedNormalOperatorCompiler,
-        GriddedNormalOperatorFrame, SourceCardinalityObservation, SpectralOperatorPass,
-        prepare_spectral_operator, spectral_operator_workload,
+        CompleteDataOwnerResult, CompleteDataOwnerSlabFold, GriddedNormalCompilationPlan,
+        GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame, NormalStoragePlan,
+        SourceCardinalityObservation, SpectralOperatorPass, prepare_spectral_operator,
+        spectral_operator_workload,
     },
 };
 
@@ -384,16 +385,28 @@ fn t38_two_channel_hogbom_cycle_is_ordered_and_model_plane_complete() {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         attempt(239),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("cube lifecycle");
     let initial = lifecycle.initial_empty().expect("empty cube model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
     let complete = run_t19_complete_data(&problem, Some(&preparation));
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("channel-local major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("channel-local normal state");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("channel-local major-cycle owner")
+    .reconcile(&mut lifecycle)
+    .expect("channel-local normal state");
     let (normal, continuation) = joined.into_continuation();
     let coordinate = problem.geometry().domains()[0].direction();
     let mask = ReconstructionMask::full_plane(
@@ -488,22 +501,36 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         attempt(247),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("initial cube lifecycle");
     let initial = initial_lifecycle.initial_empty().expect("empty cube model");
     let preparation = MajorCyclePreparation::prepare(&initial_lifecycle, initial, None)
         .expect("prepare empty cube model");
     let complete = run_t19_complete_data(&problem, Some(&preparation));
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("initial complete-data owner")
-        .reconcile(&mut initial_lifecycle)
-        .expect("initial paired normal state");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("initial complete-data owner")
+    .reconcile(&mut initial_lifecycle)
+    .expect("initial paired normal state");
     let (normal, continuation) = joined.into_continuation();
     let (mut lifecycle, carried) = ModelLifecycle::continue_from(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("continued cube problem"),
         attempt(248),
         2,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continue the initial final model");
 
@@ -626,10 +653,20 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
     let (delta, _) = rust.into_parts();
     let (complete, preparation) =
         prepare_reconciliation_reusing(&problem, &lifecycle, carried, delta, normal);
-    let final_join = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("final complete-data owner")
-        .reconcile(&mut lifecycle)
-        .expect("final paired A/A* reconciliation");
+    let final_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("final complete-data owner")
+    .reconcile(&mut lifecycle)
+    .expect("final paired A/A* reconciliation");
     assert!(final_join.model_completion().delta().is_some());
     let (paired_normal, continuation) = final_join.into_continuation();
     let paired_final_residual = paired_normal.residual().to_vec();
@@ -643,15 +680,28 @@ fn t38_casacore_minor_cycle_and_paired_final_residual_are_split_oracles() {
         attempt(249),
         3,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continue the exact final model for a fresh paired replay");
     let (replayed_complete, replayed_preparation) =
         prepare_reconciliation(&problem, &replay_lifecycle, replay_carried, None);
-    let replayed_join =
-        MajorCycleOwner::from_complete_data(replayed_complete, replayed_preparation)
-            .expect("fresh paired complete-data owner")
-            .reconcile(&mut replay_lifecycle)
-            .expect("fresh paired A/A* replay");
+    let replayed_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    replayed_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            replayed_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        replayed_preparation,
+    )
+    .expect("fresh paired complete-data owner")
+    .reconcile(&mut replay_lifecycle)
+    .expect("fresh paired A/A* replay");
     assert_eq!(
         replayed_join.normal_state().residual(),
         paired_final_residual,
@@ -683,6 +733,8 @@ fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() 
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
         attempt(251),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("initial lifecycle");
     let initial_model = initial_lifecycle.initial_empty().expect("empty model");
@@ -690,16 +742,30 @@ fn residual_refresh_rejects_prior_invariants_from_another_selected_generation() 
         MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
             .expect("initial preparation");
     let initial_complete = run_t19_complete_data(&problem, Some(&initial_preparation));
-    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
-        .expect("initial major owner")
-        .reconcile(&mut initial_lifecycle)
-        .expect("initial normal state");
+    let initial_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    initial_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            initial_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        initial_preparation,
+    )
+    .expect("initial major owner")
+    .reconcile(&mut initial_lifecycle)
+    .expect("initial normal state");
     let (normal_state, continuation) = initial_join.into_continuation();
     let (continued_lifecycle, carried_model) = ModelLifecycle::continue_from(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
         attempt(252),
         2,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continued lifecycle");
     let preparation = MajorCyclePreparation::prepare(&continued_lifecycle, carried_model, None)
@@ -780,10 +846,20 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     let complete = owner
         .complete(&summary, selected_generation, None)
         .expect("all-flagged initial normal");
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .unwrap()
-        .reconcile(&mut lifecycle)
-        .unwrap();
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .unwrap()
+    .reconcile(&mut lifecycle)
+    .unwrap();
     let (prior, continuation) = joined.into_continuation();
     let prior_content = prior.content_identity();
     let (mut lifecycle, named) = ModelLifecycle::continue_from(
@@ -791,6 +867,8 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
         attempt(250),
         2,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .unwrap();
     let preparation = MajorCyclePreparation::prepare(&lifecycle, named, None).unwrap();
@@ -800,13 +878,28 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
             .unwrap();
     let prepared = prepare_spectral_operator(specification, workload).unwrap();
     let apply = program
-        .begin_apply(&problem, preparation.final_model(), prior, prepared)
+        .begin_apply(
+            &problem,
+            preparation.final_model(),
+            &mut program.bind_prior(prior).unwrap(),
+            prepared,
+        )
         .expect("begin empty gridded apply");
     let complete = apply.finish().expect("finish validated zero-work apply");
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .unwrap()
-        .reconcile(&mut lifecycle)
-        .unwrap();
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .unwrap()
+    .reconcile(&mut lifecycle)
+    .unwrap();
     assert_eq!(joined.normal_state().content_identity(), prior_content);
 }
 
@@ -905,10 +998,22 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
     let program_alias = program.clone();
     assert_eq!(program_alias.identity(), program.identity());
 
-    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
-        .expect("initial major owner")
-        .reconcile(&mut initial_lifecycle)
-        .expect("initial normal state");
+    let initial_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    initial_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            initial_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        initial_preparation,
+    )
+    .expect("initial major owner")
+    .reconcile(&mut initial_lifecycle)
+    .expect("initial normal state");
     let (initial_normal, initial_continuation) = initial_join.into_continuation();
 
     let (mut first_lifecycle, first_named) = ModelLifecycle::continue_from(
@@ -916,6 +1021,8 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         attempt(255),
         2,
         initial_continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("first continued lifecycle");
     let first_delta = first_lifecycle
@@ -941,7 +1048,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         .begin_apply(
             &problem,
             first_preparation.final_model(),
-            initial_normal,
+            &mut program.bind_prior(initial_normal).unwrap(),
             prepared,
         )
         .expect("first gridded apply");
@@ -951,10 +1058,22 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
             .expect("apply first borrowed gridded block");
     }
     let first_complete = first_apply.finish().expect("finish first gridded apply");
-    let first_join = MajorCycleOwner::from_complete_data(first_complete, first_preparation)
-        .expect("first major owner")
-        .reconcile(&mut first_lifecycle)
-        .expect("first independent completion");
+    let first_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    first_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            first_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        first_preparation,
+    )
+    .expect("first major owner")
+    .reconcile(&mut first_lifecycle)
+    .expect("first independent completion");
     assert_eq!(
         first_join.normal_state().final_model_generation(),
         first_model_generation
@@ -968,6 +1087,8 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         attempt(1),
         3,
         first_continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("second continued lifecycle");
     let second_delta = second_lifecycle
@@ -993,7 +1114,7 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         .begin_apply(
             &problem,
             second_preparation.final_model(),
-            first_normal,
+            &mut program.bind_prior(first_normal).unwrap(),
             prepared,
         )
         .expect("second gridded apply from the same program");
@@ -1003,10 +1124,22 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
             .expect("apply second borrowed gridded block");
     }
     let second_complete = second_apply.finish().expect("finish second gridded apply");
-    let second_join = MajorCycleOwner::from_complete_data(second_complete, second_preparation)
-        .expect("second major owner")
-        .reconcile(&mut second_lifecycle)
-        .expect("second independent completion");
+    let second_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    second_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            second_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        second_preparation,
+    )
+    .expect("second major owner")
+    .reconcile(&mut second_lifecycle)
+    .expect("second independent completion");
 
     assert_ne!(first_model_generation, second_model_generation);
     assert_ne!(first_completion, second_join.completion_id());
@@ -1053,6 +1186,8 @@ struct LinearReplayConfiguration {
     source_block_samples: usize,
     one_atom_capacity: bool,
     check_rejections: bool,
+    replay_core_channels: usize,
+    output_channels: usize,
 }
 
 impl Default for LinearReplayConfiguration {
@@ -1061,11 +1196,14 @@ impl Default for LinearReplayConfiguration {
             source_block_samples: 1,
             one_atom_capacity: false,
             check_rejections: false,
+            replay_core_channels: 2,
+            output_channels: 2,
         }
     }
 }
 
 struct LinearReplayResult {
+    normal_content: LogicalIdentity,
     predictions: Vec<num_complex::Complex64>,
     records: u64,
     frames: Vec<RecordedFrame>,
@@ -1087,6 +1225,7 @@ fn t55_fixed_atom_frames_are_independent_of_source_block_boundaries() {
                 source_block_samples,
                 one_atom_capacity: true,
                 check_rejections: false,
+                ..LinearReplayConfiguration::default()
             },
         )
     };
@@ -1122,6 +1261,7 @@ fn t55_linear_compiler_rejects_incomplete_rows_and_poisoned_streams() {
             source_block_samples: 1,
             one_atom_capacity: true,
             check_rejections: true,
+            ..LinearReplayConfiguration::default()
         },
     );
 }
@@ -1207,12 +1347,15 @@ fn check_linear_cube_replay(
     records_per_row: Option<usize>,
     configuration: LinearReplayConfiguration,
 ) -> LinearReplayResult {
+    let output_channels = configuration.output_channels;
     let channels = (0..native_frequencies.len() as u32).collect::<Vec<_>>();
     let problem = reconstruction_problem_with_sampling_and_model(
         source_with_channels(247, [channels.clone(), channels]),
         8,
-        2,
-        ReconstructionBasis::ChannelLocal { channels: 2 },
+        output_channels,
+        ReconstructionBasis::ChannelLocal {
+            channels: output_channels,
+        },
         ReconstructionAlgorithm::Dirty,
         ReconstructionControls::new(0, 1.0, 0.0),
         (
@@ -1373,11 +1516,22 @@ fn check_linear_cube_replay(
         let initial_complete = owner
             .complete(&summary, selected_generation, None)
             .expect("complete initial normal state");
-        let initial_join =
-            MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
-                .expect("initial major owner")
-                .reconcile(&mut initial_lifecycle)
-                .expect("initial channel slab");
+        let initial_join = MajorCycleOwner::from_complete_data(
+            {
+                let storage =
+                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                        initial_complete.primitives().slab().total_channels(),
+                    )
+                    .expect("fixture normal window");
+                initial_complete
+                    .seal(&storage)
+                    .expect("seal fixture normal state")
+            },
+            initial_preparation,
+        )
+        .expect("initial major owner")
+        .reconcile(&mut initial_lifecycle)
+        .expect("initial channel slab");
         let (initial_normal, continuation) = initial_join.into_continuation();
 
         let (lifecycle, named_model) = ModelLifecycle::continue_from(
@@ -1385,6 +1539,8 @@ fn check_linear_cube_replay(
             attempt(249),
             2,
             continuation,
+            casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+                .expect("positive model window"),
         )
         .expect("continued lifecycle");
         let delta = lifecycle
@@ -1392,7 +1548,10 @@ fn check_linear_cube_replay(
                 &named_model,
                 [
                     ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [1, 0]), delta_value(0.5)),
-                    ModelDeltaTerm::new(ModelCell::new(0, 1, 0, [2, 0]), delta_value(0.75)),
+                    ModelDeltaTerm::new(
+                        ModelCell::new(0, output_channels - 1, 0, [2, 0]),
+                        delta_value(0.75),
+                    ),
                 ],
             )
             .expect("two-channel model delta");
@@ -1403,60 +1562,92 @@ fn check_linear_cube_replay(
     let (mut lifecycle, preparation, initial_normal) = prepare_case();
     let initial_sum_weights = initial_normal.sum_weights().to_vec();
     let final_model_generation = preparation.final_model_generation();
-    let specification =
-        SpectralOperatorSpecification::new(&problem).expect("residual spectral specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::ResidualRefresh,
-    )
-    .expect("residual workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("residual operator");
-    let mut apply = program
-        .begin_apply(
-            &problem,
-            preparation.final_model(),
-            initial_normal,
-            prepared,
+    let normal_storage = NormalStoragePlan::resident(configuration.replay_core_channels)
+        .expect("positive fixture normal window");
+    let mut prior = program
+        .bind_prior(initial_normal)
+        .expect("certify prior generation");
+    let mut fold = None::<CompleteDataOwnerSlabFold>;
+    for start in (0..output_channels).step_by(configuration.replay_core_channels) {
+        let depth = configuration
+            .replay_core_channels
+            .min(output_channels - start);
+        let specification = program
+            .specification_for_slab(&problem, start, depth)
+            .expect("residual window specification");
+        let workload = spectral_operator_workload(
+            &specification,
+            plan.limits().max_block_samples(),
+            SpectralOperatorPass::ResidualRefresh,
         )
-        .expect("begin channel-local gridded apply");
-    for block in &gridded_blocks {
-        apply
-            .apply_encoded_block(block.sequence(), block.encoded_bytes())
-            .expect("apply borrowed split-channel block");
+        .expect("residual window workload");
+        let prepared =
+            prepare_spectral_operator(specification, workload).expect("residual window operator");
+        let mut apply = program
+            .begin_apply(&problem, preparation.final_model(), &mut prior, prepared)
+            .expect("begin channel-local gridded window");
+        for block in &gridded_blocks {
+            apply
+                .apply_encoded_block(block.sequence(), block.encoded_bytes())
+                .expect("apply borrowed split-channel block");
+        }
+        let window = apply.finish().expect("finish channel-local gridded window");
+        fold = Some(if let Some(fold) = fold.take() {
+            fold.extend(window).expect("append adjacent normal window")
+        } else {
+            CompleteDataOwnerSlabFold::begin(window, &normal_storage)
+                .expect("begin normal window fold")
+        });
     }
-    let complete = apply.finish().expect("finish channel-local gridded apply");
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("channel-local major owner")
-        .reconcile(&mut lifecycle)
-        .expect("reconciled channel-local replay");
+    let joined = MajorCycleOwner::from_complete_data(
+        fold.expect("nonempty spectral axis")
+            .finish()
+            .expect("seal complete normal coverage"),
+        preparation,
+    )
+    .expect("channel-local major owner")
+    .reconcile(&mut lifecycle)
+    .expect("reconciled channel-local replay");
 
     assert_eq!(
         joined.normal_state().block_count(),
         program.source_block_count()
     );
-    assert_eq!(joined.normal_state().channel_count(), 2);
+    assert_eq!(joined.normal_state().channel_count(), output_channels);
     assert_eq!(joined.normal_state().sum_weights(), initial_sum_weights);
     assert_eq!(
         joined.normal_state().final_model_generation(),
         final_model_generation
     );
+    let gridded_residual = (0..output_channels)
+        .flat_map(|channel| {
+            joined
+                .normal_state()
+                .read_window(channel..channel + 1)
+                .expect("one-channel fixture window")
+                .residual()
+                .to_vec()
+        })
+        .collect::<Vec<_>>();
     assert!(
-        joined
-            .normal_state()
-            .residual()
+        gridded_residual
             .iter()
             .all(|value| value.re.is_finite() && value.im.is_finite())
     );
-    let gridded_residual = joined.normal_state().residual().to_vec();
     let (mut direct_lifecycle, direct_preparation, direct_initial_normal) = prepare_case();
     assert_eq!(
         direct_preparation.final_model_generation(),
         final_model_generation
     );
     assert_eq!(
-        direct_preparation.final_model().samples(),
-        joined.final_model().samples()
+        direct_preparation
+            .final_model()
+            .read_samples(0..direct_preparation.final_model().sample_count())
+            .expect("read fixture model"),
+        joined
+            .final_model()
+            .read_samples(0..joined.final_model().sample_count())
+            .expect("read fixture model")
     );
     let specification =
         SpectralOperatorSpecification::new(&problem).expect("direct spectral specification");
@@ -1498,13 +1689,28 @@ fn check_linear_cube_replay(
     let direct_complete = direct_owner
         .complete(&summary, selected_generation, None)
         .expect("complete direct linear residual");
-    let direct = MajorCycleOwner::from_complete_data(direct_complete, direct_preparation)
-        .expect("direct major owner")
-        .reconcile(&mut direct_lifecycle)
-        .expect("reconciled direct residual");
+    let direct = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    direct_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            direct_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        direct_preparation,
+    )
+    .expect("direct major owner")
+    .reconcile(&mut direct_lifecycle)
+    .expect("reconciled direct residual");
     assert_eq!(direct.normal_state().sum_weights(), initial_sum_weights);
-    let differences = direct
+    let direct_window = direct
         .normal_state()
+        .read_window(0..output_channels)
+        .expect("complete diagnostic fixture window");
+    let differences = direct_window
         .residual()
         .iter()
         .zip(&gridded_residual)
@@ -1523,10 +1729,11 @@ fn check_linear_cube_replay(
     assert!(
         *maximum < 1.0e-7,
         "row-local CASA linear residual differs from sealed replay: native=[1.0,1.1,1.2]GHz output=[1.05,1.15]GHz minimum_nonzero={minimum_nonzero:e} maximum={maximum:e} index={maximum_index} direct={:?} gridded={:?}",
-        direct.normal_state().residual()[maximum_index],
+        direct_window.residual()[maximum_index],
         gridded_residual[maximum_index],
     );
     LinearReplayResult {
+        normal_content: joined.normal_state().content_identity(),
         predictions: predictions
             .iter()
             .map(|sample| sample.predicted())
@@ -1537,7 +1744,50 @@ fn check_linear_cube_replay(
         frames_per_source,
         source_records_per_source,
         gridded_residual,
-        direct_residual: direct.normal_state().residual().to_vec(),
+        direct_residual: direct_window.residual().to_vec(),
+    }
+}
+
+#[test]
+fn t55_gridded_final_replay_preserves_complete_identity_across_channel_windows() {
+    let run = |replay_core_channels| {
+        check_linear_cube_replay(
+            &[1.0e9, 1.1e9, 1.2e9],
+            1.0e8,
+            Some(8),
+            LinearReplayConfiguration {
+                replay_core_channels,
+                ..LinearReplayConfiguration::default()
+            },
+        )
+    };
+    let full = run(2);
+    let windows = run(1);
+    assert_eq!(full.frames, windows.frames);
+    assert_eq!(full.gridded_residual, windows.gridded_residual);
+    assert_eq!(full.normal_content, windows.normal_content);
+}
+
+#[test]
+fn t55_coarse_native_atoms_preserve_final_replay_across_nondivisible_windows() {
+    let run = |replay_core_channels| {
+        check_linear_cube_replay(
+            &[1.0e9, 2.6e9],
+            1.6e9,
+            None,
+            LinearReplayConfiguration {
+                output_channels: 17,
+                replay_core_channels,
+                ..LinearReplayConfiguration::default()
+            },
+        )
+    };
+    let full = run(17);
+    for window in [1, 2, 3, 5] {
+        let bounded = run(window);
+        assert_eq!(full.frames, bounded.frames);
+        assert_eq!(full.gridded_residual, bounded.gridded_residual);
+        assert_eq!(full.normal_content, bounded.normal_content);
     }
 }
 
@@ -1548,16 +1798,28 @@ fn t38_independent_channels_receive_the_same_iteration_limit() {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         attempt(245),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("cube lifecycle");
     let initial = lifecycle.initial_empty().expect("empty cube model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
     let complete = run_t19_complete_data(&problem, Some(&preparation));
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("channel-local major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("channel-local normal state");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("channel-local major-cycle owner")
+    .reconcile(&mut lifecycle)
+    .expect("channel-local normal state");
     let (normal, continuation) = joined.into_continuation();
     let mask = ReconstructionMask::full_plane(
         problem.problem_id(),
@@ -1598,16 +1860,28 @@ fn t38_casa_inclusive_iteration_limit_is_applied_to_every_channel() {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         attempt(251),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("cube lifecycle");
     let initial = lifecycle.initial_empty().expect("empty cube model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
     let complete = run_t19_complete_data(&problem, Some(&preparation));
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("channel-local major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("channel-local normal state");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("channel-local major-cycle owner")
+    .reconcile(&mut lifecycle)
+    .expect("channel-local normal state");
     let (normal, continuation) = joined.into_continuation();
     let mask = ReconstructionMask::full_plane(
         problem.problem_id(),
@@ -1656,16 +1930,28 @@ fn t38_blank_and_unmapped_channels_are_ordered_and_never_cleaned() {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         attempt(241),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("cube lifecycle");
     let initial = lifecycle.initial_empty().expect("empty cube model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
     let complete = run_t19_complete_data_with_samples(&problem, Some(&preparation), &samples);
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("channel-local major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("channel-local normal state");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("channel-local major-cycle owner")
+    .reconcile(&mut lifecycle)
+    .expect("channel-local normal state");
     let (normal, continuation) = joined.into_continuation();
     let mask = ReconstructionMask::full_plane(
         problem.problem_id(),
@@ -1731,16 +2017,28 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             ExecutableModelProblem::from_compiled(problem.clone()).expect("cube problem"),
             attempt(241),
             1,
+            casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+                .expect("positive model window"),
         )
         .expect("cube lifecycle");
         let initial = lifecycle.initial_empty().expect("empty cube model");
         let preparation =
             MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare model");
         let complete = run_t19_complete_data_with_samples(&problem, Some(&preparation), &samples);
-        let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-            .expect("major-cycle owner")
-            .reconcile(&mut lifecycle)
-            .expect("normal state");
+        let joined = MajorCycleOwner::from_complete_data(
+            {
+                let storage =
+                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                        complete.primitives().slab().total_channels(),
+                    )
+                    .expect("fixture normal window");
+                complete.seal(&storage).expect("seal fixture normal state")
+            },
+            preparation,
+        )
+        .expect("major-cycle owner")
+        .reconcile(&mut lifecycle)
+        .expect("normal state");
         let (normal, continuation) = joined.into_continuation();
         let base = continuation.generation();
         let mask = ReconstructionMask::full_plane(
@@ -1786,11 +2084,15 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
             assert!(actual_workspace.retained_bytes() <= planned_workspace.retained_bytes());
             for start in (0..work.plane_count()).step_by(workers) {
                 let end = (start + workers).min(work.plane_count());
+                let inputs = (start..end)
+                    .rev()
+                    .map(|ordinal| work.prepare_plane(ordinal).expect("load model window"))
+                    .collect::<Vec<_>>();
                 let partials = std::thread::scope(|scope| {
                     let work = &work;
-                    (start..end)
-                        .rev()
-                        .map(|ordinal| scope.spawn(move || work.execute_plane(ordinal)))
+                    inputs
+                        .into_iter()
+                        .map(|input| scope.spawn(move || work.execute_plane(&input)))
                         .collect::<Vec<_>>()
                         .into_iter()
                         .map(|worker| worker.join().expect("plane worker").expect("plane solve"))
@@ -1824,24 +2126,33 @@ fn t55_prepared_cube_planes_preserve_results_and_require_exact_ordered_coverage(
         let mut work = cycle
             .prepare_independent(&lifecycle, base, &normal, &mask)
             .expect("prepared planes");
-        assert!(matches!(work.execute_plane(3), Err(InvalidPlaneCoverage)));
-        let out_of_order = work.execute_plane(1).expect("second plane");
+        assert!(matches!(work.prepare_plane(3), Err(InvalidPlaneCoverage)));
+        let out_of_order = work
+            .execute_plane(&work.prepare_plane(1).unwrap())
+            .expect("second plane");
         assert!(matches!(
             work.commit_plane(out_of_order),
             Err(InvalidPlaneCoverage)
         ));
         let other_cycle = cycle.clone();
-        let foreign = other_cycle
+        let other_work = other_cycle
             .prepare_independent(&lifecycle, base, &normal, &mask)
-            .expect("different prepared inputs")
-            .execute_plane(0)
+            .expect("different prepared inputs");
+        let foreign_input = other_work.prepare_plane(0).unwrap();
+        assert!(matches!(
+            work.execute_plane(&foreign_input),
+            Err(InvalidPlaneCoverage)
+        ));
+        let foreign = other_work
+            .execute_plane(&foreign_input)
             .expect("foreign partial");
         assert!(matches!(
             work.commit_plane(foreign),
             Err(InvalidPlaneCoverage)
         ));
-        let first = work.execute_plane(0).expect("first plane");
-        let duplicate = work.execute_plane(0).expect("duplicate first plane");
+        let input = work.prepare_plane(0).unwrap();
+        let first = work.execute_plane(&input).expect("first plane");
+        let duplicate = work.execute_plane(&input).expect("duplicate first plane");
         work.commit_plane(first).expect("first commit");
         assert!(matches!(
             work.commit_plane(duplicate),
@@ -1858,16 +2169,28 @@ fn t38_late_nsigma_floor_and_first_component_divergence_remain_per_channel() {
         ExecutableModelProblem::from_compiled(problem.clone()).expect("executable cube problem"),
         attempt(243),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("cube lifecycle");
     let initial = lifecycle.initial_empty().expect("empty cube model");
     let preparation =
         MajorCyclePreparation::prepare(&lifecycle, initial, None).expect("prepare cube model");
     let complete = run_t19_complete_data(&problem, Some(&preparation));
-    let joined = MajorCycleOwner::from_complete_data(complete, preparation)
-        .expect("channel-local major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("channel-local normal state");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            complete.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("channel-local major-cycle owner")
+    .reconcile(&mut lifecycle)
+    .expect("channel-local normal state");
     let (normal, continuation) = joined.into_continuation();
     let mask = ReconstructionMask::full_plane(
         problem.problem_id(),
@@ -2357,6 +2680,8 @@ fn bind_lifecycle(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("direct executable problem"),
         attempt,
         7,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("bind model lifecycle")
 }
@@ -2398,8 +2723,18 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     let block_count = evidence.completion().block_count();
     let weighting_generation = evidence.completion().weighting_generation();
 
-    let owner =
-        MajorCycleOwner::from_complete_data(evidence, preparation).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner from T19");
     assert_eq!(owner.weighting_generation(), weighting_generation);
     let joined = owner
         .reconcile(&mut lifecycle)
@@ -2443,7 +2778,15 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
         joined.final_model().generation_id(),
         model_completion.generation()
     );
-    assert!(joined.final_model().samples()[1].value().value() == -2.5);
+    assert!(
+        joined
+            .final_model()
+            .read_samples(0..joined.final_model().sample_count())
+            .expect("read fixture model")[1]
+            .value()
+            .value()
+            == -2.5
+    );
 
     // The pending delta was applied only through the model owner.
     assert_eq!(model_completion.delta(), Some(delta_id));
@@ -2461,8 +2804,18 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     let data_side_content = evidence.primitives().normal_state_content_identity();
     let data_side_dirty = evidence.primitives().dirty().to_vec();
 
-    let owner =
-        MajorCycleOwner::from_complete_data(evidence, preparation).expect("T20 owner from T19");
+    let owner = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner from T19");
     let joined = owner
         .reconcile(&mut lifecycle)
         .expect("confirm-only reconciliation");
@@ -2474,9 +2827,13 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     assert_eq!(joined.normal_state().final_model_generation(), input_id);
     // An empty final model reconciles to the exact T19 dirty plane bit-for-bit.
     assert_eq!(joined.normal_state().content_identity(), data_side_content);
-    assert_eq!(joined.normal_state().residual(), data_side_dirty);
-    assert_eq!(joined.normal_state().normal_approximation().len(), 8 * 8);
-    assert_eq!(joined.normal_state().sensitivity().len(), 8 * 8);
+    let window = joined
+        .normal_state()
+        .read_window(0..1)
+        .expect("single-plane fixture window");
+    assert_eq!(window.residual(), data_side_dirty);
+    assert_eq!(window.normal_approximation().len(), 8 * 8);
+    assert_eq!(window.sensitivity().len(), 8 * 8);
     assert!(joined.normal_state().sum_weight() > 0.0);
 }
 
@@ -2556,6 +2913,8 @@ fn all_zero_ingested_model_uses_the_general_operator_and_matches_empty_science()
         ExecutableModelProblem::from_compiled(problem.clone()).expect("ingested problem"),
         attempt(70),
         1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("ingested lifecycle");
     let target = lifecycle.contract().target().clone();
@@ -2622,10 +2981,22 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
         MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
             .expect("initial preparation");
     let initial_complete = run_t19_complete_data(&problem, Some(&initial_preparation));
-    let initial_join = MajorCycleOwner::from_complete_data(initial_complete, initial_preparation)
-        .expect("initial major owner")
-        .reconcile(&mut initial_lifecycle)
-        .expect("initial normal state");
+    let initial_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    initial_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            initial_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        initial_preparation,
+    )
+    .expect("initial major owner")
+    .reconcile(&mut initial_lifecycle)
+    .expect("initial normal state");
     let initial_content = initial_join.normal_state().content_identity();
     let (initial_normal, continuation) = initial_join.into_continuation();
     let (mut continued_lifecycle, carried_model) = ModelLifecycle::continue_from(
@@ -2633,6 +3004,8 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
         attempt(74),
         2,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continue empty model");
     assert_eq!(
@@ -2650,10 +3023,22 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
         SpectralOperatorPass::ResidualRefresh,
         Some(initial_normal),
     );
-    let refreshed = MajorCycleOwner::from_complete_data(refresh_complete, refresh_preparation)
-        .expect("refresh major owner")
-        .reconcile(&mut continued_lifecycle)
-        .expect("refresh normal state");
+    let refreshed = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    refresh_complete.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            refresh_complete
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        refresh_preparation,
+    )
+    .expect("refresh major owner")
+    .reconcile(&mut continued_lifecycle)
+    .expect("refresh normal state");
     assert_eq!(refreshed.normal_state().content_identity(), initial_content);
 }
 
@@ -2664,14 +3049,28 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
     let initial_named = initial_lifecycle
         .initial_empty()
         .expect("initial empty generation");
-    let initial_samples = initial_named.samples().to_vec();
+    let initial_samples = initial_named
+        .read_samples(0..initial_named.sample_count())
+        .expect("read fixture model");
     let initial_id = initial_named.generation_id();
     let (initial_evidence, initial_preparation) =
         prepare_reconciliation(&problem, &initial_lifecycle, initial_named, None);
-    let initial_join = MajorCycleOwner::from_complete_data(initial_evidence, initial_preparation)
-        .expect("initial major-cycle owner")
-        .reconcile(&mut initial_lifecycle)
-        .expect("initial no-delta reconciliation");
+    let initial_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    initial_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            initial_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        initial_preparation,
+    )
+    .expect("initial major-cycle owner")
+    .reconcile(&mut initial_lifecycle)
+    .expect("initial no-delta reconciliation");
     let (initial_normal, initial_continuation) = initial_join.into_continuation();
 
     let (mut first_lifecycle, first_named) = ModelLifecycle::continue_from(
@@ -2680,6 +3079,8 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
         attempt(24),
         8,
         initial_continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continue the initial no-delta generation");
     assert_eq!(first_named.generation_id(), initial_id);
@@ -2693,13 +3094,31 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
         SpectralOperatorPass::ResidualRefresh,
         Some(initial_normal),
     );
-    let first_join = MajorCycleOwner::from_complete_data(first_evidence, first_preparation)
-        .expect("first final-major owner")
-        .reconcile(&mut first_lifecycle)
-        .expect("first no-delta final-major reconciliation");
+    let first_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    first_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            first_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        first_preparation,
+    )
+    .expect("first final-major owner")
+    .reconcile(&mut first_lifecycle)
+    .expect("first no-delta final-major reconciliation");
     assert_eq!(first_join.model_completion().base(), initial_id);
     assert_eq!(first_join.model_completion().delta(), None);
-    assert_eq!(first_join.final_model().samples(), initial_samples);
+    assert_eq!(
+        first_join
+            .final_model()
+            .read_samples(0..first_join.final_model().sample_count())
+            .expect("read fixture model"),
+        initial_samples
+    );
     let first_id = first_join.final_model().generation_id();
     assert_ne!(
         first_id, initial_id,
@@ -2713,6 +3132,8 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
         attempt(25),
         9,
         first_continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continue the first no-delta final-major generation");
     assert_eq!(second_named.generation_id(), first_id);
@@ -2726,13 +3147,31 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
         SpectralOperatorPass::ResidualRefresh,
         Some(first_normal),
     );
-    let second_join = MajorCycleOwner::from_complete_data(second_evidence, second_preparation)
-        .expect("second final-major owner")
-        .reconcile(&mut second_lifecycle)
-        .expect("second no-delta final-major reconciliation");
+    let second_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    second_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            second_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        second_preparation,
+    )
+    .expect("second final-major owner")
+    .reconcile(&mut second_lifecycle)
+    .expect("second no-delta final-major reconciliation");
     assert_eq!(second_join.model_completion().base(), first_id);
     assert_eq!(second_join.model_completion().delta(), None);
-    assert_eq!(second_join.final_model().samples(), initial_samples);
+    assert_eq!(
+        second_join
+            .final_model()
+            .read_samples(0..second_join.final_model().sample_count())
+            .expect("read fixture model"),
+        initial_samples
+    );
     let second_id = second_join.final_model().generation_id();
     assert_ne!(
         second_id, first_id,
@@ -2745,6 +3184,8 @@ fn chained_no_delta_final_major_cycles_reauthorize_the_carried_generation() {
         attempt(26),
         10,
         second_continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continue the second no-delta final-major generation");
     assert_eq!(third_named.generation_id(), second_id);
@@ -2760,10 +3201,22 @@ fn residual_content_depends_on_the_exact_final_model() {
         .expect("empty named generation");
     let (empty_evidence, empty_preparation) =
         prepare_reconciliation(&problem, &empty_lifecycle, empty_named, None);
-    let empty_join = MajorCycleOwner::from_complete_data(empty_evidence, empty_preparation)
-        .expect("owner from intact T19 pairing")
-        .reconcile(&mut empty_lifecycle)
-        .expect("empty-model reconciliation");
+    let empty_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    empty_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            empty_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        empty_preparation,
+    )
+    .expect("owner from intact T19 pairing")
+    .reconcile(&mut empty_lifecycle)
+    .expect("empty-model reconciliation");
 
     let mut delta_lifecycle = bind_lifecycle(&problem, attempt(29));
     let delta_named = delta_lifecycle
@@ -2777,10 +3230,22 @@ fn residual_content_depends_on_the_exact_final_model() {
         .expect("pending delta");
     let (delta_evidence, delta_preparation) =
         prepare_reconciliation(&problem, &delta_lifecycle, delta_named, Some(delta));
-    let delta_join = MajorCycleOwner::from_complete_data(delta_evidence, delta_preparation)
-        .expect("owner from intact T19 pairing")
-        .reconcile(&mut delta_lifecycle)
-        .expect("delta reconciliation");
+    let delta_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    delta_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            delta_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        delta_preparation,
+    )
+    .expect("owner from intact T19 pairing")
+    .reconcile(&mut delta_lifecycle)
+    .expect("delta reconciliation");
 
     assert_ne!(
         empty_join.normal_state().content_identity(),
@@ -2788,8 +3253,16 @@ fn residual_content_depends_on_the_exact_final_model() {
         "a nonzero final model must change the authoritative residual content"
     );
     assert_ne!(
-        empty_join.normal_state().residual(),
-        delta_join.normal_state().residual(),
+        empty_join
+            .normal_state()
+            .read_window(0..1)
+            .expect("single-plane fixture window")
+            .residual(),
+        delta_join
+            .normal_state()
+            .read_window(0..1)
+            .expect("single-plane fixture window")
+            .residual(),
         "the retained authoritative residual must depend on the final model"
     );
     assert_ne!(empty_join.completion_id(), delta_join.completion_id());
@@ -2814,14 +3287,38 @@ fn completion_ids_stay_stable_across_owner_allocations() {
     let (second_evidence, second_preparation) =
         prepare_reconciliation(&problem, &second, second_named, None);
 
-    let first_join = MajorCycleOwner::from_complete_data(first_evidence, first_preparation)
-        .expect("first owner")
-        .reconcile(&mut first)
-        .expect("first reconciliation");
-    let second_join = MajorCycleOwner::from_complete_data(second_evidence, second_preparation)
-        .expect("second owner")
-        .reconcile(&mut second)
-        .expect("second reconciliation");
+    let first_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    first_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            first_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        first_preparation,
+    )
+    .expect("first owner")
+    .reconcile(&mut first)
+    .expect("first reconciliation");
+    let second_join = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    second_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            second_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        second_preparation,
+    )
+    .expect("second owner")
+    .reconcile(&mut second)
+    .expect("second reconciliation");
 
     assert_eq!(
         first_join.completion_id(),
@@ -2853,10 +3350,20 @@ fn transformed_visibility_generation_cannot_be_substituted_under_raw_lineage() {
             &samples,
             Some(transform_generation),
         );
-        MajorCycleOwner::from_complete_data(evidence, preparation)
-            .expect("owner")
-            .reconcile(&mut lifecycle)
-            .expect("reconciliation")
+        MajorCycleOwner::from_complete_data(
+            {
+                let storage =
+                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                        evidence.primitives().slab().total_channels(),
+                    )
+                    .expect("fixture normal window");
+                evidence.seal(&storage).expect("seal fixture normal state")
+            },
+            preparation,
+        )
+        .expect("owner")
+        .reconcile(&mut lifecycle)
+        .expect("reconciliation")
     };
 
     let first = reconcile(first_transform, 42);
@@ -2895,10 +3402,20 @@ fn observation_generation_lineage_is_bound_into_the_normal_state() {
         let mut lifecycle = bind_lifecycle(problem, attempt(attempt_byte));
         let named = lifecycle.initial_empty().expect("named generation");
         let (evidence, preparation) = prepare_reconciliation(problem, &lifecycle, named, None);
-        let join = MajorCycleOwner::from_complete_data(evidence, preparation)
-            .expect("owner from intact T19 pairing")
-            .reconcile(&mut lifecycle)
-            .expect("reconciliation");
+        let join = MajorCycleOwner::from_complete_data(
+            {
+                let storage =
+                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                        evidence.primitives().slab().total_channels(),
+                    )
+                    .expect("fixture normal window");
+                evidence.seal(&storage).expect("seal fixture normal state")
+            },
+            preparation,
+        )
+        .expect("owner from intact T19 pairing")
+        .reconcile(&mut lifecycle)
+        .expect("reconciliation");
         assert_eq!(
             join.normal_state().selected_generation(),
             expected,
@@ -2928,10 +3445,22 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
         MajorCyclePreparation::prepare(&foreign_problem_lifecycle, foreign_named, None)
             .expect("prepare foreign problem model");
     let foreign_evidence = run_t19_complete_data(&problem, Some(&foreign_preparation));
-    let stale_problem = MajorCycleOwner::from_complete_data(foreign_evidence, foreign_preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut foreign_problem_lifecycle)
-        .expect_err("stale model evidence must fail closed");
+    let stale_problem = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    foreign_evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            foreign_evidence
+                .seal(&storage)
+                .expect("seal fixture normal state")
+        },
+        foreign_preparation,
+    )
+    .expect("T20 owner from T19")
+    .reconcile(&mut foreign_problem_lifecycle)
+    .expect_err("stale model evidence must fail closed");
     assert!(matches!(stale_problem, MajorCycleError::StaleModelEvidence));
 
     let mut lifecycle = bind_lifecycle(&problem, attempt(23));
@@ -2981,10 +3510,20 @@ fn reconciliation_fails_atomically_and_leaves_both_authorities_intact() {
         .compile_delta(&named, [ModelDeltaTerm::new(cell(2), delta_value(1.0))])
         .expect("correctly bound delta");
     let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, Some(delta));
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle)
-        .expect("reconciliation succeeds after atomic failures");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("T20 owner from T19")
+    .reconcile(&mut lifecycle)
+    .expect("reconciliation succeeds after atomic failures");
     assert_eq!(
         joined.model_completion().attempt(),
         casa_imaging_model::ModelExecutionAttemptId::new(identity(23, 0))

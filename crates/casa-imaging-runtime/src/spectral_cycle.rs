@@ -1059,6 +1059,10 @@ pub struct FinalMajorPhaseInput {
 }
 
 impl FinalMajorPhaseInput {
+    pub(crate) fn maximum_read_channels(&self) -> usize {
+        self.evidence.normal_state.maximum_read_channels()
+    }
+
     /// Return the owner-independent accepted-update identity bound into planning.
     #[must_use]
     pub fn identity(&self) -> crate::ArtifactIdentity {
@@ -1123,14 +1127,14 @@ impl SpectralCycleExecutor {
         let (stream, artifact_pass_count, peak_physical_route_capacity_bytes) =
             if let Some((replay, stream)) = state.gridded_replay.as_ref().and_then(|replay| {
                 replay
-                    .latest_stream_measurements()
+                    .aggregate_stream_measurements()
                     .map(|stream| (replay, stream))
             }) {
                 (
                     stream,
-                    u64::from(replay.latest_read_measurements().is_some()),
+                    replay.artifact_pass_count(),
                     replay
-                        .latest_routing_measurements()?
+                        .aggregate_routing_measurements()?
                         .peak_physical_route_capacity_bytes,
                 )
             } else {
@@ -1459,6 +1463,14 @@ impl SpectralCycleExecutor {
         if let Ok(mut state) = self.state.lock() {
             state.gridded_compilation = None;
             state.gridded_replay = None;
+            state.operator = None;
+            state.prepared = None;
+            state.pending_complete_data_slabs = None;
+            state.complete_data = None;
+            state.prepared_model = None;
+            state.lifecycle = None;
+            state.result = None;
+            state.reconstruction_cycle_completion = None;
         }
     }
 
@@ -1623,6 +1635,7 @@ impl SpectralCycleExecutor {
     }
 
     fn prepare_final_model(
+        &self,
         state: &mut SpectralCycleExecutorState,
         context: WorkExecutionContext<'_>,
     ) -> Result<(), io::Error> {
@@ -1643,10 +1656,22 @@ impl SpectralCycleExecutor {
             context.attempt_id().as_bytes(),
         ));
         let epoch = context.lease_epoch();
+        let storage = match self.problem.reconstruction().basis() {
+            casa_imaging_model::ReconstructionBasis::ChannelLocal { .. } => self
+                .complete_data
+                .cube_state
+                .as_ref()
+                .ok_or_else(|| {
+                    io::Error::other("channel-local execution lacks its physical backing plan")
+                })?
+                .model_storage(context)?,
+            _ => casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+                .map_err(io::Error::other)?,
+        };
         let (lifecycle, named, terms, prior_normal_state, reconstruction_masks) = match input {
             SpectralCyclePassInput::Initial => {
-                let mut lifecycle =
-                    ModelLifecycle::bind(executable, attempt, epoch).map_err(io::Error::other)?;
+                let mut lifecycle = ModelLifecycle::bind(executable, attempt, epoch, storage)
+                    .map_err(io::Error::other)?;
                 let named = match lifecycle.contract().input() {
                     ModelInputCommitment::Empty => lifecycle.initial_empty(),
                     ModelInputCommitment::ReprojectedSeed(_) => lifecycle.initial_reprojected(),
@@ -1662,9 +1687,14 @@ impl SpectralCycleExecutor {
             }
             SpectralCyclePassInput::FinalMajor(input) => {
                 let (terms, continuation, prior_normal_state, masks) = input.into_execution_parts();
-                let (lifecycle, named) =
-                    ModelLifecycle::continue_from(executable, attempt, epoch, continuation)
-                        .map_err(io::Error::other)?;
+                let (lifecycle, named) = ModelLifecycle::continue_from(
+                    executable,
+                    attempt,
+                    epoch,
+                    continuation,
+                    storage,
+                )
+                .map_err(io::Error::other)?;
                 (
                     lifecycle,
                     named,
@@ -1692,6 +1722,25 @@ impl SpectralCycleExecutor {
         state.reconstruction_masks = reconstruction_masks;
         state.lifecycle = Some(lifecycle);
         Ok(())
+    }
+
+    fn normal_storage(
+        &self,
+    ) -> io::Result<casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan> {
+        match self.problem.reconstruction().basis() {
+            casa_imaging_model::ReconstructionBasis::ChannelLocal { .. } => self
+                .complete_data
+                .cube_state
+                .as_ref()
+                .ok_or_else(|| {
+                    io::Error::other("channel-local execution lacks its physical backing plan")
+                })?
+                .normal_storage(),
+            _ => casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                self.problem.geometry().spectral().output_channels(),
+            )
+            .map_err(io::Error::other),
+        }
     }
 
     fn run_stream(
@@ -1810,7 +1859,10 @@ impl SpectralCycleExecutor {
         let (first, mut recycle) = first_operator
             .complete_initial_slab_recycled(replay, selected_generation, continuum_generation)
             .map_err(io::Error::other)?;
-        let mut folded = first.begin_fold().map_err(io::Error::other)?;
+        let normal_storage = self.normal_storage()?;
+        let mut folded = first
+            .begin_fold(&normal_storage)
+            .map_err(io::Error::other)?;
 
         for ordinal in 1..self.complete_data.slab_count() {
             let prepared = self
@@ -1961,27 +2013,60 @@ impl SpectralCycleExecutor {
             .gridded_replay
             .as_mut()
             .ok_or_else(|| io::Error::other("sealed gridded-normal replay missing"))?;
-        let operator = self
-            .complete_data
-            .begin_gridded_replay(
-                context,
-                &self.problem,
-                preparation,
-                prior_normal_state,
-                prepared,
-                replay,
-            )
+        let mut prior = replay
+            .bind_prior(prior_normal_state)
             .map_err(io::Error::other)?;
         let route_capacity_bytes =
             u64::try_from(self.complete_data.residency().gridded_route_bytes())
                 .map_err(|_| io::Error::other("gridded-normal route capacity overflow"))?;
-        state.complete_data = Some(replay.execute_bounded(
-            context,
-            self.pass.ordinal(),
-            operator,
-            route_capacity_bytes,
-        )?);
-        self.log_gridded_replay_measurements(replay);
+        let slab_count = self.complete_data.slab_count();
+        let normal_storage = self.normal_storage()?;
+        let mut prepared = prepared;
+        let mut fold = None::<crate::complete_data_operator::PendingCompleteDataSlabFold>;
+        for ordinal in 0..slab_count {
+            let operator = self
+                .complete_data
+                .begin_gridded_replay(
+                    context,
+                    &self.problem,
+                    preparation,
+                    &mut prior,
+                    prepared,
+                    replay,
+                )
+                .map_err(io::Error::other)?;
+            let stream_ordinal = u32::try_from(slab_count)
+                .ok()
+                .and_then(|count| self.pass.ordinal().checked_mul(count))
+                .and_then(|pass| {
+                    u32::try_from(ordinal)
+                        .ok()
+                        .and_then(|ordinal| pass.checked_add(ordinal))
+                })
+                .ok_or_else(|| io::Error::other("gridded-normal window identity overflow"))?;
+            let (window, recycle) =
+                replay.execute_bounded(context, stream_ordinal, operator, route_capacity_bytes)?;
+            fold = Some(
+                match fold.take() {
+                    Some(fold) => fold.fold(window),
+                    None => window.begin_fold(&normal_storage),
+                }
+                .map_err(io::Error::other)?,
+            );
+            self.log_gridded_replay_measurements(replay);
+            if ordinal + 1 == slab_count {
+                break;
+            }
+            prepared = self
+                .complete_data
+                .reprepare_slab(context, ordinal + 1, recycle)
+                .map_err(io::Error::other)?;
+        }
+        state.complete_data = Some(
+            fold.ok_or_else(|| io::Error::other("gridded-normal complete coverage missing"))?
+                .complete_gridded()
+                .map_err(io::Error::other)?,
+        );
         replay
             .release_completed_window_plan()
             .map_err(io::Error::other)?;
@@ -2411,7 +2496,7 @@ impl SpectralCycleExecutor {
                 state
                     .gridded_replay
                     .as_ref()
-                    .and_then(FrozenGriddedNormalReplay::latest_read_measurements)
+                    .and_then(FrozenGriddedNormalReplay::aggregate_read_measurements)
             })
             .flatten();
         let actual_batch = (context.node().id == *self.complete_data.replay_node())
@@ -2419,7 +2504,7 @@ impl SpectralCycleExecutor {
                 state
                     .gridded_replay
                     .as_ref()
-                    .and_then(FrozenGriddedNormalReplay::latest_stream_measurements)
+                    .and_then(FrozenGriddedNormalReplay::aggregate_stream_measurements)
             })
             .flatten()
             .map(|measurements| {
@@ -2599,7 +2684,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                 crate::spectral_cycle_plan::adaptation_route_join_node(self.pass);
             if context.node().id == final_model_preparation {
                 if self.mode == SpectralCycleExecutionMode::Science {
-                    Self::prepare_final_model(&mut state, context)?;
+                    self.prepare_final_model(&mut state, context)?;
                     if let (Some(sink), Some(prepared_model)) =
                         (&self.final_visibility_sink, state.prepared_model.as_ref())
                     {
@@ -2831,6 +2916,9 @@ impl WorkImplementation for SpectralCycleExecutor {
                     .release(context, fragment)
                     .map_err(io::Error::other)?;
             }
+            if let Some(cube_state) = self.complete_data.cube_state.as_ref() {
+                cube_state.log_measurements(&context.node().id);
+            }
             match fragment.as_ref() {
                 Some(fragment) => self.node_measurements(context, &state, fragment),
                 None => self.gridded_node_measurements(context, &state),
@@ -2846,7 +2934,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                     None if state
                         .gridded_replay
                         .as_ref()
-                        .and_then(FrozenGriddedNormalReplay::latest_read_measurements)
+                        .and_then(FrozenGriddedNormalReplay::aggregate_stream_measurements)
                         .is_some() =>
                     {
                         self.gridded_node_measurements(context, &state).ok()
@@ -2974,7 +3062,7 @@ impl WorkImplementation for SpectralCycleExecutor {
                     } else {
                         serial_operator
                             .expect("serial operator exists when no MVC fold exists")
-                            .complete(replay)
+                            .complete(replay, &self.normal_storage()?)
                             .map_err(io::Error::other)?
                     };
                     let gridded_replay = compilation
@@ -3009,6 +3097,12 @@ impl WorkImplementation for SpectralCycleExecutor {
         owner_node: &WorkNodeId,
         permit: crate::RetainedArtifactPermit,
     ) -> Result<bool, Self::Error> {
+        if let Some(cube_state) = self.complete_data.cube_state.as_ref()
+            && cube_state.retains_at(owner_node)
+        {
+            cube_state.retain(owner_node, permit)?;
+            return Ok(true);
+        }
         let fragment = self
             .fragment()
             .ok_or_else(|| io::Error::other("artifact retention requires a streaming plan"))?;

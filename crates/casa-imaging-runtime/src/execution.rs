@@ -284,6 +284,19 @@ pub struct RetainedArtifactPermit {
 }
 
 impl RetainedArtifactPermit {
+    /// Check all named non-memory resources in a capacity reservation.
+    pub(crate) fn covers_exact_resources(&self, expected: &[(LeaseResource, u64)]) -> bool {
+        self.immutable_allocations.is_empty()
+            && self.permits.len() == expected.len()
+            && expected.iter().all(|(resource, amount)| {
+                self.permits
+                    .iter()
+                    .filter(|permit| permit.resource() == resource && permit.amount() == *amount)
+                    .count()
+                    == 1
+            })
+    }
+
     /// Return the lease epoch that admitted the artifact resources.
     #[must_use]
     pub const fn lease_epoch(&self) -> u64 {
@@ -358,6 +371,7 @@ impl RetainedArtifactPermit {
                     demand_id,
                     use_kind: StorageUseKind::Temporary,
                 } => demand_id.len(),
+                LeaseResource::FileDescriptors => 0,
                 _ => return None,
             };
             bytes
@@ -3356,11 +3370,11 @@ fn validate_claims(node: &WorkNode) -> Result<(), ExecutionError> {
                 LeaseResource::Storage {
                     use_kind: StorageUseKind::Temporary,
                     ..
-                }
+                } | LeaseResource::FileDescriptors
             )
         {
             return Err(ExecutionError::invalid_plan(format!(
-                "work node {} retains a non-temporary-storage resource in an artifact",
+                "work node {} retains a resource other than temporary storage or file descriptors in an artifact",
                 node.id.as_str()
             )));
         }

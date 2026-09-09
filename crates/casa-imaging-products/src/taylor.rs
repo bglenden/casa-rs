@@ -144,6 +144,7 @@ impl TaylorProducts {
             .is_some()
             .then(std::time::Instant::now);
         let state = inputs.normal_state();
+        let state = &state.read_window(state.slab().core_range())?;
         if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
             return Err(ProductsError::SourceLineageMismatch);
         }
@@ -912,8 +913,6 @@ fn model_term(
     coefficient: usize,
     shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
-    use casa_imaging_model::ModelCell;
-
     let model = inputs.final_model();
     if model.shape().domains().len() != 1
         || model.shape().polarizations() != 1
@@ -927,13 +926,10 @@ fn model_term(
         return Err(ProductsError::SourceLineageMismatch);
     }
     let mut plane = vec![0.0; shape[0] * shape[1]];
+    let samples = model.read_plane(0, coefficient, 0)?;
     for y in 0..shape[1] {
         for x in 0..shape[0] {
-            let index = model
-                .shape()
-                .flat_index(ModelCell::new(0, coefficient, 0, [x, y]))
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            plane[x * shape[1] + y] = model.samples()[index].value().value() as f32;
+            plane[x * shape[1] + y] = samples[y * shape[0] + x].value().value() as f32;
         }
     }
     Ok(plane)

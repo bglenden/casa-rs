@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use casa_imaging_model::{CompiledProblemId, LogicalIdentity, ModelCell, ModelDeltaTerm};
+use casa_imaging_model::{CompiledProblemId, LogicalIdentity, ModelDeltaTerm};
 use thiserror::Error;
 
 use crate::{
@@ -475,7 +475,8 @@ impl ReconstructionCycle {
         }
         let mut work = self.prepare_independent(lifecycle, base, normal, mask)?;
         for ordinal in 0..work.plane_count() {
-            let partial = work.execute_plane(ordinal)?;
+            let input = work.prepare_plane(ordinal)?;
+            let partial = work.execute_plane(&input)?;
             work.commit_plane(partial)?;
         }
         work.finish()
@@ -510,6 +511,7 @@ impl ReconstructionCycle {
                 normal,
                 mask,
             },
+            validated_model: lifecycle.validate_named_generation(base)?,
             shared_cycle_threshold: shared_cycle_threshold(&self.program, normal)?,
             plane_count,
             terms: Vec::new(),
@@ -585,10 +587,29 @@ impl ReconstructionPlaneBinding<'_> {
 /// state changes until the complete collection is finalized.
 pub struct ReconstructionPlaneWork<'a> {
     binding: ReconstructionPlaneBinding<'a>,
+    validated_model: crate::ModelGenerationValidation<'a>,
     shared_cycle_threshold: Option<f64>,
     plane_count: usize,
     terms: Vec<ModelDeltaTerm>,
     channels: Vec<ChannelCycleEvidence>,
+}
+
+/// One coordinator-loaded plane input with no worker-side backing access.
+pub struct ReconstructionPlaneInput<'a> {
+    binding: ReconstructionPlaneBinding<'a>,
+    ordinal: usize,
+    model: Option<crate::ValidatedModelWindow<'a>>,
+    normal: crate::FinalNormalStateWindow<'a>,
+}
+
+impl ReconstructionPlaneInput<'_> {
+    /// Resident semantic sample buffer retained by this partition.
+    pub fn owned_bytes(&self) -> u64 {
+        self.model
+            .as_ref()
+            .map_or(0, |model| model.owned_bytes() as u64)
+            + self.normal.owned_bytes() as u64
+    }
 }
 
 /// Opaque result from exactly one admitted independent plane.
@@ -640,6 +661,7 @@ impl ReconstructionPlaneWorkspace {
             .ok_or(MinorCycleError::ModelShapeMismatch)?;
         Ok(Some(Self::new(
             target.domains()[0].pixels(),
+            target.polarizations(),
             planes,
             &program,
             program.actual_iteration_limit(),
@@ -649,6 +671,7 @@ impl ReconstructionPlaneWorkspace {
 
     fn new(
         shape: [usize; 2],
+        polarizations: usize,
         planes: usize,
         program: &MinorCycleProgram,
         recorded_components: usize,
@@ -656,6 +679,7 @@ impl ReconstructionPlaneWorkspace {
     ) -> Self {
         let plane = crate::minor_cycle::minor_cycle_workspace(
             shape,
+            polarizations,
             casa_imaging_model::ReconstructionBasis::Constant,
             program.algorithm(),
             program.actual_iteration_limit(),
@@ -677,7 +701,15 @@ impl ReconstructionPlaneWorkspace {
             .saturating_add(size_of::<ReconstructionPlaneWork<'_>>() as u64);
         Self {
             planes,
-            worker_bytes: plane.bytes,
+            worker_bytes: plane.bytes.saturating_add(
+                crate::normal_state_window_residency_bytes(
+                    shape,
+                    polarizations,
+                    planes / polarizations,
+                    1,
+                )
+                .unwrap_or(u64::MAX),
+            ),
             retained_bytes,
         }
     }
@@ -725,6 +757,7 @@ impl<'a> ReconstructionPlaneWork<'a> {
     pub fn workspace(&self) -> ReconstructionPlaneWorkspace {
         ReconstructionPlaneWorkspace::new(
             self.binding.normal.shape(),
+            self.binding.base.shape().polarizations(),
             self.plane_count,
             &self.binding.cycle.program,
             self.binding
@@ -741,25 +774,56 @@ impl<'a> ReconstructionPlaneWork<'a> {
         self.plane_count
     }
 
-    /// Execute one plane against the shared entry threshold without mutation.
-    pub fn execute_plane(
+    /// Load model support before a plane is dispatched to computation workers.
+    pub fn prepare_plane(
         &self,
         ordinal: usize,
-    ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
+    ) -> Result<ReconstructionPlaneInput<'a>, ReconstructionCycleError> {
         if ordinal >= self.plane_count {
             return Err(ReconstructionCycleError::InvalidPlaneCoverage);
         }
+        let normal = self.binding.normal;
+        let channel = normal.slab().core_range().start + ordinal % normal.channel_count();
+        let normal_window = normal.read_window(channel..channel + 1)?;
+        let plane = normal_window
+            .polarization_plane(0, ordinal / normal.channel_count())
+            .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
+        let model = if plane.validity() == SpectralChannelValidity::Valid {
+            Some(
+                self.validated_model
+                    .read_window(0, plane.output_channel()..plane.output_channel() + 1)?,
+            )
+        } else {
+            None
+        };
+        Ok(ReconstructionPlaneInput {
+            binding: self.binding,
+            ordinal,
+            model,
+            normal: normal_window,
+        })
+    }
+
+    /// Execute one prepared plane against the shared entry threshold without I/O.
+    pub fn execute_plane(
+        &self,
+        input: &ReconstructionPlaneInput<'a>,
+    ) -> Result<ReconstructionPlanePartial<'a>, ReconstructionCycleError> {
+        if !self.binding.same_inputs(input.binding) {
+            return Err(ReconstructionCycleError::InvalidPlaneCoverage);
+        }
+        let ordinal = input.ordinal;
         let ReconstructionPlaneBinding {
             cycle,
             lifecycle,
-            base,
+            base: _,
             normal,
             mask,
         } = self.binding;
         let polarization = ordinal / normal.channel_count();
-        let local_channel = ordinal % normal.channel_count();
-        let plane = normal
-            .polarization_plane(local_channel, polarization)
+        let plane = input
+            .normal
+            .polarization_plane(0, polarization)
             .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
         let validity = plane.validity();
         let (delta, minor_cycle) = if validity == SpectralChannelValidity::Valid {
@@ -772,8 +836,17 @@ impl<'a> ReconstructionPlaneWork<'a> {
                     plane.output_channel(),
                     polarization,
                 ));
-            let (delta, evidence) =
-                run_minor_cycle_plane(lifecycle, base, plane, mask, program)?.into_parts();
+            let (delta, evidence) = run_minor_cycle_plane(
+                lifecycle,
+                input
+                    .model
+                    .as_ref()
+                    .ok_or(ReconstructionCycleError::InvalidPlaneCoverage)?,
+                plane,
+                mask,
+                program,
+            )?
+            .into_parts();
             (delta, Some(evidence))
         } else {
             (None, None)
@@ -862,12 +935,10 @@ fn image_domain_polarization_validities(
 ) -> Result<Vec<SpectralChannelValidity>, ReconstructionCycleError> {
     (0..normal.polarization_count())
         .map(|polarization| {
-            normal
-                .domains()
+            (0..normal.domain_count())
                 .map(|domain| {
-                    domain
-                        .polarization_plane(0, polarization)
-                        .map(|plane| plane.validity())
+                    normal
+                        .domain_channel_validity(domain, 0, polarization)
                         .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)
                 })
                 .find_map(|validity| match validity {
@@ -898,6 +969,7 @@ fn shared_image_domain_cycle_threshold(
 
     let mut global_peak = 0.0_f64;
     let mut maximum_sidelobe = 0.0_f64;
+    let normal = &normal.read_window(normal.slab().core_range())?;
     for (polarization, validity) in validities.iter().copied().enumerate() {
         if validity != SpectralChannelValidity::Valid {
             continue;
@@ -929,17 +1001,14 @@ fn shared_image_domain_cycle_threshold(
             }
 
             let mut plane_peak = 0.0_f64;
+            let model_plane = base.read_plane(domain.ordinal(), 0, polarization)?;
             for (index, value) in plane.residual().iter().enumerate() {
                 if !value.re.is_finite() {
                     return Err(MinorCycleError::GeneratedNonfinite);
                 }
                 let pixel = [index / shape[1], index % shape[1]];
-                let cell = ModelCell::new(domain.ordinal(), 0, polarization, pixel);
-                let supported = base
-                    .shape()
-                    .flat_index(cell)
-                    .and_then(|flat| base.samples().get(flat))
-                    .is_some_and(|sample| sample.support() == ModelSupport::Valid);
+                let supported =
+                    model_plane[pixel[1] * shape[0] + pixel[0]].support() == ModelSupport::Valid;
                 if mask.contains(pixel) && supported {
                     plane_peak = plane_peak.max(value.re.abs() / psf_peak);
                 }
@@ -983,8 +1052,10 @@ fn shared_cycle_threshold(
     let mut maximum_sidelobe = 0.0_f64;
     for polarization in 0..normal.polarization_count() {
         for local_channel in 0..normal.channel_count() {
-            let plane = normal
-                .polarization_plane(local_channel, polarization)
+            let channel = normal.slab().core_range().start + local_channel;
+            let window = normal.read_window(channel..channel + 1)?;
+            let plane = window
+                .polarization_plane(0, polarization)
                 .ok_or(MinorCycleError::ModelShapeMismatch)?;
             if plane.validity() != SpectralChannelValidity::Valid {
                 continue;
@@ -1047,6 +1118,9 @@ impl ReconstructionCycleResult {
 /// Exact reason the shared reconstruction cycle failed closed.
 #[derive(Debug, Error)]
 pub enum ReconstructionCycleError {
+    /// A coordinator could not load the required authoritative Normal State.
+    #[error(transparent)]
+    NormalAccess(#[from] crate::SpectralOperatorError),
     /// No jointly coupled channel solver is approved by T38.
     #[error("coupled channel reconstruction requires an approved joint solver")]
     UnsupportedCoupledPolicy,
