@@ -901,19 +901,19 @@ impl BoundObservationSamples<'_> {
                                 })
                             {
                                 let peer_offset = usize::try_from(peer.correlation_index()).ok();
-                                let peer_flag = match (channel_offset, peer_offset) {
-                                    (Some(channel), Some(correlation)) => block
-                                        .buffer
-                                        .channel_flag(channel, self.row_offset, correlation),
+                                let peer_stored = match (channel_offset, peer_offset) {
+                                    (Some(channel), Some(correlation)) => {
+                                        block.buffer.sample(channel, self.row_offset, correlation)
+                                    }
                                     _ => None,
                                 };
-                                let Some(peer_flag) = peer_flag else {
+                                let Some(peer_stored) = peer_stored else {
                                     self.finished = true;
                                     return Some(Err(
                                         BoundObservationSourceError::StoredSampleShapeMismatch,
                                     ));
                                 };
-                                flagged |= peer_flag;
+                                flagged |= peer_stored.channel_flag();
                             }
                             flagged
                         } else {
@@ -1354,25 +1354,29 @@ fn selected_input_weight_group(
             .copied()
             .try_fold(false, |flagged, product| {
                 let correlation = usize::try_from(product.correlation_index()).ok()?;
-                Some(flagged || buffer.channel_flag(channel, row, correlation)?)
+                Some(flagged || buffer.sample(channel, row, correlation)?.channel_flag())
             })?;
     let first = coordinates.products.first()?;
-    let first_weight = buffer.input_weight(
-        channel,
-        row,
-        usize::try_from(first.correlation_index()).ok()?,
-    )?;
+    let first_weight = buffer
+        .sample(
+            channel,
+            row,
+            usize::try_from(first.correlation_index()).ok()?,
+        )?
+        .input_weight();
     if coordinates.products.len() == 1 {
         return Some(
             SelectedInputWeightGroup::single(first_weight).with_imaging_flag(imaging_flag),
         );
     }
     let last = coordinates.products.last()?;
-    let last_weight = buffer.input_weight(
-        channel,
-        row,
-        usize::try_from(last.correlation_index()).ok()?,
-    )?;
+    let last_weight = buffer
+        .sample(
+            channel,
+            row,
+            usize::try_from(last.correlation_index()).ok()?,
+        )?
+        .input_weight();
     Some(
         SelectedInputWeightGroup::correlation_run(
             first_weight,
@@ -1506,16 +1510,16 @@ impl SelectedObservationBlock {
                     .filter(|peer| peer.correlation_type().contributes_to_stokes_i())
                     .try_fold(false, |flagged, peer| {
                         let correlation = usize::try_from(peer.correlation_index()).ok();
-                        let peer_flag = match (channel_offset, correlation) {
+                        let peer = match (channel_offset, correlation) {
                             (Some(channel), Some(correlation)) => {
-                                self.buffer.channel_flag(channel, row, correlation)
+                                self.buffer.sample(channel, row, correlation)
                             }
                             _ => None,
                         }
                         .ok_or(BlockVisitError::Source(
                             BoundObservationSourceError::StoredSampleShapeMismatch,
                         ))?;
-                        Ok::<_, BlockVisitError<E>>(flagged || peer_flag)
+                        Ok::<_, BlockVisitError<E>>(flagged || peer.channel_flag())
                     })?;
                 for product in coordinates.products.iter().copied() {
                     let correlation_offset = usize::try_from(product.correlation_index()).ok();
