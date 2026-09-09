@@ -451,9 +451,11 @@ impl NormalArrayStorage for PagedNormalArray {
         let window = array
             .get_slice(&[start], &[values.len()], &[1])
             .map_err(normal_storage_error)?;
-        for (destination, source) in values.iter_mut().zip(window) {
-            *destination = source;
-        }
+        values.copy_from_slice(
+            window
+                .as_slice()
+                .ok_or_else(|| normal_storage_error("normal backing slice is not contiguous"))?,
+        );
         self.observation
             .record(values.len(), array.io_stats().delta_since(before));
         Ok(())
