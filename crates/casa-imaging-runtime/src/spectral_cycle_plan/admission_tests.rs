@@ -337,12 +337,13 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
     }
     assert!(selected.maximum_records() < preferred.maximum_records());
     assert!(candidate.complete_data.residency().aw_prepared_pool_bytes() >= 472_524_620);
+    let model_samples = 4096 * 4096 * 2;
     assert_eq!(
         candidate
             .complete_data
             .residency()
             .major_cycle_model_bytes(),
-        2_147_483_648
+        model_samples * (size_of::<ModelSample>() + 2 * size_of::<ModelDeltaTerm>())
     );
     let receipts = ExecutionReceiptStore::new(
         root.path().join("receipts"),

@@ -766,7 +766,11 @@ impl ModelSampleStorage for PagedModelSamples {
             destination.len(),
             arrays.support.io_stats().delta_since(before_support),
         );
-        for ((destination, value), supported) in destination.iter_mut().zip(values).zip(support) {
+        for ((destination, value), supported) in destination
+            .iter_mut()
+            .zip(values.iter().copied())
+            .zip(support.iter().copied())
+        {
             *destination = if supported {
                 ModelSample::valid(ModelValue::new(value)?)
             } else if value == 0.0 {
@@ -1050,6 +1054,23 @@ mod tests {
         assert_eq!(arrays.support.maximum_cache_size_pixels(), 8);
         drop(arrays);
         assert!(storage.read(256, &mut actual).is_err());
+        for (value, supported) in [(f64::NAN, true), (f64::INFINITY, true), (1.0, false)] {
+            let arrays = storage.arrays.get_mut().unwrap();
+            arrays
+                .values
+                .put_slice(&ArrayD::from_elem(IxDyn(&[1]), value), &[254])
+                .unwrap();
+            arrays
+                .support
+                .put_slice(&ArrayD::from_elem(IxDyn(&[1]), supported), &[254])
+                .unwrap();
+            let failure = storage.read(254, &mut actual[..1]).unwrap_err();
+            if supported {
+                assert!(matches!(failure, ModelLifecycleError::Contract(_)));
+            } else {
+                assert_eq!(failure, ModelLifecycleError::InvalidSupportPayload);
+            }
+        }
         drop(storage);
         assert!(!path.exists());
     }

@@ -168,7 +168,7 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.0.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        for (target, source) in values.iter_mut().zip(window) {
+        for (target, source) in values.iter_mut().zip(window.iter().copied()) {
             *target = source;
         }
         Ok(())
@@ -181,7 +181,7 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.1.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        for (target, source) in values.iter_mut().zip(window) {
+        for (target, source) in values.iter_mut().zip(window.iter().copied()) {
             *target = source;
         }
         Ok(())
@@ -211,4 +211,54 @@ impl ProductArrayStorage for PagedProductArray {
 
 fn error(value: impl std::fmt::Display) -> ProductsError {
     ProductsError::Storage(value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn product_backing_reads_multiaxis_windows_in_canonical_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let shape = [3, 4, 2, 5];
+        let tiled = TiledShape::with_tile_shape(shape.to_vec(), vec![2, 3, 1, 2]).unwrap();
+        let mut payload =
+            PagedArray::<f32>::create(tiled.clone(), directory.path().join("payload")).unwrap();
+        let mut validity =
+            PagedArray::<bool>::create(tiled, directory.path().join("validity")).unwrap();
+        let source = ArrayD::from_shape_fn(IxDyn(&shape), |index| {
+            (1000 * index[0] + 100 * index[1] + 10 * index[2] + index[3]) as f32
+        });
+        let support = source.mapv(|value| value as usize % 3 != 0);
+        payload.put_slice(&source, &[0; 4]).unwrap();
+        validity.put_slice(&support, &[0; 4]).unwrap();
+        let backing = PagedProductArray {
+            arrays: Mutex::new((payload, validity)),
+            shape,
+            _directory: directory,
+        };
+        for (start, extent) in [([0; 4], shape), ([1, 1, 0, 1], [2, 2, 2, 3])] {
+            let count = extent.iter().product();
+            let mut actual = vec![0.0; count];
+            let mut actual_support = vec![false; count];
+            backing.read_payload(start, extent, &mut actual).unwrap();
+            backing
+                .read_validity(start, extent, &mut actual_support)
+                .unwrap();
+            let mut offset = 0;
+            for x in start[0]..start[0] + extent[0] {
+                for y in start[1]..start[1] + extent[1] {
+                    for polarization in start[2]..start[2] + extent[2] {
+                        for channel in start[3]..start[3] + extent[3] {
+                            let index = [x, y, polarization, channel];
+                            assert_eq!(actual[offset], source[index]);
+                            assert_eq!(actual_support[offset], support[index]);
+                            offset += 1;
+                        }
+                    }
+                }
+            }
+            assert_eq!(offset, count);
+        }
+    }
 }
