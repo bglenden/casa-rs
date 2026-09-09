@@ -37,7 +37,7 @@ use crate::{
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     primary_beam::PreparedPrimaryBeamPower,
-    spectral_sampling::{CasaLinearGrid, CasaLinearOutputGrid, CasaLinearSample},
+    spectral_sampling::{CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample},
     trace_complex_values,
     weighting::{
         CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
@@ -538,6 +538,7 @@ pub struct SpectralOperatorSpecification {
     charts: Box<[SpectralOperatorChartSpecification]>,
     slab: SpectralSlabPlan,
     spectral_kernel: SpectralKernel,
+    pub(super) cube_native_weight_transfer: bool,
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
     output_channel_frequencies_hz: Box<[f64]>,
@@ -1309,6 +1310,7 @@ impl SpectralOperatorSpecification {
             charts,
             slab,
             spectral_kernel: problem.science().spectral().sampling().kernel(),
+            cube_native_weight_transfer: problem.weighting().casa_cube_density_padding().is_some(),
             basis,
             joint_line_term_by_channel: joint_line_term_by_channel(problem, basis)?,
             output_channel_frequencies_hz: (0..problem.geometry().spectral().output_channels())
@@ -5106,31 +5108,8 @@ fn selected_address_key(
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct NativeSpectralRowKey {
-    measurement_set: casa_imaging_model::MeasurementSetIdentity,
-    physical_row: u64,
-    data_description_id: i32,
-    spectral_window_id: u32,
-    polarization_id: u32,
-}
-
-impl NativeSpectralRowKey {
-    pub(super) fn from_sample(sample: &crate::weighting::WeightingSelectedSample) -> Self {
-        let address = sample.address();
-        Self {
-            measurement_set: address.measurement_set,
-            physical_row: address.physical_row,
-            data_description_id: address.data_description_id,
-            spectral_window_id: address.spectral_window_id,
-            polarization_id: address.polarization_id,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct NativeSpectralGroup<P = SmallVec<[Complex64; 4]>> {
-    pub(super) key: NativeSpectralRowKey,
     pub(super) frequency_hz: f64,
     pub(super) samples: SmallVec<[crate::weighting::WeightingSampleValue; 4]>,
     pub(super) observed: SmallVec<[Complex64; 4]>,
@@ -5152,18 +5131,14 @@ pub(super) struct CasaResampledGroup<P = SmallVec<[Complex64; 4]>> {
 #[derive(Debug)]
 pub(super) struct CasaLinearRowResampler<P = SmallVec<[Complex64; 4]>> {
     pending: Option<NativeSpectralGroup<P>>,
-    grid: Option<CasaLinearGrid>,
-    next_fine_channel: usize,
-    native_channels: usize,
+    cursor: CasaLinearRowCursor,
 }
 
 impl<P> CasaLinearRowResampler<P> {
     pub(super) const fn new() -> Self {
         Self {
             pending: None,
-            grid: None,
-            next_fine_channel: 0,
-            native_channels: 0,
+            cursor: CasaLinearRowCursor::new(),
         }
     }
 
@@ -5172,6 +5147,7 @@ impl<P> CasaLinearRowResampler<P> {
         current: NativeSpectralGroup<P>,
         output: CasaLinearOutputGrid,
         finite_values: FiniteValuePolicy,
+        cube_native_weight_transfer: bool,
         mut interpolate_prediction: impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
         mut emit: impl FnMut(CasaResampledGroup<T>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
@@ -5180,86 +5156,53 @@ impl<P> CasaLinearRowResampler<P> {
             .first()
             .and_then(|sample| sample.selected().row_spectral_geometry())
             .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
-        if self
-            .pending
-            .as_ref()
-            .is_none_or(|previous| previous.key != current.key)
-        {
-            self.finish()?;
-            if current.samples[0].selected().address().channel_index != geometry.first().0 {
-                return Err(SpectralOperatorError::IncompleteCoverage);
-            }
-            let pair = geometry
-                .first_pair_hz()
-                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
-            self.grid = Some(
-                CasaLinearGrid::compile_for_output(output, pair[0], pair[1])
-                    .ok_or(SpectralOperatorError::InvalidSample)?,
-            );
-            self.next_fine_channel = 0;
-            self.native_channels = 1;
+        let samples = self
+            .cursor
+            .push(
+                current.samples[0].selected().address(),
+                geometry,
+                current.frequency_hz,
+                output,
+            )
+            .map_err(spectral_row_error)?;
+        let Some(samples) = samples else {
             self.pending = Some(current);
             return Ok(());
-        }
+        };
         let previous = self
             .pending
             .take()
             .ok_or(SpectralOperatorError::InvalidSample)?;
-        if previous
-            .samples
-            .first()
-            .and_then(|sample| sample.selected().row_spectral_geometry())
-            != Some(geometry)
-        {
-            return Err(SpectralOperatorError::InvalidSample);
-        }
-        if self.native_channels >= geometry.selected_channels()
-            || current.samples[0].selected().address().channel_index
-                <= previous.samples[0].selected().address().channel_index
-            || (self.native_channels == 1
-                && Some(current.samples[0].selected().address().channel_index)
-                    != geometry.second().map(|second| second.0))
-        {
-            return Err(SpectralOperatorError::IncompleteCoverage);
-        }
-        self.native_channels += 1;
-        let grid = self.grid.ok_or(SpectralOperatorError::InvalidSample)?;
-        let result = grid
-            .samples_for_pair(
-                &mut self.next_fine_channel,
-                previous.frequency_hz,
-                current.frequency_hz,
-            )
-            .map_err(|_| SpectralOperatorError::InvalidSample)?
-            .try_for_each(|sample| {
-                emit(resample_native_pair(
-                    &previous,
-                    &current,
-                    sample,
-                    finite_values,
-                    &mut interpolate_prediction,
-                )?)
-            });
-        self.grid = Some(grid);
+        let result = samples.into_iter().try_for_each(|sample| {
+            emit(resample_native_pair(
+                &previous,
+                &current,
+                sample,
+                finite_values,
+                cube_native_weight_transfer,
+                &mut interpolate_prediction,
+            )?)
+        });
         self.pending = Some(current);
         result
     }
 
     pub(super) fn finish(&mut self) -> Result<(), SpectralOperatorError> {
-        if let Some(pending) = &self.pending {
-            let geometry = pending.samples[0]
-                .selected()
-                .row_spectral_geometry()
-                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
-            if self.native_channels != geometry.selected_channels() {
-                return Err(SpectralOperatorError::IncompleteCoverage);
-            }
-        }
+        self.cursor.finish().map_err(spectral_row_error)?;
         self.pending = None;
-        self.grid = None;
-        self.next_fine_channel = 0;
-        self.native_channels = 0;
         Ok(())
+    }
+}
+
+fn spectral_row_error(error: crate::SpectralStencilError) -> SpectralOperatorError {
+    match error {
+        crate::SpectralStencilError::IncompleteNativeRow => {
+            SpectralOperatorError::IncompleteCoverage
+        }
+        crate::SpectralStencilError::InvalidNativeRowGeometry => {
+            SpectralOperatorError::MissingRowSpectralGeometry
+        }
+        _ => SpectralOperatorError::InvalidSample,
     }
 }
 
@@ -5268,6 +5211,7 @@ fn resample_native_pair<P, T>(
     right: &NativeSpectralGroup<P>,
     fine: CasaLinearSample,
     finite_values: FiniteValuePolicy,
+    cube_native_weight_transfer: bool,
     interpolate_prediction: &mut impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
 ) -> Result<CasaResampledGroup<T>, SpectralOperatorError> {
     if left.samples.len() != right.samples.len()
@@ -5277,7 +5221,6 @@ fn resample_native_pair<P, T>(
         return Err(SpectralOperatorError::InvalidSample);
     }
     let [left_factor, right_factor] = fine.factors();
-    let epsilon = f64::EPSILON;
     let mut correlations = SmallVec::new();
     let mut observed = SmallVec::new();
     let mut weights = SmallVec::new();
@@ -5296,18 +5239,41 @@ fn resample_native_pair<P, T>(
         correlations.push(left_selected.address().correlation_type);
         observed
             .push(left.observed[ordinal] * left_factor + right.observed[ordinal] * right_factor);
-        let left_weight = spectral_weight_for_output(left_weighted, fine.output_channel())?;
-        let right_weight = spectral_weight_for_output(right_weighted, fine.output_channel())?;
-        weights.push(left_weight * left_factor + right_weight * right_factor);
+        if cube_native_weight_transfer {
+            let nearest = if fine.nearest_is_right() {
+                right_weighted
+            } else {
+                left_weighted
+            };
+            weights.push(
+                nearest
+                    .source_imaging_weight()
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
+            );
+        } else {
+            let left_weight = if left_factor == 0.0 {
+                0.0
+            } else {
+                spectral_weight_for_output(left_weighted, fine.output_channel())?
+            };
+            let right_weight = if right_factor == 0.0 {
+                0.0
+            } else {
+                spectral_weight_for_output(right_weighted, fine.output_channel())?
+            };
+            weights.push(left_weight * left_factor + right_weight * right_factor);
+        }
         let left_flag = !accept_polarization_input(left_selected, finite_values)?;
         let right_flag = !accept_polarization_input(right_selected, finite_values)?;
-        flags.push(if right_factor <= epsilon {
-            left_flag
-        } else if right_factor >= 1.0 - epsilon {
-            right_flag
-        } else {
-            left_flag || right_flag
-        });
+        let weight_flag = cube_native_weight_transfer && {
+            let nearest = if fine.nearest_is_right() {
+                right_selected
+            } else {
+                left_selected
+            };
+            nearest.input_weight_group_flag || nearest.parallel_hand_group_flag || nearest.row_flag
+        };
+        flags.push(fine.linear_flag(left_flag, right_flag) || weight_flag);
     }
     let selected = left
         .samples
@@ -6333,7 +6299,6 @@ impl CompleteDataOwnerState {
         }
         let frequency_hz = selected.output_frame_frequency_hz();
         let native = NativeSpectralGroup {
-            key: NativeSpectralRowKey::from_sample(selected),
             frequency_hz,
             samples: group.iter().cloned().collect(),
             observed,
@@ -6346,6 +6311,7 @@ impl CompleteDataOwnerState {
             native,
             output,
             self.finite_values,
+            self.specification.cube_native_weight_transfer,
             |left, right, [left_factor, right_factor]| {
                 if left.len() != right.len() {
                     return Err(SpectralOperatorError::InvalidSample);

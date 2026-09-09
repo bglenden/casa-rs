@@ -380,6 +380,159 @@ impl<'a> SelectedObservationSpectralEnvelopeReducer<'a> {
 }
 
 impl MeasurementSet {
+    /// Derive CASA's nominal Briggs-cube density padding for one native SPW.
+    ///
+    /// Each field's requested image-centre interval is converted back to native
+    /// frequency over the selected row epochs, then matched against the complete
+    /// native SPW with CASA's strict channel-edge overlap. The returned padding
+    /// is per side; explicit selected-channel interpolation support does not
+    /// redefine this nominal density domain. No visibility payload is read.
+    #[allow(clippy::too_many_arguments)]
+    pub fn selected_observation_cube_density_padding(
+        &self,
+        row_selection: &SelectedObservationRowSelection,
+        window: SelectedObservationSpectralWindow<'_>,
+        fields: impl IntoIterator<Item = i32>,
+        output_frequency_reference: FrequencyRef,
+        output_centres: [f64; 2],
+        output_channels: usize,
+        geometry_engine: &MsCalEngine,
+        io: MsSelectionIoBudget,
+    ) -> MsResult<usize> {
+        if row_selection
+            .data_descriptions()
+            .iter()
+            .any(|description| description.spectral_window_id() != window.spectral_window_id)
+            || window.frequencies_hz.is_empty()
+            || window
+                .frequencies_hz
+                .iter()
+                .any(|frequency| !frequency.is_finite() || *frequency <= 0.0)
+            || window
+                .channel_widths_hz
+                .iter()
+                .any(|width| !width.is_finite() || *width == 0.0)
+        {
+            return Err(MsError::InvalidInput(
+                "cube density padding requires one valid native SPW".into(),
+            ));
+        }
+        if window.source_frequency_reference == output_frequency_reference {
+            return Ok(0);
+        }
+        let increment = (output_centres[1] - output_centres[0]).abs()
+            / output_channels.saturating_sub(1).max(1) as f64;
+        if output_channels < 2 || !increment.is_finite() || increment <= 0.0 {
+            return Err(MsError::InvalidInput(
+                "cube density padding requires a finite multi-channel axis".into(),
+            ));
+        }
+        if window.frequencies_hz.len() != window.channel_widths_hz.len() {
+            return Err(MsError::InvalidInput(
+                "cube density native frequency/width lengths differ".into(),
+            ));
+        }
+        let output = [
+            output_centres[0].min(output_centres[1]),
+            output_centres[0].max(output_centres[1]),
+        ];
+        let mut lower_centres = [f64::INFINITY, f64::NEG_INFINITY];
+        let mut upper_centres = [f64::INFINITY, f64::NEG_INFINITY];
+        for field in fields {
+            let field_id = usize::try_from(field)
+                .map_err(|_| MsError::InvalidInput("cube density field is negative".into()))?;
+            let direction = raw_field_phase_direction(self, field_id)?;
+            let mut interval = [f64::INFINITY, f64::NEG_INFINITY];
+            let mut last_time = None;
+            let mut error = None;
+            self.visit_selected_observation_rows(row_selection, io, |row| {
+                if row.field_id() != field
+                    || last_time == Some(row.time_mjd_seconds().to_bits())
+                    || error.is_some()
+                {
+                    return;
+                }
+                last_time = Some(row.time_mjd_seconds().to_bits());
+                let result = (|| -> MsResult<()> {
+                    let frame = geometry_engine.spectral_frame_observatory_direction(
+                        row.time_mjd_seconds(),
+                        direction.clone(),
+                    )?;
+                    let conversion = PreparedFrequencyFrameConversion::new(
+                        output_frequency_reference,
+                        window.source_frequency_reference,
+                        Some(&frame),
+                        Some(&frame),
+                    )?;
+                    let a = conversion.convert_hz(output[0]);
+                    let b = conversion.convert_hz(output[1]);
+                    interval[0] = interval[0].min(a.min(b));
+                    interval[1] = interval[1].max(a.max(b));
+                    Ok(())
+                })();
+                error = result.err();
+            })?;
+            if let Some(error) = error {
+                return Err(error);
+            }
+            let native_min = window
+                .frequencies_hz
+                .iter()
+                .copied()
+                .fold(f64::INFINITY, f64::min);
+            let native_max = window
+                .frequencies_hz
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            let lower = interval[0] - 0.5 * increment;
+            let upper = interval[1] + 0.5 * increment;
+            let partial = (lower > native_min && lower < native_max)
+                || (upper > native_min && upper < native_max);
+            let full = lower < native_min && upper > native_max;
+            if !partial && !full {
+                continue;
+            }
+            let mut first = None;
+            let mut last = None;
+            for (channel, (&centre, &width)) in window
+                .frequencies_hz
+                .iter()
+                .zip(window.channel_widths_hz)
+                .enumerate()
+            {
+                if full
+                    || (centre + 0.5 * width.abs() > lower && centre - 0.5 * width.abs() < upper)
+                {
+                    first.get_or_insert(channel);
+                    last = Some(channel);
+                }
+            }
+            if let (Some(first), Some(last)) = (first, last) {
+                let a = window.frequencies_hz[first];
+                let b = window.frequencies_hz[last];
+                lower_centres[0] = lower_centres[0].min(a.min(b));
+                lower_centres[1] = lower_centres[1].max(a.min(b));
+                upper_centres[0] = upper_centres[0].min(a.max(b));
+                upper_centres[1] = upper_centres[1].max(a.max(b));
+            }
+        }
+        if !lower_centres[0].is_finite() {
+            return Ok(0);
+        }
+        // One SPW has one full-native origin, so CASA's first-channel shift is zero.
+        let swing = (lower_centres[1] - lower_centres[0]).max(upper_centres[1] - upper_centres[0]);
+        let swing_channels = (swing / increment).ceil();
+        if !swing_channels.is_finite() || swing_channels >= usize::MAX as f64 {
+            return Err(MsError::InvalidInput(
+                "cube density padding overflows usize".into(),
+            ));
+        }
+        (swing_channels as usize)
+            .checked_add((output_channels / 10).clamp(1, 4))
+            .ok_or_else(|| MsError::InvalidInput("cube density padding overflows usize".into()))
+    }
+
     /// Plan a bounded spectral-envelope observer for the canonical selected-row traversal.
     #[allow(clippy::too_many_arguments)]
     pub fn selected_observation_spectral_envelope_reducer<'a, 'w>(

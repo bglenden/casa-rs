@@ -140,7 +140,6 @@ impl GriddedNormalOperatorCompiler {
                     .uses_casa_linear_resampling(correlations)?
                 {
                     let native = NativeSpectralGroup {
-                        key: NativeSpectralRowKey::from_sample(first.selected()),
                         frequency_hz: first.selected().output_frame_frequency_hz(),
                         samples: correlations.iter().cloned().collect(),
                         observed: std::iter::repeat_n(Complex64::default(), correlations.len())
@@ -152,6 +151,7 @@ impl GriddedNormalOperatorCompiler {
                         native,
                         self.specification.casa_linear_output_grid()?,
                         self.finite_values,
+                        self.specification.cube_native_weight_transfer,
                         |left, right, factors| {
                             Ok(InterpolatedPredictions {
                                 banks: [*left, *right],

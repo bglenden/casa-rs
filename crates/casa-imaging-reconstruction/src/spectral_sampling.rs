@@ -4,7 +4,7 @@
 //! bounded row-local data resampling geometry.
 
 use casa_imaging_model::{
-    CompiledProblem, ReconstructionBasis, SelectedObservationSampleView,
+    CompiledProblem, ReconstructionBasis, SelectedObservationSampleView, SelectedSampleAddress,
     SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
     SpectralCovariance, SpectralEdgePolicy, SpectralKernel,
 };
@@ -31,6 +31,22 @@ impl CasaLinearSample {
 
     pub(crate) const fn factors(self) -> [f64; 2] {
         [self.left_factor, self.right_factor]
+    }
+
+    /// CASA nearest interpolation keeps the previous native element at a tie,
+    /// including when native frequencies descend.
+    pub(crate) const fn nearest_is_right(self) -> bool {
+        self.right_factor > self.left_factor
+    }
+
+    pub(crate) fn linear_flag(self, left: bool, right: bool) -> bool {
+        if self.right_factor <= f64::EPSILON {
+            left
+        } else if self.right_factor >= 1.0 - f64::EPSILON {
+            right
+        } else {
+            left || right
+        }
     }
 }
 
@@ -98,6 +114,35 @@ pub(crate) struct CasaLinearOutputGrid {
 }
 
 impl CasaLinearOutputGrid {
+    pub(crate) fn from_spectral(
+        spectral: &casa_imaging_model::SpectralCoordinateSpec,
+    ) -> Option<Self> {
+        let channels = spectral.output_channels();
+        Some(Self {
+            first_hz: spectral.channel_centre_hz(0)?,
+            second_hz: spectral.channel_centre_hz(1)?,
+            last_hz: spectral.channel_centre_hz(channels.checked_sub(1)?)?,
+            channels,
+        })
+    }
+    pub(crate) fn with_padding(self, padding: usize) -> Option<Self> {
+        let increment = self.second_hz - self.first_hz;
+        let first_hz = self.first_hz - padding as f64 * increment;
+        let last_hz = self.last_hz + padding as f64 * increment;
+        let channels = self.channels.checked_add(padding.checked_mul(2)?)?;
+        (first_hz.is_finite() && last_hz.is_finite()).then_some(Self {
+            first_hz,
+            second_hz: first_hz + increment,
+            last_hz,
+            channels,
+        })
+    }
+
+    pub(crate) fn nearest_channel(self, frequency_hz: f64) -> Option<usize> {
+        let pixel =
+            ((frequency_hz - self.first_hz) / (self.second_hz - self.first_hz) + 0.5).floor();
+        (pixel >= 0.0 && pixel < self.channels as f64).then_some(pixel as usize)
+    }
     pub(crate) fn compile(output_centres_hz: &[f64]) -> Option<Self> {
         Some(Self {
             first_hz: *output_centres_hz.first()?,
@@ -105,6 +150,136 @@ impl CasaLinearOutputGrid {
             last_hz: *output_centres_hz.last()?,
             channels: output_centres_hz.len(),
         })
+    }
+}
+
+/// Validated selected-vector geometry, independent of visibility or weight payloads.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct NativeRowSpectralGeometry {
+    pub(crate) channels: usize,
+    pub(crate) first: (u32, f64),
+    pub(crate) second: Option<(u32, f64)>,
+}
+
+impl NativeRowSpectralGeometry {
+    pub(crate) const fn selected_channels(self) -> usize {
+        self.channels
+    }
+
+    pub(crate) const fn first(self) -> (u32, f64) {
+        self.first
+    }
+
+    pub(crate) const fn second(self) -> Option<(u32, f64)> {
+        self.second
+    }
+
+    pub(crate) fn first_pair_hz(self) -> Option<[f64; 2]> {
+        self.second.map(|second| [self.first.1, second.1])
+    }
+}
+
+#[derive(Debug)]
+struct NativeRowCursorPoint {
+    address: SelectedSampleAddress,
+    geometry: NativeRowSpectralGeometry,
+    frequency_hz: f64,
+}
+
+/// Shared row ordering, coverage and fine-grid cursor for independently owned payloads.
+#[derive(Debug)]
+pub(crate) struct CasaLinearRowCursor {
+    previous: Option<NativeRowCursorPoint>,
+    grid: Option<CasaLinearGrid>,
+    next_fine_channel: usize,
+    native_channels: usize,
+}
+
+impl CasaLinearRowCursor {
+    pub(crate) const fn new() -> Self {
+        Self {
+            previous: None,
+            grid: None,
+            next_fine_channel: 0,
+            native_channels: 0,
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        address: SelectedSampleAddress,
+        geometry: NativeRowSpectralGeometry,
+        frequency_hz: f64,
+        output: CasaLinearOutputGrid,
+    ) -> Result<Option<CasaLinearPairSamples<'_>>, SpectralStencilError> {
+        let new_row = self.previous.as_ref().is_none_or(|previous| {
+            let other = previous.address;
+            address.measurement_set != other.measurement_set
+                || address.physical_row != other.physical_row
+                || address.data_description_id != other.data_description_id
+                || address.spectral_window_id != other.spectral_window_id
+                || address.polarization_id != other.polarization_id
+        });
+        if new_row {
+            self.finish()?;
+            if address.channel_index != geometry.first.0 {
+                return Err(SpectralStencilError::IncompleteNativeRow);
+            }
+            let pair = geometry
+                .first_pair_hz()
+                .ok_or(SpectralStencilError::InvalidNativeRowGeometry)?;
+            self.grid = Some(
+                CasaLinearGrid::compile_for_output(output, pair[0], pair[1])
+                    .ok_or(SpectralStencilError::InvalidNativeRowGeometry)?,
+            );
+            self.native_channels = 1;
+            self.previous = Some(NativeRowCursorPoint {
+                address,
+                geometry,
+                frequency_hz,
+            });
+            return Ok(None);
+        }
+        let previous = self
+            .previous
+            .as_ref()
+            .ok_or(SpectralStencilError::InvalidNativeRowGeometry)?;
+        if previous.geometry != geometry {
+            return Err(SpectralStencilError::InvalidNativeRowGeometry);
+        }
+        if self.native_channels >= geometry.channels
+            || address.channel_index <= previous.address.channel_index
+            || (self.native_channels == 1
+                && Some(address.channel_index) != geometry.second.map(|second| second.0))
+        {
+            return Err(SpectralStencilError::IncompleteNativeRow);
+        }
+        let left_frequency_hz = previous.frequency_hz;
+        self.native_channels += 1;
+        self.previous = Some(NativeRowCursorPoint {
+            address,
+            geometry,
+            frequency_hz,
+        });
+        self.grid
+            .ok_or(SpectralStencilError::InvalidNativeRowGeometry)?
+            .samples_for_pair(&mut self.next_fine_channel, left_frequency_hz, frequency_hz)
+            .map(Some)
+    }
+
+    pub(crate) fn finish(&mut self) -> Result<(), SpectralStencilError> {
+        if self
+            .previous
+            .as_ref()
+            .is_some_and(|previous| self.native_channels != previous.geometry.channels)
+        {
+            return Err(SpectralStencilError::IncompleteNativeRow);
+        }
+        self.previous = None;
+        self.grid = None;
+        self.next_fine_channel = 0;
+        self.native_channels = 0;
+        Ok(())
     }
 }
 
@@ -434,6 +609,12 @@ impl SpectralStencilReceipt {
 /// A spectral law or geometry could not produce a coherent sparse stencil.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum SpectralStencilError {
+    /// A streamed row did not contain its complete ordered selected vector.
+    #[error("spectral interpolation received an incomplete native row")]
+    IncompleteNativeRow,
+    /// Native row geometry changed or cannot define an interpolation grid.
+    #[error("spectral interpolation received invalid native row geometry")]
+    InvalidNativeRowGeometry,
     /// Output WCS centres or boundaries were invalid.
     #[error("compiled output spectral geometry is invalid")]
     InvalidOutputGeometry,
@@ -886,6 +1067,41 @@ fn sparse_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn t55_cube_density_keeps_the_nominal_active_extent() {
+        let output = CasaLinearOutputGrid::compile(&[1.0e9, 1.005e9, 1.010e9]).unwrap();
+        assert_eq!(output.nearest_channel(1.013e9), None);
+        assert_eq!(output.nearest_channel(0.997e9), None);
+        let padded = output.with_padding(1).unwrap();
+        assert_eq!(padded.nearest_channel(1.013e9), Some(4));
+        assert_eq!(padded.nearest_channel(0.997e9), Some(0));
+        assert!(output.with_padding(usize::MAX).is_none());
+    }
+
+    #[test]
+    fn t55_nearest_native_ties_keep_previous_array_element_and_independent_flags() {
+        for pair in [[2.0, 8.0], [8.0, 2.0]] {
+            let centres = if pair[0] < pair[1] {
+                [2.0, 5.0, 8.0]
+            } else {
+                [8.0, 5.0, 2.0]
+            };
+            let grid = CasaLinearGrid::compile(&centres, pair[0], pair[1]).unwrap();
+            let mut cursor = 0;
+            let points = grid
+                .samples_for_pair(&mut cursor, pair[0], pair[1])
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(points.len(), 3);
+            assert!(!points[1].nearest_is_right());
+            assert!(points[1].linear_flag(false, true));
+            assert!(points[1].linear_flag(true, false));
+            assert!(!points[0].linear_flag(false, true));
+            assert!(!points[2].linear_flag(true, false));
+            assert!(points[2].nearest_is_right());
+        }
+    }
 
     #[test]
     fn t55_linear_grid_rejects_unrepresentable_fine_channel_counts_before_iteration() {

@@ -1866,6 +1866,51 @@ fn prepare(
             .map_err(|error| Box::new(error) as crate::ApplicationError)
         })
         .transpose()?;
+    let cube_density_padding = if matches!(request.spectral_mode, SpectralImagingMode::Cube { .. })
+        && prepared_spectral.sampling == SpectralSamplingLaw::LINEAR
+        && prepared_spectral.output_channels > 1
+        && request.weighting != ContinuumWeighting::Natural
+        && request
+            .task_requirements
+            .contains(&TaskRequirement::PerChannelWeightDensity)
+    {
+        let [window] = spectral_windows.as_slice() else {
+            return Err(boxed("cube density requires one native SPW"));
+        };
+        Some(
+            ms.selected_observation_cube_density_padding(
+                &row_selection,
+                SelectedObservationSpectralWindow::borrow_selected(
+                    u32::try_from(window.spw_id).map_err(|_| boxed("SPW id exceeds u32"))?,
+                    window.frequency_reference,
+                    &window.frequencies_hz,
+                    &window.channel_widths_hz,
+                    prepared_spectral
+                        .selected_source_channels
+                        .get(&window.spw_id)
+                        .expect("prepared native SPW"),
+                ),
+                selected_fields.iter().copied(),
+                prepared_spectral.output_frequency_reference,
+                [
+                    prepared_spectral.reference_frequency_hz,
+                    prepared_spectral.reference_frequency_hz
+                        + (prepared_spectral.output_channels - 1) as f64
+                            * prepared_spectral.increment_hz,
+                ],
+                prepared_spectral.output_channels,
+                &frame_engine,
+                MsSelectionIoBudget {
+                    available_bytes: content_budget.available_bytes(),
+                    maximum_live_blocks: content_budget.maximum_live_blocks(),
+                    requested_bytes_per_row: SelectedObservationRow::STORAGE_BYTES_PER_ROW,
+                    storage_alignment_rows: None,
+                },
+            )?,
+        )
+    } else {
+        None
+    };
     let specification = match continuum_transform {
         Some(transform) => specification(
             &request,
@@ -1874,6 +1919,7 @@ fn prepare(
             uncorrected_mask,
             w_projection,
             aw_projection,
+            cube_density_padding,
         )?
         .with_visibility_transform(transform),
         None => specification(
@@ -1883,6 +1929,7 @@ fn prepare(
             uncorrected_mask,
             w_projection,
             aw_projection,
+            cube_density_padding,
         )?,
     };
     let masks = casa_imaging_reconstruction::ImageDomainReconstructionMaskPlans::new(
@@ -2918,6 +2965,7 @@ fn specification(
     uncorrected_mask: UncorrectedImageMaskPolicy,
     w_projection: Option<WProjectionContract>,
     aw_projection: Option<AwProjectionContract>,
+    cube_density_padding: Option<usize>,
 ) -> Result<ProblemSpecification, crate::ApplicationError> {
     let mosaic = request
         .task_requirements
@@ -2949,21 +2997,27 @@ fn specification(
         },
         _ => spectral.basis,
     };
+    // CASA disables cube density for MFS and MT-MFS-via-cube requests.
+    let density_scope = if matches!(
+        request.spectral_mode,
+        SpectralImagingMode::Cube { .. } | SpectralImagingMode::CubeSource { .. }
+    ) && request
+        .task_requirements
+        .contains(&TaskRequirement::PerChannelWeightDensity)
+    {
+        WeightDensityScope::PerOutputChannel
+    } else {
+        WeightDensityScope::GlobalSelection
+    };
     let (weighting, density) = match request.weighting {
         ContinuumWeighting::Natural => {
             (WeightingScheme::Natural, WeightDensityScope::NotApplicable)
         }
-        ContinuumWeighting::Uniform => (
-            WeightingScheme::Uniform,
-            WeightDensityScope::GlobalSelection,
-        ),
-        ContinuumWeighting::Briggs(robust) => (
-            WeightingScheme::Briggs { robust },
-            WeightDensityScope::GlobalSelection,
-        ),
+        ContinuumWeighting::Uniform => (WeightingScheme::Uniform, density_scope),
+        ContinuumWeighting::Briggs(robust) => (WeightingScheme::Briggs { robust }, density_scope),
         ContinuumWeighting::BriggsBandwidthTaper(robust) => (
             WeightingScheme::BriggsBandwidthTaper { robust },
-            WeightDensityScope::GlobalSelection,
+            density_scope,
         ),
     };
     let mut reconstruction = ReconstructionContract::new(
@@ -3036,10 +3090,14 @@ fn specification(
     if let Some(model) = instrument_model {
         science = science.with_instrument_model(model);
     }
+    let weighting = WeightingContract::new(weighting, density);
+    let weighting = cube_density_padding.map_or(weighting, |padding| {
+        weighting.with_casa_cube_density_padding(padding)
+    });
     Ok(ProblemSpecification::new(
         science,
         reconstruction,
-        WeightingContract::new(weighting, density),
+        weighting,
         ProductRequirements::new(
             requested_products(
                 &request.algorithm,

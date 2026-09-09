@@ -3,6 +3,119 @@
 use super::*;
 
 #[test]
+fn t55_shifted_cube_density_retains_native_endpoint_weights() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = joint_measurement_set(root.path());
+    let mut imaging = request(
+        measurement_set,
+        root.path().join("shifted-density"),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.weighting = ContinuumWeighting::Briggs(0.5);
+    imaging.spectral_window = Some("0:0~3".into());
+    imaging.channel_count = Some(4);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::TOPO,
+            start: Some(CubeAxisValue::FrequencyHz {
+                hz: 44.0e9 - 200_000.0,
+                frame: Some(FrequencyRef::TOPO),
+            }),
+            width: Some(CubeAxisValue::FrequencyHz {
+                hz: 1_000_000.0,
+                frame: Some(FrequencyRef::TOPO),
+            }),
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(4),
+    };
+    imaging.task_requirements =
+        vec![casa_imaging_application::TaskRequirement::PerChannelWeightDensity];
+    let result = execute_continuum(imaging).expect("shifted native endpoint density execution");
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .publication_receipt
+            .compiled_problem_evidence()
+            .field("weighting.casa_cube_density_padding"),
+        Some("0")
+    );
+    assert_eq!(
+        result
+            .outcome
+            .output
+            .publication_receipt
+            .compiled_problem_evidence()
+            .field("weighting.density_scope"),
+        Some("per_output_channel"),
+    );
+}
+
+#[test]
+fn t55_per_channel_density_request_is_bound_into_the_executed_cube() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let measurement_set = spectral_line_measurement_set(root.path());
+    for cube in [true, false] {
+        for per_channel in [true, false] {
+            for weighting in [
+                ContinuumWeighting::Briggs(0.5),
+                ContinuumWeighting::Uniform,
+                ContinuumWeighting::Natural,
+            ] {
+                let mut imaging = request(
+                    measurement_set.clone(),
+                    root.path()
+                        .join(format!("density-{cube}-{per_channel}-{weighting:?}")),
+                    ContinuumAlgorithm::Dirty,
+                );
+                imaging.weighting = weighting;
+                imaging.spectral_window = Some("0:0~3".into());
+                imaging.channel_count = Some(4);
+                if cube {
+                    imaging.spectral_mode = SpectralImagingMode::Cube {
+                        axis: CubeAxisConfig {
+                            outframe: FrequencyRef::TOPO,
+                            ..CubeAxisConfig::default()
+                        },
+                        output_channels: Some(4),
+                    };
+                }
+                if per_channel {
+                    imaging
+                        .task_requirements
+                        .push(casa_imaging_application::TaskRequirement::PerChannelWeightDensity);
+                }
+                let result = execute_continuum(imaging).expect("density scope execution");
+                let expected = if weighting == ContinuumWeighting::Natural {
+                    "not_applicable"
+                } else if cube && per_channel {
+                    "per_output_channel"
+                } else {
+                    "global_selection"
+                };
+                for receipt in [
+                    &result.outcome.output.initial_receipt,
+                    &result.outcome.output.publication_receipt,
+                ] {
+                    assert_eq!(
+                        receipt
+                            .compiled_problem_evidence()
+                            .field("weighting.density_scope"),
+                        Some(expected),
+                        "cube={cube} per_channel={per_channel} weighting={weighting:?}",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn t55_clark_cube_products_and_repeated_cycles_are_exact_across_worker_counts() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     set_production_io_environment();

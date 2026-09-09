@@ -40,8 +40,8 @@ use crate::{
     spectral_operator::{
         AwReplayCoordinates, CasaLinearRowResampler, CasaResampledGroup,
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, ConvolutionOperator,
-        NativeSpectralGroup, NativeSpectralRowKey, PreparedSpectralOperator, ReusableNormalState,
-        SPEED_OF_LIGHT_M_PER_S, SUPPORT, SampleTaps, SpectralOperatorError, SpectralOperatorPass,
+        NativeSpectralGroup, PreparedSpectralOperator, ReusableNormalState, SPEED_OF_LIGHT_M_PER_S,
+        SUPPORT, SampleTaps, SpectralOperatorError, SpectralOperatorPass,
         SpectralOperatorSpecification, SpectralPrimitiveCatalog, SpectralSlabOperator, TapSpan,
         WProjectionDiagnostics, accept_polarization_input, accept_weighted_input,
         aw_replay_coordinates, aw_stokes_i_mueller, combine_chart_updates,

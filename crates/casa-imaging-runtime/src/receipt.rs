@@ -6369,6 +6369,13 @@ fn project_weighting(fields: &mut BTreeMap<String, String>, problem: &CompiledPr
         "weighting.density_scope",
         weight_density_scope(weighting.density_scope()),
     );
+    if let Some(padding) = weighting.casa_cube_density_padding() {
+        evidence_field(
+            fields,
+            "weighting.casa_cube_density_padding",
+            padding.to_string(),
+        );
+    }
     match weighting.uv_taper() {
         None => evidence_field(fields, "weighting.uv_taper.kind", "none"),
         Some(taper) => {

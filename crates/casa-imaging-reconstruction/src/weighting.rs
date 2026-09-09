@@ -16,6 +16,10 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 
+use crate::spectral_sampling::{
+    CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, NativeRowSpectralGeometry,
+};
+
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const GENERATION_DOMAIN: &[u8] = b"casa-rs-frozen-weighting-generation";
 const GENERATION_VERSION: u32 = 2;
@@ -140,6 +144,7 @@ impl WeightingExecutionLimits {
 /// Complete byte projection for weighting-owned resident state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WeightingResidency {
+    density_layout_bytes: usize,
     density_grid_bytes: usize,
     robust_factor_bytes: usize,
     sum_weight_bytes: usize,
@@ -220,6 +225,12 @@ fn validate_spectral_contribution_capacity(
 }
 
 impl WeightingResidency {
+    /// Frozen cube-density geometry and transfer-law metadata.
+    #[must_use]
+    pub const fn density_layout_bytes(self) -> usize {
+        self.density_layout_bytes
+    }
+
     /// Frozen density-grid bytes.
     #[must_use]
     pub const fn density_grid_bytes(self) -> usize {
@@ -311,6 +322,11 @@ pub fn plan_weighting(
     limits: WeightingExecutionLimits,
 ) -> Result<WeightingPlan, WeightingError> {
     let grid = density_grid_shape(problem)?;
+    let density_layout_bytes = if grid.cube_output.is_some() {
+        size_of::<DensityGridShape>()
+    } else {
+        0
+    };
     let cells = if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
         0
     } else {
@@ -323,16 +339,30 @@ pub fn plan_weighting(
         .planes
         .checked_mul(size_of::<f64>())
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let sum_weight_bytes = robust_factor_bytes;
+    let sum_weight_bytes = grid
+        .output_planes
+        .checked_mul(size_of::<f64>())
+        .ok_or(WeightingError::ResidencyOverflow)?;
     let shared_density_accumulator_bytes = cells
         .checked_mul(F32_SUPERACCUMULATOR_LIMBS)
         .and_then(|limbs| limbs.checked_mul(size_of::<u64>()))
         .and_then(|bytes| bytes.checked_add(size_of::<ExactF32Grid>()))
+        .and_then(|bytes| {
+            bytes.checked_add(if grid.cube_output.is_some() {
+                exact_sum_capacity_bytes(grid.planes)?.checked_add(size_of::<CubeWeightRows>())?
+            } else {
+                0
+            })
+        })
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let sum_weight_accumulator_bytes = F64_EXPONENT_BINS
-        .checked_add(1)
-        .and_then(|entries| entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES))
-        .and_then(|bytes| bytes.checked_mul(grid.planes))
+    let sum_weight_accumulator_bytes = exact_sum_capacity_bytes(grid.output_planes)
+        .and_then(|bytes| {
+            bytes.checked_add(if grid.cube_output.is_some() {
+                size_of::<CubeWeightRows>()
+            } else {
+                0
+            })
+        })
         .ok_or(WeightingError::ResidencyOverflow)?;
     let replay_read_bytes = 0;
     let weighted_sample_bytes = size_of::<WeightingSampleValue>()
@@ -346,7 +376,8 @@ pub fn plan_weighting(
         .ok_or(WeightingError::ResidencyOverflow)?;
     let simultaneous_selected_weighted_bytes = weighted_block_bytes;
     let peak_bytes = density_grid_bytes
-        .checked_add(robust_factor_bytes)
+        .checked_add(density_layout_bytes)
+        .and_then(|bytes| bytes.checked_add(robust_factor_bytes))
         .and_then(|bytes| bytes.checked_add(sum_weight_bytes))
         .and_then(|bytes| bytes.checked_add(shared_density_accumulator_bytes))
         .and_then(|bytes| bytes.checked_add(sum_weight_accumulator_bytes))
@@ -358,6 +389,7 @@ pub fn plan_weighting(
         limits,
         grid,
         planned: WeightingResidency {
+            density_layout_bytes,
             density_grid_bytes,
             robust_factor_bytes,
             sum_weight_bytes,
@@ -370,6 +402,77 @@ pub fn plan_weighting(
             peak_bytes,
         },
     })
+}
+
+fn exact_sum_capacity_bytes(planes: usize) -> Option<usize> {
+    F64_EXPONENT_BINS
+        .checked_add(1)?
+        .checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES)?
+        .checked_mul(planes)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NativeCubeWeight {
+    value: f64,
+    flag: bool,
+    uvw_m: [f64; 3],
+    correlations: usize,
+}
+
+#[derive(Debug)]
+struct CubeWeightRows {
+    cursor: CasaLinearRowCursor,
+    previous: Option<NativeCubeWeight>,
+}
+
+impl CubeWeightRows {
+    fn new() -> Self {
+        Self {
+            cursor: CasaLinearRowCursor::new(),
+            previous: None,
+        }
+    }
+
+    fn push(
+        &mut self,
+        sample: &WeightingSelectedSample,
+        value: f64,
+        output: CasaLinearOutputGrid,
+        mut emit: impl FnMut(
+            CasaLinearSample,
+            NativeCubeWeight,
+            NativeCubeWeight,
+        ) -> Result<(), WeightingError>,
+    ) -> Result<(), WeightingError> {
+        let geometry = sample
+            .row_spectral_geometry
+            .ok_or(WeightingError::RowSpectralGeometryMismatch)?;
+        let current = NativeCubeWeight {
+            value,
+            flag: sample.input_weight_group_flag
+                || sample.parallel_hand_group_flag
+                || sample.row_flag
+                || !sample.input_weight.is_finite()
+                || sample.input_weight < 0.0,
+            uvw_m: sample.density_uvw_m,
+            correlations: sample.correlation_group_size,
+        };
+        if let Some(points) = self.cursor.push(
+            sample.address,
+            geometry,
+            sample.output_frame_frequency_hz,
+            output,
+        )? {
+            let previous = self
+                .previous
+                .ok_or(WeightingError::RowSpectralGeometryMismatch)?;
+            for point in points {
+                emit(point, previous, current)?;
+            }
+        }
+        self.previous = Some(current);
+        Ok(())
+    }
 }
 
 /// Reconstruction-owned algorithm state prepared by bounded callback phases.
@@ -630,23 +733,6 @@ impl WeightingAlgorithmState {
         }
         Ok(())
     }
-
-    fn weight(
-        &self,
-        problem: &CompiledProblem,
-        sample: &WeightingSelectedSample,
-        contribution: Option<SelectedSpectralContribution>,
-    ) -> Result<f64, WeightingError> {
-        weight_from_state(
-            problem,
-            self.grid,
-            &self.density,
-            &self.robust_f2,
-            self.frequency_range_hz,
-            sample,
-            contribution,
-        )
-    }
 }
 
 fn weight_from_state(
@@ -681,6 +767,9 @@ fn weight_from_state(
                 return Ok(0.0);
             };
             let cell_density = density[cell];
+            if grid.cube_output.is_some() && cell_density <= 0.0 {
+                return Ok(0.0);
+            }
             input / (cell_density * robust_f2[plane] + 1.0)
         }
         WeightingScheme::BriggsBandwidthTaper { .. } => {
@@ -688,6 +777,9 @@ fn weight_from_state(
                 return Ok(0.0);
             };
             let cell_density = density[cell];
+            if grid.cube_output.is_some() && cell_density <= 0.0 {
+                return Ok(0.0);
+            }
             let factor = bandwidth_taper_factor(grid, frequency_range_hz, uv);
             input / (cell_density * robust_f2[plane] / factor + 1.0)
         }
@@ -698,6 +790,71 @@ fn weight_from_state(
     } else {
         Err(WeightingError::GeneratedNonFiniteWeight)
     }
+}
+
+fn weighted_sample_from_state(
+    problem: &CompiledProblem,
+    grid: DensityGridShape,
+    density: &[f64],
+    robust_f2: &[f64],
+    frequency_range_hz: Option<[f64; 2]>,
+    sample: WeightingSelectedSample,
+    contributions: SelectedSpectralContributions,
+) -> Result<WeightingSampleValue, WeightingError> {
+    let weight = |contribution| {
+        weight_from_state(
+            problem,
+            grid,
+            density,
+            robust_f2,
+            frequency_range_hz,
+            &sample,
+            contribution,
+        )
+    };
+    let source_imaging_weight = if let Some(output) = grid.cube_output {
+        let density_output = output
+            .with_padding(grid.padding)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        Some(
+            match density_output.nearest_channel(sample.output_frame_frequency_hz) {
+                None => 0.0,
+                Some(plane) => weight(Some(
+                    SelectedSpectralContribution::new(
+                        u32::try_from(plane).map_err(|_| WeightingError::OutputChannelMismatch)?,
+                        1.0,
+                        sample.address.frequency_centre_hz,
+                    )
+                    .ok_or(WeightingError::OutputChannelMismatch)?,
+                ))?,
+            },
+        )
+    } else if problem.weighting().density_scope() != WeightDensityScope::PerOutputChannel {
+        Some(weight(Some(
+            SelectedSpectralContribution::new(0, 1.0, sample.output_frame_frequency_hz)
+                .ok_or(WeightingError::OutputChannelMismatch)?,
+        ))?)
+    } else {
+        None
+    };
+    let spectral_values = contributions
+        .iter()
+        .map(|contribution| {
+            Ok(WeightingSpectralValue {
+                contribution,
+                imaging_weight: if grid.cube_output.is_some() {
+                    source_imaging_weight.ok_or(WeightingError::OutputChannelMismatch)?
+                } else {
+                    weight(Some(contribution))?
+                },
+            })
+        })
+        .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
+    Ok(WeightingSampleValue {
+        sample,
+        source_imaging_weight,
+        spectral_values,
+    })
 }
 
 /// Begin reconstruction-owned accumulation for a global density pass.
@@ -724,7 +881,22 @@ pub fn begin_weighting_generation(
             },
         )?,
         ordinal: 0,
-        frequency_range_hz: None,
+        frequency_range_hz: plan.grid.cube_output.map(|_| {
+            let spectral = problem.geometry().spectral();
+            let first = spectral.channel_centre_hz(0).expect("compiled output axis");
+            let last = spectral
+                .channel_centre_hz(spectral.output_channels() - 1)
+                .expect("compiled output axis");
+            [first.min(last), first.max(last)]
+        }),
+        cube_rows: plan.grid.cube_output.map(|_| CubeWeightRows::new()),
+        raw_sum_weights: if plan.grid.cube_output.is_some() {
+            (0..plan.grid.planes)
+                .map(|_| ExactF64Sum::default())
+                .collect()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -753,6 +925,8 @@ pub struct WeightingDensityPhase {
     density: ExactF32Grid,
     ordinal: u64,
     frequency_range_hz: Option<[f64; 2]>,
+    cube_rows: Option<CubeWeightRows>,
+    raw_sum_weights: Vec<ExactF64Sum>,
 }
 
 impl WeightingDensityPhase {
@@ -773,14 +947,46 @@ impl WeightingDensityPhase {
         let density_owner = sample.input_weight_group().is_density_owner();
         let sample =
             WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
-        for contribution in contributions.iter() {
+        for contribution in contributions
+            .iter()
+            .filter(|_| self.grid.cube_output.is_none())
+        {
             extend_frequency_range(
                 &mut self.frequency_range_hz,
                 contribution.evaluation_frequency_hz(),
             );
         }
         let input = input_weight(problem, &sample)?;
-        if density_owner
+        if density_owner && let Some(rows) = &mut self.cube_rows {
+            let output = self
+                .grid
+                .cube_output
+                .expect("cube rows bind output geometry");
+            let density_output = output
+                .with_padding(self.grid.padding)
+                .ok_or(WeightingError::ResidencyOverflow)?;
+            rows.push(&sample, input, density_output, |point, left, right| {
+                if point.linear_flag(left.flag, right.flag) {
+                    return Ok(());
+                }
+                let [lf, rf] = point.factors();
+                let value = f64::from((left.value * lf + right.value * rf) as f32);
+                let uv = uv_lambda_for_coordinates(left.uvw_m, point.frequency_hz());
+                if density_build_cell(problem, self.grid, point.output_channel(), uv).is_some() {
+                    add_density_sample(
+                        problem,
+                        self.grid,
+                        &mut self.density,
+                        point.output_channel(),
+                        uv,
+                        value,
+                    )?;
+                    self.raw_sum_weights[point.output_channel()].add(value)?;
+                }
+                Ok(())
+            })?;
+        } else if self.cube_rows.is_none()
+            && density_owner
             && input > 0.0
             && !matches!(problem.weighting().scheme(), WeightingScheme::Natural)
         {
@@ -818,7 +1024,7 @@ impl WeightingDensityPhase {
 
     /// Finish local density reduction and begin the sum-weight callback phase.
     pub fn finish(
-        self,
+        mut self,
         problem: &CompiledProblem,
     ) -> Result<WeightingSumWeightPhase, WeightingError> {
         if self.problem != problem.problem_id()
@@ -826,10 +1032,31 @@ impl WeightingDensityPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let shared_density_accumulator_bytes = self.density.resident_bytes()?;
+        if let Some(rows) = &mut self.cube_rows {
+            rows.cursor.finish()?;
+            rows.previous = None;
+        }
+        let shared_density_accumulator_bytes = self
+            .density
+            .resident_bytes()?
+            .checked_add(
+                exact_f64_state_resident_bytes(
+                    &self.raw_sum_weights,
+                    self.raw_sum_weights.capacity(),
+                )
+                .ok_or(WeightingError::ResidencyOverflow)?,
+            )
+            .and_then(|bytes| {
+                bytes.checked_add(if self.cube_rows.is_some() {
+                    size_of::<CubeWeightRows>()
+                } else {
+                    0
+                })
+            })
+            .ok_or(WeightingError::ResidencyOverflow)?;
         let density_digest = self.density.digest();
         let density = self.density.values()?;
-        let robust_f2 = robust_factors(problem, self.grid, &density);
+        let robust_f2 = robust_factors(problem, self.grid, &density, &self.raw_sum_weights);
         Ok(WeightingSumWeightPhase {
             problem: self.problem,
             commitment: self.commitment,
@@ -841,10 +1068,11 @@ impl WeightingDensityPhase {
             planned_residency: self.planned_residency,
             shared_density_accumulator_bytes,
             density_sample_count: self.ordinal,
-            sum_weights: (0..self.grid.planes)
+            sum_weights: (0..self.grid.output_planes)
                 .map(|_| ExactF64Sum::default())
                 .collect(),
             sum_sample_count: 0,
+            cube_rows: self.cube_rows,
         })
     }
 
@@ -875,6 +1103,7 @@ pub struct WeightingSumWeightPhase {
     density_sample_count: u64,
     sum_weights: Vec<ExactF64Sum>,
     sum_sample_count: u64,
+    cube_rows: Option<CubeWeightRows>,
 }
 
 impl WeightingSumWeightPhase {
@@ -915,50 +1144,55 @@ impl WeightingSumWeightPhase {
         validate_spectral_contribution_capacity(problem, &contributions)?;
         let sample =
             WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
-        let source_imaging_weight = match problem.weighting().density_scope() {
-            WeightDensityScope::PerOutputChannel => None,
-            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                let source = SelectedSpectralContribution::new(0, 1.0, output_frame_frequency_hz)
-                    .ok_or(WeightingError::OutputChannelMismatch)?;
-                Some(weight_from_state(
-                    problem,
-                    self.grid,
-                    &self.density,
-                    &self.robust_f2,
-                    self.frequency_range_hz,
-                    &sample,
-                    Some(source),
-                )?)
+        let weighted = weighted_sample_from_state(
+            problem,
+            self.grid,
+            &self.density,
+            &self.robust_f2,
+            self.frequency_range_hz,
+            sample,
+            contributions,
+        )?;
+        let sample = &weighted.sample;
+        let spectral_values = &weighted.spectral_values;
+        if let Some(rows) = &mut self.cube_rows {
+            if sample.starts_correlation_group {
+                rows.push(
+                    sample,
+                    weighted
+                        .source_imaging_weight
+                        .ok_or(WeightingError::OutputChannelMismatch)?,
+                    self.grid.cube_output.expect("bound cube rows"),
+                    |point, left, right| {
+                        if point.linear_flag(left.flag, right.flag) {
+                            return Ok(());
+                        }
+                        let chosen = if point.nearest_is_right() {
+                            right
+                        } else {
+                            left
+                        };
+                        if !chosen.flag {
+                            self.sum_weights[point.output_channel()]
+                                .add(chosen.value * chosen.correlations as f64)?;
+                        }
+                        Ok(())
+                    },
+                )?;
             }
-        };
-        let spectral_values = contributions
-            .iter()
-            .map(|contribution| {
-                Ok(WeightingSpectralValue {
-                    contribution,
-                    imaging_weight: weight_from_state(
-                        problem,
-                        self.grid,
-                        &self.density,
-                        &self.robust_f2,
-                        self.frequency_range_hz,
-                        &sample,
-                        Some(contribution),
-                    )?,
-                })
-            })
-            .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
-        match problem.weighting().density_scope() {
-            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                if let Some(value) = spectral_values.first() {
-                    self.sum_weights[0].add(value.imaging_weight)?;
+        } else {
+            match problem.weighting().density_scope() {
+                WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
+                    if let Some(value) = spectral_values.first() {
+                        self.sum_weights[0].add(value.imaging_weight)?;
+                    }
                 }
-            }
-            WeightDensityScope::PerOutputChannel => {
-                for value in &spectral_values {
-                    let plane = contribution_plane(self.grid, value.contribution)?;
-                    self.sum_weights[plane]
-                        .add(value.imaging_weight * value.contribution.factor())?;
+                WeightDensityScope::PerOutputChannel => {
+                    for value in spectral_values {
+                        let plane = contribution_plane(self.grid, value.contribution)?;
+                        self.sum_weights[plane]
+                            .add(value.imaging_weight * value.contribution.factor())?;
+                    }
                 }
             }
         }
@@ -966,11 +1200,7 @@ impl WeightingSumWeightPhase {
             .sum_sample_count
             .checked_add(1)
             .ok_or(WeightingError::SampleCountOverflow)?;
-        Ok(WeightingSampleValue {
-            sample,
-            source_imaging_weight,
-            spectral_values,
-        })
+        Ok(weighted)
     }
 
     fn into_fused(self, density_prepass: bool, plan: &WeightingPlan) -> FusedWeightingPhase {
@@ -989,7 +1219,10 @@ impl WeightingSumWeightPhase {
     }
 
     /// Finalize algorithmic state; this is not traversal-completion evidence.
-    pub fn finish(self) -> Result<WeightingAlgorithmState, WeightingError> {
+    pub fn finish(mut self) -> Result<WeightingAlgorithmState, WeightingError> {
+        if let Some(rows) = &mut self.cube_rows {
+            rows.cursor.finish()?;
+        }
         if self.density_sample_count != self.sum_sample_count {
             return Err(WeightingError::SelectedGenerationMismatch);
         }
@@ -1016,7 +1249,13 @@ impl WeightingSumWeightPhase {
             .len()
             .checked_mul(size_of::<f64>())
             .ok_or(WeightingError::ResidencyOverflow)?;
-        let sum_weight_accumulator_bytes = exact_sum_weight_bytes;
+        let sum_weight_accumulator_bytes = exact_sum_weight_bytes
+            .checked_add(if self.cube_rows.is_some() {
+                size_of::<CubeWeightRows>()
+            } else {
+                0
+            })
+            .ok_or(WeightingError::ResidencyOverflow)?;
         let robust_factor_bytes = self
             .robust_f2
             .len()
@@ -1027,7 +1266,8 @@ impl WeightingSumWeightPhase {
             .checked_mul(size_of::<f64>())
             .ok_or(WeightingError::ResidencyOverflow)?;
         let peak_bytes = density_grid_bytes
-            .checked_add(robust_factor_bytes)
+            .checked_add(self.planned_residency.density_layout_bytes)
+            .and_then(|bytes| bytes.checked_add(robust_factor_bytes))
             .and_then(|bytes| bytes.checked_add(sum_weight_bytes))
             .and_then(|bytes| bytes.checked_add(self.shared_density_accumulator_bytes))
             .and_then(|bytes| bytes.checked_add(sum_weight_accumulator_bytes))
@@ -1044,6 +1284,7 @@ impl WeightingSumWeightPhase {
             frequency_range_hz: self.frequency_range_hz,
             planned_residency: self.planned_residency,
             generation_residency: WeightingResidency {
+                density_layout_bytes: self.planned_residency.density_layout_bytes,
                 density_grid_bytes,
                 robust_factor_bytes,
                 sum_weight_bytes,
@@ -1188,6 +1429,7 @@ impl FusedWeightingPhase {
             coverage_proof_bytes: coverage_proof_work.bytes,
             coverage_proof_hash_calls: coverage_proof_work.hash_calls,
             residency: WeightingResidency {
+                density_layout_bytes: state.generation_residency.density_layout_bytes,
                 density_grid_bytes: state.generation_residency.density_grid_bytes,
                 robust_factor_bytes: state.generation_residency.robust_factor_bytes,
                 sum_weight_bytes: state.generation_residency.sum_weight_bytes,
@@ -1293,39 +1535,12 @@ pub struct WeightingSelectedSample {
     pub(crate) parallactic_angles_rad: [f64; 2],
     pub(crate) density_uvw_m: [f64; 3],
     output_frame_frequency_hz: f64,
-    row_spectral_geometry: Option<WeightingRowSpectralGeometry>,
+    row_spectral_geometry: Option<NativeRowSpectralGeometry>,
     field_id: i32,
     pointing_directions: SelectedPointingDirections,
     aw_pointing_pixel: Option<[f64; 2]>,
     antenna_responses: Option<SelectedAntennaResponses>,
     domain_projections: SelectedImageDomainProjections,
-}
-
-/// Spectral values remaining after the source descriptor's row/frame binding
-/// has been checked; no duplicate source-validation provenance enters a block.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct WeightingRowSpectralGeometry {
-    channels: usize,
-    first: (u32, f64),
-    second: Option<(u32, f64)>,
-}
-
-impl WeightingRowSpectralGeometry {
-    pub(crate) const fn selected_channels(self) -> usize {
-        self.channels
-    }
-
-    pub(crate) const fn first(self) -> (u32, f64) {
-        self.first
-    }
-
-    pub(crate) const fn second(self) -> Option<(u32, f64)> {
-        self.second
-    }
-
-    pub(crate) fn first_pair_hz(self) -> Option<[f64; 2]> {
-        self.second.map(|second| [self.first.1, second.1])
-    }
 }
 
 impl WeightingSelectedSample {
@@ -1366,7 +1581,7 @@ impl WeightingSelectedSample {
             density_uvw_m: coordinates.density_uvw_m,
             output_frame_frequency_hz,
             row_spectral_geometry: row_spectral_geometry.map(|geometry| {
-                WeightingRowSpectralGeometry {
+                NativeRowSpectralGeometry {
                     channels: geometry.selected_channels(),
                     first: geometry.first(),
                     second: geometry.second(),
@@ -1430,7 +1645,7 @@ impl WeightingSelectedSample {
 
     /// Source-issued geometry of the complete selected native-channel vector.
     #[must_use]
-    pub(crate) const fn row_spectral_geometry(&self) -> Option<WeightingRowSpectralGeometry> {
+    pub(crate) const fn row_spectral_geometry(&self) -> Option<NativeRowSpectralGeometry> {
         self.row_spectral_geometry
     }
 
@@ -1509,7 +1724,7 @@ mod selected_sample_tests {
         SelectedPhaseCentreProjection,
     };
 
-    use super::{WeightingRowSpectralGeometry, WeightingSelectedSample, primary_aw_pointing_pixel};
+    use super::{NativeRowSpectralGeometry, WeightingSelectedSample, primary_aw_pointing_pixel};
 
     #[test]
     fn chunk_checkpoint_chain_binds_each_emitted_prefix() {
@@ -1627,7 +1842,7 @@ mod selected_sample_tests {
     #[test]
     fn bounded_replay_retains_a_compact_kernel_projection_and_only_required_spectral_values() {
         let weighted_bytes = size_of::<WeightingSelectedSample>();
-        let spectral_bytes = size_of::<Option<WeightingRowSpectralGeometry>>();
+        let spectral_bytes = size_of::<Option<NativeRowSpectralGeometry>>();
         let source_bytes = size_of::<casa_imaging_model::SelectedObservationSample>();
         assert!(weighted_bytes < source_bytes);
         assert!(
@@ -1689,7 +1904,8 @@ impl WeightingSampleValue {
         self.spectral_values.iter().copied()
     }
 
-    /// Return the output-channel-independent imaging weight at the transformed source centre.
+    /// Return the native imaging-weight scalar. For bound CASA cube weighting,
+    /// this uses the native channel's density plane, independently of prediction support.
     #[must_use]
     pub const fn source_imaging_weight(&self) -> Option<f64> {
         self.source_imaging_weight
@@ -1810,35 +2026,15 @@ impl WeightingReplayPhase<'_> {
             sample.into(),
             output_frame_frequency_hz,
         )?;
-        let source_imaging_weight = match problem.weighting().density_scope() {
-            WeightDensityScope::PerOutputChannel => None,
-            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                let source = SelectedSpectralContribution::new(0, 1.0, output_frame_frequency_hz)
-                    .ok_or(WeightingError::OutputChannelMismatch)?;
-                Some(
-                    self.generation
-                        .weight(self.problem, &sample, Some(source))?,
-                )
-            }
-        };
-        let spectral_values = contributions
-            .iter()
-            .map(|contribution| {
-                Ok(WeightingSpectralValue {
-                    contribution,
-                    imaging_weight: self.generation.weight(
-                        self.problem,
-                        &sample,
-                        Some(contribution),
-                    )?,
-                })
-            })
-            .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
-        let weighted = WeightingSampleValue {
+        let weighted = weighted_sample_from_state(
+            problem,
+            self.generation.grid,
+            &self.generation.density,
+            &self.generation.robust_f2,
+            self.generation.frequency_range_hz,
             sample,
-            source_imaging_weight,
-            spectral_values,
-        };
+            contributions,
+        )?;
         let emitted = self
             .flush_before_group(&weighted)?
             .then(|| self.take_block())
@@ -1924,7 +2120,10 @@ impl WeightingReplayPhase<'_> {
             .generation
             .generation_residency
             .density_grid_bytes
-            .checked_add(self.generation.generation_residency.robust_factor_bytes)
+            .checked_add(self.generation.generation_residency.density_layout_bytes)
+            .and_then(|bytes| {
+                bytes.checked_add(self.generation.generation_residency.robust_factor_bytes)
+            })
             .and_then(|bytes| {
                 bytes.checked_add(self.generation.generation_residency.sum_weight_bytes)
             })
@@ -1942,6 +2141,7 @@ impl WeightingReplayPhase<'_> {
                 coverage_proof_bytes: coverage_proof_work.bytes,
                 coverage_proof_hash_calls: coverage_proof_work.hash_calls,
                 residency: WeightingResidency {
+                    density_layout_bytes: self.generation.generation_residency.density_layout_bytes,
                     density_grid_bytes: self.generation.generation_residency.density_grid_bytes,
                     robust_factor_bytes: self.generation.generation_residency.robust_factor_bytes,
                     sum_weight_bytes: self.generation.generation_residency.sum_weight_bytes,
@@ -2123,11 +2323,14 @@ pub enum WeightingError {
     CoverageMismatch,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct DensityGridShape {
     width: usize,
     height: usize,
     planes: usize,
+    output_planes: usize,
+    padding: usize,
+    cube_output: Option<CasaLinearOutputGrid>,
     increment_rad: [u64; 2],
 }
 
@@ -2156,14 +2359,33 @@ fn density_grid_shape(problem: &CompiledProblem) -> Result<DensityGridShape, Wei
         .ok_or(WeightingError::MissingMainDomain)?;
     let [width, height] = domain.shape().pixels();
     let increments = domain.direction().increment_rad();
-    let planes = match problem.weighting().density_scope() {
+    let output_planes = match problem.weighting().density_scope() {
         WeightDensityScope::PerOutputChannel => problem.geometry().spectral().output_channels(),
         WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => 1,
     };
+    let padding = problem.weighting().casa_cube_density_padding().unwrap_or(0);
+    let planes = output_planes
+        .checked_add(
+            padding
+                .checked_mul(2)
+                .ok_or(WeightingError::ResidencyOverflow)?,
+        )
+        .ok_or(WeightingError::ResidencyOverflow)?;
+    let cube_output = problem
+        .weighting()
+        .casa_cube_density_padding()
+        .map(|_| {
+            CasaLinearOutputGrid::from_spectral(problem.geometry().spectral())
+                .ok_or(WeightingError::OutputChannelMismatch)
+        })
+        .transpose()?;
     Ok(DensityGridShape {
         width,
         height,
         planes,
+        output_planes,
+        padding,
+        cube_output,
         increment_rad: [increments[0].to_bits(), increments[1].to_bits()],
     })
 }
@@ -2286,10 +2508,14 @@ fn contribution_plane(
 }
 
 fn uv_lambda(sample: &WeightingSelectedSample, frequency_hz: f64) -> [f64; 2] {
+    uv_lambda_for_coordinates(sample.density_uvw_m, frequency_hz)
+}
+
+fn uv_lambda_for_coordinates(uvw_m: [f64; 3], frequency_hz: f64) -> [f64; 2] {
     let scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
     [
-        f64::from((sample.density_uvw_m[0] * scale) as f32),
-        f64::from((sample.density_uvw_m[1] * scale) as f32),
+        f64::from((uvw_m[0] * scale) as f32),
+        f64::from((uvw_m[1] * scale) as f32),
     ]
 }
 
@@ -2354,6 +2580,7 @@ fn robust_factors(
     problem: &CompiledProblem,
     grid: DensityGridShape,
     density: &[f64],
+    raw_sum_weights: &[ExactF64Sum],
 ) -> Box<[f64]> {
     let robust = match problem.weighting().scheme() {
         WeightingScheme::Briggs { robust } | WeightingScheme::BriggsBandwidthTaper { robust } => {
@@ -2374,6 +2601,9 @@ fn robust_factors(
         for value in &density[start..end] {
             density_sum += *value;
             density_square_sum += value * value;
+        }
+        if let Some(raw) = raw_sum_weights.get(plane) {
+            density_sum = 2.0 * raw.value();
         }
         *factor = if density_sum > 0.0 && density_square_sum > 0.0 {
             (5.0 * 10_f64.powf(-robust)).powi(2) / (density_square_sum / density_sum)

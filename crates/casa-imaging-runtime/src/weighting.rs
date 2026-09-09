@@ -361,16 +361,21 @@ impl DensityBlockKernel<'_> {
         self.consumer
             .consume(storage, |run| {
                 for reported in run.samples() {
-                    let contributions = match continuum {
-                        Some(continuum) => density_spectral_contributions(
-                            spectral_contributions,
-                            problem,
-                            &reported,
-                            continuum,
-                        )?,
-                        None => spectral_contributions
-                            .compile(problem, &reported)
-                            .map_err(ContinuumDensityCallbackError::Owner)?,
+                    let contributions = if problem.weighting().casa_cube_density_padding().is_some()
+                    {
+                        SelectedSpectralContributions::empty()
+                    } else {
+                        match continuum {
+                            Some(continuum) => density_spectral_contributions(
+                                spectral_contributions,
+                                problem,
+                                &reported,
+                                continuum,
+                            )?,
+                            None => spectral_contributions
+                                .compile(problem, &reported)
+                                .map_err(ContinuumDensityCallbackError::Owner)?,
+                        }
                     };
                     density
                         .consume(
@@ -1601,6 +1606,7 @@ impl<'a> WeightingPlanFragment<'a> {
     fn allocation_specs(&self) -> Result<Vec<AllocationSpec>, WeightingPlanFragmentError> {
         let residency = self.plan.planned_residency();
         let frozen_bytes = checked_sum([
+            residency.density_layout_bytes(),
             residency.density_grid_bytes(),
             residency.robust_factor_bytes(),
             residency.sum_weight_bytes(),
@@ -3594,6 +3600,7 @@ impl FrozenWeightingReservation {
         replay_proof_bytes: usize,
     ) -> Result<Self, ResourceError> {
         let weighting_bytes = [
+            residency.density_layout_bytes(),
             residency.density_grid_bytes(),
             residency.robust_factor_bytes(),
             residency.sum_weight_bytes(),

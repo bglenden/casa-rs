@@ -33,9 +33,9 @@ use crate::transaction::{
 };
 
 const COMPILED_PROBLEM_IDENTITY_DOMAIN: &[u8] = b"casa-rs-compiled-problem";
-const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 24;
+const COMPILED_PROBLEM_IDENTITY_VERSION: u32 = 25;
 const COMPILED_PROBLEM_BASIS_DOMAIN: &[u8] = b"casa-rs-compiled-problem-basis";
-const COMPILED_PROBLEM_BASIS_VERSION: u32 = 3;
+const COMPILED_PROBLEM_BASIS_VERSION: u32 = 4;
 const NUMERICS_CONTRACT_IDENTITY_DOMAIN: &[u8] = b"casa-rs-numerics-contract";
 const NUMERICS_CONTRACT_IDENTITY_VERSION: u32 = 1;
 
@@ -1209,6 +1209,7 @@ pub struct WeightingContract {
     scheme: WeightingScheme,
     density_scope: WeightDensityScope,
     uv_taper: Option<UvTaper>,
+    casa_cube_density_padding: Option<usize>,
 }
 
 impl WeightingContract {
@@ -1219,6 +1220,7 @@ impl WeightingContract {
             scheme,
             density_scope,
             uv_taper: None,
+            casa_cube_density_padding: None,
         }
     }
 
@@ -1227,6 +1229,21 @@ impl WeightingContract {
     pub const fn with_uv_taper(mut self, uv_taper: UvTaper) -> Self {
         self.uv_taper = Some(uv_taper);
         self
+    }
+
+    /// Bind CASA's cube density and native-weight transfer law, with a
+    /// metadata-derived number of density channels on each side of the image.
+    /// Zero padding still selects the cube law. The published axis is unchanged.
+    #[must_use]
+    pub const fn with_casa_cube_density_padding(mut self, channels_per_side: usize) -> Self {
+        self.casa_cube_density_padding = Some(channels_per_side);
+        self
+    }
+
+    /// Return the bound CASA cube law's symmetric density-axis padding.
+    #[must_use]
+    pub const fn casa_cube_density_padding(self) -> Option<usize> {
+        self.casa_cube_density_padding
     }
 
     /// Return the weighting formula.
@@ -2133,7 +2150,7 @@ impl CompiledProblem {
 
         let mut encoder = CanonicalEncoder::new();
         encoder.bytes(b"casa-rs/prepared-artifact-dependencies");
-        encoder.u32(1);
+        encoder.u32(2);
         encoder.u8(match kind {
             PreparedArtifactScientificKind::ConvolutionFunction => 1,
             PreparedArtifactScientificKind::SpectralMap => 2,
@@ -2841,6 +2858,13 @@ fn validate_joint_continuum_line(
 }
 
 fn validate_weighting(contract: WeightingContract) -> Result<(), CompileProblemError> {
+    if contract.casa_cube_density_padding.is_some()
+        && contract.density_scope != WeightDensityScope::PerOutputChannel
+    {
+        return Err(CompileProblemError::InvalidWeighting {
+            reason: "CASA cube density requires per-output-channel weighting",
+        });
+    }
     match contract.scheme {
         WeightingScheme::Natural if contract.density_scope != WeightDensityScope::NotApplicable => {
             return Err(CompileProblemError::InvalidWeighting {
@@ -3498,6 +3522,13 @@ fn encode_prepared_weighting(
         WeightDensityScope::GlobalSelection => 1,
         WeightDensityScope::PerOutputChannel => 2,
     });
+    match compiled_weighting.casa_cube_density_padding() {
+        None => encoder.u8(0),
+        Some(padding) => {
+            encoder.u8(1);
+            encoder.usize(padding);
+        }
+    }
     match compiled_weighting.uv_taper() {
         None => encoder.u8(0),
         Some(taper) => {
