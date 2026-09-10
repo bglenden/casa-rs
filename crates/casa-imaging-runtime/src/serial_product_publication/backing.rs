@@ -168,14 +168,6 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.0.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        if window.is_standard_layout() {
-            if let Some(source) = window.as_slice() {
-                if source.len() == values.len() {
-                    values.copy_from_slice(source);
-                    return Ok(());
-                }
-            }
-        }
         ArrayViewMut::from_shape(IxDyn(&shape), values)
             .map_err(error)?
             .assign(&window);
@@ -189,14 +181,6 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.1.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        if window.is_standard_layout() {
-            if let Some(source) = window.as_slice() {
-                if source.len() == values.len() {
-                    values.copy_from_slice(source);
-                    return Ok(());
-                }
-            }
-        }
         ArrayViewMut::from_shape(IxDyn(&shape), values)
             .map_err(error)?
             .assign(&window);

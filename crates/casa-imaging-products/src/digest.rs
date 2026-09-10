@@ -2,8 +2,6 @@
 
 //! Canonical digest encoder shared by the product identity schemas.
 
-use std::mem::size_of;
-
 use sha2::{Digest, Sha256};
 
 pub(crate) const COMMITMENT_DOMAIN: &[u8] = b"casa-rs-continuum-commitment";
@@ -61,39 +59,9 @@ impl Encoder {
     }
 
     /// Encode one canonical `f32` payload bit with `-0.0` folded onto `+0.0`.
-    #[cfg(test)]
     pub(crate) fn f32_bits(&mut self, value: f32) {
         let bits = if value == 0.0 { 0 } else { value.to_bits() };
         self.u32(bits);
-    }
-
-    /// Encode canonical `f32` payload bits in order, byte-identical to a
-    /// [`Self::f32_bits`] loop but hashed in bulk chunks.
-    pub(crate) fn f32_bits_slice(&mut self, values: &[f32]) {
-        const CHUNK_VALUES: usize = 1024;
-        let mut chunk = [0_u8; CHUNK_VALUES * size_of::<f32>()];
-        for values in values.chunks(CHUNK_VALUES) {
-            let bytes = &mut chunk[..values.len() * size_of::<f32>()];
-            for (target, value) in bytes.chunks_exact_mut(size_of::<f32>()).zip(values) {
-                let bits = if *value == 0.0 { 0 } else { value.to_bits() };
-                target.copy_from_slice(&bits.to_le_bytes());
-            }
-            self.0.update(bytes);
-        }
-    }
-
-    /// Encode canonical validity bytes in order, byte-identical to a
-    /// [`Self::u8`] loop over `u8::from(value)`.
-    pub(crate) fn validity_slice(&mut self, values: &[bool]) {
-        const CHUNK_VALUES: usize = 4096;
-        let mut chunk = [0_u8; CHUNK_VALUES];
-        for values in values.chunks(CHUNK_VALUES) {
-            let bytes = &mut chunk[..values.len()];
-            for (target, value) in bytes.iter_mut().zip(values) {
-                *target = u8::from(*value);
-            }
-            self.0.update(bytes);
-        }
     }
 }
 
@@ -122,7 +90,7 @@ pub(crate) fn member_content_digest(values: &[f32], validity: &[bool]) -> [u8; 3
 
 #[cfg(test)]
 mod tests {
-    use super::{Encoder, member_content_digest};
+    use super::member_content_digest;
 
     #[test]
     fn member_identity_binds_validity_independently_of_numeric_pixels() {
@@ -131,33 +99,5 @@ mod tests {
             member_content_digest(&pixels, &[true, true, true, true]),
             member_content_digest(&pixels, &[true, false, true, true])
         );
-    }
-
-    #[test]
-    fn slice_encoding_is_byte_identical_to_the_per_value_loop() {
-        let mut values: Vec<f32> = (0..5000_u32)
-            .map(|index| f32::from_bits(index.wrapping_mul(2_654_435_761)))
-            .collect();
-        values.extend([0.0, -0.0, f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 1.5]);
-        let mut looped = Encoder::new(b"casa-rs-product-plane-content", 1);
-        looped.usize(values.len());
-        for value in &values {
-            looped.f32_bits(*value);
-        }
-        let mut sliced = Encoder::new(b"casa-rs-product-plane-content", 1);
-        sliced.usize(values.len());
-        sliced.f32_bits_slice(&values);
-        assert_eq!(looped.finish(), sliced.finish());
-
-        let validity: Vec<bool> = (0..9000).map(|index| index % 3 == 0).collect();
-        let mut looped = Encoder::new(b"casa-rs-product-member-content", 1);
-        looped.usize(validity.len());
-        for valid in &validity {
-            looped.u8(u8::from(*valid));
-        }
-        let mut sliced = Encoder::new(b"casa-rs-product-member-content", 1);
-        sliced.usize(validity.len());
-        sliced.validity_slice(&validity);
-        assert_eq!(looped.finish(), sliced.finish());
     }
 }
