@@ -7,30 +7,43 @@ Tied tickets: [#541](https://github.com/bglenden/casa-rs/issues/541),
 [#543](https://github.com/bglenden/casa-rs/issues/543), and programme
 [#486](https://github.com/bglenden/casa-rs/issues/486).
 
-## Snapshot 14 — active, before the quota pause
+## Snapshot 18 — quota pause, explicit resumption required
 
-- Source: `eae932ad832cbc176adae6ac938cf89f49b214d8`, verified on
+- Source: `bb47e918348b7dd6ddcc070b7ca0a7d1f3cca3b9`, verified on
   `origin/codex/t55-serial-autoresearch` and `origin/codex/t55-cube-pipeline`.
-- Active run: `5643a1a0493c4c7d8f1cd2f3ae30c28d`, iteration 14, clean/consistent.
-- Retained native/CASA ratio: 1.2782518014322406; target: 0.90.
+- Run: `5643a1a0493c4c7d8f1cd2f3ae30c28d`, iteration 18, clean/consistent.
+- Retained native/CASA ratio: 1.1790668889333646; target: 0.90.
   Initial ratio: 1.7628787405420967. The target and full-input acceptance remain open.
-- Last retained implementation: `3bd0f90c692ab5139fc4586ba90dcf6d608c9f44`
-  (trial 12, bounded problem-bound spectral cache). Trials 13/14 were reverted.
+- Last retained implementation: `bb47e918348b7dd6ddcc070b7ca0a7d1f3cca3b9`
+  (trial 18, contiguous row-slice tile commit). C/P 0.9770404627, paired 95%
+  interval [0.9590116944, 0.9954081597]; native/CASA medians 8.143475042 /
+  6.924885834 s. All seven products versus both references, metadata and focused
+  guards passed. Trial 15 private spill v2 and trial 17 single release codegen
+  unit were also retained. Trials 13/14/16 were visibly reverted.
 - Quota checkpoint: at **15% weekly remaining or below**, start no experiments,
   reach a safe recorded boundary, preserve source/evidence remotely, and pause
   for explicit resumption. Most recent reading when preparing this snapshot:
-  19% remaining; 10080-minute window; reset Unix 1789435318. Account-wide usage
+  15% remaining (85% used); 10080-minute window; reset Unix 1789435318. Account-wide usage
   is not task billing. No new unattended overnight checkpoint is approved.
 - Current optional design consultation, not final contract review:
   [GPT-6 Pro, Power 5](https://chatgpt.com/c/6aa1e814-97cc-83e8-b963-e8ee5b9c7432).
-  It was still running at snapshot creation; no proposal was implemented.
+  It completed and supported the trial-15 private spill v2 experiment, subject
+  to original-seal integrity and adversarial tests. Its preserved summary and
+  local verification limits are in `experiment/oracle-spill-v2-review.md`.
 
-`snapshot-14.tar.gz` contains the unchanged controller run/events/logs (including
+No trial 19 was started or selected. This is an execution pause, not goal
+completion. The immutable foreground controller still validates `active` because
+the target is unmet. Available Goal tools cannot set `paused`; app control was
+denied and must not be bypassed. Brian must pause the Goal in the app if needed.
+Neither automatic Goal continuation nor quota reset authorizes new experiments.
+
+`snapshot-18.tar.gz` contains the unchanged controller run/events/logs (including
 the earlier archived five-trial campaign), fixed experiment configuration,
 measurement/comparison/resource receipts and test logs, profiles, the retained
 native executable, the original native-reference executable and reproduction
 receipt, exact controller implementation, and current work record. Binaries
 are macOS arm64 project test executables, not portable to other platforms.
+The older snapshot 14 remains as historical evidence and is not the restart tip.
 See `SHA256SUMS` for the compressed archive and `MANIFEST.sha256` inside it for
 each file. No credentials or account identifier are included.
 
@@ -59,11 +72,18 @@ No serial parity claim, full-input speedup, merge, or approved deferral exists.
 The unchanged parent reproduces 88 `compile_plan_run` failures / 91 passes;
 these are recorded, not passing evidence. The trial-12 library and focused plan
 tests and all retained scientific guards passed as detailed in the work record.
+The older ignored medium-VLA construction discriminator still stops at seven
+captured blocks versus an old expectation of six. The metadata-layout provenance
+and independent streamed v1/v2 digest migration probe are preserved; unrelated
+source/science goldens were not refreshed and this diagnostic is not green.
 
 Do not restart retired hypotheses: pending-take-only resampling; identical-pol
 prediction range or atom reuse; selected-metadata borrowing (including the
 mistaken repeat in current trials 8/9); indexed/on-demand spectral axes; direct
-MS getter; canonical hash batching; shaped-Zip tile commit; flat-row degridding.
+MS getter; canonical hash batching; shaped-Zip tile commit; flat-row degridding;
+compiler-to-writer payload-checksum reuse. Trial 18 used the one evidence-producing
+retry of tile indexing with a different row-slice implementation and was retained;
+that allowance is consumed, not reset by the keep.
 The exact-axis reservation's one evidence-producing retry was retained in
 trial 3. Routine build/fixture repairs did not renew scientific retry budgets.
 Use the complete controller histories and `current-work-record.md`, not this
@@ -116,8 +136,9 @@ short list alone. No failed hypothesis may be renamed to reset its allowance.
    Verify both preserved executable hashes, all frozen-control hashes, input
    identities, source HEAD and clean Git state. Run the controller's `status`
    command below; it must report matching source, branch and consistent history.
-7. Resume the existing foreground Goal through its app controls, then inspect
-   the pending Pro review and current evidence before selecting a new candidate.
+7. After Brian explicitly resumes work, resume the existing foreground Goal
+   through its app controls, then inspect the completed Pro review, current
+   evidence and rejected-candidate history before selecting a new candidate.
    Never call `init` over restored state or `resume` on an already-active
    foreground event stream. Check quota before the next trial. Only `finish`
    may commit/revert an experiment in the active repository.
