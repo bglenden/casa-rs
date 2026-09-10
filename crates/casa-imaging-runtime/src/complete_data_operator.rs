@@ -1797,13 +1797,11 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
         }
         self.state
             .state
-            .two_domain_window_partition_count(storage.frames().map(|frame| {
-                (
-                    frame.sequence(),
-                    frame.payload(),
-                    Some(frame.verified_payload_sha256()),
-                )
-            }))
+            .two_domain_window_partition_count(
+                storage
+                    .frames()
+                    .map(|frame| (frame.sequence(), frame.payload())),
+            )
             .map_err(CompleteDataOperatorError::Owner)
     }
 
