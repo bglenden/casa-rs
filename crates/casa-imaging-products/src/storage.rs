@@ -316,7 +316,9 @@ impl ProductMemberBacking {
             let count = values_for(shape)?;
             self.storage
                 .read_payload(start, shape, &mut values[..count])?;
-            payload.f32_bits_slice(&values[..count]);
+            for value in &values[..count] {
+                payload.f32_bits(*value);
+            }
         }
         drop(values);
         let mut member = Encoder::new(b"casa-rs-product-member-content", 1);
@@ -327,7 +329,9 @@ impl ProductMemberBacking {
             let count = values_for(shape)?;
             self.storage
                 .read_validity(start, shape, &mut validity[..count])?;
-            member.validity_slice(&validity[..count]);
+            for valid in &validity[..count] {
+                member.u8(u8::from(*valid));
+            }
         }
         Ok(member.finish())
     }
