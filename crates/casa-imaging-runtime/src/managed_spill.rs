@@ -10,28 +10,41 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use sha2::Digest;
-#[cfg(not(test))]
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use tempfile::{Builder, NamedTempFile, TempPath};
-#[cfg(test)]
-use tests::MeasuredSha256 as Sha256;
 use thiserror::Error;
 
 use crate::bounded_stream::{OrderedBlockSource, SourceFillCancellation, SourcePoll};
 use crate::execution_bindings::IoMeasurement;
 use crate::resource_authority::{IoBufferKind, ResourceAuthority, StorageIoResourceBinding};
 
-// V2 commits to the versioned file header and fixed-width frame headers. Each
-// frame header binds its payload checksum; completion still requires the
-// original in-memory seal, not a digest reconstructed from the stored footer.
-const FORMAT_VERSION: u32 = 2;
+#[cfg(not(test))]
+mod checksum {
+    pub(super) fn payload(bytes: &[u8]) -> u32 {
+        crc32c::crc32c(bytes)
+    }
+
+    pub(super) fn transcript(crc: u32, bytes: &[u8]) -> u32 {
+        crc32c::crc32c_append(crc, bytes)
+    }
+}
+
+#[cfg(test)]
+use tests::measured_checksum as checksum;
+
+// V3 commits to the versioned file header and fixed-width frame headers. Each
+// frame header binds the compiler-computed payload checksum; completion still
+// requires the original in-memory seal, not a checksum reconstructed from the
+// stored footer.
+const FORMAT_VERSION: u32 = 3;
 const FILE_HEADER_MAGIC: [u8; 8] = *b"CASPHDR\0";
 const FRAME_MAGIC: [u8; 8] = *b"CASPFRM\0";
 const FOOTER_MAGIC: [u8; 8] = *b"CASPFTR\0";
 const FILE_HEADER_BYTES: usize = 16;
 pub(crate) const FRAME_HEADER_BYTES: usize = 72;
 const FOOTER_BYTES: usize = 80;
+const FRAME_RESERVED_BYTES: std::ops::Range<usize> = 44..72;
+const FOOTER_RESERVED_BYTES: std::ops::Range<usize> = 52..80;
 const ARTIFACT_PREFIX: &str = ".casa-rs-managed-spill-";
 const ARTIFACT_RANDOM_BYTES: usize = 6;
 
@@ -326,8 +339,8 @@ pub(crate) struct ManagedSpillMeasurements {
     record_count: u64,
     transferred_bytes: u64,
     operations: u64,
-    sha256_bytes: u64,
-    sha256_calls: u64,
+    checksum_bytes: u64,
+    checksum_calls: u64,
     peak_buffer_bytes: u64,
     payload_copy_bytes: u64,
     payload_copy_operations: u64,
@@ -375,17 +388,17 @@ impl ManagedSpillMeasurements {
             operations: previous.operations.checked_add(window.operations).ok_or(
                 ManagedSpillError::ArithmeticOverflow("aggregate artifact operations"),
             )?,
-            sha256_bytes: previous
-                .sha256_bytes
-                .checked_add(window.sha256_bytes)
+            checksum_bytes: previous
+                .checksum_bytes
+                .checked_add(window.checksum_bytes)
                 .ok_or(ManagedSpillError::ArithmeticOverflow(
                     "aggregate artifact checksum",
                 ))?,
-            sha256_calls: previous
-                .sha256_calls
-                .checked_add(window.sha256_calls)
+            checksum_calls: previous
+                .checksum_calls
+                .checked_add(window.checksum_calls)
                 .ok_or(ManagedSpillError::ArithmeticOverflow(
-                    "aggregate artifact hash calls",
+                    "aggregate artifact checksum calls",
                 ))?,
             peak_buffer_bytes: previous.peak_buffer_bytes.max(window.peak_buffer_bytes),
             payload_copy_bytes: previous
@@ -439,12 +452,12 @@ impl ManagedSpillMeasurements {
         self.operations
     }
 
-    pub(crate) const fn sha256_bytes(self) -> u64 {
-        self.sha256_bytes
+    pub(crate) const fn checksum_bytes(self) -> u64 {
+        self.checksum_bytes
     }
 
-    pub(crate) const fn sha256_calls(self) -> u64 {
-        self.sha256_calls
+    pub(crate) const fn checksum_calls(self) -> u64 {
+        self.checksum_calls
     }
 
     pub(crate) const fn peak_buffer_bytes(self) -> u64 {
@@ -511,12 +524,18 @@ impl ManagedSpillMeasurements {
             operations: self.operations.checked_sub(earlier.operations).ok_or(
                 ManagedSpillError::ArithmeticOverflow("artifact measurement operations"),
             )?,
-            sha256_bytes: self.sha256_bytes.checked_sub(earlier.sha256_bytes).ok_or(
-                ManagedSpillError::ArithmeticOverflow("artifact measurement checksum"),
-            )?,
-            sha256_calls: self.sha256_calls.checked_sub(earlier.sha256_calls).ok_or(
-                ManagedSpillError::ArithmeticOverflow("artifact measurement hash calls"),
-            )?,
+            checksum_bytes: self
+                .checksum_bytes
+                .checked_sub(earlier.checksum_bytes)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "artifact measurement checksum",
+                ))?,
+            checksum_calls: self
+                .checksum_calls
+                .checked_sub(earlier.checksum_calls)
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "artifact measurement checksum calls",
+                ))?,
             peak_buffer_bytes: self.peak_buffer_bytes,
             payload_copy_bytes: self
                 .payload_copy_bytes
@@ -547,7 +566,7 @@ pub(crate) struct ManagedSpillSeal {
     record_count: u64,
     payload_bytes: u64,
     artifact_bytes: u64,
-    global_sha256: [u8; 32],
+    global_crc32c: u32,
 }
 
 impl ManagedSpillSeal {
@@ -567,8 +586,8 @@ impl ManagedSpillSeal {
         self.artifact_bytes
     }
 
-    pub(crate) const fn global_sha256(self) -> [u8; 32] {
-        self.global_sha256
+    pub(crate) const fn global_crc32c(self) -> u32 {
+        self.global_crc32c
     }
 }
 
@@ -689,7 +708,7 @@ pub(crate) struct ManagedSpillWriter {
     file: NamedTempFile,
     budget: ManagedSpillBudget,
     buffer: Vec<u8>,
-    global_hasher: Sha256,
+    global_crc32c: u32,
     bytes_written: u64,
     write_operations: u64,
     frame_count: u64,
@@ -724,7 +743,7 @@ impl ManagedSpillWriter {
             file,
             budget,
             buffer: vec![0; buffer_len],
-            global_hasher: Sha256::new(),
+            global_crc32c: 0,
             bytes_written: 0,
             write_operations: 0,
             frame_count: 0,
@@ -738,7 +757,7 @@ impl ManagedSpillWriter {
             writer.poisoned = true;
             return Err(error);
         }
-        writer.global_hasher.update(header);
+        writer.global_crc32c = checksum::transcript(writer.global_crc32c, &header);
         Ok(writer)
     }
 
@@ -747,11 +766,12 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_crc32c: u32,
     ) -> Result<(), ManagedSpillError> {
         if self.poisoned {
             return Err(ManagedSpillError::WriterPoisoned);
         }
-        let result = self.append_frame_inner(sequence, record_count, payload);
+        let result = self.append_frame_inner(sequence, record_count, payload, payload_crc32c);
         if result.is_err() {
             self.poisoned = true;
         }
@@ -763,11 +783,13 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_crc32c: u32,
     ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
         if self.poisoned {
             return Err(ManagedSpillError::WriterPoisoned);
         }
-        let result = self.append_frame_observed_inner(sequence, record_count, payload);
+        let result =
+            self.append_frame_observed_inner(sequence, record_count, payload, payload_crc32c);
         if result.is_err() {
             self.poisoned = true;
         }
@@ -783,8 +805,8 @@ impl ManagedSpillWriter {
             record_count: self.record_count,
             transferred_bytes: self.bytes_written,
             operations: self.write_operations,
-            sha256_bytes: self.bytes_written,
-            sha256_calls: self.frame_count,
+            checksum_bytes: self.bytes_written.saturating_sub(self.payload_bytes),
+            checksum_calls: self.frame_count.saturating_add(1),
             peak_buffer_bytes: self.budget.io_buffer_bytes,
             payload_copy_bytes: self.payload_bytes,
             payload_copy_operations: self.payload_copy_operations,
@@ -798,8 +820,9 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_crc32c: u32,
     ) -> Result<(), ManagedSpillError> {
-        let prepared = self.prepare_frame(sequence, record_count, payload)?;
+        let prepared = self.prepare_frame(sequence, record_count, payload, payload_crc32c)?;
         self.copy_frame_payload(&prepared, payload);
         self.write_prepared_frame(&prepared)?;
         self.commit_prepared_frame(&prepared);
@@ -811,10 +834,11 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_crc32c: u32,
     ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
         let mut timings = ManagedSpillStageTimings::default();
         let started = Instant::now();
-        let prepared = self.prepare_frame(sequence, record_count, payload)?;
+        let prepared = self.prepare_frame(sequence, record_count, payload, payload_crc32c)?;
         timings.encoding_checksum = started.elapsed();
         let started = Instant::now();
         self.copy_frame_payload(&prepared, payload);
@@ -833,6 +857,7 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_crc32c: u32,
     ) -> Result<PreparedFrame, ManagedSpillError> {
         if sequence != self.frame_count {
             return Err(ManagedSpillError::WriterSequenceMismatch {
@@ -883,8 +908,7 @@ impl ManagedSpillWriter {
                 capacity: self.budget.maximum_artifact_bytes,
             });
         }
-        let payload_sha256: [u8; 32] = Sha256::digest(payload).into();
-        let header = encode_frame_header(sequence, record_count, payload_bytes, payload_sha256);
+        let header = encode_frame_header(sequence, record_count, payload_bytes, payload_crc32c);
         let encoded_bytes = FRAME_HEADER_BYTES.checked_add(payload.len()).ok_or(
             ManagedSpillError::ArithmeticOverflow("encoded frame buffer bytes"),
         )?;
@@ -914,7 +938,7 @@ impl ManagedSpillWriter {
     }
 
     fn commit_prepared_frame(&mut self, prepared: &PreparedFrame) {
-        self.global_hasher.update(prepared.header);
+        self.global_crc32c = checksum::transcript(self.global_crc32c, &prepared.header);
         self.payload_bytes = prepared.prospective_payload_bytes;
         self.record_count = prepared.prospective_record_count;
         self.frame_count = prepared.prospective_frame_count;
@@ -936,13 +960,12 @@ impl ManagedSpillWriter {
                 capacity: self.budget.maximum_artifact_bytes,
             });
         }
-        let global_sha256: [u8; 32] = self.global_hasher.clone().finalize().into();
         let footer = encode_footer(
             self.frame_count,
             self.record_count,
             self.payload_bytes,
             artifact_bytes,
-            global_sha256,
+            self.global_crc32c,
         );
         self.write_bytes(&footer, "write artifact footer")?;
         self.file
@@ -973,10 +996,14 @@ impl ManagedSpillWriter {
                 actual: actual_bytes,
             });
         }
-        let sha256_bytes = self.bytes_written.checked_sub(footer_bytes).ok_or(
-            ManagedSpillError::ArithmeticOverflow("artifact checksum bytes"),
-        )?;
-        let sha256_calls =
+        let checksum_bytes = self
+            .bytes_written
+            .checked_sub(footer_bytes)
+            .and_then(|bytes| bytes.checked_sub(self.payload_bytes))
+            .ok_or(ManagedSpillError::ArithmeticOverflow(
+                "artifact checksum bytes",
+            ))?;
+        let checksum_calls =
             self.frame_count
                 .checked_add(1)
                 .ok_or(ManagedSpillError::ArithmeticOverflow(
@@ -987,7 +1014,7 @@ impl ManagedSpillWriter {
             record_count: self.record_count,
             payload_bytes: self.payload_bytes,
             artifact_bytes,
-            global_sha256,
+            global_crc32c: self.global_crc32c,
         };
         let write_measurements = ManagedSpillMeasurements {
             direction: ManagedSpillIoDirection::Write,
@@ -997,8 +1024,8 @@ impl ManagedSpillWriter {
             record_count: self.record_count,
             transferred_bytes: self.bytes_written,
             operations: self.write_operations,
-            sha256_bytes,
-            sha256_calls,
+            checksum_bytes,
+            checksum_calls,
             peak_buffer_bytes: self.budget.io_buffer_bytes,
             payload_copy_bytes: self.payload_bytes,
             payload_copy_operations: self.payload_copy_operations,
@@ -1124,7 +1151,7 @@ impl ManagedSpillArtifact {
             budget: self.budget,
             seal: self.seal,
             offset: 0,
-            global_hasher: Sha256::new(),
+            global_crc32c: 0,
             frame_count: 0,
             record_count: 0,
             payload_bytes: 0,
@@ -1252,8 +1279,8 @@ impl ManagedSpillRetainedBlockSource {
                 record_count: self.seal.record_count,
                 transferred_bytes: 0,
                 operations: 0,
-                sha256_bytes: 0,
-                sha256_calls: 0,
+                checksum_bytes: 0,
+                checksum_calls: 0,
                 peak_buffer_bytes: self.retained_bytes,
                 payload_copy_bytes: 0,
                 payload_copy_operations: 0,
@@ -1286,7 +1313,7 @@ pub(crate) struct ManagedSpillFrame<'a> {
     sequence: u64,
     record_count: u64,
     payload: &'a [u8],
-    payload_sha256: [u8; 32],
+    payload_crc32c: u32,
 }
 
 impl<'a> ManagedSpillFrame<'a> {
@@ -1302,14 +1329,14 @@ impl<'a> ManagedSpillFrame<'a> {
         self.payload
     }
 
-    /// Payload digest from the frame header of a reader-verified window.
+    /// Payload checksum from the frame header of a reader-verified window.
     ///
-    /// The block source checks this digest against the payload before the
+    /// The block source checks this checksum against the payload before the
     /// window is published, and the footer binds the header to the seal, so a
-    /// replay binding its descriptor to this digest does not have to hash the
-    /// payload again.
-    pub(crate) const fn verified_payload_sha256(self) -> [u8; 32] {
-        self.payload_sha256
+    /// replay binding its descriptor to this checksum does not have to checksum
+    /// the payload again.
+    pub(crate) const fn verified_payload_crc32c(self) -> u32 {
+        self.payload_crc32c
     }
 }
 
@@ -1332,12 +1359,12 @@ impl<'a> Iterator for ManagedSpillFrames<'a> {
         let payload_len = usize::try_from(decode_u64(header, 32)).ok()?;
         let payload_end = header_end.checked_add(payload_len)?;
         let payload = self.bytes.get(header_end..payload_end)?;
-        let payload_sha256: [u8; 32] = header.get(40..72)?.try_into().ok()?;
+        let payload_crc32c = decode_u32(header, 40);
         let frame = ManagedSpillFrame {
             sequence: decode_u64(header, 16),
             record_count: decode_u64(header, 24),
             payload,
-            payload_sha256,
+            payload_crc32c,
         };
         self.offset = payload_end;
         self.remaining -= 1;
@@ -1398,7 +1425,7 @@ pub(crate) struct ManagedSpillBlockSource {
     budget: ManagedSpillBudget,
     seal: ManagedSpillSeal,
     offset: u64,
-    global_hasher: Sha256,
+    global_crc32c: u32,
     frame_count: u64,
     record_count: u64,
     payload_bytes: u64,
@@ -1419,7 +1446,7 @@ impl ManagedSpillBlockSource {
     ) -> Result<(Self, ManagedSpillReadCompletion), ManagedSpillError> {
         let completion = self.complete_read()?;
         self.offset = 0;
-        self.global_hasher = Sha256::new();
+        self.global_crc32c = 0;
         self.frame_count = 0;
         self.record_count = 0;
         self.payload_bytes = 0;
@@ -1467,14 +1494,27 @@ impl ManagedSpillBlockSource {
             record_count: storage.record_count,
             transferred_bytes: self.measurements.transferred_bytes,
             operations: self.measurements.operations,
-            sha256_bytes: self
+            checksum_bytes: self
                 .measurements
                 .transferred_bytes
-                .checked_sub(if ready { 0 } else { FOOTER_BYTES as u64 })
+                .checked_sub(if self.finished {
+                    FOOTER_BYTES as u64
+                } else {
+                    0
+                })
                 .ok_or(ManagedSpillError::ArithmeticOverflow(
                     "prefetched checksum bytes",
                 ))?,
-            sha256_calls: if ready { frame_count } else { 1 },
+            checksum_calls: if ready {
+                frame_count
+                    .checked_mul(2)
+                    .and_then(|calls| calls.checked_add(1))
+            } else {
+                Some(1)
+            }
+            .ok_or(ManagedSpillError::ArithmeticOverflow(
+                "prefetched checksum calls",
+            ))?,
             peak_buffer_bytes,
             payload_copy_bytes: 0,
             payload_copy_operations: 0,
@@ -1506,7 +1546,7 @@ impl ManagedSpillBlockSource {
                 kind: "file header",
             });
         }
-        self.global_hasher.update(header);
+        self.global_crc32c = checksum::transcript(self.global_crc32c, &header);
         self.offset = FILE_HEADER_BYTES as u64;
         self.initialized = true;
         Ok(())
@@ -1560,7 +1600,9 @@ impl ManagedSpillBlockSource {
             "read artifact frame header",
         )?;
         let header: &[u8] = &storage.bytes[frame_start..header_end];
-        if !valid_version_and_length(header, FRAME_HEADER_BYTES) {
+        if !valid_version_and_length(header, FRAME_HEADER_BYTES)
+            || !reserved_is_zero(header, FRAME_RESERVED_BYTES)
+        {
             return Err(ManagedSpillError::InvalidFormat {
                 kind: "frame header",
             });
@@ -1580,8 +1622,7 @@ impl ManagedSpillBlockSource {
         }
         let record_count = decode_u64(header, 24);
         let payload_bytes = decode_u64(header, 32);
-        let expected_sha256: [u8; 32] =
-            header[40..72].try_into().expect("fixed frame digest slice");
+        let expected_crc32c = decode_u32(header, 40);
         let payload_len = usize::try_from(payload_bytes).map_err(|_| {
             ManagedSpillError::FramePayloadTooLarge {
                 actual: usize::MAX,
@@ -1635,8 +1676,7 @@ impl ManagedSpillBlockSource {
             "read artifact frame payload",
         )?;
         let payload = &storage.bytes[header_end..payload_end];
-        let actual_sha256: [u8; 32] = Sha256::digest(payload).into();
-        if actual_sha256 != expected_sha256 {
+        if checksum::payload(payload) != expected_crc32c {
             return Err(ManagedSpillError::FrameChecksumMismatch { sequence });
         }
         let next_frame_count =
@@ -1651,8 +1691,8 @@ impl ManagedSpillBlockSource {
         let next_payload_bytes = self.payload_bytes.checked_add(payload_bytes).ok_or(
             ManagedSpillError::ArithmeticOverflow("replayed payload bytes"),
         )?;
-        self.global_hasher
-            .update(&storage.bytes[frame_start..header_end]);
+        self.global_crc32c =
+            checksum::transcript(self.global_crc32c, &storage.bytes[frame_start..header_end]);
         self.offset = next_offset;
         self.frame_count = next_frame_count;
         self.record_count = next_record_count;
@@ -1688,7 +1728,9 @@ impl ManagedSpillBlockSource {
             &mut self.measurements,
             "read artifact footer",
         )?;
-        if !valid_version_and_length(&footer, FOOTER_BYTES) {
+        if !valid_version_and_length(&footer, FOOTER_BYTES)
+            || !reserved_is_zero(&footer, FOOTER_RESERVED_BYTES)
+        {
             return Err(ManagedSpillError::InvalidFormat { kind: "footer" });
         }
         let footer_frame_count = decode_u64(&footer, 16);
@@ -1705,11 +1747,8 @@ impl ManagedSpillBlockSource {
         {
             return Err(ManagedSpillError::FooterCountMismatch);
         }
-        let footer_sha256: [u8; 32] = footer[48..80]
-            .try_into()
-            .expect("fixed footer digest slice");
-        let actual_sha256: [u8; 32] = self.global_hasher.clone().finalize().into();
-        if footer_sha256 != actual_sha256 || footer_sha256 != self.seal.global_sha256 {
+        let footer_crc32c = decode_u32(&footer, 48);
+        if footer_crc32c != self.global_crc32c || footer_crc32c != self.seal.global_crc32c {
             return Err(ManagedSpillError::GlobalChecksumMismatch);
         }
         let expected_end = self.offset.checked_add(FOOTER_BYTES as u64).ok_or(
@@ -1753,19 +1792,20 @@ impl ManagedSpillBlockSource {
         if !self.finished {
             return Err(ManagedSpillError::IncompleteRead);
         }
-        let sha256_bytes = self
+        let checksum_bytes = self
             .seal
             .artifact_bytes
             .checked_sub(FOOTER_BYTES as u64)
             .ok_or(ManagedSpillError::ArithmeticOverflow(
                 "artifact checksum bytes",
             ))?;
-        let sha256_calls =
-            self.frame_count
-                .checked_add(1)
-                .ok_or(ManagedSpillError::ArithmeticOverflow(
-                    "artifact checksum calls",
-                ))?;
+        let checksum_calls = self
+            .frame_count
+            .checked_mul(2)
+            .and_then(|calls| calls.checked_add(1))
+            .ok_or(ManagedSpillError::ArithmeticOverflow(
+                "artifact checksum calls",
+            ))?;
         let slots = u64::try_from(self.created_slots.load(Ordering::Acquire))
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("artifact source slots"))?;
         let peak_buffer_bytes = self.source_slot_bytes.checked_mul(slots).ok_or(
@@ -1781,8 +1821,8 @@ impl ManagedSpillBlockSource {
                 record_count: self.record_count,
                 transferred_bytes: self.measurements.transferred_bytes,
                 operations: self.measurements.operations,
-                sha256_bytes,
-                sha256_calls,
+                checksum_bytes,
+                checksum_calls,
                 peak_buffer_bytes,
                 payload_copy_bytes: 0,
                 payload_copy_operations: 0,
@@ -2009,7 +2049,7 @@ fn encode_frame_header(
     sequence: u64,
     record_count: u64,
     payload_bytes: u64,
-    payload_sha256: [u8; 32],
+    payload_crc32c: u32,
 ) -> [u8; FRAME_HEADER_BYTES] {
     let mut header = [0_u8; FRAME_HEADER_BYTES];
     header[..8].copy_from_slice(&FRAME_MAGIC);
@@ -2018,7 +2058,7 @@ fn encode_frame_header(
     encode_u64(&mut header, 16, sequence);
     encode_u64(&mut header, 24, record_count);
     encode_u64(&mut header, 32, payload_bytes);
-    header[40..72].copy_from_slice(&payload_sha256);
+    encode_u32(&mut header, 40, payload_crc32c);
     header
 }
 
@@ -2027,7 +2067,7 @@ fn encode_footer(
     record_count: u64,
     payload_bytes: u64,
     artifact_bytes: u64,
-    global_sha256: [u8; 32],
+    global_crc32c: u32,
 ) -> [u8; FOOTER_BYTES] {
     let mut footer = [0_u8; FOOTER_BYTES];
     footer[..8].copy_from_slice(&FOOTER_MAGIC);
@@ -2037,7 +2077,7 @@ fn encode_footer(
     encode_u64(&mut footer, 24, record_count);
     encode_u64(&mut footer, 32, payload_bytes);
     encode_u64(&mut footer, 40, artifact_bytes);
-    footer[48..80].copy_from_slice(&global_sha256);
+    encode_u32(&mut footer, 48, global_crc32c);
     footer
 }
 
@@ -2050,6 +2090,10 @@ fn valid_file_header(header: &[u8; FILE_HEADER_BYTES]) -> bool {
 fn valid_version_and_length(bytes: &[u8], expected_len: usize) -> bool {
     decode_u32(bytes, 8) == FORMAT_VERSION
         && usize::try_from(decode_u32(bytes, 12)).ok() == Some(expected_len)
+}
+
+fn reserved_is_zero(bytes: &[u8], reserved: std::ops::Range<usize>) -> bool {
+    bytes[reserved].iter().all(|byte| *byte == 0)
 }
 
 fn encode_u32(bytes: &mut [u8], offset: usize, value: u32) {
@@ -2397,64 +2441,65 @@ mod tests {
     const TEST_FRAME_PAYLOAD_BYTES: usize = 64;
 
     thread_local! {
-        static HASH_INPUT_BYTES: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
+        static CHECKSUM_INPUT: Cell<(usize, usize, usize, usize)> = const { Cell::new((0, 0, 0, 0)) };
     }
 
-    /// Test-only replacement at the SHA call boundary, independent of reported
-    /// measurement arithmetic. Production uses sha2 directly.
-    #[derive(Clone, Debug)]
-    pub(super) struct MeasuredSha256(sha2::Sha256);
+    /// Test-only replacement at the checksum call boundary, independent of
+    /// reported measurement arithmetic. Production calls crc32c directly.
+    pub(super) mod measured_checksum {
+        use super::CHECKSUM_INPUT;
 
-    impl MeasuredSha256 {
-        pub(super) fn new() -> Self {
-            Self(sha2::Sha256::new())
-        }
-
-        pub(super) fn update(&mut self, bytes: impl AsRef<[u8]>) {
-            let bytes = bytes.as_ref();
-            HASH_INPUT_BYTES.with(|counts| {
-                let (payload, global) = counts.get();
-                counts.set((payload, global + bytes.len()));
+        pub(crate) fn payload(bytes: &[u8]) -> u32 {
+            CHECKSUM_INPUT.with(|counts| {
+                let (payload_bytes, transcript_bytes, payload_calls, transcript_calls) =
+                    counts.get();
+                counts.set((
+                    payload_bytes + bytes.len(),
+                    transcript_bytes,
+                    payload_calls + 1,
+                    transcript_calls,
+                ));
             });
-            self.0.update(bytes);
+            crc32c::crc32c(bytes)
         }
 
-        pub(super) fn digest(bytes: impl AsRef<[u8]>) -> sha2::digest::Output<sha2::Sha256> {
-            let bytes = bytes.as_ref();
-            HASH_INPUT_BYTES.with(|counts| {
-                let (payload, global) = counts.get();
-                counts.set((payload + bytes.len(), global));
+        pub(crate) fn transcript(crc: u32, bytes: &[u8]) -> u32 {
+            CHECKSUM_INPUT.with(|counts| {
+                let (payload_bytes, transcript_bytes, payload_calls, transcript_calls) =
+                    counts.get();
+                counts.set((
+                    payload_bytes,
+                    transcript_bytes + bytes.len(),
+                    payload_calls,
+                    transcript_calls + 1,
+                ));
             });
-            sha2::Sha256::digest(bytes)
-        }
-
-        pub(super) fn finalize(self) -> sha2::digest::Output<sha2::Sha256> {
-            self.0.finalize()
+            crc32c::crc32c_append(crc, bytes)
         }
     }
 
-    fn take_hash_input_bytes() -> (usize, usize) {
-        HASH_INPUT_BYTES.with(|counts| counts.replace((0, 0)))
+    fn take_checksum_input() -> (usize, usize, usize, usize) {
+        CHECKSUM_INPUT.with(|counts| counts.replace((0, 0, 0, 0)))
     }
 
     // Deliberately independent of production framing helpers and constants.
-    fn transcript_digest(bytes: &[u8]) -> [u8; 32] {
-        let mut transcript = bytes[..16].to_vec();
+    fn transcript_checksum(bytes: &[u8]) -> u32 {
+        let mut checksum = crc32c::crc32c(&bytes[..16]);
         let mut offset = 16;
         while offset < bytes.len() - 80 {
-            transcript.extend_from_slice(&bytes[offset..offset + 72]);
+            checksum = crc32c::crc32c_append(checksum, &bytes[offset..offset + 72]);
             let payload_len =
                 u64::from_le_bytes(bytes[offset + 32..offset + 40].try_into().unwrap());
             offset += 72 + payload_len as usize;
         }
         assert_eq!(offset, bytes.len() - 80);
-        sha2::Sha256::digest(transcript).into()
+        checksum
     }
 
-    fn repair_footer_digest(bytes: &mut [u8]) {
-        let digest = transcript_digest(bytes);
+    fn repair_footer_checksum(bytes: &mut [u8]) {
+        let checksum = transcript_checksum(bytes);
         let end = bytes.len();
-        bytes[end - 32..].copy_from_slice(&digest);
+        bytes[end - 32..end - 28].copy_from_slice(&checksum.to_le_bytes());
     }
 
     fn drain_source<S>(source: &mut S) -> Result<(), ManagedSpillError>
@@ -2479,7 +2524,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_hashes_each_payload_once_and_only_headers_globally() {
+    fn v3_checksums_each_payload_once_per_reader_and_only_headers_globally() {
         let root = tempfile::tempdir().unwrap();
         let (_, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
         for observed in [false, true] {
@@ -2488,61 +2533,88 @@ mod tests {
                 vec![b"".as_slice(), b""],
                 vec![b"abc".as_slice(), b"", b"longer"],
             ] {
-                take_hash_input_bytes();
+                take_checksum_input();
                 let mut writer =
                     ManagedSpillWriter::create(&storage, budget(TEST_CAPACITY_BYTES)).unwrap();
                 for (sequence, payload) in payloads.iter().enumerate() {
+                    let payload_checksum = crc32c::crc32c(payload);
                     if observed {
                         writer
-                            .append_frame_observed(sequence as u64, sequence as u64 + 1, payload)
+                            .append_frame_observed(
+                                sequence as u64,
+                                sequence as u64 + 1,
+                                payload,
+                                payload_checksum,
+                            )
                             .unwrap();
                     } else {
                         writer
-                            .append_frame(sequence as u64, sequence as u64 + 1, payload)
+                            .append_frame(
+                                sequence as u64,
+                                sequence as u64 + 1,
+                                payload,
+                                payload_checksum,
+                            )
                             .unwrap();
                     }
                 }
                 let payload_bytes = payloads.iter().map(|p| p.len()).sum::<usize>();
-                let expected = (payload_bytes, 16 + 72 * payloads.len());
+                let header_bytes = 16 + 72 * payloads.len();
+                let expected = (
+                    payload_bytes,
+                    header_bytes,
+                    payloads.len(),
+                    payloads.len() + 1,
+                );
+                // The compiler checksums each payload; the writer only feeds the
+                // file and frame headers to the transcript.
                 assert_eq!(
-                    writer.measurements().sha256_bytes(),
-                    (expected.0 + expected.1) as u64
+                    take_checksum_input(),
+                    (0, header_bytes, 0, payloads.len() + 1)
+                );
+                assert_eq!(writer.measurements().checksum_bytes(), header_bytes as u64);
+                assert_eq!(
+                    writer.measurements().checksum_calls(),
+                    payloads.len() as u64 + 1
                 );
                 let artifact = writer.seal().unwrap();
-                assert_eq!(take_hash_input_bytes(), expected);
                 let bytes = std::fs::read(&artifact.path).unwrap();
-                assert_eq!(&bytes[8..12], &2_u32.to_le_bytes());
-                let digest = transcript_digest(&bytes);
-                assert_eq!(artifact.seal().global_sha256(), digest);
-                assert_eq!(&bytes[bytes.len() - 32..], &digest);
+                assert_eq!(&bytes[8..12], &3_u32.to_le_bytes());
+                let checksum = transcript_checksum(&bytes);
+                assert_eq!(artifact.seal().global_crc32c(), checksum);
+                assert_eq!(
+                    &bytes[bytes.len() - 32..bytes.len() - 28],
+                    &checksum.to_le_bytes()
+                );
                 for prefetch in [false, true] {
                     let mut source = artifact.block_source(1).unwrap();
-                    take_hash_input_bytes();
+                    take_checksum_input();
                     if prefetch {
                         let measurement = source.prefetch_first_window().unwrap();
-                        let prefix = take_hash_input_bytes();
+                        let prefix = take_checksum_input();
                         let expected_prefix = if payloads.is_empty() {
-                            (0, 16)
+                            (0, 16, 0, 1)
                         } else {
-                            (payloads[0].len(), 88)
+                            (payloads[0].len(), 88, 1, 2)
                         };
                         assert_eq!(prefix, expected_prefix);
-                        assert_eq!(measurement.sha256_bytes(), (prefix.0 + prefix.1) as u64);
-                        HASH_INPUT_BYTES.with(|counts| counts.set(prefix));
+                        assert_eq!(measurement.checksum_bytes(), (prefix.0 + prefix.1) as u64);
+                        assert_eq!(measurement.checksum_calls(), (prefix.2 + prefix.3) as u64);
+                        CHECKSUM_INPUT.with(|counts| counts.set(prefix));
                     }
                     drain_source(&mut source).unwrap();
-                    assert_eq!(take_hash_input_bytes(), expected);
+                    assert_eq!(take_checksum_input(), expected);
                     let (mut source, completion) = source.complete_rewound().unwrap();
                     assert_eq!(
-                        completion.measurements().sha256_bytes(),
+                        completion.measurements().checksum_bytes(),
                         (expected.0 + expected.1) as u64
                     );
                     assert_eq!(
-                        completion.measurements().sha256_calls(),
-                        payloads.len() as u64 + 1
+                        completion.measurements().checksum_calls(),
+                        (expected.2 + expected.3) as u64
                     );
                     drain_source(&mut source).unwrap();
-                    assert_eq!(take_hash_input_bytes(), expected);
+                    assert_eq!(take_checksum_input(), expected);
                     assert_eq!(source.complete().unwrap().seal(), artifact.seal());
                 }
             }
@@ -2558,10 +2630,10 @@ mod tests {
             let (mut source, _) = source.complete_rewound().unwrap();
             let mut bytes = std::fs::read(&artifact.path).unwrap();
             bytes[88] ^= 0xff;
-            let digest = sha2::Sha256::digest(&bytes[88..99]);
-            bytes[56..88].copy_from_slice(&digest);
+            let checksum = crc32c::crc32c(&bytes[88..99]);
+            bytes[56..60].copy_from_slice(&checksum.to_le_bytes());
             if repair_footer {
-                repair_footer_digest(&mut bytes);
+                repair_footer_checksum(&mut bytes);
             }
             write_all_at(&artifact_file(&artifact), &bytes, 0);
             assert!(matches!(
@@ -2599,7 +2671,7 @@ mod tests {
                 bytes[40..48].copy_from_slice(&0_u64.to_le_bytes());
                 bytes[113..121].copy_from_slice(&2_u64.to_le_bytes());
             }
-            repair_footer_digest(&mut bytes);
+            repair_footer_checksum(&mut bytes);
             write_all_at(&artifact_file(&artifact), &bytes, 0);
             assert!(matches!(
                 artifact_source_error(&artifact),
@@ -2609,20 +2681,49 @@ mod tests {
     }
 
     #[test]
-    fn v1_and_mixed_version_artifacts_are_rejected() {
-        for versions in [[1, 1, 1], [1, 2, 2], [2, 1, 2], [2, 2, 1]] {
+    fn version_three_rejects_older_and_mixed_version_artifacts() {
+        let (_root, current) = sealed_numbered_artifact(1);
+        let current_bytes = std::fs::read(&current.path).unwrap();
+        assert_eq!(&current_bytes[8..12], &3_u32.to_le_bytes());
+        assert_eq!(&current_bytes[24..28], &3_u32.to_le_bytes());
+        assert_eq!(&current_bytes[97..101], &3_u32.to_le_bytes());
+        for versions in [[1, 1, 1], [2, 2, 2], [2, 3, 3], [3, 2, 3], [3, 3, 2]] {
             let (_root, artifact) = sealed_numbered_artifact(1);
             let mut bytes = std::fs::read(&artifact.path).unwrap();
             for (offset, version) in [8, 24, 97].into_iter().zip(versions) {
                 bytes[offset..offset + 4].copy_from_slice(&u32::to_le_bytes(version));
             }
-            repair_footer_digest(&mut bytes);
+            repair_footer_checksum(&mut bytes);
             write_all_at(&artifact_file(&artifact), &bytes, 0);
             assert!(matches!(
                 artifact_source_error(&artifact),
                 ManagedSpillError::InvalidFormat { .. }
             ));
         }
+    }
+
+    #[test]
+    fn nonzero_frame_and_footer_reserved_bytes_are_rejected() {
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let mut bytes = std::fs::read(&artifact.path).unwrap();
+        bytes[FILE_HEADER_BYTES + 44] = 1;
+        write_all_at(&artifact_file(&artifact), &bytes, 0);
+        assert!(matches!(
+            artifact_source_error(&artifact),
+            ManagedSpillError::InvalidFormat {
+                kind: "frame header"
+            }
+        ));
+
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let mut bytes = std::fs::read(&artifact.path).unwrap();
+        let footer_reserved = bytes.len() - FOOTER_BYTES + 52;
+        bytes[footer_reserved] = 1;
+        write_all_at(&artifact_file(&artifact), &bytes, 0);
+        assert!(matches!(
+            artifact_source_error(&artifact),
+            ManagedSpillError::InvalidFormat { kind: "footer" }
+        ));
     }
 
     #[test]
@@ -2638,14 +2739,14 @@ mod tests {
             SourcePoll::Ready { .. }
         ));
         let offset = artifact.seal.artifact_bytes - 32;
-        write_all_at(&artifact_file(&artifact), &[0; 32], offset);
+        write_all_at(&artifact_file(&artifact), &[0; 4], offset);
         assert!(matches!(
             source.fill(1, &mut storage, SourceFillCancellation::new(&cancelled)),
             Err(ManagedSpillError::GlobalChecksumMismatch)
         ));
         write_all_at(
             &artifact_file(&artifact),
-            &artifact.seal.global_sha256,
+            &artifact.seal.global_crc32c.to_le_bytes(),
             offset,
         );
         assert!(matches!(
@@ -2659,7 +2760,7 @@ mod tests {
     }
 
     #[test]
-    fn published_window_frames_expose_the_reader_verified_payload_digest() {
+    fn published_window_frames_expose_the_reader_verified_payload_checksum() {
         let (_root, artifact) = sealed_two_frame_artifact();
         let mut source = artifact.block_source(1).expect("block source");
         let cancelled = AtomicBool::new(false);
@@ -2674,8 +2775,8 @@ mod tests {
         assert_eq!(frames.len(), 1);
         for frame in frames {
             assert_eq!(
-                frame.verified_payload_sha256(),
-                <[u8; 32]>::from(Sha256::digest(frame.payload()))
+                frame.verified_payload_crc32c(),
+                crc32c::crc32c(frame.payload())
             );
         }
     }
@@ -2690,8 +2791,8 @@ mod tests {
             record_count: 7,
             transferred_bytes: 512,
             operations: 4,
-            sha256_bytes: 700,
-            sha256_calls: 4,
+            checksum_bytes: 700,
+            checksum_calls: 4,
             peak_buffer_bytes: 96,
             payload_copy_bytes: 0,
             payload_copy_operations: 0,
@@ -2704,8 +2805,8 @@ mod tests {
             record_count: 5,
             transferred_bytes: 256,
             operations: 2,
-            sha256_bytes: 400,
-            sha256_calls: 3,
+            checksum_bytes: 400,
+            checksum_calls: 3,
             peak_buffer_bytes: 128,
             buffer_allocations: 1,
             buffer_reuses: 2,
@@ -2720,8 +2821,8 @@ mod tests {
         assert_eq!(aggregate.record_count(), 12);
         assert_eq!(aggregate.transferred_bytes(), 768);
         assert_eq!(aggregate.operations(), 6);
-        assert_eq!(aggregate.sha256_bytes(), 1_100);
-        assert_eq!(aggregate.sha256_calls(), 7);
+        assert_eq!(aggregate.checksum_bytes(), 1_100);
+        assert_eq!(aggregate.checksum_calls(), 7);
         assert_eq!(aggregate.peak_buffer_bytes(), 128);
         assert_eq!(aggregate.buffer_allocations(), 3);
         assert_eq!(aggregate.buffer_reuses(), 3);
@@ -2817,9 +2918,11 @@ mod tests {
         let mut writer = ManagedSpillWriter::create(&storage, budget(TEST_CAPACITY_BYTES))
             .expect("artifact writer");
         writer
-            .append_frame(0, 2, b"first-frame")
+            .append_frame(0, 2, b"first-frame", crc32c::crc32c(b"first-frame"))
             .expect("first frame");
-        writer.append_frame(1, 1, b"second").expect("second frame");
+        writer
+            .append_frame(1, 1, b"second", crc32c::crc32c(b"second"))
+            .expect("second frame");
         let artifact = writer.seal().expect("sealed artifact");
         (root, artifact)
     }
@@ -2831,8 +2934,9 @@ mod tests {
         let mut writer =
             ManagedSpillWriter::create(&storage, budget(capacity)).expect("artifact writer");
         for sequence in 0..frame_count {
+            let payload = [sequence as u8];
             writer
-                .append_frame(sequence, 1, &[sequence as u8])
+                .append_frame(sequence, 1, &payload, crc32c::crc32c(&payload))
                 .expect("numbered frame");
         }
         let artifact = writer.seal().expect("sealed numbered artifact");
@@ -2847,12 +2951,14 @@ mod tests {
             .expect("heterogeneous artifact budget");
         let mut writer =
             ManagedSpillWriter::create(&storage, artifact_budget).expect("artifact writer");
+        let large = [0; 3_200];
         writer
-            .append_frame(0, 100, &[0; 3_200])
+            .append_frame(0, 100, &large, crc32c::crc32c(&large))
             .expect("large frame");
         for sequence in 1..5 {
+            let payload = [sequence as u8; 32];
             writer
-                .append_frame(sequence, 1, &[sequence as u8; 32])
+                .append_frame(sequence, 1, &payload, crc32c::crc32c(&payload))
                 .expect("small frame");
         }
         let artifact = writer.seal().expect("sealed heterogeneous artifact");
@@ -3006,7 +3112,7 @@ mod tests {
         assert_eq!(seal.frame_count(), 2);
         assert_eq!(seal.record_count(), 3);
         assert_eq!(seal.payload_bytes(), 17);
-        assert_ne!(seal.global_sha256(), [0; 32]);
+        assert_ne!(seal.global_crc32c(), 0);
         let expected_artifact_bytes =
             (FILE_HEADER_BYTES + 2 * FRAME_HEADER_BYTES + 17 + FOOTER_BYTES) as u64;
         assert_eq!(seal.artifact_bytes(), expected_artifact_bytes);
@@ -3022,14 +3128,14 @@ mod tests {
         #[cfg(not(target_os = "linux"))]
         let expected_write_operations = 4;
         assert_eq!(write.operations(), expected_write_operations);
-        assert_eq!(write.sha256_calls(), 3);
+        assert_eq!(write.checksum_calls(), 3);
         assert_eq!(write.payload_copy_bytes(), 17);
         assert_eq!(write.payload_copy_operations(), 2);
         assert_eq!(write.buffer_allocations(), 1);
         assert_eq!(write.buffer_reuses(), 1);
         assert_eq!(
-            write.sha256_bytes(),
-            expected_artifact_bytes - FOOTER_BYTES as u64
+            write.checksum_bytes(),
+            write.artifact_bytes() - FOOTER_BYTES as u64 - 17
         );
         assert_eq!(
             write.peak_buffer_bytes(),
@@ -3063,8 +3169,15 @@ mod tests {
         #[cfg(not(target_os = "linux"))]
         let expected_read_operations = 10;
         assert_eq!(read.operations(), expected_read_operations);
-        assert_eq!(read.sha256_calls(), 3);
-        assert_eq!(read.sha256_bytes(), write.sha256_bytes());
+        assert_eq!(read.checksum_calls(), 5);
+        assert_eq!(
+            read.checksum_bytes(),
+            expected_artifact_bytes - FOOTER_BYTES as u64
+        );
+        assert_eq!(
+            read.checksum_bytes() - read.payload_bytes(),
+            write.checksum_bytes()
+        );
         assert_eq!(read.peak_buffer_bytes(), write.peak_buffer_bytes());
         assert_eq!(read.payload_copy_bytes(), 0);
         assert_eq!(read.payload_copy_operations(), 0);
@@ -3140,7 +3253,7 @@ mod tests {
         let (_root, empty) = sealed_numbered_artifact(0);
         write_all_at(
             &artifact_file(&empty),
-            &[0xff; 32],
+            &[0xff; 4],
             (FILE_HEADER_BYTES + 48) as u64,
         );
         assert!(matches!(
@@ -3188,8 +3301,8 @@ mod tests {
         );
         let replay = outcome.source_completion.measurements();
         assert_eq!(replay.io_measurement().actual(), Some((0, 0)));
-        assert_eq!(replay.sha256_bytes(), 0);
-        assert_eq!(replay.sha256_calls(), 0);
+        assert_eq!(replay.checksum_bytes(), 0);
+        assert_eq!(replay.checksum_calls(), 0);
         assert_eq!(replay.payload_copy_bytes(), 0);
         assert_eq!(replay.payload_copy_operations(), 0);
         assert_eq!(replay.peak_buffer_bytes(), retained_bytes);
@@ -3273,7 +3386,7 @@ mod tests {
         ));
         let mut first = None;
         for _ in 0..3 {
-            take_hash_input_bytes();
+            take_checksum_input();
             let values = read(&mut cached);
             assert_eq!(first.get_or_insert_with(|| values.clone()), &values);
             let (next, completion) = cached.complete_rewound().unwrap();
@@ -3282,9 +3395,9 @@ mod tests {
                 Some((0, 0))
             );
             assert_eq!(completion.measurements().payload_copy_bytes(), 0);
-            assert_eq!(completion.measurements().sha256_bytes(), 0);
-            assert_eq!(completion.measurements().sha256_calls(), 0);
-            assert_eq!(take_hash_input_bytes(), (0, 0));
+            assert_eq!(completion.measurements().checksum_bytes(), 0);
+            assert_eq!(completion.measurements().checksum_calls(), 0);
+            assert_eq!(take_checksum_input(), (0, 0, 0, 0));
             cached = next;
         }
     }
@@ -3657,7 +3770,7 @@ mod tests {
             .expect("artifact writer");
         let oversized = vec![0; TEST_FRAME_PAYLOAD_BYTES + 1];
         assert!(matches!(
-            writer.append_frame(0, 1, &oversized),
+            writer.append_frame(0, 1, &oversized, crc32c::crc32c(&oversized)),
             Err(ManagedSpillError::FramePayloadTooLarge { .. })
         ));
         assert!(matches!(
@@ -3676,12 +3789,13 @@ mod tests {
         let (_authority, storage) = test_authority(root.path(), minimum_capacity);
         let mut writer = ManagedSpillWriter::create(&storage, budget(minimum_capacity))
             .expect("capacity-bounded writer");
+        let maximum = [7; TEST_FRAME_PAYLOAD_BYTES];
         writer
-            .append_frame(0, 4, &[7; TEST_FRAME_PAYLOAD_BYTES])
+            .append_frame(0, 4, &maximum, crc32c::crc32c(&maximum))
             .expect("one maximum frame fits exactly");
         let bytes_before_rejection = writer.bytes_written;
         assert!(matches!(
-            writer.append_frame(1, 1, &[8]),
+            writer.append_frame(1, 1, &[8], crc32c::crc32c(&[8])),
             Err(ManagedSpillError::ArtifactCapacityExceeded { .. })
         ));
         assert_eq!(writer.bytes_written, bytes_before_rejection);
