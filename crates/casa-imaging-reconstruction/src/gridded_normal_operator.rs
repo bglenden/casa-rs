@@ -2592,7 +2592,7 @@ impl GriddedNormalOperatorApply {
                             .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
                     )
                     .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-                validate_encoded_block(descriptor, encoded, self.program.record_bytes())?;
+                validate_encoded_block(descriptor, encoded, self.program.record_bytes(), None)?;
                 let (routed, predictions, prediction_records) = {
                     let block = prepared
                         .blocks
@@ -2689,7 +2689,7 @@ impl GriddedNormalOperatorApply {
                     .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
             )
             .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-        validate_encoded_block(descriptor, encoded, self.program.record_bytes())?;
+        validate_encoded_block(descriptor, encoded, self.program.record_bytes(), None)?;
         self.sector_window_partition(sequence, 1, local_ordinal)
     }
 
@@ -3836,18 +3836,26 @@ fn decode_tap_key(
     Ok(taps)
 }
 
+/// Bind one borrowed encoded frame to its program descriptor.
+///
+/// `verified_payload_sha256` is the payload digest that the private spill
+/// reader already checked against the frame header of the same read session,
+/// so replay need not hash the borrowed bytes a second time; `None` hashes
+/// them here. Either way the payload length and digest must match the
+/// descriptor.
 fn validate_encoded_block(
     descriptor: &BlockDescriptor,
     encoded: &[u8],
     record_bytes: usize,
+    verified_payload_sha256: Option<[u8; 32]>,
 ) -> Result<(), SpectralOperatorError> {
     let expected_bytes = usize::try_from(descriptor.record_count)
         .ok()
         .and_then(|records| records.checked_mul(record_bytes))
         .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-    if encoded.len() != expected_bytes
-        || <[u8; 32]>::from(Sha256::digest(encoded)) != descriptor.digest
-    {
+    let payload_sha256 =
+        verified_payload_sha256.unwrap_or_else(|| <[u8; 32]>::from(Sha256::digest(encoded)));
+    if encoded.len() != expected_bytes || payload_sha256 != descriptor.digest {
         return Err(SpectralOperatorError::GriddedRecordMismatch);
     }
     Ok(())
@@ -4155,7 +4163,7 @@ mod tests {
             digest: Sha256::digest(&legacy_scalar).into(),
         };
         assert_eq!(
-            validate_encoded_block(&legacy_descriptor, &legacy_scalar, 32),
+            validate_encoded_block(&legacy_descriptor, &legacy_scalar, 32, None),
             Err(SpectralOperatorError::GriddedRecordMismatch),
             "domain-tagged scalar framing cannot collide with Taylor framing"
         );
@@ -4181,7 +4189,7 @@ mod tests {
             digest: Sha256::digest(&taylor).into(),
         };
         assert_eq!(
-            validate_encoded_block(&taylor_descriptor, &legacy_scalar, 32),
+            validate_encoded_block(&taylor_descriptor, &legacy_scalar, 32, None),
             Err(SpectralOperatorError::GriddedRecordMismatch),
             "a sealed Taylor descriptor rejects same-width legacy bytes before decode"
         );
@@ -4907,21 +4915,32 @@ mod tests {
             digest: Sha256::digest(&encoded).into(),
         };
         assert!(
-            validate_encoded_block(&descriptor, &encoded, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES)
-                .is_ok()
+            validate_encoded_block(
+                &descriptor,
+                &encoded,
+                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                None
+            )
+            .is_ok()
         );
         assert_eq!(
             validate_encoded_block(
                 &descriptor,
                 &encoded[..15],
-                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES
+                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                None
             ),
             Err(SpectralOperatorError::GriddedRecordMismatch)
         );
         let mut corrupt = encoded.to_vec();
         corrupt[0] ^= 1;
         assert_eq!(
-            validate_encoded_block(&descriptor, &corrupt, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES),
+            validate_encoded_block(
+                &descriptor,
+                &corrupt,
+                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                None
+            ),
             Err(SpectralOperatorError::GriddedRecordMismatch)
         );
 
@@ -4931,6 +4950,48 @@ mod tests {
         assert_eq!(
             decode_record(&reserved, geometry().grid_shape, 1),
             Err(SpectralOperatorError::InvalidGriddedRecord)
+        );
+    }
+
+    #[test]
+    fn reader_verified_payload_digest_binds_the_descriptor_without_rehashing() {
+        let gridder = StandardConvolution::new(&geometry());
+        let taps = gridder.taps([0.0, 0.0]).expect("central taps");
+        let (encoded, _) =
+            encode_reduced::<false>(scalar_groups([(taps, 1.0)])).expect("encode record");
+        let digest: [u8; 32] = Sha256::digest(&encoded).into();
+        let descriptor = BlockDescriptor {
+            record_count: 1,
+            digest,
+        };
+        assert!(
+            validate_encoded_block(
+                &descriptor,
+                &encoded,
+                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                Some(digest)
+            )
+            .is_ok()
+        );
+        let mut wrong = digest;
+        wrong[0] ^= 1;
+        assert_eq!(
+            validate_encoded_block(
+                &descriptor,
+                &encoded,
+                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                Some(wrong)
+            ),
+            Err(SpectralOperatorError::GriddedRecordMismatch)
+        );
+        assert_eq!(
+            validate_encoded_block(
+                &descriptor,
+                &encoded[..15],
+                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
+                Some(digest)
+            ),
+            Err(SpectralOperatorError::GriddedRecordMismatch)
         );
     }
 
