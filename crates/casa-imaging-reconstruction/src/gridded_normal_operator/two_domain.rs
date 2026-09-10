@@ -790,7 +790,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         output_channels: usize,
     ) -> Result<(), SpectralOperatorError>
     where
-        I: IntoIterator<Item = (u64, &'a [u8], Option<u32>)>,
+        I: IntoIterator<Item = (u64, &'a [u8], Option<[u8; 32]>)>,
     {
         if self.active_frames != 0 {
             return Err(SpectralOperatorError::BlockSequence);
@@ -810,7 +810,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.accumulation_record_count = 0;
 
         let prepared = (|| {
-            for (frame_ordinal, (sequence, encoded, verified_payload_crc32c)) in
+            for (frame_ordinal, (sequence, encoded, verified_payload_sha256)) in
                 frames.into_iter().enumerate()
             {
                 let frame_ordinal_u64 = u64::try_from(frame_ordinal)
@@ -831,7 +831,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
                     descriptor,
                     encoded,
                     self.record_bytes,
-                    verified_payload_crc32c,
+                    verified_payload_sha256,
                 )?;
                 let record_count = encoded.len() / self.record_bytes;
                 if record_count
@@ -1391,17 +1391,17 @@ impl GriddedNormalOperatorApply {
 
     /// Prepare one ordered frame window and return four prediction plus four grid lanes.
     ///
-    /// Each item carries the payload checksum already verified against the
+    /// Each item carries the payload digest already verified against the
     /// private spill frame header by the reader session that produced the
-    /// slice; replay then binds the descriptor without checksumming the payload
+    /// slice; replay then binds the descriptor without hashing the payload
     /// again. Pass `None` for a borrowed frame outside such a session and the
-    /// payload is checksummed here.
+    /// payload is hashed here.
     pub fn two_domain_window_partition_count<'a, I>(
         &self,
         frames: I,
     ) -> Result<usize, SpectralOperatorError>
     where
-        I: IntoIterator<Item = (u64, &'a [u8], Option<u32>)>,
+        I: IntoIterator<Item = (u64, &'a [u8], Option<[u8; 32]>)>,
     {
         if self.next_partition_commit != 0 {
             return Err(SpectralOperatorError::BlockSequence);

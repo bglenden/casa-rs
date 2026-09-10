@@ -18,7 +18,6 @@ workspace = true
 [dependencies]
 casa-imaging-model = { path = "../casa-imaging-model" }
 casa-numerics = { path = "../casa-numerics" }
-crc32c = "0.6"
 ndarray.workspace = true
 num-complex.workspace = true
 rustfft.workspace = true

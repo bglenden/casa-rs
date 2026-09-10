@@ -843,5 +843,3 @@ backend selection available.
 | 0009 | Mathematical imaging architecture | accepted |
 | 0010 | Unified imaging resource authority | accepted |
 | 0011 | Distinct sequential and joint continuum-line reconstruction | accepted |
-| 0012 | Current-only sparse profile contracts | accepted |
-| 0013 | Non-cryptographic integrity for private run-scoped spill artifacts | accepted |

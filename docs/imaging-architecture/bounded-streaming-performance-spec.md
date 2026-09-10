@@ -922,18 +922,16 @@ The artifact is sealed only after exhaustive first-pass completion and exact
 identity/count validation. Later major cycles traverse the bounded artifact,
 not the MS. A missing, truncated, corrupt, or mismatched artifact fails the
 run; there is no compatibility fallback. The format is private and run-scoped,
-not a persisted public cache contract, and uses versioned framing with
-non-cryptographic CRC32C payload and header-transcript checksums (ADR-0013).
-The vertical serial slice uses one scientific grid and bounded buffers—never
-one full grid per worker—and must delete the displaced later-major route in
-the same cutover.
+not a persisted public cache contract. The vertical serial slice uses one
+scientific grid and bounded buffers—never one full grid per worker—and must
+delete the displaced later-major route in the same cutover.
 
 This MFS artifact deliberately remains a deletion-owning named temporary file:
 the accepted plan closes the writer descriptor at seal and opens one bounded
 reader descriptor per later-major plan, which cannot be combined with an
 unlinked file on macOS. `TempPath` removes the private name when the final
 artifact owner drops it, and every reopen verifies the sealed device and inode
-before checking length, framing, and checksums (ADR-0013). The initial plan marks its one
+before checking length, framing, and hashes. The initial plan marks its one
 temporary-storage claim as artifact-retained; after successful seal and
 evidence, the scheduler transfers that exact permit from the plan's admitted
 lease into the sealed replay. Later plans bind the retained artifact by

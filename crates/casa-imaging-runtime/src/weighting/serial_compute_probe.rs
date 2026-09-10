@@ -84,15 +84,10 @@ const EXPECTED_NORMAL_STATE_IDENTITY: &str =
     "e6368112404a3ce2b3b3b9e988bde85dadd5726e09de8d87ca4499dc27a71b91";
 const EXPECTED_INITIAL_WEIGHTED_NORMAL_STATE_IDENTITY: &str =
     "29697a529f90bfa832a45461469fd7a20ddbb0688ec4f4cb52ec5ce816807f8a";
-// ADR-0013: descriptor identity no longer folds per-frame payload digests.
-// This pinned dataset identity requires regeneration on the next mounted
-// medium-dataset run.
 const EXPECTED_INITIAL_WEIGHTED_ARTIFACT_IDENTITY: &str =
     "e622ef9bd43c09136f8bd58953beaec608326232001a29c111bc405f71647404";
-// ADR-0013: the private spill seals a CRC32C header transcript instead of a
-// SHA-256 digest. This pinned dataset checksum requires regeneration on the
-// next mounted medium-dataset run.
-const EXPECTED_INITIAL_WEIGHTED_ARTIFACT_CHECKSUM: &str =
+// Independently reconstructed from the v2 file/frame-header transcript.
+const EXPECTED_INITIAL_WEIGHTED_ARTIFACT_SHA256: &str =
     "babf4d4db5b8ad181543460ba7a74f923a461dd7b38c70b3645c81195b717dd9";
 const EXPECTED_INITIAL_WEIGHTING_GENERATION: &str =
     "7c777736897881dc952ad18ec490d23f70351f8b78419ba0e960cb59c22e8808";
@@ -826,7 +821,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
         "sealed artifact and writer counters differ"
     );
     assert_eq!(seal.artifact_bytes(), write.artifact_bytes());
-    assert_ne!(seal.global_crc32c(), 0);
+    assert_ne!(seal.global_sha256(), [0; 32]);
     assert_eq!(write.frame_count(), compilation.frames);
     assert!(compilation.frames <= u64::try_from(admission.compiler.descriptor_capacity())?);
     assert_eq!(
@@ -840,7 +835,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     );
     assert_eq!(write.transferred_bytes(), write.artifact_bytes());
     assert_eq!(write.operations(), write.frame_count() + 2);
-    assert_eq!(write.checksum_calls(), write.frame_count() + 1);
+    assert_eq!(write.sha256_calls(), write.frame_count() + 1);
     assert_eq!(write.payload_copy_bytes(), write.payload_bytes());
     assert_eq!(
         write.payload_copy_operations(),
@@ -852,10 +847,8 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     assert_eq!(write.peak_buffer_bytes(), signature.io_buffer_bytes);
     assert!(write.artifact_bytes() <= signature.maximum_artifact_bytes);
     assert_eq!(
-        write.checksum_bytes(),
-        write.artifact_bytes()
-            - write.payload_bytes()
-            - admission.spill.serialization_buffer_bytes()
+        write.sha256_bytes(),
+        write.artifact_bytes() - admission.spill.serialization_buffer_bytes()
     );
     assert_eq!(
         [
@@ -883,7 +876,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
             signature.weighting_coverage.as_str(),
             signature.normal_state_identity.as_str(),
             signature.artifact_identity.as_str(),
-            checksum_hex(seal.global_crc32c()).as_str(),
+            sha256_hex(seal.global_sha256()).as_str(),
         ],
         [
             EXPECTED_INITIAL_WEIGHTING_GENERATION,
@@ -891,7 +884,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
             EXPECTED_INITIAL_WEIGHTING_COVERAGE,
             EXPECTED_INITIAL_WEIGHTED_NORMAL_STATE_IDENTITY,
             EXPECTED_INITIAL_WEIGHTED_ARTIFACT_IDENTITY,
-            EXPECTED_INITIAL_WEIGHTED_ARTIFACT_CHECKSUM,
+            EXPECTED_INITIAL_WEIGHTED_ARTIFACT_SHA256,
         ],
         "initial weighted scientific or artifact identity changed"
     );
@@ -1008,8 +1001,8 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
                 "weighting_coverage": signature.weighting_coverage,
                 "normal_state": signature.normal_state_identity,
                 "artifact": signature.artifact_identity,
-                "artifact_checksum": checksum_hex(seal.global_crc32c()),
-                "artifact_checksum_scheme": "managed-spill-v3/header-transcript-crc32c",
+                "artifact_sha256": sha256_hex(seal.global_sha256()),
+                "artifact_digest_scheme": "managed-spill-v2/header-transcript-sha256",
             },
             "residency": {
                 "weighting_peak_bytes": signature.weighting_residency_bytes,
@@ -1041,8 +1034,8 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
                 "records": write.record_count(),
                 "transferred_bytes": write.transferred_bytes(),
                 "operations": write.operations(),
-                "checksum_bytes": write.checksum_bytes(),
-                "checksum_calls": write.checksum_calls(),
+                "sha256_bytes": write.sha256_bytes(),
+                "sha256_calls": write.sha256_calls(),
                 "payload_copy_bytes": write.payload_copy_bytes(),
                 "payload_copy_operations": write.payload_copy_operations(),
                 "buffer_allocations": write.buffer_allocations(),
@@ -2119,6 +2112,6 @@ fn milliseconds(duration: Duration) -> f64 {
     duration.as_secs_f64() * 1_000.0
 }
 
-fn checksum_hex(checksum: u32) -> String {
-    format!("{checksum:08x}")
+fn sha256_hex(bytes: [u8; 32]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
