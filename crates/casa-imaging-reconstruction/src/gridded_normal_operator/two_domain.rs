@@ -564,8 +564,8 @@ impl GriddedNormalTileAccumulator {
             if offset.is_some_and(|offset| offset != 0) || values.capacity() != self.cell_capacity {
                 return Err(SpectralOperatorError::ResidencyOverflow);
             }
+            values.clear();
             values.resize(cells, Complex64::default());
-            values.fill(Complex64::default());
             *plane = Array2::from_shape_vec((shape[0], shape[1]), values)
                 .map_err(|_| SpectralOperatorError::UnsupportedGeometry)?;
         }
