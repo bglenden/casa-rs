@@ -57,6 +57,7 @@ tracing-subscriber = "0.3"
 
 [profile.release]
 lto = "thin"
+codegen-units = 1
 
 # Performance benchmarks compare Rust vs C++ (compiled optimized by cc::Build).
 # Without these overrides, Rust tests run at opt-level=0 (debug), producing
