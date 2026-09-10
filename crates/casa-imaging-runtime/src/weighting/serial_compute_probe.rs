@@ -835,7 +835,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     );
     assert_eq!(write.transferred_bytes(), write.artifact_bytes());
     assert_eq!(write.operations(), write.frame_count() + 2);
-    assert_eq!(write.sha256_calls(), 1);
+    assert_eq!(write.sha256_calls(), write.frame_count() + 1);
     assert_eq!(write.payload_copy_bytes(), write.payload_bytes());
     assert_eq!(
         write.payload_copy_operations(),
@@ -848,9 +848,7 @@ fn medium_vla_64ch_initial_weighted_construction_discriminator() -> Result<(), B
     assert!(write.artifact_bytes() <= signature.maximum_artifact_bytes);
     assert_eq!(
         write.sha256_bytes(),
-        write.artifact_bytes()
-            - admission.spill.serialization_buffer_bytes()
-            - write.payload_bytes()
+        write.artifact_bytes() - admission.spill.serialization_buffer_bytes()
     );
     assert_eq!(
         [
