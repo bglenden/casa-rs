@@ -1082,7 +1082,7 @@ mod tests {
     }
 
     #[test]
-    fn vla_l_and_q_bands_use_casa_annular_airy_lookup_and_other_bands_fail_closed() {
+    fn vla_q_band_uses_casa_annular_airy_lookup_and_other_bands_fail_closed() {
         let frequency_hz = 45_469_370_205.156_37;
         let table = super::vla_band_voltage_table(frequency_hz)
             .expect("issue #607 representative frequency is in VLA Q band");
@@ -1091,25 +1091,15 @@ mod tests {
         let voltage = table.evaluate(29.919_033_706_45);
         assert_eq!((voltage * voltage).to_bits(), 0x3e6d_1a6e);
 
-        // The L band shares the same CASA annular aperture inside its open
-        // 1--2 GHz interval.
-        let l_band = super::vla_band_voltage_table(1.5e9).expect("VLA L band is supported");
-        assert_eq!(l_band.maximum_radius(), table.maximum_radius());
-        assert_eq!(
-            l_band.evaluate(29.919_033_706_45).to_bits(),
-            table.evaluate(29.919_033_706_45).to_bits()
-        );
-
         for unsupported_hz in [
             f64::NAN,
-            55.0e9,
             35.0e9,
+            55.0e9,
             25.0e9,
             15.0e9,
             9.0e9,
             5.0e9,
-            2.0e9,
-            1.0e9,
+            1.5e9,
             0.3e9,
             0.05e9,
         ] {
