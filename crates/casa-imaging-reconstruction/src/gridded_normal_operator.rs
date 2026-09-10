@@ -14,7 +14,6 @@ use casa_imaging_model::{
 };
 use ndarray::Array2;
 use num_complex::Complex64;
-use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 
 mod bounded_records;
@@ -603,7 +602,7 @@ impl DecodedTaylorRecord<'_> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct BlockDescriptor {
     record_count: u64,
-    digest: [u8; 32],
+    payload_crc32c: u32,
 }
 
 /// Whether compilation should derive diagnostic source cardinality.
@@ -3227,7 +3226,7 @@ fn program_identity(
     encoder.usize(plan.frame_record_capacity);
     for descriptor in descriptors {
         encoder.u64(descriptor.record_count);
-        encoder.identity(descriptor.digest);
+        encoder.u32(descriptor.payload_crc32c);
     }
     LogicalIdentity::from_sha256(encoder.finish())
 }
@@ -3385,7 +3384,7 @@ fn reduce_groups<const OBSERVE_SOURCE_CARDINALITY: bool>(
 fn encode_and_checksum(
     groups: Vec<ReducedRecordGroup>,
     measurements: &mut GriddedNormalOperatorBlockMeasurements,
-) -> Result<(Box<[u8]>, [u8; 32]), SpectralOperatorError> {
+) -> Result<(Box<[u8]>, u32), SpectralOperatorError> {
     encode_and_checksum_mode(groups, false, measurements)
 }
 
@@ -3394,7 +3393,7 @@ fn encode_and_checksum_mode(
     groups: Vec<ReducedRecordGroup>,
     aw_projection: bool,
     measurements: &mut GriddedNormalOperatorBlockMeasurements,
-) -> Result<(Box<[u8]>, [u8; 32]), SpectralOperatorError> {
+) -> Result<(Box<[u8]>, u32), SpectralOperatorError> {
     let record_count = groups.iter().try_fold(0_usize, |total, group| {
         total
             .checked_add(group.records.len())
@@ -3496,8 +3495,8 @@ fn encode_and_checksum_mode(
     }
     measurements.encoded_buffer_bytes =
         u64::try_from(encoded.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-    let digest = Sha256::digest(&encoded).into();
-    Ok((encoded, digest))
+    let checksum = crc32c::crc32c(&encoded);
+    Ok((encoded, checksum))
 }
 
 fn valid_aw_coordinates(value: AwReplayCoordinates) -> bool {
@@ -3518,7 +3517,7 @@ fn encode_taylor_and_checksum(
     records: Vec<ReducedTaylorRecord>,
     plan: crate::block_normal::BlockNormalPlan,
     measurements: &mut GriddedNormalOperatorBlockMeasurements,
-) -> Result<(Box<[u8]>, [u8; 32]), SpectralOperatorError> {
+) -> Result<(Box<[u8]>, u32), SpectralOperatorError> {
     let record_bytes = GriddedNormalRecordLayout::Taylor(plan).record_bytes()?;
     let capacity = records
         .len()
@@ -3545,8 +3544,8 @@ fn encode_taylor_and_checksum(
     }
     measurements.encoded_buffer_bytes =
         u64::try_from(encoded.len()).map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
-    let digest = Sha256::digest(&encoded).into();
-    Ok((encoded, digest))
+    let checksum = crc32c::crc32c(&encoded);
+    Ok((encoded, checksum))
 }
 
 #[cfg(test)]
@@ -3838,24 +3837,26 @@ fn decode_tap_key(
 
 /// Bind one borrowed encoded frame to its program descriptor.
 ///
-/// `verified_payload_sha256` is the payload digest that the private spill
+/// `verified_payload_crc32c` is the payload checksum that the private spill
 /// reader already checked against the frame header of the same read session,
-/// so replay need not hash the borrowed bytes a second time; `None` hashes
-/// them here. Either way the payload length and digest must match the
-/// descriptor.
+/// so replay need not checksum the borrowed bytes a second time; `None`
+/// checksums them here. Either way the payload length and checksum must match
+/// the descriptor.
 fn validate_encoded_block(
     descriptor: &BlockDescriptor,
     encoded: &[u8],
     record_bytes: usize,
-    verified_payload_sha256: Option<[u8; 32]>,
+    verified_payload_crc32c: Option<u32>,
 ) -> Result<(), SpectralOperatorError> {
     let expected_bytes = usize::try_from(descriptor.record_count)
         .ok()
         .and_then(|records| records.checked_mul(record_bytes))
         .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-    let payload_sha256 =
-        verified_payload_sha256.unwrap_or_else(|| <[u8; 32]>::from(Sha256::digest(encoded)));
-    if encoded.len() != expected_bytes || payload_sha256 != descriptor.digest {
+    if encoded.len() != expected_bytes {
+        return Err(SpectralOperatorError::GriddedRecordMismatch);
+    }
+    let payload_crc32c = verified_payload_crc32c.unwrap_or_else(|| crc32c::crc32c(encoded));
+    if payload_crc32c != descriptor.payload_crc32c {
         return Err(SpectralOperatorError::GriddedRecordMismatch);
     }
     Ok(())
@@ -4160,7 +4161,7 @@ mod tests {
         assert_ne!(legacy_scalar.len(), layout.record_bytes().unwrap());
         let legacy_descriptor = BlockDescriptor {
             record_count: 1,
-            digest: Sha256::digest(&legacy_scalar).into(),
+            payload_crc32c: crc32c::crc32c(&legacy_scalar),
         };
         assert_eq!(
             validate_encoded_block(&legacy_descriptor, &legacy_scalar, 32, None),
@@ -4186,7 +4187,7 @@ mod tests {
         .unwrap();
         let taylor_descriptor = BlockDescriptor {
             record_count: 1,
-            digest: Sha256::digest(&taylor).into(),
+            payload_crc32c: crc32c::crc32c(&taylor),
         };
         assert_eq!(
             validate_encoded_block(&taylor_descriptor, &legacy_scalar, 32, None),
@@ -4912,7 +4913,7 @@ mod tests {
             encode_reduced::<false>(scalar_groups([(taps, 1.0)])).expect("encode record");
         let descriptor = BlockDescriptor {
             record_count: 1,
-            digest: Sha256::digest(&encoded).into(),
+            payload_crc32c: crc32c::crc32c(&encoded),
         };
         assert!(
             validate_encoded_block(
@@ -4954,27 +4955,26 @@ mod tests {
     }
 
     #[test]
-    fn reader_verified_payload_digest_binds_the_descriptor_without_rehashing() {
+    fn reader_verified_payload_checksum_binds_the_descriptor_without_rechecksumming() {
         let gridder = StandardConvolution::new(&geometry());
         let taps = gridder.taps([0.0, 0.0]).expect("central taps");
         let (encoded, _) =
             encode_reduced::<false>(scalar_groups([(taps, 1.0)])).expect("encode record");
-        let digest: [u8; 32] = Sha256::digest(&encoded).into();
+        let checksum = crc32c::crc32c(&encoded);
         let descriptor = BlockDescriptor {
             record_count: 1,
-            digest,
+            payload_crc32c: checksum,
         };
         assert!(
             validate_encoded_block(
                 &descriptor,
                 &encoded,
                 GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-                Some(digest)
+                Some(checksum)
             )
             .is_ok()
         );
-        let mut wrong = digest;
-        wrong[0] ^= 1;
+        let wrong = checksum ^ 1;
         assert_eq!(
             validate_encoded_block(
                 &descriptor,
@@ -4989,7 +4989,7 @@ mod tests {
                 &descriptor,
                 &encoded[..15],
                 GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-                Some(digest)
+                Some(checksum)
             ),
             Err(SpectralOperatorError::GriddedRecordMismatch)
         );

@@ -343,6 +343,7 @@ pub struct GriddedNormalOperatorFrame<'a> {
     sequence: u64,
     record_count: u64,
     encoded: &'a [u8],
+    payload_crc32c: u32,
 }
 
 impl<'a> GriddedNormalOperatorFrame<'a> {
@@ -360,6 +361,11 @@ impl<'a> GriddedNormalOperatorFrame<'a> {
     #[must_use]
     pub const fn encoded_bytes(self) -> &'a [u8] {
         self.encoded
+    }
+    /// Return the checksum of the borrowed encoding computed by the compiler.
+    #[must_use]
+    pub const fn payload_crc32c(self) -> u32 {
+        self.payload_crc32c
     }
 }
 
@@ -515,7 +521,7 @@ impl FrameLedger {
             .checked_add(record_count)
             .ok_or(SpectralOperatorError::CoverageOverflow)?;
         let started = self.observe.then(Instant::now);
-        let digest = Sha256::digest(encoded).into();
+        let payload_crc32c = crc32c::crc32c(encoded);
         if let Some(started) = started {
             self.checksum_time += started.elapsed();
         }
@@ -524,13 +530,14 @@ impl FrameLedger {
             sequence: self.descriptors.length as u64,
             record_count,
             encoded,
+            payload_crc32c,
         })?;
         if let Some(started) = started {
             self.sink_time += started.elapsed();
         }
         self.descriptors.storage[self.descriptors.length] = BlockDescriptor {
             record_count,
-            digest,
+            payload_crc32c,
         };
         self.descriptors.length += 1;
         self.record_count = total_records;
@@ -599,7 +606,11 @@ mod tests {
             (correlations, usize::MAX, atom, 4096, 72),
             (correlations, atom, usize::MAX, 4096, 72),
             (correlations, atom, atom, 4096, usize::MAX),
-            (correlations, atom, atom, u64::MAX, 1),
+            // The former u64::MAX-ceiling row overflowed descriptor accounting
+            // only because a digest-bearing descriptor was 40 bytes. With the
+            // 32-bit checksum descriptor the ceiling is representable, so the
+            // remaining arithmetic rejection is the source-sample ceiling.
+            (usize::MAX, atom, atom, 4096, 72),
         ] {
             assert!(
                 matches!(
@@ -616,6 +627,10 @@ mod tests {
                 "accepted B={block} U={raw} R={frame} S={storage} h={header}"
             );
         }
+        let largest =
+            GriddedNormalCompilationPlan::new(problem(), correlations, atom, atom, u64::MAX, 1)
+                .expect("the largest representable artifact ceiling is admissible");
+        assert!(largest.descriptor_capacity() > 0);
         let minimum = GriddedNormalCompilationPlan::new(problem(), correlations, atom, atom, 1, 1)
             .expect("minimum atom and correlation capacities are admissible");
         assert_eq!(minimum.raw_record_capacity(), atom);

@@ -944,6 +944,7 @@ fn spill_frame_sink<'a>(
                     frame.sequence(),
                     frame.record_count(),
                     frame.encoded_bytes(),
+                    frame.payload_crc32c(),
                 )
                 .map(|measured| {
                     timings.encoding_checksum += measured.encoding_checksum;
@@ -956,6 +957,7 @@ fn spill_frame_sink<'a>(
                 frame.sequence(),
                 frame.record_count(),
                 frame.encoded_bytes(),
+                frame.payload_crc32c(),
             )
         };
         #[cfg(not(test))]
@@ -963,6 +965,7 @@ fn spill_frame_sink<'a>(
             frame.sequence(),
             frame.record_count(),
             frame.encoded_bytes(),
+            frame.payload_crc32c(),
         );
         result.map_err(|failure| {
             *error = Some(io::Error::other(failure));
@@ -1801,7 +1804,7 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
                 (
                     frame.sequence(),
                     frame.payload(),
-                    Some(frame.verified_payload_sha256()),
+                    Some(frame.verified_payload_crc32c()),
                 )
             }))
             .map_err(CompleteDataOperatorError::Owner)
