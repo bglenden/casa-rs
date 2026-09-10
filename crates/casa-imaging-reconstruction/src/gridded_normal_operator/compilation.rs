@@ -343,6 +343,7 @@ pub struct GriddedNormalOperatorFrame<'a> {
     sequence: u64,
     record_count: u64,
     encoded: &'a [u8],
+    payload_sha256: &'a [u8; 32],
 }
 
 impl<'a> GriddedNormalOperatorFrame<'a> {
@@ -360,6 +361,15 @@ impl<'a> GriddedNormalOperatorFrame<'a> {
     #[must_use]
     pub const fn encoded_bytes(self) -> &'a [u8] {
         self.encoded
+    }
+
+    /// Borrow the compiler's SHA-256 of these exact immutable encoded bytes.
+    ///
+    /// The checksum and payload share the synchronous sink-call lifetime. A
+    /// storage sink can reuse this checksum without hashing the payload again.
+    #[must_use]
+    pub const fn payload_sha256(self) -> &'a [u8; 32] {
+        self.payload_sha256
     }
 }
 
@@ -524,6 +534,7 @@ impl FrameLedger {
             sequence: self.descriptors.length as u64,
             record_count,
             encoded,
+            payload_sha256: &digest,
         })?;
         if let Some(started) = started {
             self.sink_time += started.elapsed();
@@ -675,6 +686,8 @@ mod tests {
                 CompilationFrames::new(plan, layout, false, false).expect("fixed frame workspace");
             let mut emitted = Vec::new();
             let mut sink = |frame: GriddedNormalOperatorFrame<'_>| {
+                let expected: [u8; 32] = Sha256::digest(frame.encoded_bytes()).into();
+                assert_eq!(*frame.payload_sha256(), expected);
                 emitted.push((
                     frame.sequence(),
                     frame.record_count(),

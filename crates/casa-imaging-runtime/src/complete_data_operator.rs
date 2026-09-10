@@ -939,31 +939,17 @@ fn spill_frame_sink<'a>(
     move |frame| {
         #[cfg(test)]
         let result = if let Some(timings) = timings.as_deref_mut() {
-            writer
-                .append_frame_observed(
-                    frame.sequence(),
-                    frame.record_count(),
-                    frame.encoded_bytes(),
-                )
-                .map(|measured| {
-                    timings.encoding_checksum += measured.encoding_checksum;
-                    timings.payload_movement += measured.payload_movement;
-                    timings.artifact_writes += measured.artifact_writes;
-                    timings.completion += measured.completion;
-                })
+            writer.append_frame_observed(frame).map(|measured| {
+                timings.encoding_checksum += measured.encoding_checksum;
+                timings.payload_movement += measured.payload_movement;
+                timings.artifact_writes += measured.artifact_writes;
+                timings.completion += measured.completion;
+            })
         } else {
-            writer.append_frame(
-                frame.sequence(),
-                frame.record_count(),
-                frame.encoded_bytes(),
-            )
+            writer.append_frame(frame)
         };
         #[cfg(not(test))]
-        let result = writer.append_frame(
-            frame.sequence(),
-            frame.record_count(),
-            frame.encoded_bytes(),
-        );
+        let result = writer.append_frame(frame);
         result.map_err(|failure| {
             *error = Some(io::Error::other(failure));
             SpectralOperatorError::GriddedFrameSink

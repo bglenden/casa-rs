@@ -10,6 +10,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+use casa_imaging_reconstruction::runtime_adapter::GriddedNormalOperatorFrame;
 use sha2::Digest;
 #[cfg(not(test))]
 use sha2::Sha256;
@@ -744,14 +745,27 @@ impl ManagedSpillWriter {
 
     pub(crate) fn append_frame(
         &mut self,
+        frame: GriddedNormalOperatorFrame<'_>,
+    ) -> Result<(), ManagedSpillError> {
+        self.append_frame_parts(
+            frame.sequence(),
+            frame.record_count(),
+            frame.encoded_bytes(),
+            *frame.payload_sha256(),
+        )
+    }
+
+    fn append_frame_parts(
+        &mut self,
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_sha256: [u8; 32],
     ) -> Result<(), ManagedSpillError> {
         if self.poisoned {
             return Err(ManagedSpillError::WriterPoisoned);
         }
-        let result = self.append_frame_inner(sequence, record_count, payload);
+        let result = self.append_frame_inner(sequence, record_count, payload, payload_sha256);
         if result.is_err() {
             self.poisoned = true;
         }
@@ -760,14 +774,28 @@ impl ManagedSpillWriter {
 
     pub(crate) fn append_frame_observed(
         &mut self,
+        frame: GriddedNormalOperatorFrame<'_>,
+    ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
+        self.append_frame_observed_parts(
+            frame.sequence(),
+            frame.record_count(),
+            frame.encoded_bytes(),
+            *frame.payload_sha256(),
+        )
+    }
+
+    fn append_frame_observed_parts(
+        &mut self,
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_sha256: [u8; 32],
     ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
         if self.poisoned {
             return Err(ManagedSpillError::WriterPoisoned);
         }
-        let result = self.append_frame_observed_inner(sequence, record_count, payload);
+        let result =
+            self.append_frame_observed_inner(sequence, record_count, payload, payload_sha256);
         if result.is_err() {
             self.poisoned = true;
         }
@@ -783,8 +811,8 @@ impl ManagedSpillWriter {
             record_count: self.record_count,
             transferred_bytes: self.bytes_written,
             operations: self.write_operations,
-            sha256_bytes: self.bytes_written,
-            sha256_calls: self.frame_count,
+            sha256_bytes: self.bytes_written.saturating_sub(self.payload_bytes),
+            sha256_calls: 0,
             peak_buffer_bytes: self.budget.io_buffer_bytes,
             payload_copy_bytes: self.payload_bytes,
             payload_copy_operations: self.payload_copy_operations,
@@ -798,8 +826,9 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_sha256: [u8; 32],
     ) -> Result<(), ManagedSpillError> {
-        let prepared = self.prepare_frame(sequence, record_count, payload)?;
+        let prepared = self.prepare_frame(sequence, record_count, payload, payload_sha256)?;
         self.copy_frame_payload(&prepared, payload);
         self.write_prepared_frame(&prepared)?;
         self.commit_prepared_frame(&prepared);
@@ -811,10 +840,11 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_sha256: [u8; 32],
     ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
         let mut timings = ManagedSpillStageTimings::default();
         let started = Instant::now();
-        let prepared = self.prepare_frame(sequence, record_count, payload)?;
+        let prepared = self.prepare_frame(sequence, record_count, payload, payload_sha256)?;
         timings.encoding_checksum = started.elapsed();
         let started = Instant::now();
         self.copy_frame_payload(&prepared, payload);
@@ -833,6 +863,7 @@ impl ManagedSpillWriter {
         sequence: u64,
         record_count: u64,
         payload: &[u8],
+        payload_sha256: [u8; 32],
     ) -> Result<PreparedFrame, ManagedSpillError> {
         if sequence != self.frame_count {
             return Err(ManagedSpillError::WriterSequenceMismatch {
@@ -883,7 +914,6 @@ impl ManagedSpillWriter {
                 capacity: self.budget.maximum_artifact_bytes,
             });
         }
-        let payload_sha256: [u8; 32] = Sha256::digest(payload).into();
         let header = encode_frame_header(sequence, record_count, payload_bytes, payload_sha256);
         let encoded_bytes = FRAME_HEADER_BYTES.checked_add(payload.len()).ok_or(
             ManagedSpillError::ArithmeticOverflow("encoded frame buffer bytes"),
@@ -973,15 +1003,14 @@ impl ManagedSpillWriter {
                 actual: actual_bytes,
             });
         }
-        let sha256_bytes = self.bytes_written.checked_sub(footer_bytes).ok_or(
-            ManagedSpillError::ArithmeticOverflow("artifact checksum bytes"),
-        )?;
-        let sha256_calls =
-            self.frame_count
-                .checked_add(1)
-                .ok_or(ManagedSpillError::ArithmeticOverflow(
-                    "artifact checksum calls",
-                ))?;
+        let sha256_bytes = self
+            .bytes_written
+            .checked_sub(footer_bytes)
+            .and_then(|bytes| bytes.checked_sub(self.payload_bytes))
+            .ok_or(ManagedSpillError::ArithmeticOverflow(
+                "artifact checksum bytes",
+            ))?;
+        let sha256_calls = 1;
         let seal = ManagedSpillSeal {
             frame_count: self.frame_count,
             record_count: self.record_count,
@@ -2383,6 +2412,28 @@ mod tests {
     const TEST_CAPACITY_BYTES: u64 = 4_096;
     const TEST_FRAME_PAYLOAD_BYTES: usize = 64;
 
+    impl ManagedSpillWriter {
+        fn append_test_frame(
+            &mut self,
+            sequence: u64,
+            records: u64,
+            payload: &[u8],
+        ) -> Result<(), ManagedSpillError> {
+            let digest = Sha256::digest(payload).into();
+            self.append_frame_parts(sequence, records, payload, digest)
+        }
+
+        fn append_test_frame_observed(
+            &mut self,
+            sequence: u64,
+            records: u64,
+            payload: &[u8],
+        ) -> Result<ManagedSpillStageTimings, ManagedSpillError> {
+            let digest = Sha256::digest(payload).into();
+            self.append_frame_observed_parts(sequence, records, payload, digest)
+        }
+    }
+
     thread_local! {
         static HASH_INPUT_BYTES: Cell<(usize, usize)> = const { Cell::new((0, 0)) };
     }
@@ -2466,7 +2517,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_hashes_each_payload_once_and_only_headers_globally() {
+    fn v2_reuses_producer_payload_hashes_and_only_hashes_headers_when_writing() {
         let root = tempfile::tempdir().unwrap();
         let (_, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
         for observed in [false, true] {
@@ -2481,22 +2532,28 @@ mod tests {
                 for (sequence, payload) in payloads.iter().enumerate() {
                     if observed {
                         writer
-                            .append_frame_observed(sequence as u64, sequence as u64 + 1, payload)
+                            .append_test_frame_observed(
+                                sequence as u64,
+                                sequence as u64 + 1,
+                                payload,
+                            )
                             .unwrap();
                     } else {
                         writer
-                            .append_frame(sequence as u64, sequence as u64 + 1, payload)
+                            .append_test_frame(sequence as u64, sequence as u64 + 1, payload)
                             .unwrap();
                     }
                 }
                 let payload_bytes = payloads.iter().map(|p| p.len()).sum::<usize>();
                 let expected = (payload_bytes, 16 + 72 * payloads.len());
-                assert_eq!(
-                    writer.measurements().sha256_bytes(),
-                    (expected.0 + expected.1) as u64
-                );
+                assert_eq!(writer.measurements().sha256_bytes(), expected.1 as u64);
                 let artifact = writer.seal().unwrap();
                 assert_eq!(take_hash_input_bytes(), expected);
+                assert_eq!(
+                    artifact.write_measurements().sha256_bytes(),
+                    expected.1 as u64
+                );
+                assert_eq!(artifact.write_measurements().sha256_calls(), 1);
                 let bytes = std::fs::read(&artifact.path).unwrap();
                 assert_eq!(&bytes[8..12], &2_u32.to_le_bytes());
                 let digest = transcript_digest(&bytes);
@@ -2782,9 +2839,11 @@ mod tests {
         let mut writer = ManagedSpillWriter::create(&storage, budget(TEST_CAPACITY_BYTES))
             .expect("artifact writer");
         writer
-            .append_frame(0, 2, b"first-frame")
+            .append_test_frame(0, 2, b"first-frame")
             .expect("first frame");
-        writer.append_frame(1, 1, b"second").expect("second frame");
+        writer
+            .append_test_frame(1, 1, b"second")
+            .expect("second frame");
         let artifact = writer.seal().expect("sealed artifact");
         (root, artifact)
     }
@@ -2797,7 +2856,7 @@ mod tests {
             ManagedSpillWriter::create(&storage, budget(capacity)).expect("artifact writer");
         for sequence in 0..frame_count {
             writer
-                .append_frame(sequence, 1, &[sequence as u8])
+                .append_test_frame(sequence, 1, &[sequence as u8])
                 .expect("numbered frame");
         }
         let artifact = writer.seal().expect("sealed numbered artifact");
@@ -2813,11 +2872,11 @@ mod tests {
         let mut writer =
             ManagedSpillWriter::create(&storage, artifact_budget).expect("artifact writer");
         writer
-            .append_frame(0, 100, &[0; 3_200])
+            .append_test_frame(0, 100, &[0; 3_200])
             .expect("large frame");
         for sequence in 1..5 {
             writer
-                .append_frame(sequence, 1, &[sequence as u8; 32])
+                .append_test_frame(sequence, 1, &[sequence as u8; 32])
                 .expect("small frame");
         }
         let artifact = writer.seal().expect("sealed heterogeneous artifact");
@@ -2987,14 +3046,14 @@ mod tests {
         #[cfg(not(target_os = "linux"))]
         let expected_write_operations = 4;
         assert_eq!(write.operations(), expected_write_operations);
-        assert_eq!(write.sha256_calls(), 3);
+        assert_eq!(write.sha256_calls(), 1);
         assert_eq!(write.payload_copy_bytes(), 17);
         assert_eq!(write.payload_copy_operations(), 2);
         assert_eq!(write.buffer_allocations(), 1);
         assert_eq!(write.buffer_reuses(), 1);
         assert_eq!(
             write.sha256_bytes(),
-            expected_artifact_bytes - FOOTER_BYTES as u64
+            expected_artifact_bytes - FOOTER_BYTES as u64 - 17
         );
         assert_eq!(
             write.peak_buffer_bytes(),
@@ -3029,7 +3088,7 @@ mod tests {
         let expected_read_operations = 10;
         assert_eq!(read.operations(), expected_read_operations);
         assert_eq!(read.sha256_calls(), 3);
-        assert_eq!(read.sha256_bytes(), write.sha256_bytes());
+        assert_eq!(read.sha256_bytes(), write.sha256_bytes() + 17);
         assert_eq!(read.peak_buffer_bytes(), write.peak_buffer_bytes());
         assert_eq!(read.payload_copy_bytes(), 0);
         assert_eq!(read.payload_copy_operations(), 0);
@@ -3622,7 +3681,7 @@ mod tests {
             .expect("artifact writer");
         let oversized = vec![0; TEST_FRAME_PAYLOAD_BYTES + 1];
         assert!(matches!(
-            writer.append_frame(0, 1, &oversized),
+            writer.append_test_frame(0, 1, &oversized),
             Err(ManagedSpillError::FramePayloadTooLarge { .. })
         ));
         assert!(matches!(
@@ -3642,11 +3701,11 @@ mod tests {
         let mut writer = ManagedSpillWriter::create(&storage, budget(minimum_capacity))
             .expect("capacity-bounded writer");
         writer
-            .append_frame(0, 4, &[7; TEST_FRAME_PAYLOAD_BYTES])
+            .append_test_frame(0, 4, &[7; TEST_FRAME_PAYLOAD_BYTES])
             .expect("one maximum frame fits exactly");
         let bytes_before_rejection = writer.bytes_written;
         assert!(matches!(
-            writer.append_frame(1, 1, &[8]),
+            writer.append_test_frame(1, 1, &[8]),
             Err(ManagedSpillError::ArtifactCapacityExceeded { .. })
         ));
         assert_eq!(writer.bytes_written, bytes_before_rejection);
