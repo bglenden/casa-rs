@@ -57,7 +57,7 @@ ACCEPTED_MATRIX_ROWS_SHA256 = (
     "1e6e924803b005cbcd7d4d3bc0b456e90705cf1516b2c37d2a7efe642e860ed0"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "bac64f31e1f094a27b25d685246dfcdec9f3af9d68eec350dbe33e7a8e6451c8"
+    "fc59390187671ab5edb7606ac1b362ca451c429434d92d612cd1463203d09381"
 )
 ACCEPTED_MATRIX_CONTRACT_REVISION = 88
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
@@ -1926,6 +1926,7 @@ def validate_t18_global_weighting_sources(
     ) or evaluation_fields != {
         "native": "SelectedSpectralInterval",
         "output_frame": "SelectedSpectralInterval",
+        "row_geometry": "Option<SelectedRowSpectralGeometry>",
         "effective_weight": "f64",
         "valid": "bool",
     }:
@@ -2241,6 +2242,7 @@ def validate_t18_global_weighting_sources(
             "parallactic_angles_rad": "[f64;2]",
             "density_uvw_m": "[f64;3]",
             "output_frame_frequency_hz": "f64",
+            "row_spectral_geometry": "Option<NativeRowSpectralGeometry>",
             "field_id": "i32",
             "pointing_directions": "SelectedPointingDirections",
             "aw_pointing_pixel": "Option<[f64;2]>",
@@ -2251,7 +2253,7 @@ def validate_t18_global_weighting_sources(
         or replay_phase_fields.get("block") != "Vec<WeightingSampleValue>"
         or sample_fields.get("generation") != "WeightingGenerationId"
         or "into_boxed_slice" in take_block
-        or "self.generation.weight(" not in replay_consume
+        or "weighted_sample_from_state(" not in replay_consume
         or "self.coverage.push(&weighted)" not in replay_consume
         or "self.block.push(weighted)" not in replay_consume
         or "std::mem::take(&mut self.block)" not in take_block
@@ -2413,7 +2415,7 @@ def validate_t18_global_weighting_sources(
         or "removed.contains" not in compose_streaming
         or "terminal_fence" not in compose_streaming
         or "kind: WorkKind::Release" not in compose
-        or allocation_specs.count("AllocationSpec::new(") != 5
+        or allocation_specs.count("AllocationSpec::new(") != 6
         or "if let Some(bytes) = self.continuum_row_bytes" not in allocation_specs
         or '"continuum-transform-row"' not in allocation_specs
         or "predecessor_observation_completion(&self.source_read)"
@@ -2469,7 +2471,7 @@ def validate_t18_global_weighting_sources(
         or "quarantine_external_permits" not in finish_draining
     ):
         raise ArchitectureError(
-            "T18 production fragment must own four core allocations plus optional continuum storage, exact queue authority, continuous retained-source authority, and fail-closed scheduler release"
+            "T18 production fragment must own five core allocations plus optional continuum storage, exact queue authority, continuous retained-source authority, and fail-closed scheduler release"
         )
 
     plan_projection = rust_impl_method_body(receipt, "PlanProjection", "new", receipt_path)
