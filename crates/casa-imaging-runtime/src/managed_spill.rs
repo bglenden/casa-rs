@@ -1286,6 +1286,7 @@ pub(crate) struct ManagedSpillFrame<'a> {
     sequence: u64,
     record_count: u64,
     payload: &'a [u8],
+    payload_sha256: [u8; 32],
 }
 
 impl<'a> ManagedSpillFrame<'a> {
@@ -1299,6 +1300,16 @@ impl<'a> ManagedSpillFrame<'a> {
 
     pub(crate) const fn payload(self) -> &'a [u8] {
         self.payload
+    }
+
+    /// Payload digest from the frame header of a reader-verified window.
+    ///
+    /// The block source checks this digest against the payload before the
+    /// window is published, and the footer binds the header to the seal, so a
+    /// replay binding its descriptor to this digest does not have to hash the
+    /// payload again.
+    pub(crate) const fn verified_payload_sha256(self) -> [u8; 32] {
+        self.payload_sha256
     }
 }
 
@@ -1321,10 +1332,12 @@ impl<'a> Iterator for ManagedSpillFrames<'a> {
         let payload_len = usize::try_from(decode_u64(header, 32)).ok()?;
         let payload_end = header_end.checked_add(payload_len)?;
         let payload = self.bytes.get(header_end..payload_end)?;
+        let payload_sha256: [u8; 32] = header.get(40..72)?.try_into().ok()?;
         let frame = ManagedSpillFrame {
             sequence: decode_u64(header, 16),
             record_count: decode_u64(header, 24),
             payload,
+            payload_sha256,
         };
         self.offset = payload_end;
         self.remaining -= 1;
@@ -2643,6 +2656,28 @@ mod tests {
             source.complete(),
             Err(ManagedSpillError::ReaderPoisoned)
         ));
+    }
+
+    #[test]
+    fn published_window_frames_expose_the_reader_verified_payload_digest() {
+        let (_root, artifact) = sealed_two_frame_artifact();
+        let mut source = artifact.block_source(1).expect("block source");
+        let cancelled = AtomicBool::new(false);
+        let mut storage = source.create_storage(0);
+        assert!(matches!(
+            source
+                .fill(0, &mut storage, SourceFillCancellation::new(&cancelled))
+                .expect("fill first block"),
+            SourcePoll::Ready { .. }
+        ));
+        let frames: Vec<_> = storage.frames().collect();
+        assert_eq!(frames.len(), 1);
+        for frame in frames {
+            assert_eq!(
+                frame.verified_payload_sha256(),
+                <[u8; 32]>::from(Sha256::digest(frame.payload()))
+            );
+        }
     }
 
     #[test]
