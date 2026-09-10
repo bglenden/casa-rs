@@ -1701,11 +1701,11 @@ fn execute_compact_taylor(
         .expect("begin compact Taylor apply");
     assert_eq!(
         apply
-            .two_domain_window_partition_count(blocks.iter().map(|block| (
-                block.sequence(),
-                block.encoded_bytes(),
-                None
-            )),)
+            .two_domain_window_partition_count(
+                blocks
+                    .iter()
+                    .map(|block| (block.sequence(), block.encoded_bytes())),
+            )
             .expect("prepare the complete compact window"),
         GRIDDED_NORMAL_PARTITION_COUNT
     );
