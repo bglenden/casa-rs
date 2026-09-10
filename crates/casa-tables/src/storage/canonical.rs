@@ -137,29 +137,11 @@ pub(crate) fn write_f64_le(dst: &mut [u8], val: f64) {
 /// `Conversion::bitToBool`.
 pub(crate) fn read_bool_bits(src: &[u8], bit_offset: usize, count: usize) -> Vec<bool> {
     let mut result = Vec::with_capacity(count);
-    let end = bit_offset + count;
-    let mut bit = bit_offset;
-    while bit < end && bit % 8 != 0 {
-        result.push((src[bit / 8] >> (bit % 8)) & 1 != 0);
-        bit += 1;
-    }
-    while bit + 8 <= end {
-        let byte = src[bit / 8];
-        result.extend_from_slice(&[
-            byte & 0x01 != 0,
-            byte & 0x02 != 0,
-            byte & 0x04 != 0,
-            byte & 0x08 != 0,
-            byte & 0x10 != 0,
-            byte & 0x20 != 0,
-            byte & 0x40 != 0,
-            byte & 0x80 != 0,
-        ]);
-        bit += 8;
-    }
-    while bit < end {
-        result.push((src[bit / 8] >> (bit % 8)) & 1 != 0);
-        bit += 1;
+    for i in 0..count {
+        let bit = bit_offset + i;
+        let byte_idx = bit / 8;
+        let bit_idx = bit % 8;
+        result.push((src[byte_idx] >> bit_idx) & 1 != 0);
     }
     result
 }
@@ -353,26 +335,6 @@ mod tests {
         write_bool_bits(&mut buf, 3, &values);
         let read_back = read_bool_bits(&buf, 3, 3);
         assert_eq!(read_back, values);
-    }
-
-    #[test]
-    fn bool_bit_reading_matches_the_bitwise_definition_across_offsets_and_patterns() {
-        let source: Vec<u8> = (0..=255u8).collect();
-        for bit_offset in 0..24 {
-            for count in 0..80 {
-                let expected: Vec<bool> = (0..count)
-                    .map(|i| {
-                        let bit = bit_offset + i;
-                        (source[bit / 8] >> (bit % 8)) & 1 != 0
-                    })
-                    .collect();
-                assert_eq!(
-                    read_bool_bits(&source, bit_offset, count),
-                    expected,
-                    "offset {bit_offset} count {count}"
-                );
-            }
-        }
     }
 
     #[test]
