@@ -790,7 +790,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
         output_channels: usize,
     ) -> Result<(), SpectralOperatorError>
     where
-        I: IntoIterator<Item = (u64, &'a [u8])>,
+        I: IntoIterator<Item = (u64, &'a [u8], Option<[u8; 32]>)>,
     {
         if self.active_frames != 0 {
             return Err(SpectralOperatorError::BlockSequence);
@@ -810,7 +810,9 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.accumulation_record_count = 0;
 
         let prepared = (|| {
-            for (frame_ordinal, (sequence, encoded)) in frames.into_iter().enumerate() {
+            for (frame_ordinal, (sequence, encoded, verified_payload_sha256)) in
+                frames.into_iter().enumerate()
+            {
                 let frame_ordinal_u64 = u64::try_from(frame_ordinal)
                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
                 let expected = first_sequence
@@ -825,7 +827,12 @@ impl PreparedGriddedNormalTwoDomainWindow {
                             .map_err(|_| SpectralOperatorError::GriddedRecordMismatch)?,
                     )
                     .ok_or(SpectralOperatorError::GriddedRecordMismatch)?;
-                validate_encoded_block(descriptor, encoded, self.record_bytes)?;
+                validate_encoded_block(
+                    descriptor,
+                    encoded,
+                    self.record_bytes,
+                    verified_payload_sha256,
+                )?;
                 let record_count = encoded.len() / self.record_bytes;
                 if record_count
                     > *self
@@ -1370,7 +1377,7 @@ impl GriddedNormalOperatorApply {
         encoded: &[u8],
     ) -> Result<(), SpectralOperatorError> {
         let partition_count =
-            self.two_domain_window_partition_count(std::iter::once((sequence, encoded)))?;
+            self.two_domain_window_partition_count(std::iter::once((sequence, encoded, None)))?;
         for ordinal in 0..partition_count {
             let work = self.two_domain_window_partition(sequence, 1, ordinal)?;
             let partial = self.execute_two_domain_window(
@@ -1383,12 +1390,18 @@ impl GriddedNormalOperatorApply {
     }
 
     /// Prepare one ordered frame window and return four prediction plus four grid lanes.
+    ///
+    /// Each item carries the payload digest already verified against the
+    /// private spill frame header by the reader session that produced the
+    /// slice; replay then binds the descriptor without hashing the payload
+    /// again. Pass `None` for a borrowed frame outside such a session and the
+    /// payload is hashed here.
     pub fn two_domain_window_partition_count<'a, I>(
         &self,
         frames: I,
     ) -> Result<usize, SpectralOperatorError>
     where
-        I: IntoIterator<Item = (u64, &'a [u8])>,
+        I: IntoIterator<Item = (u64, &'a [u8], Option<[u8; 32]>)>,
     {
         if self.next_partition_commit != 0 {
             return Err(SpectralOperatorError::BlockSequence);
