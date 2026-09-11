@@ -846,6 +846,7 @@ pub struct SerialProductPublicationExecutor<S> {
 
 impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
     /// Bind pending scientific inputs to their immutable pre-seal plan and sink.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: WorkImplementationId,
         problem: CompiledProblem,

@@ -127,7 +127,7 @@ impl GriddedNormalOperatorCompiler {
                 let bank = scratch.next_bank;
                 self.standard_predictions(
                     correlations,
-                    &operator,
+                    operator,
                     &mut scratch.banks[bank],
                     scratch.maximum_native_terms_per_correlation,
                 )?;
@@ -173,7 +173,7 @@ impl GriddedNormalOperatorCompiler {
                                 .map(|accepted| !accepted)
                         })
                         .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-                    let flags = polarization_effective_flags(&operator, flags);
+                    let flags = polarization_effective_flags(operator, flags);
                     let columns = operator.model_coordinates().len();
                     for (row, flagged) in flags.into_iter().enumerate() {
                         if flagged {
@@ -292,7 +292,7 @@ impl GriddedNormalOperatorCompiler {
         let operator = self
             .specification
             .direction_independent_polarization(&resampled.correlations)?;
-        let flags = polarization_effective_flags(&operator, resampled.flags);
+        let flags = polarization_effective_flags(operator, resampled.flags);
         let columns = operator.model_coordinates().len();
         for (row, flagged) in flags.into_iter().enumerate() {
             if flagged {

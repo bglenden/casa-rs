@@ -216,14 +216,11 @@ fn t52_native_evla_representative_full_products() {
     } else {
         assert!(output.total_actual_minor_iterations > 1);
         assert!(output.final_major_receipt.is_some());
-        assert!(
-            output
-                .scientific
-                .final_model()
-                .samples()
-                .iter()
-                .any(|sample| sample.value().value() != 0.0)
-        );
+        let final_model = output.scientific.final_model();
+        let samples = final_model
+            .read_samples(0..final_model.sample_count())
+            .expect("read final model samples");
+        assert!(samples.iter().any(|sample| sample.value().value() != 0.0));
     }
     let products = output
         .products

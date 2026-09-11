@@ -495,9 +495,12 @@ fn t51_aw_subset_clean1() {
     }
     let digest_started = Instant::now();
     let model = outcome.scientific.final_model();
+    let model_samples = model
+        .read_samples(0..model.sample_count())
+        .expect("read final model samples");
     let mut model_digest = Sha256::new();
     let mut nonzero_model_samples = 0_usize;
-    for sample in model.samples() {
+    for sample in &model_samples {
         let value = sample.value().value();
         assert!(value.is_finite());
         nonzero_model_samples += usize::from(value != 0.0);
@@ -507,16 +510,19 @@ fn t51_aw_subset_clean1() {
     let normal = outcome.scientific.normal_state();
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
+    let normal_window = normal
+        .read_window(normal.slab().core_range())
+        .expect("complete final normal window");
     let mut normal_digest = Sha256::new();
     for term in 0..normal.coefficient_term_count() {
-        for value in normal.coefficient_term(term).unwrap().residual() {
+        for value in normal_window.coefficient_term(term).unwrap().residual() {
             assert!(value.re.is_finite() && value.im.is_finite());
             normal_digest.update(value.re.to_bits().to_le_bytes());
             normal_digest.update(value.im.to_bits().to_le_bytes());
         }
     }
     for moment in 0..normal.normal_moment_count() {
-        let moment = normal.normal_moment(moment).unwrap();
+        let moment = normal_window.normal_moment(moment).unwrap();
         for value in moment.normal_approximation() {
             assert!(value.re.is_finite() && value.im.is_finite());
             normal_digest.update(value.re.to_bits().to_le_bytes());

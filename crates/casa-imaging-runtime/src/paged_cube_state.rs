@@ -61,13 +61,6 @@ impl CubeArrayLayout {
         })
     }
 
-    pub(crate) fn logical_scalars(&self) -> usize {
-        self.logical_scalars
-    }
-    pub(crate) fn window_scalars(&self) -> usize {
-        self.window_scalars
-    }
-
     fn support_layout(&self) -> Result<TiledArrayStorageLayout, String> {
         let shape = TiledShape::with_tile_shape(
             self.values.cube_shape().to_vec(),
@@ -146,6 +139,7 @@ pub(crate) struct CubeArrayLedger {
 }
 
 /// Current physical ownership and typed I/O counters for one backing.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CubeArrayMeasurements {
     pub(crate) owned_bytes: usize,
@@ -359,6 +353,10 @@ pub(crate) struct PagedNormalArray {
     scalars: usize,
     window_scalars: usize,
     // Fields drop in declaration order: close the array before removing its files.
+    #[allow(
+        dead_code,
+        reason = "RAII guard removing the private backing files on drop"
+    )]
     directory: TempDir,
     observation: BackingObservation,
     _retention: Arc<dyn std::fmt::Debug + Send + Sync>,
@@ -406,6 +404,7 @@ impl PagedNormalArray {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn measurements(&self) -> Result<CubeArrayMeasurements, SpectralOperatorError> {
         let array = self.array.lock().map_err(normal_storage_error)?;
         Ok(CubeArrayMeasurements {
@@ -644,6 +643,10 @@ pub(crate) struct PagedModelSamples {
     samples: usize,
     window_samples: usize,
     // Delete after the array handles have flushed and closed.
+    #[allow(
+        dead_code,
+        reason = "RAII guard removing the private backing files on drop"
+    )]
     directory: TempDir,
     observation: BackingObservation,
     _retention: Arc<dyn std::fmt::Debug + Send + Sync>,
@@ -700,6 +703,7 @@ impl PagedModelSamples {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn measurements(&self) -> Result<CubeArrayMeasurements, ModelLifecycleError> {
         let arrays = self.arrays.lock().map_err(storage_error)?;
         Ok(CubeArrayMeasurements {

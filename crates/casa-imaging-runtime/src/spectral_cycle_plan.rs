@@ -471,6 +471,7 @@ impl SpectralCyclePlan {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,

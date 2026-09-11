@@ -5959,7 +5959,7 @@ impl CompleteDataOwnerState {
                 accept_polarization_input(weighted.selected(), self.finite_values).map(|ok| !ok)
             })
             .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-        let flags = polarization_effective_flags(&polarization, flags);
+        let flags = polarization_effective_flags(polarization, flags);
         let predicts_residual = self
             .model_binding
             .is_some_and(ReconstructionModelBinding::is_evaluated);
@@ -6038,14 +6038,14 @@ impl CompleteDataOwnerState {
                     })
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 let published_weights =
-                    polarization_published_weights(&polarization, &correlation_weights, &flags);
+                    polarization_published_weights(polarization, &correlation_weights, &flags);
                 let observed_adjoint = polarization
                     .weighted_adjoint(&visibilities, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
                 let predicted_adjoint = polarization
                     .weighted_adjoint(&predicted_correlations, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                let diagonal = polarization_diagonal(&polarization, &correlation_weights, &flags);
+                let diagonal = polarization_diagonal(polarization, &correlation_weights, &flags);
                 let contribution = first_spectral.contribution();
                 for coordinate in 0..polarization.model_coordinates().len() {
                     let weight = diagonal[coordinate];
@@ -6267,16 +6267,16 @@ impl CompleteDataOwnerState {
         let polarization = self
             .specification
             .direction_independent_polarization(&resampled.correlations)?;
-        let flags = polarization_effective_flags(&polarization, resampled.flags);
+        let flags = polarization_effective_flags(polarization, resampled.flags);
         let published_weights =
-            polarization_published_weights(&polarization, &resampled.weights, &flags);
+            polarization_published_weights(polarization, &resampled.weights, &flags);
         let observed_adjoint = polarization
             .weighted_adjoint(&resampled.observed, &resampled.weights, &flags)
             .map_err(|_| SpectralOperatorError::InvalidSample)?;
         let predicted_adjoint = polarization
             .weighted_adjoint(&resampled.predicted, &resampled.weights, &flags)
             .map_err(|_| SpectralOperatorError::InvalidSample)?;
-        let diagonal = polarization_diagonal(&polarization, &resampled.weights, &flags);
+        let diagonal = polarization_diagonal(polarization, &resampled.weights, &flags);
         for chart_ordinal in 0..self.operators.len() {
             let chart = &self.specification.charts[chart_ordinal];
             let (uvw_m, phase_shift_m) = selected_model_projection(
@@ -6347,7 +6347,7 @@ impl CompleteDataOwnerState {
         let polarization = self
             .specification
             .direction_independent_polarization(&resampled.correlations)?;
-        let flags = polarization_effective_flags(&polarization, resampled.flags.clone());
+        let flags = polarization_effective_flags(polarization, resampled.flags.clone());
         if resampled.observed.len() != resampled.correlations.len()
             || resampled.predicted.len() != resampled.correlations.len()
             || resampled.weights.len() != resampled.correlations.len()

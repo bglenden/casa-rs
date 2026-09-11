@@ -53,6 +53,9 @@ jobs:
           # casars-imager progress instrumentation is process-global and its
           # unit tests intentionally exercise that shared context.
           RUST_TEST_THREADS: 1
+          # Debug builds of the bounded imaging stack legitimately exceed the
+          # default test-thread stack; production uses release frames.
+          RUST_MIN_STACK: 33554432
         run: cargo test --workspace
 
   python_package:

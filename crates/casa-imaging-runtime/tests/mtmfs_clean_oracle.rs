@@ -26,10 +26,11 @@ use casa_imaging_runtime::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings, QueueResource,
     QueueResourceId, RateResource, RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority,
     ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion,
-    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
-    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain,
-    StorageDomainId, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
-    WorkImplementationId, WorkMeasurements, plan as runtime_plan, run as runtime_run,
+    SerialProductBackingPlan, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
+    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
+    SpectralCycleRegistry, StorageDomain, StorageDomainId, StorageIoResourceBinding,
+    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
+    plan as runtime_plan, run as runtime_run,
 };
 use serde_json::json;
 
@@ -114,6 +115,21 @@ struct CleanRun {
     problem: casa_imaging_model::CompiledProblem,
     final_completion: casa_imaging_reconstruction::MajorCycleCompletion,
     cycles: Vec<CycleSummary>,
+    artifact_directory: tempfile::TempDir,
+}
+
+fn full_product_window(
+    planned: &casa_imaging_products::PlannedContinuumGeneration,
+) -> casa_imaging_products::ProductStoragePlan {
+    casa_imaging_products::ProductStoragePlan::new(
+        planned
+            .members()
+            .iter()
+            .map(|member| member.axes().spectral().output_channels())
+            .max()
+            .expect("planned continuum generation has members"),
+    )
+    .expect("planned continuum generation has positive channels")
 }
 
 fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Error>> {
@@ -279,6 +295,7 @@ fn execute_four_cycle_clean(t44_products: bool) -> Result<CleanRun, Box<dyn Erro
         problem,
         final_completion,
         cycles,
+        artifact_directory,
     })
 }
 
@@ -292,6 +309,7 @@ fn t43_real_ms_mtmfs_clean_matches_frozen_casa() -> Result<(), Box<dyn Error>> {
         problem: _,
         final_completion,
         cycles,
+        artifact_directory: _,
     } = execute_four_cycle_clean(false)?;
 
     let model = final_completion
@@ -380,6 +398,7 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
         problem,
         final_completion,
         cycles,
+        artifact_directory,
     } = execute_four_cycle_clean(true)?;
     let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &final_completion)?;
     let authority = ProductGenerationAuthority::bind(&problem);
@@ -390,7 +409,16 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
         return Err("T44 product plan did not pin the CASA EVLA common beam".into());
     }
     let inputs = ContinuumProductInputs::from_major_cycle(&problem, &final_completion)?;
-    let produced = produce_continuum_members(&planned, &inputs)?;
+    let window = full_product_window(&planned);
+    let products_directory = artifact_directory.path().join("products");
+    fs::create_dir_all(&products_directory)?;
+    let products_storage = ManagedSpillStorage::bind(
+        ResourceAuthority::production()?,
+        artifact_storage_io(),
+        products_directory,
+    )?;
+    let backing = SerialProductBackingPlan::prepare(&planned, window, &products_storage)?;
+    let produced = produce_continuum_members(&planned, &inputs, window, &backing)?;
     let sealed = authority.authorize(&planned, &produced)?;
     let names = sealed
         .members()
@@ -434,15 +462,21 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
             "stop_reason": "iteration_limit",
         },
         "common_beam": beam_json(common_beam),
-        "members": sealed.members().iter().map(|member| json!({
-            "name": member.name(),
-            "role": product_role_name(member.contract().role()),
-            "unit": product_unit_name(member.contract().unit()),
-            "shape": member.contract().axes().shape(),
-            "beam": member.resolved_beam().map(beam_json),
-            "payload": member.payload(),
-            "validity": member.validity(),
-        })).collect::<Vec<_>>(),
+        "members": sealed.members().iter().map(|member| {
+            let layout = member.window_layout();
+            let full = member
+                .read_window(0..layout.shape()[layout.spectral_axis()])
+                .expect("T44 sealed member full window");
+            json!({
+                "name": member.name(),
+                "role": product_role_name(member.contract().role()),
+                "unit": product_unit_name(member.contract().unit()),
+                "shape": member.contract().axes().shape(),
+                "beam": member.resolved_beam().map(beam_json),
+                "payload": full.payload(),
+                "validity": full.validity(),
+            })
+        }).collect::<Vec<_>>(),
     });
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
