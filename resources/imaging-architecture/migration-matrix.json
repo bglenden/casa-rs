@@ -116,7 +116,7 @@
     "repo://crates/casa-ms/src/derived/engine.rs": "451bbbd7515419da36bb08bbf496729a8ca0cde28413a093f1cb2ae0552bbb82",
     "repo://crates/casa-ms/src/selected_observation/spectral_evaluation.rs": "42a60247be1cf293857d11d667967e35976e76b6d7838207c25deabd9a15fca2",
     "repo://crates/casa-ms/src/spectral_selection.rs": "e4a9b0df1504d62d072f8ed7c085a584e34ec18588cd9037ad8a2f263a81e360",
-    "repo://crates/casa-imaging-application/src/availability.rs": "7007234830618c3a34211b5f5c97bc595f17f3bef5b23c016e67ce644d8eedf9",
+    "repo://crates/casa-imaging-application/src/availability.rs": "df4d2089293958cd5d04e768e504e6b262f3ab8a1aa7b2cbe50d380f12f60baa",
     "repo://docs/tutorial-parity/capability-matrix.md": "f17fb0d6a278b7494739f6f1d724a12a370ccdff3fc07713084290250d597be1",
     "repo://docs/tutorial-parity/outlierfile-inventory.md": "9ec4eff5c61668078e0bb201d6ee0216b1edb002004d8faa838f9e8ee22a9533",
     "repo://docs/tutorial-parity/vlass-imaging-recovery-contract.md": "d8b080c6eda684b6aae7097a54609655059fa8bf20ba7f5a5f25965d183ae9c5",

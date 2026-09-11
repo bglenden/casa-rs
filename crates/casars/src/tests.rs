@@ -257,13 +257,10 @@ fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
     let config = ConfigStore::load_for_tests(temp.path().join("casars.toml"));
     let mut app = AppState::from_schema_with_config(app_definition, schema, config);
     app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
-    let stdin = app
+    let preflight = app
         .execution_stdin_for_test()
-        .expect("installed cross-surface imager fixture must project an executable request")
-        .expect("imager execution plan carries canonical stdin");
-    let execution_request: serde_json::Value =
-        serde_json::from_str(&stdin).expect("decode canonical imager execution stdin");
-    assert_eq!(execution_request, expected["request"]);
+        .expect_err("unconsumed source-stream controls must surface owner diagnostics first");
+    assert!(preflight.contains("task/task.grid_threads"), "{preflight}");
 
     for name in ["vis", "imagename", "imsize", "cell", "niter"] {
         assert_eq!(

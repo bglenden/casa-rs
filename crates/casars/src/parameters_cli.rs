@@ -749,8 +749,20 @@ mod tests {
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
         assert_eq!(request, expected["request"]);
-        ensure_supported_invocation("imager", &invocation)
-            .expect("cross-surface imager request is installed");
+        let error = ensure_supported_invocation("imager", &invocation)
+            .expect_err("unconsumed source-stream controls must fail closed");
+        for reason in [
+            "task/task.fft_precision",
+            "task/task.grid_threads",
+            "task/task.memory_pressure_policy",
+            "task/task.memory_target",
+            "task/task.prepare_buffer",
+            "task/task.prepare_workers",
+            "task/task.read_ahead_blocks",
+            "task/task.row_block_rows",
+        ] {
+            assert!(error.contains(reason), "missing {reason} in {error}");
+        }
     }
 
     #[test]

@@ -514,14 +514,6 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::SerialCpu
             | TaskRequirement::FixedTileCpu
             | TaskRequirement::RustFft
-            | TaskRequirement::GridThreads
-            | TaskRequirement::MemoryTarget
-            | TaskRequirement::MemoryPressurePolicy
-            | TaskRequirement::PrepareBuffer
-            | TaskRequirement::RowBlockRows
-            | TaskRequirement::PrepareWorkers
-            | TaskRequirement::ReadAheadBlocks
-            | TaskRequirement::FftPrecision
             | TaskRequirement::PreviewPng
     )
 }

@@ -9904,10 +9904,24 @@ mod tests {
             Some("casa_imager_task")
         );
         assert_eq!(invocation.protocol_version, Some(8));
-        assert!(
-            invocation.unsupported_reasons.is_empty(),
-            "installed cross-surface imager request has no unsupported controls: {:?}",
-            invocation.unsupported_reasons
+        let reasons = invocation
+            .unsupported_reasons
+            .iter()
+            .map(|reason| reason.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reasons,
+            [
+                "task.grid_threads",
+                "task.memory_target",
+                "task.memory_pressure_policy",
+                "task.prepare_buffer",
+                "task.row_block_rows",
+                "task.prepare_workers",
+                "task.read_ahead_blocks",
+                "task.fft_precision",
+            ],
+            "the installed imager must report the exact unconsumed source-stream controls"
         );
         let canonical_profile = uniffi_snapshot
             .profile_toml

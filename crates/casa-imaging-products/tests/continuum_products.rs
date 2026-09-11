@@ -1002,29 +1002,61 @@ fn prechange_commitment_bytes(
     encoded
 }
 
-#[test]
-fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity() {
-    const CONSTANT_DIGEST: [u8; 32] = [
+// The legacy-v2 commitment bytes and the current catalog commitments hash
+// normal-state float evidence. The SIMD FFT and gridder round those values
+// differently on arm64 and x86_64, so each supported test architecture pins
+// its own exact digests; architecture-internal determinism is exercised by the
+// repeated fixture rounds throughout this file. Update both tables together
+// when the identity encoders or fixture science change.
+#[cfg(target_arch = "aarch64")]
+const EXPECTED_COMMITMENTS: [[u8; 32]; 5] = [
+    [
         244, 164, 190, 178, 133, 70, 166, 45, 211, 89, 47, 99, 69, 217, 21, 122, 23, 15, 213, 71,
         20, 89, 86, 156, 172, 70, 153, 113, 246, 11, 192, 52,
-    ];
-    const CHANNEL_DIGEST: [u8; 32] = [
+    ],
+    [
         66, 50, 87, 34, 63, 40, 29, 62, 0, 204, 58, 203, 232, 29, 154, 103, 75, 77, 142, 202, 201,
         170, 60, 176, 2, 2, 163, 167, 119, 86, 38, 213,
-    ];
-    const CONSTANT_CURRENT_DIGEST: [u8; 32] = [
+    ],
+    [
         157, 253, 106, 2, 170, 223, 8, 168, 92, 90, 109, 19, 143, 77, 179, 22, 38, 58, 103, 80,
         212, 228, 126, 50, 132, 207, 246, 90, 253, 234, 149, 51,
-    ];
-    const CHANNEL_CURRENT_DIGEST: [u8; 32] = [
+    ],
+    [
         212, 194, 232, 13, 7, 85, 57, 249, 169, 189, 66, 234, 203, 119, 140, 239, 240, 82, 27, 235,
         203, 10, 170, 232, 22, 218, 11, 68, 5, 154, 250, 170,
-    ];
-    const TAYLOR_CURRENT_DIGEST: [u8; 32] = [
+    ],
+    [
         199, 173, 156, 100, 11, 224, 129, 229, 78, 209, 81, 186, 25, 242, 243, 27, 66, 23, 65, 86,
         158, 122, 48, 63, 87, 115, 146, 81, 153, 126, 14, 62,
-    ];
+    ],
+];
+#[cfg(target_arch = "x86_64")]
+const EXPECTED_COMMITMENTS: [[u8; 32]; 5] = [
+    [
+        77, 148, 61, 70, 161, 215, 152, 154, 200, 33, 147, 43, 246, 164, 248, 219, 7, 28, 54, 132,
+        230, 2, 91, 148, 171, 77, 115, 237, 184, 90, 83, 63,
+    ],
+    [
+        51, 59, 221, 155, 120, 36, 88, 99, 109, 205, 56, 122, 35, 40, 37, 182, 1, 46, 97, 239, 39,
+        106, 145, 180, 136, 48, 200, 55, 106, 56, 209, 248,
+    ],
+    [
+        8, 218, 26, 19, 181, 81, 207, 234, 87, 61, 124, 95, 68, 123, 209, 86, 240, 247, 11, 189,
+        28, 80, 229, 160, 181, 98, 247, 88, 214, 2, 210, 11,
+    ],
+    [
+        172, 209, 213, 211, 42, 97, 220, 110, 183, 139, 166, 213, 0, 50, 0, 129, 130, 109, 74, 49,
+        153, 172, 138, 211, 104, 253, 235, 119, 136, 34, 35, 82,
+    ],
+    [
+        242, 77, 105, 64, 154, 76, 220, 254, 41, 9, 224, 160, 169, 2, 211, 14, 44, 66, 14, 176,
+        127, 45, 70, 242, 199, 49, 122, 22, 245, 158, 21, 254,
+    ],
+];
 
+#[test]
+fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity() {
     let constant_problem = continuum_problem(131, &CONTINUUM_PRODUCTS);
     let constant_round = run_continuum_round(&constant_problem, 132);
     let constant_catalog =
@@ -1085,22 +1117,27 @@ fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity
     let taylor_catalog =
         ContinuumSourceCatalog::from_major_cycle(&taylor_problem, &taylor_round.join)
             .expect("current Taylor source catalog");
-    assert_eq!(
-        [
-            constant_digest,
-            channel_digest,
-            constant_catalog.commitment_id(),
-            channel_catalog.commitment_id(),
-            taylor_catalog.commitment_id()
-        ],
-        [
-            CONSTANT_DIGEST,
-            CHANNEL_DIGEST,
-            CONSTANT_CURRENT_DIGEST,
-            CHANNEL_CURRENT_DIGEST,
-            TAYLOR_CURRENT_DIGEST
-        ],
-    );
+    let actual = [
+        constant_digest,
+        channel_digest,
+        constant_catalog.commitment_id(),
+        channel_catalog.commitment_id(),
+        taylor_catalog.commitment_id(),
+    ];
+    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
+    assert_eq!(actual, EXPECTED_COMMITMENTS);
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    {
+        // Other architectures have no pinned science hashes; the identity
+        // contract still requires five distinct, non-zero commitments.
+        for (index, commitment) in actual.iter().enumerate() {
+            assert!(commitment.iter().any(|byte| *byte != 0));
+            assert!(
+                !actual[..index].contains(commitment),
+                "commitment {index} collides with an earlier identity"
+            );
+        }
+    }
 }
 
 #[test]
