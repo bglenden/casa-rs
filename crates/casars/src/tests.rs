@@ -259,8 +259,8 @@ fn tui_typed_session_matches_shared_imager_cross_surface_profile() {
     app.configure_parameter_runtime(temp.path().to_path_buf(), false, Some(session));
     let preflight = app
         .execution_stdin_for_test()
-        .expect_err("unsupported fixture must surface owner diagnostics before execution");
-    assert!(preflight.contains("task/task.aw_projection"), "{preflight}");
+        .expect_err("unconsumed source-stream controls must surface owner diagnostics first");
+    assert!(preflight.contains("task/task.grid_threads"), "{preflight}");
 
     for name in ["vis", "imagename", "imsize", "cell", "niter"] {
         assert_eq!(
@@ -10870,9 +10870,7 @@ fn clear_tablebrowser_launcher_bin() {
 }
 
 fn clear_test_clipboard_file() {
-    unsafe {
-        std::env::remove_var("CASARS_TEST_CLIPBOARD_FILE");
-    }
+    crate::clipboard::set_test_clipboard_file(None);
 }
 
 fn clear_imexplore_perf_env() {
@@ -10899,9 +10897,7 @@ fn set_imexplore_perf_env(dir: &Path) -> ImexplorePerfEnvGuard {
 }
 
 fn set_test_clipboard_file(path: &Path) {
-    unsafe {
-        std::env::set_var("CASARS_TEST_CLIPBOARD_FILE", path);
-    }
+    crate::clipboard::set_test_clipboard_file(Some(path.to_path_buf()));
 }
 
 fn set_tablebrowser_launcher_bin(path: &Path) {

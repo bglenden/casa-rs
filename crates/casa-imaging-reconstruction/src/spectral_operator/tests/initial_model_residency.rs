@@ -21,6 +21,43 @@ fn fixture() -> (
 }
 
 #[test]
+fn t55_identity_chart_transfers_primitive_allocations_to_its_domain() {
+    let (problem, _, model) = fixture();
+    let specification = SpectralOperatorSpecification::new(&problem).unwrap();
+    assert_eq!(specification.domains.len(), 1);
+    assert_eq!(specification.charts.len(), 1);
+    let cells = 512 * 512;
+    let mut primitives = SpectralOperatorPrimitives::native_taylor_fixture(
+        &problem,
+        model.generation_id(),
+        vec![Complex64::new(0.25, -0.5); 2 * cells].into_boxed_slice(),
+        vec![Complex64::new(1.0, 0.0); 3 * cells].into_boxed_slice(),
+        None,
+    );
+    primitives.invariant_dirty = Some(primitives.dirty.clone());
+    let dirty = primitives.dirty.as_ptr();
+    let invariant_dirty = primitives.invariant_dirty.as_ref().unwrap().as_ptr();
+    let psf = primitives.psf.as_ptr();
+    let sensitivity = primitives.sensitivity.as_ptr();
+    let content = primitives.normal_state_content_identity();
+
+    let domains = super::super::combine_initial_chart_primitives(
+        &specification,
+        [Ok(primitives)].into_iter(),
+    )
+    .unwrap();
+    let retained = domains.primary();
+    assert_eq!(retained.normal_state_content_identity(), content);
+    assert_eq!(retained.dirty.as_ptr(), dirty);
+    assert_eq!(
+        retained.invariant_dirty.as_ref().unwrap().as_ptr(),
+        invariant_dirty
+    );
+    assert_eq!(retained.psf.as_ptr(), psf);
+    assert_eq!(retained.sensitivity.as_ptr(), sensitivity);
+}
+
+#[test]
 fn t51_initial_empty_projection_omits_only_absent_residual_planes() {
     let (problem, _, _) = fixture();
     let specification = SpectralOperatorSpecification::new(&problem).unwrap();

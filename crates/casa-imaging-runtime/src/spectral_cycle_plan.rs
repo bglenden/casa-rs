@@ -11,8 +11,11 @@ use std::{
 
 use casa_imaging_model::CompiledProblem;
 use casa_imaging_reconstruction::{
-    PreparedAwProjection, WeightingExecutionLimits, WeightingPlan, plan_weighting,
-    runtime_adapter::{GRIDDED_NORMAL_LANE_COUNT, SpectralOperatorPass},
+    PreparedAwProjection, SpectralOperatorSpecification, WeightingExecutionLimits, WeightingPlan,
+    plan_weighting,
+    runtime_adapter::{
+        GRIDDED_NORMAL_LANE_COUNT, ReconstructionPlaneWorkspace, SpectralOperatorPass,
+    },
 };
 use casa_ms::{SelectedObservationResidencyCertificate, SelectedVisibilityStoragePlan};
 
@@ -193,12 +196,9 @@ fn bind_aw_projection(
 
 /// One fully composed ordinary reconstruction physical plan.
 pub struct SpectralCyclePlan {
-    physical: PhysicalWorkBinding,
+    candidates: Vec<SpectralCyclePhysicalCandidate>,
     weighting: WeightingPlan,
-    complete_data: CompleteDataPlanFragment,
-    source_resources: SelectedObservationSourceResources,
     pass: SpectralPassIdentity,
-    minor_cycle_node: Option<WorkNodeId>,
     gridded_normal: Option<PlannedGriddedNormalBinding>,
 }
 
@@ -326,6 +326,7 @@ impl SpectralCyclePlan {
             false,
             None,
             None,
+            None,
         )
     }
 
@@ -341,6 +342,7 @@ impl SpectralCyclePlan {
             policy,
             SpectralPassIdentity::new(SpectralPassPhase::InitialMajor, 0),
             true,
+            None,
             None,
             None,
         )
@@ -362,6 +364,7 @@ impl SpectralCyclePlan {
             false,
             Some(input.identity()),
             Some(gridded_replay),
+            Some(input.maximum_read_channels()),
         )
     }
 
@@ -382,6 +385,7 @@ impl SpectralCyclePlan {
             true,
             Some(input.identity()),
             Some(gridded_replay),
+            Some(input.maximum_read_channels()),
         )
     }
 
@@ -402,6 +406,7 @@ impl SpectralCyclePlan {
             false,
             Some(input.identity()),
             Some(gridded_replay),
+            Some(input.maximum_read_channels()),
         )
     }
 
@@ -453,16 +458,20 @@ impl SpectralCyclePlan {
                 append_visibility_write_resources(registry, physical, &policy, &replay, bounds)?;
         }
         Ok(Self {
-            physical,
+            candidates: vec![SpectralCyclePhysicalCandidate {
+                physical,
+                complete_data,
+                source_resources,
+                minor_cycle_node: None,
+                window: None,
+            }],
             weighting,
-            complete_data,
-            source_resources,
             pass,
-            minor_cycle_node: None,
             gridded_normal: None,
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
@@ -470,7 +479,8 @@ impl SpectralCyclePlan {
         pass: SpectralPassIdentity,
         include_minor: bool,
         phase_input: Option<ArtifactIdentity>,
-        mut gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
+        gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
+        prior_window_channels: Option<usize>,
     ) -> Result<Self, SpectralCyclePlanError> {
         validate_aw_projection_binding(problem, &policy)?;
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
@@ -490,7 +500,7 @@ impl SpectralCyclePlan {
             None
         } else {
             Some(
-                crate::complete_data_operator::project_managed_spill_budget(
+                crate::complete_data_operator::project_gridded_normal_compilation(
                     problem,
                     weighting.limits().max_block_samples(),
                 )
@@ -502,8 +512,8 @@ impl SpectralCyclePlan {
             .map(crate::FrozenGriddedNormalReplay::descriptor);
         let retained_artifact_bytes =
             gridded_replay_descriptor.map(|descriptor| descriptor.bytes());
-        let gridded_window_plan = match gridded_replay.as_mut() {
-            Some(replay) => {
+        let gridded_window_capacity = match gridded_replay.as_ref() {
+            Some(_) => {
                 let capacity = gridded_normal_storage
                     .as_ref()
                     .and_then(ManagedSpillStorage::cpu_replay_capacity)
@@ -524,73 +534,138 @@ impl SpectralCyclePlan {
                             .maximum_convolution_support()
                     }
                 };
-                Some((
-                    replay.preview_windows(capacity, support, None)?,
-                    capacity,
-                    support,
-                ))
+                Some((capacity, support))
             }
             None => None,
         };
-        let phase = SpectralCyclePhasePlanning {
-            pass,
-            include_minor,
-            phase_input,
-            strategy,
-            artifact_budget,
-            gridded_replay_descriptor,
+        let plane_workspace = if include_minor {
+            ReconstructionPlaneWorkspace::for_problem(problem)
+                .map_err(SpectralCyclePlanError::Minor)?
+        } else {
+            None
         };
-        let candidate = match gridded_replay.as_mut() {
-            Some(replay) => {
-                let (preferred, capacity, support) =
-                    gridded_window_plan.ok_or(SpectralCyclePlanError::Overflow)?;
-                let (window, candidate) = select_gridded_window_plan(
-                    preferred,
-                    &policy,
-                    |budget| {
-                        replay.preview_windows(
+        let replay_workers = match pass.phase() {
+            SpectralPassPhase::InitialMajor => 1,
+            SpectralPassPhase::FinalMajor => GRIDDED_NORMAL_LANE_COUNT as u64,
+        };
+        let minimum_workers = if policy.visibility_write.is_some() {
+            2
+        } else {
+            1
+        };
+        let maximum_workers = policy
+            .authority
+            .planning_worker_capacity(&policy.resource_policy)?
+            .min(
+                replay_workers
+                    .max(plane_workspace.map_or(1, |workspace| workspace.plane_count() as u64)),
+            )
+            .max(minimum_workers);
+        let mut candidates = Vec::new();
+        let channel_local = matches!(
+            problem.reconstruction().basis(),
+            casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+        );
+        let total_channels = problem.geometry().spectral().output_channels();
+        let bounded_channels = channel_local
+            && (pass.phase() == SpectralPassPhase::FinalMajor
+                || matches!(
+                    problem.model_lifecycle().input(),
+                    casa_imaging_model::ModelInputCommitment::Empty
+                ));
+        let maximum_depth = if bounded_channels {
+            prior_window_channels
+                .unwrap_or(total_channels)
+                .min(total_channels)
+        } else {
+            total_channels
+        };
+        for workers in (minimum_workers..=maximum_workers).rev() {
+            for depth in (1..=maximum_depth).rev() {
+                let gridded_spectral_windows = gridded_replay
+                    .as_ref()
+                    .map(|replay| replay.spectral_windows(problem, depth))
+                    .transpose()?;
+                let phase = SpectralCyclePhasePlanning {
+                    pass,
+                    include_minor,
+                    phase_input,
+                    strategy,
+                    artifact_budget,
+                    gridded_replay_descriptor,
+                    gridded_spectral_windows: gridded_spectral_windows.as_deref(),
+                    initial_channel_depth: (bounded_channels
+                        && pass.phase() == SpectralPassPhase::InitialMajor)
+                        .then_some(depth),
+                };
+                let candidate = match gridded_replay.as_ref() {
+                    Some(replay) => {
+                        let (capacity, support) = gridded_window_capacity
+                            .as_ref()
+                            .ok_or(SpectralCyclePlanError::Overflow)?;
+                        let preferred = replay.preview_windows(depth, *capacity, *support, None)?;
+                        let (window, candidate) = select_gridded_window_plan(
+                            preferred,
+                            &policy,
+                            |budget| {
+                                replay.preview_windows(
+                            depth,
                             if budget.is_none() {
                                 crate::complete_data_operator::GriddedNormalReplayPlanningCapacity::Unknown
                             } else {
-                                capacity
+                                *capacity
                             },
-                            support,
+                            *support,
                             budget,
                         ).map_err(SpectralCyclePlanError::from)
-                    },
-                    |window| {
-                        compose_major_physical(
-                            problem,
-                            registry,
-                            &policy,
-                            &weighting,
-                            phase,
-                            Some(window),
-                        )
-                    },
-                )?;
-                if imaging_plan_diagnostics_enabled() {
-                    eprintln!(
-                        "imaging_gridded_storage_plan_selection maximum_frames={} maximum_records={} source_slot_bytes={} route_bytes={} schedule_bytes={} storage={:?}",
-                        window.maximum_frames(),
-                        window.maximum_records(),
-                        window.source_slot_bytes(),
-                        window.route_capacity_bytes(),
-                        window.schedule_metadata_capacity_bytes(),
-                        window.storage_plan()
-                    );
+                            },
+                            |window| {
+                                compose_major_physical(
+                                    problem,
+                                    registry,
+                                    &policy,
+                                    &weighting,
+                                    phase,
+                                    workers,
+                                    Some(window),
+                                )
+                            },
+                        )?;
+                        if imaging_plan_diagnostics_enabled() {
+                            eprintln!(
+                                "imaging_gridded_storage_plan_selection maximum_frames={} maximum_records={} source_slot_bytes={} route_bytes={} schedule_bytes={} storage={:?}",
+                                window.maximum_frames(),
+                                window.maximum_records(),
+                                window.source_slot_bytes(),
+                                window.route_capacity_bytes(),
+                                window.schedule_metadata_capacity_bytes(),
+                                window.storage_plan()
+                            );
+                        }
+                        SpectralCyclePhysicalCandidate {
+                            window: Some(window),
+                            ..candidate
+                        }
+                    }
+                    None => compose_major_physical(
+                        problem, registry, &policy, &weighting, phase, workers, None,
+                    )?,
+                };
+                if !bounded_channels || depth == 1 || candidate_memory_fits(&candidate, &policy)? {
+                    if imaging_plan_diagnostics_enabled() {
+                        eprintln!(
+                            "imaging_spectral_window_selection phase={:?} workers={} core_depth={} window_count={}",
+                            pass.phase(),
+                            workers,
+                            candidate.complete_data.slab().core_depth(),
+                            candidate.complete_data.slab_count()
+                        );
+                    }
+                    candidates.push(candidate);
+                    break;
                 }
-                replay.bind_window_plan(window)?;
-                candidate
             }
-            None => compose_major_physical(problem, registry, &policy, &weighting, phase, None)?,
-        };
-        let SpectralCyclePhysicalCandidate {
-            physical,
-            complete_data,
-            source_resources,
-            minor_cycle_node,
-        } = candidate;
+        }
         let gridded_normal = match (strategy, gridded_normal_storage, gridded_replay) {
             (GriddedNormalStrategy::ReuseManagedSpill, Some(storage), Some(replay)) => {
                 Some(PlannedGriddedNormalBinding::replay(replay, storage)?)
@@ -601,6 +676,7 @@ impl SpectralCyclePlan {
                     retained_artifact_bytes.unwrap_or(
                         artifact_budget
                             .ok_or(SpectralCyclePlanError::Overflow)?
+                            .spill
                             .maximum_artifact_bytes(),
                     ),
                 ))
@@ -609,35 +685,55 @@ impl SpectralCyclePlan {
             _ => return Err(SpectralCyclePlanError::MissingGriddedNormalStorage),
         };
         Ok(Self {
-            physical,
+            candidates,
             weighting,
-            complete_data,
-            source_resources,
             pass,
-            minor_cycle_node,
             gridded_normal,
         })
     }
 
-    /// Return the complete physical work to the ordinary runtime planner.
-    pub const fn physical_work(&self) -> &PhysicalWorkBinding {
-        &self.physical
+    /// Return fully composed, exact-worker alternatives to the ordinary planner.
+    pub fn physical_candidates(&self) -> Vec<PhysicalWorkBinding> {
+        self.candidates
+            .iter()
+            .map(|candidate| candidate.physical.clone())
+            .collect()
     }
-    /// Return the optional resource-accounted T21 node.
-    pub const fn minor_cycle_node(&self) -> Option<&WorkNodeId> {
-        self.minor_cycle_node.as_ref()
+    /// Return common weighting residency before admission reserves retained state.
+    pub const fn weighting_plan(&self) -> &WeightingPlan {
+        &self.weighting
     }
-    /// Consume into executor construction parts.
-    pub fn into_parts(self) -> SpectralCyclePlanParts {
-        SpectralCyclePlanParts {
-            physical: self.physical,
-            weighting: self.weighting,
-            complete_data: self.complete_data,
-            source_resources: self.source_resources,
-            pass: self.pass,
-            minor_cycle_node: self.minor_cycle_node,
-            gridded_normal: self.gridded_normal,
+    /// Transfer only the admitted candidate, binding the single retained replay
+    /// to its selected window without cloning execution state.
+    pub fn into_parts(
+        mut self,
+        selected: &ExecutionPlan,
+    ) -> Result<SpectralCyclePlanParts, SpectralCyclePlanError> {
+        let candidate = self
+            .candidates
+            .into_iter()
+            .find(|candidate| {
+                candidate.physical.execution_dag().physical_work_id() == selected.physical_work_id()
+            })
+            .ok_or(SpectralCyclePlanError::UnselectedPhysicalWork)?;
+        if let Some(window) = candidate.window {
+            let Some(PlannedGriddedNormalBinding {
+                kind: PlannedGriddedNormalKind::Replay { replay, .. },
+            }) = self.gridded_normal.as_mut()
+            else {
+                return Err(SpectralCyclePlanError::InvalidGriddedNormalReplay);
+            };
+            replay.bind_window_plan(window)?;
         }
+        Ok(SpectralCyclePlanParts {
+            physical: candidate.physical,
+            weighting: self.weighting,
+            complete_data: candidate.complete_data,
+            source_resources: candidate.source_resources,
+            pass: self.pass,
+            minor_cycle_node: candidate.minor_cycle_node,
+            gridded_normal: self.gridded_normal,
+        })
     }
 }
 
@@ -658,13 +754,15 @@ pub(crate) fn adaptation_route_join_node(pass: SpectralPassIdentity) -> WorkNode
 }
 
 #[derive(Clone, Copy)]
-struct SpectralCyclePhasePlanning {
+struct SpectralCyclePhasePlanning<'a> {
     pass: SpectralPassIdentity,
     include_minor: bool,
     phase_input: Option<ArtifactIdentity>,
     strategy: GriddedNormalStrategy,
-    artifact_budget: Option<crate::managed_spill::ManagedSpillBudget>,
+    artifact_budget: Option<crate::complete_data_operator::GriddedNormalCompilationAdmission>,
     gridded_replay_descriptor: Option<GriddedNormalReplayDescriptor>,
+    gridded_spectral_windows: Option<&'a [SpectralOperatorSpecification]>,
+    initial_channel_depth: Option<usize>,
 }
 
 struct SpectralCyclePhysicalCandidate {
@@ -672,6 +770,7 @@ struct SpectralCyclePhysicalCandidate {
     complete_data: CompleteDataPlanFragment,
     source_resources: SelectedObservationSourceResources,
     minor_cycle_node: Option<WorkNodeId>,
+    window: Option<crate::complete_data_operator::GriddedNormalReplayWindowPlan>,
 }
 
 fn select_gridded_window_plan(
@@ -696,30 +795,14 @@ fn select_gridded_window_plan(
     // Cache topology suggests a window; only the complete physical alternative
     // can admit it. Quote through the same authority that plans execution, with
     // all source, route, pool, reader, downstream and overhead owners composed.
-    let fits =
-        |candidate: &SpectralCyclePhysicalCandidate| -> Result<bool, SpectralCyclePlanError> {
-            let serial = candidate.physical.clone().with_fixed_worker_count(1)?;
-            match policy.authority.remaining_planning_memory_bytes(
-                &policy.resource_policy,
-                serial.execution_dag().resource_alternative(),
-            ) {
-                Ok(_) => Ok(true),
-                Err(ResourceError::Infeasible { resource, .. })
-                    if resource.starts_with("memory-domain:") =>
-                {
-                    Ok(false)
-                }
-                Err(error) => Err(error.into()),
-            }
-        };
     let preferred_candidate = compose(&preferred)?;
-    if fits(&preferred_candidate)? {
+    if candidate_memory_fits(&preferred_candidate, policy)? {
         return Ok((preferred, preferred_candidate));
     }
     let mut upper = preferred.working_set_bytes();
     let minimum = preview(None)?;
     let minimum_candidate = compose(&minimum)?;
-    if !fits(&minimum_candidate)? {
+    if !candidate_memory_fits(&minimum_candidate, policy)? {
         // The ordinary planner still issues the authoritative infeasibility
         // certificate, now for the smallest complete-frame allocation profile.
         return Ok((minimum, minimum_candidate));
@@ -730,7 +813,7 @@ fn select_gridded_window_plan(
         let budget = lower + (upper - lower) / 2;
         let window = preview(Some(budget))?;
         let candidate = compose(&window)?;
-        if fits(&candidate)? {
+        if candidate_memory_fits(&candidate, policy)? {
             lower = budget;
             selected = (window, candidate);
         } else {
@@ -740,12 +823,31 @@ fn select_gridded_window_plan(
     Ok(selected)
 }
 
+fn candidate_memory_fits(
+    candidate: &SpectralCyclePhysicalCandidate,
+    policy: &SpectralCycleExecutionPolicy,
+) -> Result<bool, SpectralCyclePlanError> {
+    match policy.authority.remaining_planning_memory_bytes(
+        &policy.resource_policy,
+        candidate.physical.execution_dag().resource_alternative(),
+    ) {
+        Ok(_) => Ok(true),
+        Err(ResourceError::Infeasible { resource, .. })
+            if resource.starts_with("memory-domain:") =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn compose_major_physical<R: ImplementationRegistry>(
     problem: &CompiledProblem,
     registry: &R,
     policy: &SpectralCycleExecutionPolicy,
     weighting: &WeightingPlan,
-    phase: SpectralCyclePhasePlanning,
+    phase: SpectralCyclePhasePlanning<'_>,
+    workers: u64,
     gridded_window_plan: Option<&crate::complete_data_operator::GriddedNormalReplayWindowPlan>,
 ) -> Result<SpectralCyclePhysicalCandidate, SpectralCyclePlanError> {
     let SpectralCyclePhasePlanning {
@@ -755,8 +857,28 @@ fn compose_major_physical<R: ImplementationRegistry>(
         strategy,
         artifact_budget,
         gridded_replay_descriptor,
+        gridded_spectral_windows,
+        initial_channel_depth,
     } = phase;
-    let retained_artifact_bytes = gridded_replay_descriptor.map(|descriptor| descriptor.bytes());
+    let plane_workspace = if include_minor {
+        ReconstructionPlaneWorkspace::for_problem(problem).map_err(SpectralCyclePlanError::Minor)?
+    } else {
+        None
+    };
+    let minor_resources = if include_minor {
+        Some(MinorCycleResources::for_worker_count(
+            plane_workspace,
+            policy,
+            workers,
+        )?)
+    } else {
+        None
+    };
+    let replay_workers = match pass.phase() {
+        SpectralPassPhase::InitialMajor => 1,
+        SpectralPassPhase::FinalMajor => workers.min(GRIDDED_NORMAL_LANE_COUNT as u64),
+    };
+    let replay_stack_bytes = bounded_worker_stack_bytes(replay_workers)?;
     let (physical, source_resources, replay, weighting_fragment) = match pass.phase() {
         SpectralPassPhase::InitialMajor => {
             let (base, source_resources) =
@@ -819,7 +941,7 @@ fn compose_major_physical<R: ImplementationRegistry>(
             )?;
             let physical = append_managed_spill_resources(
                 registry,
-                base,
+                base.with_fixed_worker_count(replay_workers)?,
                 policy,
                 &replay,
                 pass,
@@ -833,22 +955,45 @@ fn compose_major_physical<R: ImplementationRegistry>(
     };
     let preparation_node = pass_node("spectral-operator-fft-plan", pass);
     let complete_data = match pass.phase() {
+        SpectralPassPhase::InitialMajor if initial_channel_depth.is_some() => {
+            CompleteDataPlanFragment::channel_major_at_depth(
+                problem,
+                weighting.limits().max_block_samples(),
+                replay.clone(),
+                preparation_node,
+                initial_channel_depth.expect("matched planned channel depth"),
+            )?
+        }
         SpectralPassPhase::InitialMajor
-            if matches!(
-                problem.reconstruction().basis(),
-                casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
-                    | casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
-            ) =>
+            if !(include_minor
+                && matches!(
+                    problem.reconstruction().basis(),
+                    casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+                ))
+                && matches!(
+                    problem.reconstruction().basis(),
+                    casa_imaging_model::ReconstructionBasis::TaylorViaChannelMajor { .. }
+                        | casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+                ) =>
         {
-            let available_after_base = policy.authority.remaining_planning_memory_bytes(
+            let available_after_base = match policy.authority.remaining_planning_memory_bytes(
                 &policy.resource_policy,
                 physical.execution_dag().resource_alternative(),
-            )?;
-            let downstream_reservation = if include_minor {
-                policy.limits.minor_cycle_bytes
-            } else {
-                0
+            ) {
+                Ok(bytes) => bytes,
+                Err(ResourceError::Infeasible { resource, .. })
+                    if resource.starts_with("memory-domain:") =>
+                {
+                    0
+                }
+                Err(error) => return Err(error.into()),
             };
+            let downstream_reservation = minor_resources.as_ref().map_or(Ok(0), |resources| {
+                resources
+                    .heap_bytes
+                    .checked_add(resources.stack_bytes.saturating_sub(replay_stack_bytes))
+                    .ok_or(SpectralCyclePlanError::Overflow)
+            })?;
             let aw_prepared_pool_bytes = policy
                 .aw_reader
                 .as_ref()
@@ -864,15 +1009,6 @@ fn compose_major_physical<R: ImplementationRegistry>(
                 preparation_node,
                 memory_ceiling,
             )?;
-            if include_minor
-                && matches!(
-                    problem.reconstruction().basis(),
-                    casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
-                )
-                && fragment.slab_count() != 1
-            {
-                return Err(SpectralCyclePlanError::CubeCleanRequiresAllPlanes);
-            }
             if imaging_plan_diagnostics_enabled() {
                 let residency = fragment.residency();
                 eprintln!(
@@ -912,6 +1048,7 @@ fn compose_major_physical<R: ImplementationRegistry>(
                 replay.clone(),
                 preparation_node,
                 gridded_window_plan.ok_or(SpectralCyclePlanError::Overflow)?,
+                gridded_spectral_windows.ok_or(SpectralCyclePlanError::Overflow)?,
             )?
         }
     };
@@ -923,7 +1060,7 @@ fn compose_major_physical<R: ImplementationRegistry>(
             complete_data.residency(),
         );
     }
-    let (mut physical, complete_data) = match weighting_fragment.as_ref() {
+    let (mut physical, mut complete_data) = match weighting_fragment.as_ref() {
         Some(weighting_fragment) => {
             complete_data.compose_initial_weighting(problem, &physical, weighting_fragment)?
         }
@@ -955,8 +1092,54 @@ fn compose_major_physical<R: ImplementationRegistry>(
         physical = append_visibility_write_resources(registry, physical, policy, &replay, bounds)?;
     }
     let minor_cycle_node = include_minor.then(|| WorkNodeId::new(MINOR_NODE));
-    if let Some(minor) = &minor_cycle_node {
-        physical = append_minor(registry, physical, policy, minor)?;
+    if let (Some(minor), Some(resources)) = (&minor_cycle_node, minor_resources) {
+        physical = append_minor(
+            registry,
+            physical,
+            policy,
+            minor,
+            resources,
+            replay_stack_bytes,
+        )?;
+    }
+    if matches!(
+        problem.reconstruction().basis(),
+        casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+    ) {
+        let storage = policy
+            .gridded_normal_storage
+            .as_ref()
+            .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
+        let acquire = physical
+            .observation_transaction()
+            .final_model_preparation()
+            .ok_or(SpectralCyclePlanError::Overflow)?
+            .clone();
+        let reconcile = physical
+            .observation_transaction()
+            .post_replay_reconciliation()
+            .ok_or(SpectralCyclePlanError::Overflow)?
+            .clone();
+        let terminal = minor_cycle_node
+            .clone()
+            .unwrap_or_else(|| reconcile.clone());
+        let cube_state = crate::cube_state_plan::CubeStatePlan::new(
+            problem,
+            storage,
+            complete_data.slab().core_depth(),
+            acquire,
+            terminal,
+        )
+        .map_err(SpectralCyclePlanError::CubeStorage)?;
+        physical = cube_state.compose(
+            registry,
+            policy.implementation.clone(),
+            storage,
+            physical,
+            &replay,
+            &reconcile,
+        )?;
+        complete_data.cube_state = Some(std::sync::Arc::new(cube_state));
     }
     if policy.resource_policy.has_explicit_memory_ceiling()
         && pass.phase() == SpectralPassPhase::FinalMajor
@@ -967,7 +1150,9 @@ fn compose_major_physical<R: ImplementationRegistry>(
             pass,
             strategy,
             &complete_data,
-            retained_artifact_bytes.ok_or(SpectralCyclePlanError::Overflow)?,
+            gridded_replay_descriptor
+                .ok_or(SpectralCyclePlanError::Overflow)?
+                .retained_source_capacity_bytes()?,
             gridded_window_plan.ok_or(SpectralCyclePlanError::Overflow)?,
         )?;
     }
@@ -976,6 +1161,7 @@ fn compose_major_physical<R: ImplementationRegistry>(
         complete_data,
         source_resources,
         minor_cycle_node,
+        window: None,
     })
 }
 
@@ -1257,6 +1443,7 @@ fn append_low_memory_adaptation(
                     compatibility: cache_compatibility.clone(),
                     physical_slot: cache_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: retained.clone(),
                         release_after: BTreeSet::from([WorkDependency::Work(science_node.clone())]),
                     },
@@ -1268,6 +1455,7 @@ fn append_low_memory_adaptation(
                     compatibility: cache_read_compatibility.clone(),
                     physical_slot: cache_read_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: retained.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             retained.clone(),
@@ -1282,6 +1470,7 @@ fn append_low_memory_adaptation(
                     compatibility: prefetch_compatibility.clone(),
                     physical_slot: prefetch_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: low_memory_io.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             science_node.clone(),
@@ -1602,6 +1791,7 @@ fn base_physical<R: ImplementationRegistry>(
             compatibility: source_compat.clone(),
             physical_slot: source_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: AllocationDisposition::Release,
                 acquire_at: read.clone(),
                 release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                     read.clone(),
@@ -1616,6 +1806,7 @@ fn base_physical<R: ImplementationRegistry>(
             compatibility: commit_compat.clone(),
             physical_slot: commit_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: AllocationDisposition::Release,
                 acquire_at: commit.clone(),
                 release_after: BTreeSet::from([
                     WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -2023,6 +2214,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
             compatibility: compatibility.clone(),
             physical_slot: commit_slot.clone(),
             lifetime: AllocationLifetime {
+                disposition: AllocationDisposition::Release,
                 acquire_at: commit.clone(),
                 release_after: BTreeSet::from([
                     WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -2179,16 +2371,49 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     policy: &SpectralCycleExecutionPolicy,
     node: &WorkNodeId,
     pass: SpectralPassIdentity,
-    budget: crate::managed_spill::ManagedSpillBudget,
+    admission: crate::complete_data_operator::GriddedNormalCompilationAdmission,
     mode: ManagedSpillMode<'_>,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
+    let budget = admission.spill;
     let storage = policy
         .gridded_normal_storage
         .as_ref()
         .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
     let mode = mode.specification(budget);
+    let reconciliation = base
+        .observation_transaction()
+        .post_replay_reconciliation()
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+    let compiler_allocation = (!mode.is_read).then(|| {
+        AllocationId::new(crate::complete_data_operator::gridded_compiler_allocation(
+            node.as_str(),
+        ))
+    });
+    let compiler_bytes = u64::try_from(admission.compiler.transient_workspace_bytes())
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
+    let compiler_slot = compiler_allocation
+        .as_ref()
+        .map(|allocation| PhysicalSlotId::new(format!("{}-slot", allocation.as_str())));
     let suffix = format!("{}-{}", pass.ordinal(), mode.suffix);
     let storage_id = format!("{MANAGED_SPILL_STORAGE_DEMAND}-{suffix}");
+    let metadata_allocation = if mode.is_read {
+        None
+    } else {
+        let resources =
+            crate::complete_data_operator::gridded_metadata_resources(node, &storage_id);
+        let bytes = crate::complete_data_operator::gridded_backing_metadata_bytes(
+            admission.compiler.retained_metadata_bytes(),
+            storage.retained_path_bytes(),
+            &resources,
+            storage.resources().domain().as_str(),
+        )
+        .map_err(|_| SpectralCyclePlanError::Overflow)?;
+        Some(crate::complete_data_operator::gridded_metadata_allocation(
+            node,
+            admission.compiler.binding(),
+            bytes,
+        ))
+    };
     let allocation = AllocationId::new(format!("managed-spill-buffer-{suffix}"));
     let serialization_allocation =
         AllocationId::new(format!("managed-spill-serialization-{suffix}"));
@@ -2210,6 +2435,10 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     };
     let serialization_compatibility = SlotCompatibility {
         layout: AllocationLayout::new("managed-spill-serialization"),
+        ..compatibility.clone()
+    };
+    let compiler_compatibility = SlotCompatibility {
+        layout: AllocationLayout::new("owner-managed-host-workspace"),
         ..compatibility.clone()
     };
     let reused_slot = reusable_physical_slot(&base, node, &compatibility, buffer_bytes, None);
@@ -2241,10 +2470,6 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         owner.kind = WorkKind::Spill;
         owner.domain = WorkDomain::Io;
         owner.fences = BTreeSet::from([FenceKind::Io]);
-        let reconciliation = base
-            .observation_transaction()
-            .post_replay_reconciliation()
-            .ok_or(SpectralCyclePlanError::Overflow)?;
         let reconciliation = nodes
             .iter_mut()
             .find(|candidate| candidate.id == *reconciliation)
@@ -2318,6 +2543,18 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         allocation: serialization_allocation.clone(),
         lifetime: lifetime.clone(),
     });
+    if let Some(allocation) = &compiler_allocation {
+        owner.allocations.push(AllocationUse {
+            allocation: allocation.clone(),
+            lifetime: lifetime.clone(),
+        });
+    }
+    if let Some(allocation) = &metadata_allocation {
+        owner.allocations.push(AllocationUse {
+            allocation: allocation.id.clone(),
+            lifetime: lifetime.clone(),
+        });
+    }
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.id = AlternativeId::new(format!("{}-gridded-{suffix}", alternative.id.as_str()));
     if reused_slot.is_none() {
@@ -2333,6 +2570,22 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
             allocation_id: serialization_allocation.as_str().to_string(),
             hard_bytes: serialization_bytes,
             preferred_bytes: serialization_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+    }
+    if let Some(allocation) = &compiler_allocation {
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: allocation.as_str().to_string(),
+            hard_bytes: compiler_bytes,
+            preferred_bytes: compiler_bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+    }
+    if let Some(allocation) = &metadata_allocation {
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: allocation.id.as_str().to_owned(),
+            hard_bytes: allocation.bytes,
+            preferred_bytes: allocation.bytes,
             views: vec![CapacityViewId::new("host-memory")],
         });
     }
@@ -2416,6 +2669,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     compatibility: compatibility.clone(),
                     physical_slot: slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: node.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             node.clone(),
@@ -2432,6 +2686,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     },
                     physical_slot: serialization_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: node.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             node.clone(),
@@ -2440,6 +2695,27 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     },
                 },
             ])
+            .chain(
+                compiler_allocation
+                    .as_ref()
+                    .zip(compiler_slot.as_ref())
+                    .map(|(allocation, slot)| LogicalAllocation {
+                        id: allocation.clone(),
+                        bytes: compiler_bytes,
+                        purpose: AllocationPurpose::Data,
+                        compatibility: compiler_compatibility.clone(),
+                        physical_slot: slot.clone(),
+                        lifetime: AllocationLifetime {
+                            disposition: AllocationDisposition::Release,
+                            acquire_at: node.clone(),
+                            // Scientific sealing consumes the compiler after the I/O fence.
+                            release_after: BTreeSet::from([WorkDependency::Work(
+                                reconciliation.clone(),
+                            )]),
+                        },
+                    }),
+            )
+            .chain(metadata_allocation.iter().cloned())
             .collect(),
         physical_slots: base
             .execution_dag()
@@ -2461,6 +2737,27 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                 },
                 capacity_bytes: serialization_bytes,
                 compatibility: serialization_compatibility,
+            }))
+            .chain(
+                compiler_allocation
+                    .as_ref()
+                    .zip(compiler_slot)
+                    .map(|(allocation, slot)| PhysicalSlot {
+                        id: slot,
+                        lease_resource: LeaseResource::Memory {
+                            allocation_id: allocation.as_str().to_string(),
+                        },
+                        capacity_bytes: compiler_bytes,
+                        compatibility: compiler_compatibility,
+                    }),
+            )
+            .chain(metadata_allocation.iter().map(|allocation| PhysicalSlot {
+                id: allocation.physical_slot.clone(),
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: allocation.id.as_str().to_owned(),
+                },
+                capacity_bytes: allocation.bytes,
+                compatibility: allocation.compatibility.clone(),
             }))
             .collect(),
         initial_knobs: base.execution_dag().initial_knobs().clone(),
@@ -2724,6 +3021,7 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
                     compatibility: compatibility.clone(),
                     physical_slot: slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: replay.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             replay.clone(),
@@ -2738,6 +3036,7 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
                     compatibility: compatibility.clone(),
                     physical_slot: block_slot.clone(),
                     lifetime: AllocationLifetime {
+                        disposition: AllocationDisposition::Release,
                         acquire_at: replay.clone(),
                         release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                             replay.clone(),
@@ -2811,11 +3110,46 @@ fn append_visibility_write_resources<R: ImplementationRegistry>(
     )?)
 }
 
+struct MinorCycleResources {
+    workers: u64,
+    heap_bytes: u64,
+    stack_bytes: u64,
+}
+
+impl MinorCycleResources {
+    fn for_worker_count(
+        workspace: Option<ReconstructionPlaneWorkspace>,
+        policy: &SpectralCycleExecutionPolicy,
+        workers: u64,
+    ) -> Result<Self, SpectralCyclePlanError> {
+        let Some(workspace) = workspace else {
+            return Ok(Self {
+                workers: 1,
+                heap_bytes: policy.limits.minor_cycle_bytes,
+                stack_bytes: 0,
+            });
+        };
+        let workers = workers.min(workspace.plane_count() as u64);
+        let plan = crate::reconstruction_executor::PlaneExecutionPlan::new(
+            workspace,
+            usize::try_from(workers).map_err(|_| SpectralCyclePlanError::Overflow)?,
+        )
+        .map_err(SpectralCyclePlanError::MinorWorkspace)?;
+        Ok(Self {
+            workers,
+            heap_bytes: plan.heap_bytes,
+            stack_bytes: plan.stack_bytes,
+        })
+    }
+}
+
 fn append_minor<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
     policy: &SpectralCycleExecutionPolicy,
     minor: &WorkNodeId,
+    resources: MinorCycleResources,
+    replay_stack_bytes: u64,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let reconcile = base
         .observation_transaction()
@@ -2824,16 +3158,37 @@ fn append_minor<R: ImplementationRegistry>(
         .clone();
     let commit = base.observation_transaction().commit().clone();
     let allocation = AllocationId::new("spectral-cycle-minor-cycle");
-    let slot = PhysicalSlotId::new("spectral-cycle-minor-cycle-slot");
     let compatibility = SlotCompatibility {
         memory_domain: CapacityDomainId::new("host-memory"),
         views: BTreeSet::from([CapacityViewId::new("host-memory")]),
         alignment_bytes: 64,
         storage_mode: StorageMode::Host,
-        layout: AllocationLayout::new("spectral-cycle-minor-cycle"),
+        layout: AllocationLayout::new("owner-managed-host-workspace"),
         initialization: InitializationPolicy::OverwriteBeforeRead,
         access: AllocationAccess::ReadWrite,
     };
+    let compiler_slot = base
+        .execution_dag()
+        .logical_allocations()
+        .values()
+        .find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("gridded-normal-compiler-")
+                && allocation.compatibility == compatibility
+                && allocation.lifetime.disposition == AllocationDisposition::Release
+                && allocation.lifetime.release_after
+                    == BTreeSet::from([WorkDependency::Work(reconcile.clone())])
+        })
+        .map(|allocation| &base.execution_dag().physical_slots()[&allocation.physical_slot]);
+    let slot = compiler_slot.map_or_else(
+        || PhysicalSlotId::new("spectral-cycle-minor-cycle-slot"),
+        |slot| slot.id.clone(),
+    );
+    let capacity_bytes = compiler_slot.map_or(resources.heap_bytes, |slot| {
+        slot.capacity_bytes.max(resources.heap_bytes)
+    });
     let mut nodes = base
         .execution_dag()
         .nodes()
@@ -2846,17 +3201,25 @@ fn append_minor<R: ImplementationRegistry>(
         .expect("commit exists")
         .dependencies
         .insert(WorkDependency::Work(minor.clone()));
+    let mut claims = vec![ResourceClaim {
+        resource: LeaseResource::Workers,
+        amount: resources.workers,
+        lifetime: ClaimLifetime::Work,
+    }];
+    if resources.stack_bytes > 0 {
+        claims.push(ResourceClaim {
+            resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
+            amount: resources.stack_bytes,
+            lifetime: ClaimLifetime::Work,
+        });
+    }
     nodes.push(WorkNode {
         id: minor.clone(),
         kind: WorkKind::Compute,
         domain: WorkDomain::Cpu,
         implementation: policy.implementation.clone(),
         dependencies: BTreeSet::from([WorkDependency::Work(reconcile)]),
-        claims: vec![ResourceClaim {
-            resource: LeaseResource::Workers,
-            amount: 1,
-            lifetime: ClaimLifetime::Work,
-        }],
+        claims,
         allocations: vec![AllocationUse {
             allocation: allocation.clone(),
             lifetime: ClaimLifetime::Work,
@@ -2865,10 +3228,37 @@ fn append_minor<R: ImplementationRegistry>(
         quiescence_after: BTreeSet::new(),
     });
     let mut alternative = base.execution_dag().resource_alternative().clone();
+    let workers = alternative.scaling.maximum_workers.max(resources.workers);
+    alternative.id = AlternativeId::new(format!(
+        "{}-minor-workers-{}",
+        alternative.id.as_str(),
+        resources.workers
+    ));
+    alternative.demand.workers = CountDemand::new(workers, workers);
+    alternative.scaling.minimum_workers = workers;
+    alternative.scaling.maximum_workers = workers;
+    alternative.demand.overhead.thread_stack_bytes = alternative
+        .demand
+        .overhead
+        .thread_stack_bytes
+        .checked_add(resources.stack_bytes.saturating_sub(replay_stack_bytes))
+        .ok_or(SpectralCyclePlanError::Overflow)?;
+    let mut knobs = base.execution_dag().initial_knobs().clone();
+    knobs.workers = workers;
+    if let Some(PhysicalSlot {
+        lease_resource: LeaseResource::Memory { allocation_id },
+        ..
+    }) = compiler_slot
+    {
+        alternative
+            .demand
+            .memory
+            .retain(|demand| &demand.allocation_id != allocation_id);
+    }
     alternative.demand.memory.push(MemoryDemand {
         allocation_id: "spectral-cycle-minor-cycle".to_string(),
-        hard_bytes: policy.limits.minor_cycle_bytes,
-        preferred_bytes: policy.limits.minor_cycle_bytes,
+        hard_bytes: capacity_bytes,
+        preferred_bytes: capacity_bytes,
         views: vec![CapacityViewId::new("host-memory")],
     });
     let dag = ExecutionDag::new(ExecutionDagSpecification {
@@ -2885,11 +3275,12 @@ fn append_minor<R: ImplementationRegistry>(
             .cloned()
             .chain([LogicalAllocation {
                 id: allocation,
-                bytes: policy.limits.minor_cycle_bytes,
+                bytes: resources.heap_bytes,
                 purpose: AllocationPurpose::Data,
                 compatibility: compatibility.clone(),
                 physical_slot: slot.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: AllocationDisposition::Release,
                     acquire_at: minor.clone(),
                     release_after: BTreeSet::from([WorkDependency::Work(minor.clone())]),
                 },
@@ -2899,17 +3290,18 @@ fn append_minor<R: ImplementationRegistry>(
             .execution_dag()
             .physical_slots()
             .values()
+            .filter(|existing| existing.id != slot)
             .cloned()
             .chain([PhysicalSlot {
-                id: slot,
+                id: slot.clone(),
                 lease_resource: LeaseResource::Memory {
                     allocation_id: "spectral-cycle-minor-cycle".to_string(),
                 },
-                capacity_bytes: policy.limits.minor_cycle_bytes,
+                capacity_bytes,
                 compatibility,
             }])
             .collect(),
-        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        initial_knobs: knobs,
         adaptations: vec![],
     })?;
     let prediction = PlanPrediction::new(
@@ -2945,8 +3337,12 @@ fn append_minor<R: ImplementationRegistry>(
 #[derive(Debug)]
 /// Failure to construct a complete spectral cycle physical plan.
 pub enum SpectralCyclePlanError {
-    /// Cube CLEAN cannot keep every output plane resident in one synchronized cycle.
-    CubeCleanRequiresAllPlanes,
+    /// Independent reconstruction controls rejected the owner workspace plan.
+    Minor(casa_imaging_reconstruction::MinorCycleError),
+    /// The bounded plane executor could not represent its resource envelope.
+    MinorWorkspace(std::io::Error),
+    /// Executor handoff did not name one of this bundle's sealed candidates.
+    UnselectedPhysicalWork,
     /// A clean initial-major plan omitted its runtime-private spill storage.
     MissingGriddedNormalStorage,
     /// A later-major plan received replay state outside its retained storage authority.
@@ -2957,6 +3353,8 @@ pub enum SpectralCyclePlanError {
     Overflow,
     /// Reconstruction rejected the replay layout or its managed-spill projection.
     ManagedSpillBudget(std::io::Error),
+    /// Physical model/normal backing layout could not be prepared.
+    CubeStorage(std::io::Error),
     /// Scientific weighting planning rejected the compiled problem or limits.
     Weighting(casa_imaging_reconstruction::WeightingError),
     /// T18 physical composition rejected the base transaction authority.
@@ -2980,7 +3378,7 @@ impl fmt::Display for SpectralCyclePlanError {
 impl Error for SpectralCyclePlanError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::ManagedSpillBudget(error) => Some(error),
+            Self::ManagedSpillBudget(error) | Self::CubeStorage(error) => Some(error),
             _ => None,
         }
     }

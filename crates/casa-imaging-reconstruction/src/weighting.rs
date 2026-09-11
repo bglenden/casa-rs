@@ -2,6 +2,9 @@
 
 //! Frozen global weighting generations and bounded weighted replay.
 
+mod spectral_cache;
+pub use spectral_cache::WeightingSpectralCache;
+
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeMap, fmt, mem::size_of};
 
@@ -16,6 +19,10 @@ use casa_imaging_model::{
 use sha2::{Digest, Sha256};
 use smallvec::SmallVec;
 
+use crate::spectral_sampling::{
+    CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample, NativeRowSpectralGeometry,
+};
+
 const SPEED_OF_LIGHT_M_PER_S: f64 = 299_792_458.0;
 const GENERATION_DOMAIN: &[u8] = b"casa-rs-frozen-weighting-generation";
 const GENERATION_VERSION: u32 = 2;
@@ -23,7 +30,7 @@ const REPLAY_DOMAIN: &[u8] = b"casa-rs-weighting-replay";
 const REPLAY_VERSION: u32 = 1;
 const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
 const COVERAGE_HASH_CHUNK_BYTES: usize = 256;
-const COVERAGE_VERSION: u32 = 2;
+const COVERAGE_VERSION: u32 = 3;
 const F32_MINIMUM_POWER: i16 = -149;
 const F32_SUPERACCUMULATOR_LIMBS: usize = 6;
 const CONSERVATIVE_TREE_ENTRY_BYTES: usize = 64;
@@ -140,6 +147,7 @@ impl WeightingExecutionLimits {
 /// Complete byte projection for weighting-owned resident state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WeightingResidency {
+    density_layout_bytes: usize,
     density_grid_bytes: usize,
     robust_factor_bytes: usize,
     sum_weight_bytes: usize,
@@ -147,11 +155,87 @@ pub struct WeightingResidency {
     sum_weight_accumulator_bytes: usize,
     replay_read_bytes: usize,
     weighted_block_bytes: usize,
+    weighted_sample_bytes: usize,
     simultaneous_selected_weighted_bytes: usize,
+    spectral_cache_bytes: usize,
     peak_bytes: usize,
 }
 
+pub(crate) fn maximum_spectral_terms(problem: &CompiledProblem) -> usize {
+    use casa_imaging_model::{ReconstructionBasis, SpectralKernel};
+    match problem.reconstruction().basis() {
+        ReconstructionBasis::Constant | ReconstructionBasis::Taylor { .. } => 1,
+        ReconstructionBasis::TaylorViaChannelMajor { .. }
+        | ReconstructionBasis::ChannelLocal { .. }
+        | ReconstructionBasis::JointContinuumLine { .. } => {
+            match problem.science().spectral().sampling().kernel() {
+                SpectralKernel::Identity | SpectralKernel::Nearest => 1,
+                SpectralKernel::Linear => 2,
+                SpectralKernel::Cubic => 4,
+                SpectralKernel::ChannelIntegration { maximum_terms } => maximum_terms,
+            }
+        }
+    }
+}
+
+// SmallVec's collect, clone and push paths round spilled capacity to a power of two.
+pub(crate) fn smallvec_heap_bytes<T>(maximum_len: usize) -> Result<usize, WeightingError> {
+    if maximum_len <= 4 {
+        return Ok(0);
+    }
+    maximum_len
+        .checked_next_power_of_two()
+        .and_then(|capacity| capacity.checked_mul(size_of::<T>()))
+        .ok_or(WeightingError::ResidencyOverflow)
+}
+
+pub(crate) fn native_row_heap_bytes(
+    maximum_correlations: usize,
+    maximum_terms: usize,
+) -> Result<usize, WeightingError> {
+    let spectral = smallvec_heap_bytes::<WeightingSpectralValue>(maximum_terms)?
+        .checked_mul(maximum_correlations)
+        .ok_or(WeightingError::ResidencyOverflow)?;
+    let native_samples = smallvec_heap_bytes::<WeightingSampleValue>(maximum_correlations)?;
+    // A growth step may hold the new backing and its preceding power-of-two capacity.
+    let sample_growth_overlap =
+        smallvec_heap_bytes::<WeightingSampleValue>(maximum_correlations.div_ceil(2))?;
+    let observed = smallvec_heap_bytes::<num_complex::Complex64>(maximum_correlations)?;
+    let correlations =
+        smallvec_heap_bytes::<casa_imaging_model::CorrelationType>(maximum_correlations)?;
+    let weights = smallvec_heap_bytes::<f64>(maximum_correlations)?;
+    let flags = smallvec_heap_bytes::<bool>(maximum_correlations)?;
+    native_samples
+        .checked_add(sample_growth_overlap)
+        .and_then(|bytes| bytes.checked_add(observed.checked_mul(3)?))
+        .and_then(|bytes| bytes.checked_add(spectral))
+        .and_then(|bytes| bytes.checked_add(correlations))
+        .and_then(|bytes| bytes.checked_add(weights))
+        .and_then(|bytes| bytes.checked_add(flags))
+        .ok_or(WeightingError::ResidencyOverflow)
+}
+
+fn validate_spectral_contribution_capacity(
+    problem: &CompiledProblem,
+    contributions: &SelectedSpectralContributions,
+) -> Result<(), WeightingError> {
+    let maximum = maximum_spectral_terms(problem);
+    if contributions.len() > maximum {
+        return Err(WeightingError::SpectralContributionCapacity {
+            actual: contributions.len(),
+            maximum,
+        });
+    }
+    Ok(())
+}
+
 impl WeightingResidency {
+    /// Frozen cube-density geometry and transfer-law metadata.
+    #[must_use]
+    pub const fn density_layout_bytes(self) -> usize {
+        self.density_layout_bytes
+    }
+
     /// Frozen density-grid bytes.
     #[must_use]
     pub const fn density_grid_bytes(self) -> usize {
@@ -200,6 +284,12 @@ impl WeightingResidency {
         self.simultaneous_selected_weighted_bytes
     }
 
+    /// Return the bounded source-channel stencil cache and miss workspace.
+    #[must_use]
+    pub const fn spectral_cache_bytes(self) -> usize {
+        self.spectral_cache_bytes
+    }
+
     /// Conservative total weighting-owner residency.
     #[must_use]
     pub const fn peak_bytes(self) -> usize {
@@ -243,6 +333,11 @@ pub fn plan_weighting(
     limits: WeightingExecutionLimits,
 ) -> Result<WeightingPlan, WeightingError> {
     let grid = density_grid_shape(problem)?;
+    let density_layout_bytes = if grid.cube_output.is_some() {
+        size_of::<DensityGridShape>()
+    } else {
+        0
+    };
     let cells = if matches!(problem.weighting().scheme(), WeightingScheme::Natural) {
         0
     } else {
@@ -255,29 +350,51 @@ pub fn plan_weighting(
         .planes
         .checked_mul(size_of::<f64>())
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let sum_weight_bytes = robust_factor_bytes;
+    let sum_weight_bytes = grid
+        .output_planes
+        .checked_mul(size_of::<f64>())
+        .ok_or(WeightingError::ResidencyOverflow)?;
     let shared_density_accumulator_bytes = cells
         .checked_mul(F32_SUPERACCUMULATOR_LIMBS)
         .and_then(|limbs| limbs.checked_mul(size_of::<u64>()))
         .and_then(|bytes| bytes.checked_add(size_of::<ExactF32Grid>()))
+        .and_then(|bytes| {
+            bytes.checked_add(if grid.cube_output.is_some() {
+                exact_sum_capacity_bytes(grid.planes)?.checked_add(size_of::<CubeWeightRows>())?
+            } else {
+                0
+            })
+        })
         .ok_or(WeightingError::ResidencyOverflow)?;
-    let sum_weight_accumulator_bytes = F64_EXPONENT_BINS
-        .checked_add(1)
-        .and_then(|entries| entries.checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES))
-        .and_then(|bytes| bytes.checked_mul(grid.planes))
+    let sum_weight_accumulator_bytes = exact_sum_capacity_bytes(grid.output_planes)
+        .and_then(|bytes| {
+            bytes.checked_add(if grid.cube_output.is_some() {
+                size_of::<CubeWeightRows>()
+            } else {
+                0
+            })
+        })
         .ok_or(WeightingError::ResidencyOverflow)?;
     let replay_read_bytes = 0;
+    let weighted_sample_bytes = size_of::<WeightingSampleValue>()
+        .checked_add(smallvec_heap_bytes::<WeightingSpectralValue>(
+            maximum_spectral_terms(problem),
+        )?)
+        .ok_or(WeightingError::ResidencyOverflow)?;
     let weighted_block_bytes = limits
         .max_block_samples
-        .checked_mul(size_of::<WeightingSampleValue>())
+        .checked_mul(weighted_sample_bytes)
         .ok_or(WeightingError::ResidencyOverflow)?;
     let simultaneous_selected_weighted_bytes = weighted_block_bytes;
+    let spectral_cache_bytes = WeightingSpectralCache::planned_bytes(problem)?;
     let peak_bytes = density_grid_bytes
-        .checked_add(robust_factor_bytes)
+        .checked_add(density_layout_bytes)
+        .and_then(|bytes| bytes.checked_add(robust_factor_bytes))
         .and_then(|bytes| bytes.checked_add(sum_weight_bytes))
         .and_then(|bytes| bytes.checked_add(shared_density_accumulator_bytes))
         .and_then(|bytes| bytes.checked_add(sum_weight_accumulator_bytes))
         .and_then(|bytes| bytes.checked_add(simultaneous_selected_weighted_bytes))
+        .and_then(|bytes| bytes.checked_add(spectral_cache_bytes))
         .ok_or(WeightingError::ResidencyOverflow)?;
     Ok(WeightingPlan {
         problem: problem.problem_id(),
@@ -285,6 +402,7 @@ pub fn plan_weighting(
         limits,
         grid,
         planned: WeightingResidency {
+            density_layout_bytes,
             density_grid_bytes,
             robust_factor_bytes,
             sum_weight_bytes,
@@ -292,10 +410,83 @@ pub fn plan_weighting(
             sum_weight_accumulator_bytes,
             replay_read_bytes,
             weighted_block_bytes,
+            weighted_sample_bytes,
             simultaneous_selected_weighted_bytes,
+            spectral_cache_bytes,
             peak_bytes,
         },
     })
+}
+
+fn exact_sum_capacity_bytes(planes: usize) -> Option<usize> {
+    F64_EXPONENT_BINS
+        .checked_add(1)?
+        .checked_mul(CONSERVATIVE_TREE_ENTRY_BYTES)?
+        .checked_mul(planes)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct NativeCubeWeight {
+    value: f64,
+    flag: bool,
+    uvw_m: [f64; 3],
+    correlations: usize,
+}
+
+#[derive(Debug)]
+struct CubeWeightRows {
+    cursor: CasaLinearRowCursor,
+    previous: Option<NativeCubeWeight>,
+}
+
+impl CubeWeightRows {
+    fn new() -> Self {
+        Self {
+            cursor: CasaLinearRowCursor::new(),
+            previous: None,
+        }
+    }
+
+    fn push(
+        &mut self,
+        sample: &WeightingSelectedSample,
+        value: f64,
+        output: CasaLinearOutputGrid,
+        mut emit: impl FnMut(
+            CasaLinearSample,
+            NativeCubeWeight,
+            NativeCubeWeight,
+        ) -> Result<(), WeightingError>,
+    ) -> Result<(), WeightingError> {
+        let geometry = sample
+            .row_spectral_geometry
+            .ok_or(WeightingError::RowSpectralGeometryMismatch)?;
+        let current = NativeCubeWeight {
+            value,
+            flag: sample.input_weight_group_flag
+                || sample.parallel_hand_group_flag
+                || sample.row_flag
+                || !sample.input_weight.is_finite()
+                || sample.input_weight < 0.0,
+            uvw_m: sample.density_uvw_m,
+            correlations: sample.correlation_group_size,
+        };
+        if let Some(points) = self.cursor.push(
+            sample.address,
+            geometry,
+            sample.output_frame_frequency_hz,
+            output,
+        )? {
+            let previous = self
+                .previous
+                .ok_or(WeightingError::RowSpectralGeometryMismatch)?;
+            for point in points {
+                emit(point, previous, current)?;
+            }
+        }
+        self.previous = Some(current);
+        Ok(())
+    }
 }
 
 /// Reconstruction-owned algorithm state prepared by bounded callback phases.
@@ -474,7 +665,7 @@ impl WeightingAlgorithmState {
     /// Return the maximum selected samples in one planned replay block.
     #[must_use]
     pub const fn max_replay_block_samples(&self) -> usize {
-        self.planned_residency.weighted_block_bytes / std::mem::size_of::<WeightingSampleValue>()
+        self.planned_residency.weighted_block_bytes / self.planned_residency.weighted_sample_bytes
     }
 
     /// Begin one bounded weighted replay callback phase.
@@ -490,6 +681,7 @@ impl WeightingAlgorithmState {
         }
         let block = Vec::with_capacity(plan.limits.max_block_samples);
         let peak_weighted_capacity = block.capacity();
+        let coverage = CoverageEncoder::new();
         Ok(WeightingReplayPhase {
             generation: self,
             problem,
@@ -498,7 +690,8 @@ impl WeightingAlgorithmState {
             pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
-            coverage: CoverageEncoder::new(),
+            previous_checkpoint: coverage.checkpoint_token(),
+            coverage,
             sample_count: 0,
             replay_sequence,
         })
@@ -523,6 +716,7 @@ impl WeightingAlgorithmState {
         }
         let block = Vec::with_capacity(plan.limits.max_block_samples);
         let peak_weighted_capacity = block.capacity();
+        let coverage = CoverageEncoder::derived(proof.coverage());
         Ok(WeightingReplayPhase {
             generation: self,
             problem,
@@ -531,7 +725,8 @@ impl WeightingAlgorithmState {
             pending: None,
             peak_weighted_capacity,
             block_sequence: 0,
-            coverage: CoverageEncoder::derived(proof.coverage()),
+            previous_checkpoint: coverage.checkpoint_token(),
+            coverage,
             sample_count: 0,
             replay_sequence,
         })
@@ -551,23 +746,6 @@ impl WeightingAlgorithmState {
             return Err(WeightingError::ProblemMismatch);
         }
         Ok(())
-    }
-
-    fn weight(
-        &self,
-        problem: &CompiledProblem,
-        sample: &WeightingSelectedSample,
-        contribution: Option<SelectedSpectralContribution>,
-    ) -> Result<f64, WeightingError> {
-        weight_from_state(
-            problem,
-            self.grid,
-            &self.density,
-            &self.robust_f2,
-            self.frequency_range_hz,
-            sample,
-            contribution,
-        )
     }
 }
 
@@ -603,6 +781,9 @@ fn weight_from_state(
                 return Ok(0.0);
             };
             let cell_density = density[cell];
+            if grid.cube_output.is_some() && cell_density <= 0.0 {
+                return Ok(0.0);
+            }
             input / (cell_density * robust_f2[plane] + 1.0)
         }
         WeightingScheme::BriggsBandwidthTaper { .. } => {
@@ -610,6 +791,9 @@ fn weight_from_state(
                 return Ok(0.0);
             };
             let cell_density = density[cell];
+            if grid.cube_output.is_some() && cell_density <= 0.0 {
+                return Ok(0.0);
+            }
             let factor = bandwidth_taper_factor(grid, frequency_range_hz, uv);
             input / (cell_density * robust_f2[plane] / factor + 1.0)
         }
@@ -620,6 +804,71 @@ fn weight_from_state(
     } else {
         Err(WeightingError::GeneratedNonFiniteWeight)
     }
+}
+
+fn weighted_sample_from_state(
+    problem: &CompiledProblem,
+    grid: DensityGridShape,
+    density: &[f64],
+    robust_f2: &[f64],
+    frequency_range_hz: Option<[f64; 2]>,
+    sample: WeightingSelectedSample,
+    contributions: SelectedSpectralContributions,
+) -> Result<WeightingSampleValue, WeightingError> {
+    let weight = |contribution| {
+        weight_from_state(
+            problem,
+            grid,
+            density,
+            robust_f2,
+            frequency_range_hz,
+            &sample,
+            contribution,
+        )
+    };
+    let source_imaging_weight = if let Some(output) = grid.cube_output {
+        let density_output = output
+            .with_padding(grid.padding)
+            .ok_or(WeightingError::ResidencyOverflow)?;
+        Some(
+            match density_output.nearest_channel(sample.output_frame_frequency_hz) {
+                None => 0.0,
+                Some(plane) => weight(Some(
+                    SelectedSpectralContribution::new(
+                        u32::try_from(plane).map_err(|_| WeightingError::OutputChannelMismatch)?,
+                        1.0,
+                        sample.address.frequency_centre_hz,
+                    )
+                    .ok_or(WeightingError::OutputChannelMismatch)?,
+                ))?,
+            },
+        )
+    } else if problem.weighting().density_scope() != WeightDensityScope::PerOutputChannel {
+        Some(weight(Some(
+            SelectedSpectralContribution::new(0, 1.0, sample.output_frame_frequency_hz)
+                .ok_or(WeightingError::OutputChannelMismatch)?,
+        ))?)
+    } else {
+        None
+    };
+    let spectral_values = contributions
+        .iter()
+        .map(|contribution| {
+            Ok(WeightingSpectralValue {
+                contribution,
+                imaging_weight: if grid.cube_output.is_some() {
+                    source_imaging_weight.ok_or(WeightingError::OutputChannelMismatch)?
+                } else {
+                    weight(Some(contribution))?
+                },
+            })
+        })
+        .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
+    Ok(WeightingSampleValue {
+        sample,
+        source_imaging_weight,
+        spectral_values,
+    })
 }
 
 /// Begin reconstruction-owned accumulation for a global density pass.
@@ -646,7 +895,22 @@ pub fn begin_weighting_generation(
             },
         )?,
         ordinal: 0,
-        frequency_range_hz: None,
+        frequency_range_hz: plan.grid.cube_output.map(|_| {
+            let spectral = problem.geometry().spectral();
+            let first = spectral.channel_centre_hz(0).expect("compiled output axis");
+            let last = spectral
+                .channel_centre_hz(spectral.output_channels() - 1)
+                .expect("compiled output axis");
+            [first.min(last), first.max(last)]
+        }),
+        cube_rows: plan.grid.cube_output.map(|_| CubeWeightRows::new()),
+        raw_sum_weights: if plan.grid.cube_output.is_some() {
+            (0..plan.grid.planes)
+                .map(|_| ExactF64Sum::default())
+                .collect()
+        } else {
+            Vec::new()
+        },
     })
 }
 
@@ -675,6 +939,8 @@ pub struct WeightingDensityPhase {
     density: ExactF32Grid,
     ordinal: u64,
     frequency_range_hz: Option<[f64; 2]>,
+    cube_rows: Option<CubeWeightRows>,
+    raw_sum_weights: Vec<ExactF64Sum>,
 }
 
 impl WeightingDensityPhase {
@@ -693,15 +959,48 @@ impl WeightingDensityPhase {
         }
         let sample = sample.into();
         let density_owner = sample.input_weight_group().is_density_owner();
-        let sample = WeightingSelectedSample::from_selected(sample, output_frame_frequency_hz);
-        for contribution in contributions.iter() {
+        let sample =
+            WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
+        for contribution in contributions
+            .iter()
+            .filter(|_| self.grid.cube_output.is_none())
+        {
             extend_frequency_range(
                 &mut self.frequency_range_hz,
                 contribution.evaluation_frequency_hz(),
             );
         }
         let input = input_weight(problem, &sample)?;
-        if density_owner
+        if density_owner && let Some(rows) = &mut self.cube_rows {
+            let output = self
+                .grid
+                .cube_output
+                .expect("cube rows bind output geometry");
+            let density_output = output
+                .with_padding(self.grid.padding)
+                .ok_or(WeightingError::ResidencyOverflow)?;
+            rows.push(&sample, input, density_output, |point, left, right| {
+                if point.linear_flag(left.flag, right.flag) {
+                    return Ok(());
+                }
+                let [lf, rf] = point.factors();
+                let value = f64::from((left.value * lf + right.value * rf) as f32);
+                let uv = uv_lambda_for_coordinates(left.uvw_m, point.frequency_hz());
+                if density_build_cell(problem, self.grid, point.output_channel(), uv).is_some() {
+                    add_density_sample(
+                        problem,
+                        self.grid,
+                        &mut self.density,
+                        point.output_channel(),
+                        uv,
+                        value,
+                    )?;
+                    self.raw_sum_weights[point.output_channel()].add(value)?;
+                }
+                Ok(())
+            })?;
+        } else if self.cube_rows.is_none()
+            && density_owner
             && input > 0.0
             && !matches!(problem.weighting().scheme(), WeightingScheme::Natural)
         {
@@ -739,7 +1038,7 @@ impl WeightingDensityPhase {
 
     /// Finish local density reduction and begin the sum-weight callback phase.
     pub fn finish(
-        self,
+        mut self,
         problem: &CompiledProblem,
     ) -> Result<WeightingSumWeightPhase, WeightingError> {
         if self.problem != problem.problem_id()
@@ -747,10 +1046,31 @@ impl WeightingDensityPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let shared_density_accumulator_bytes = self.density.resident_bytes()?;
+        if let Some(rows) = &mut self.cube_rows {
+            rows.cursor.finish()?;
+            rows.previous = None;
+        }
+        let shared_density_accumulator_bytes = self
+            .density
+            .resident_bytes()?
+            .checked_add(
+                exact_f64_state_resident_bytes(
+                    &self.raw_sum_weights,
+                    self.raw_sum_weights.capacity(),
+                )
+                .ok_or(WeightingError::ResidencyOverflow)?,
+            )
+            .and_then(|bytes| {
+                bytes.checked_add(if self.cube_rows.is_some() {
+                    size_of::<CubeWeightRows>()
+                } else {
+                    0
+                })
+            })
+            .ok_or(WeightingError::ResidencyOverflow)?;
         let density_digest = self.density.digest();
         let density = self.density.values()?;
-        let robust_f2 = robust_factors(problem, self.grid, &density);
+        let robust_f2 = robust_factors(problem, self.grid, &density, &self.raw_sum_weights);
         Ok(WeightingSumWeightPhase {
             problem: self.problem,
             commitment: self.commitment,
@@ -762,10 +1082,11 @@ impl WeightingDensityPhase {
             planned_residency: self.planned_residency,
             shared_density_accumulator_bytes,
             density_sample_count: self.ordinal,
-            sum_weights: (0..self.grid.planes)
+            sum_weights: (0..self.grid.output_planes)
                 .map(|_| ExactF64Sum::default())
                 .collect(),
             sum_sample_count: 0,
+            cube_rows: self.cube_rows,
         })
     }
 
@@ -796,6 +1117,7 @@ pub struct WeightingSumWeightPhase {
     density_sample_count: u64,
     sum_weights: Vec<ExactF64Sum>,
     sum_sample_count: u64,
+    cube_rows: Option<CubeWeightRows>,
 }
 
 impl WeightingSumWeightPhase {
@@ -833,51 +1155,58 @@ impl WeightingSumWeightPhase {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample = WeightingSelectedSample::from_selected(sample, output_frame_frequency_hz);
-        let source_imaging_weight = match problem.weighting().density_scope() {
-            WeightDensityScope::PerOutputChannel => None,
-            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                let source = SelectedSpectralContribution::new(0, 1.0, output_frame_frequency_hz)
-                    .ok_or(WeightingError::OutputChannelMismatch)?;
-                Some(weight_from_state(
-                    problem,
-                    self.grid,
-                    &self.density,
-                    &self.robust_f2,
-                    self.frequency_range_hz,
-                    &sample,
-                    Some(source),
-                )?)
+        validate_spectral_contribution_capacity(problem, &contributions)?;
+        let sample =
+            WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
+        let weighted = weighted_sample_from_state(
+            problem,
+            self.grid,
+            &self.density,
+            &self.robust_f2,
+            self.frequency_range_hz,
+            sample,
+            contributions,
+        )?;
+        let sample = &weighted.sample;
+        let spectral_values = &weighted.spectral_values;
+        if let Some(rows) = &mut self.cube_rows {
+            if sample.starts_correlation_group {
+                rows.push(
+                    sample,
+                    weighted
+                        .source_imaging_weight
+                        .ok_or(WeightingError::OutputChannelMismatch)?,
+                    self.grid.cube_output.expect("bound cube rows"),
+                    |point, left, right| {
+                        if point.linear_flag(left.flag, right.flag) {
+                            return Ok(());
+                        }
+                        let chosen = if point.nearest_is_right() {
+                            right
+                        } else {
+                            left
+                        };
+                        if !chosen.flag {
+                            self.sum_weights[point.output_channel()]
+                                .add(chosen.value * chosen.correlations as f64)?;
+                        }
+                        Ok(())
+                    },
+                )?;
             }
-        };
-        let spectral_values = contributions
-            .iter()
-            .map(|contribution| {
-                Ok(WeightingSpectralValue {
-                    contribution,
-                    imaging_weight: weight_from_state(
-                        problem,
-                        self.grid,
-                        &self.density,
-                        &self.robust_f2,
-                        self.frequency_range_hz,
-                        &sample,
-                        Some(contribution),
-                    )?,
-                })
-            })
-            .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
-        match problem.weighting().density_scope() {
-            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                if let Some(value) = spectral_values.first() {
-                    self.sum_weights[0].add(value.imaging_weight)?;
+        } else {
+            match problem.weighting().density_scope() {
+                WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
+                    if let Some(value) = spectral_values.first() {
+                        self.sum_weights[0].add(value.imaging_weight)?;
+                    }
                 }
-            }
-            WeightDensityScope::PerOutputChannel => {
-                for value in &spectral_values {
-                    let plane = contribution_plane(self.grid, value.contribution)?;
-                    self.sum_weights[plane]
-                        .add(value.imaging_weight * value.contribution.factor())?;
+                WeightDensityScope::PerOutputChannel => {
+                    for value in spectral_values {
+                        let plane = contribution_plane(self.grid, value.contribution)?;
+                        self.sum_weights[plane]
+                            .add(value.imaging_weight * value.contribution.factor())?;
+                    }
                 }
             }
         }
@@ -885,14 +1214,11 @@ impl WeightingSumWeightPhase {
             .sum_sample_count
             .checked_add(1)
             .ok_or(WeightingError::SampleCountOverflow)?;
-        Ok(WeightingSampleValue {
-            sample,
-            source_imaging_weight,
-            spectral_values,
-        })
+        Ok(weighted)
     }
 
     fn into_fused(self, density_prepass: bool, plan: &WeightingPlan) -> FusedWeightingPhase {
+        let coverage = CoverageEncoder::new();
         FusedWeightingPhase {
             sum: self,
             density_prepass,
@@ -901,12 +1227,16 @@ impl WeightingSumWeightPhase {
             max_block_samples: plan.limits.max_block_samples,
             peak_weighted_capacity: plan.limits.max_block_samples,
             block_sequence: 0,
-            coverage: CoverageEncoder::new(),
+            previous_checkpoint: coverage.checkpoint_token(),
+            coverage,
         }
     }
 
     /// Finalize algorithmic state; this is not traversal-completion evidence.
-    pub fn finish(self) -> Result<WeightingAlgorithmState, WeightingError> {
+    pub fn finish(mut self) -> Result<WeightingAlgorithmState, WeightingError> {
+        if let Some(rows) = &mut self.cube_rows {
+            rows.cursor.finish()?;
+        }
         if self.density_sample_count != self.sum_sample_count {
             return Err(WeightingError::SelectedGenerationMismatch);
         }
@@ -933,7 +1263,13 @@ impl WeightingSumWeightPhase {
             .len()
             .checked_mul(size_of::<f64>())
             .ok_or(WeightingError::ResidencyOverflow)?;
-        let sum_weight_accumulator_bytes = exact_sum_weight_bytes;
+        let sum_weight_accumulator_bytes = exact_sum_weight_bytes
+            .checked_add(if self.cube_rows.is_some() {
+                size_of::<CubeWeightRows>()
+            } else {
+                0
+            })
+            .ok_or(WeightingError::ResidencyOverflow)?;
         let robust_factor_bytes = self
             .robust_f2
             .len()
@@ -944,7 +1280,8 @@ impl WeightingSumWeightPhase {
             .checked_mul(size_of::<f64>())
             .ok_or(WeightingError::ResidencyOverflow)?;
         let peak_bytes = density_grid_bytes
-            .checked_add(robust_factor_bytes)
+            .checked_add(self.planned_residency.density_layout_bytes)
+            .and_then(|bytes| bytes.checked_add(robust_factor_bytes))
             .and_then(|bytes| bytes.checked_add(sum_weight_bytes))
             .and_then(|bytes| bytes.checked_add(self.shared_density_accumulator_bytes))
             .and_then(|bytes| bytes.checked_add(sum_weight_accumulator_bytes))
@@ -961,6 +1298,7 @@ impl WeightingSumWeightPhase {
             frequency_range_hz: self.frequency_range_hz,
             planned_residency: self.planned_residency,
             generation_residency: WeightingResidency {
+                density_layout_bytes: self.planned_residency.density_layout_bytes,
                 density_grid_bytes,
                 robust_factor_bytes,
                 sum_weight_bytes,
@@ -968,7 +1306,9 @@ impl WeightingSumWeightPhase {
                 sum_weight_accumulator_bytes,
                 replay_read_bytes: 0,
                 weighted_block_bytes: 0,
+                weighted_sample_bytes: self.planned_residency.weighted_sample_bytes,
                 simultaneous_selected_weighted_bytes: 0,
+                spectral_cache_bytes: 0,
                 peak_bytes,
             },
             next_replay: AtomicU64::new(0),
@@ -987,6 +1327,7 @@ pub struct FusedWeightingPhase {
     peak_weighted_capacity: usize,
     block_sequence: u64,
     coverage: CoverageEncoder,
+    previous_checkpoint: [u8; 32],
 }
 
 impl FusedWeightingPhase {
@@ -1086,7 +1427,7 @@ impl FusedWeightingPhase {
             replay_identity(state.generation_id, coverage, sample_count, block_count, 0);
         let weighted_block_bytes = self
             .peak_weighted_capacity
-            .checked_mul(size_of::<WeightingSampleValue>())
+            .checked_mul(state.planned_residency.weighted_sample_bytes)
             .ok_or(WeightingError::ResidencyOverflow)?;
         let peak_bytes = state
             .generation_residency
@@ -1103,6 +1444,7 @@ impl FusedWeightingPhase {
             coverage_proof_bytes: coverage_proof_work.bytes,
             coverage_proof_hash_calls: coverage_proof_work.hash_calls,
             residency: WeightingResidency {
+                density_layout_bytes: state.generation_residency.density_layout_bytes,
                 density_grid_bytes: state.generation_residency.density_grid_bytes,
                 robust_factor_bytes: state.generation_residency.robust_factor_bytes,
                 sum_weight_bytes: state.generation_residency.sum_weight_bytes,
@@ -1114,7 +1456,9 @@ impl FusedWeightingPhase {
                     .sum_weight_accumulator_bytes,
                 replay_read_bytes: 0,
                 weighted_block_bytes,
+                weighted_sample_bytes: state.planned_residency.weighted_sample_bytes,
                 simultaneous_selected_weighted_bytes: weighted_block_bytes,
+                spectral_cache_bytes: 0,
                 peak_bytes,
             },
         };
@@ -1128,11 +1472,12 @@ impl FusedWeightingPhase {
             .checked_add(1)
             .ok_or(WeightingError::BlockCountOverflow)?;
         self.peak_weighted_capacity = self.peak_weighted_capacity.max(self.block.capacity());
-        Ok(WeightingReplayChunk {
+        Ok(WeightingReplayChunk::new(
             sequence,
-            samples: std::mem::take(&mut self.block),
-            coverage: self.coverage.clone(),
-        })
+            std::mem::take(&mut self.block),
+            &self.coverage,
+            &mut self.previous_checkpoint,
+        ))
     }
 
     fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
@@ -1186,9 +1531,9 @@ impl WeightingSpectralValue {
 
 /// Compact kernel projection of one validated selected sample.
 ///
-/// Row-level geometry used only for source validation is absent. The bounded
-/// block retains the field, pointing, frequency, coordinates, flags,
-/// visibility, and address consumed by the scientific kernels.
+/// Row-level provenance used only for source validation is absent. The bounded
+/// block retains the field, pointing, selected spectral geometry, coordinates,
+/// flags, visibility, and address consumed by the scientific kernels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WeightingSelectedSample {
     pub(crate) address: SelectedSampleAddress,
@@ -1206,6 +1551,7 @@ pub struct WeightingSelectedSample {
     pub(crate) parallactic_angles_rad: [f64; 2],
     pub(crate) density_uvw_m: [f64; 3],
     output_frame_frequency_hz: f64,
+    row_spectral_geometry: Option<NativeRowSpectralGeometry>,
     field_id: i32,
     pointing_directions: SelectedPointingDirections,
     aw_pointing_pixel: Option<[f64; 2]>,
@@ -1215,13 +1561,27 @@ pub struct WeightingSelectedSample {
 
 impl WeightingSelectedSample {
     fn from_selected(
+        problem: &CompiledProblem,
         sample: SelectedObservationSampleView<'_>,
         output_frame_frequency_hz: f64,
-    ) -> Self {
+    ) -> Result<Self, WeightingError> {
+        let row_spectral_geometry = sample.row_spectral_geometry();
+        if row_spectral_geometry.is_some_and(|geometry| {
+            !geometry.matches_sample(sample, problem.geometry().spectral().output_frame())
+                || [Some(geometry.first()), geometry.second()]
+                    .into_iter()
+                    .flatten()
+                    .any(|(channel, frequency)| {
+                        channel == sample.address().channel_index
+                            && frequency.to_bits() != output_frame_frequency_hz.to_bits()
+                    })
+        }) {
+            return Err(WeightingError::RowSpectralGeometryMismatch);
+        }
         let coordinates = sample.coordinates();
         let input_weight_group = sample.input_weight_group();
         let domain_projections = sample.domain_projections().clone();
-        Self {
+        Ok(Self {
             address: sample.address(),
             visibility: sample.visibility(),
             channel_flag: sample.channel_flag(),
@@ -1236,12 +1596,19 @@ impl WeightingSelectedSample {
             parallactic_angles_rad: coordinates.parallactic_angles_rad,
             density_uvw_m: coordinates.density_uvw_m,
             output_frame_frequency_hz,
+            row_spectral_geometry: row_spectral_geometry.map(|geometry| {
+                NativeRowSpectralGeometry {
+                    channels: geometry.selected_channels(),
+                    first: geometry.first(),
+                    second: geometry.second(),
+                }
+            }),
             field_id: sample.metadata().field_id,
             pointing_directions: coordinates.pointing_directions,
             aw_pointing_pixel: primary_aw_pointing_pixel(&domain_projections),
             antenna_responses: sample.metadata().antenna_responses,
             domain_projections,
-        }
+        })
     }
 
     /// Return the exact selected-sample address.
@@ -1290,6 +1657,12 @@ impl WeightingSelectedSample {
     #[must_use]
     pub const fn output_frame_frequency_hz(&self) -> f64 {
         self.output_frame_frequency_hz
+    }
+
+    /// Source-issued geometry of the complete selected native-channel vector.
+    #[must_use]
+    pub(crate) const fn row_spectral_geometry(&self) -> Option<NativeRowSpectralGeometry> {
+        self.row_spectral_geometry
     }
 
     /// Return the two antenna pointing directions used by the mosaic response.
@@ -1367,7 +1740,326 @@ mod selected_sample_tests {
         SelectedPhaseCentreProjection,
     };
 
-    use super::primary_aw_pointing_pixel;
+    use super::{NativeRowSpectralGeometry, WeightingSelectedSample, primary_aw_pointing_pixel};
+
+    #[test]
+    fn chunk_checkpoint_chain_binds_each_emitted_prefix() {
+        use super::{CoverageEncoder, WeightingReplayChunk};
+
+        let mut coverage = CoverageEncoder::new();
+        let empty = coverage.checkpoint_token();
+        let mut previous = empty;
+        coverage.update(b"first selected prefix");
+        let first = WeightingReplayChunk::new(0, Vec::new(), &coverage, &mut previous);
+        assert_eq!(first.previous_checkpoint(), empty);
+        assert_eq!(first.checkpoint(), coverage.checkpoint_token());
+        coverage.update(b"second selected prefix");
+        let second = WeightingReplayChunk::new(1, Vec::new(), &coverage, &mut previous);
+        assert_eq!(second.previous_checkpoint(), first.checkpoint());
+        assert_eq!(previous, second.checkpoint());
+
+        let mut other_coverage = CoverageEncoder::new();
+        let mut other_previous = other_coverage.checkpoint_token();
+        other_coverage.update(b"another selected prefix");
+        let other_first =
+            WeightingReplayChunk::new(0, Vec::new(), &other_coverage, &mut other_previous);
+        other_coverage.update(b"second selected prefix");
+        let other_second =
+            WeightingReplayChunk::new(1, Vec::new(), &other_coverage, &mut other_previous);
+        assert_eq!(other_second.sequence(), second.sequence());
+        assert_eq!(other_second.previous_checkpoint(), other_first.checkpoint());
+        assert_ne!(other_second.previous_checkpoint(), first.checkpoint());
+        assert_ne!(other_second.checkpoint(), second.checkpoint());
+    }
+
+    #[test]
+    fn checkpoint_tokens_preserve_science_hash_state_and_separate_derived_proofs() {
+        use super::{CoverageEncoder, WeightingReplayCoverageId};
+        use sha2::Digest;
+
+        let mut coverage = CoverageEncoder::new();
+        coverage.update(b"selected prefix");
+        let token = coverage.checkpoint_token();
+        assert_eq!(coverage.checkpoint_token(), token);
+        let expected: [u8; 32] = coverage.hasher.clone().unwrap().finalize().into();
+        assert_eq!(token, expected);
+
+        let proof = WeightingReplayCoverageId(super::LogicalIdentity::from_sha256(token));
+        let derived = CoverageEncoder::derived(proof);
+        assert_ne!(derived.checkpoint_token(), token);
+        assert_ne!(
+            derived.checkpoint_token(),
+            CoverageEncoder::new().checkpoint_token()
+        );
+        let other = CoverageEncoder::derived(WeightingReplayCoverageId(
+            super::LogicalIdentity::from_sha256([7; 32]),
+        ));
+        assert_ne!(derived.checkpoint_token(), other.checkpoint_token());
+        assert_eq!(derived.work.bytes, 0);
+        assert_eq!(derived.work.hash_calls, 0);
+    }
+
+    #[test]
+    fn spectral_heap_bound_matches_smallvec_collection_and_clone() {
+        use super::{WeightingSpectralValue, smallvec_heap_bytes};
+        use smallvec::SmallVec;
+
+        for terms in [0, 1, 4, 5, 8, 9, 17] {
+            let values = (0..terms)
+                .map(|channel| {
+                    Ok::<_, super::WeightingError>(WeightingSpectralValue {
+                        contribution: casa_imaging_model::SelectedSpectralContribution::new(
+                            channel as u32,
+                            1.0,
+                            1.0e9,
+                        )
+                        .unwrap(),
+                        imaging_weight: 1.0,
+                    })
+                })
+                .collect::<Result<SmallVec<[_; 4]>, _>>()
+                .unwrap();
+            for values in [&values, &values.clone()] {
+                let heap = if values.spilled() {
+                    values.capacity() * size_of::<WeightingSpectralValue>()
+                } else {
+                    0
+                };
+                assert_eq!(
+                    heap,
+                    smallvec_heap_bytes::<WeightingSpectralValue>(terms).unwrap()
+                );
+            }
+        }
+        assert!(smallvec_heap_bytes::<WeightingSpectralValue>(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn native_row_heap_counts_one_sample_bank_and_all_observed_vectors() {
+        use super::{WeightingSampleValue, WeightingSpectralValue, native_row_heap_bytes};
+        assert_eq!(native_row_heap_bytes(4, 4).unwrap(), 0);
+        assert_eq!(
+            native_row_heap_bytes(4, 5).unwrap(),
+            4 * 8 * size_of::<WeightingSpectralValue>()
+        );
+        let q_capacity = (0..5)
+            .collect::<smallvec::SmallVec<[usize; 4]>>()
+            .capacity();
+        let vectors = q_capacity
+            * (size_of::<WeightingSampleValue>()
+                + 3 * size_of::<num_complex::Complex64>()
+                + size_of::<casa_imaging_model::CorrelationType>()
+                + size_of::<f64>()
+                + size_of::<bool>());
+        assert_eq!(native_row_heap_bytes(5, 4).unwrap(), vectors);
+        assert_eq!(
+            native_row_heap_bytes(9, 4).unwrap(),
+            24 * size_of::<WeightingSampleValue>()
+                + 16 * (3 * size_of::<num_complex::Complex64>()
+                    + size_of::<casa_imaging_model::CorrelationType>()
+                    + size_of::<f64>()
+                    + size_of::<bool>())
+        );
+        assert!(native_row_heap_bytes(usize::MAX, 5).is_err());
+    }
+
+    fn native_row_sample(channel: u32, row: u64) -> super::WeightingSampleValue {
+        use casa_imaging_model::{
+            CorrelationType, DirectionFrame, FrequencyFrame, LogicalIdentity,
+            MeasurementSetIdentity, SkyDirection,
+        };
+        let direction = SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5);
+        let frequency = 100.0 + f64::from(channel) * 100.0;
+        super::WeightingSampleValue {
+            sample: WeightingSelectedSample {
+                address: super::SelectedSampleAddress {
+                    measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256(
+                        [1; 32],
+                    )),
+                    physical_row: row,
+                    data_description_id: 0,
+                    spectral_window_id: 0,
+                    channel_index: channel,
+                    frequency_centre_hz: frequency,
+                    frequency_lower_hz: frequency - 50.0,
+                    frequency_upper_hz: frequency + 50.0,
+                    channel_width_hz: 100.0,
+                    frequency_frame: FrequencyFrame::Topocentric,
+                    polarization_id: 0,
+                    correlation_index: 0,
+                    correlation_type: CorrelationType::StokesI,
+                },
+                visibility: super::SelectedVisibilitySample::Complex32([1.0, 0.0]),
+                channel_flag: false,
+                parallel_hand_group_flag: false,
+                input_weight_group_flag: false,
+                row_flag: false,
+                input_weight: 1.0,
+                raw_input_weight: 1.0,
+                starts_correlation_group: true,
+                ends_correlation_group: true,
+                correlation_group_size: 1,
+                parallactic_angles_rad: [0.0; 2],
+                density_uvw_m: [0.0; 3],
+                output_frame_frequency_hz: frequency,
+                row_spectral_geometry: Some(NativeRowSpectralGeometry {
+                    channels: 3,
+                    first: (0, 100.0),
+                    second: Some((1, 200.0)),
+                }),
+                field_id: 0,
+                pointing_directions: super::SelectedPointingDirections {
+                    antenna1: direction,
+                    antenna2: direction,
+                },
+                aw_pointing_pixel: None,
+                antenna_responses: None,
+                domain_projections: SelectedImageDomainProjections::one_domain_with_shared_psf(
+                    SelectedPhaseCentreProjection::new([0.0; 3], 0.0).unwrap(),
+                ),
+            },
+            source_imaging_weight: Some(4.0 + f64::from(channel) * 6.0),
+            spectral_values: smallvec::SmallVec::new(),
+        }
+    }
+
+    #[test]
+    fn native_row_retains_previous_input_and_current_input_after_callback_errors() {
+        use super::{CasaLinearOutputGrid, FiniteValuePolicy};
+        use crate::spectral_operator::{
+            CasaLinearRowResampler, NativeSpectralGroup, SpectralOperatorError,
+        };
+        use num_complex::Complex64;
+        let output = CasaLinearOutputGrid::compile(&[100.0, 150.0, 200.0, 250.0, 300.0]).unwrap();
+        for failure in 0..3 {
+            let mut rows = CasaLinearRowResampler::<usize>::new();
+            let mut samples = [native_row_sample(0, 0)];
+            let mut observed = [Complex64::new(10.0, 0.0)];
+            rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 100.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 1,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |_, _, _| -> Result<(), SpectralOperatorError> {
+                    unreachable!("first input cannot interpolate")
+                },
+                |_| unreachable!("first input cannot emit"),
+            )
+            .unwrap();
+            assert!(matches!(
+                rows.finish(),
+                Err(SpectralOperatorError::IncompleteCoverage)
+            ));
+            samples[0] = native_row_sample(1, 0);
+            samples[0].sample.channel_flag = true;
+            observed[0] = Complex64::new(22.0, 0.0);
+            let mut emitted = Vec::new();
+            let result = rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 200.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 2,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |left, right, _| {
+                    assert_eq!((*left, *right), (1, 2));
+                    if failure == 1 {
+                        Err(SpectralOperatorError::InvalidSample)
+                    } else {
+                        Ok(())
+                    }
+                },
+                |group| {
+                    if failure == 2 {
+                        return Err(SpectralOperatorError::InvalidSample);
+                    }
+                    emitted.push((
+                        group.frequency_hz,
+                        group.observed[0].re,
+                        group.weights[0],
+                        group.flags[0],
+                    ));
+                    Ok(())
+                },
+            );
+            if failure == 0 {
+                result.unwrap();
+                assert!(emitted.contains(&(100.0, 10.0, 4.0, false)));
+                assert!(emitted.contains(&(150.0, 16.0, 4.0, true)));
+            } else {
+                assert!(matches!(result, Err(SpectralOperatorError::InvalidSample)));
+            }
+            samples[0] = native_row_sample(2, 0);
+            observed[0] = Complex64::new(34.0, 0.0);
+            let mut pairs = 0;
+            rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 300.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 3,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |left, right, _| {
+                    assert_eq!((*left, *right), (2, 3));
+                    pairs += 1;
+                    Ok(())
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+            assert!(pairs > 0);
+            rows.finish().unwrap();
+            samples[0] = native_row_sample(0, 1);
+            rows.push(
+                NativeSpectralGroup {
+                    frequency_hz: 100.0,
+                    samples: &samples,
+                    observed: &observed,
+                    predicted: 4,
+                },
+                output,
+                FiniteValuePolicy::RejectAll,
+                true,
+                |_, _, _| -> Result<(), SpectralOperatorError> {
+                    unreachable!("new row cannot interpolate")
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+            assert!(matches!(
+                rows.finish(),
+                Err(SpectralOperatorError::IncompleteCoverage)
+            ));
+        }
+    }
+
+    #[test]
+    fn bounded_replay_retains_a_compact_kernel_projection_and_only_required_spectral_values() {
+        let weighted_bytes = size_of::<WeightingSelectedSample>();
+        let spectral_bytes = size_of::<Option<NativeRowSpectralGeometry>>();
+        let source_bytes = size_of::<casa_imaging_model::SelectedObservationSample>();
+        assert!(weighted_bytes < source_bytes);
+        assert!(
+            (weighted_bytes - spectral_bytes) * 3 < source_bytes * 2,
+            "non-spectral kernel payload must retain the original compactness bound"
+        );
+        assert!(
+            spectral_bytes
+                < size_of::<Option<casa_imaging_model::SelectedRowSpectralGeometry>>() / 2,
+            "row/frame provenance must not be duplicated in every weighted sample"
+        );
+    }
 
     #[test]
     fn weighting_selects_the_main_chart_exact_aw_pointing_pixel() {
@@ -1417,7 +2109,8 @@ impl WeightingSampleValue {
         self.spectral_values.iter().copied()
     }
 
-    /// Return the output-channel-independent imaging weight at the transformed source centre.
+    /// Return the native imaging-weight scalar. For bound CASA cube weighting,
+    /// this uses the native channel's density plane, independently of prediction support.
     #[must_use]
     pub const fn source_imaging_weight(&self) -> Option<f64> {
         self.source_imaging_weight
@@ -1433,9 +2126,35 @@ pub struct WeightingReplayChunk {
     sequence: u64,
     samples: Vec<WeightingSampleValue>,
     coverage: CoverageEncoder,
+    previous_checkpoint: [u8; 32],
+    checkpoint: [u8; 32],
 }
 
 impl WeightingReplayChunk {
+    fn new(
+        sequence: u64,
+        samples: Vec<WeightingSampleValue>,
+        coverage: &CoverageEncoder,
+        previous_checkpoint: &mut [u8; 32],
+    ) -> Self {
+        let checkpoint = coverage.checkpoint_token();
+        Self {
+            sequence,
+            samples,
+            coverage: coverage.clone(),
+            previous_checkpoint: std::mem::replace(previous_checkpoint, checkpoint),
+            checkpoint,
+        }
+    }
+
+    pub(super) const fn previous_checkpoint(&self) -> [u8; 32] {
+        self.previous_checkpoint
+    }
+
+    pub(super) const fn checkpoint(&self) -> [u8; 32] {
+        self.checkpoint
+    }
+
     /// Return the zero-based replay block sequence.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
@@ -1486,6 +2205,7 @@ pub struct WeightingReplayPhase<'a> {
     peak_weighted_capacity: usize,
     block_sequence: u64,
     coverage: CoverageEncoder,
+    previous_checkpoint: [u8; 32],
     sample_count: u64,
     replay_sequence: u64,
 }
@@ -1505,37 +2225,21 @@ impl WeightingReplayPhase<'_> {
         {
             return Err(WeightingError::ProblemMismatch);
         }
-        let sample =
-            WeightingSelectedSample::from_selected(sample.into(), output_frame_frequency_hz);
-        let source_imaging_weight = match problem.weighting().density_scope() {
-            WeightDensityScope::PerOutputChannel => None,
-            WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-                let source = SelectedSpectralContribution::new(0, 1.0, output_frame_frequency_hz)
-                    .ok_or(WeightingError::OutputChannelMismatch)?;
-                Some(
-                    self.generation
-                        .weight(self.problem, &sample, Some(source))?,
-                )
-            }
-        };
-        let spectral_values = contributions
-            .iter()
-            .map(|contribution| {
-                Ok(WeightingSpectralValue {
-                    contribution,
-                    imaging_weight: self.generation.weight(
-                        self.problem,
-                        &sample,
-                        Some(contribution),
-                    )?,
-                })
-            })
-            .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
-        let weighted = WeightingSampleValue {
+        validate_spectral_contribution_capacity(problem, &contributions)?;
+        let sample = WeightingSelectedSample::from_selected(
+            problem,
+            sample.into(),
+            output_frame_frequency_hz,
+        )?;
+        let weighted = weighted_sample_from_state(
+            problem,
+            self.generation.grid,
+            &self.generation.density,
+            &self.generation.robust_f2,
+            self.generation.frequency_range_hz,
             sample,
-            source_imaging_weight,
-            spectral_values,
-        };
+            contributions,
+        )?;
         let emitted = self
             .flush_before_group(&weighted)?
             .then(|| self.take_block())
@@ -1613,7 +2317,7 @@ impl WeightingReplayPhase<'_> {
         );
         let weighted_block_bytes = self
             .peak_weighted_capacity
-            .checked_mul(size_of::<WeightingSampleValue>())
+            .checked_mul(self.generation.planned_residency.weighted_sample_bytes)
             .ok_or(WeightingError::ResidencyOverflow)?;
         let replay_read_bytes = 0;
         let simultaneous_selected_weighted_bytes = weighted_block_bytes;
@@ -1621,7 +2325,10 @@ impl WeightingReplayPhase<'_> {
             .generation
             .generation_residency
             .density_grid_bytes
-            .checked_add(self.generation.generation_residency.robust_factor_bytes)
+            .checked_add(self.generation.generation_residency.density_layout_bytes)
+            .and_then(|bytes| {
+                bytes.checked_add(self.generation.generation_residency.robust_factor_bytes)
+            })
             .and_then(|bytes| {
                 bytes.checked_add(self.generation.generation_residency.sum_weight_bytes)
             })
@@ -1639,6 +2346,7 @@ impl WeightingReplayPhase<'_> {
                 coverage_proof_bytes: coverage_proof_work.bytes,
                 coverage_proof_hash_calls: coverage_proof_work.hash_calls,
                 residency: WeightingResidency {
+                    density_layout_bytes: self.generation.generation_residency.density_layout_bytes,
                     density_grid_bytes: self.generation.generation_residency.density_grid_bytes,
                     robust_factor_bytes: self.generation.generation_residency.robust_factor_bytes,
                     sum_weight_bytes: self.generation.generation_residency.sum_weight_bytes,
@@ -1646,7 +2354,9 @@ impl WeightingReplayPhase<'_> {
                     sum_weight_accumulator_bytes: 0,
                     replay_read_bytes,
                     weighted_block_bytes,
+                    weighted_sample_bytes: self.generation.planned_residency.weighted_sample_bytes,
                     simultaneous_selected_weighted_bytes,
+                    spectral_cache_bytes: 0,
                     peak_bytes,
                 },
             },
@@ -1664,11 +2374,12 @@ impl WeightingReplayPhase<'_> {
         // original full-capacity allocation with its logical length intact;
         // shrinking a partial terminal block could transiently allocate a copy.
         let samples = std::mem::take(&mut self.block);
-        Ok(WeightingReplayChunk {
+        Ok(WeightingReplayChunk::new(
             sequence,
             samples,
-            coverage: self.coverage.clone(),
-        })
+            &self.coverage,
+            &mut self.previous_checkpoint,
+        ))
     }
 
     fn flush_before_group(&self, weighted: &WeightingSampleValue) -> Result<bool, WeightingError> {
@@ -1763,6 +2474,14 @@ impl WeightingReplaySummary {
 /// Weighting failure independent of source or consumer I/O.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum WeightingError {
+    /// A supplied stencil exceeds the canonical compiled producer's bound.
+    #[error("spectral contribution count {actual} exceeds compiled capacity {maximum}")]
+    SpectralContributionCapacity {
+        /// Number of contributions supplied by the caller.
+        actual: usize,
+        /// Maximum produced by the compiled basis and spectral kernel.
+        maximum: usize,
+    },
     /// Reconstruction could not compile the paired sparse spectral stencil.
     #[error(transparent)]
     SpectralStencil(#[from] crate::SpectralStencilError),
@@ -1781,6 +2500,9 @@ pub enum WeightingError {
     /// An evaluated frequency cannot be assigned to the compiled density scope.
     #[error("selected sample is outside the compiled output-channel density scope")]
     OutputChannelMismatch,
+    /// The source-issued frequency geometry belongs to another row, frame or first pair.
+    #[error("selected row spectral geometry does not match the weighted sample")]
+    RowSpectralGeometryMismatch,
     /// The two global passes or a replay visited different selected content.
     #[error("weighting passes do not bind the same selected-observation generation")]
     SelectedGenerationMismatch,
@@ -1807,11 +2529,14 @@ pub enum WeightingError {
     CoverageMismatch,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct DensityGridShape {
     width: usize,
     height: usize,
     planes: usize,
+    output_planes: usize,
+    padding: usize,
+    cube_output: Option<CasaLinearOutputGrid>,
     increment_rad: [u64; 2],
 }
 
@@ -1840,14 +2565,33 @@ fn density_grid_shape(problem: &CompiledProblem) -> Result<DensityGridShape, Wei
         .ok_or(WeightingError::MissingMainDomain)?;
     let [width, height] = domain.shape().pixels();
     let increments = domain.direction().increment_rad();
-    let planes = match problem.weighting().density_scope() {
+    let output_planes = match problem.weighting().density_scope() {
         WeightDensityScope::PerOutputChannel => problem.geometry().spectral().output_channels(),
         WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => 1,
     };
+    let padding = problem.weighting().casa_cube_density_padding().unwrap_or(0);
+    let planes = output_planes
+        .checked_add(
+            padding
+                .checked_mul(2)
+                .ok_or(WeightingError::ResidencyOverflow)?,
+        )
+        .ok_or(WeightingError::ResidencyOverflow)?;
+    let cube_output = problem
+        .weighting()
+        .casa_cube_density_padding()
+        .map(|_| {
+            CasaLinearOutputGrid::from_spectral(problem.geometry().spectral())
+                .ok_or(WeightingError::OutputChannelMismatch)
+        })
+        .transpose()?;
     Ok(DensityGridShape {
         width,
         height,
         planes,
+        output_planes,
+        padding,
+        cube_output,
         increment_rad: [increments[0].to_bits(), increments[1].to_bits()],
     })
 }
@@ -1970,10 +2714,14 @@ fn contribution_plane(
 }
 
 fn uv_lambda(sample: &WeightingSelectedSample, frequency_hz: f64) -> [f64; 2] {
+    uv_lambda_for_coordinates(sample.density_uvw_m, frequency_hz)
+}
+
+fn uv_lambda_for_coordinates(uvw_m: [f64; 3], frequency_hz: f64) -> [f64; 2] {
     let scale = f64::from((frequency_hz / SPEED_OF_LIGHT_M_PER_S) as f32);
     [
-        f64::from((sample.density_uvw_m[0] * scale) as f32),
-        f64::from((sample.density_uvw_m[1] * scale) as f32),
+        f64::from((uvw_m[0] * scale) as f32),
+        f64::from((uvw_m[1] * scale) as f32),
     ]
 }
 
@@ -2038,6 +2786,7 @@ fn robust_factors(
     problem: &CompiledProblem,
     grid: DensityGridShape,
     density: &[f64],
+    raw_sum_weights: &[ExactF64Sum],
 ) -> Box<[f64]> {
     let robust = match problem.weighting().scheme() {
         WeightingScheme::Briggs { robust } | WeightingScheme::BriggsBandwidthTaper { robust } => {
@@ -2058,6 +2807,9 @@ fn robust_factors(
         for value in &density[start..end] {
             density_sum += *value;
             density_square_sum += value * value;
+        }
+        if let Some(raw) = raw_sum_weights.get(plane) {
+            density_sum = 2.0 * raw.value();
         }
         *factor = if density_sum > 0.0 && density_square_sum > 0.0 {
             (5.0 * 10_f64.powf(-robust)).powi(2) / (density_square_sum / density_sum)
@@ -2420,6 +3172,21 @@ pub(super) struct CoverageEncoder {
 }
 
 impl CoverageEncoder {
+    pub(super) fn checkpoint_token(&self) -> [u8; 32] {
+        if let Some(hasher) = &self.hasher {
+            hasher.clone().finalize().into()
+        } else {
+            let mut hasher = Sha256::new();
+            hasher.update(b"casa-rs-derived-weighting-checkpoint");
+            hasher.update(
+                self.derived
+                    .expect("derived coverage has a proof")
+                    .as_bytes(),
+            );
+            hasher.finalize().into()
+        }
+    }
+
     pub(super) fn new() -> Self {
         let mut encoder = Self {
             hasher: Some(Sha256::new()),
@@ -2505,6 +3272,41 @@ impl CoverageEncoder {
             &mut used,
             &sample.address.correlation_index.to_be_bytes(),
         );
+        append_coverage_bytes(
+            self,
+            &mut chunk,
+            &mut used,
+            &sample.output_frame_frequency_hz.to_bits().to_be_bytes(),
+        );
+        match sample.row_spectral_geometry {
+            Some(geometry) => {
+                append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
+                append_coverage_bytes(
+                    self,
+                    &mut chunk,
+                    &mut used,
+                    &(geometry.selected_channels() as u128).to_be_bytes(),
+                );
+                let first = geometry.first();
+                append_coverage_bytes(self, &mut chunk, &mut used, &first.0.to_be_bytes());
+                append_coverage_bytes(
+                    self,
+                    &mut chunk,
+                    &mut used,
+                    &first.1.to_bits().to_be_bytes(),
+                );
+                if let Some(second) = geometry.second() {
+                    append_coverage_bytes(self, &mut chunk, &mut used, &second.0.to_be_bytes());
+                    append_coverage_bytes(
+                        self,
+                        &mut chunk,
+                        &mut used,
+                        &second.1.to_bits().to_be_bytes(),
+                    );
+                }
+            }
+            None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
+        }
         let mut count = 0_u8;
         for value in weighted.spectral_values() {
             count += 1;

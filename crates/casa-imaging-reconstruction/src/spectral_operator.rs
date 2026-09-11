@@ -2,6 +2,8 @@
 
 //! Serial CPU basis-neutral spectral measurement operator and normal-state primitives.
 
+pub(crate) mod normal_storage;
+
 use std::{
     collections::BTreeMap,
     fmt,
@@ -37,7 +39,7 @@ use crate::{
     mosaic::{MOSAIC_OVERSAMPLING, MosaicNormalAccumulator, MosaicProjector, MosaicSamplePlan},
     polarization_operator::{MuellerMatrix, PolarizationOperator},
     primary_beam::PreparedPrimaryBeamPower,
-    spectral_sampling::{CasaLinearGrid, CasaLinearOutputGrid, CasaLinearSample},
+    spectral_sampling::{CasaLinearOutputGrid, CasaLinearRowCursor, CasaLinearSample},
     trace_complex_values,
     weighting::{
         CoverageEncoder, FrozenWeightingCoverageProof, WeightingAlgorithmState,
@@ -527,9 +529,10 @@ pub struct SpectralOperatorSpecification {
     mosaic_response_selections: Box<[MosaicResponseSelection]>,
     mosaic_field_capacity: usize,
     mosaic_normal_entry_capacity: usize,
-    selected_spectral_channel_counts: BTreeMap<(MeasurementSetIdentity, u32), usize>,
+    selected_spectral_rows: Box<[SelectedSpectralRowEntry]>,
     primary_beam_cutoff: f32,
     polarization_coordinates: Box<[PolarizationCoordinate]>,
+    direction_independent_polarizations: Box<[PolarizationOperator]>,
     image_shape: [usize; 2],
     grid_shape: [usize; 2],
     image_blc: [usize; 2],
@@ -538,6 +541,7 @@ pub struct SpectralOperatorSpecification {
     charts: Box<[SpectralOperatorChartSpecification]>,
     slab: SpectralSlabPlan,
     spectral_kernel: SpectralKernel,
+    pub(super) cube_native_weight_transfer: bool,
     basis: SpectralBasisPlan,
     joint_line_term_by_channel: Box<[Option<usize>]>,
     output_channel_frequencies_hz: Box<[f64]>,
@@ -547,6 +551,171 @@ pub struct SpectralOperatorSpecification {
 enum InitialModelClassification {
     Empty,
     Evaluated,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectedSpectralRowShape {
+    channels: usize,
+    first: u32,
+    second: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SelectedSpectralRowEntry {
+    key: (MeasurementSetIdentity, u32),
+    shape: SelectedSpectralRowShape,
+}
+
+#[cfg(test)]
+mod specification_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn owned_metadata_counts_string_capacity_and_excludes_shared_catalog_payload() {
+        let cells = 512 * 512;
+        let (problem, lifecycle, model, normal) = crate::major_cycle::native_minor_fixture::build(
+            vec![Complex64::default(); 2 * cells].into_boxed_slice(),
+            vec![Complex64::default(); 3 * cells].into_boxed_slice(),
+            None,
+        );
+        drop((lifecycle, model, normal));
+        let mut specification =
+            SpectralOperatorSpecification::new(&problem).expect("specification");
+        assert_eq!(specification.direction_independent_polarizations.len(), 1);
+        let correlations = specification.direction_independent_polarizations[0]
+            .correlations()
+            .to_vec();
+        let compiled = specification
+            .direction_independent_polarization(&correlations)
+            .expect("selected layout is compiled");
+        let reference = PolarizationOperator::compile(
+            specification.polarization_coordinates(),
+            &correlations,
+            [0.0, 0.0],
+            MuellerMatrix::identity(),
+        )
+        .unwrap();
+        assert_eq!(compiled, &reference);
+        for _ in 0..64 {
+            assert!(std::ptr::eq(
+                compiled,
+                specification
+                    .direction_independent_polarization(&correlations)
+                    .unwrap(),
+            ));
+        }
+        assert!(
+            specification
+                .direction_independent_polarization(&[])
+                .is_err()
+        );
+        assert!(
+            specification
+                .selected_spectral_rows
+                .windows(2)
+                .all(|pair| pair[0].key < pair[1].key)
+        );
+        let initial = specification
+            .owned_heap_bytes()
+            .expect("initial owned bytes");
+        let matrices = specification.direction_independent_polarizations.clone();
+        specification.direction_independent_polarizations = Box::default();
+        assert_eq!(
+            initial - specification.owned_heap_bytes().unwrap(),
+            std::mem::size_of_val(matrices.as_ref()),
+            "precompiled matrix payload remains in the physical demand",
+        );
+        specification.direction_independent_polarizations = matrices;
+        let mut name = String::with_capacity(128);
+        name.push_str("outlier");
+        let capacity = name.capacity();
+        specification.domains[0].role = ImageDomainRole::Outlier(name);
+        assert_eq!(
+            specification
+                .owned_heap_bytes()
+                .expect("named domain bytes"),
+            initial + capacity
+        );
+        assert!(specification.mosaic_response_selections.is_empty());
+        let selection = MosaicResponseSelection {
+            measurement_set: problem.inputs().observation_snapshot().sources()[0].identity(),
+            spectral_window_id: 0,
+            channel_indices: vec![0, 2].into_boxed_slice(),
+            coordinate_catalog: SpectralWindowCoordinateCatalog::new(vec![1.0e9; 3], 1.0e6)
+                .expect("small shared catalog"),
+        };
+        specification.mosaic_response_selections = vec![selection].into_boxed_slice();
+        let with_selection = specification
+            .owned_heap_bytes()
+            .expect("owned selection bytes");
+        assert_eq!(
+            with_selection,
+            initial + capacity + size_of::<MosaicResponseSelection>() + 2 * size_of::<u32>()
+        );
+        specification.mosaic_response_selections[0].coordinate_catalog =
+            SpectralWindowCoordinateCatalog::new(vec![1.0e9; 4096], 1.0e6)
+                .expect("larger source-shared catalog");
+        assert_eq!(
+            specification
+                .owned_heap_bytes()
+                .expect("shared payload excluded"),
+            with_selection
+        );
+        let shared_bytes = 4096 * size_of::<f64>() + 2 * size_of::<usize>();
+        assert_eq!(
+            specification.shared_catalog_heap_bytes().unwrap(),
+            shared_bytes
+        );
+        let shared = specification.mosaic_response_selections[0].clone();
+        specification.mosaic_response_selections = vec![shared.clone(), shared].into_boxed_slice();
+        assert_eq!(
+            specification.shared_catalog_heap_bytes().unwrap(),
+            shared_bytes,
+            "two retained handles to one Arc require one allocation charge"
+        );
+        specification.mosaic_response_selections[1].coordinate_catalog =
+            SpectralWindowCoordinateCatalog::new(vec![1.0e9; 4096], 1.0e6).unwrap();
+        assert_eq!(
+            specification.shared_catalog_heap_bytes().unwrap(),
+            2 * shared_bytes,
+            "equal contents in distinct Arcs require distinct allocation charges"
+        );
+        let standard_headers = specification
+            .compiler_convolution_metadata_bytes()
+            .expect("standard headers");
+        assert_eq!(
+            standard_headers,
+            specification.charts.len() * size_of::<ConvolutionOperator>()
+        );
+        specification.w_projection = Some(
+            WProjectionContract::new(1.0, std::num::NonZeroUsize::new(3)).expect("three planes"),
+        );
+        assert_eq!(
+            specification
+                .compiler_convolution_metadata_bytes()
+                .expect("W headers"),
+            standard_headers
+                + specification.charts.len()
+                    * (size_of::<WProjectionDiagnostics>() + 3 * size_of::<WProjectionKernel>())
+        );
+        specification.w_projection = Some(
+            WProjectionContract::new(0.0, std::num::NonZeroUsize::new(3)).expect("zero W envelope"),
+        );
+        assert_eq!(
+            specification
+                .compiler_convolution_metadata_bytes()
+                .expect("zero W uses standard"),
+            standard_headers
+        );
+        specification.w_projection = Some(
+            WProjectionContract::new(1.0, std::num::NonZeroUsize::new(usize::MAX))
+                .expect("oversized plane count"),
+        );
+        assert!(matches!(
+            specification.compiler_convolution_metadata_bytes(),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        ));
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -898,6 +1067,22 @@ pub(crate) struct SpectralOperatorGeometry {
 }
 
 impl SpectralOperatorSpecification {
+    pub(crate) fn with_prediction_range(
+        mut self,
+        resident: std::ops::Range<usize>,
+    ) -> Result<Self, SpectralOperatorError> {
+        if self.basis != SpectralBasisPlan::ChannelLocal
+            || resident.start > self.slab.core_start
+            || resident.end < self.slab.core_end
+            || resident.end > self.slab.total_channels
+        {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
+        self.slab.resident_start = resident.start;
+        self.slab.resident_end = resident.end;
+        Ok(self)
+    }
+
     /// Whether this pass is certified to start from the compiler's empty model.
     ///
     /// A later residual refresh always evaluates its named model, even when the
@@ -1064,15 +1249,31 @@ impl SpectralOperatorSpecification {
             .first()
             .ok_or(SpectralOperatorError::UnsupportedProblem)?
             .geometry;
-        let mut selected_spectral_channel_counts = BTreeMap::new();
+        let mut selected_spectral_rows = Vec::new();
         for source in problem.inputs().observation_snapshot().sources() {
             for spectral_window in source.selection().spectral_windows() {
-                selected_spectral_channel_counts.insert(
-                    (source.identity(), spectral_window.spectral_window_id()),
-                    spectral_window.channel_indices().len(),
-                );
+                let channels = spectral_window.channel_indices();
+                selected_spectral_rows.push(SelectedSpectralRowEntry {
+                    key: (source.identity(), spectral_window.spectral_window_id()),
+                    shape: SelectedSpectralRowShape {
+                        channels: channels.len(),
+                        first: *channels
+                            .first()
+                            .ok_or(SpectralOperatorError::InvalidSample)?,
+                        second: channels.get(1).copied(),
+                    },
+                });
             }
         }
+        selected_spectral_rows.sort_unstable_by_key(|entry| entry.key);
+        // Compiled observations reject duplicate source identities and SPW selections.
+        if selected_spectral_rows
+            .windows(2)
+            .any(|pair| pair[0].key == pair[1].key)
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        let selected_spectral_rows = selected_spectral_rows.into_boxed_slice();
         let (mosaic_response_selections, mosaic_field_capacity, mosaic_normal_entry_capacity) =
             if mosaic {
                 let mut selections = Vec::new();
@@ -1136,6 +1337,34 @@ impl SpectralOperatorSpecification {
         {
             return Err(SpectralOperatorError::UnsupportedNumerics);
         }
+        let mut direction_independent_polarizations = Vec::<PolarizationOperator>::new();
+        for selection in problem
+            .inputs()
+            .observation_snapshot()
+            .sources()
+            .iter()
+            .flat_map(|source| source.selection().correlations())
+        {
+            let correlations = selection
+                .products()
+                .iter()
+                .map(|product| product.correlation_type())
+                .collect::<SmallVec<[_; 4]>>();
+            if !direction_independent_polarizations
+                .iter()
+                .any(|operator| operator.correlations() == correlations.as_slice())
+            {
+                direction_independent_polarizations.push(
+                    PolarizationOperator::compile(
+                        problem.reconstruction().polarization().coordinates(),
+                        &correlations,
+                        [0.0, 0.0],
+                        MuellerMatrix::identity(),
+                    )
+                    .map_err(|_| SpectralOperatorError::InvalidSample)?,
+                );
+            }
+        }
         Ok(Self {
             problem: problem.problem_id(),
             initial_model: match problem.model_lifecycle().input() {
@@ -1153,9 +1382,11 @@ impl SpectralOperatorSpecification {
             mosaic_response_selections,
             mosaic_field_capacity,
             mosaic_normal_entry_capacity,
-            selected_spectral_channel_counts,
+            selected_spectral_rows,
             primary_beam_cutoff: problem.products().validity().primary_beam().cutoff(),
             polarization_coordinates: problem.reconstruction().polarization().coordinates().into(),
+            direction_independent_polarizations: direction_independent_polarizations
+                .into_boxed_slice(),
             image_shape: domains[0].image_shape,
             grid_shape: primary.grid_shape,
             image_blc: primary.image_blc,
@@ -1164,6 +1395,7 @@ impl SpectralOperatorSpecification {
             charts,
             slab,
             spectral_kernel: problem.science().spectral().sampling().kernel(),
+            cube_native_weight_transfer: problem.weighting().casa_cube_density_padding().is_some(),
             basis,
             joint_line_term_by_channel: joint_line_term_by_channel(problem, basis)?,
             output_channel_frequencies_hz: (0..problem.geometry().spectral().output_channels())
@@ -1202,6 +1434,98 @@ impl SpectralOperatorSpecification {
         self.charts.len()
     }
 
+    /// Exact owned container payload, excluding inline state and source-shared catalogs.
+    pub(crate) fn owned_heap_bytes(&self) -> Result<usize, SpectralOperatorError> {
+        let containers = [
+            std::mem::size_of_val(self.polarization_coordinates.as_ref()),
+            std::mem::size_of_val(self.direction_independent_polarizations.as_ref()),
+            std::mem::size_of_val(self.domains.as_ref()),
+            std::mem::size_of_val(self.charts.as_ref()),
+            std::mem::size_of_val(self.joint_line_term_by_channel.as_ref()),
+            std::mem::size_of_val(self.output_channel_frequencies_hz.as_ref()),
+            std::mem::size_of_val(self.selected_spectral_rows.as_ref()),
+        ];
+        let bytes =
+            containers
+                .into_iter()
+                .try_fold(self.mosaic_selection_bytes()?, |total, bytes| {
+                    total
+                        .checked_add(bytes)
+                        .ok_or(SpectralOperatorError::ResidencyOverflow)
+                })?;
+        self.domains.iter().try_fold(bytes, |total, domain| {
+            let name_bytes = match &domain.role {
+                ImageDomainRole::Main => 0,
+                ImageDomainRole::Outlier(name) => name.capacity(),
+            };
+            total
+                .checked_add(name_bytes)
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })
+    }
+
+    /// Count shared physical-coordinate allocations retained beyond source execution.
+    /// The initial source reservation may also cover these Arcs, but it ends at
+    /// the source DAG boundary; the retained manifest must carry its own claim.
+    pub(crate) fn shared_catalog_heap_bytes(&self) -> Result<usize, SpectralOperatorError> {
+        self.mosaic_response_selections.iter().enumerate().try_fold(
+            0_usize,
+            |total, (index, selection)| {
+                let frequencies = selection.coordinate_catalog.channel_frequencies_hz();
+                if self.mosaic_response_selections[..index]
+                    .iter()
+                    .any(|prior| {
+                        std::ptr::eq(
+                            prior.coordinate_catalog.channel_frequencies_hz(),
+                            frequencies,
+                        )
+                    })
+                {
+                    return Ok(total);
+                }
+                frequencies
+                    .len()
+                    .checked_mul(size_of::<f64>())
+                    .and_then(|bytes| bytes.checked_add(2 * size_of::<usize>()))
+                    .and_then(|bytes| total.checked_add(bytes))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            },
+        )
+    }
+
+    /// Owned convolution headers, excluding the numerical buffers projected by the workload.
+    pub(crate) fn compiler_convolution_metadata_bytes(
+        &self,
+    ) -> Result<usize, SpectralOperatorError> {
+        self.charts.iter().try_fold(0_usize, |total, chart| {
+            let w_headers = match self
+                .w_projection
+                .filter(|contract| contract.maximum_abs_w_lambda() > f64::MIN_POSITIVE)
+            {
+                Some(contract) => w_projection_plane_count(&chart.geometry, contract)
+                    .checked_mul(size_of::<WProjectionKernel>())
+                    .and_then(|bytes| bytes.checked_add(size_of::<WProjectionDiagnostics>()))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?,
+                None => 0,
+            };
+            total
+                .checked_add(size_of::<ConvolutionOperator>())
+                .and_then(|bytes| bytes.checked_add(w_headers))
+                .ok_or(SpectralOperatorError::ResidencyOverflow)
+        })
+    }
+
+    fn mosaic_selection_bytes(&self) -> Result<usize, SpectralOperatorError> {
+        self.mosaic_response_selections.iter().try_fold(
+            std::mem::size_of_val(self.mosaic_response_selections.as_ref()),
+            |total, selection| {
+                total
+                    .checked_add(std::mem::size_of_val(selection.channel_indices.as_ref()))
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)
+            },
+        )
+    }
+
     fn mosaic_selected_channel_capacity(&self) -> usize {
         self.mosaic_response_selections
             .iter()
@@ -1217,14 +1541,93 @@ impl SpectralOperatorSpecification {
         self.mosaic_selected_channel_capacity().saturating_mul(3)
     }
 
-    fn selected_spectral_channel_count(
+    pub(super) fn uses_casa_linear_resampling(
         &self,
-        measurement_set: MeasurementSetIdentity,
-        spectral_window_id: u32,
-    ) -> Option<usize> {
-        self.selected_spectral_channel_counts
-            .get(&(measurement_set, spectral_window_id))
-            .copied()
+        group: &[crate::weighting::WeightingSampleValue],
+    ) -> Result<bool, SpectralOperatorError> {
+        if self.spectral_kernel != SpectralKernel::Linear
+            || self.output_channel_frequencies_hz.len() < 2
+        {
+            return Ok(false);
+        }
+        let selected = group
+            .first()
+            .ok_or(SpectralOperatorError::InvalidSample)?
+            .selected();
+        let address = selected.address();
+        let shape_index = self
+            .selected_spectral_rows
+            .binary_search_by_key(
+                &(address.measurement_set, address.spectral_window_id),
+                |entry| entry.key,
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        let shape = &self.selected_spectral_rows[shape_index].shape;
+        if shape.channels == 1 {
+            return Ok(false);
+        }
+        let geometry = selected
+            .row_spectral_geometry()
+            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+        if geometry.selected_channels() != shape.channels
+            || geometry.first().0 != shape.first
+            || geometry.second().map(|second| second.0) != shape.second
+            || group
+                .iter()
+                .any(|weighted| weighted.selected().row_spectral_geometry() != Some(geometry))
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        Ok(true)
+    }
+
+    pub(super) fn casa_linear_output_grid(
+        &self,
+    ) -> Result<CasaLinearOutputGrid, SpectralOperatorError> {
+        CasaLinearOutputGrid::compile(&self.output_channel_frequencies_hz)
+            .ok_or(SpectralOperatorError::InvalidSample)
+    }
+
+    /// Reuse the sky-frame map compiled for this exact selected correlation layout.
+    /// Calibrated standard-imaging correlations are already in the sky frame;
+    /// parallactic angles and Mueller responses remain in their paired
+    /// direction-dependent operator, not this direction-independent map.
+    pub(super) fn direction_independent_polarization(
+        &self,
+        correlations: &[casa_imaging_model::CorrelationType],
+    ) -> Result<&PolarizationOperator, SpectralOperatorError> {
+        self.direction_independent_polarizations
+            .iter()
+            .find(|operator| operator.correlations() == correlations)
+            .ok_or(SpectralOperatorError::InvalidSample)
+    }
+
+    pub(super) fn prediction_contributions(
+        &self,
+        weighted: &crate::weighting::WeightingSampleValue,
+    ) -> Result<
+        SmallVec<[casa_imaging_model::SelectedSpectralContribution; 4]>,
+        SpectralOperatorError,
+    > {
+        if self.aw_projection.is_none()
+            && self.uses_casa_linear_resampling(std::slice::from_ref(weighted))?
+        {
+            let selected = weighted.selected();
+            let first_pair = selected
+                .row_spectral_geometry()
+                .and_then(|geometry| geometry.first_pair_hz())
+                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+            return crate::spectral_sampling::casa_linear_prediction_terms(
+                &self.output_channel_frequencies_hz,
+                selected.output_frame_frequency_hz(),
+                first_pair,
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample);
+        }
+        Ok(weighted
+            .spectral_values()
+            .map(|value| value.contribution())
+            .collect())
     }
 
     /// Iterate padded grid shapes in canonical physical-chart order.
@@ -1281,19 +1684,7 @@ impl SpectralOperatorSpecification {
                 .map(|chart| {
                     let conv_size = chart.geometry.grid_shape.into_iter().max().unwrap_or(0);
                     let contract = self.w_projection.expect("W contract is present");
-                    let half_field_angle = ((chart.geometry.image_shape[0] as f64
-                        * chart.geometry.increment_rad[0].abs())
-                    .max(
-                        chart.geometry.image_shape[1] as f64
-                            * chart.geometry.increment_rad[1].abs(),
-                    )) / 2.0;
-                    let automatic =
-                        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs())
-                            as usize;
-                    let planes = contract
-                        .planes()
-                        .map(std::num::NonZeroUsize::get)
-                        .unwrap_or(automatic.max(1));
+                    let planes = w_projection_plane_count(&chart.geometry, contract);
                     let sampling = if planes > 1 { 4 } else { 1 };
                     ((conv_size / 2).saturating_sub(2) as f64 / sampling as f64 - 0.5)
                         .ceil()
@@ -1628,6 +2019,7 @@ pub struct SpectralOperatorWorkload {
     fft_resident_complex_values: usize,
     fft_planning_words: usize,
     forward_complex_values: usize,
+    source_row_workspace_bytes: usize,
     primitive_complex_values: usize,
     primitive_f64_values: usize,
     fold_accumulator_complex_values: usize,
@@ -1732,6 +2124,13 @@ impl SpectralOperatorWorkload {
     #[must_use]
     pub const fn forward_complex_values(self) -> usize {
         self.forward_complex_values
+    }
+
+    /// Return the bounded previous-row owner and simultaneous resampling buffers.
+    /// The current weighted source slice remains covered by its source owner.
+    #[must_use]
+    pub const fn source_row_workspace_bytes(self) -> usize {
+        self.source_row_workspace_bytes
     }
 
     #[must_use]
@@ -1888,19 +2287,7 @@ pub fn spectral_operator_workload(
                     });
                 let projected = specification.w_projection.map_or(standard, |contract| {
                     let conv_size = chart.geometry.grid_shape.into_iter().max().unwrap_or(0);
-                    let half_field_angle = ((chart.geometry.image_shape[0] as f64
-                        * chart.geometry.increment_rad[0].abs())
-                    .max(
-                        chart.geometry.image_shape[1] as f64
-                            * chart.geometry.increment_rad[1].abs(),
-                    )) / 2.0;
-                    let automatic =
-                        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs())
-                            as usize;
-                    let planes = contract
-                        .planes()
-                        .map(std::num::NonZeroUsize::get)
-                        .unwrap_or(automatic.max(1));
+                    let planes = w_projection_plane_count(&chart.geometry, contract);
                     let quarter_cells = (conv_size / 2)
                         .saturating_sub(1)
                         .checked_mul((conv_size / 2).saturating_sub(1));
@@ -1965,6 +2352,44 @@ pub fn spectral_operator_workload(
                 .checked_add(total)
                 .ok_or(SpectralOperatorError::ResidencyOverflow)
         })?;
+    let source_row_workspace_bytes = if specification.spectral_kernel == SpectralKernel::Linear
+        && specification.output_channel_frequencies_hz.len() >= 2
+        && specification
+            .selected_spectral_rows
+            .iter()
+            .any(|row| row.shape.channels > 1)
+    {
+        let correlations = specification
+            .direction_independent_polarizations
+            .iter()
+            .map(|operator| operator.correlations().len())
+            .max()
+            .unwrap_or(1);
+        let sample_and_observed = crate::weighting::native_row_heap_bytes(correlations, 2)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        // Previous, current, and interpolated predictions coexist during emission.
+        let predictions = crate::weighting::smallvec_heap_bytes::<Complex64>(correlations)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?
+            .checked_mul(3)
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        let carried_projections =
+            casa_imaging_model::SelectedImageDomainProjections::retained_heap_bytes_for_len(
+                specification.chart_count(),
+            )
+            .and_then(|bytes| bytes.checked_mul(correlations))
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+        sample_and_observed
+            .checked_add(predictions)
+            .and_then(|bytes| bytes.checked_add(carried_projections))
+            .and_then(|bytes| {
+                bytes.checked_add(
+                    CasaLinearRowResampler::<SmallVec<[Complex64; 4]>>::retained_group_bytes(),
+                )
+            })
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?
+    } else {
+        0
+    };
     let chart_count = specification.charts.len();
     let maximum_chart_cells = specification
         .charts
@@ -1996,16 +2421,7 @@ pub fn spectral_operator_workload(
         .map(|selection| selection.channel_indices.len())
         .max()
         .unwrap_or(0);
-    let mosaic_selection_bytes = specification
-        .mosaic_response_selections
-        .len()
-        .checked_mul(size_of::<MosaicResponseSelection>())
-        .and_then(|bytes| {
-            mosaic_selected_channel_capacity
-                .checked_mul(size_of::<u32>())
-                .and_then(|channels| bytes.checked_add(channels))
-        })
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+    let mosaic_selection_bytes = specification.mosaic_selection_bytes()?;
     let response_residency = crate::mosaic::response_residency_projection(
         mosaic_response_route_capacity,
         mosaic_selection_bytes,
@@ -2116,6 +2532,7 @@ pub fn spectral_operator_workload(
         fft_resident_complex_values,
         fft_planning_words,
         forward_complex_values,
+        source_row_workspace_bytes,
         primitive_complex_values: image_cells
             .checked_mul(parent_complex_planes)
             .and_then(|values| {
@@ -2277,21 +2694,12 @@ fn project_initial_phase_residency(
             .ok_or_else(overflow)?,
         moments,
     )?;
-    // Parent dirty is cloned only after local dirty/invariant/PSF arrays drop.
-    let parent_copy_bytes = bytes(
-        coefficients
-            .checked_mul(3)
-            .and_then(|planes| planes.checked_add(doubled_moments))
-            .ok_or_else(overflow)?,
-        doubled_moments,
-    )?;
     let accumulation_bytes = grid_complex_values
         .checked_mul(size_of::<Complex64>())
         .ok_or_else(overflow)?;
     let completion_bytes = accumulation_bytes
         .checked_add(local_formation_bytes)
         .ok_or_else(overflow)?
-        .max(parent_copy_bytes)
         .max(retained_bytes);
     Ok(Some(SpectralOperatorInitialPhaseResidency {
         accumulation_bytes,
@@ -2341,8 +2749,8 @@ pub struct PreparedSpectralOperator {
 /// Opaque reusable FFT plans and workspaces returned between ordered slabs.
 #[doc(hidden)]
 pub struct PreparedSpectralOperatorRecycle {
-    ffts: Vec<PreparedFft>,
-    aw_projection: Option<PreparedAwProjection>,
+    pub(crate) ffts: Vec<PreparedFft>,
+    pub(crate) aw_projection: Option<PreparedAwProjection>,
 }
 
 impl fmt::Debug for PreparedSpectralOperator {
@@ -2356,6 +2764,11 @@ impl fmt::Debug for PreparedSpectralOperator {
 }
 
 impl PreparedSpectralOperator {
+    /// Return the admitted core and complete prediction range of this prepared window.
+    pub fn slab(&self) -> SpectralSlabPlan {
+        self.specification.slab()
+    }
+
     pub(crate) fn convolution_maximum_support(&self) -> usize {
         self.aw_projection.as_ref().map_or_else(
             || self.specification.maximum_convolution_support(),
@@ -2880,7 +3293,8 @@ impl ReusableNormalState {
             && self.weighting_commitment == specification.weighting_commitment
             && self.domain_ordinal == domain_ordinal
             && self.shape == image_shape
-            && self.slab == specification.slab
+            && self.slab.total_channels() == specification.slab.total_channels()
+            && self.slab.core_range() == specification.slab.core_range()
             && self.basis == specification.basis
             && self.polarization_count == specification.polarization_count()
             && self.joint_line_term_by_channel == specification.joint_line_term_by_channel
@@ -3128,12 +3542,26 @@ fn combine_initial_chart_primitives(
     for domain in specification.domains() {
         let parent_shape = domain.image_shape();
         let parent_cells = checked_cells(parent_shape)?;
-        let mut first = Some(
-            chart_primitives
-                .next()
-                .transpose()?
-                .ok_or(SpectralOperatorError::DomainProjectionMismatch)?,
-        );
+        let first = chart_primitives
+            .next()
+            .transpose()?
+            .ok_or(SpectralOperatorError::DomainProjectionMismatch)?;
+        if matches!(
+            &specification.charts[domain.chart_range()],
+            [chart] if chart.window.origin() == [0, 0]
+                && chart.geometry.image_shape == parent_shape
+        ) {
+            if first.shape != parent_shape {
+                return Err(SpectralOperatorError::DomainProjectionMismatch);
+            }
+            domains.push(SpectralDomainPrimitives::new(
+                domain.ordinal,
+                domain.role.clone(),
+                first,
+            ));
+            continue;
+        }
+        let mut first = Some(first);
         let first_ref = first
             .as_ref()
             .ok_or(SpectralOperatorError::DomainProjectionMismatch)?;
@@ -3439,6 +3867,42 @@ pub(crate) fn combine_chart_updates(
 }
 
 impl SpectralPrimitiveDomains {
+    pub(crate) fn owned_bytes(&self) -> usize {
+        self.iter()
+            .map(|domain| {
+                let p = domain.primitives();
+                size_of::<SpectralDomainPrimitives>()
+                    + std::mem::size_of_val(p.dirty())
+                    + p.invariant_dirty
+                        .as_deref()
+                        .map_or(0, std::mem::size_of_val)
+                    + p.common_residual
+                        .as_deref()
+                        .map_or(0, std::mem::size_of_val)
+                    + p.invariant_common_dirty
+                        .as_deref()
+                        .map_or(0, std::mem::size_of_val)
+                    + std::mem::size_of_val(p.psf())
+                    + std::mem::size_of_val(p.sensitivity())
+                    + p.primary_beam_weighted_sum
+                        .as_deref()
+                        .map_or(0, std::mem::size_of_val)
+                    + std::mem::size_of_val(p.sum_weights())
+                    + std::mem::size_of_val(p.published_sum_weights())
+                    + std::mem::size_of_val(p.channel_sum_weights())
+                    + std::mem::size_of_val(p.channel_validity())
+                    + p.major_cycle_residual
+                        .as_deref()
+                        .map_or(0, std::mem::size_of_val)
+                    + std::mem::size_of_val(p.joint_line_term_by_channel.as_ref())
+                    + match &domain.domain_role {
+                        ImageDomainRole::Main => 0,
+                        ImageDomainRole::Outlier(name) => name.capacity(),
+                    }
+            })
+            .sum()
+    }
+
     pub(crate) fn new(
         domains: Box<[SpectralDomainPrimitives]>,
     ) -> Result<Self, SpectralOperatorError> {
@@ -3672,21 +4136,13 @@ impl CompleteDataOwnerResult {
                 .expect("fold retains one canonical completion"),
         })
     }
-
-    /// Consume the pairing without exposing either member separately outside
-    /// this crate; the Major-Cycle owner is the only split consumer.
-    #[must_use]
-    pub(crate) fn into_parts(self) -> (SpectralPrimitiveDomains, CompleteDataOwnerCompletion) {
-        (self.domains, self.completion)
-    }
 }
 
 /// Reconstruction-owned accumulator for an ordered channel-major slab schedule.
 ///
 /// Taylor slabs contribute to the same coefficient planes and are summed.
-/// Channel-local slabs own disjoint output planes and are copied into one
-/// complete-axis allocation. Keeping both operations behind this opaque owner
-/// prevents the runtime from interpreting normal-state layouts.
+/// Channel-local slabs write disjoint output windows into their admitted backing.
+/// The opaque owner verifies coverage without making a complete-axis image allocation.
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct CompleteDataOwnerSlabFold {
@@ -3695,33 +4151,32 @@ pub struct CompleteDataOwnerSlabFold {
 
 #[derive(Debug)]
 enum CompleteDataOwnerSlabFoldState {
-    Taylor(CompleteDataOwnerResult),
-    ChannelLocal(ChannelLocalSlabFold),
-}
-
-#[derive(Debug)]
-struct ChannelLocalSlabFold {
-    domains: SpectralPrimitiveDomains,
-    completion: CompleteDataOwnerCompletion,
-    next_channel: usize,
+    Coupled(CompleteDataOwnerResult),
+    ChannelLocal(normal_storage::StoredChannelNormalFold),
 }
 
 impl CompleteDataOwnerSlabFold {
-    /// Start an ordered fold and allocate any complete-axis channel-local state.
-    pub fn begin(first: CompleteDataOwnerResult) -> Result<Self, SpectralOperatorError> {
+    /// Start an ordered fold using an explicitly admitted physical storage plan.
+    pub fn begin(
+        first: CompleteDataOwnerResult,
+        storage: &normal_storage::NormalStoragePlan,
+    ) -> Result<Self, SpectralOperatorError> {
         let range = first.primitives().slab().core_range();
         if range.start != 0 {
             return Err(SpectralOperatorError::InvalidSlab);
         }
         let state = match first.primitives().basis {
             SpectralBasisPlan::TaylorViaChannelMajor(_) => {
-                CompleteDataOwnerSlabFoldState::Taylor(first)
+                CompleteDataOwnerSlabFoldState::Coupled(first)
             }
-            SpectralBasisPlan::ChannelLocal => {
-                CompleteDataOwnerSlabFoldState::ChannelLocal(ChannelLocalSlabFold::new(first)?)
-            }
+            SpectralBasisPlan::ChannelLocal => CompleteDataOwnerSlabFoldState::ChannelLocal(
+                normal_storage::StoredChannelNormalFold::begin(first, storage)?,
+            ),
             SpectralBasisPlan::Polynomial(_) | SpectralBasisPlan::Joint { .. } => {
-                return Err(SpectralOperatorError::InvalidSlab);
+                if range.end != first.primitives().slab().total_channels() {
+                    return Err(SpectralOperatorError::IncompleteCoverage);
+                }
+                CompleteDataOwnerSlabFoldState::Coupled(first)
             }
         };
         Ok(Self { state })
@@ -3730,8 +4185,8 @@ impl CompleteDataOwnerSlabFold {
     /// Extend the prefix with the next adjacent slab.
     pub fn extend(self, next: CompleteDataOwnerResult) -> Result<Self, SpectralOperatorError> {
         let state = match self.state {
-            CompleteDataOwnerSlabFoldState::Taylor(prefix) => {
-                CompleteDataOwnerSlabFoldState::Taylor(
+            CompleteDataOwnerSlabFoldState::Coupled(prefix) => {
+                CompleteDataOwnerSlabFoldState::Coupled(
                     CompleteDataOwnerResult::fold_channel_major_slab_prefix(prefix, next)?,
                 )
             }
@@ -3743,305 +4198,20 @@ impl CompleteDataOwnerSlabFold {
     }
 
     /// Seal a fold only after its ordered prefix covers the complete axis.
-    pub fn finish(self) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
+    pub fn finish(self) -> Result<normal_storage::CompleteDataNormalState, SpectralOperatorError> {
         match self.state {
-            CompleteDataOwnerSlabFoldState::Taylor(result) => {
+            CompleteDataOwnerSlabFoldState::Coupled(result) => {
                 let slab = result.primitives().slab();
                 if slab.core_range() != (0..slab.total_channels()) {
                     return Err(SpectralOperatorError::IncompleteCoverage);
                 }
-                Ok(result)
+                Ok(normal_storage::CompleteDataNormalState {
+                    primitives: normal_storage::NormalStatePrimitives::Coupled(result.domains),
+                    completion: result.completion,
+                })
             }
             CompleteDataOwnerSlabFoldState::ChannelLocal(fold) => fold.finish(),
         }
-    }
-}
-
-impl ChannelLocalSlabFold {
-    fn new(first: CompleteDataOwnerResult) -> Result<Self, SpectralOperatorError> {
-        if first.completion.primitives != SpectralPrimitiveCatalog::UnnormalizedChannelSlabV1 {
-            return Err(SpectralOperatorError::ProblemMismatch);
-        }
-        let next_channel = first.primitives().slab().core_range().end;
-        let mut domains = first.domains;
-        for domain in &mut domains.domains {
-            expand_channel_local_prefix(&mut domain.primitives)?;
-        }
-        Ok(Self {
-            domains,
-            completion: first.completion,
-            next_channel,
-        })
-    }
-
-    fn extend(mut self, next: CompleteDataOwnerResult) -> Result<Self, SpectralOperatorError> {
-        let range = next.primitives().slab().core_range();
-        let total_channels = self.domains.primary().slab().total_channels();
-        if range.start != self.next_channel
-            || next.primitives().slab().total_channels() != total_channels
-            || !matches!(next.primitives().basis, SpectralBasisPlan::ChannelLocal)
-            || !same_complete_data_authority(&self.completion, &next.completion)
-            || next.domains.len() != self.domains.len()
-        {
-            return Err(SpectralOperatorError::IncompleteCoverage);
-        }
-        for (destination, source) in self.domains.domains.iter_mut().zip(next.domains.domains) {
-            append_channel_local_domain(destination, source)?;
-        }
-        self.next_channel = range.end;
-        Ok(self)
-    }
-
-    fn finish(mut self) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
-        let total_channels = self.domains.primary().slab().total_channels();
-        if self.next_channel != total_channels {
-            return Err(SpectralOperatorError::IncompleteCoverage);
-        }
-        for domain in &mut self.domains.domains {
-            normalize_completed_primary_beam_psf_fold(&mut domain.primitives)?;
-        }
-        Ok(CompleteDataOwnerResult {
-            domains: self.domains,
-            completion: self.completion,
-        })
-    }
-}
-
-fn expand_channel_local_prefix(
-    primitives: &mut SpectralOperatorPrimitives,
-) -> Result<(), SpectralOperatorError> {
-    let slab = primitives.slab;
-    let range = slab.core_range();
-    if !matches!(primitives.basis, SpectralBasisPlan::ChannelLocal)
-        || range.start != 0
-        || primitives.joint_line_term_by_channel.len() != slab.total_channels()
-        || primitives.common_residual.is_some()
-        || primitives.invariant_common_dirty.is_some()
-        || primitives.primary_beam_weighted_sum.is_some()
-        || !primitives.channel_sum_weights.is_empty()
-    {
-        return Err(SpectralOperatorError::ProblemMismatch);
-    }
-    let cells = checked_cells(primitives.shape)?;
-    let prefix_planes = range
-        .len()
-        .checked_mul(primitives.polarizations)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let total_planes = slab
-        .total_channels()
-        .checked_mul(primitives.polarizations)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let prefix_values = prefix_planes
-        .checked_mul(cells)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let total_values = total_planes
-        .checked_mul(cells)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-
-    primitives.dirty = expand_prefix(
-        std::mem::take(&mut primitives.dirty),
-        prefix_values,
-        total_values,
-    )?;
-    primitives.invariant_dirty = expand_optional_prefix(
-        primitives.invariant_dirty.take(),
-        prefix_values,
-        total_values,
-        Complex64::default(),
-    )?;
-    primitives.psf = expand_prefix(
-        std::mem::take(&mut primitives.psf),
-        prefix_values,
-        total_values,
-    )?;
-    primitives.sensitivity = expand_prefix(
-        std::mem::take(&mut primitives.sensitivity),
-        prefix_values,
-        total_values,
-    )?;
-    primitives.sum_weights = expand_prefix(
-        std::mem::take(&mut primitives.sum_weights),
-        prefix_planes,
-        total_planes,
-    )?;
-    primitives.published_sum_weights = expand_prefix(
-        std::mem::take(&mut primitives.published_sum_weights),
-        prefix_planes,
-        total_planes,
-    )?;
-    primitives.validity = expand_prefix_with(
-        std::mem::take(&mut primitives.validity),
-        prefix_planes,
-        total_planes,
-        SpectralChannelValidity::Unmapped,
-    )?;
-    primitives.major_cycle_residual = expand_optional_prefix(
-        primitives.major_cycle_residual.take(),
-        prefix_values,
-        total_values,
-        Complex64::default(),
-    )?;
-    primitives.slab = SpectralSlabPlan {
-        total_channels: slab.total_channels(),
-        core_start: 0,
-        core_end: slab.total_channels(),
-        resident_start: 0,
-        resident_end: slab.total_channels(),
-    };
-    Ok(())
-}
-
-fn append_channel_local_domain(
-    destination: &mut SpectralDomainPrimitives,
-    source: SpectralDomainPrimitives,
-) -> Result<(), SpectralOperatorError> {
-    if destination.domain_ordinal != source.domain_ordinal
-        || destination.domain_role != source.domain_role
-    {
-        return Err(SpectralOperatorError::DomainProjectionMismatch);
-    }
-    let source = source.primitives;
-    let destination = &mut destination.primitives;
-    let range = source.slab.core_range();
-    let cells = checked_cells(source.shape)?;
-    let source_planes = range
-        .len()
-        .checked_mul(source.polarizations)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let plane_offset = range
-        .start
-        .checked_mul(source.polarizations)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let source_values = source_planes
-        .checked_mul(cells)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    let value_offset = plane_offset
-        .checked_mul(cells)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    if destination.shape != source.shape
-        || !matches!(source.basis, SpectralBasisPlan::ChannelLocal)
-        || destination.basis != source.basis
-        || destination.polarizations != source.polarizations
-        || destination.joint_line_term_by_channel != source.joint_line_term_by_channel
-        || destination.residual_model != source.residual_model
-        || destination.major_cycle_residual_promoted != source.major_cycle_residual_promoted
-        || source.common_residual.is_some()
-        || source.invariant_common_dirty.is_some()
-        || source.primary_beam_weighted_sum.is_some()
-        || !source.channel_sum_weights.is_empty()
-    {
-        return Err(SpectralOperatorError::ProblemMismatch);
-    }
-    copy_slab(
-        &mut destination.dirty,
-        &source.dirty,
-        value_offset,
-        source_values,
-    )?;
-    copy_optional_slab(
-        destination.invariant_dirty.as_deref_mut(),
-        source.invariant_dirty.as_deref(),
-        value_offset,
-        source_values,
-    )?;
-    copy_slab(
-        &mut destination.psf,
-        &source.psf,
-        value_offset,
-        source_values,
-    )?;
-    copy_slab(
-        &mut destination.sensitivity,
-        &source.sensitivity,
-        value_offset,
-        source_values,
-    )?;
-    copy_slab(
-        &mut destination.sum_weights,
-        &source.sum_weights,
-        plane_offset,
-        source_planes,
-    )?;
-    copy_slab(
-        &mut destination.published_sum_weights,
-        &source.published_sum_weights,
-        plane_offset,
-        source_planes,
-    )?;
-    copy_slab(
-        &mut destination.validity,
-        &source.validity,
-        plane_offset,
-        source_planes,
-    )?;
-    copy_optional_slab(
-        destination.major_cycle_residual.as_deref_mut(),
-        source.major_cycle_residual.as_deref(),
-        value_offset,
-        source_values,
-    )?;
-    Ok(())
-}
-
-fn expand_prefix<T: Copy + Default>(
-    prefix: Box<[T]>,
-    prefix_len: usize,
-    total_len: usize,
-) -> Result<Box<[T]>, SpectralOperatorError> {
-    expand_prefix_with(prefix, prefix_len, total_len, T::default())
-}
-
-fn expand_prefix_with<T: Copy>(
-    prefix: Box<[T]>,
-    prefix_len: usize,
-    total_len: usize,
-    fill: T,
-) -> Result<Box<[T]>, SpectralOperatorError> {
-    if prefix.len() != prefix_len || prefix_len > total_len {
-        return Err(SpectralOperatorError::ProblemMismatch);
-    }
-    let mut expanded = vec![fill; total_len];
-    expanded[..prefix_len].copy_from_slice(&prefix);
-    Ok(expanded.into_boxed_slice())
-}
-
-fn expand_optional_prefix<T: Copy>(
-    prefix: Option<Box<[T]>>,
-    prefix_len: usize,
-    total_len: usize,
-    fill: T,
-) -> Result<Option<Box<[T]>>, SpectralOperatorError> {
-    prefix
-        .map(|values| expand_prefix_with(values, prefix_len, total_len, fill))
-        .transpose()
-}
-
-fn copy_slab<T: Copy>(
-    destination: &mut [T],
-    source: &[T],
-    offset: usize,
-    source_len: usize,
-) -> Result<(), SpectralOperatorError> {
-    let end = offset
-        .checked_add(source_len)
-        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-    if source.len() != source_len || end > destination.len() {
-        return Err(SpectralOperatorError::ProblemMismatch);
-    }
-    destination[offset..end].copy_from_slice(source);
-    Ok(())
-}
-
-fn copy_optional_slab<T: Copy>(
-    destination: Option<&mut [T]>,
-    source: Option<&[T]>,
-    offset: usize,
-    source_len: usize,
-) -> Result<(), SpectralOperatorError> {
-    match (destination, source) {
-        (Some(destination), Some(source)) => copy_slab(destination, source, offset, source_len),
-        (None, None) => Ok(()),
-        _ => Err(SpectralOperatorError::ProblemMismatch),
     }
 }
 
@@ -4666,11 +4836,13 @@ impl SpectralScienceProbe {
             static CONFIG: OnceLock<
                 Result<Option<CumulativeAwProbeConfig>, SpectralOperatorError>,
             > = OnceLock::new();
-            *CONFIG.get_or_init(|| match std::env::var("CASA_RS_TRACE_AW_GROUP") {
-                Ok(value) => CumulativeAwProbeConfig::parse(&value).map(Some),
-                Err(std::env::VarError::NotPresent) => Ok(None),
-                Err(_) => Err(SpectralOperatorError::DiagnosticConfiguration),
-            })
+            CONFIG
+                .get_or_init(|| match std::env::var("CASA_RS_TRACE_AW_GROUP") {
+                    Ok(value) => CumulativeAwProbeConfig::parse(&value).map(Some),
+                    Err(std::env::VarError::NotPresent) => Ok(None),
+                    Err(_) => Err(SpectralOperatorError::DiagnosticConfiguration),
+                })
+                .clone()
         })?;
         if probe
             .as_ref()
@@ -4838,141 +5010,152 @@ fn selected_address_key(
     )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct NativeSpectralRowKey {
-    measurement_set: casa_imaging_model::MeasurementSetIdentity,
-    physical_row: u64,
-    data_description_id: i32,
-    spectral_window_id: u32,
-    polarization_id: u32,
+#[derive(Debug)]
+pub(super) struct NativeSpectralGroup<'a, P = SmallVec<[Complex64; 4]>> {
+    pub(super) frequency_hz: f64,
+    pub(super) samples: &'a [crate::weighting::WeightingSampleValue],
+    pub(super) observed: &'a [Complex64],
+    pub(super) predicted: P,
 }
 
-impl NativeSpectralRowKey {
-    fn from_sample(sample: &crate::weighting::WeightingSelectedSample) -> Self {
-        let address = sample.address();
-        Self {
-            measurement_set: address.measurement_set,
-            physical_row: address.physical_row,
-            data_description_id: address.data_description_id,
-            spectral_window_id: address.spectral_window_id,
-            polarization_id: address.polarization_id,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct NativeSpectralGroup {
-    key: NativeSpectralRowKey,
-    frequency_hz: f64,
+#[derive(Debug)]
+struct RetainedNativeSpectralGroup<P> {
     samples: SmallVec<[crate::weighting::WeightingSampleValue; 4]>,
     observed: SmallVec<[Complex64; 4]>,
-    predicted: SmallVec<[Complex64; 4]>,
+    predicted: P,
 }
 
 #[derive(Debug)]
-struct CasaResampledGroup {
-    output_channel: usize,
-    frequency_hz: f64,
-    selected: crate::weighting::WeightingSelectedSample,
-    correlations: SmallVec<[casa_imaging_model::CorrelationType; 4]>,
-    observed: SmallVec<[Complex64; 4]>,
-    predicted: SmallVec<[Complex64; 4]>,
-    weights: SmallVec<[f64; 4]>,
-    flags: SmallVec<[bool; 4]>,
+pub(super) struct CasaResampledGroup<P = SmallVec<[Complex64; 4]>> {
+    pub(super) output_channel: usize,
+    pub(super) frequency_hz: f64,
+    pub(super) selected: crate::weighting::WeightingSelectedSample,
+    pub(super) correlations: SmallVec<[casa_imaging_model::CorrelationType; 4]>,
+    pub(super) observed: SmallVec<[Complex64; 4]>,
+    pub(super) predicted: P,
+    pub(super) weights: SmallVec<[f64; 4]>,
+    pub(super) flags: SmallVec<[bool; 4]>,
 }
 
 #[derive(Debug)]
-struct CasaLinearRowResampler {
-    pending: Option<NativeSpectralGroup>,
-    grid: Option<CasaLinearGrid>,
-    next_fine_channel: usize,
+pub(super) struct CasaLinearRowResampler<P = SmallVec<[Complex64; 4]>> {
+    pending: Option<Box<RetainedNativeSpectralGroup<P>>>,
+    cursor: CasaLinearRowCursor,
 }
 
-impl CasaLinearRowResampler {
-    const fn new() -> Self {
+impl<P> CasaLinearRowResampler<P> {
+    pub(super) const fn retained_group_bytes() -> usize {
+        std::mem::size_of::<RetainedNativeSpectralGroup<P>>()
+    }
+
+    pub(super) const fn new() -> Self {
         Self {
             pending: None,
-            grid: None,
-            next_fine_channel: 0,
+            cursor: CasaLinearRowCursor::new(),
         }
     }
 
-    fn push(
+    pub(super) fn push<T>(
         &mut self,
-        current: NativeSpectralGroup,
+        current: NativeSpectralGroup<'_, P>,
         output: CasaLinearOutputGrid,
         finite_values: FiniteValuePolicy,
-        mut emit: impl FnMut(CasaResampledGroup) -> Result<(), SpectralOperatorError>,
+        cube_native_weight_transfer: bool,
+        mut interpolate_prediction: impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
+        mut emit: impl FnMut(CasaResampledGroup<T>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
-        let Some(previous) = self.pending.take() else {
-            self.pending = Some(current);
-            return Ok(());
-        };
-        if previous.key != current.key {
-            self.grid = None;
-            self.next_fine_channel = 0;
-            self.pending = Some(current);
-            return Ok(());
-        }
-        let grid = match self.grid {
-            Some(grid) => grid,
-            None => CasaLinearGrid::compile_for_output(
+        let geometry = current
+            .samples
+            .first()
+            .and_then(|sample| sample.selected().row_spectral_geometry())
+            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+        let samples = self
+            .cursor
+            .push(
+                current.samples[0].selected().address(),
+                geometry,
+                current.frequency_hz,
                 output,
-                previous.frequency_hz,
-                current.frequency_hz,
             )
-            .ok_or(SpectralOperatorError::InvalidSample)?,
+            .map_err(spectral_row_error)?;
+        let Some(samples) = samples else {
+            self.retain_current(current);
+            return Ok(());
         };
-        let result = grid
-            .samples_for_pair(
-                &mut self.next_fine_channel,
-                previous.frequency_hz,
-                current.frequency_hz,
-            )
-            .map_err(|_| SpectralOperatorError::InvalidSample)?
-            .try_for_each(|sample| {
-                emit(resample_native_pair(
-                    &previous,
-                    &current,
-                    sample,
-                    finite_values,
-                )?)
-            });
-        self.grid = Some(grid);
-        self.pending = Some(current);
+        let previous = self
+            .pending
+            .as_ref()
+            .ok_or(SpectralOperatorError::InvalidSample)?;
+        let result = samples.into_iter().try_for_each(|sample| {
+            emit(resample_native_pair(
+                previous,
+                &current,
+                sample,
+                finite_values,
+                cube_native_weight_transfer,
+                &mut interpolate_prediction,
+            )?)
+        });
+        self.retain_current(current);
         result
     }
 
-    fn finish(&mut self) {
+    fn retain_current(&mut self, current: NativeSpectralGroup<'_, P>) {
+        if let Some(previous) = &mut self.pending {
+            previous.samples.clear();
+            previous.samples.extend(current.samples.iter().cloned());
+            previous.observed.clear();
+            previous.observed.extend_from_slice(current.observed);
+            previous.predicted = current.predicted;
+        } else {
+            self.pending = Some(Box::new(RetainedNativeSpectralGroup {
+                samples: current.samples.iter().cloned().collect(),
+                observed: current.observed.iter().copied().collect(),
+                predicted: current.predicted,
+            }));
+        }
+    }
+
+    pub(super) fn finish(&mut self) -> Result<(), SpectralOperatorError> {
+        self.cursor.finish().map_err(spectral_row_error)?;
         self.pending = None;
-        self.grid = None;
-        self.next_fine_channel = 0;
+        Ok(())
     }
 }
 
-fn resample_native_pair(
-    left: &NativeSpectralGroup,
-    right: &NativeSpectralGroup,
+fn spectral_row_error(error: crate::SpectralStencilError) -> SpectralOperatorError {
+    match error {
+        crate::SpectralStencilError::IncompleteNativeRow => {
+            SpectralOperatorError::IncompleteCoverage
+        }
+        crate::SpectralStencilError::InvalidNativeRowGeometry => {
+            SpectralOperatorError::MissingRowSpectralGeometry
+        }
+        _ => SpectralOperatorError::InvalidSample,
+    }
+}
+
+fn resample_native_pair<P, T>(
+    left: &RetainedNativeSpectralGroup<P>,
+    right: &NativeSpectralGroup<'_, P>,
     fine: CasaLinearSample,
     finite_values: FiniteValuePolicy,
-) -> Result<CasaResampledGroup, SpectralOperatorError> {
+    cube_native_weight_transfer: bool,
+    interpolate_prediction: &mut impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
+) -> Result<CasaResampledGroup<T>, SpectralOperatorError> {
     if left.samples.len() != right.samples.len()
         || left.observed.len() != left.samples.len()
         || right.observed.len() != right.samples.len()
-        || left.predicted.len() != left.samples.len()
-        || right.predicted.len() != right.samples.len()
     {
         return Err(SpectralOperatorError::InvalidSample);
     }
     let [left_factor, right_factor] = fine.factors();
-    let epsilon = f64::EPSILON;
     let mut correlations = SmallVec::new();
     let mut observed = SmallVec::new();
-    let mut predicted = SmallVec::new();
     let mut weights = SmallVec::new();
     let mut flags = SmallVec::new();
     for (ordinal, (left_weighted, right_weighted)) in
-        left.samples.iter().zip(&right.samples).enumerate()
+        left.samples.iter().zip(right.samples).enumerate()
     {
         let left_selected = left_weighted.selected();
         let right_selected = right_weighted.selected();
@@ -4985,20 +5168,41 @@ fn resample_native_pair(
         correlations.push(left_selected.address().correlation_type);
         observed
             .push(left.observed[ordinal] * left_factor + right.observed[ordinal] * right_factor);
-        predicted
-            .push(left.predicted[ordinal] * left_factor + right.predicted[ordinal] * right_factor);
-        let left_weight = spectral_weight_for_output(left_weighted, fine.output_channel())?;
-        let right_weight = spectral_weight_for_output(right_weighted, fine.output_channel())?;
-        weights.push(left_weight * left_factor + right_weight * right_factor);
+        if cube_native_weight_transfer {
+            let nearest = if fine.nearest_is_right() {
+                right_weighted
+            } else {
+                left_weighted
+            };
+            weights.push(
+                nearest
+                    .source_imaging_weight()
+                    .ok_or(SpectralOperatorError::InvalidSample)?,
+            );
+        } else {
+            let left_weight = if left_factor == 0.0 {
+                0.0
+            } else {
+                spectral_weight_for_output(left_weighted, fine.output_channel())?
+            };
+            let right_weight = if right_factor == 0.0 {
+                0.0
+            } else {
+                spectral_weight_for_output(right_weighted, fine.output_channel())?
+            };
+            weights.push(left_weight * left_factor + right_weight * right_factor);
+        }
         let left_flag = !accept_polarization_input(left_selected, finite_values)?;
         let right_flag = !accept_polarization_input(right_selected, finite_values)?;
-        flags.push(if right_factor <= epsilon {
-            left_flag
-        } else if right_factor >= 1.0 - epsilon {
-            right_flag
-        } else {
-            left_flag || right_flag
-        });
+        let weight_flag = cube_native_weight_transfer && {
+            let nearest = if fine.nearest_is_right() {
+                right_selected
+            } else {
+                left_selected
+            };
+            nearest.input_weight_group_flag || nearest.parallel_hand_group_flag || nearest.row_flag
+        };
+        flags.push(fine.linear_flag(left_flag, right_flag) || weight_flag);
     }
     let selected = left
         .samples
@@ -5012,7 +5216,7 @@ fn resample_native_pair(
         selected,
         correlations,
         observed,
-        predicted,
+        predicted: interpolate_prediction(&left.predicted, &right.predicted, fine.factors())?,
         weights,
         flags,
     })
@@ -5069,7 +5273,7 @@ impl CompleteDataOwnerState {
                     chart,
                     workload,
                     fft,
-                    0,
+                    workload.max_replay_block_samples,
                     aw_projection.clone(),
                 )
             })
@@ -5134,7 +5338,7 @@ impl CompleteDataOwnerState {
                     chart,
                     workload,
                     fft,
-                    0,
+                    workload.max_replay_block_samples,
                     aw_projection.clone(),
                 )
             })
@@ -5393,7 +5597,7 @@ impl CompleteDataOwnerState {
     }
 
     fn finish_casa_linear_rows(&mut self) -> Result<(), SpectralOperatorError> {
-        self.linear_rows.finish();
+        self.linear_rows.finish()?;
         Ok(())
     }
 
@@ -5439,7 +5643,13 @@ impl CompleteDataOwnerState {
                 chart.domain_ordinal,
                 chart.facet_ordinal,
             )?;
-            let stencil = spectral_stencil(first, uvw_m, phase_shift_m, mosaic_response)?;
+            let stencil = spectral_stencil(
+                &self.specification,
+                first,
+                uvw_m,
+                phase_shift_m,
+                mosaic_response,
+            )?;
             let domain_touches = stencil.iter().any(|sample| {
                 self.operators[chart_ordinal]
                     .slab
@@ -5480,10 +5690,10 @@ impl CompleteDataOwnerState {
             .iter()
             .map(|weighted| weighted.selected().address.correlation_type)
             .collect::<SmallVec<[_; 4]>>();
-        let polarization = direction_independent_polarization(
-            self.specification.polarization_coordinates(),
-            &correlations,
-        )?;
+        let polarization = self
+            .specification
+            .direction_independent_polarization(&correlations)?
+            .clone();
         let visibilities = group
             .iter()
             .map(|weighted| selected_visibility(weighted.selected().visibility))
@@ -5503,7 +5713,10 @@ impl CompleteDataOwnerState {
             .is_some_and(ReconstructionModelBinding::is_initial_certified_zero);
         let (predicted_correlations, touches_core) =
             self.predict_aw_correlation_group(group, mosaic_response, predicts_residual)?;
-        let has_spectral_support = first.spectral_values().next().is_some();
+        let has_spectral_support = !self
+            .specification
+            .prediction_contributions(first)?
+            .is_empty();
         let contract = self
             .specification
             .aw_projection
@@ -5733,10 +5946,9 @@ impl CompleteDataOwnerState {
             .iter()
             .map(|weighted| weighted.selected().address.correlation_type)
             .collect::<SmallVec<[_; 4]>>();
-        let polarization = direction_independent_polarization(
-            self.specification.polarization_coordinates(),
-            &correlations,
-        )?;
+        let polarization = self
+            .specification
+            .direction_independent_polarization(&correlations)?;
         let visibilities = group
             .iter()
             .map(|weighted| selected_visibility(weighted.selected().visibility))
@@ -5747,14 +5959,17 @@ impl CompleteDataOwnerState {
                 accept_polarization_input(weighted.selected(), self.finite_values).map(|ok| !ok)
             })
             .collect::<Result<SmallVec<[_; 4]>, _>>()?;
-        let flags = polarization_effective_flags(&polarization, flags);
+        let flags = polarization_effective_flags(polarization, flags);
         let predicts_residual = self
             .model_binding
             .is_some_and(ReconstructionModelBinding::is_evaluated);
         let predicts_zero = self
             .model_binding
             .is_some_and(ReconstructionModelBinding::is_initial_certified_zero);
-        let has_spectral_support = first.spectral_values().next().is_some();
+        let has_spectral_support = !self
+            .specification
+            .prediction_contributions(first)?
+            .is_empty();
         let mut model_prediction = SmallVec::<[Complex64; 4]>::new();
         model_prediction.resize(polarization.model_coordinates().len(), Complex64::default());
         let mut touches_core = false;
@@ -5766,7 +5981,13 @@ impl CompleteDataOwnerState {
                 chart.domain_ordinal,
                 chart.facet_ordinal,
             )?;
-            let stencil = spectral_stencil(first, uvw_m, phase_shift_m, mosaic_response)?;
+            let stencil = spectral_stencil(
+                &self.specification,
+                first,
+                uvw_m,
+                phase_shift_m,
+                mosaic_response,
+            )?;
             let domain_touches = stencil.iter().any(|sample| {
                 self.operators[chart_ordinal]
                     .slab
@@ -5817,14 +6038,14 @@ impl CompleteDataOwnerState {
                     })
                     .collect::<Result<SmallVec<[_; 4]>, _>>()?;
                 let published_weights =
-                    polarization_published_weights(&polarization, &correlation_weights, &flags);
+                    polarization_published_weights(polarization, &correlation_weights, &flags);
                 let observed_adjoint = polarization
                     .weighted_adjoint(&visibilities, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
                 let predicted_adjoint = polarization
                     .weighted_adjoint(&predicted_correlations, &correlation_weights, &flags)
                     .map_err(|_| SpectralOperatorError::InvalidSample)?;
-                let diagonal = polarization_diagonal(&polarization, &correlation_weights, &flags);
+                let diagonal = polarization_diagonal(polarization, &correlation_weights, &flags);
                 let contribution = first_spectral.contribution();
                 for coordinate in 0..polarization.model_coordinates().len() {
                     let weight = diagonal[coordinate];
@@ -5907,30 +6128,7 @@ impl CompleteDataOwnerState {
         &self,
         group: &[crate::weighting::WeightingSampleValue],
     ) -> Result<bool, SpectralOperatorError> {
-        if self.specification.spectral_kernel != SpectralKernel::Linear
-            || self.specification.output_channel_frequencies_hz.len() < 2
-        {
-            return Ok(false);
-        }
-        let selected = group
-            .first()
-            .ok_or(SpectralOperatorError::InvalidSample)?
-            .selected();
-        let address = selected.address();
-        if self
-            .specification
-            .selected_spectral_channel_count(address.measurement_set, address.spectral_window_id)
-            .is_none_or(|channels| channels < 2)
-        {
-            return Ok(false);
-        }
-        let native_width_hz = selected.address().channel_width_hz.abs();
-        let address = selected.address();
-        let selected_channel_count = self
-            .specification
-            .selected_spectral_channel_count(address.measurement_set, address.spectral_window_id)
-            .ok_or(SpectralOperatorError::InvalidSample)?;
-        Ok(native_width_hz > 0.0 && selected_channel_count > 1)
+        self.specification.uses_casa_linear_resampling(group)
     }
 
     fn consume_casa_linear_group(
@@ -5960,10 +6158,9 @@ impl CompleteDataOwnerState {
         let (predicted, touches_core) = if self.specification.aw_projection.is_some() {
             self.predict_aw_correlation_group(group, mosaic_response, predicts_residual)?
         } else {
-            let polarization = direction_independent_polarization(
-                self.specification.polarization_coordinates(),
-                &correlations,
-            )?;
+            let polarization = self
+                .specification
+                .direction_independent_polarization(&correlations)?;
             let mut model_prediction = SmallVec::<[Complex64; 4]>::new();
             model_prediction.resize(polarization.model_coordinates().len(), Complex64::default());
             let mut touches_core = false;
@@ -5975,7 +6172,13 @@ impl CompleteDataOwnerState {
                     chart.domain_ordinal,
                     chart.facet_ordinal,
                 )?;
-                let stencil = spectral_stencil(first, uvw_m, phase_shift_m, mosaic_response)?;
+                let stencil = spectral_stencil(
+                    &self.specification,
+                    first,
+                    uvw_m,
+                    phase_shift_m,
+                    mosaic_response,
+                )?;
                 let domain_touches = stencil.iter().any(|sample| {
                     self.operators[chart_ordinal]
                         .slab
@@ -6001,7 +6204,10 @@ impl CompleteDataOwnerState {
             (predicted, touches_core)
         };
         if self.emit_final_visibilities
-            && first.spectral_values().next().is_some()
+            && !self
+                .specification
+                .prediction_contributions(first)?
+                .is_empty()
             && (touches_core || self.specification.slab.total_channels() == 1 || predicts_zero)
         {
             for ((weighted, observed), predicted) in group.iter().zip(&observed).zip(&predicted) {
@@ -6020,20 +6226,31 @@ impl CompleteDataOwnerState {
         }
         let frequency_hz = selected.output_frame_frequency_hz();
         let native = NativeSpectralGroup {
-            key: NativeSpectralRowKey::from_sample(selected),
             frequency_hz,
-            samples: group.iter().cloned().collect(),
-            observed,
+            samples: group,
+            observed: &observed,
             predicted,
         };
-        let output =
-            CasaLinearOutputGrid::compile(&self.specification.output_channel_frequencies_hz)
-                .ok_or(SpectralOperatorError::InvalidSample)?;
+        let output = self.specification.casa_linear_output_grid()?;
         let mut linear_rows =
             std::mem::replace(&mut self.linear_rows, CasaLinearRowResampler::new());
-        let result = linear_rows.push(native, output, self.finite_values, |resampled| {
-            self.accumulate_casa_resampled_group(resampled, predicts_residual)
-        });
+        let result = linear_rows.push(
+            native,
+            output,
+            self.finite_values,
+            self.specification.cube_native_weight_transfer,
+            |left, right, [left_factor, right_factor]| {
+                if left.len() != right.len() {
+                    return Err(SpectralOperatorError::InvalidSample);
+                }
+                Ok(left
+                    .iter()
+                    .zip(right)
+                    .map(|(left, right)| *left * left_factor + *right * right_factor)
+                    .collect())
+            },
+            |resampled| self.accumulate_casa_resampled_group(resampled, predicts_residual),
+        );
         self.linear_rows = linear_rows;
         result
     }
@@ -6047,20 +6264,19 @@ impl CompleteDataOwnerState {
             return self.accumulate_casa_resampled_aw_group(resampled, predicts_residual);
         }
         let mosaic_response = self.mosaic_response(&resampled.selected)?;
-        let polarization = direction_independent_polarization(
-            self.specification.polarization_coordinates(),
-            &resampled.correlations,
-        )?;
-        let flags = polarization_effective_flags(&polarization, resampled.flags);
+        let polarization = self
+            .specification
+            .direction_independent_polarization(&resampled.correlations)?;
+        let flags = polarization_effective_flags(polarization, resampled.flags);
         let published_weights =
-            polarization_published_weights(&polarization, &resampled.weights, &flags);
+            polarization_published_weights(polarization, &resampled.weights, &flags);
         let observed_adjoint = polarization
             .weighted_adjoint(&resampled.observed, &resampled.weights, &flags)
             .map_err(|_| SpectralOperatorError::InvalidSample)?;
         let predicted_adjoint = polarization
             .weighted_adjoint(&resampled.predicted, &resampled.weights, &flags)
             .map_err(|_| SpectralOperatorError::InvalidSample)?;
-        let diagonal = polarization_diagonal(&polarization, &resampled.weights, &flags);
+        let diagonal = polarization_diagonal(polarization, &resampled.weights, &flags);
         for chart_ordinal in 0..self.operators.len() {
             let chart = &self.specification.charts[chart_ordinal];
             let (uvw_m, phase_shift_m) = selected_model_projection(
@@ -6128,11 +6344,10 @@ impl CompleteDataOwnerState {
         predicts_residual: bool,
     ) -> Result<(), SpectralOperatorError> {
         let mosaic_response = self.mosaic_response(&resampled.selected)?;
-        let polarization = direction_independent_polarization(
-            self.specification.polarization_coordinates(),
-            &resampled.correlations,
-        )?;
-        let flags = polarization_effective_flags(&polarization, resampled.flags.clone());
+        let polarization = self
+            .specification
+            .direction_independent_polarization(&resampled.correlations)?;
+        let flags = polarization_effective_flags(polarization, resampled.flags.clone());
         if resampled.observed.len() != resampled.correlations.len()
             || resampled.predicted.len() != resampled.correlations.len()
             || resampled.weights.len() != resampled.correlations.len()
@@ -6247,7 +6462,10 @@ impl CompleteDataOwnerState {
                     .is_some_and(ReconstructionModelBinding::is_evaluated);
                 let (predicted, touches_core) =
                     self.predict_aw_correlation_group(group, mosaic_response, evaluates_model)?;
-                if first.spectral_values().next().is_some()
+                if !self
+                    .specification
+                    .prediction_contributions(first)?
+                    .is_empty()
                     && (touches_core || self.specification.slab.total_channels() == 1)
                 {
                     for ((weighted, observed), predicted) in
@@ -6279,10 +6497,9 @@ impl CompleteDataOwnerState {
                 .iter()
                 .map(|weighted| weighted.selected().address.correlation_type)
                 .collect::<SmallVec<[_; 4]>>();
-            let polarization = direction_independent_polarization(
-                self.specification.polarization_coordinates(),
-                &correlations,
-            )?;
+            let polarization = self
+                .specification
+                .direction_independent_polarization(&correlations)?;
             let observed = group
                 .iter()
                 .map(|weighted| {
@@ -6293,7 +6510,10 @@ impl CompleteDataOwnerState {
             let mut model_prediction = SmallVec::<[Complex64; 4]>::new();
             model_prediction.resize(polarization.model_coordinates().len(), Complex64::default());
             let mut touches_core = false;
-            let has_spectral_support = first.spectral_values().next().is_some();
+            let has_spectral_support = !self
+                .specification
+                .prediction_contributions(first)?
+                .is_empty();
             for domain_ordinal in 0..self.operators.len() {
                 let chart = &self.specification.charts[domain_ordinal];
                 let (uvw_m, phase_shift_m) = selected_model_projection(
@@ -6302,7 +6522,13 @@ impl CompleteDataOwnerState {
                     chart.domain_ordinal,
                     chart.facet_ordinal,
                 )?;
-                let stencil = spectral_stencil(first, uvw_m, phase_shift_m, mosaic_response)?;
+                let stencil = spectral_stencil(
+                    &self.specification,
+                    first,
+                    uvw_m,
+                    phase_shift_m,
+                    mosaic_response,
+                )?;
                 let domain_touches = stencil.iter().any(|sample| {
                     self.operators[domain_ordinal]
                         .slab
@@ -6402,14 +6628,14 @@ impl CompleteDataOwnerState {
                 }
                 continue;
             }
-            let polarization = direction_independent_polarization(
-                self.specification.polarization_coordinates(),
+            let polarization = self.specification.direction_independent_polarization(
                 &group
                     .iter()
                     .map(|weighted| weighted.selected().address.correlation_type)
                     .collect::<SmallVec<[_; 4]>>(),
             )?;
             let stencil = spectral_stencil(
+                &self.specification,
                 first,
                 selected.transformed_uvw_m(),
                 selected.phase_shift_m(),
@@ -6767,15 +6993,16 @@ fn casa_model_output_prediction(
 }
 
 fn spectral_stencil(
+    specification: &SpectralOperatorSpecification,
     weighted: &crate::weighting::WeightingSampleValue,
     uvw_m: [f64; 3],
     phase_shift_m: f64,
     mosaic_response: Option<MosaicResponse>,
 ) -> Result<SmallVec<[SpectralOperatorSample; 4]>, SpectralOperatorError> {
-    weighted
-        .spectral_values()
-        .map(|spectral| {
-            let contribution = spectral.contribution();
+    specification
+        .prediction_contributions(weighted)?
+        .into_iter()
+        .map(|contribution| {
             SpectralOperatorSample::new(
                 usize::try_from(contribution.output_channel())
                     .map_err(|_| SpectralOperatorError::InvalidSample)?,
@@ -6783,7 +7010,7 @@ fn spectral_stencil(
                 contribution.evaluation_frequency_hz(),
                 phase_shift_m,
                 [0.0, 0.0],
-                spectral.imaging_weight(),
+                1.0,
                 contribution.factor(),
             )
             .map(|sample| {
@@ -6796,24 +7023,6 @@ fn spectral_stencil(
             })
         })
         .collect()
-}
-
-/// Compile CASA's standard direction-independent correlation-to-image map.
-///
-/// Calibrated MeasurementSet correlations are already in the sky frame for
-/// standard imaging. Parallactic-angle and Mueller responses belong to an
-/// explicitly selected direction-dependent operator, not this identity path.
-fn direction_independent_polarization(
-    coordinates: &[PolarizationCoordinate],
-    correlations: &[casa_imaging_model::CorrelationType],
-) -> Result<PolarizationOperator, SpectralOperatorError> {
-    PolarizationOperator::compile(
-        coordinates,
-        correlations,
-        [0.0, 0.0],
-        MuellerMatrix::identity(),
-    )
-    .map_err(|_| SpectralOperatorError::InvalidSample)
 }
 
 pub(crate) fn polarization_diagonal(
@@ -6886,6 +7095,7 @@ pub(crate) fn polarization_effective_flags(
                 | PolarizationCoordinate::StokesV
         )
     ) || operator.feed_basis() == crate::polarization_operator::FeedBasis::Stokes
+        || operator.model_coordinates() == [PolarizationCoordinate::StokesI]
     {
         return flags;
     }
@@ -7133,6 +7343,11 @@ struct ChannelMajorNormalContribution {
 }
 
 impl SpectralSlabOperator {
+    pub(crate) fn owns_gridded_plane(&self, output_plane: usize) -> bool {
+        self.basis != SpectralBasisPlan::ChannelLocal
+            || self.slab.owns(output_plane / self.polarization_count)
+    }
+
     pub(crate) fn convolution_maximum_support(&self) -> usize {
         self.maximum_convolution_support
     }
@@ -8263,7 +8478,7 @@ impl SpectralSlabOperator {
                         domain.pixels() != specification.domains[self.domain_ordinal].image_shape
                     })
                 })
-            || generation.samples().len() != shape.sample_count()
+            || generation.sample_count() != shape.sample_count()
         {
             return Err(SpectralOperatorError::ModelShape);
         }
@@ -8294,6 +8509,8 @@ impl SpectralSlabOperator {
         let specification = self.specification.as_deref();
         let domain_ordinal = self.domain_ordinal;
         for (resident, coefficient) in coefficient_range.enumerate() {
+            let generation =
+                &generation.read_window(self.domain_ordinal, coefficient..coefficient + 1)?;
             for polarization in 0..self.polarization_count {
                 let plane = self.polarization_plane(resident, polarization);
                 let grid = &mut self.forward_grids[plane];
@@ -8309,7 +8526,9 @@ impl SpectralSlabOperator {
                                 [origin[0] + x, origin[1] + y],
                             ))
                             .ok_or(SpectralOperatorError::ModelShape)?;
-                        let sample = generation.samples()[index];
+                        let sample = generation
+                            .sample(index)
+                            .ok_or(SpectralOperatorError::ModelShape)?;
                         if sample.support() == ModelSupport::Invalid {
                             continue;
                         }
@@ -8383,6 +8602,8 @@ impl SpectralSlabOperator {
         let mut basis = vec![0.0; plan.coefficient_term_count()];
         let mosaic = self.mosaic_normal.is_some();
         let aw_projection = self.aw_projection.is_some();
+        let generation =
+            &generation.read_window(self.domain_ordinal, 0..plan.coefficient_term_count())?;
         for (resident, output_channel) in self.slab.resident_range().enumerate() {
             let frequency = *self
                 .output_channel_frequencies_hz
@@ -8416,7 +8637,9 @@ impl SpectralSlabOperator {
                                     [origin[0] + x, origin[1] + y],
                                 ))
                                 .ok_or(SpectralOperatorError::ModelShape)?;
-                            let sample = generation.samples()[index];
+                            let sample = generation
+                                .sample(index)
+                                .ok_or(SpectralOperatorError::ModelShape)?;
                             if sample.support() != ModelSupport::Invalid {
                                 value += sample.value().value() * basis;
                             }
@@ -8467,6 +8690,8 @@ impl SpectralSlabOperator {
         let mut basis = vec![0.0; plan.coefficient_term_count()];
         let mut before = ScienceTraceDigest::new();
         let mut after = ScienceTraceDigest::new();
+        let generation =
+            &generation.read_window(self.domain_ordinal, 0..plan.coefficient_term_count())?;
         for output_channel in self.slab.resident_range() {
             let frequency = *self
                 .output_channel_frequencies_hz
@@ -8492,7 +8717,9 @@ impl SpectralSlabOperator {
                                     [origin[0] + x, origin[1] + y],
                                 ))
                                 .ok_or(SpectralOperatorError::ModelShape)?;
-                            let sample = generation.samples()[index];
+                            let sample = generation
+                                .sample(index)
+                                .ok_or(SpectralOperatorError::ModelShape)?;
                             if sample.support() != ModelSupport::Invalid {
                                 value += sample.value().value() * basis;
                             }
@@ -9830,7 +10057,7 @@ impl SpectralSlabOperator {
         mut self,
         residual_model: ModelGenerationId,
         normal_grids: Vec<Array2<Complex64>>,
-    ) -> Result<SpectralChartUpdate, SpectralOperatorError> {
+    ) -> Result<(SpectralChartUpdate, PreparedFft), SpectralOperatorError> {
         let expected_shape = (self.geometry.grid_shape[0], self.geometry.grid_shape[1]);
         let expected_planes = self
             .basis
@@ -9856,18 +10083,19 @@ impl SpectralSlabOperator {
             );
         }
         self.residual_grids = Some(normal_grids);
-        self.finish_chart_update(residual_model, true)
+        let update = self.finish_chart_update(residual_model, true)?;
+        Ok((update, self.fft))
     }
 
     fn finish_streaming_residual(
-        self,
+        mut self,
         residual_model: ModelGenerationId,
     ) -> Result<SpectralChartUpdate, SpectralOperatorError> {
         self.finish_chart_update(residual_model, false)
     }
 
     fn finish_chart_update(
-        mut self,
+        &mut self,
         residual_model: ModelGenerationId,
         normal: bool,
     ) -> Result<SpectralChartUpdate, SpectralOperatorError> {
@@ -10786,6 +11014,21 @@ pub(crate) struct WProjectionConvolution {
     kernel_identity: [u8; 32],
 }
 
+fn w_projection_plane_count(
+    geometry: &SpectralOperatorGeometry,
+    contract: WProjectionContract,
+) -> usize {
+    let half_field_angle = ((geometry.image_shape[0] as f64 * geometry.increment_rad[0].abs())
+        .max(geometry.image_shape[1] as f64 * geometry.increment_rad[1].abs()))
+        / 2.0;
+    let automatic =
+        (1.05 * contract.maximum_abs_w_lambda() * half_field_angle.sin().abs()) as usize;
+    contract
+        .planes()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(automatic.max(1))
+}
+
 impl WProjectionConvolution {
     fn new(
         geometry: &SpectralOperatorGeometry,
@@ -10793,15 +11036,7 @@ impl WProjectionConvolution {
     ) -> Result<Self, SpectralOperatorError> {
         let standard = StandardConvolution::new(geometry);
         let maximum_abs_w_lambda = contract.maximum_abs_w_lambda();
-        let half_field_angle = ((geometry.image_shape[0] as f64 * geometry.increment_rad[0].abs())
-            .max(geometry.image_shape[1] as f64 * geometry.increment_rad[1].abs()))
-            / 2.0;
-        let automatic_planes =
-            (1.05 * maximum_abs_w_lambda * half_field_angle.sin().abs()) as usize;
-        let plane_count = contract
-            .planes()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or(automatic_planes.max(1));
+        let plane_count = w_projection_plane_count(geometry, contract);
         let sampling = if plane_count > 1 { 4 } else { 1 };
         let effective_max_w_lambda = if contract.planes().is_some() {
             0.25 / geometry.increment_rad[0].abs()
@@ -11466,8 +11701,14 @@ fn checked_cells(shape: [usize; 2]) -> Result<usize, SpectralOperatorError> {
 }
 
 /// Exact reason the spectral operator plan or operator rejected its input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SpectralOperatorError {
+    /// A bounded Normal State backing operation failed.
+    #[error("normal-state storage: {0}")]
+    NormalStorage(String),
+    /// An authoritative model window could not be loaded.
+    #[error(transparent)]
+    ModelAccess(#[from] crate::ModelLifecycleError),
     /// An opt-in diagnostic requested an invalid or unbounded source-group capture.
     #[error(
         "invalid CASA_RS_TRACE_AW_GROUP: expected bounded start:end:ddid:spw:channels:4:accepted_hands"
@@ -11513,6 +11754,9 @@ pub enum SpectralOperatorError {
     /// A weighted contribution contains an invalid numerical value.
     #[error("spectral operator sample is non-finite or outside its numerical domain")]
     InvalidSample,
+    /// Row interpolation was requested without source-issued selected-channel geometry.
+    #[error("spectral row interpolation requires exact selected-channel geometry")]
+    MissingRowSpectralGeometry,
     /// Selected row geometry did not provide one canonical projection per image domain.
     #[error("selected row image-domain projections do not match the compiled geometry")]
     DomainProjectionMismatch,
@@ -11560,6 +11804,15 @@ pub enum SpectralOperatorError {
     /// An opaque record has an unsupported, truncated, or invalid fixed encoding.
     #[error("gridded normal-operator record encoding is invalid")]
     InvalidGriddedRecord,
+    /// A failed source consumption or frame write invalidated this compilation.
+    #[error("gridded normal-operator compilation is poisoned")]
+    GriddedCompilationPoisoned,
+    /// The synchronous runtime frame sink rejected a complete encoded frame.
+    #[error("gridded normal-operator frame sink failed")]
+    GriddedFrameSink,
+    /// Compilation exceeded its admitted finite artifact or descriptor capacity.
+    #[error("gridded normal-operator compilation exhausted its admitted capacity")]
+    GriddedCompilationCapacity,
     /// A worker panicked while mutating one exclusive gridded-normal sector.
     #[error("gridded normal-operator sector state was poisoned")]
     GriddedSectorPoisoned,
@@ -11611,6 +11864,44 @@ mod tests {
         AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelDeltaId,
         ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
     };
+
+    #[test]
+    fn native_row_retention_reuses_one_stable_slot_across_owner_moves() {
+        let mut rows = super::CasaLinearRowResampler::<usize>::new();
+        let first = [Complex64::new(1.0, -2.0); 5];
+        rows.retain_current(super::NativeSpectralGroup {
+            frequency_hz: 100.0,
+            samples: &[],
+            observed: &first,
+            predicted: 7,
+        });
+        let original = rows.pending.as_deref().unwrap();
+        let slot = std::ptr::from_ref(original);
+        let observed = original.observed.as_ptr();
+        let capacity = original.observed.capacity();
+        for predicted in 8..12 {
+            let mut moved = std::mem::replace(&mut rows, super::CasaLinearRowResampler::new());
+            moved.retain_current(super::NativeSpectralGroup {
+                frequency_hz: 100.0 + predicted as f64,
+                samples: &[],
+                observed: &[Complex64::new(predicted as f64, 1.0); 5],
+                predicted,
+            });
+            let retained = moved.pending.as_deref().unwrap();
+            assert_eq!(std::ptr::from_ref(retained), slot);
+            assert_eq!(retained.observed.as_ptr(), observed);
+            assert_eq!(retained.observed.capacity(), capacity);
+            assert_eq!(retained.observed[0], Complex64::new(predicted as f64, 1.0));
+            assert_eq!(retained.predicted, predicted);
+            rows = moved;
+        }
+        assert!(
+            std::mem::size_of_val(&rows)
+                < super::CasaLinearRowResampler::<usize>::retained_group_bytes()
+        );
+        rows.finish().unwrap();
+        assert!(rows.pending.is_none());
+    }
 
     #[test]
     fn aw_pointing_phase_requires_exact_pixel_and_uses_the_integer_image_centre() {
@@ -12232,6 +12523,7 @@ mod tests {
             resident_model_terms,
             total_model_terms,
             max_replay_block_samples: 3,
+            source_row_workspace_bytes: 0,
             initial_phase_residency: None,
         }
     }
@@ -12631,6 +12923,7 @@ mod tests {
             resident_model_terms,
             total_model_terms,
             max_replay_block_samples: 4,
+            source_row_workspace_bytes: 0,
             initial_phase_residency: None,
         };
         let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)

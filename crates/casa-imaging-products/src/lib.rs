@@ -29,6 +29,7 @@ mod error;
 mod projection;
 mod restore;
 mod source;
+mod storage;
 mod taylor;
 mod visibility;
 
@@ -48,6 +49,10 @@ pub use restore::{
     rescale_residual_to_beam,
 };
 pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};
+pub use storage::{
+    ProductArrayStorage, ProductStorageFactory, ProductStoragePlan, ProductWindow,
+    ProductWindowLayout,
+};
 pub use visibility::{
     ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,
     VisibilityProductCompletion, VisibilityProductError,
@@ -57,7 +62,9 @@ pub use visibility::{
 mod tests {
     #[test]
     fn algorithm_catalog_version_is_pinned() {
-        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 8);
+        // v9 separated cube pixels and CASA publication masks; bump this pin
+        // only together with a reviewed product-algorithm identity change.
+        assert_eq!(super::CONTINUUM_ALGORITHM_CATALOG_VERSION, 9);
         assert_eq!(super::DEFAULT_PSF_CUTOFF, 0.35);
     }
 }

@@ -62,6 +62,7 @@ pub use array_lattice::ArrayLattice;
 pub use array_math::{
     array_fractile, array_madfm, array_median, near, near_abs, near_f32, near_tol,
 };
+pub use casa_tables::{TiledArrayStorageLayout, TiledFileIoStats};
 pub use element::LatticeElement;
 pub use error::LatticeError;
 pub use execution::{

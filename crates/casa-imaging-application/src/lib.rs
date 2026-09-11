@@ -417,27 +417,38 @@ where
     } else {
         SpectralCyclePlan::dirty(problem, &planning_registry, policy)?
     };
-    let minor_node = planned.minor_cycle_node().cloned();
-    let SpectralCyclePlanParts {
-        physical,
-        weighting,
-        complete_data: complete,
-        source_resources: resources,
-        pass,
-        gridded_normal: planned_gridded_normal,
-        ..
-    } = planned.into_parts();
     let replay_proof_bytes = initial_access.replay_proof_retained_heap_bytes(problem)?;
     let frozen_reservation = minor_cycle_requested
         .then(|| {
             FrozenWeightingReservation::acquire(
                 &runtime.authority,
                 runtime.resource_policy.clone(),
-                weighting.planned_residency(),
+                planned.weighting_plan().planned_residency(),
                 replay_proof_bytes,
             )
         })
         .transpose()?;
+    let initial_plan = plan(
+        problem,
+        PlanningBindings::new(
+            runtime.registry,
+            runtime.resource_policy.clone(),
+            runtime.cost_model,
+        ),
+        &runtime.authority,
+        &planning_registry,
+        &runtime.receipts,
+        |_, _| Ok::<_, std::convert::Infallible>(planned.physical_candidates()),
+    )?;
+    let SpectralCyclePlanParts {
+        weighting,
+        complete_data: complete,
+        source_resources: resources,
+        pass,
+        minor_cycle_node: minor_node,
+        gridded_normal: planned_gridded_normal,
+        ..
+    } = planned.into_parts(&initial_plan)?;
     let initial_source_state = initial_access.source_state().clone();
     let mut executor = SpectralCycleExecutor::new(
         runtime.implementation.clone(),
@@ -488,18 +499,6 @@ where
         problem,
         executor,
     );
-    let initial_plan = plan(
-        problem,
-        PlanningBindings::new(
-            runtime.registry,
-            runtime.resource_policy.clone(),
-            runtime.cost_model,
-        ),
-        &runtime.authority,
-        &registry,
-        &runtime.receipts,
-        move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-    )?;
     run_phase(
         problem,
         &initial_plan,
@@ -701,15 +700,26 @@ where
                         gridded_replay,
                     )?
                 };
+                let final_plan = plan(
+                    problem,
+                    PlanningBindings::new(
+                        runtime.registry,
+                        runtime.resource_policy.clone(),
+                        runtime.cost_model,
+                    ),
+                    &runtime.authority,
+                    &planning_registry,
+                    &runtime.receipts,
+                    |_, _| Ok::<_, std::convert::Infallible>(final_planned.physical_candidates()),
+                )?;
                 let SpectralCyclePlanParts {
-                    physical,
                     weighting,
                     complete_data: complete,
                     pass,
                     minor_cycle_node: minor_node,
                     gridded_normal: planned_gridded_normal,
                     ..
-                } = final_planned.into_parts();
+                } = final_planned.into_parts(&final_plan)?;
                 let mut executor = SpectralCycleExecutor::new_gridded(
                     runtime.implementation.clone(),
                     problem.clone(),
@@ -747,18 +757,6 @@ where
                     problem,
                     executor,
                 );
-                let final_plan = plan(
-                    problem,
-                    PlanningBindings::new(
-                        runtime.registry,
-                        runtime.resource_policy.clone(),
-                        runtime.cost_model,
-                    ),
-                    &runtime.authority,
-                    &registry,
-                    &runtime.receipts,
-                    move |_, _| Ok::<_, std::convert::Infallible>(vec![physical]),
-                )?;
                 let attempt = major_cycle_attempt(runtime.attempts[1], ordinal);
                 run_phase(problem, &final_plan, &registry, &runtime, attempt)?;
                 let receipt = runtime.receipts.open(attempt)?;
@@ -824,14 +822,25 @@ where
                     output_policy,
                     ordinal,
                 )?;
+                let output_plan = plan(
+                    problem,
+                    PlanningBindings::new(
+                        runtime.registry,
+                        runtime.resource_policy.clone(),
+                        runtime.cost_model,
+                    ),
+                    &runtime.authority,
+                    &planning_registry,
+                    &runtime.receipts,
+                    |_, _| Ok::<_, std::convert::Infallible>(output_planned.physical_candidates()),
+                )?;
                 let SpectralCyclePlanParts {
-                    physical: output_physical,
                     weighting: output_weighting,
                     complete_data: output_complete,
                     source_resources: output_resources,
                     pass: output_pass,
                     ..
-                } = output_planned.into_parts();
+                } = output_planned.into_parts(&output_plan)?;
                 let (visibility_replay, sink) = FinalVisibilityReplay::with_visibility_write(
                     std::path::PathBuf::from(input.observation.locator()),
                     source_state,
@@ -860,18 +869,6 @@ where
                     problem,
                     output_executor,
                 );
-                let output_plan = plan(
-                    problem,
-                    PlanningBindings::new(
-                        runtime.registry,
-                        runtime.resource_policy.clone(),
-                        runtime.cost_model,
-                    ),
-                    &runtime.authority,
-                    &output_registry,
-                    &runtime.receipts,
-                    move |_, _| Ok::<_, std::convert::Infallible>(vec![output_physical]),
-                )?;
                 let output_attempt = selected_output_attempt(attempt);
                 run_phase(
                     problem,
@@ -1123,7 +1120,7 @@ where
                 }
             };
         }
-        planned_products.demand(&inputs)?
+        planned_products.demand(&inputs, casa_imaging_products::ProductStoragePlan::new(1)?)?
     };
     let staging_residency_bytes = publication_config
         .sink
@@ -1156,9 +1153,10 @@ where
             runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
+            runtime.gridded_normal_storage.clone(),
         ),
     )?;
-    let (physical, publication) = publication_plan.into_parts();
+    let (physical, publication, backing) = publication_plan.into_parts();
     // Admission covers production, validity, sealing overlap, and staging.
     // Obtain it before allocating any product payload.
     let execution_plan = plan(
@@ -1181,6 +1179,7 @@ where
         scientific,
         reconstruction_masks,
         publication_config.sink,
+        backing,
     )?;
     let registry = SerialProductPublicationRegistry::new(
         runtime.registry,

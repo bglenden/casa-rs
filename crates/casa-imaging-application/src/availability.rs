@@ -514,6 +514,7 @@ const fn supports_task(requirement: TaskRequirement) -> bool {
             | TaskRequirement::SerialCpu
             | TaskRequirement::FixedTileCpu
             | TaskRequirement::RustFft
+            | TaskRequirement::PreviewPng
     )
 }
 
