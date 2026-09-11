@@ -76,9 +76,10 @@ Negative:
   corruption, not collision-resistant against an intentional attacker;
 - historical version-2 artifacts are unreadable, which is acceptable for a
   private run-scoped file and must never become a persisted cache contract;
-- ignored serial-compute probe identity pins must be regenerated on the next
-  mounted-dataset run because descriptor identity no longer folds payload
-  digests.
+- dataset identity values in the ignored serial-compute probes are recorded as
+  JSON evidence rather than asserted, so accepted science and accounting
+  evolution cannot turn an unmaintained golden into a false regression; the
+  probes keep only structural invariants and stable selection-derived totals.
 
 Neutral / tradeoffs:
 - the `F_NOCACHE` bounded page-cache policy, frame sizes, and buffer
@@ -106,9 +107,10 @@ This decision is enforced by:
 - tests: managed-spill unit tests for version-3 framing, CRC32C corruption
   rejection, version rejection, transcript/seal binding, reserved-byte
   validation, and poisoned-reader behavior; reconstruction descriptor-binding
-  and encoded-record validation tests; the serial-compute probe scheme string
-  and accounting formulas (the probe's identity pins require the mounted VLA
-  medium dataset);
+  and encoded-record validation tests; the serial-compute probes record their
+  version-3 checksum scheme, accounting formulas, and dataset identities as
+  evidence while asserting structural invariants (the probes require the
+  mounted VLA medium dataset);
 - lint/import/dependency rules: dependency review keeps checksum crates
   non-cryptographic and direct dependencies explicit;
 - CI checks: `just verify` runs the affected `casa-imaging-runtime` and
