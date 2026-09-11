@@ -5273,7 +5273,7 @@ impl CompleteDataOwnerState {
                     chart,
                     workload,
                     fft,
-                    0,
+                    workload.max_replay_block_samples,
                     aw_projection.clone(),
                 )
             })
@@ -5338,7 +5338,7 @@ impl CompleteDataOwnerState {
                     chart,
                     workload,
                     fft,
-                    0,
+                    workload.max_replay_block_samples,
                     aw_projection.clone(),
                 )
             })
@@ -7095,6 +7095,7 @@ pub(crate) fn polarization_effective_flags(
                 | PolarizationCoordinate::StokesV
         )
     ) || operator.feed_basis() == crate::polarization_operator::FeedBasis::Stokes
+        || operator.model_coordinates() == [PolarizationCoordinate::StokesI]
     {
         return flags;
     }

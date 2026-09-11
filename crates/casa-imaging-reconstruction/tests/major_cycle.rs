@@ -2604,10 +2604,87 @@ fn prepare_reconciliation(
     named: ModelGeneration,
     delta: Option<ModelDelta>,
 ) -> (CompleteDataOwnerResult, MajorCyclePreparation) {
+    prepare_reconciliation_with_prior(problem, lifecycle, named, delta, None)
+}
+
+fn prepare_reconciliation_with_prior(
+    problem: &casa_imaging_model::CompiledProblem,
+    lifecycle: &ModelLifecycle,
+    named: ModelGeneration,
+    delta: Option<ModelDelta>,
+    prior_normal_state: Option<casa_imaging_reconstruction::FinalNormalState>,
+) -> (CompleteDataOwnerResult, MajorCyclePreparation) {
     let preparation =
         MajorCyclePreparation::prepare(lifecycle, named, delta).expect("prepare final model");
-    let evidence = run_t19_complete_data(problem, Some(&preparation));
+    // An unchanged empty model is the certified-zero initial pass; any other
+    // final model is a residual refresh over its prior normal state.
+    let pass = if preparation.final_model().origin()
+        == casa_imaging_reconstruction::ModelGenerationOrigin::Empty
+    {
+        SpectralOperatorPass::InitialMajor
+    } else {
+        SpectralOperatorPass::ResidualRefresh
+    };
+    let prior_normal_state =
+        if pass == SpectralOperatorPass::ResidualRefresh && prior_normal_state.is_none() {
+            Some(confirm_prior_normal_state(problem))
+        } else {
+            prior_normal_state
+        };
+    let evidence = run_t19_complete_data_for_pass(
+        problem,
+        Some(&preparation),
+        &fixture_samples(problem),
+        None,
+        pass,
+        prior_normal_state,
+    );
     (evidence, preparation)
+}
+
+/// Mint the empty-model prior normal state used by delta refreshes.
+///
+/// Production carries this state from the preceding reconcile; the fixture
+/// reproduces it with an independent confirm reconciliation over the same
+/// frozen observation and weighting lineage.
+fn confirm_prior_normal_state(
+    problem: &casa_imaging_model::CompiledProblem,
+) -> casa_imaging_reconstruction::FinalNormalState {
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("prior executable problem"),
+        attempt(0xf0),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("bind prior lifecycle");
+    let named = lifecycle.initial_empty().expect("prior empty generation");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prior preparation");
+    let evidence = run_t19_complete_data_for_pass(
+        problem,
+        Some(&preparation),
+        &fixture_samples(problem),
+        None,
+        SpectralOperatorPass::InitialMajor,
+        None,
+    );
+    MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("prior normal window");
+            evidence.seal(&storage).expect("seal prior normal state")
+        },
+        preparation,
+    )
+    .expect("prior owner")
+    .reconcile(&mut lifecycle)
+    .expect("prior reconciliation")
+    .into_continuation()
+    .0
 }
 
 #[cfg(feature = "cpp-interop-tests")]
@@ -2801,7 +2878,6 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     let named = lifecycle.initial_empty().expect("empty named generation");
     let input_id = named.generation_id();
     let (evidence, preparation) = prepare_reconciliation(&problem, &lifecycle, named, None);
-    let data_side_content = evidence.primitives().normal_state_content_identity();
     let data_side_dirty = evidence.primitives().dirty().to_vec();
 
     let owner = MajorCycleOwner::from_complete_data(
@@ -2825,8 +2901,11 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     assert_eq!(joined.model_completion().generation(), input_id);
     assert_eq!(joined.normal_state().input_model_generation(), input_id);
     assert_eq!(joined.normal_state().final_model_generation(), input_id);
-    // An empty final model reconciles to the exact T19 dirty plane bit-for-bit.
-    assert_eq!(joined.normal_state().content_identity(), data_side_content);
+    // An empty final model reconciles to the exact T19 dirty plane bit-for-bit,
+    // and its domain-level content identity matches an independent confirm
+    // reconciliation over the same frozen evidence.
+    let confirm_content = confirm_prior_normal_state(&problem).content_identity();
+    assert_eq!(joined.normal_state().content_identity(), confirm_content);
     let window = joined
         .normal_state()
         .read_window(0..1)

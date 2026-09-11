@@ -749,16 +749,8 @@ mod tests {
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().unwrap()).unwrap();
         assert_eq!(request, expected["request"]);
-        let error = ensure_supported_invocation("imager", &invocation).unwrap_err();
-        for reason in [
-            "task/task.aw_projection",
-            "task/task.per_channel_weight_density",
-            "task/task.grid_threads",
-            "task/task.memory_target",
-            "task/task.memory_pressure_policy",
-        ] {
-            assert!(error.contains(reason), "missing {reason} in {error}");
-        }
+        ensure_supported_invocation("imager", &invocation)
+            .expect("cross-surface imager request is installed");
     }
 
     #[test]

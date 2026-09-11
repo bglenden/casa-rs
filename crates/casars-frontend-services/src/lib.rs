@@ -9547,7 +9547,7 @@ mod tests {
     fn application_catalog_exposes_canonical_frontend_projection() {
         let catalog = application_catalog().expect("application catalog");
         let applications = catalog.applications;
-        assert_eq!(applications.len(), 43);
+        assert_eq!(applications.len(), 42);
         assert!(applications.iter().any(|application| {
             application.id == "imager"
                 && application.kind == "task"
@@ -9584,13 +9584,13 @@ mod tests {
         let catalog =
             casa_provider_contracts::builtin_surface_catalog().expect("parameter catalog");
         let surfaces = &catalog.surfaces;
-        assert_eq!(surfaces.len(), 42);
+        assert_eq!(surfaces.len(), 41);
         assert_eq!(
             surfaces
                 .iter()
                 .filter(|surface| surface.kind() == SurfaceKind::Task)
                 .count(),
-            40
+            39
         );
         assert_eq!(
             surfaces
@@ -9813,7 +9813,7 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(6));
+        assert_eq!(invocation.protocol_version, Some(8));
         assert!(invocation.unsupported_reasons.is_empty());
         let request: serde_json::Value =
             serde_json::from_str(invocation.stdin.as_deref().expect("stdin JSON")).unwrap();
@@ -9903,24 +9903,12 @@ mod tests {
             invocation.protocol_name.as_deref(),
             Some("casa_imager_task")
         );
-        assert_eq!(invocation.protocol_version, Some(6));
-        let reasons = invocation
-            .unsupported_reasons
-            .iter()
-            .map(|reason| reason.id.as_str())
-            .collect::<Vec<_>>();
-        for expected in [
-            "task.aw_projection",
-            "task.per_channel_weight_density",
-            "task.grid_threads",
-            "task.memory_target",
-            "task.memory_pressure_policy",
-        ] {
-            assert!(
-                reasons.contains(&expected),
-                "missing {expected}: {reasons:?}"
-            );
-        }
+        assert_eq!(invocation.protocol_version, Some(8));
+        assert!(
+            invocation.unsupported_reasons.is_empty(),
+            "installed cross-surface imager request has no unsupported controls: {:?}",
+            invocation.unsupported_reasons
+        );
         let canonical_profile = uniffi_snapshot
             .profile_toml
             .as_deref()

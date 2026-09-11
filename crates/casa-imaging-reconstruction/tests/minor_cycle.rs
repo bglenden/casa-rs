@@ -510,21 +510,33 @@ fn run_t19_complete_data(
     let (blocks, summary) = replay(&generation, problem, &plan, samples);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
+    // A non-empty final model over an empty-model contract is a residual
+    // refresh over a prior normal state; every other pass stays initial.
+    let residual_refresh = preparation.is_some_and(|preparation| {
+        preparation.final_model().origin()
+            != casa_imaging_reconstruction::ModelGenerationOrigin::Empty
+    }) && matches!(
+        problem.model_lifecycle().input(),
+        casa_imaging_model::ModelInputCommitment::Empty
+    );
+    let pass = if residual_refresh {
+        SpectralOperatorPass::ResidualRefresh
+    } else {
+        SpectralOperatorPass::InitialMajor
+    };
     let specification =
         SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
-    )
-    .expect("workload");
+    let workload =
+        spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
+            .expect("workload");
     let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
     let mut state = prepared
         .begin(problem, &generation)
         .expect("begin complete-data owner");
     if let Some(preparation) = preparation {
+        let prior = residual_refresh.then(|| confirm_prior_normal_state(problem, samples));
         state
-            .bind_major_cycle_model(preparation.final_model(), None)
+            .bind_major_cycle_model(preparation.final_model(), prior)
             .expect("bind exact final model before replay");
     }
     for block in &blocks {
@@ -533,6 +545,45 @@ fn run_t19_complete_data(
     state
         .complete(&summary, selected_generation, None)
         .expect("complete T19 evidence")
+}
+
+/// Mint the empty-model prior normal state used by delta refreshes.
+///
+/// Production carries this state from the preceding reconcile; the fixture
+/// reproduces it with an independent confirm reconciliation over the same
+/// frozen observation and weighting lineage.
+fn confirm_prior_normal_state(
+    problem: &casa_imaging_model::CompiledProblem,
+    samples: &[SelectedObservationSample],
+) -> casa_imaging_reconstruction::FinalNormalState {
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("prior executable problem"),
+        attempt(0xf0),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("bind prior lifecycle");
+    let named = lifecycle.initial_empty().expect("prior empty generation");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("prior preparation");
+    let evidence = run_t19_complete_data(problem, Some(&preparation), samples);
+    MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("prior normal window");
+            evidence.seal(&storage).expect("seal prior normal state")
+        },
+        preparation,
+    )
+    .expect("prior owner")
+    .reconcile(&mut lifecycle)
+    .expect("prior reconciliation")
+    .into_continuation()
+    .0
 }
 
 /// Mint the authoritative T17 observation generation of the fixture stream.

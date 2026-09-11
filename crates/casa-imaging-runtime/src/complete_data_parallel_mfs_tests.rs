@@ -333,18 +333,20 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
             run.final_stream.grid_resident_bytes, run.expected_replay_grid_bytes,
             "the admitted grid allocation must cover resident tile/shard plus merge grids",
         );
+        // The Stokes-I fixture now replays three encoded records in two frames,
+        // so the route reserves exactly that window.
+        let expected_route = gridded_normal_route_capacity_bytes(3, 2, 1).unwrap();
         assert_eq!(
-            run.final_stream.planned_gridded_route_capacity_bytes,
-            gridded_normal_route_capacity_bytes(0, 1, 1).unwrap(),
-            "zero encoded frames reserve only the minimum route window",
+            run.final_stream.planned_gridded_route_capacity_bytes, expected_route,
+            "the plan reserves the encoded replay window",
         );
         assert_eq!(
             run.final_stream.peak_partial_dynamic_capacity_bytes, 0,
             "route-once replay must not retain dynamic scientific partials",
         );
         assert_eq!(
-            run.final_stream.peak_physical_route_capacity_bytes, 0,
-            "empty replay performs no physical route allocation",
+            run.final_stream.peak_physical_route_capacity_bytes, expected_route,
+            "the routed replay touches its whole planned window once",
         );
         assert!(
             run.final_stream.peak_kernel_window_capacity_bytes
@@ -380,16 +382,24 @@ fn faceted_complete_data_products_are_exact_across_distinct_admitted_plans() {
         "the two-worker plan must admit a larger kernel/worker resource envelope",
     );
     for run in [&serial, &parallel] {
+        // The faceted Stokes-I fixture routes eight encoded records in one frame.
         assert_eq!(
-            run.final_stream.peak_worker_stack_capacity_bytes, 0,
-            "empty replay starts no worker task requiring a stack window"
+            run.final_stream.peak_physical_route_capacity_bytes,
+            gridded_normal_route_capacity_bytes(8, 1, 1).unwrap(),
         );
-        assert_eq!(run.final_stream.peak_physical_route_capacity_bytes, 0);
         assert!(
             run.final_stream.peak_kernel_window_capacity_bytes
                 <= run.final_stream.planned_kernel_window_capacity_bytes
         );
     }
+    assert_eq!(
+        serial.final_stream.peak_worker_stack_capacity_bytes, 0,
+        "the single lane executes in-line without a scoped worker task stack",
+    );
+    assert!(
+        parallel.final_stream.peak_worker_stack_capacity_bytes > 0,
+        "the two-worker plan starts scoped worker tasks with a stack window",
+    );
 }
 
 #[test]

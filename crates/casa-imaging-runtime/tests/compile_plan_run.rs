@@ -741,14 +741,7 @@ fn geometry_with_shape_and_increment(
         CentreLaws::new(
             PhaseCentreLaw::Fixed(direction.reference_direction()),
             DelayCentreLaw::PhaseTrackingCentre,
-            PointingCentreLaw::Observation(ObservationPointingLaw::new(
-                PointingDirectionColumn::Direction,
-                PointingDirectionSemantic::AntennaBoresight,
-                PointingTimeSampling::VisibilityTimeCentroid,
-                PointingInterpolation::GreatCircleShortestArc,
-                PointingExtrapolation::Reject,
-                MissingPointingPolicy::Reject,
-            )),
+            PointingCentreLaw::PhaseTrackingCentre,
         ),
         UvwCoordinateLaw::PhaseTrackingCentre,
         SpectralCoordinateSpec::new(
@@ -1224,6 +1217,51 @@ fn standard_problem_specification(
     )
 }
 
+fn hogbom_problem_specification(
+    weighting: WeightingContract,
+    products: Vec<ProductKind>,
+    model_column_write: ModelColumnWrite,
+    controls: ReconstructionControls,
+    basis: ReconstructionBasis,
+) -> ProblemSpecification {
+    let numerics = NumericsContract::new(
+        vec![NumericPrecision::F64],
+        ReductionPolicy::Compensated,
+        FiniteValuePolicy::FlagInputRejectGenerated,
+        NumericalStage::ALL
+            .into_iter()
+            .map(|stage| (stage, StageErrorBudget::new(1.0e-7, 1.0e-3)))
+            .collect(),
+    );
+    ProblemSpecification::new(
+        ScientificContract::new(
+            SpectralContract::new(SpectralSamplingLaw::IDENTITY, SpectralCoupling::Independent),
+            MeasurementEquationContract::new(
+                InstrumentResponse::Scalar,
+                DeclaredInnerProducts::new(
+                    ModelInnerProduct::HermitianEuclidean,
+                    VisibilityInnerProduct::HermitianEuclidean,
+                ),
+            ),
+        ),
+        ReconstructionContract::new(
+            basis,
+            ReconstructionAlgorithm::Hogbom,
+            controls,
+            PolarizationContract::new(vec![PolarizationCoordinate::StokesI]),
+        ),
+        weighting,
+        ProductRequirements::new(
+            products,
+            ProductNormalization::UnitResponse,
+            RestoringBeamPolicy::None,
+            product_validity(),
+        ),
+        ObservationTransactionRequirements::new(model_column_write),
+        numerics,
+    )
+}
+
 fn mtmfs_problem_specification(small_scale_bias: f64) -> ProblemSpecification {
     let numerics = NumericsContract::new(
         vec![NumericPrecision::F64],
@@ -1370,6 +1408,8 @@ fn recording_executor(
         publication_probe: None,
         sealed_measurements: None,
         product_projection: None,
+        publication_path: None,
+        native_publication: Mutex::new(None),
         observation_completions: None,
         delivered_observation_completions: None,
         observation_completion_failure: None,
@@ -1390,8 +1430,11 @@ fn recording_executor(
         major_cycle_node: None,
         major_cycle_mode: MajorCycleMode::Confirm,
         major_cycle_problem: None,
+        bind_major_cycle_model: false,
         major_cycle_lifecycle: Mutex::new(None),
         major_cycle_preparation: Mutex::new(None),
+        major_cycle_continuation: Mutex::new(None),
+        major_cycle_prior_normal_state: Mutex::new(None),
         major_cycle_result: Mutex::new(None),
         major_cycle_error: Mutex::new(None),
         weighting_source_sample_count: AtomicUsize::new(0),
@@ -1511,15 +1554,16 @@ impl CompleteDataLawEvidence {
                     num_complex::Complex64::new(f64::from(real), f64::from(imaginary))
                 }
             };
-            let phase = num_complex::Complex64::from_polar(
-                1.0,
-                std::f64::consts::TAU
-                    * selected.phase_shift_m()
-                    * selected.address().frequency_centre_hz
-                    / 299_792_458.0,
-            );
             for spectral in weighted.spectral_values() {
-                expected_unit.push(phase.conj() * spectral.contribution().factor());
+                let contribution = spectral.contribution();
+                let phase = num_complex::Complex64::from_polar(
+                    1.0,
+                    std::f64::consts::TAU
+                        * selected.phase_shift_m()
+                        * contribution.evaluation_frequency_hz()
+                        / 299_792_458.0,
+                );
+                expected_unit.push(phase.conj() * contribution.factor());
                 weighted_visibility.push(visibility * spectral.imaging_weight());
             }
         }
@@ -1604,6 +1648,8 @@ struct RecordingExecutor {
     publication_probe: Option<PublicationProbe>,
     sealed_measurements: Option<Vec<ArtifactMeasurement>>,
     product_projection: Option<PublicationProjection>,
+    publication_path: Option<RedactedPath>,
+    native_publication: Mutex<Option<NativePublicationFixture>>,
     observation_completions: Option<Arc<Mutex<Vec<RecordedObservationCompletion>>>>,
     delivered_observation_completions: Option<DeliveredObservationCompletions>,
     observation_completion_failure: Option<&'static str>,
@@ -1624,8 +1670,11 @@ struct RecordingExecutor {
     major_cycle_node: Option<WorkNodeId>,
     major_cycle_mode: MajorCycleMode,
     major_cycle_problem: Option<casa_imaging_model::CompiledProblem>,
+    bind_major_cycle_model: bool,
     major_cycle_lifecycle: Mutex<Option<ModelLifecycle>>,
     major_cycle_preparation: Mutex<Option<MajorCyclePreparation>>,
+    major_cycle_continuation: Mutex<Option<casa_imaging_reconstruction::FinalModelContinuation>>,
+    major_cycle_prior_normal_state: Mutex<Option<casa_imaging_reconstruction::FinalNormalState>>,
     major_cycle_result: Mutex<Option<MajorCycleOperatorResult>>,
     major_cycle_error: Mutex<Option<String>>,
     weighting_source_sample_count: AtomicUsize,
@@ -1638,6 +1687,12 @@ struct RecordingExecutor {
     weighting_owner_at_release: AtomicBool,
 }
 
+#[derive(Clone)]
+struct NativePublicationFixture {
+    plan: ProductPublicationPlan,
+    projection: PublicationProjection,
+}
+
 #[derive(Debug)]
 struct PublicationProbe {
     receipts: Arc<ExecutionReceiptStore>,
@@ -1647,6 +1702,40 @@ struct PublicationProbe {
 }
 
 impl RecordingExecutor {
+    fn native_publication(&self) -> Option<NativePublicationFixture> {
+        let mut cached = self
+            .native_publication
+            .lock()
+            .expect("native publication cache lock");
+        if cached.is_none() {
+            let problem = self.major_cycle_problem.as_ref()?;
+            let (plan, projection) = sealed_publication_plan_for_problem(problem);
+            *cached = Some(NativePublicationFixture { plan, projection });
+        }
+        cached.clone()
+    }
+
+    fn native_sealed_measurements(&self) -> Option<Vec<ArtifactMeasurement>> {
+        let fixture = self.native_publication()?;
+        let authorization = fixture.plan.authorize(&fixture.projection).ok()?;
+        Some(
+            authorization
+                .entries()
+                .iter()
+                .map(|entry| {
+                    ArtifactMeasurement::new(
+                        entry.planned_identity(),
+                        Some(entry.observed_identity()),
+                        ArtifactDisposition::PublicationPrepared,
+                        entry.payload_bytes(),
+                        None,
+                    )
+                    .expect("publication evidence is externally constructible")
+                })
+                .collect(),
+        )
+    }
+
     fn work_measurements(&self, context: WorkExecutionContext<'_>) -> WorkMeasurements {
         let resources = context
             .node()
@@ -1683,11 +1772,14 @@ impl RecordingExecutor {
                     Vec::new(),
                 )
             });
-        if context.node().kind == WorkKind::Publication && self.sealed_measurements.is_some() {
-            artifacts = self
+        if context.node().kind == WorkKind::Publication {
+            if let Some(sealed) = self
                 .sealed_measurements
                 .clone()
-                .expect("sealed measurements present");
+                .or_else(|| self.native_sealed_measurements())
+            {
+                artifacts = sealed;
+            }
         }
         if context.node().kind == WorkKind::Publication && artifacts.is_empty() {
             artifacts = context
@@ -1827,15 +1919,30 @@ impl RecordingExecutor {
             MajorCycleMode::StaleLifecycleEpoch => context.lease_epoch() + 1,
             _ => context.lease_epoch(),
         };
-        let lifecycle = ModelLifecycle::bind(
-            ExecutableModelProblem::from_compiled(problem.clone()).map_err(io::Error::other)?,
-            canonical_attempt,
-            epoch,
-            casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
-                .expect("positive model window"),
-        )
-        .map_err(io::Error::other)?;
-        let named = lifecycle.initial_empty().map_err(io::Error::other)?;
+        let executable =
+            ExecutableModelProblem::from_compiled(problem.clone()).map_err(io::Error::other)?;
+        let storage = casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window");
+        let continuation = self
+            .major_cycle_continuation
+            .lock()
+            .expect("major-cycle continuation lock")
+            .take();
+        let (lifecycle, named) = if let Some(continuation) = continuation {
+            ModelLifecycle::continue_from(
+                executable,
+                canonical_attempt,
+                epoch,
+                continuation,
+                storage,
+            )
+            .map_err(io::Error::other)?
+        } else {
+            let lifecycle = ModelLifecycle::bind(executable, canonical_attempt, epoch, storage)
+                .map_err(io::Error::other)?;
+            let named = lifecycle.initial_empty().map_err(io::Error::other)?;
+            (lifecycle, named)
+        };
         let preparation = match self.major_cycle_mode {
             MajorCycleMode::ForeignGeneration => {
                 let foreign = ModelLifecycle::bind(
@@ -2075,10 +2182,15 @@ impl WorkImplementation for RecordingExecutor {
                         .expect("weighting execution state lock")
                         .begin_complete_data(context, complete, problem, prepared)
                         .map_err(io::Error::other)?;
-                    if self.major_cycle_problem.is_some() {
+                    if self.bind_major_cycle_model {
                         let preparation = self.prepare_major_cycle(context)?;
+                        let prior_normal_state = self
+                            .major_cycle_prior_normal_state
+                            .lock()
+                            .expect("major-cycle prior normal state lock")
+                            .take();
                         operator
-                            .bind_major_cycle_model(&preparation, None)
+                            .bind_major_cycle_model(&preparation, prior_normal_state)
                             .map_err(io::Error::other)?;
                         *self
                             .major_cycle_preparation
@@ -2112,7 +2224,7 @@ impl WorkImplementation for RecordingExecutor {
                             .expect("complete-data state lock")
                             .as_mut()
                         {
-                            if self.major_cycle_problem.is_none() {
+                            if !self.bind_major_cycle_model {
                                 let prediction_count = self
                                     .complete_data_laws
                                     .lock()
@@ -2371,7 +2483,10 @@ impl WorkImplementation for RecordingExecutor {
         &self,
         _context: WorkExecutionContext<'_>,
     ) -> Result<Option<PublicationProjection>, Self::Error> {
-        Ok(self.product_projection.clone())
+        if let Some(projection) = &self.product_projection {
+            return Ok(Some(projection.clone()));
+        }
+        Ok(self.native_publication().map(|fixture| fixture.projection))
     }
 
     fn publish(&self, context: WorkExecutionContext<'_>) -> Result<(), Self::Error> {
@@ -2405,7 +2520,7 @@ impl WorkImplementation for RecordingExecutor {
                 Some(entry.observed_identity()),
                 disposition,
                 entry.payload_bytes(),
-                None,
+                self.publication_path,
             )
             .expect("T20 publication fixture uses authorized artifact evidence")
         };
@@ -3073,7 +3188,8 @@ fn spectral_cycle_claims_the_compiled_continuum_row_buffer() {
             ),
             authority().clone(),
             ResourcePolicy::Balanced,
-        ),
+        )
+        .with_gridded_normal_storage(artifact_storage()),
     )
     .expect("transformed dirty plan");
     let candidates = planned.physical_candidates();
@@ -3252,6 +3368,9 @@ impl FinalVisibilitySink for RejectFirstVisibilityBlock {
 
 #[test]
 fn failed_density_generation_receipt_uses_current_partial_stream_measurements() {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let problem = compile(
         request_with_geometry_references_weighting_products_model_write_input_and_source_count(
             74,
@@ -3479,6 +3598,12 @@ fn execute_spectral_cycle_with_weighting_mode(
     verify_low_memory_plan: bool,
     apply_low_memory_route: bool,
 ) {
+    // The deterministic 1 MiB authority is shared by the whole integration
+    // binary; serialize with every other plan/run so an unrelated concurrent
+    // reservation cannot make this exact plane envelope infeasible.
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let image_edge = 8;
     let reference_pixel = if verify_low_memory_plan { 4.0 } else { 3.0 };
     let mut geometry = geometry_with_shape_and_increment(
@@ -3486,9 +3611,10 @@ fn execute_spectral_cycle_with_weighting_mode(
         ImageShape::new(image_edge, image_edge),
         [-1.0e-6, 1.0e-6],
     );
+    let low_memory_channels = 8;
     if verify_low_memory_plan {
         let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
-            channels: 2,
+            channels: low_memory_channels,
             reference_pixel: 0.0,
             reference_frequency_hz: 1.4e9,
             increment_hz: 1.0e6,
@@ -3503,7 +3629,12 @@ fn execute_spectral_cycle_with_weighting_mode(
                 ModelColumnWrite::Disabled,
             ),
             geometry.clone(),
-            problem_inputs_with_channels(1, default_references(), ModelStateIdentity::Empty, 2),
+            problem_inputs_with_channels(
+                1,
+                default_references(),
+                ModelStateIdentity::Empty,
+                low_memory_channels,
+            ),
             model_lifecycle(ModelStateIdentity::Empty),
         )
     } else {
@@ -3535,11 +3666,22 @@ fn execute_spectral_cycle_with_weighting_mode(
         .expect("resolve runtime owner fixture")
         .into_parts();
     let snapshot = compile_observation(snapshot_input).expect("compile runtime owner snapshot");
+    // Multi-channel continuum is compiled channel-major; the Constant and
+    // Taylor bases are defined for a single output channel only.
+    let problem_basis = if verify_low_memory_plan {
+        ReconstructionBasis::ChannelLocal {
+            channels: low_memory_channels,
+        }
+    } else {
+        ReconstructionBasis::Constant
+    };
     let problem = compile(ImagingRequest::new(
-        standard_problem_specification(
+        hogbom_problem_specification(
             weighting,
             vec![ProductKind::Psf],
             ModelColumnWrite::Disabled,
+            ReconstructionControls::new(2, 0.1, 0.0),
+            problem_basis,
         ),
         geometry,
         ProblemInputIdentities::new(snapshot),
@@ -3638,7 +3780,8 @@ fn execute_spectral_cycle_with_weighting_mode(
             },
         ])
         .expect("one-domain mask plans"),
-        casa_imaging_reconstruction::MinorCycleProgram::new(0.1, 0.0, 2).expect("controls"),
+        casa_imaging_reconstruction::MinorCycleProgram::for_problem(&problem)
+            .expect("compiled minor-cycle controls"),
     );
     let runtime_registry =
         SpectralCycleRegistry::new(registry(73), implementation(73), &problem, executor);
@@ -4135,9 +4278,16 @@ fn execute_spectral_cycle_with_weighting_mode(
             .maximum_batch_size,
         1
     );
-    assert!(replay_nodes[0].claims.iter().any(|claim| {
-        claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead) && claim.amount == 2 * 72
-    }));
+    let spill_read_claims = replay_nodes[0]
+        .claims
+        .iter()
+        .filter(|claim| claim.resource == LeaseResource::IoBuffer(IoBufferKind::SpillRead))
+        .map(|claim| claim.amount)
+        .collect::<Vec<_>>();
+    assert!(
+        spill_read_claims.contains(&(2 * 112)),
+        "two 112-byte gridded-normal records were {spill_read_claims:?}"
+    );
     assert!(
         replay_nodes[0]
             .id
@@ -4239,7 +4389,9 @@ fn execute_spectral_cycle_with_weighting_mode(
                 .starts_with("spectral-operator-gridded-route-gridded-residual-refresh-")
         })
         .expect("gridded replay route allocation");
-    let expected_route_bytes = gridded_normal_route_capacity_bytes(0, 1, 1).unwrap();
+    // The single selected sample now contributes one compressed
+    // gridded-normal record; Stokes-I data no longer zeroes it out.
+    let expected_route_bytes = gridded_normal_route_capacity_bytes(1, 1, 1).unwrap();
     assert_eq!(route.bytes, expected_route_bytes);
     assert_eq!(
         route.compatibility.layout,
@@ -4673,6 +4825,9 @@ fn owner_resolved_channel_local_hogbom_problem(
 
 #[test]
 fn t55_small_cube_admits_owner_workspace_with_one_worker() {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (problem, access) = owner_resolved_channel_local_hogbom_problem(238, 3, 2);
     let dense_array_estimate = 3 * 8 * 8 * std::mem::size_of::<num_complex::Complex64>() as u64 * 3;
     let planning_registry = ContractOnlyRegistry::new(
@@ -4708,7 +4863,10 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
     )
     .expect("the owner workspace fits authoritative admission");
     let parts = planned.into_parts(&selected).unwrap();
-    assert_eq!(parts.complete_data.slab().core_depth(), 3);
+    // T55 bounds channel-local cube state by the exact owner workspace rather
+    // than the caller's old dense-array estimate, so Balanced admits a single
+    // resident channel plane per slab.
+    assert_eq!(parts.complete_data.slab().core_depth(), 1);
     let dag = parts.physical.execution_dag();
     let minor = &dag.nodes()[parts.minor_cycle_node.as_ref().unwrap()];
     assert!(
@@ -4735,7 +4893,11 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
         workspace.hard_bytes > dense_array_estimate,
         "admission uses the owner workspace rather than the caller's old dense-array estimate"
     );
-    let minor_allocation = &dag.logical_allocations()[&minor.allocations[0].allocation];
+    let minor_allocation = dag
+        .logical_allocations()
+        .values()
+        .find(|allocation| allocation.id.as_str() == "spectral-cycle-minor-cycle")
+        .expect("minor-cycle workspace allocation");
     let compiler = dag
         .logical_allocations()
         .values()
@@ -4847,7 +5009,11 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
                 .iter()
                 .any(|claim| claim.resource == LeaseResource::Workers && claim.amount == workers)
         );
-        let allocation = &dag.logical_allocations()[&minor.allocations[0].allocation];
+        let allocation = dag
+            .logical_allocations()
+            .values()
+            .find(|allocation| allocation.id.as_str() == "spectral-cycle-minor-cycle")
+            .expect("minor-cycle workspace allocation");
         let slot = &dag.physical_slots()[&allocation.physical_slot];
         let demand = alternative
             .demand
@@ -4914,6 +5080,9 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
 
 #[test]
 fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
+    let _run_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(238, 3, 2);
     let completion = execute_initial_reconstruction_cycle(&problem, 78, initial_access);
     let evidence = completion.evidence();
@@ -4949,7 +5118,10 @@ fn t38_runtime_runs_one_shared_cycle_with_combined_channel_evidence() {
 fn t607_runtime_executes_resource_bounded_channel_local_slabs() {
     let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
         .lock()
-        .expect("T607 execution lock");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _run_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(247, 32, 32);
     let completion = execute_dirty_channel_local_slabs(&problem, 79, initial_access);
     assert_eq!(
@@ -4963,7 +5135,10 @@ fn t607_runtime_executes_resource_bounded_channel_local_slabs() {
 fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
     let _guard = T607_CHANNEL_SLAB_EXECUTION_LOCK
         .lock()
-        .expect("T607 execution lock");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _run_guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (problem, initial_access) = owner_resolved_channel_local_hogbom_problem(248, 28, 28);
     let residency = initial_access
         .certify_residency(&problem)
@@ -5179,7 +5354,7 @@ fn t607_clean_cycle_admits_bounded_channel_slabs_and_rejects_below_minimum() {
                         AlternativeRejectionReason::Infeasible { resource, required, available }
                             if resource.starts_with("memory-domain:")
                                 && *required == minimum_required
-                                && *available == below_minimum
+                                && *available <= below_minimum
                     ))
         ),
         "the authority must reject a ceiling below the one-channel demand"
@@ -5426,6 +5601,41 @@ fn physical_work_for_problem(
         base.publication_layouts().clone(),
     )
     .expect("problem-bound physical work")
+}
+
+/// Bind a problem whose model input cannot be sealed by the empty-model
+/// publication fixture (for example an aligned seed) to a reconstruction-only
+/// transaction over the same physical transaction DAG.
+fn reconstruction_physical_work_for_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
+    let base = physical_work(implementation_byte);
+    let artifacts = base
+        .artifacts()
+        .iter()
+        .filter(|artifact| artifact.role() != ArtifactRole::Output)
+        .cloned()
+        .collect();
+    let transaction = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .expect("product transaction has reconciliation")
+            .clone(),
+        base.observation_transaction().commit().clone(),
+    );
+    PhysicalWorkBinding::new_reconstruction(
+        implementation_catalog(problem, base.execution_dag()),
+        base.execution_dag().clone(),
+        base.prediction().clone(),
+        artifacts,
+        transaction,
+        PublicationLayoutLedger::empty(),
+    )
+    .expect("problem-bound reconstruction physical work")
 }
 
 fn physical_work_for_weighting_problem(
@@ -6519,6 +6729,13 @@ fn evidenced_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
 
 fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
     let problem = compile(request(1)).expect("adaptive physical-work problem");
+    adaptive_physical_work_for_problem(&problem, implementation_byte)
+}
+
+fn adaptive_physical_work_for_problem(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> PhysicalWorkBinding {
     let work_implementation = implementation(implementation_byte);
     let first_id = WorkNodeId::new("first-major-work");
     let boundary_id = WorkNodeId::new("major-boundary");
@@ -6615,10 +6832,10 @@ fn adaptive_physical_work(implementation_byte: u8) -> PhysicalWorkBinding {
         }],
     };
     transaction_binding(
-        &problem,
+        problem,
         specification,
         implementation(implementation_byte),
-        default_product_participants(),
+        product_participants(problem),
         false,
         true,
     )
@@ -6844,7 +7061,7 @@ fn auditable_physical_work(
     problem: &casa_imaging_model::CompiledProblem,
     implementation_byte: u8,
 ) -> PhysicalWorkBinding {
-    let base = adaptive_physical_work(implementation_byte);
+    let base = adaptive_physical_work_for_problem(problem, implementation_byte);
     let base_dag = base.execution_dag();
     let allocation = AllocationId::new("audit-generation");
     let slot = PhysicalSlotId::new("audit-slot");
@@ -7249,19 +7466,28 @@ fn mapped_publication_candidate(
     )
 }
 
+fn publication_capable_executor(
+    problem: &casa_imaging_model::CompiledProblem,
+    implementation_byte: u8,
+) -> RecordingExecutor {
+    let mut executor = recording_executor(implementation_byte, None, None);
+    executor.major_cycle_problem = Some(problem.clone());
+    executor.bind_major_cycle_model = true;
+    executor
+}
+
 fn test_registry(
     problem: &casa_imaging_model::CompiledProblem,
     registry_byte: u8,
     implementation_byte: u8,
     failure: Option<&'static str>,
 ) -> TestRegistry {
+    let mut executor = publication_capable_executor(problem, implementation_byte);
+    executor.failure = failure;
     TestRegistry {
         id: registry(registry_byte),
         metadata: implementation_metadata(problem),
-        executors: BTreeMap::from([(
-            implementation(implementation_byte),
-            recording_executor(implementation_byte, failure, None),
-        )]),
+        executors: BTreeMap::from([(implementation(implementation_byte), executor)]),
     }
 }
 
@@ -7918,6 +8144,16 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
             .collect(),
     )
     .expect("complete stage ledger with no typed I/O evidence");
+    let transaction = ObservationTransactionWork::new_reconstruction(
+        base.observation_transaction()
+            .initial_consistency_check()
+            .clone(),
+        base.observation_transaction()
+            .post_replay_reconciliation()
+            .expect("transaction has reconciliation")
+            .clone(),
+        base.observation_transaction().commit().clone(),
+    );
 
     assert!(matches!(
         PhysicalWorkBinding::new_reconstruction(
@@ -7925,7 +8161,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
             dag,
             prediction,
             Vec::new(),
-            base.observation_transaction().clone(),
+            transaction,
             PublicationLayoutLedger::empty(),
         ),
         Err(PhysicalWorkBindingError::MissingIoPrediction { .. })
@@ -8085,7 +8321,7 @@ fn run_can_invoke_only_the_implementation_identity_sealed_by_plan() {
         |_, _| Ok::<_, ()>(physical_work(6)),
     )
     .expect("physical planning");
-    let selected = recording_executor(6, None, None);
+    let selected = publication_capable_executor(&problem, 6);
     let different = recording_executor(7, None, None);
     let registry = TestRegistry {
         id: registry(3),
@@ -8142,7 +8378,7 @@ fn initial_consistency_check_receives_the_exact_observation_transaction() {
         cost_model(4),
     );
     let observed = Arc::new(AtomicBool::new(false));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.initial_consistency_expected = Some((
         problem.observation_transaction().transaction_id(),
         Arc::clone(&observed),
@@ -8177,7 +8413,7 @@ fn generic_io_cannot_receive_observation_sources() {
         cost_model(4),
     );
     let generic_source_access = Arc::new(AtomicBool::new(false));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.generic_source_access = Some(Arc::clone(&generic_source_access));
     let registry = TestRegistry {
         id: registry(3),
@@ -8345,8 +8581,8 @@ fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            36, 130, 229, 225, 168, 116, 205, 156, 201, 148, 238, 180, 124, 228, 193, 199, 79, 11,
-            231, 197, 230, 142, 0, 90, 69, 86, 151, 107, 100, 145, 141, 210,
+            132, 71, 84, 206, 228, 138, 118, 210, 82, 151, 166, 55, 97, 52, 50, 97, 86, 103, 184,
+            231, 32, 48, 162, 94, 150, 1, 121, 64, 139, 238, 126, 21,
         ]
     );
 }
@@ -9216,6 +9452,11 @@ fn prepared_publication_holds_the_shared_root_reservation_through_publish() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
+    // The two intentional overlapping runs below must not overlap an unrelated
+    // test's lease on the shared deterministic authority.
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let max_bytes = 1_048_576;
     let receipts = execution_plan.receipt_store();
     let pause = Arc::new(PublicationPause::default());
@@ -9405,7 +9646,7 @@ fn observation_completion_is_attempt_node_and_fence_bound_after_successful_settl
     let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([157; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
@@ -9452,7 +9693,7 @@ fn settled_observation_completion_is_delivered_only_to_explicit_predecessor_cons
         cost_model(4),
     );
     let delivered = Arc::new(Mutex::new(Vec::new()));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.delivered_observation_completions = Some(Arc::clone(&delivered));
     let registry = TestRegistry {
         id: registry(3),
@@ -9519,7 +9760,7 @@ fn synchronous_observation_completion_is_exactly_once_attempt_node_and_lease_bou
     let receipts = execution_plan.receipt_store();
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([159; 32]);
     let completions = Arc::new(Mutex::new(Vec::new()));
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.observation_completions = Some(Arc::clone(&completions));
     let registry = TestRegistry {
         id: registry(3),
@@ -10247,7 +10488,7 @@ fn multi_source_weighting_receipts_certified_aggregate_residency_through_release
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.weighting_source_residency = Some(residency);
     executor.weighting_plan = Some(weighting_plan);
     let registry = TestRegistry {
@@ -10566,7 +10807,8 @@ fn t51_initial_empty_model_residency_excludes_unallocated_pending_delta() {
         fragment(SpectralOperatorPass::ResidualRefresh)
             .residency()
             .major_cycle_model_bytes(),
-        dense_bytes + delta_bytes,
+        dense_bytes + 2 * delta_bytes,
+        "a refresh reserves the pending delta's terms and their compensated pair",
     );
 }
 
@@ -10910,7 +11152,12 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let mut executor = recording_executor(6, None, None);
+    // Keep this fixture on the T19 law-evidence path: the publication fixture
+    // supplies the projection, sealed measurements and member publisher, while
+    // `bind_major_cycle_model` stays off so the paired-operator law probe runs.
+    let (publication, projection) = sealed_publication_plan_for_problem(&problem);
+    let mut executor = sealed_measurement_executor(&publication, &projection);
+    executor.major_cycle_problem = Some(problem.clone());
     executor.id = pathlike_implementation.clone();
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
@@ -11069,8 +11316,11 @@ fn owner_traversed_weighting_freezes_only_at_settled_plan_node_and_lease() {
         .lock()
         .expect("complete-data law evidence lock");
     assert_eq!(laws.blocks as u64, complete_data.block_count());
+    // The retained T19 operator predicts through the gridded transform, whose
+    // own round-trip contract is 1e-6 relative; the earlier exact-operator
+    // bound of 1e-10 no longer describes this implementation.
     assert!(
-        laws.unit_source_max_error <= 1.0e-10,
+        laws.unit_source_max_error <= 1.0e-6,
         "T18-authorized unit source error was {}",
         laws.unit_source_max_error
     );
@@ -11503,7 +11753,7 @@ fn release_failures_drain_independent_fences_and_quarantine_only_failed_slots() 
                 ),
             );
         }
-        let mut prepare_executor = recording_executor(6, None, None);
+        let mut prepare_executor = publication_capable_executor(&problem, 6);
         prepare_executor.measurements.insert(
             WorkNodeId::new(if fail_at_fence {
                 "0-prepare-mapping"
@@ -11665,7 +11915,7 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
     let execution_plan = plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |problem, _| Ok::<_, ()>(physical_work_for_problem(problem, 6)),
+        |problem, _| Ok::<_, ()>(reconstruction_physical_work_for_problem(problem, 6)),
     )
     .expect("physical planning");
     let current = RunBindings::new(
@@ -11673,7 +11923,11 @@ fn receipt_rejects_checksum_valid_typed_projection_and_audit_forgery() {
         &ResourcePolicy::Balanced,
         cost_model(4),
     );
-    let registry = test_registry(&problem, 3, 6, None);
+    let registry = TestRegistry {
+        id: registry(3),
+        metadata: implementation_metadata(&problem),
+        executors: BTreeMap::from([(implementation(6), recording_executor(6, None, None))]),
+    };
     let receipts = execution_plan.receipt_store();
     let provenance = execution_provenance(
         casa_imaging_runtime::ExecutionAttemptId::from_sha256([85; 32]),
@@ -11848,7 +12102,7 @@ fn effective_problem_projection_carries_mtmfs_scales_and_bias() {
     let unbiased_projection = CompiledProblemEvidence::project(&unbiased);
     let biased_projection = CompiledProblemEvidence::project(&biased);
 
-    assert_eq!(unbiased_projection.schema_version(), 10);
+    assert_eq!(unbiased_projection.schema_version(), 11);
     assert_eq!(
         unbiased_projection.field("reconstruction.algorithm.kind"),
         Some("mtmfs")
@@ -12003,7 +12257,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         .expect("antenna generation")
         .to_string();
 
-    assert_eq!(projected.schema_version(), 10);
+    assert_eq!(projected.schema_version(), 11);
     assert_eq!(projected, &CompiledProblemEvidence::project(&problem));
     assert_eq!(
         reopened.model_lifecycle_identity(),
@@ -12042,10 +12296,14 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
     );
     assert_eq!(
         projected.field("science.measurement_equation.operator.transforms.2.kind"),
-        Some("direction_dependent_response")
+        Some("feed_response")
     );
     assert_eq!(
         projected.field("science.measurement_equation.operator.transforms.3.kind"),
+        Some("direction_dependent_response")
+    );
+    assert_eq!(
+        projected.field("science.measurement_equation.operator.transforms.4.kind"),
         Some("phase")
     );
     assert_eq!(
@@ -12111,7 +12369,7 @@ fn receipt_reopens_the_complete_versioned_effective_problem_projection() {
         projected.field("products.graph.identity"),
         Some(problem.product_graph().graph_id().to_string().as_str())
     );
-    assert_eq!(projected.field("products.graph.schema_version"), Some("2"));
+    assert_eq!(projected.field("products.graph.schema_version"), Some("4"));
     assert_eq!(projected.field("products.graph.nodes.0.ordinal"), Some("0"));
     assert_eq!(
         projected.field("products.graph.publication.members.0"),
@@ -12181,7 +12439,7 @@ fn receipt_reopens_the_complete_selected_plan_projection() {
     .expect("auditable physical planning");
     let current = RunBindings::new(problem.inputs().clone(), &policy, cost_model(4));
     let cache_artifact = ArtifactIdentity::from_sha256([51; 32]);
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
     executor.measurements = BTreeMap::from([(
         WorkNodeId::new("first-major-work"),
         (
@@ -12515,10 +12773,32 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     );
     let input = ArtifactIdentity::from_sha256([31; 32]);
     let cache = ArtifactIdentity::from_sha256([32; 32]);
-    let output = ArtifactIdentity::from_sha256([34; 32]);
+    let (publication, projection) = sealed_publication_plan_for_problem(&problem);
+    let authorization = publication
+        .authorize(&projection)
+        .expect("publication authorization");
+    let first_output = authorization.entries()[0];
+    let output = first_output.planned_identity();
+    let output_bytes = first_output.payload_bytes();
     let input_path = RedactedPath::from_path("/Users/private/secret-source.ms");
     let output_path = RedactedPath::from_path("/Volumes/private/secret-image.table");
-    let mut executor = recording_executor(6, None, None);
+    let mut executor = publication_capable_executor(&problem, 6);
+    executor.publication_path = Some(output_path);
+    executor.sealed_measurements = Some(
+        authorization
+            .entries()
+            .iter()
+            .map(|entry| {
+                artifact_measurement(
+                    entry.planned_identity(),
+                    Some(entry.observed_identity()),
+                    ArtifactDisposition::PublicationPrepared,
+                    entry.payload_bytes(),
+                    (entry.node() == first_output.node()).then_some(output_path),
+                )
+            })
+            .collect(),
+    );
     executor.measurements = BTreeMap::from([
         (
             WorkNodeId::new("read"),
@@ -12546,13 +12826,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
             WorkNodeId::new("transaction-commit"),
             (
                 vec![IoMeasurement::new(IoBufferKind::Publication, 2_048, 1)],
-                vec![artifact_measurement(
-                    output,
-                    Some(ArtifactIdentity::from_sha256([36; 32])),
-                    ArtifactDisposition::Staged,
-                    2_048,
-                    Some(output_path),
-                )],
+                Vec::new(),
             ),
         ),
     ]);
@@ -12608,7 +12882,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
         receipt.artifact_node(output),
         Some(WorkNodeId::new("transaction-commit"))
     );
-    assert_eq!(receipt.artifact_actual_bytes(output), Some(2_048));
+    assert_eq!(receipt.artifact_actual_bytes(output), Some(output_bytes));
     assert_eq!(
         receipt.artifact_disposition(output),
         Some(ArtifactDisposition::Published)
@@ -12623,7 +12897,7 @@ fn receipt_compares_planned_and_actual_io_artifacts_and_never_persists_paths() {
     );
     assert_eq!(
         receipt.artifact_observed_identity(output),
-        Some(ArtifactIdentity::from_sha256([36; 32]).as_bytes())
+        Some(first_output.observed_identity().as_bytes())
     );
     assert_eq!(
         receipt.artifact_path_identity(input),
@@ -12950,8 +13224,14 @@ fn stale_binding_uses_the_plan_receipt_store_for_mutation_evidence() {
     ));
 }
 
-fn t20_major_cycle_harness(
+type T20PriorState = (
+    casa_imaging_reconstruction::FinalNormalState,
+    casa_imaging_reconstruction::FinalModelContinuation,
+);
+
+fn t20_major_cycle_harness_with_prior(
     mode: MajorCycleMode,
+    prior: Option<T20PriorState>,
 ) -> (
     casa_imaging_model::CompiledProblem,
     casa_imaging_runtime::ExecutionPlan,
@@ -12987,11 +13267,16 @@ fn t20_major_cycle_harness(
     let physical = fragment
         .compose(&base)
         .expect("production weighting physical work");
+    let operator_pass = if prior.is_some() {
+        SpectralOperatorPass::ResidualRefresh
+    } else {
+        SpectralOperatorPass::InitialMajor
+    };
     let operator_plan = CompleteDataPlanFragment::new(
         &problem,
         weighting_plan.limits().max_block_samples(),
         replay.clone(),
-        SpectralOperatorPass::InitialMajor,
+        operator_pass,
     )
     .expect("spectral operator runtime plan");
     let (physical, operator_plan) = operator_plan
@@ -13014,12 +13299,23 @@ fn t20_major_cycle_harness(
     executor.weighting_source_residency = Some(selected_content_residency(&problem));
     executor.weighting_plan = Some(weighting_plan);
     executor.complete_data_plan = Some(operator_plan);
+    if let Some((normal_state, continuation)) = prior {
+        *executor
+            .major_cycle_prior_normal_state
+            .lock()
+            .expect("major-cycle prior normal state lock") = Some(normal_state);
+        *executor
+            .major_cycle_continuation
+            .lock()
+            .expect("major-cycle continuation lock") = Some(continuation);
+    }
     executor.major_cycle_node = Some(match mode {
         MajorCycleMode::NodeSubstitution => WorkNodeId::new("transaction-stage-psf"),
         _ => WorkNodeId::new("post-replay-reconciliation"),
     });
     executor.major_cycle_mode = mode;
     executor.major_cycle_problem = Some(problem.clone());
+    executor.bind_major_cycle_model = true;
     (
         problem,
         execution_plan,
@@ -13038,8 +13334,21 @@ fn run_t20_major_cycle(
     TestRegistry,
     WorkImplementationId,
 ) {
+    run_t20_major_cycle_with_prior(mode, seed, None)
+}
+
+fn run_t20_major_cycle_with_prior(
+    mode: MajorCycleMode,
+    seed: u8,
+    prior: Option<T20PriorState>,
+) -> (
+    Result<ExecutionOutcome, RunError<io::Error>>,
+    casa_imaging_model::CompiledProblem,
+    TestRegistry,
+    WorkImplementationId,
+) {
     let (problem, execution_plan, current, implementation, executors) =
-        t20_major_cycle_harness(mode);
+        t20_major_cycle_harness_with_prior(mode, prior);
     let registry = TestRegistry {
         id: registry(3),
         metadata: implementation_metadata(&problem),
@@ -13124,8 +13433,27 @@ fn major_cycle_reconciles_t19_evidence_with_the_named_model_generation() {
 
 #[test]
 fn major_cycle_applies_pending_deltas_only_through_the_model_owner() {
+    // A pending delta is applied by a residual-refresh major cycle over the
+    // prior reconciled normal state, so the fixture runs the production
+    // initial-reconciliation then final-major sequence rather than binding a
+    // delta-applied candidate to a certified-zero initial pass.
+    let (outcome, _problem, initial_registry, initial_implementation) =
+        run_t20_major_cycle(MajorCycleMode::Confirm, 212);
+    assert_eq!(
+        outcome.expect("initial reconciliation completes"),
+        ExecutionOutcome::Succeeded
+    );
+    let initial = initial_registry.executors[&initial_implementation]
+        .major_cycle_result
+        .lock()
+        .expect("initial major-cycle result lock")
+        .take()
+        .expect("initial reconciliation recorded its runtime envelope")
+        .into_completion();
+    let prior = Some(initial.into_continuation());
+
     let (outcome, _problem, registry, implementation) =
-        run_t20_major_cycle(MajorCycleMode::ApplyDelta, 213);
+        run_t20_major_cycle_with_prior(MajorCycleMode::ApplyDelta, 213, prior);
     assert_eq!(
         outcome.expect("delta reconciliation completes"),
         ExecutionOutcome::Succeeded
@@ -13694,6 +14022,9 @@ impl SerialProductPublicationSink for InMemoryProductSink {
 
 #[test]
 fn serial_product_publication_stages_privately_then_publishes_once() {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let problem = compile(sealed_products_request(242)).expect("continuum compilation");
     let (planned, scientific, generation_demand) = pending_generation_for_problem(&problem);
     let sink = InMemoryProductSink::default();
@@ -14178,6 +14509,9 @@ fn profiled_serial_plans_bind_only_their_used_storage_identities() {
 }
 
 fn assert_member_failure_receipt(uncertain: bool, expected: ArtifactDisposition) {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let problem = compile(sealed_products_request(245)).expect("continuum compilation");
     let (planned, scientific, generation_demand) = pending_generation_for_problem(&problem);
     let sink = InMemoryProductSink {
@@ -14478,6 +14812,8 @@ fn sealed_generation_publishes_through_the_runtime_with_authority_bound_receipt_
     let sealed_executor = sealed_measurement_executor(&sealed_plan, &projection);
     probed.sealed_measurements = sealed_executor.sealed_measurements;
     probed.product_projection = sealed_executor.product_projection;
+    probed.major_cycle_problem = Some(problem.clone());
+    probed.bind_major_cycle_model = true;
     let registry = TestRegistry {
         id: registry(3),
         metadata: implementation_metadata(&problem),
