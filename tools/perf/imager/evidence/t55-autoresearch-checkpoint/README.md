@@ -195,7 +195,7 @@ hypotheses, acceptance requirements, resource caps or pause conditions.
 Repository: /Users/brianglendenning/.codex/worktrees/5d43/casa-rs
 Experiment root: /private/tmp/casa-t55-serial-ratio-t2.UrhEd2
 Native MS: /private/tmp/casa-t55-real-density-accounted.p5Medq/input/refim_point_withline.ms
-CASA MS: /private/tmp/casa-t55-serial-ratio-t2.UrhEd2/refim_point_withline.ms
+CASA MS: /private/tmp/casa-t55-serial-ratio.OnKOSr/refim_point_withline.ms
 Reference run directory: /private/tmp/casa-t55-serial.d5AeGJ/measured/candidate-1
 Reference product prefix: /private/tmp/casa-t55-serial.d5AeGJ/measured/candidate-1/natural-w1/image
 Controller scripts: /Users/brianglendenning/.agents/skills/codex-autoresearch/scripts
