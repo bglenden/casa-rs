@@ -523,11 +523,16 @@ fn problem_with_shape_response_and_mosaic(
         product_kinds.push(ProductKind::TaylorTerms);
     }
     let [width, height] = image_shape.pixels();
+    let increment_rad = if mosaic {
+        [-1.0e-4, 1.0e-4]
+    } else {
+        [-1.0e-6, 1.0e-6]
+    };
     let direction = DirectionCoordinateSpec::new(
         Projection::Sin,
         SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
         [width as f64 / 2.0, height as f64 / 2.0],
-        [-1.0e-6, 1.0e-6],
+        increment_rad,
         [[1.0, 0.0], [0.0, 1.0]],
         [180.0, 0.0],
     );
@@ -2507,6 +2512,10 @@ fn t47_mosaic_mtmfs_executes_signed_normal_moments() {
         .iter()
         .copied()
         .fold(f64::NEG_INFINITY, f64::max);
+    eprintln!(
+        "mosaic sensitivity min={minimum:.17e} max={maximum:.17e} delta={:.17e}",
+        maximum - minimum
+    );
     assert!(
         maximum > minimum,
         "fixture must exercise nontrivial direction-dependent mosaic sensitivity"
@@ -2614,6 +2623,10 @@ fn t46_joint_minor_cycle_recovers_mixed_components_in_one_atomic_delta() {
     assert_eq!(terms[0].cell().pixel(), terms[1].cell().pixel());
     assert!((terms[0].increment().value() - 1.0).abs() < 1.0e-6);
     assert!((terms[1].increment().value() - 2.0).abs() < 1.0e-6);
+    eprintln!(
+        "joint minor final_peak={:.17e}",
+        result.evidence().final_peak_flux()
+    );
     assert!(result.evidence().final_peak_flux() < 1.0e-6);
 }
 

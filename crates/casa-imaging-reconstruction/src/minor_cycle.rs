@@ -3390,6 +3390,19 @@ fn build_active_block_system(
         })
         .fold(0.0_f64, f64::max);
     let condition = normal_norm * inverse_norm;
+    if count == 2 {
+        eprintln!(
+            "joint system normal=[{:.17e},{:.17e};{:.17e},{:.17e}] inverse=[{:.17e},{:.17e};{:.17e},{:.17e}] condition={condition:.17e}",
+            normal[0],
+            normal[1],
+            normal[2],
+            normal[3],
+            inverse[0],
+            inverse[1],
+            inverse[2],
+            inverse[3],
+        );
+    }
     if !condition.is_finite() || condition > maximum_condition_number {
         return Err(MinorCycleError::SingularJointNormalBlock);
     }
