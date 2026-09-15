@@ -39,6 +39,7 @@ use crate::{
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
 const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 10;
+const TAYLOR_PSF_PEAK_TIE_RELATIVE_TOLERANCE: f64 = 1.0e-12;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
 ///
@@ -3390,19 +3391,6 @@ fn build_active_block_system(
         })
         .fold(0.0_f64, f64::max);
     let condition = normal_norm * inverse_norm;
-    if count == 2 {
-        eprintln!(
-            "joint system normal=[{:.17e},{:.17e};{:.17e},{:.17e}] inverse=[{:.17e},{:.17e};{:.17e},{:.17e}] condition={condition:.17e}",
-            normal[0],
-            normal[1],
-            normal[2],
-            normal[3],
-            inverse[0],
-            inverse[1],
-            inverse[2],
-            inverse[3],
-        );
-    }
     if !condition.is_finite() || condition > maximum_condition_number {
         return Err(MinorCycleError::SingularJointNormalBlock);
     }
@@ -3594,7 +3582,12 @@ fn taylor_psf_peak_index(
         for y in low[1]..high[1] {
             let index = x * shape[1] + y;
             let magnitude = psf.get(index)?.re.abs();
-            if best.is_none_or(|(current, _)| magnitude > current) {
+            // FFT roundoff can split mathematically tied PSF maxima by a few
+            // ulps; the scan order is the canonical tie-break.
+            if best.is_none_or(|(current, _)| {
+                magnitude > current
+                    && magnitude - current > current.abs() * TAYLOR_PSF_PEAK_TIE_RELATIVE_TOLERANCE
+            }) {
                 best = Some((magnitude, index));
             }
         }
@@ -5029,6 +5022,17 @@ mod tests {
             taylor_psf_peak_index(&psf, shape, 0.0),
             Some(64 * shape[1] + 64)
         );
+    }
+
+    #[test]
+    fn mtmfs_psf_peak_uses_scan_order_for_roundoff_ties() {
+        let shape = [8, 8];
+        let mut psf = vec![Complex64::new(0.0, 0.0); shape[0] * shape[1]];
+        psf[9] = Complex64::new(1.0, 0.0);
+        psf[15] = Complex64::new(1.0 + 0.5e-12, 0.0);
+        assert_eq!(taylor_psf_peak_index(&psf, shape, 0.0), Some(9));
+        psf[15] = Complex64::new(1.0 + 2.0e-12, 0.0);
+        assert_eq!(taylor_psf_peak_index(&psf, shape, 0.0), Some(15));
     }
 
     #[test]
