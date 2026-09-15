@@ -18,6 +18,7 @@ use super::{
 struct GroupRange {
     start: usize,
     end: usize,
+    leading_key: [u64; 2],
 }
 
 #[derive(Clone, Copy)]
@@ -194,7 +195,14 @@ impl BoundedRecordEncoder {
                         aw: None,
                     },
                 )?,
-                ranges: fixed_buffer(raw_capacity, GroupRange { start: 0, end: 0 })?,
+                ranges: fixed_buffer(
+                    raw_capacity,
+                    GroupRange {
+                        start: 0,
+                        end: 0,
+                        leading_key: [0; 2],
+                    },
+                )?,
                 records_used: 0,
                 groups_used: 0,
             },
@@ -286,6 +294,10 @@ impl BoundedRecordEncoder {
         ranges[*groups_used] = GroupRange {
             start: *records_used,
             end,
+            leading_key: [
+                (u64::from(group[0].chart_ordinal) << 32) | u64::from(group[0].output_channel),
+                group[0].taps,
+            ],
         };
         *groups_used += 1;
         *records_used = end;
@@ -365,8 +377,11 @@ impl BoundedRecordEncoder {
                 groups_used,
             } => {
                 let ranges = &mut ranges[..*groups_used];
-                ranges
-                    .sort_unstable_by(|a, b| records[a.start..a.end].cmp(&records[b.start..b.end]));
+                ranges.sort_unstable_by(|a, b| {
+                    a.leading_key
+                        .cmp(&b.leading_key)
+                        .then_with(|| records[a.start..a.end].cmp(&records[b.start..b.end]))
+                });
                 let mut index = 0;
                 while index < ranges.len() {
                     let range = ranges[index];
@@ -675,6 +690,58 @@ mod tests {
         encoder.finish(&mut sink).expect("finish");
         assert_eq!(bytes, oracle(expected, false));
         assert_eq!(encoder.reduced_groups(), 2);
+    }
+
+    #[test]
+    fn cached_group_prefix_preserves_full_lexicographic_order_and_multiplicity() {
+        let mut channel = record(0);
+        channel.output_channel = 1;
+        let mut coefficient = record(2);
+        coefficient.forward_real = 2.0_f64.to_bits();
+        let groups = vec![
+            vec![channel],
+            vec![record(2), record(9)],
+            vec![coefficient],
+            vec![record(2)],
+            vec![record(1)],
+            vec![record(2), record(1)],
+            vec![record(2), record(9)],
+        ];
+        let count = groups.iter().map(Vec::len).sum();
+        let mut expected: Vec<ReducedRecordGroup> = groups[..groups.len() - 1]
+            .iter()
+            .enumerate()
+            .map(|(index, records)| ReducedRecordGroup {
+                records: records.clone(),
+                multiplicity: if index == 1 { 2.0 } else { 1.0 },
+            })
+            .collect();
+        expected.sort_by(|a, b| a.records.cmp(&b.records));
+        let mut encoder =
+            BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, count, count, 2)
+                .unwrap();
+        let mut bytes = Vec::new();
+        let mut sink = |frame: &[u8], _| {
+            bytes.extend_from_slice(frame);
+            Ok(())
+        };
+        for group in &groups {
+            encoder.push_group(group, &mut sink).unwrap();
+        }
+        encoder.finish(&mut sink).unwrap();
+        assert_eq!(bytes, oracle(expected, false));
+        assert_eq!(encoder.reduced_groups(), 6);
+        assert_eq!(
+            BoundedRecordEncoder::workspace_bytes(
+                GriddedNormalRecordLayout::Scalar,
+                false,
+                count,
+                count,
+                2,
+            )
+            .unwrap(),
+            count * (size_of::<ReducedRecordKey>() + size_of::<GroupRange>() + 40)
+        );
     }
 
     #[test]
