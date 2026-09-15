@@ -3668,8 +3668,11 @@ fn select_taylor_candidate(
 }
 
 fn prefer_taylor_within_scale(candidate: &TaylorCandidate, current: &TaylorCandidate) -> bool {
-    candidate.score.abs() > current.score.abs()
-        || (candidate.score.abs() == current.score.abs() && candidate.score > current.score)
+    let candidate_abs = candidate.score.abs();
+    let current_abs = current.score.abs();
+    (candidate_abs > current_abs
+        && candidate_abs - current_abs > current_abs * TAYLOR_PSF_PEAK_TIE_RELATIVE_TOLERANCE)
+        || (candidate_abs == current_abs && candidate.score > current.score)
 }
 
 fn prefer_taylor_across_scales(
@@ -5033,6 +5036,28 @@ mod tests {
         assert_eq!(taylor_psf_peak_index(&psf, shape, 0.0), Some(9));
         psf[15] = Complex64::new(1.0 + 2.0e-12, 0.0);
         assert_eq!(taylor_psf_peak_index(&psf, shape, 0.0), Some(15));
+    }
+
+    #[test]
+    fn mtmfs_candidate_peak_uses_scan_order_for_roundoff_ties() {
+        let current = TaylorCandidate {
+            index: 9,
+            scale_index: 0,
+            coefficients: Vec::new(),
+            score: 1.0,
+        };
+        let near_tie = TaylorCandidate {
+            index: 15,
+            scale_index: 0,
+            coefficients: Vec::new(),
+            score: 1.0 + 0.5e-12,
+        };
+        assert!(!prefer_taylor_within_scale(&near_tie, &current));
+        let distinct = TaylorCandidate {
+            score: 1.0 + 2.0e-12,
+            ..near_tie
+        };
+        assert!(prefer_taylor_within_scale(&distinct, &current));
     }
 
     #[test]
