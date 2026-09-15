@@ -620,15 +620,52 @@ impl SpectralCyclePlan {
                         ).map_err(SpectralCyclePlanError::from)
                             },
                             |window| {
-                                compose_major_physical(
+                                let retained = compose_major_physical_mode(
                                     problem,
                                     registry,
                                     &policy,
                                     &weighting,
                                     phase,
-                                    workers,
-                                    Some(window),
-                                )
+                                    PhysicalComposition {
+                                        workers,
+                                        window: Some(window),
+                                        retention: RetentionMode::Retained,
+                                    },
+                                )?;
+                                if !policy.resource_policy.has_explicit_memory_ceiling()
+                                    || pass.phase() != SpectralPassPhase::FinalMajor
+                                    || candidate_memory_fits(&retained, &policy)?
+                                {
+                                    return Ok(retained);
+                                }
+                                // Retained replay charges the complete sealed
+                                // artifact as resident memory. When that cannot
+                                // fit the explicit ceiling, the direct replay
+                                // route streams the same artifact from disk
+                                // through window-sized buffers.
+                                let bounded = compose_major_physical_mode(
+                                    problem,
+                                    registry,
+                                    &policy,
+                                    &weighting,
+                                    phase,
+                                    PhysicalComposition {
+                                        workers,
+                                        window: Some(window),
+                                        retention: RetentionMode::Bounded,
+                                    },
+                                )?;
+                                if candidate_memory_fits(&bounded, &policy)? {
+                                    if imaging_plan_diagnostics_enabled() {
+                                        eprintln!(
+                                            "imaging_low_memory_retained_route_replaced pass={:?}",
+                                            pass.phase()
+                                        );
+                                    }
+                                    Ok(bounded)
+                                } else {
+                                    Ok(retained)
+                                }
                             },
                         )?;
                         if imaging_plan_diagnostics_enabled() {
@@ -647,8 +684,17 @@ impl SpectralCyclePlan {
                             ..candidate
                         }
                     }
-                    None => compose_major_physical(
-                        problem, registry, &policy, &weighting, phase, workers, None,
+                    None => compose_major_physical_mode(
+                        problem,
+                        registry,
+                        &policy,
+                        &weighting,
+                        phase,
+                        PhysicalComposition {
+                            workers,
+                            window: None,
+                            retention: RetentionMode::Retained,
+                        },
                     )?,
                 };
                 if !bounded_channels || depth == 1 || candidate_memory_fits(&candidate, &policy)? {
@@ -827,10 +873,20 @@ fn candidate_memory_fits(
     candidate: &SpectralCyclePhysicalCandidate,
     policy: &SpectralCycleExecutionPolicy,
 ) -> Result<bool, SpectralCyclePlanError> {
-    match policy.authority.remaining_planning_memory_bytes(
-        &policy.resource_policy,
+    alternative_memory_fits(
+        policy,
         candidate.physical.execution_dag().resource_alternative(),
-    ) {
+    )
+}
+
+fn alternative_memory_fits(
+    policy: &SpectralCycleExecutionPolicy,
+    alternative: &DemandAlternative,
+) -> Result<bool, SpectralCyclePlanError> {
+    match policy
+        .authority
+        .remaining_planning_memory_bytes(&policy.resource_policy, alternative)
+    {
         Ok(_) => Ok(true),
         Err(ResourceError::Infeasible { resource, .. })
             if resource.starts_with("memory-domain:") =>
@@ -841,6 +897,19 @@ fn candidate_memory_fits(
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RetentionMode {
+    Retained,
+    Bounded,
+}
+
+struct PhysicalComposition<'a> {
+    workers: u64,
+    window: Option<&'a crate::complete_data_operator::GriddedNormalReplayWindowPlan>,
+    retention: RetentionMode,
+}
+
+#[cfg(test)]
 fn compose_major_physical<R: ImplementationRegistry>(
     problem: &CompiledProblem,
     registry: &R,
@@ -850,6 +919,33 @@ fn compose_major_physical<R: ImplementationRegistry>(
     workers: u64,
     gridded_window_plan: Option<&crate::complete_data_operator::GriddedNormalReplayWindowPlan>,
 ) -> Result<SpectralCyclePhysicalCandidate, SpectralCyclePlanError> {
+    compose_major_physical_mode(
+        problem,
+        registry,
+        policy,
+        weighting,
+        phase,
+        PhysicalComposition {
+            workers,
+            window: gridded_window_plan,
+            retention: RetentionMode::Retained,
+        },
+    )
+}
+
+fn compose_major_physical_mode<R: ImplementationRegistry>(
+    problem: &CompiledProblem,
+    registry: &R,
+    policy: &SpectralCycleExecutionPolicy,
+    weighting: &WeightingPlan,
+    phase: SpectralCyclePhasePlanning<'_>,
+    composition: PhysicalComposition<'_>,
+) -> Result<SpectralCyclePhysicalCandidate, SpectralCyclePlanError> {
+    let PhysicalComposition {
+        workers,
+        window: gridded_window_plan,
+        retention,
+    } = composition;
     let SpectralCyclePhasePlanning {
         pass,
         include_minor,
@@ -1143,6 +1239,7 @@ fn compose_major_physical<R: ImplementationRegistry>(
     }
     if policy.resource_policy.has_explicit_memory_ceiling()
         && pass.phase() == SpectralPassPhase::FinalMajor
+        && retention == RetentionMode::Retained
     {
         physical = append_low_memory_adaptation(
             physical,

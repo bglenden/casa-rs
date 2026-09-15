@@ -2987,6 +2987,9 @@ mod tests {
             bytes = &bytes[written..];
             offset += written as u64;
         }
+        // Match the sealed writer's clean-page invariant so Linux cache-release
+        // verification does not mask the corruption check under test.
+        file.sync_data().expect("flush test mutation before replay");
     }
 
     #[derive(Debug, Default)]
@@ -3653,10 +3656,14 @@ mod tests {
         let (_root, artifact) = sealed_two_frame_artifact();
         let payload_offset = (FILE_HEADER_BYTES + FRAME_HEADER_BYTES) as u64;
         write_all_at(&artifact_file(&artifact), b"X", payload_offset);
-        assert!(matches!(
-            artifact_source_error(&artifact),
-            ManagedSpillError::FrameChecksumMismatch { sequence: 0 }
-        ));
+        let error = artifact_source_error(&artifact);
+        assert!(
+            matches!(
+                error,
+                ManagedSpillError::FrameChecksumMismatch { sequence: 0 }
+            ),
+            "expected payload checksum rejection, got {error:?}"
+        );
     }
 
     #[test]

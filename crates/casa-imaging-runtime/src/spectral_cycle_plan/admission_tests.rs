@@ -300,6 +300,27 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         workers: Some(1),
         ..crate::ResourceOverride::default()
     });
+    let bounded = compose_major_physical_mode(
+        &problem,
+        &registry,
+        &fixed_policy,
+        &weighting,
+        phase,
+        PhysicalComposition {
+            workers: 1,
+            window: Some(&selected),
+            retention: RetentionMode::Bounded,
+        },
+    )
+    .unwrap();
+    assert!(candidate_memory_fits(&bounded, &fixed_policy).unwrap());
+    assert!(
+        !bounded
+            .physical
+            .execution_dag()
+            .nodes()
+            .contains_key(&retained_route_node(phase.pass))
+    );
     for window in [&preferred, &selected] {
         let planned = compose_major_physical(
             &problem,
@@ -311,6 +332,10 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
             Some(window),
         )
         .unwrap();
+        assert!(
+            !candidate_memory_fits(&planned, &fixed_policy).unwrap(),
+            "retaining the entire spill must exceed this explicit ceiling"
+        );
         let reader = planned.complete_data.prepared_artifact_reader().unwrap();
         let nodes = planned.physical.execution_dag().nodes();
         let join = adaptation_route_join_node(phase.pass);
