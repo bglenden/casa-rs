@@ -112,8 +112,11 @@ large artifacts under:
 /Volumes/GLENDENNING/casa-rs-imperformance/_tmp_safe_to_delete/imperformance-artifacts/
 ```
 
-That root contains `README_SAFE_TO_DELETE.txt`; its contents are generated and
-safe to remove when no benchmark is actively using them. Override the root with
+That root contains `README_SAFE_TO_DELETE.txt` and is disposable scratch only.
+It must not hold the sole copy of anything needed in a future session or review.
+For retained work, use an explicit durable root outside `/private` and all
+temporary directories, following `docs/agent-reference.md` checkpoint policy.
+Override the root with
 `CASA_RS_IMPERF_ARTIFACT_ROOT` or `run_workload.py --artifact-root` when a run
 needs a different external scratch area. Small JSON/log result files may still
 be directed with `--output-dir`, but image products, comparison panels, and

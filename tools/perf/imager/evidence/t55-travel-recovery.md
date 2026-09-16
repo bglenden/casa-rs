@@ -2,6 +2,38 @@
 
 Work issue: #541. Related: #543, draft PR #630.
 
+## 2026-09-16: missing temporary artifacts and durable record recovery
+
+Run `be4b854516544e5090dacacedf79a641` is blocked at iteration 6, with
+13 of its 19 trials remaining. All six trials were discarded; retained
+Rust/CASA ratio is 1.0805235318587376, not serial parity or the 0.90 target.
+The exact trial/revert commits and top-level command receipts survive in the
+controller. Source HEAD is `165b774759ee9aaa4393b7a54bc5aeafa8d709b6`.
+
+The four configured temporary experiment/input/reference directories are
+absent. `/private/tmp` itself is accessible; this is not an access-authorization
+problem. What removed the directories has not been established. Backup access
+was denied, and the remote evidence carrier still has the September 11 snapshot.
+The current run's detailed paired measurements, frozen configuration, retained
+baseline executable and generated reference products have not been recovered.
+Do not reconstruct them from headline numbers or overwrite controller history.
+
+The surviving controller and its archives, source and trial patches, and the
+published snapshot are preserved at
+`/Users/brianglendenning/SoftwareProjects/casa-rs-evidence/t55/recovery-20260916`.
+Its `README.md` distinguishes surviving primary evidence, historical evidence,
+conversation-derived reconstruction, and missing material. Snapshot 19's archive
+matches SHA-256 `dedff2a7e46eec39fd26af472f80622148c72e7bc8db42d56bf70af71151f62f`;
+all 664 original manifest entries verify. This is record recovery, not a new
+benchmark, controller archive/restart, or acceptance result.
+
+Keep future run inputs, references, logs, measurements and checkpoints under
+the durable evidence root from creation. The normative storage/checkpoint
+procedure is in `docs/agent-reference.md`. Full-size acceptance still requires
+GLENDENNING. Exact evidence restoration or an explicitly approved fresh baseline
+is required before more trials; the remaining allowance and retired candidates
+must not reset.
+
 ## 2026-09-15: plan-identity CI repair and serial restart
 
 The previous run `22745ec0e448480f9534d180d1012b11` is archived at
