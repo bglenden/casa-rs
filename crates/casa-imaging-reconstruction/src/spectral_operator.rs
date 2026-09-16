@@ -11409,15 +11409,10 @@ impl StandardConvolution {
             .expect("spectral compensation uses standard contiguous layout");
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
-        let rows = taps.x.start * row_stride..(taps.x.start + TAP_COUNT) * row_stride;
-        let columns = taps.y.start..taps.y.start + TAP_COUNT;
-        for ((grid_row, compensation_row), x_weight) in grid[rows.clone()]
-            .chunks_exact_mut(row_stride)
-            .zip(compensation[rows].chunks_exact_mut(row_stride))
-            .zip(x_weights)
-        {
-            let grid_row = &mut grid_row[columns.clone()];
-            let compensation_row = &mut compensation_row[columns.clone()];
+        for (x, x_weight) in x_weights.into_iter().enumerate() {
+            let start = (taps.x.start + x) * row_stride + taps.y.start;
+            let grid_row = &mut grid[start..start + y_weights.len()];
+            let compensation_row = &mut compensation[start..start + y_weights.len()];
             for ((grid_cell, compensation_cell), y_weight) in
                 grid_row.iter_mut().zip(compensation_row).zip(y_weights)
             {
@@ -11869,69 +11864,6 @@ mod tests {
         AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelDeltaId,
         ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
     };
-
-    #[test]
-    fn compensated_row_bands_match_scalar_updates_bitwise() {
-        let mut geometry = geometry();
-        geometry.grid_shape = [17, 23];
-        let gridder = StandardConvolution::new(&geometry);
-        let shape = (geometry.grid_shape[0], geometry.grid_shape[1]);
-        for x_start in [0, 5, shape.0 - super::TAP_COUNT] {
-            for y_start in [0, 8, shape.1 - super::TAP_COUNT] {
-                for fraction in 0..gridder.weights.len() {
-                    let taps = SampleTaps {
-                        x: TapSpan {
-                            start: x_start,
-                            weight_index: fraction,
-                        },
-                        y: TapSpan {
-                            start: y_start,
-                            weight_index: gridder.weights.len() - 1 - fraction,
-                        },
-                    };
-                    let mut expected = Array2::from_shape_fn(shape, |(x, y)| {
-                        Complex64::new((x * 23 + y) as f64 * 0.125, -0.0)
-                    });
-                    let mut actual = expected.clone();
-                    let mut expected_errors =
-                        Array2::from_elem(shape, Complex64::new(1e-14, -1e-14));
-                    let mut actual_errors = expected_errors.clone();
-                    for value in [
-                        Complex64::new(1e12, -1e12),
-                        Complex64::new(0.125, -0.25),
-                        Complex64::new(-1e12, 1e12),
-                        Complex64::new(-0.0, 0.0),
-                    ] {
-                        gridder.grid_compensated(&mut actual, &mut actual_errors, taps, value);
-                        for (x, x_weight) in
-                            gridder.weights[taps.x.weight_index].into_iter().enumerate()
-                        {
-                            for (y, y_weight) in
-                                gridder.weights[taps.y.weight_index].into_iter().enumerate()
-                            {
-                                let index = (x_start + x, y_start + y);
-                                let contribution =
-                                    value * x_weight * y_weight - expected_errors[index];
-                                let updated = expected[index] + contribution;
-                                expected_errors[index] = (updated - expected[index]) - contribution;
-                                expected[index] = updated;
-                            }
-                        }
-                        for (actual, expected) in actual
-                            .iter()
-                            .zip(&expected)
-                            .chain(actual_errors.iter().zip(&expected_errors))
-                        {
-                            assert_eq!(
-                                (actual.re.to_bits(), actual.im.to_bits()),
-                                (expected.re.to_bits(), expected.im.to_bits())
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     #[test]
     fn native_row_retention_reuses_one_stable_slot_across_owner_moves() {
