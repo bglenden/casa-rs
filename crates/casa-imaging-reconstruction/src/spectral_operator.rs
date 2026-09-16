@@ -5102,8 +5102,14 @@ impl<P> CasaLinearRowResampler<P> {
 
     fn retain_current(&mut self, current: NativeSpectralGroup<'_, P>) {
         if let Some(previous) = &mut self.pending {
-            previous.samples.clear();
-            previous.samples.extend(current.samples.iter().cloned());
+            previous.samples.truncate(current.samples.len());
+            let reused = previous.samples.len();
+            previous
+                .samples
+                .clone_from_slice(&current.samples[..reused]);
+            previous
+                .samples
+                .extend(current.samples[reused..].iter().cloned());
             previous.observed.clear();
             previous.observed.extend_from_slice(current.observed);
             previous.predicted = current.predicted;

@@ -2045,6 +2045,69 @@ mod selected_sample_tests {
     }
 
     #[test]
+    fn retained_native_samples_follow_changing_correlation_layout_sizes() {
+        use super::{CasaLinearOutputGrid, FiniteValuePolicy};
+        use crate::spectral_operator::{CasaLinearRowResampler, NativeSpectralGroup};
+        use num_complex::Complex64;
+
+        let output = CasaLinearOutputGrid::compile(&[100.0, 150.0, 200.0, 250.0, 300.0]).unwrap();
+        let mut rows = CasaLinearRowResampler::<usize>::new();
+        for (row, count) in [2, 5, 1, 4].into_iter().enumerate() {
+            let mut emitted = 0;
+            for channel in 0..3 {
+                let samples = (0..count)
+                    .map(|correlation| {
+                        let mut value = native_row_sample(channel, row as u64);
+                        value.sample.address.correlation_index = correlation as u32;
+                        value.source_imaging_weight = Some((row * 10 + correlation + 1) as f64);
+                        value
+                    })
+                    .collect::<Vec<_>>();
+                let observed = (0..count)
+                    .map(|correlation| {
+                        Complex64::new((row * 10 + correlation) as f64 + f64::from(channel), 0.0)
+                    })
+                    .collect::<Vec<_>>();
+                rows.push(
+                    NativeSpectralGroup {
+                        frequency_hz: 100.0 + 100.0 * f64::from(channel),
+                        samples: &samples,
+                        observed: &observed,
+                        predicted: count,
+                    },
+                    output,
+                    FiniteValuePolicy::RejectAll,
+                    true,
+                    |left, right, _| {
+                        assert_eq!((*left, *right), (count, count));
+                        Ok(())
+                    },
+                    |group| {
+                        assert_eq!(group.correlations.len(), count);
+                        assert_eq!(group.selected.address().physical_row, row as u64);
+                        for correlation in 0..count {
+                            assert_eq!(
+                                group.weights[correlation],
+                                (row * 10 + correlation + 1) as f64
+                            );
+                            assert_eq!(
+                                group.observed[correlation].re,
+                                (row * 10 + correlation) as f64
+                                    + (group.frequency_hz - 100.0) / 100.0
+                            );
+                        }
+                        emitted += 1;
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            }
+            assert_eq!(emitted, 5);
+        }
+        rows.finish().unwrap();
+    }
+
+    #[test]
     fn bounded_replay_retains_a_compact_kernel_projection_and_only_required_spectral_values() {
         let weighted_bytes = size_of::<WeightingSelectedSample>();
         let spectral_bytes = size_of::<Option<NativeRowSpectralGeometry>>();
