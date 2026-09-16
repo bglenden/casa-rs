@@ -99,6 +99,17 @@ struct RecordStencil {
     imaging_weight: f64,
 }
 
+impl RecordStencil {
+    fn forward_coefficient(self, phase: f64, coefficient: Complex64) -> Complex64 {
+        if phase == 0.0 {
+            // The standard path supplies finite ideal-polarization coefficients.
+            coefficient * self.factor
+        } else {
+            Complex64::from_polar(self.factor, -phase) * coefficient
+        }
+    }
+}
+
 struct InterpolatedPredictions {
     banks: [usize; 2],
     factors: [f64; 2],
@@ -375,7 +386,7 @@ impl GriddedNormalOperatorCompiler {
                 if coefficient == Complex64::default() {
                     continue;
                 }
-                let forward = Complex64::from_polar(stencil.factor, -phase) * coefficient;
+                let forward = stencil.forward_coefficient(phase, coefficient);
                 let output_plane = stencil
                     .output_channel
                     .checked_mul(self.specification.polarization_count())
@@ -446,6 +457,36 @@ fn emit_atom(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stencil_forward_preserves_canonical_coefficients_for_zero_and_nonzero_phase() {
+        for factor in [f64::from_bits(1), 1e-200, -0.25, 1.0, -1e200, f64::MAX] {
+            let stencil = RecordStencil {
+                output_channel: 0,
+                frequency_hz: 1e9,
+                factor,
+                role: RecordRole::Prediction,
+                imaging_weight: 0.0,
+            };
+            for phase in [0.0, -0.0, 1e-20, -0.25, std::f64::consts::PI] {
+                for re in [0.0, -0.0, 0.5, -1.0] {
+                    for im in [0.0, -0.0, 0.5, -1.0] {
+                        let coefficient = Complex64::new(re, im);
+                        let expected = Complex64::from_polar(factor, -phase) * coefficient;
+                        let actual = stencil.forward_coefficient(phase, coefficient);
+                        assert_eq!(
+                            canonical_zero_bits(actual.re),
+                            canonical_zero_bits(expected.re)
+                        );
+                        assert_eq!(
+                            canonical_zero_bits(actual.im),
+                            canonical_zero_bits(expected.im)
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn fixed_workspace_rejects_growth_and_overflow() {
