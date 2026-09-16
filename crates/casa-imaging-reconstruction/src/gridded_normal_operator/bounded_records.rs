@@ -27,9 +27,83 @@ struct IndexedTaylor {
     ordinal: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct StandardRecordKey {
+    chart_ordinal: u32,
+    output_channel: u32,
+    taps: u64,
+    forward_real: u64,
+    forward_imaginary: u64,
+    imaging_weight: u64,
+    role: RecordRole,
+}
+
+impl From<&ReducedRecordKey> for StandardRecordKey {
+    fn from(record: &ReducedRecordKey) -> Self {
+        Self {
+            chart_ordinal: record.chart_ordinal,
+            output_channel: record.output_channel,
+            taps: record.taps,
+            forward_real: record.forward_real,
+            forward_imaginary: record.forward_imaginary,
+            imaging_weight: record.imaging_weight,
+            role: record.role,
+        }
+    }
+}
+
+impl From<&StandardRecordKey> for ReducedRecordKey {
+    fn from(record: &StandardRecordKey) -> Self {
+        Self {
+            chart_ordinal: record.chart_ordinal,
+            output_channel: record.output_channel,
+            taps: record.taps,
+            forward_real: record.forward_real,
+            forward_imaginary: record.forward_imaginary,
+            imaging_weight: record.imaging_weight,
+            role: record.role,
+            aw: None,
+        }
+    }
+}
+
+enum GroupRecords {
+    Standard(Box<[StandardRecordKey]>),
+    Aw(Box<[ReducedRecordKey]>),
+}
+
+impl GroupRecords {
+    fn len(&self) -> usize {
+        match self {
+            Self::Standard(records) => records.len(),
+            Self::Aw(records) => records.len(),
+        }
+    }
+
+    fn copy_group(
+        &mut self,
+        start: usize,
+        group: &[ReducedRecordKey],
+    ) -> Result<(), SpectralOperatorError> {
+        let end = start + group.len();
+        match self {
+            Self::Standard(records) => {
+                for (destination, record) in records[start..end].iter_mut().zip(group) {
+                    if record.aw.is_some() {
+                        return Err(SpectralOperatorError::InvalidGriddedRecord);
+                    }
+                    *destination = record.into();
+                }
+            }
+            Self::Aw(records) => records[start..end].copy_from_slice(group),
+        }
+        Ok(())
+    }
+}
+
 enum RawArena {
     Groups {
-        records: Box<[ReducedRecordKey]>,
+        records: GroupRecords,
         ranges: Box<[GroupRange]>,
         records_used: usize,
         groups_used: usize,
@@ -103,7 +177,6 @@ pub(super) struct BoundedRecordEncoder {
     arena: RawArena,
     frame: Frame,
     maximum_atom_records: usize,
-    aw_projection: bool,
     peak_raw_records: usize,
     usable: bool,
     reduced_groups: u64,
@@ -140,7 +213,13 @@ impl BoundedRecordEncoder {
                         .checked_mul(3 * size_of::<f64>())
                         .and_then(|moments| bytes.checked_add(moments))
                 }),
-            _ => raw_capacity.checked_mul(size_of::<ReducedRecordKey>() + size_of::<GroupRange>()),
+            _ => raw_capacity.checked_mul(
+                if aw_projection {
+                    size_of::<ReducedRecordKey>()
+                } else {
+                    size_of::<StandardRecordKey>()
+                } + size_of::<GroupRange>(),
+            ),
         }
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         frame_record_capacity
@@ -182,9 +261,8 @@ impl BoundedRecordEncoder {
                 plan,
             },
             _ => RawArena::Groups {
-                records: fixed_buffer(
-                    raw_capacity,
-                    ReducedRecordKey {
+                records: {
+                    let record = ReducedRecordKey {
                         chart_ordinal: 0,
                         output_channel: 0,
                         taps: 0,
@@ -193,8 +271,13 @@ impl BoundedRecordEncoder {
                         imaging_weight: 0,
                         role: RecordRole::Both,
                         aw: None,
-                    },
-                )?,
+                    };
+                    if aw_projection {
+                        GroupRecords::Aw(fixed_buffer(raw_capacity, record)?)
+                    } else {
+                        GroupRecords::Standard(fixed_buffer(raw_capacity, (&record).into())?)
+                    }
+                },
                 ranges: fixed_buffer(
                     raw_capacity,
                     GroupRange {
@@ -221,7 +304,6 @@ impl BoundedRecordEncoder {
                 sink_duration: Duration::ZERO,
             },
             maximum_atom_records,
-            aw_projection,
             peak_raw_records: 0,
             usable: true,
             reduced_groups: 0,
@@ -290,7 +372,7 @@ impl BoundedRecordEncoder {
             unreachable!("group arena checked above")
         };
         let end = *records_used + group.len();
-        records[*records_used..end].clone_from_slice(group);
+        records.copy_group(*records_used, group)?;
         ranges[*groups_used] = GroupRange {
             start: *records_used,
             end,
@@ -377,47 +459,29 @@ impl BoundedRecordEncoder {
                 groups_used,
             } => {
                 let ranges = &mut ranges[..*groups_used];
-                ranges.sort_unstable_by(|a, b| {
-                    a.leading_key
-                        .cmp(&b.leading_key)
-                        .then_with(|| records[a.start..a.end].cmp(&records[b.start..b.end]))
-                });
-                let mut index = 0;
-                while index < ranges.len() {
-                    let range = ranges[index];
-                    let group = &records[range.start..range.end];
-                    let mut multiplicity = 0.0;
-                    let mut compensation = 0.0;
-                    loop {
-                        let corrected = 1.0 - compensation;
-                        let updated = multiplicity + corrected;
-                        compensation = (updated - multiplicity) - corrected;
-                        multiplicity = updated;
-                        index += 1;
-                        if index == ranges.len()
-                            || records[ranges[index].start..ranges[index].end] != *group
-                        {
-                            break;
-                        }
-                    }
-                    self.frame.make_room(group.len(), sink)?;
-                    let started = self.observe_timings.then(Instant::now);
-                    for (ordinal, record) in group.iter().enumerate() {
-                        encode_record(
-                            record,
-                            multiplicity,
-                            ordinal + 1 == group.len(),
-                            self.aw_projection,
-                            self.frame.append_record(),
-                        )?;
-                    }
-                    if let Some(started) = started {
-                        self.timings.encoding_checksum += started.elapsed();
-                    }
-                    self.reduced_groups = self
-                        .reduced_groups
-                        .checked_add(1)
-                        .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                match records {
+                    GroupRecords::Standard(records) => reduce_groups(
+                        records,
+                        ranges,
+                        &mut self.frame,
+                        &mut self.timings,
+                        &mut self.reduced_groups,
+                        sink,
+                        |record, multiplicity, group_end, bytes| {
+                            encode_record(&record.into(), multiplicity, group_end, false, bytes)
+                        },
+                    )?,
+                    GroupRecords::Aw(records) => reduce_groups(
+                        records,
+                        ranges,
+                        &mut self.frame,
+                        &mut self.timings,
+                        &mut self.reduced_groups,
+                        sink,
+                        |record, multiplicity, group_end, bytes| {
+                            encode_record(record, multiplicity, group_end, true, bytes)
+                        },
+                    )?,
                 }
                 *records_used = 0;
                 *groups_used = 0;
@@ -480,6 +544,56 @@ impl BoundedRecordEncoder {
         }
         Ok(())
     }
+}
+
+fn reduce_groups<R: Ord>(
+    records: &[R],
+    ranges: &mut [GroupRange],
+    frame: &mut Frame,
+    timings: &mut GriddedNormalOperatorStageTimings,
+    reduced_groups: &mut u64,
+    sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+    encode: impl Fn(&R, f64, bool, &mut [u8]) -> Result<(), SpectralOperatorError>,
+) -> Result<(), SpectralOperatorError> {
+    ranges.sort_unstable_by(|a, b| {
+        a.leading_key
+            .cmp(&b.leading_key)
+            .then_with(|| records[a.start..a.end].cmp(&records[b.start..b.end]))
+    });
+    let mut index = 0;
+    while index < ranges.len() {
+        let range = ranges[index];
+        let group = &records[range.start..range.end];
+        let mut multiplicity = 0.0;
+        let mut compensation = 0.0;
+        loop {
+            let corrected = 1.0 - compensation;
+            let updated = multiplicity + corrected;
+            compensation = (updated - multiplicity) - corrected;
+            multiplicity = updated;
+            index += 1;
+            if index == ranges.len() || records[ranges[index].start..ranges[index].end] != *group {
+                break;
+            }
+        }
+        frame.make_room(group.len(), sink)?;
+        let started = frame.observe_timings.then(Instant::now);
+        for (ordinal, record) in group.iter().enumerate() {
+            encode(
+                record,
+                multiplicity,
+                ordinal + 1 == group.len(),
+                frame.append_record(),
+            )?;
+        }
+        if let Some(started) = started {
+            timings.encoding_checksum += started.elapsed();
+        }
+        *reduced_groups = reduced_groups
+            .checked_add(1)
+            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+    }
+    Ok(())
 }
 
 fn fixed_buffer<T: Clone>(length: usize, value: T) -> Result<Box<[T]>, SpectralOperatorError> {
@@ -740,8 +854,138 @@ mod tests {
                 2,
             )
             .unwrap(),
-            count * (size_of::<ReducedRecordKey>() + size_of::<GroupRange>() + 40)
+            count * (size_of::<StandardRecordKey>() + size_of::<GroupRange>() + 40)
         );
+    }
+
+    #[test]
+    fn compact_standard_keys_preserve_order_bytes_and_exact_workspace() {
+        let keys = [
+            record(2),
+            ReducedRecordKey {
+                chart_ordinal: 1,
+                ..record(2)
+            },
+            ReducedRecordKey {
+                output_channel: 1,
+                ..record(2)
+            },
+            record(3),
+            ReducedRecordKey {
+                forward_real: (-2.0_f64).to_bits(),
+                ..record(2)
+            },
+            ReducedRecordKey {
+                forward_imaginary: 0.5_f64.to_bits(),
+                ..record(2)
+            },
+            ReducedRecordKey {
+                imaging_weight: 3.0_f64.to_bits(),
+                ..record(2)
+            },
+            ReducedRecordKey {
+                role: RecordRole::Prediction,
+                ..record(2)
+            },
+            ReducedRecordKey {
+                role: RecordRole::Accumulation,
+                ..record(2)
+            },
+        ];
+        for left in &keys {
+            assert_eq!(
+                ReducedRecordKey::from(&StandardRecordKey::from(left)),
+                *left
+            );
+            for right in &keys {
+                assert_eq!(
+                    StandardRecordKey::from(left).cmp(&right.into()),
+                    left.cmp(right)
+                );
+            }
+        }
+        let raw_capacity = keys.len() * 2;
+        let mut encoder = BoundedRecordEncoder::new(
+            GriddedNormalRecordLayout::Scalar,
+            false,
+            raw_capacity,
+            raw_capacity,
+            1,
+        )
+        .unwrap();
+        let mut bytes = Vec::new();
+        let mut sink = |frame: &[u8], _| {
+            bytes.extend_from_slice(frame);
+            Ok(())
+        };
+        for key in keys.iter().rev().chain(keys.iter()) {
+            encoder
+                .push_group(std::slice::from_ref(key), &mut sink)
+                .unwrap();
+        }
+        encoder.finish(&mut sink).unwrap();
+        let mut expected = keys
+            .map(|key| ReducedRecordGroup {
+                records: vec![key],
+                multiplicity: 2.0,
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        expected.sort_by(|a, b| a.records.cmp(&b.records));
+        assert_eq!(bytes, oracle(expected, false));
+        assert!(size_of::<StandardRecordKey>() < size_of::<ReducedRecordKey>());
+        let RawArena::Groups {
+            records: GroupRecords::Standard(records),
+            ranges,
+            ..
+        } = &encoder.arena
+        else {
+            panic!("standard compilation must allocate compact records");
+        };
+        assert_eq!(
+            BoundedRecordEncoder::workspace_bytes(
+                GriddedNormalRecordLayout::Scalar,
+                false,
+                raw_capacity,
+                raw_capacity,
+                1,
+            )
+            .unwrap(),
+            std::mem::size_of_val(records.as_ref())
+                + std::mem::size_of_val(ranges.as_ref())
+                + encoder.frame.bytes.len(),
+        );
+        eprintln!(
+            "raw record bytes: standard={}, AW={}",
+            size_of::<StandardRecordKey>(),
+            size_of::<ReducedRecordKey>()
+        );
+    }
+
+    #[test]
+    fn compact_standard_arena_rejects_aw_payload_and_poisoned_reuse() {
+        let mut key = record(0);
+        key.aw = Some(AwRecordCoordinates {
+            frequency_hz: 1.0e9_f64.to_bits(),
+            uvw_m: [0; 3],
+            prediction_w_m: 0,
+            parallactic_angle_deg: 0,
+            pointing_phase_gradient_rad_per_grid_cell: [0; 2],
+            mueller_element: 0,
+        });
+        let mut encoder =
+            BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, 1, 1, 1).unwrap();
+        let mut sink = |_: &[u8], _| -> Result<(), SpectralOperatorError> {
+            panic!("invalid standard record must not emit");
+        };
+        assert!(matches!(
+            encoder.push_group(&[key], &mut sink),
+            Err(SpectralOperatorError::InvalidGriddedRecord)
+        ));
+        assert!(matches!(
+            encoder.finish(&mut sink),
+            Err(SpectralOperatorError::GriddedCompilationPoisoned)
+        ));
     }
 
     #[test]
@@ -926,7 +1170,7 @@ mod tests {
                 2
             )
             .expect("workspace"),
-            3 * (size_of::<ReducedRecordKey>() + size_of::<GroupRange>()) + 4 * 40
+            3 * (size_of::<StandardRecordKey>() + size_of::<GroupRange>()) + 4 * 40
         );
         let mut sink = |_: &[u8], _| -> Result<(), SpectralOperatorError> {
             panic!("oversized atom never emits")
