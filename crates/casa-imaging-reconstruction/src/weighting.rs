@@ -1534,7 +1534,7 @@ impl WeightingSpectralValue {
 /// Row-level provenance used only for source validation is absent. The bounded
 /// block retains the field, pointing, selected spectral geometry, coordinates,
 /// flags, visibility, and address consumed by the scientific kernels.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct WeightingSelectedSample {
     pub(crate) address: SelectedSampleAddress,
     pub(crate) visibility: SelectedVisibilitySample,
@@ -1557,6 +1557,57 @@ pub struct WeightingSelectedSample {
     aw_pointing_pixel: Option<[f64; 2]>,
     antenna_responses: Option<SelectedAntennaResponses>,
     domain_projections: SelectedImageDomainProjections,
+}
+
+impl Clone for WeightingSelectedSample {
+    fn clone(&self) -> Self {
+        Self {
+            address: self.address,
+            visibility: self.visibility,
+            channel_flag: self.channel_flag,
+            parallel_hand_group_flag: self.parallel_hand_group_flag,
+            input_weight_group_flag: self.input_weight_group_flag,
+            row_flag: self.row_flag,
+            input_weight: self.input_weight,
+            raw_input_weight: self.raw_input_weight,
+            starts_correlation_group: self.starts_correlation_group,
+            ends_correlation_group: self.ends_correlation_group,
+            correlation_group_size: self.correlation_group_size,
+            parallactic_angles_rad: self.parallactic_angles_rad,
+            density_uvw_m: self.density_uvw_m,
+            output_frame_frequency_hz: self.output_frame_frequency_hz,
+            row_spectral_geometry: self.row_spectral_geometry,
+            field_id: self.field_id,
+            pointing_directions: self.pointing_directions,
+            aw_pointing_pixel: self.aw_pointing_pixel,
+            antenna_responses: self.antenna_responses,
+            domain_projections: self.domain_projections.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.domain_projections
+            .clone_from(&source.domain_projections);
+        self.address = source.address;
+        self.visibility = source.visibility;
+        self.channel_flag = source.channel_flag;
+        self.parallel_hand_group_flag = source.parallel_hand_group_flag;
+        self.input_weight_group_flag = source.input_weight_group_flag;
+        self.row_flag = source.row_flag;
+        self.input_weight = source.input_weight;
+        self.raw_input_weight = source.raw_input_weight;
+        self.starts_correlation_group = source.starts_correlation_group;
+        self.ends_correlation_group = source.ends_correlation_group;
+        self.correlation_group_size = source.correlation_group_size;
+        self.parallactic_angles_rad = source.parallactic_angles_rad;
+        self.density_uvw_m = source.density_uvw_m;
+        self.output_frame_frequency_hz = source.output_frame_frequency_hz;
+        self.row_spectral_geometry = source.row_spectral_geometry;
+        self.field_id = source.field_id;
+        self.pointing_directions = source.pointing_directions;
+        self.aw_pointing_pixel = source.aw_pointing_pixel;
+        self.antenna_responses = source.antenna_responses;
+    }
 }
 
 impl WeightingSelectedSample {
@@ -1921,6 +1972,52 @@ mod selected_sample_tests {
             source_imaging_weight: Some(4.0 + f64::from(channel) * 6.0),
             spectral_values: smallvec::SmallVec::new(),
         }
+    }
+
+    #[test]
+    fn selected_sample_clone_from_replaces_every_field_in_both_directions() {
+        use casa_imaging_model::{
+            AntennaResponseClass, DirectionFrame, SelectedAntennaResponses, SkyDirection,
+        };
+
+        let original = native_row_sample(0, 0).sample;
+        let mut source = native_row_sample(1, 1).sample;
+        source.visibility = super::SelectedVisibilitySample::Complex32([2.0, -3.0]);
+        source.channel_flag = true;
+        source.parallel_hand_group_flag = true;
+        source.input_weight_group_flag = true;
+        source.row_flag = true;
+        source.input_weight = 8.0;
+        source.raw_input_weight = 9.0;
+        source.starts_correlation_group = false;
+        source.ends_correlation_group = false;
+        source.correlation_group_size = 2;
+        source.parallactic_angles_rad = [1.0, 2.0];
+        source.density_uvw_m = [3.0, 4.0, 5.0];
+        source.output_frame_frequency_hz = 250.0;
+        source.row_spectral_geometry = None;
+        source.field_id = 3;
+        source.pointing_directions = super::SelectedPointingDirections {
+            antenna1: SkyDirection::new(DirectionFrame::J2000, 1.1, -0.4),
+            antenna2: SkyDirection::new(DirectionFrame::J2000, 1.2, -0.3),
+        };
+        source.aw_pointing_pixel = Some([1.0, 2.0]);
+        source.antenna_responses = Some(SelectedAntennaResponses {
+            antenna1: AntennaResponseClass::CasaAlma12m,
+            antenna2: AntennaResponseClass::CasaAca7m,
+            family_envelope: AntennaResponseClass::CasaAlma12m,
+        });
+        source.domain_projections = SelectedImageDomainProjections::one_domain_with_shared_psf(
+            SelectedPhaseCentreProjection::new([1.0, 2.0, 3.0], 4.0).unwrap(),
+        );
+        let mut destination = original.clone();
+        destination.clone_from(&source);
+        assert_eq!(destination, source);
+        source.clone_from(&original);
+        assert_eq!(source, original);
+        assert_ne!(destination, source);
+        destination.clone_from(&original);
+        assert_eq!(destination, original);
     }
 
     #[test]
