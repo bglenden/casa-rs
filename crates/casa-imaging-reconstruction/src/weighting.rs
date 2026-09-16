@@ -806,7 +806,6 @@ fn weight_from_state(
     }
 }
 
-#[inline]
 fn weighted_sample_from_state(
     problem: &CompiledProblem,
     grid: DensityGridShape,
