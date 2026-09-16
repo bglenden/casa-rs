@@ -1612,32 +1612,22 @@ impl SpectralOperatorSpecification {
         if self.aw_projection.is_none()
             && self.uses_casa_linear_resampling(std::slice::from_ref(weighted))?
         {
-            return self.casa_linear_prediction_contributions(weighted.selected());
+            let selected = weighted.selected();
+            let first_pair = selected
+                .row_spectral_geometry()
+                .and_then(|geometry| geometry.first_pair_hz())
+                .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+            return crate::spectral_sampling::casa_linear_prediction_terms(
+                &self.output_channel_frequencies_hz,
+                selected.output_frame_frequency_hz(),
+                first_pair,
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample);
         }
         Ok(weighted
             .spectral_values()
             .map(|value| value.contribution())
             .collect())
-    }
-
-    /// Compile forward terms after the caller validates CASA-linear eligibility.
-    pub(super) fn casa_linear_prediction_contributions(
-        &self,
-        selected: &crate::weighting::WeightingSelectedSample,
-    ) -> Result<
-        SmallVec<[casa_imaging_model::SelectedSpectralContribution; 4]>,
-        SpectralOperatorError,
-    > {
-        let first_pair = selected
-            .row_spectral_geometry()
-            .and_then(|geometry| geometry.first_pair_hz())
-            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
-        crate::spectral_sampling::casa_linear_prediction_terms(
-            &self.output_channel_frequencies_hz,
-            selected.output_frame_frequency_hz(),
-            first_pair,
-        )
-        .map_err(|_| SpectralOperatorError::InvalidSample)
     }
 
     /// Iterate padded grid shapes in canonical physical-chart order.
