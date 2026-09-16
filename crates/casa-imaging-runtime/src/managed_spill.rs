@@ -1576,29 +1576,22 @@ impl ManagedSpillBlockSource {
         }
         read_exact_at(
             &self.file,
-            &mut storage.bytes[frame_start..frame_start + 8],
+            &mut storage.bytes[frame_start..header_end],
             self.offset,
             &mut self.measurements,
-            "read artifact entry marker",
+            "read artifact entry header",
         )?;
         let marker: [u8; 8] = storage.bytes[frame_start..frame_start + 8]
             .try_into()
             .expect("fixed artifact marker slice");
         if marker == FOOTER_MAGIC {
-            self.read_footer(marker)?;
+            self.read_footer(&storage.bytes[frame_start..header_end])?;
             self.finished = true;
             return Ok(None);
         }
         if marker != FRAME_MAGIC {
             return Err(ManagedSpillError::InvalidFormat { kind: "frame" });
         }
-        read_exact_at(
-            &self.file,
-            &mut storage.bytes[frame_start + marker.len()..header_end],
-            self.offset + marker.len() as u64,
-            &mut self.measurements,
-            "read artifact frame header",
-        )?;
         let header: &[u8] = &storage.bytes[frame_start..header_end];
         if !valid_version_and_length(header, FRAME_HEADER_BYTES)
             || !reserved_is_zero(header, FRAME_RESERVED_BYTES)
@@ -1718,13 +1711,13 @@ impl ManagedSpillBlockSource {
         Ok(Some((payload_bytes, operations)))
     }
 
-    fn read_footer(&mut self, marker: [u8; 8]) -> Result<(), ManagedSpillError> {
+    fn read_footer(&mut self, prefix: &[u8]) -> Result<(), ManagedSpillError> {
         let mut footer = [0_u8; FOOTER_BYTES];
-        footer[..marker.len()].copy_from_slice(&marker);
+        footer[..prefix.len()].copy_from_slice(prefix);
         read_exact_at(
             &self.file,
-            &mut footer[marker.len()..],
-            self.offset + marker.len() as u64,
+            &mut footer[prefix.len()..],
+            self.offset + prefix.len() as u64,
             &mut self.measurements,
             "read artifact footer",
         )?;
@@ -3168,9 +3161,9 @@ mod tests {
         assert_eq!(read.record_count(), 3);
         assert_eq!(read.transferred_bytes(), expected_artifact_bytes);
         #[cfg(target_os = "linux")]
-        let expected_read_operations = 28;
+        let expected_read_operations = 22;
         #[cfg(not(target_os = "linux"))]
-        let expected_read_operations = 10;
+        let expected_read_operations = 8;
         assert_eq!(read.operations(), expected_read_operations);
         assert_eq!(read.checksum_calls(), 5);
         assert_eq!(
