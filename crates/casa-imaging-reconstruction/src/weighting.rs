@@ -1924,6 +1924,39 @@ mod selected_sample_tests {
     }
 
     #[test]
+    fn weighted_sample_clone_from_reuses_spectral_storage_and_preserves_ownership() {
+        let mut retained = native_row_sample(0, 0);
+        for (row, terms) in [0, 4, 9, 5, 1, 17, 0].into_iter().enumerate() {
+            let mut source = native_row_sample(1, row as u64 + 1);
+            source.source_imaging_weight = (row % 2 == 0).then_some(row as f64);
+            source.sample.channel_flag = row % 2 != 0;
+            source.spectral_values = (0..terms)
+                .map(|channel| super::WeightingSpectralValue {
+                    contribution: casa_imaging_model::SelectedSpectralContribution::new(
+                        channel,
+                        0.5,
+                        1.0e9 + f64::from(channel),
+                    )
+                    .unwrap(),
+                    imaging_weight: f64::from(channel) + row as f64,
+                })
+                .collect();
+            let old_capacity = retained.spectral_values.capacity();
+            let old_storage = retained.spectral_values.as_ptr();
+            retained.clone_from(&source);
+            assert_eq!(retained, source);
+            if terms as usize <= old_capacity {
+                assert_eq!(retained.spectral_values.capacity(), old_capacity);
+                assert_eq!(retained.spectral_values.as_ptr(), old_storage);
+            }
+            let snapshot = source.clone();
+            source.sample.address.physical_row += 1;
+            source.spectral_values.clear();
+            assert_eq!(retained, snapshot);
+        }
+    }
+
+    #[test]
     fn native_row_retains_previous_input_and_current_input_after_callback_errors() {
         use super::{CasaLinearOutputGrid, FiniteValuePolicy};
         use crate::spectral_operator::{
@@ -2153,11 +2186,27 @@ fn casa_unpolarized_input_weight(group: SelectedInputWeightGroup) -> f32 {
 }
 
 /// One unbranded weighted selected sample produced by reconstruction.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct WeightingSampleValue {
     sample: WeightingSelectedSample,
     source_imaging_weight: Option<f64>,
     spectral_values: SmallVec<[WeightingSpectralValue; 4]>,
+}
+
+impl Clone for WeightingSampleValue {
+    fn clone(&self) -> Self {
+        Self {
+            sample: self.sample.clone(),
+            source_imaging_weight: self.source_imaging_weight,
+            spectral_values: self.spectral_values.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.sample.clone_from(&source.sample);
+        self.source_imaging_weight = source.source_imaging_weight;
+        self.spectral_values.clone_from(&source.spectral_values);
+    }
 }
 
 impl WeightingSampleValue {
