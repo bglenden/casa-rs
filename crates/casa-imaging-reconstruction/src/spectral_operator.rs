@@ -11435,9 +11435,11 @@ impl StandardConvolution {
         let y_weights = self.weights[taps.y.weight_index];
         let mut value = Complex64::new(0.0, 0.0);
         for (x, x_weight) in x_weights.into_iter().enumerate() {
+            let mut row_value = Complex64::new(0.0, 0.0);
             for (y, y_weight) in y_weights.into_iter().enumerate() {
-                value += grid[(taps.x.start + x, taps.y.start + y)] * x_weight * y_weight;
+                row_value += grid[(taps.x.start + x, taps.y.start + y)] * y_weight;
             }
+            value += row_value * x_weight;
         }
         value
     }
@@ -11870,6 +11872,56 @@ mod tests {
         AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelDeltaId,
         ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
     };
+
+    #[test]
+    fn separable_degrid_matches_scalar_kernel_with_bounded_roundoff() {
+        let mut geometry = geometry();
+        geometry.grid_shape = [17, 23];
+        let gridder = StandardConvolution::new(&geometry);
+        for scale in [1e-100, 1.0, 1e100] {
+            let grid = Array2::from_shape_fn((17, 23), |(x, y)| {
+                let sign = if (x + y) % 2 == 0 { 1.0 } else { -1.0 };
+                Complex64::new(
+                    sign * (1.0 + x as f64 * 0.03125),
+                    -sign * (1.0 + y as f64 * 0.0625),
+                ) * scale
+            });
+            for x_start in [0, 5, 17 - super::TAP_COUNT] {
+                for y_start in [0, 8, 23 - super::TAP_COUNT] {
+                    for fraction in 0..gridder.weights.len() {
+                        let taps = SampleTaps {
+                            x: TapSpan {
+                                start: x_start,
+                                weight_index: fraction,
+                            },
+                            y: TapSpan {
+                                start: y_start,
+                                weight_index: gridder.weights.len() - 1 - fraction,
+                            },
+                        };
+                        let mut expected = Complex64::default();
+                        let mut absolute_sum = 0.0;
+                        for (x, x_weight) in
+                            gridder.weights[taps.x.weight_index].into_iter().enumerate()
+                        {
+                            for (y, y_weight) in
+                                gridder.weights[taps.y.weight_index].into_iter().enumerate()
+                            {
+                                let contribution =
+                                    grid[(x_start + x, y_start + y)] * x_weight * y_weight;
+                                expected += contribution;
+                                absolute_sum += contribution.re.abs() + contribution.im.abs();
+                            }
+                        }
+                        let actual = gridder.degrid(&grid, taps);
+                        let bound = 64.0 * f64::EPSILON * absolute_sum;
+                        assert!((actual.re - expected.re).abs() <= bound);
+                        assert!((actual.im - expected.im).abs() <= bound);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn native_row_retention_reuses_one_stable_slot_across_owner_moves() {
