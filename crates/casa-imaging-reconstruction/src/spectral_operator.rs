@@ -5649,8 +5649,7 @@ impl CompleteDataOwnerState {
                 uvw_m,
                 phase_shift_m,
                 mosaic_response,
-            )?
-            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+            )?;
             let domain_touches = stencil.iter().any(|sample| {
                 self.operators[chart_ordinal]
                     .slab
@@ -5988,8 +5987,7 @@ impl CompleteDataOwnerState {
                 uvw_m,
                 phase_shift_m,
                 mosaic_response,
-            )?
-            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+            )?;
             let domain_touches = stencil.iter().any(|sample| {
                 self.operators[chart_ordinal]
                     .slab
@@ -6174,24 +6172,18 @@ impl CompleteDataOwnerState {
                     chart.domain_ordinal,
                     chart.facet_ordinal,
                 )?;
-                let samples = spectral_stencil(
+                let stencil = spectral_stencil(
                     &self.specification,
                     first,
                     uvw_m,
                     phase_shift_m,
                     mosaic_response,
                 )?;
-                let mut stencil = SmallVec::<[_; 4]>::new();
-                let mut domain_touches = false;
-                for sample in samples {
-                    let sample = sample?;
-                    domain_touches |= self.operators[chart_ordinal]
+                let domain_touches = stencil.iter().any(|sample| {
+                    self.operators[chart_ordinal]
                         .slab
-                        .owns(sample.output_channel);
-                    if predicts_residual {
-                        stencil.push(sample);
-                    }
-                }
+                        .owns(sample.output_channel)
+                });
                 touches_core |= domain_touches;
                 if predicts_residual && domain_touches {
                     for (coordinate, predicted) in model_prediction.iter_mut().enumerate() {
@@ -6536,8 +6528,7 @@ impl CompleteDataOwnerState {
                     uvw_m,
                     phase_shift_m,
                     mosaic_response,
-                )?
-                .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+                )?;
                 let domain_touches = stencil.iter().any(|sample| {
                     self.operators[domain_ordinal]
                         .slab
@@ -6649,8 +6640,7 @@ impl CompleteDataOwnerState {
                 selected.transformed_uvw_m(),
                 selected.phase_shift_m(),
                 mosaic_response,
-            )?
-            .collect::<Result<SmallVec<[_; 4]>, _>>()?;
+            )?;
             if stencil
                 .iter()
                 .any(|sample| self.operators[0].slab.owns(sample.output_channel))
@@ -7008,14 +6998,11 @@ fn spectral_stencil(
     uvw_m: [f64; 3],
     phase_shift_m: f64,
     mosaic_response: Option<MosaicResponse>,
-) -> Result<
-    impl Iterator<Item = Result<SpectralOperatorSample, SpectralOperatorError>>,
-    SpectralOperatorError,
-> {
-    Ok(specification
+) -> Result<SmallVec<[SpectralOperatorSample; 4]>, SpectralOperatorError> {
+    specification
         .prediction_contributions(weighted)?
         .into_iter()
-        .map(move |contribution| {
+        .map(|contribution| {
             SpectralOperatorSample::new(
                 usize::try_from(contribution.output_channel())
                     .map_err(|_| SpectralOperatorError::InvalidSample)?,
@@ -7034,7 +7021,8 @@ fn spectral_stencil(
                     )
                     .with_mosaic_response(mosaic_response)
             })
-        }))
+        })
+        .collect()
 }
 
 pub(crate) fn polarization_diagonal(
