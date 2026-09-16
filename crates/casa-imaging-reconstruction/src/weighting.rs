@@ -812,9 +812,9 @@ fn weighted_sample_from_state(
     density: &[f64],
     robust_f2: &[f64],
     frequency_range_hz: Option<[f64; 2]>,
-    sample: &WeightingSelectedSample,
+    sample: WeightingSelectedSample,
     contributions: SelectedSpectralContributions,
-) -> Result<(Option<f64>, SmallVec<[WeightingSpectralValue; 4]>), WeightingError> {
+) -> Result<WeightingSampleValue, WeightingError> {
     let weight = |contribution| {
         weight_from_state(
             problem,
@@ -822,7 +822,7 @@ fn weighted_sample_from_state(
             density,
             robust_f2,
             frequency_range_hz,
-            sample,
+            &sample,
             contribution,
         )
     };
@@ -864,7 +864,11 @@ fn weighted_sample_from_state(
             })
         })
         .collect::<Result<SmallVec<[_; 4]>, WeightingError>>()?;
-    Ok((source_imaging_weight, spectral_values))
+    Ok(WeightingSampleValue {
+        sample,
+        source_imaging_weight,
+        spectral_values,
+    })
 }
 
 /// Begin reconstruction-owned accumulation for a global density pass.
@@ -1154,20 +1158,15 @@ impl WeightingSumWeightPhase {
         validate_spectral_contribution_capacity(problem, &contributions)?;
         let sample =
             WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
-        let (source_imaging_weight, spectral_values) = weighted_sample_from_state(
+        let weighted = weighted_sample_from_state(
             problem,
             self.grid,
             &self.density,
             &self.robust_f2,
             self.frequency_range_hz,
-            &sample,
+            sample,
             contributions,
         )?;
-        let weighted = WeightingSampleValue {
-            sample,
-            source_imaging_weight,
-            spectral_values,
-        };
         let sample = &weighted.sample;
         let spectral_values = &weighted.spectral_values;
         if let Some(rows) = &mut self.cube_rows {
@@ -2344,20 +2343,15 @@ impl WeightingReplayPhase<'_> {
             sample.into(),
             output_frame_frequency_hz,
         )?;
-        let (source_imaging_weight, spectral_values) = weighted_sample_from_state(
+        let weighted = weighted_sample_from_state(
             problem,
             self.generation.grid,
             &self.generation.density,
             &self.generation.robust_f2,
             self.generation.frequency_range_hz,
-            &sample,
+            sample,
             contributions,
         )?;
-        let weighted = WeightingSampleValue {
-            sample,
-            source_imaging_weight,
-            spectral_values,
-        };
         let emitted = self
             .flush_before_group(&weighted)?
             .then(|| self.take_block())
