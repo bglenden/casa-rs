@@ -125,16 +125,13 @@ impl GriddedNormalOperatorCompiler {
                         .collect::<SmallVec<[_; 4]>>(),
                 )?;
                 let bank = scratch.next_bank;
-                self.standard_predictions(
+                let linear = self.standard_predictions(
                     correlations,
                     operator,
                     &mut scratch.banks[bank],
                     scratch.maximum_native_terms_per_correlation,
                 )?;
-                if self
-                    .specification
-                    .uses_casa_linear_resampling(correlations)?
-                {
+                if linear {
                     let observed = std::iter::repeat_n(Complex64::default(), correlations.len())
                         .collect::<SmallVec<[_; 4]>>();
                     let native = NativeSpectralGroup {
@@ -227,7 +224,7 @@ impl GriddedNormalOperatorCompiler {
         operator: &PolarizationOperator,
         bank: &mut NativePredictionBank,
         maximum_native_terms_per_correlation: usize,
-    ) -> Result<(), SpectralOperatorError> {
+    ) -> Result<bool, SpectralOperatorError> {
         let first = correlations
             .first()
             .ok_or(SpectralOperatorError::InvalidSample)?;
@@ -240,7 +237,8 @@ impl GriddedNormalOperatorCompiler {
             .specification
             .uses_casa_linear_resampling(correlations)?;
         let linear_terms = if linear {
-            self.specification.prediction_contributions(first)?
+            self.specification
+                .casa_linear_prediction_contributions(first.selected())?
         } else {
             SmallVec::new()
         };
@@ -279,7 +277,7 @@ impl GriddedNormalOperatorCompiler {
             }
             push_fixed(&mut bank.correlations, start..bank.records.len())?;
         }
-        Ok(())
+        Ok(linear)
     }
 
     fn resampled_record_groups(
