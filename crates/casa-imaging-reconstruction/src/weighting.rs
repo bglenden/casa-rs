@@ -762,7 +762,16 @@ fn weight_from_state(
     if input == 0.0 {
         return Ok(0.0);
     }
-    let (plane, uv) = weighting_coordinate(problem, grid, sample, contribution)?;
+    let contribution = contribution.ok_or(WeightingError::OutputChannelMismatch)?;
+    let plane = match problem.weighting().density_scope() {
+        WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => 0,
+        WeightDensityScope::PerOutputChannel => contribution_plane(grid, contribution)?,
+    };
+    let taper = problem.weighting().uv_taper();
+    if matches!(problem.weighting().scheme(), WeightingScheme::Natural) && taper.is_none() {
+        return Ok(input);
+    }
+    let uv = uv_lambda(sample, contribution.evaluation_frequency_hz());
     let weighted = match problem.weighting().scheme() {
         WeightingScheme::Natural => input,
         WeightingScheme::Uniform => {
@@ -798,7 +807,7 @@ fn weight_from_state(
             input / (cell_density * robust_f2[plane] / factor + 1.0)
         }
     };
-    let weighted = weighted * gaussian_taper(problem.weighting().uv_taper(), uv);
+    let weighted = weighted * gaussian_taper(taper, uv);
     if weighted.is_finite() && weighted >= 0.0 {
         Ok(weighted)
     } else {
@@ -1008,15 +1017,14 @@ impl WeightingDensityPhase {
                 WeightDensityScope::NotApplicable => {}
                 WeightDensityScope::GlobalSelection => {
                     if let Some(contribution) = contributions.iter().next() {
-                        let (_, uv) =
-                            weighting_coordinate(problem, self.grid, &sample, Some(contribution))?;
+                        let uv = uv_lambda(&sample, contribution.evaluation_frequency_hz());
                         add_density_sample(problem, self.grid, &mut self.density, 0, uv, input)?;
                     }
                 }
                 WeightDensityScope::PerOutputChannel => {
                     for contribution in contributions.iter() {
-                        let (plane, uv) =
-                            weighting_coordinate(problem, self.grid, &sample, Some(contribution))?;
+                        let plane = contribution_plane(self.grid, contribution)?;
+                        let uv = uv_lambda(&sample, contribution.evaluation_frequency_hz());
                         add_density_sample(
                             problem,
                             self.grid,
@@ -2678,28 +2686,6 @@ fn add_density_sample(
         }
     }
     Ok(())
-}
-
-fn weighting_coordinate(
-    problem: &CompiledProblem,
-    grid: DensityGridShape,
-    sample: &WeightingSelectedSample,
-    contribution: Option<SelectedSpectralContribution>,
-) -> Result<(usize, [f64; 2]), WeightingError> {
-    match problem.weighting().density_scope() {
-        WeightDensityScope::NotApplicable | WeightDensityScope::GlobalSelection => {
-            let contribution = contribution.ok_or(WeightingError::OutputChannelMismatch)?;
-            Ok((0, uv_lambda(sample, contribution.evaluation_frequency_hz())))
-        }
-        WeightDensityScope::PerOutputChannel => {
-            let contribution = contribution.ok_or(WeightingError::OutputChannelMismatch)?;
-            let plane = contribution_plane(grid, contribution)?;
-            Ok((
-                plane,
-                uv_lambda(sample, contribution.evaluation_frequency_hz()),
-            ))
-        }
-    }
 }
 
 fn contribution_plane(
