@@ -2,6 +2,42 @@
 
 Work issue: #541. Related: #543, draft PR #630.
 
+## 2026-09-15: plan-identity CI repair and serial restart
+
+The previous run `22745ec0e448480f9534d180d1012b11` is archived at
+`autoresearch-results/archive/20260915-050733`. Its retained trial
+`ef3cf12fd9` caches leading bounded-record sort keys: matched Rust/CASA ratio
+1.09758232221312, paired candidate/parent 0.9909536096386621 with 95% interval
+[0.9830882437329485, 0.9988819037517114]. This remains short of serial parity.
+
+Hosted CI run `34927655662` failed the exact plan-ID golden in
+`plan_seals_physical_work_and_every_required_binding`. The logical, geometry,
+numerics, product-graph and physical-work identities matched in the local
+macOS/Linux diagnostic; the numerical publication artifact identity differed.
+The fixture now uses a single phase-centre pixel and passes that same compiled
+problem to the existing transaction-staging helper. All binding assertions,
+repeatability and one platform-independent version-12 golden remain. Production
+hashing, scientific tests and the serial performance workload are unchanged.
+
+The new digest matched on macOS release and Linux ARM64 debug before replacing
+the golden. After replacement, all 28 `compile_plan_run` tests selected by
+`plan_` pass on both platforms (macOS 3.32 seconds, Linux 91.84 seconds, excluding
+build). macOS build/test used 143.05 seconds and 2,418,327,552 bytes sampled peak
+under 600-second/8-GiB caps; Linux used two CPUs, 8 GiB without swap and a
+600-second timeout. `cargo fmt --all -- --check` and `git diff --check` pass.
+This is local CI-failure repair evidence, not a green hosted x86 CI claim.
+The remote PR still points to `0454aefec6`; no push or merge is included.
+
+On resumption, the earlier `/private/tmp` evidence and input directories were
+absent. New evidence is under `/private/tmp/casa-t55-restart.ENFucS`, including
+the red/green macOS logs and retained Linux container logs. Snapshot 19 and all
+664 manifest entries were verified again. Restore the exact frozen inputs and
+original reference executable before initializing a fresh baseline; never use
+the current candidate as its own reference. The approved remaining allowance
+is 19 trials, preserving all retired hypotheses and the 0.90 target. Full-size
+acceptance still requires GLENDENNING; the sections below record the earlier
+recovery rather than asserting its temporary files still exist.
+
 ## Current source and result
 
 Local branch `codex/t55-serial-autoresearch` was fast-forwarded to the published

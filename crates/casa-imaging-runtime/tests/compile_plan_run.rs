@@ -8508,7 +8508,13 @@ fn versioned_request_compiles_before_physical_planning() {
 #[test]
 fn plan_seals_physical_work_and_every_required_binding() {
     assert_eq!(ExecutionPlanId::SCHEMA_VERSION, 12);
-    let problem = compile(request(1)).expect("logical compilation");
+    // The golden includes exact numerical publication content. A single phase-centre
+    // pixel avoids off-axis numerical work in this identity-binding regression.
+    let problem = compile(request_with_geometry(
+        1,
+        geometry_with_shape_and_increment([0.0, 0.0], ImageShape::new(1, 1), [-1.0e-6, 1.0e-6]),
+    ))
+    .expect("logical compilation");
     let expected_problem_id = problem.problem_id();
     let bindings =
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4));
@@ -8524,7 +8530,13 @@ fn plan_seals_physical_work_and_every_required_binding() {
         |problem, bindings| {
             assert_eq!(problem.problem_id(), expected_problem_id);
             assert_eq!(bindings.resource_policy(), &ResourcePolicy::Balanced);
-            Ok::<_, ()>(physical_work(6))
+            Ok::<_, ()>(physical_work_with_transaction_staging(
+                problem,
+                6,
+                product_participants(problem),
+                false,
+                true,
+            ))
         },
     )
     .expect("physical planning");
@@ -8573,16 +8585,22 @@ fn plan_seals_physical_work_and_every_required_binding() {
         execution_plan.physical_work_id()
     );
 
-    let repeated = plan_with_receipts(&problem, bindings, &receipts, |_, _| {
-        Ok::<_, ()>(physical_work(6))
+    let repeated = plan_with_receipts(&problem, bindings, &receipts, |problem, _| {
+        Ok::<_, ()>(physical_work_with_transaction_staging(
+            problem,
+            6,
+            product_participants(problem),
+            false,
+            true,
+        ))
     })
     .expect("repeat physical planning");
     assert_eq!(execution_plan.plan_id(), repeated.plan_id());
     assert_eq!(
         execution_plan.plan_id().as_bytes(),
         [
-            132, 71, 84, 206, 228, 138, 118, 210, 82, 151, 166, 55, 97, 52, 50, 97, 86, 103, 184,
-            231, 32, 48, 162, 94, 150, 1, 121, 64, 139, 238, 126, 21,
+            111, 0, 155, 65, 0, 194, 48, 14, 192, 137, 132, 88, 246, 169, 253, 105, 132, 134, 185,
+            31, 142, 0, 253, 191, 111, 238, 86, 18, 230, 18, 240, 39,
         ]
     );
 }
