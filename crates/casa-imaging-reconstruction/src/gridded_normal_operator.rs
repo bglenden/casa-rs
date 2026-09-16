@@ -3608,7 +3608,6 @@ fn decode_record(
     Ok(record)
 }
 
-#[inline]
 fn decode_domain_record(
     encoded: &[u8],
     catalogs: &GriddedNormalDomainTileCatalogs,
