@@ -260,9 +260,16 @@ impl SelectedImageDomainProjection {
 /// Entries are required to be contiguous in domain-major, facet-minor order.
 /// The collection is immutable and cheaply shared between a retained source
 /// block, selected-run validation, and scientific consumers.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct SelectedImageDomainProjections {
     entries: Arc<[SelectedImageDomainProjection]>,
+}
+
+impl PartialEq for SelectedImageDomainProjections {
+    fn eq(&self, other: &Self) -> bool {
+        // Constructors admit only finite coordinates, so equality is reflexive.
+        Arc::ptr_eq(&self.entries, &other.entries) || self.entries == other.entries
+    }
 }
 
 impl SelectedImageDomainProjections {
@@ -1817,6 +1824,44 @@ mod tests {
         assert!(SelectedImageDomainProjections::new([main, outlier]).is_some());
         assert!(SelectedImageDomainProjections::new(std::iter::empty()).is_none());
         assert!(SelectedPhaseCentreProjection::new([f64::NAN, 0.0, 0.0], 0.0).is_none());
+    }
+
+    #[test]
+    fn shared_projection_equality_preserves_independent_value_comparisons() {
+        let model = SelectedPhaseCentreProjection::new([1.0, -2.0, 3.0], 0.25).unwrap();
+        let main = SelectedImageDomainProjection::with_shared_psf(0, model)
+            .with_aw_pointing_pixel([4.0, 5.0])
+            .unwrap();
+        let outlier = SelectedImageDomainProjection::with_shared_psf(1, model);
+        let original = SelectedImageDomainProjections::new([main, outlier]).unwrap();
+        let shared = original.clone();
+        let independent = SelectedImageDomainProjections::new(original.iter()).unwrap();
+        assert!(Arc::ptr_eq(&original.entries, &shared.entries));
+        assert!(!Arc::ptr_eq(&original.entries, &independent.entries));
+        assert_eq!(original, shared);
+        assert_eq!(original, independent);
+        let changed = SelectedImageDomainProjections::new([
+            main.with_aw_pointing_pixel([4.0, 6.0]).unwrap(),
+            outlier,
+        ])
+        .unwrap();
+        assert_ne!(original, changed);
+        assert_ne!(
+            original,
+            SelectedImageDomainProjections::new([main]).unwrap()
+        );
+
+        let zeros = |zero| {
+            SelectedImageDomainProjections::one_domain_with_shared_psf(
+                SelectedPhaseCentreProjection::new([zero; 3], zero).unwrap(),
+            )
+        };
+        assert_eq!(zeros(0.0), zeros(-0.0));
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(SelectedPhaseCentreProjection::new([invalid, 0.0, 0.0], 0.0).is_none());
+            assert!(SelectedPhaseCentreProjection::new([0.0; 3], invalid).is_none());
+            assert!(main.with_aw_pointing_pixel([0.0, invalid]).is_none());
+        }
     }
 
     #[test]
