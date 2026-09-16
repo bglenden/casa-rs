@@ -10,23 +10,6 @@ use num_complex::Complex64;
 use super::*;
 use crate::spectral_operator::GriddedNormalLocalContribution;
 
-fn same_prediction_terms(left: &[u8], right: &[u8], record_bytes: usize) -> bool {
-    debug_assert!(matches!(
-        record_bytes,
-        GRIDDED_NORMAL_OPERATOR_RECORD_BYTES | AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES
-    ));
-    debug_assert_eq!(left.len() % record_bytes, 0);
-    debug_assert_eq!(right.len() % record_bytes, 0);
-    // Both fixed layouts end with the accumulation-only imaging weight.
-    left.len() == right.len()
-        && left
-            .chunks_exact(record_bytes)
-            .zip(right.chunks_exact(record_bytes))
-            .all(|(left, right)| {
-                left[..record_bytes - size_of::<f64>()] == right[..record_bytes - size_of::<f64>()]
-            })
-}
-
 fn planned_vec<T>(capacity: usize) -> Result<Vec<T>, SpectralOperatorError> {
     let mut values = Vec::new();
     values
@@ -1554,7 +1537,6 @@ impl GriddedNormalOperatorApply {
                     | GriddedNormalRecordLayout::TaylorWithCoordinates(_)
                     | GriddedNormalRecordLayout::TaylorViaChannelMajor { .. }
                     | GriddedNormalRecordLayout::Joint { .. } => {
-                        let mut previous_prediction: Option<(&[u8], Complex64)> = None;
                         for (local, group) in prepared.groups[group_range].iter().enumerate() {
                             if !group.prediction_needed {
                                 owner.values[local] = Complex64::default();
@@ -1575,24 +1557,18 @@ impl GriddedNormalOperatorApply {
                                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?
                                 .checked_mul(prepared.record_bytes)
                                 .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                            let records = encoded
+                            let mut prediction = Complex64::default();
+                            for bytes in encoded
                                 .get(start..end)
-                                .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
-                            let reused_prediction = previous_prediction
-                                .filter(|(previous, _)| {
-                                    same_prediction_terms(records, previous, prepared.record_bytes)
-                                })
-                                .map(|(_, prediction)| prediction);
-                            let mut prediction = reused_prediction.unwrap_or_default();
-                            for bytes in records.chunks_exact(prepared.record_bytes) {
+                                .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
+                                .chunks_exact(prepared.record_bytes)
+                            {
                                 let record = decode_domain_record(
                                     bytes,
                                     &self.tile_catalogs,
                                     self.program.output_plane_count()?,
                                 )?;
-                                if record.role == RecordRole::Accumulation
-                                    || reused_prediction.is_some()
-                                {
+                                if record.role == RecordRole::Accumulation {
                                     continue;
                                 }
                                 let polarizations =
@@ -1623,7 +1599,6 @@ impl GriddedNormalOperatorApply {
                                 return Err(SpectralOperatorError::GeneratedNonfinite);
                             }
                             owner.values[local] = prediction;
-                            previous_prediction = Some((records, prediction));
                         }
                     }
                     GriddedNormalRecordLayout::Taylor(plan) => {
@@ -1954,57 +1929,6 @@ mod tests {
                 start: y,
                 weight_index: 50,
             },
-        }
-    }
-
-    #[test]
-    fn prediction_reuse_key_excludes_only_weights_in_both_fixed_layouts() {
-        for width in [
-            GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-            AW_GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
-        ] {
-            let original = (0..width * 2).map(|index| index as u8).collect::<Vec<_>>();
-            assert!(same_prediction_terms(&original, &original, width));
-            assert!(!same_prediction_terms(&original, &original[..width], width));
-            for index in 0..original.len() {
-                let mut changed = original.clone();
-                changed[index] ^= 1;
-                assert_eq!(
-                    same_prediction_terms(&original, &changed, width),
-                    index % width >= width - size_of::<f64>(),
-                    "record width {width}, changed byte {index}",
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn reused_prediction_terms_still_require_weight_validation() {
-        let record = ReducedRecordKey {
-            chart_ordinal: 0,
-            output_channel: 0,
-            taps: encode_taps(taps(0, 0)).unwrap(),
-            forward_real: 1.0_f64.to_bits(),
-            forward_imaginary: 0,
-            imaging_weight: 1.0_f64.to_bits(),
-            role: RecordRole::Both,
-            aw: None,
-        };
-        let (encoded, _) =
-            encode_reduced::<false>(BTreeMap::from([(vec![record], vec![1.0])])).unwrap();
-        assert!(decode_record_for_shape(&encoded, [16, 16], 1).is_ok());
-        for weight in [2.0, -1.0, f64::NAN, f64::INFINITY] {
-            let mut changed = encoded.clone();
-            changed[32..40].copy_from_slice(&weight.to_le_bytes());
-            assert!(same_prediction_terms(
-                &encoded,
-                &changed,
-                GRIDDED_NORMAL_OPERATOR_RECORD_BYTES
-            ));
-            assert_eq!(
-                decode_record_for_shape(&changed, [16, 16], 1).is_ok(),
-                weight == 2.0
-            );
         }
     }
 
