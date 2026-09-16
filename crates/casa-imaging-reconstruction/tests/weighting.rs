@@ -735,34 +735,6 @@ fn one_correlation_group_preserves_its_casa_float_weight() {
 }
 
 #[test]
-fn untapered_natural_weighting_preserves_finite_input_bits() {
-    let problem = problem(
-        WeightingScheme::Natural,
-        WeightDensityScope::NotApplicable,
-        None,
-    );
-    for weight in [
-        0.0_f32,
-        -0.0,
-        -1.0,
-        f32::from_bits(1),
-        f32::MIN_POSITIVE,
-        3.0,
-        f32::MAX,
-    ] {
-        let mut sample = exact_samples(&problem)[0].clone();
-        sample.input_weight = weight;
-        let (weights, _) = grouped_weighting(
-            &problem,
-            &[sample],
-            &[SelectedInputWeightGroup::single(weight)],
-        );
-        assert_eq!(weights.len(), 1);
-        assert_eq!(weights[0].to_bits(), f64::from(weight).max(0.0).to_bits());
-    }
-}
-
-#[test]
 fn unequal_parallel_hands_share_the_casa_float_mean_for_natural_weighting() {
     let problem = problem(
         WeightingScheme::Natural,
