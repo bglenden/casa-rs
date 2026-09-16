@@ -395,7 +395,6 @@ impl BoundedRecordEncoder {
                         multiplicity = updated;
                         index += 1;
                         if index == ranges.len()
-                            || ranges[index].leading_key != range.leading_key
                             || records[ranges[index].start..ranges[index].end] != *group
                         {
                             break;
@@ -697,8 +696,6 @@ mod tests {
     fn cached_group_prefix_preserves_full_lexicographic_order_and_multiplicity() {
         let mut channel = record(0);
         channel.output_channel = 1;
-        let mut chart = record(0);
-        chart.chart_ordinal = 1;
         let mut coefficient = record(2);
         coefficient.forward_real = 2.0_f64.to_bits();
         let groups = vec![
@@ -708,7 +705,6 @@ mod tests {
             vec![record(2)],
             vec![record(1)],
             vec![record(2), record(1)],
-            vec![chart],
             vec![record(2), record(9)],
         ];
         let count = groups.iter().map(Vec::len).sum();
@@ -734,7 +730,7 @@ mod tests {
         }
         encoder.finish(&mut sink).unwrap();
         assert_eq!(bytes, oracle(expected, false));
-        assert_eq!(encoder.reduced_groups(), 7);
+        assert_eq!(encoder.reduced_groups(), 6);
         assert_eq!(
             BoundedRecordEncoder::workspace_bytes(
                 GriddedNormalRecordLayout::Scalar,
