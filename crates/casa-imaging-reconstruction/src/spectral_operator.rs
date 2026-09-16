@@ -11435,11 +11435,11 @@ impl StandardConvolution {
         let y_weights = self.weights[taps.y.weight_index];
         let mut value = Complex64::new(0.0, 0.0);
         for (x, x_weight) in x_weights.into_iter().enumerate() {
-            let mut row_value = Complex64::new(0.0, 0.0);
+            let mut row_values = [Complex64::new(0.0, 0.0); 2];
             for (y, y_weight) in y_weights.into_iter().enumerate() {
-                row_value += grid[(taps.x.start + x, taps.y.start + y)] * y_weight;
+                row_values[y % 2] += grid[(taps.x.start + x, taps.y.start + y)] * y_weight;
             }
-            value += row_value * x_weight;
+            value += (row_values[0] + row_values[1]) * x_weight;
         }
         value
     }
