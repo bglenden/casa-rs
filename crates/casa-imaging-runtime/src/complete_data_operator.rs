@@ -1854,23 +1854,15 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
         let _reload_role =
             crate::reload_probe::RoleScope::enter(self.timings.pass_ordinal, partition.phase());
         let started = self.timings.enabled.then(Instant::now);
-        let first_frame = storage
-            .frames()
-            .next()
-            .map(|frame| (frame.sequence(), frame.payload()));
         let result = self
             .state
             .state
             .execute_two_domain_window(
                 |ordinal| {
-                    if ordinal == 0 {
-                        first_frame
-                    } else {
-                        storage
-                            .frames()
-                            .nth(ordinal)
-                            .map(|frame| (frame.sequence(), frame.payload()))
-                    }
+                    storage
+                        .frames()
+                        .nth(ordinal)
+                        .map(|frame| (frame.sequence(), frame.payload()))
                 },
                 *partition,
             )
