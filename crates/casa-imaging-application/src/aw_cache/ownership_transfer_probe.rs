@@ -209,15 +209,18 @@ fn write_control_cache(cache: &Path, imaging_extent: usize, weight_extent: usize
 
 fn normal_fingerprint(normal: &casa_imaging_reconstruction::FinalNormalState) -> String {
     use sha2::{Digest, Sha256};
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("complete final normal window");
     let mut digest = Sha256::new();
-    for values in [normal.residual(), normal.normal_approximation()] {
+    for values in [window.residual(), window.normal_approximation()] {
         digest.update((values.len() as u64).to_le_bytes());
         for value in values {
             digest.update(value.re.to_bits().to_le_bytes());
             digest.update(value.im.to_bits().to_le_bytes());
         }
     }
-    for values in [normal.sensitivity(), normal.sum_weights()] {
+    for values in [window.sensitivity(), normal.sum_weights()] {
         digest.update((values.len() as u64).to_le_bytes());
         for value in values {
             digest.update(value.to_bits().to_le_bytes());
@@ -239,6 +242,7 @@ fn ownership_transfer_dirty_fingerprint_uses_complete_normal_arrays() {
             .env("CASA_RS_T51_DIRTY_FINGERPRINT_CHILD", "1")
             .env("CASA_RS_IMAGING_SPILL_READ_BYTES_PER_SECOND", "3000000000")
             .env("CASA_RS_IMAGING_SPILL_WRITE_BYTES_PER_SECOND", "3000000000")
+            .env("RUST_MIN_STACK", "16777216")
             .status()
             .unwrap();
         assert!(status.success());
@@ -258,11 +262,14 @@ fn ownership_transfer_dirty_fingerprint_uses_complete_normal_arrays() {
     let normal = result.outcome.output.scientific.normal_state();
     assert!(normal.coefficient_term_count() > 0);
     assert!(normal.normal_moment_count() > 0);
-    assert!(normal.coefficient_term(0).is_none());
-    assert!(normal.normal_moment(0).is_none());
-    assert!(!normal.residual().is_empty());
-    assert!(!normal.normal_approximation().is_empty());
-    assert!(!normal.sensitivity().is_empty());
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("complete final normal window");
+    assert!(window.coefficient_term(0).is_none());
+    assert!(window.normal_moment(0).is_none());
+    assert!(!window.residual().is_empty());
+    assert!(!window.normal_approximation().is_empty());
+    assert!(!window.sensitivity().is_empty());
     assert!(!normal.sum_weights().is_empty());
     assert_eq!(normal_fingerprint(normal).len(), 64);
 }

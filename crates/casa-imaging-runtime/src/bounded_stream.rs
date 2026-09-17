@@ -9,6 +9,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -20,9 +21,14 @@ pub(crate) const BOUNDED_WORKER_STACK_BYTES: usize = 2 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BoundedStreamPlan {
     source_slots: usize,
-    workers: usize,
     source_capacity_bytes: u64,
     maximum_logical_units_per_block: usize,
+    kernel: BoundedKernelPlan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BoundedKernelPlan {
+    workers: usize,
     maximum_partitions_per_block: usize,
     dynamic_kernel_window_capacity_bytes: u64,
     kernel_window_capacity_bytes: u64,
@@ -39,27 +45,18 @@ impl BoundedStreamPlan {
         if !(1..=2).contains(&source_slots) {
             return Err(BoundedStreamPlanError::SourceSlots);
         }
-        if workers == 0 {
-            return Err(BoundedStreamPlanError::Workers);
-        }
         if source_capacity_bytes == 0 {
             return Err(BoundedStreamPlanError::SourceCapacity);
         }
-        if maximum_partitions_per_block == 0 {
-            return Err(BoundedStreamPlanError::Partitions);
-        }
-        let kernel_window_capacity_bytes =
-            fixed_kernel_window_capacity_bytes::<Partition, Partial>(workers)?
-                .checked_add(dynamic_kernel_window_capacity_bytes)
-                .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
         Ok(Self {
             source_slots,
-            workers,
             source_capacity_bytes,
             maximum_logical_units_per_block: 1,
-            maximum_partitions_per_block,
-            dynamic_kernel_window_capacity_bytes,
-            kernel_window_capacity_bytes,
+            kernel: BoundedKernelPlan::new::<Partition, Partial>(
+                workers,
+                maximum_partitions_per_block,
+                dynamic_kernel_window_capacity_bytes,
+            )?,
         })
     }
 
@@ -72,6 +69,35 @@ impl BoundedStreamPlan {
         }
         self.maximum_logical_units_per_block = maximum;
         Ok(self)
+    }
+}
+
+impl BoundedKernelPlan {
+    pub(crate) fn new<Partition, Partial>(
+        workers: usize,
+        maximum_partitions_per_block: usize,
+        dynamic_kernel_window_capacity_bytes: u64,
+    ) -> Result<Self, BoundedStreamPlanError> {
+        if workers == 0 {
+            return Err(BoundedStreamPlanError::Workers);
+        }
+        if maximum_partitions_per_block == 0 {
+            return Err(BoundedStreamPlanError::Partitions);
+        }
+        let kernel_window_capacity_bytes =
+            fixed_kernel_window_capacity_bytes::<Partition, Partial>(workers)?
+                .checked_add(dynamic_kernel_window_capacity_bytes)
+                .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
+        Ok(Self {
+            workers,
+            maximum_partitions_per_block,
+            dynamic_kernel_window_capacity_bytes,
+            kernel_window_capacity_bytes,
+        })
+    }
+
+    pub(crate) const fn capacity_bytes(self) -> u64 {
+        self.kernel_window_capacity_bytes
     }
 }
 
@@ -90,7 +116,8 @@ fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
         0
     } else {
         BOUNDED_WORKER_STACK_BYTES
-            .checked_mul(workers)
+            .checked_add(size_of::<JoinHandle<()>>())
+            .and_then(|bytes| bytes.checked_mul(workers))
             .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?
     };
     let total = vectors
@@ -272,6 +299,10 @@ pub(crate) trait PartitionedKernel<S>: Send + Sync {
     fn partition_dynamic_capacity_bytes(&self, _partition: &Self::Partition) -> u64 {
         0
     }
+    /// Temporary private solve storage, released before returning the partial.
+    fn execution_dynamic_capacity_bytes(&self, _partition: &Self::Partition) -> u64 {
+        0
+    }
     fn partition_measurements(&self, _partition: &Self::Partition) -> BoundedPartitionMeasurements {
         BoundedPartitionMeasurements::default()
     }
@@ -289,8 +320,71 @@ pub(crate) trait PartitionedKernel<S>: Send + Sync {
         work: WorkIdentity,
         storage: &S,
         partial: Self::Partial,
+        execution: BoundedExecution<'_>,
     ) -> Result<(), Self::Error>;
-    fn complete(self) -> Result<Self::Completion, Self::Error>;
+    fn complete(self, execution: BoundedExecution<'_>) -> Result<Self::Completion, Self::Error>;
+}
+
+/// Borrowed authority for work inside the executor's installed worker team.
+#[derive(Clone, Copy)]
+pub(crate) struct BoundedExecution<'a>(Option<&'a FixedWorkerTeam>);
+
+impl BoundedExecution<'_> {
+    #[cfg(test)]
+    pub(crate) const fn serial() -> Self {
+        Self(None)
+    }
+
+    pub(crate) fn is_parallel(self) -> bool {
+        self.0.is_some_and(|team| team.pool.is_some())
+    }
+
+    pub(crate) fn consume_pair(
+        self,
+        science: impl FnOnce() -> std::io::Result<()> + Send,
+        compilation: impl FnOnce() -> std::io::Result<()> + Send,
+    ) -> std::io::Result<()> {
+        let Some(pool) = self.0.and_then(|team| team.pool.as_ref()) else {
+            science()?;
+            return compilation();
+        };
+        if pool.current_thread_index().is_none() {
+            return Err(std::io::Error::other(
+                "consumer pair is outside its admitted worker team",
+            ));
+        }
+        fn catch_consumer_panic(
+            label: &str,
+            consumer: impl FnOnce() -> std::io::Result<()>,
+        ) -> std::io::Result<()> {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(consumer)).unwrap_or_else(
+                |payload| {
+                    let message = payload
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| payload.downcast_ref::<&str>().copied())
+                        .unwrap_or("non-string panic payload");
+                    Err(std::io::Error::other(format!(
+                        "{label} panicked: {message}"
+                    )))
+                },
+            )
+        }
+
+        // Catch inside each branch so a panic cannot discard its sibling's
+        // failure. Neither owner is reused after the joined result is an error.
+        let results = rayon::join(
+            || catch_consumer_panic("science consumer", science),
+            || catch_consumer_panic("replay compiler", compilation),
+        );
+        match results {
+            (Err(science), Err(compilation)) => Err(std::io::Error::new(
+                science.kind(),
+                format!("{science}; replay compilation also failed: {compilation}"),
+            )),
+            (science, compilation) => science.and(compilation),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -416,6 +510,7 @@ enum WorkerExecution<P, E> {
 
 struct FixedWorkerTeam {
     pool: Option<rayon::ThreadPool>,
+    threads: Vec<JoinHandle<()>>,
     threads_started: Arc<AtomicU64>,
     #[cfg(test)]
     external_pool_installs: AtomicU64,
@@ -424,6 +519,17 @@ struct FixedWorkerTeam {
 
 impl FixedWorkerTeam {
     fn new(workers: usize) -> Result<Self, BoundedStreamPlanError> {
+        Self::new_with_spawn(workers, |thread| {
+            std::thread::Builder::new()
+                .stack_size(BOUNDED_WORKER_STACK_BYTES)
+                .spawn(move || thread.run())
+        })
+    }
+
+    fn new_with_spawn(
+        workers: usize,
+        mut spawn: impl FnMut(rayon::ThreadBuilder) -> std::io::Result<JoinHandle<()>>,
+    ) -> Result<Self, BoundedStreamPlanError> {
         if workers == 0 {
             return Err(BoundedStreamPlanError::Workers);
         }
@@ -431,6 +537,7 @@ impl FixedWorkerTeam {
         if workers == 1 {
             return Ok(Self {
                 pool: None,
+                threads: Vec::new(),
                 threads_started,
                 #[cfg(test)]
                 external_pool_installs: AtomicU64::new(0),
@@ -442,21 +549,28 @@ impl FixedWorkerTeam {
             .and_then(|bytes| bytes.checked_mul(u64::try_from(workers).ok()?))
             .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
         let started = Arc::clone(&threads_started);
+        let mut team = Self {
+            pool: None,
+            threads: Vec::with_capacity(workers),
+            threads_started,
+            #[cfg(test)]
+            external_pool_installs: AtomicU64::new(0),
+            stack_capacity_bytes,
+        };
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(workers)
             .stack_size(BOUNDED_WORKER_STACK_BYTES)
             .start_handler(move |_| {
                 started.fetch_add(1, Ordering::Relaxed);
             })
+            .spawn_handler(|thread| {
+                team.threads.push(spawn(thread)?);
+                Ok(())
+            })
             .build()
             .map_err(|_| BoundedStreamPlanError::Workers)?;
-        Ok(Self {
-            pool: Some(pool),
-            threads_started,
-            #[cfg(test)]
-            external_pool_installs: AtomicU64::new(0),
-            stack_capacity_bytes,
-        })
+        team.pool = Some(pool);
+        Ok(team)
     }
 
     fn install<R>(&self, operation: impl FnOnce() -> R + Send) -> R
@@ -549,14 +663,23 @@ impl FixedWorkerTeam {
         self.external_pool_installs.load(Ordering::Relaxed)
     }
 
-    fn shutdown(self) -> u64 {
-        let Self {
-            pool,
-            threads_started,
-            ..
-        } = self;
-        drop(pool);
-        threads_started.load(Ordering::Acquire)
+    fn shutdown(mut self) -> u64 {
+        self.join_threads();
+        self.threads_started.load(Ordering::Acquire)
+    }
+
+    fn join_threads(&mut self) {
+        drop(self.pool.take());
+        for thread in self.threads.drain(..) {
+            // Join every worker even during unwinding; Rayon propagates job panics.
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for FixedWorkerTeam {
+    fn drop(&mut self) {
+        self.join_threads();
     }
 }
 
@@ -575,6 +698,174 @@ struct ProcessMeasurements {
 }
 
 impl BoundedStreamMeasurements {
+    pub(crate) fn aggregate_window(
+        aggregate: Option<Self>,
+        window_ordinal: u64,
+        window: Self,
+    ) -> Option<Self> {
+        match aggregate {
+            None => Some(window),
+            Some(previous) => previous.combine_window(window_ordinal, window),
+        }
+    }
+
+    fn combine_window(mut self, window_ordinal: u64, window: Self) -> Option<Self> {
+        if self.worker_slots.len() != window.worker_slots.len()
+            || self.source_slots != window.source_slots
+            || self.workers != window.workers
+            || self.maximum_logical_units_per_block != window.maximum_logical_units_per_block
+            || self.maximum_partitions_per_block != window.maximum_partitions_per_block
+            || self.planned_source_capacity_bytes != window.planned_source_capacity_bytes
+            || self.planned_kernel_dynamic_capacity_bytes
+                != window.planned_kernel_dynamic_capacity_bytes
+            || self.planned_kernel_window_capacity_bytes
+                != window.planned_kernel_window_capacity_bytes
+        {
+            return None;
+        }
+        self.blocks_filled = self.blocks_filled.checked_add(window.blocks_filled)?;
+        self.logical_units_filled = self
+            .logical_units_filled
+            .checked_add(window.logical_units_filled)?;
+        self.logical_source_bytes = self
+            .logical_source_bytes
+            .checked_add(window.logical_source_bytes)?;
+        self.source_read_operations = self
+            .source_read_operations
+            .checked_add(window.source_read_operations)?;
+        self.source_fill_nanos = self
+            .source_fill_nanos
+            .checked_add(window.source_fill_nanos)?;
+        self.prepare_nanos = self.prepare_nanos.checked_add(window.prepare_nanos)?;
+        self.execute_nanos = self.execute_nanos.checked_add(window.execute_nanos)?;
+        self.commit_nanos = self.commit_nanos.checked_add(window.commit_nanos)?;
+        self.partitions_executed = self
+            .partitions_executed
+            .checked_add(window.partitions_executed)?;
+        self.commits_completed = self
+            .commits_completed
+            .checked_add(window.commits_completed)?;
+        self.worker_threads_started = self
+            .worker_threads_started
+            .checked_add(window.worker_threads_started)?;
+        self.dispatch_waves = self.dispatch_waves.checked_add(window.dispatch_waves)?;
+        self.producer_wait_nanos = self
+            .producer_wait_nanos
+            .checked_add(window.producer_wait_nanos)?;
+        self.consumer_wait_nanos = self
+            .consumer_wait_nanos
+            .checked_add(window.consumer_wait_nanos)?;
+        self.source_starved_nanos = self
+            .source_starved_nanos
+            .checked_add(window.source_starved_nanos)?;
+        self.terminal_wait_nanos = self
+            .terminal_wait_nanos
+            .checked_add(window.terminal_wait_nanos)?;
+        self.lease_return_nanos = self
+            .lease_return_nanos
+            .checked_add(window.lease_return_nanos)?;
+        self.overlap_nanos = self.overlap_nanos.checked_add(window.overlap_nanos)?;
+        self.wall_nanos = self.wall_nanos.checked_add(window.wall_nanos)?;
+        self.peak_logical_units_per_block = self
+            .peak_logical_units_per_block
+            .max(window.peak_logical_units_per_block);
+        self.ready_queue_high_water = self
+            .ready_queue_high_water
+            .max(window.ready_queue_high_water);
+        self.ready_queue_current_bytes_high_water = self
+            .ready_queue_current_bytes_high_water
+            .max(window.ready_queue_current_bytes_high_water);
+        self.ready_queue_capacity_bytes_high_water = self
+            .ready_queue_capacity_bytes_high_water
+            .max(window.ready_queue_capacity_bytes_high_water);
+        self.peak_live_source_blocks = self
+            .peak_live_source_blocks
+            .max(window.peak_live_source_blocks);
+        self.peak_live_source_current_bytes = self
+            .peak_live_source_current_bytes
+            .max(window.peak_live_source_current_bytes);
+        self.peak_live_source_capacity_bytes = self
+            .peak_live_source_capacity_bytes
+            .max(window.peak_live_source_capacity_bytes);
+        self.peak_partial_dynamic_capacity_bytes = self
+            .peak_partial_dynamic_capacity_bytes
+            .max(window.peak_partial_dynamic_capacity_bytes);
+        self.peak_worker_stack_capacity_bytes = self
+            .peak_worker_stack_capacity_bytes
+            .max(window.peak_worker_stack_capacity_bytes);
+        self.peak_kernel_window_capacity_bytes = self
+            .peak_kernel_window_capacity_bytes
+            .max(window.peak_kernel_window_capacity_bytes);
+        self.process_peak_rss_bytes =
+            match (self.process_peak_rss_bytes, window.process_peak_rss_bytes) {
+                (Some(previous), Some(current)) => Some(previous.max(current)),
+                (previous, current) => previous.or(current),
+            };
+        self.executed_work_identity_digest = extend_window_work_identity_digest(
+            b"casa-rs-bounded-work-aggregate-v1",
+            self.executed_work_identity_digest,
+            window_ordinal,
+            window.executed_work_identity_digest,
+            window.partitions_executed,
+        );
+        self.committed_work_identity_digest = extend_window_work_identity_digest(
+            b"casa-rs-bounded-work-aggregate-v1",
+            self.committed_work_identity_digest,
+            window_ordinal,
+            window.committed_work_identity_digest,
+            window.commits_completed,
+        );
+        for (worker_index, (worker, incoming)) in self
+            .worker_slots
+            .iter_mut()
+            .zip(window.worker_slots.into_vec())
+            .enumerate()
+        {
+            worker.work_units = worker.work_units.checked_add(incoming.work_units)?;
+            worker.samples = worker.samples.checked_add(incoming.samples)?;
+            worker.taps = worker.taps.checked_add(incoming.taps)?;
+            worker.active_nanos = worker.active_nanos.checked_add(incoming.active_nanos)?;
+            worker.ready_wait_nanos = worker
+                .ready_wait_nanos
+                .checked_add(incoming.ready_wait_nanos)?;
+            worker.backpressure_wait_nanos = worker
+                .backpressure_wait_nanos
+                .checked_add(incoming.backpressure_wait_nanos)?;
+            worker.reduction_nanos = worker
+                .reduction_nanos
+                .checked_add(incoming.reduction_nanos)?;
+            worker.work_identity_digest = extend_worker_window_identity_digest(
+                worker.work_identity_digest,
+                window_ordinal,
+                worker_index,
+                incoming.work_identity_digest,
+                incoming.work_units,
+            );
+            worker.wave_first_start_nanos = None;
+            worker.wave_active_nanos = 0;
+        }
+        let mut minimum = u64::MAX;
+        let mut active = 0;
+        let mut maximum = 0;
+        for work_units in self.worker_slots.iter().map(|worker| worker.work_units) {
+            if work_units > 0 {
+                active += 1;
+                minimum = minimum.min(work_units);
+                maximum = maximum.max(work_units);
+            }
+        }
+        self.workers_with_nonzero_partitions = active;
+        self.minimum_partitions_per_active_worker = if active == 0 { 0 } else { minimum };
+        self.maximum_partitions_per_active_worker = maximum;
+        #[cfg(test)]
+        {
+            self.external_pool_installs = self
+                .external_pool_installs
+                .checked_add(window.external_pool_installs)?;
+        }
+        Some(self)
+    }
+
     fn record_process(&mut self, process: ProcessMeasurements) -> Option<()> {
         let prepare_nanos = self.prepare_nanos.checked_add(process.prepare_nanos)?;
         let execute_nanos = self.execute_nanos.checked_add(process.execute_nanos)?;
@@ -659,6 +950,39 @@ fn extend_work_identity_digest(
     hasher.finalize().into()
 }
 
+fn extend_window_work_identity_digest(
+    domain: &[u8],
+    previous: [u8; 32],
+    window_ordinal: u64,
+    window: [u8; 32],
+    work_units: u64,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(domain);
+    hasher.update(previous);
+    hasher.update(window_ordinal.to_be_bytes());
+    hasher.update(work_units.to_be_bytes());
+    hasher.update(window);
+    hasher.finalize().into()
+}
+
+fn extend_worker_window_identity_digest(
+    previous: [u8; 32],
+    window_ordinal: u64,
+    worker_index: usize,
+    window: [u8; 32],
+    work_units: u64,
+) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"casa-rs-bounded-worker-work-aggregate-v1");
+    hasher.update(previous);
+    hasher.update(window_ordinal.to_be_bytes());
+    hasher.update((worker_index as u64).to_be_bytes());
+    hasher.update(work_units.to_be_bytes());
+    hasher.update(window);
+    hasher.finalize().into()
+}
+
 fn record_work_identity(hasher: &mut Sha256, identity: WorkIdentity) {
     hasher.update(identity.pass_ordinal.to_be_bytes());
     hasher.update(identity.source_ordinal.to_be_bytes());
@@ -678,7 +1002,7 @@ fn extend_worker_work_identity_digest(previous: [u8; 32], identity: WorkIdentity
 }
 
 fn process_block<S, K>(
-    plan: BoundedStreamPlan,
+    plan: BoundedKernelPlan,
     block: BlockIdentity,
     storage: &S,
     kernel: &mut K,
@@ -724,6 +1048,7 @@ where
     let fixed_wave_bytes = vector_capacity_bytes(&wave)
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&completed)?))
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&exclusive_regions)?))
+        .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&worker_team.threads)?))
         .and_then(|bytes| bytes.checked_add(worker_measurement_capacity_bytes))
         .and_then(|bytes| {
             bytes.checked_add(
@@ -820,6 +1145,26 @@ where
         let worker_stack_capacity_bytes = worker_team.stack_capacity_bytes();
         peak_worker_stack_capacity_bytes =
             peak_worker_stack_capacity_bytes.max(worker_stack_capacity_bytes);
+        let execution_bytes = wave
+            .iter()
+            .try_fold(0_u64, |bytes, (_, partition)| {
+                bytes.checked_add(kernel.execution_dynamic_capacity_bytes(&partition.payload))
+            })
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        let executing_dynamic_bytes = dynamic_partition_window_bytes
+            .checked_add(execution_bytes)
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        let executing_window_bytes = fixed_wave_bytes
+            .checked_add(worker_stack_capacity_bytes)
+            .and_then(|bytes| bytes.checked_add(executing_dynamic_bytes))
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        if executing_dynamic_bytes > plan.dynamic_kernel_window_capacity_bytes
+            || executing_window_bytes > plan.kernel_window_capacity_bytes
+        {
+            return Err(BoundedStreamError::ResidencyExceeded);
+        }
+        peak_kernel_window_capacity_bytes =
+            peak_kernel_window_capacity_bytes.max(executing_window_bytes);
         for worker in worker_measurements.iter_mut() {
             worker.wave_first_start_nanos = None;
             worker.wave_active_nanos = 0;
@@ -948,7 +1293,12 @@ where
             };
             let reduction_started = Instant::now();
             kernel
-                .commit(identity, storage, partial)
+                .commit(
+                    identity,
+                    storage,
+                    partial,
+                    BoundedExecution(Some(worker_team)),
+                )
                 .map_err(BoundedStreamError::Kernel)?;
             let reduction_nanos = reduction_started.elapsed().as_nanos();
             let worker = worker_measurements
@@ -1168,6 +1518,76 @@ impl OverlapState {
     }
 }
 
+/// Execute already-resident owner work through the same bounded waves and
+/// ordered commit path as streamed work, without a producer or source slots.
+pub(crate) fn execute_bounded_resident<S, K>(
+    plan: BoundedKernelPlan,
+    pass_ordinal: u32,
+    storage: &S,
+    mut kernel: K,
+) -> BoundedStreamResult<(), K::Completion, std::convert::Infallible, K::Error>
+where
+    S: Sync,
+    K: PartitionedKernel<S>,
+{
+    let started = Instant::now();
+    let mut measurements = measurements_for_kernel_plan(plan);
+    let worker_team = match FixedWorkerTeam::new(plan.workers) {
+        Ok(team) => team,
+        Err(_) => {
+            measurements.wall_nanos = started.elapsed().as_nanos();
+            return Err(BoundedStreamFailure {
+                cause: Box::new(BoundedStreamError::InvalidKernelPlan),
+                measurements: Box::new(measurements),
+            });
+        }
+    };
+    let result = worker_team.install(|| {
+        measurements.worker_slots =
+            worker_measurements(plan.workers).ok_or(BoundedStreamError::InvalidKernelPlan)?;
+        let measurement_bytes = slice_capacity_bytes(&measurements.worker_slots)
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        let process = process_block(
+            plan,
+            BlockIdentity {
+                pass_ordinal,
+                source_ordinal: 0,
+                block_ordinal: 0,
+            },
+            storage,
+            &mut kernel,
+            &worker_team,
+            &mut measurements.worker_slots,
+            measurement_bytes,
+        )
+        .map_err(map_process_error)?;
+        measurements
+            .record_process(process)
+            .ok_or(BoundedStreamError::MeasurementOverflow)?;
+        kernel
+            .complete(BoundedExecution(Some(&worker_team)))
+            .map_err(BoundedStreamError::Kernel)
+    });
+    #[cfg(test)]
+    {
+        measurements.external_pool_installs = worker_team.external_pool_installs();
+    }
+    measurements.worker_threads_started = worker_team.shutdown();
+    sample_process_peak_rss(&mut measurements);
+    measurements.wall_nanos = started.elapsed().as_nanos();
+    match result {
+        Ok(kernel_completion) => Ok(BoundedStreamOutcome {
+            source_completion: (),
+            kernel_completion,
+            measurements,
+        }),
+        Err(cause) => Err(BoundedStreamFailure {
+            cause: Box::new(cause),
+            measurements: Box::new(measurements),
+        }),
+    }
+}
+
 pub(crate) fn execute_bounded<S, K>(
     plan: BoundedStreamPlan,
     pass_ordinal: u32,
@@ -1180,7 +1600,7 @@ where
 {
     let started = Instant::now();
     let mut progress = StreamProgress::enabled::<S>(started);
-    let worker_team = match FixedWorkerTeam::new(plan.workers) {
+    let worker_team = match FixedWorkerTeam::new(plan.kernel.workers) {
         Ok(worker_team) => worker_team,
         Err(_) => {
             let mut measurements = measurements_for_plan(plan);
@@ -1232,9 +1652,15 @@ where
 fn measurements_for_plan(plan: BoundedStreamPlan) -> BoundedStreamMeasurements {
     BoundedStreamMeasurements {
         source_slots: plan.source_slots,
-        workers: plan.workers,
         maximum_logical_units_per_block: plan.maximum_logical_units_per_block,
         planned_source_capacity_bytes: plan.source_capacity_bytes,
+        ..measurements_for_kernel_plan(plan.kernel)
+    }
+}
+
+fn measurements_for_kernel_plan(plan: BoundedKernelPlan) -> BoundedStreamMeasurements {
+    BoundedStreamMeasurements {
+        workers: plan.workers,
         maximum_partitions_per_block: plan.maximum_partitions_per_block,
         planned_kernel_dynamic_capacity_bytes: plan.dynamic_kernel_window_capacity_bytes,
         planned_kernel_window_capacity_bytes: plan.kernel_window_capacity_bytes,
@@ -1287,8 +1713,8 @@ where
     let cancelled = AtomicBool::new(false);
     let mut measurements = measurements_for_plan(plan);
     let source_result = (|| {
-        measurements.worker_slots =
-            worker_measurements(plan.workers).ok_or(BoundedStreamError::InvalidKernelPlan)?;
+        measurements.worker_slots = worker_measurements(plan.kernel.workers)
+            .ok_or(BoundedStreamError::InvalidKernelPlan)?;
         let worker_measurement_capacity_bytes = slice_capacity_bytes(&measurements.worker_slots)
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
         let mut storage = source.create_storage(0);
@@ -1348,7 +1774,7 @@ where
                         .peak_live_source_capacity_bytes
                         .max(resident_capacity_bytes);
                     let process = process_block(
-                        plan,
+                        plan.kernel,
                         BlockIdentity {
                             pass_ordinal,
                             source_ordinal,
@@ -1386,7 +1812,7 @@ where
     })();
     let result = source_result.and_then(|source_completion| {
         kernel
-            .complete()
+            .complete(BoundedExecution(Some(worker_team)))
             .map(|kernel_completion| (source_completion, kernel_completion))
             .map_err(BoundedStreamError::Kernel)
     });
@@ -1431,8 +1857,8 @@ where
     let mut returned_tx = Some(returned_sender);
     let mut measurements = measurements_for_plan(plan);
     let source_completion = std::thread::scope(|scope| {
-        measurements.worker_slots =
-            worker_measurements(plan.workers).ok_or(BoundedStreamError::InvalidKernelPlan)?;
+        measurements.worker_slots = worker_measurements(plan.kernel.workers)
+            .ok_or(BoundedStreamError::InvalidKernelPlan)?;
         let worker_measurement_capacity_bytes = slice_capacity_bytes(&measurements.worker_slots)
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
         let producer_cancelled = Arc::clone(&cancelled);
@@ -1807,7 +2233,7 @@ where
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .set_consumer(true);
                     let process = process_block(
-                        plan,
+                        plan.kernel,
                         identity,
                         &lease.storage,
                         &mut kernel,
@@ -1941,7 +2367,7 @@ where
             });
         }
     };
-    let kernel_completion = match kernel.complete() {
+    let kernel_completion = match kernel.complete(BoundedExecution(Some(worker_team))) {
         Ok(completion) => completion,
         Err(error) => {
             return Err(BoundedStreamFailure {
@@ -2000,6 +2426,306 @@ mod tests {
             completed_blocks: 0,
             completed_logical_units: 0,
         }
+    }
+
+    fn spawn_observed_worker(
+        thread: rayon::ThreadBuilder,
+        exits: Arc<AtomicUsize>,
+    ) -> std::io::Result<JoinHandle<()>> {
+        struct ThreadExit(Arc<AtomicUsize>);
+        impl Drop for ThreadExit {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Release);
+            }
+        }
+        thread_local! {
+            static EXIT: std::cell::RefCell<Option<ThreadExit>> = const {
+                std::cell::RefCell::new(None)
+            };
+        }
+        std::thread::Builder::new()
+            .stack_size(BOUNDED_WORKER_STACK_BYTES)
+            .spawn(move || {
+                EXIT.with(|exit| *exit.borrow_mut() = Some(ThreadExit(exits)));
+                thread.run();
+            })
+    }
+
+    #[test]
+    fn fixed_worker_team_shutdown_joins_os_threads() {
+        let exits = Arc::new(AtomicUsize::new(0));
+        let team = FixedWorkerTeam::new_with_spawn(3, |thread| {
+            spawn_observed_worker(thread, Arc::clone(&exits))
+        })
+        .unwrap();
+        assert_eq!(team.threads.capacity(), 3);
+        assert_eq!(team.shutdown(), 3);
+        assert_eq!(exits.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn fixed_worker_team_unwind_joins_os_threads() {
+        let exits = Arc::new(AtomicUsize::new(0));
+        let result = std::panic::catch_unwind(|| {
+            let team = FixedWorkerTeam::new_with_spawn(2, |thread| {
+                spawn_observed_worker(thread, Arc::clone(&exits))
+            })
+            .unwrap();
+            team.install(|| panic!("injected operation panic"));
+        });
+        assert!(result.is_err());
+        assert_eq!(exits.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn fixed_worker_team_partial_startup_failure_joins_os_threads() {
+        for panic_on_spawn in [false, true] {
+            let exits = Arc::new(AtomicUsize::new(0));
+            let result = std::panic::catch_unwind(|| {
+                FixedWorkerTeam::new_with_spawn(3, |thread| {
+                    if thread.index() == 1 {
+                        assert!(!panic_on_spawn, "injected spawn panic");
+                        return Err(std::io::Error::other("injected spawn error"));
+                    }
+                    spawn_observed_worker(thread, Arc::clone(&exits))
+                })
+            });
+            if panic_on_spawn {
+                assert!(result.is_err());
+            } else {
+                assert!(matches!(result, Ok(Err(BoundedStreamPlanError::Workers))));
+            }
+            assert_eq!(exits.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_serial_preserves_order_and_short_circuit_in_foreign_pool() {
+        let inline = FixedWorkerTeam::new(1).unwrap();
+        let foreign = FixedWorkerTeam::new(2).unwrap();
+        for execution in [BoundedExecution::serial(), BoundedExecution(Some(&inline))] {
+            foreign.install(|| {
+                let calls = Mutex::new(Vec::new());
+                execution
+                    .consume_pair(
+                        || {
+                            calls.lock().unwrap().push("science");
+                            Ok(())
+                        },
+                        || {
+                            calls.lock().unwrap().push("compilation");
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(*calls.lock().unwrap(), ["science", "compilation"]);
+                calls.lock().unwrap().clear();
+                let error = execution
+                    .consume_pair(
+                        || {
+                            calls.lock().unwrap().push("science");
+                            Err(std::io::Error::other("science failure"))
+                        },
+                        || {
+                            calls.lock().unwrap().push("compilation");
+                            Ok(())
+                        },
+                    )
+                    .unwrap_err();
+                assert_eq!(error.to_string(), "science failure");
+                assert_eq!(*calls.lock().unwrap(), ["science"]);
+            });
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_overlaps_only_inside_its_admitted_pool() {
+        let team = FixedWorkerTeam::new(2).unwrap();
+        let foreign = FixedWorkerTeam::new(2).unwrap();
+        let execution = BoundedExecution(Some(&team));
+        let calls = AtomicUsize::new(0);
+        let check_rejected = || {
+            let error = execution
+                .consume_pair(
+                    || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                    || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("outside its admitted worker team")
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        };
+        check_rejected();
+        foreign.install(check_rejected);
+
+        let (science_tx, science_rx) = mpsc::channel();
+        let (compilation_tx, compilation_rx) = mpsc::channel();
+        team.install(|| {
+            let pool = team.pool.as_ref().unwrap();
+            execution
+                .consume_pair(
+                    move || {
+                        let index = pool.current_thread_index().unwrap();
+                        science_tx.send(index).unwrap();
+                        let sibling = compilation_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                        assert_ne!(index, sibling);
+                        Ok(())
+                    },
+                    move || {
+                        let index = pool.current_thread_index().unwrap();
+                        compilation_tx.send(index).unwrap();
+                        let sibling = science_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                        assert_ne!(index, sibling);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+        });
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum ConsumerResult {
+        Success,
+        Error,
+        Panic,
+    }
+
+    fn consumer_result(
+        result: ConsumerResult,
+        label: &str,
+        kind: std::io::ErrorKind,
+    ) -> std::io::Result<()> {
+        match result {
+            ConsumerResult::Success => Ok(()),
+            ConsumerResult::Error => Err(std::io::Error::new(kind, label.to_owned())),
+            ConsumerResult::Panic => panic!("{label}"),
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_errors_and_panics_wait_for_both_branches() {
+        use ConsumerResult::{Error, Panic, Success};
+        let team = FixedWorkerTeam::new(2).unwrap();
+        for (science, compilation) in [
+            (Error, Success),
+            (Success, Error),
+            (Error, Error),
+            (Panic, Success),
+            (Success, Panic),
+            (Panic, Panic),
+            (Error, Panic),
+            (Panic, Error),
+        ] {
+            let completed = AtomicUsize::new(0);
+            let (science_tx, science_rx) = mpsc::channel();
+            let (compilation_tx, compilation_rx) = mpsc::channel();
+            let error = team.install(|| {
+                let completed = &completed;
+                BoundedExecution(Some(&team))
+                    .consume_pair(
+                        move || {
+                            science_tx.send(()).unwrap();
+                            compilation_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                            completed.fetch_add(1, Ordering::SeqCst);
+                            consumer_result(
+                                science,
+                                "science failure",
+                                std::io::ErrorKind::InvalidData,
+                            )
+                        },
+                        move || {
+                            compilation_tx.send(()).unwrap();
+                            science_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                            completed.fetch_add(1, Ordering::SeqCst);
+                            consumer_result(
+                                compilation,
+                                "compiler failure",
+                                std::io::ErrorKind::PermissionDenied,
+                            )
+                        },
+                    )
+                    .unwrap_err()
+            });
+            assert_eq!(
+                completed.load(Ordering::SeqCst),
+                2,
+                "{science:?}/{compilation:?}"
+            );
+            let (kind, message) = match (science, compilation) {
+                (Error, Success) => (std::io::ErrorKind::InvalidData, "science failure"),
+                (Success, Error) => (std::io::ErrorKind::PermissionDenied, "compiler failure"),
+                (Error, Error) => (
+                    std::io::ErrorKind::InvalidData,
+                    "science failure; replay compilation also failed: compiler failure",
+                ),
+                (Panic, Success) => (
+                    std::io::ErrorKind::Other,
+                    "science consumer panicked: science failure",
+                ),
+                (Success, Panic) => (
+                    std::io::ErrorKind::Other,
+                    "replay compiler panicked: compiler failure",
+                ),
+                (Panic, Panic) => (
+                    std::io::ErrorKind::Other,
+                    "science consumer panicked: science failure; replay compilation also failed: replay compiler panicked: compiler failure",
+                ),
+                (Error, Panic) => (
+                    std::io::ErrorKind::InvalidData,
+                    "science failure; replay compilation also failed: replay compiler panicked: compiler failure",
+                ),
+                (Panic, Error) => (
+                    std::io::ErrorKind::Other,
+                    "science consumer panicked: science failure; replay compilation also failed: compiler failure",
+                ),
+                (Success, Success) => unreachable!("failure matrix excludes success"),
+            };
+            assert_eq!(error.kind(), kind);
+            assert_eq!(error.to_string(), message);
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_preserves_static_and_opaque_panic_diagnostics() {
+        let team = FixedWorkerTeam::new(2).unwrap();
+        let error = team.install(|| {
+            BoundedExecution(Some(&team))
+                .consume_pair(
+                    || std::panic::panic_any("static science failure"),
+                    || std::panic::panic_any(17_u32),
+                )
+                .unwrap_err()
+        });
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(
+            error.to_string(),
+            "science consumer panicked: static science failure; replay compilation also failed: replay compiler panicked: non-string panic payload"
+        );
+    }
+
+    #[test]
+    fn bounded_consumer_pair_serial_panic_still_unwinds_without_compiling() {
+        let compiled = AtomicBool::new(false);
+        let result = std::panic::catch_unwind(|| {
+            BoundedExecution::serial().consume_pair(
+                || panic!("serial science failure"),
+                || {
+                    compiled.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+        });
+        assert!(result.is_err());
+        assert!(!compiled.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -2190,6 +2916,7 @@ mod tests {
     struct SumKernel {
         commits: Vec<(WorkIdentity, u64)>,
         wave_barrier: Option<(Arc<Barrier>, usize)>,
+        execution_scratch_bytes: u64,
     }
 
     impl PartitionedKernel<Vec<u64>> for SumKernel {
@@ -2218,6 +2945,10 @@ mod tests {
                 local_ordinal as u64,
                 local_ordinal,
             ))
+        }
+
+        fn execution_dynamic_capacity_bytes(&self, _: &usize) -> u64 {
+            self.execution_scratch_bytes
         }
 
         fn execute(
@@ -2250,12 +2981,16 @@ mod tests {
             work: WorkIdentity,
             _values: &Vec<u64>,
             partial: Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             self.commits.push((work, partial));
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.commits)
         }
     }
@@ -2311,6 +3046,145 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_windows_sums_work_and_preserves_single_window_digest() {
+        let worker = |work_units, samples, digest| BoundedWorkerMeasurements {
+            work_units,
+            samples,
+            work_identity_digest: digest,
+            ..BoundedWorkerMeasurements::default()
+        };
+        let mut first = BoundedStreamMeasurements {
+            source_slots: 2,
+            workers: 2,
+            maximum_logical_units_per_block: 4,
+            maximum_partitions_per_block: 3,
+            planned_source_capacity_bytes: 64,
+            planned_kernel_dynamic_capacity_bytes: 128,
+            planned_kernel_window_capacity_bytes: 256,
+            blocks_filled: 2,
+            logical_units_filled: 5,
+            partitions_executed: 3,
+            commits_completed: 3,
+            peak_logical_units_per_block: 3,
+            peak_partial_dynamic_capacity_bytes: 11,
+            executed_work_identity_digest: [1; 32],
+            committed_work_identity_digest: [2; 32],
+            worker_slots: vec![worker(2, 10, [3; 32]), worker(1, 5, [4; 32])].into_boxed_slice(),
+            ..BoundedStreamMeasurements::default()
+        };
+        first.workers_with_nonzero_partitions = 2;
+        first.minimum_partitions_per_active_worker = 1;
+        first.maximum_partitions_per_active_worker = 2;
+        let single = BoundedStreamMeasurements::aggregate_window(None, 7, first.clone())
+            .expect("first window is accepted unchanged");
+        assert_eq!(single, first);
+
+        let mut second = first.clone();
+        second.blocks_filled = 4;
+        second.logical_units_filled = 6;
+        second.partitions_executed = 2;
+        second.commits_completed = 2;
+        second.peak_logical_units_per_block = 4;
+        second.peak_partial_dynamic_capacity_bytes = 17;
+        second.executed_work_identity_digest = [5; 32];
+        second.committed_work_identity_digest = [6; 32];
+        let aggregate = BoundedStreamMeasurements::aggregate_window(Some(single), 8, second)
+            .expect("compatible windows aggregate");
+        assert_eq!(aggregate.blocks_filled, 6);
+        assert_eq!(aggregate.logical_units_filled, 11);
+        assert_eq!(aggregate.partitions_executed, 5);
+        assert_eq!(aggregate.commits_completed, 5);
+        assert_eq!(aggregate.peak_logical_units_per_block, 4);
+        assert_eq!(aggregate.peak_partial_dynamic_capacity_bytes, 17);
+        assert_eq!(aggregate.worker_slots[0].work_units, 4);
+        assert_eq!(aggregate.worker_slots[1].work_units, 2);
+        assert_eq!(aggregate.workers_with_nonzero_partitions, 2);
+        assert_eq!(aggregate.minimum_partitions_per_active_worker, 2);
+        assert_eq!(aggregate.maximum_partitions_per_active_worker, 4);
+        assert_ne!(aggregate.executed_work_identity_digest, [1; 32]);
+        assert_ne!(aggregate.committed_work_identity_digest, [2; 32]);
+    }
+
+    #[test]
+    fn t55_resident_work_reuses_ordered_waves_without_source_activity() {
+        let values = (1..=7).collect::<Vec<_>>();
+        let mut reference = None;
+        for workers in [1, 2, 3] {
+            let plan = BoundedKernelPlan::new::<usize, u64>(workers, values.len(), 0).unwrap();
+            let outcome = execute_bounded_resident(
+                plan,
+                3,
+                &values,
+                SumKernel {
+                    commits: Vec::new(),
+                    wave_barrier: (workers > 1).then(|| (Arc::new(Barrier::new(workers)), workers)),
+                    ..SumKernel::default()
+                },
+            )
+            .unwrap();
+            let measured = &outcome.measurements;
+            assert_eq!(measured.source_slots, 0);
+            assert_eq!(measured.blocks_filled, 0);
+            assert_eq!(measured.source_read_operations, 0);
+            assert_eq!(measured.planned_source_capacity_bytes, 0);
+            assert_eq!(measured.peak_live_source_capacity_bytes, 0);
+            assert_eq!(measured.overlap_nanos, 0);
+            assert_eq!(measured.partitions_executed, values.len() as u64);
+            assert_eq!(measured.commits_completed, values.len() as u64);
+            assert_eq!(measured.workers_with_nonzero_partitions, workers);
+            assert_eq!(
+                measured.worker_threads_started,
+                if workers == 1 { 0 } else { workers as u64 }
+            );
+            assert_eq!(measured.external_pool_installs, u64::from(workers > 1));
+            assert!(measured.peak_kernel_window_capacity_bytes <= plan.capacity_bytes());
+            assert_eq!(
+                measured.executed_work_identity_digest,
+                measured.committed_work_identity_digest
+            );
+            if let Some((completion, digest)) = &reference {
+                assert_eq!(&outcome.kernel_completion, completion);
+                assert_eq!(&measured.committed_work_identity_digest, digest);
+            } else {
+                reference = Some((
+                    outcome.kernel_completion,
+                    measured.committed_work_identity_digest,
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn t55_resident_scratch_is_bounded_before_any_plane_executes() {
+        let values = vec![1, 2, 3];
+        for workers in [1, 2, 3] {
+            let capacity = workers as u64 * 100;
+            let kernel = || SumKernel {
+                execution_scratch_bytes: 100,
+                ..SumKernel::default()
+            };
+            let insufficient =
+                BoundedKernelPlan::new::<usize, u64>(workers, values.len(), capacity - 1).unwrap();
+            let failure = execute_bounded_resident(insufficient, 0, &values, kernel()).unwrap_err();
+            assert!(matches!(
+                *failure.cause,
+                BoundedStreamError::ResidencyExceeded
+            ));
+            assert_eq!(failure.measurements.partitions_executed, 0);
+            assert_eq!(failure.measurements.commits_completed, 0);
+            let exact =
+                BoundedKernelPlan::new::<usize, u64>(workers, values.len(), capacity).unwrap();
+            let outcome = execute_bounded_resident(exact, 0, &values, kernel()).unwrap();
+            assert_eq!(outcome.measurements.partitions_executed, 3);
+            assert_eq!(outcome.measurements.commits_completed, 3);
+            assert_eq!(
+                outcome.measurements.peak_kernel_window_capacity_bytes,
+                exact.capacity_bytes()
+            );
+        }
+    }
+
+    #[test]
     fn one_and_two_slots_have_identical_ordered_results() {
         let inline = run(1, 1);
         let overlapped = run(2, 1);
@@ -2352,6 +3226,7 @@ mod tests {
             SumKernel {
                 commits: Vec::new(),
                 wave_barrier: Some((Arc::new(Barrier::new(2)), 2)),
+                ..SumKernel::default()
             },
         );
         assert_eq!(serial.kernel_completion, parallel.kernel_completion);
@@ -2445,6 +3320,7 @@ mod tests {
             SumKernel {
                 commits: Vec::new(),
                 wave_barrier: Some((Arc::new(Barrier::new(3)), 3)),
+                ..SumKernel::default()
             },
         );
 
@@ -2582,12 +3458,16 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             partial: Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             self.commits.push(partial);
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.commits)
         }
     }
@@ -2719,11 +3599,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -2844,12 +3728,16 @@ mod tests {
             _work: WorkIdentity,
             _values: &Vec<u64>,
             partial: Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             self.committed_capacities.push(partial.capacity() as u64);
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.committed_capacities)
         }
     }
@@ -3048,11 +3936,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Err(TestFailure)
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -3085,6 +3977,119 @@ mod tests {
         assert_eq!(failure.measurements.worker_threads_started, 2);
         assert_eq!(failure.measurements.external_pool_installs, 1);
         assert_eq!(completions.load(Ordering::SeqCst), 0);
+    }
+
+    struct FailingPairKernel {
+        science: ConsumerResult,
+        compilation: ConsumerResult,
+        callbacks: Arc<[AtomicUsize; 5]>,
+    }
+
+    impl PartitionedKernel<Vec<u64>> for FailingPairKernel {
+        type Partition = ();
+        type Partial = ();
+        type Completion = ();
+        type Error = std::io::Error;
+
+        fn partition_count(&self, _: BlockIdentity, _: &Vec<u64>) -> Result<usize, Self::Error> {
+            self.callbacks[0].fetch_add(1, Ordering::SeqCst);
+            Ok(1)
+        }
+
+        fn partition(
+            &self,
+            _: BlockIdentity,
+            _: &Vec<u64>,
+            _: usize,
+        ) -> Result<KernelPartition<()>, Self::Error> {
+            Ok(KernelPartition::exclusive(0, 0, ()))
+        }
+
+        fn execute(&self, _: WorkIdentity, _: &Vec<u64>, _: &()) -> Result<(), Self::Error> {
+            self.callbacks[1].fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn commit(
+            &mut self,
+            _: WorkIdentity,
+            _: &Vec<u64>,
+            _: (),
+            execution: BoundedExecution<'_>,
+        ) -> Result<(), Self::Error> {
+            self.callbacks[2].fetch_add(1, Ordering::SeqCst);
+            execution.consume_pair(
+                || {
+                    self.callbacks[4].fetch_add(1, Ordering::SeqCst);
+                    consumer_result(
+                        self.science,
+                        "science failure",
+                        std::io::ErrorKind::InvalidData,
+                    )
+                },
+                || {
+                    self.callbacks[4].fetch_add(1, Ordering::SeqCst);
+                    consumer_result(
+                        self.compilation,
+                        "compiler failure",
+                        std::io::ErrorKind::PermissionDenied,
+                    )
+                },
+            )
+        }
+
+        fn complete(self, _: BoundedExecution<'_>) -> Result<(), Self::Error> {
+            self.callbacks[3].fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_failure_cancels_two_slot_source_without_later_callbacks() {
+        use ConsumerResult::{Error, Panic, Success};
+        for (science, compilation) in [
+            (Error, Success),
+            (Success, Error),
+            (Panic, Success),
+            (Success, Panic),
+            (Panic, Panic),
+            (Error, Panic),
+        ] {
+            let completions = Arc::new(AtomicUsize::new(0));
+            let pointers = Arc::new(Mutex::new(Vec::new()));
+            let callbacks = Arc::new(std::array::from_fn(|_| AtomicUsize::new(0)));
+            let failure = execute_bounded(
+                BoundedStreamPlan::new::<(), ()>(2, 2, 64, 1, 0).unwrap(),
+                0,
+                NumberSource {
+                    blocks: (0..100).map(|value| vec![value]).collect(),
+                    next: 0,
+                    pointers: Arc::clone(&pointers),
+                    completions: Arc::clone(&completions),
+                },
+                FailingPairKernel {
+                    science,
+                    compilation,
+                    callbacks: Arc::clone(&callbacks),
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(*failure.cause, BoundedStreamError::Kernel(_)));
+            assert_eq!(completions.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                callbacks
+                    .each_ref()
+                    .map(|count| count.load(Ordering::SeqCst)),
+                [1, 1, 1, 0, 2]
+            );
+            assert!((1..=2).contains(&failure.measurements.blocks_filled));
+            assert_eq!(
+                pointers.lock().unwrap().len() as u64,
+                failure.measurements.blocks_filled
+            );
+            assert_eq!(failure.measurements.worker_threads_started, 2);
+            assert_eq!(failure.measurements.external_pool_installs, 1);
+        }
     }
 
     struct CancellationDelayedSource {
@@ -3178,6 +4183,7 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             while !self.second_fill_started.load(Ordering::Acquire) {
                 std::thread::yield_now();
@@ -3185,7 +4191,10 @@ mod tests {
             Err(TestFailure)
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -3332,11 +4341,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.maximum.load(Ordering::SeqCst))
         }
     }
@@ -3404,11 +4417,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -3689,6 +4706,7 @@ mod tests {
             _work: WorkIdentity,
             storage: &LargeGateStorage,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             let samples = consume_large_gate_block(&storage.buffer, &mut self.digest)?;
             self.samples = self
@@ -3698,7 +4716,10 @@ mod tests {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok((self.digest, self.samples))
         }
     }

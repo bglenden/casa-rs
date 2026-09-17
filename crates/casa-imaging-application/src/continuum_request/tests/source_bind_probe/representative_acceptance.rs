@@ -279,9 +279,13 @@ fn run_full_products(require_cold_dirty: bool) {
             }
         }
     };
+    let final_model = outcome.scientific.final_model();
+    let model_samples = final_model
+        .read_samples(0..final_model.sample_count())
+        .expect("read final model samples");
     let mut model_digest = Sha256::new();
     let mut nonzero_model_samples = 0_usize;
-    for sample in outcome.scientific.final_model().samples() {
+    for sample in &model_samples {
         let value = sample.value().value();
         assert!(value.is_finite());
         nonzero_model_samples += usize::from(value != 0.0);
@@ -294,9 +298,15 @@ fn run_full_products(require_cold_dirty: bool) {
     assert_eq!(normal.sample_count(), selected_samples);
     assert_eq!(normal.coefficient_term_count(), 2);
     assert_eq!(normal.normal_moment_count(), 3);
+    let normal_window = normal
+        .read_window(normal.slab().core_range())
+        .expect("complete final normal window");
     let mut normal_digest = Sha256::new();
     let mut nonzero_normal_samples = 0_usize;
-    for values in [normal.residual(), normal.normal_approximation()] {
+    for values in [
+        normal_window.residual(),
+        normal_window.normal_approximation(),
+    ] {
         for value in values {
             assert!(value.re.is_finite() && value.im.is_finite());
             nonzero_normal_samples += usize::from(value.re != 0.0 || value.im != 0.0);
@@ -304,7 +314,11 @@ fn run_full_products(require_cold_dirty: bool) {
             normal_digest.update(value.im.to_bits().to_le_bytes());
         }
     }
-    for value in normal.sensitivity().iter().chain(normal.sum_weights()) {
+    for value in normal_window
+        .sensitivity()
+        .iter()
+        .chain(normal.sum_weights())
+    {
         assert!(value.is_finite());
         normal_digest.update(value.to_bits().to_le_bytes());
     }

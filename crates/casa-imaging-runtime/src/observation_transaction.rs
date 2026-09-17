@@ -1309,6 +1309,7 @@ mod tests {
                     compatibility: writeback_compatibility.clone(),
                     physical_slot: PhysicalSlotId::new("writeback-slot"),
                     lifetime: AllocationLifetime {
+                        disposition: crate::AllocationDisposition::Release,
                         acquire_at: model.clone(),
                         release_after: BTreeSet::from([model_completion.clone()]),
                     },
@@ -1320,6 +1321,7 @@ mod tests {
                     compatibility: publication_compatibility.clone(),
                     physical_slot: PhysicalSlotId::new("publication-slot"),
                     lifetime: AllocationLifetime {
+                        disposition: crate::AllocationDisposition::Release,
                         acquire_at: commit.clone(),
                         release_after: BTreeSet::from([
                             WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),

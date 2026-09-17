@@ -272,11 +272,18 @@ pub(crate) struct TableImpl {
 
 impl TableImpl {
     pub(crate) fn retained_lazy_metadata_heap_bytes(&self) -> Option<usize> {
-        if self.loaded_rows.get().is_some()
-            || self
-                .loaded_scalar_columns
-                .values()
-                .any(|values| values.get().is_some())
+        if self.loaded_rows.get().is_some() || self.lazy_rows.is_none() {
+            return None;
+        }
+        self.lazy_rows.as_ref()?.read_metadata.get()?;
+        self.retained_owned_metadata_heap_bytes()
+    }
+
+    pub(crate) fn retained_owned_metadata_heap_bytes(&self) -> Option<usize> {
+        if self
+            .loaded_scalar_columns
+            .values()
+            .any(|values| values.get().is_some())
             || self
                 .loaded_array_columns
                 .values()
@@ -291,9 +298,33 @@ impl TableImpl {
             return None;
         }
 
-        let lazy_rows = self.lazy_rows.as_ref()?;
-        let mut bytes = path_heap_bytes(&lazy_rows.path)
-            .checked_add(lazy_rows.read_metadata.get()?.retained_heap_bytes()?)?
+        let mut bytes = 0usize;
+        if let Some(lazy_rows) = self.lazy_rows.as_ref() {
+            bytes = bytes.checked_add(path_heap_bytes(&lazy_rows.path))?;
+            if let Some(metadata) = lazy_rows.read_metadata.get() {
+                bytes = bytes.checked_add(metadata.retained_heap_bytes()?)?;
+            }
+        }
+        if let Some(rows) = self.loaded_rows.get() {
+            bytes = bytes
+                .checked_add(rows.rows.capacity().checked_mul(size_of::<RecordValue>())?)?
+                .checked_add(
+                    rows.undefined_cells
+                        .capacity()
+                        .checked_mul(size_of::<HashSet<String>>())?,
+                )?;
+            for row in &rows.rows {
+                bytes = bytes.checked_add(row.retained_heap_bytes()?)?;
+            }
+            for undefined in &rows.undefined_cells {
+                bytes =
+                    bytes.checked_add(undefined.capacity().checked_mul(size_of::<String>())?)?;
+                for name in undefined {
+                    bytes = bytes.checked_add(name.capacity())?;
+                }
+            }
+        }
+        bytes = bytes
             .checked_add(string_keyed_map_heap_bytes(&self.loaded_scalar_columns)?)?
             .checked_add(string_keyed_map_heap_bytes(&self.loaded_array_columns)?)?
             .checked_add(string_keyed_map_heap_bytes(&self.buffered_array_cells)?)?

@@ -1722,9 +1722,12 @@ impl<T: ImagePixel> PagedImage<T> {
         if let Some(path) = &self.path {
             let mask_path = resolve_mask_table_path(path, &table_ref);
             if !mask_path.exists() {
-                let mut mask =
-                    PagedArray::<bool>::create(TiledShape::new(self.shape.clone(), 1)?, &mask_path)
-                        .map_err(ImageError::from)?;
+                let mut mask = PagedArray::<bool>::create_with_cache(
+                    TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
+                    &mask_path,
+                    self.cache_bytes(),
+                )
+                .map_err(ImageError::from)?;
                 mask.put_slice(data, start)?;
                 mask.flush().map_err(ImageError::from)?;
             } else {

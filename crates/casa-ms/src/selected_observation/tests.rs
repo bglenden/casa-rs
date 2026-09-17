@@ -1142,7 +1142,7 @@ fn real_ms_cube_traversal_compiles_source_backed_casa_cubic_stencils() {
 #[test]
 fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
     use casa_test_support::spectral_interop::{
-        SpectralInterpolationMethod, SpectralInterpolationOracle,
+        SpectralInterpolationEdge, SpectralInterpolationMethod, SpectralInterpolationOracle,
     };
 
     let directory = tempfile::tempdir().expect("temporary T35 source-backed fixture");
@@ -1241,6 +1241,7 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
         &output_centres,
         evaluation.output_frame().centre_hz(),
         SpectralInterpolationMethod::Cubic,
+        SpectralInterpolationEdge::FlagOutside,
     )
     .expect("CASA/casacore cubic spectral oracle");
     assert!(casa.valid);
@@ -1273,6 +1274,165 @@ fn t35_source_backed_identity_and_nonidentity_tracers_match_casacore() {
         .map(|term| model[term.output_channel() as usize] * term.factor() * source_visibility)
         .sum::<f64>();
     assert!((lhs - rhs).abs() <= f64::EPSILON * lhs.abs().max(1.0));
+}
+
+#[test]
+fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_channels() {
+    for (frequencies, selected) in [
+        (vec![1.4e9, 1.401e9, 1.402e9, 1.407e9, 1.408e9], vec![1, 3]),
+        (
+            vec![1.4e9, 1.401e9, 1.402e9, 1.407e9, 1.408e9],
+            vec![1, 3, 4],
+        ),
+        (vec![1.408e9, 1.407e9, 1.402e9, 1.401e9, 1.4e9], vec![1, 3]),
+        (vec![1.4e9, 1.401e9, 1.402e9, 1.407e9, 1.408e9], vec![2]),
+    ] {
+        let directory = tempfile::tempdir().expect("selected geometry fixture");
+        let path = directory.path().join("selected-geometry.ms");
+        generate_fixture_with_channel_count(&path, 2, frequencies.len());
+        let mut ms = MeasurementSet::open(&path).expect("open geometry fixture");
+        ms.spectral_window_mut()
+            .expect("SPW")
+            .table_mut()
+            .cell_accessor_mut(0, "CHAN_FREQ")
+            .expect("frequency cell")
+            .set(Value::Array(ArrayValue::Float64(
+                ArrayD::from_shape_vec(vec![frequencies.len()], frequencies.clone())
+                    .expect("frequency array"),
+            )))
+            .expect("set unequal centre spacing");
+        let mut flags = ArrayD::from_elem(vec![2, frequencies.len()], false);
+        flags[[0, selected[0] as usize]] = true;
+        flags[[1, selected[0] as usize]] = true;
+        ms.main_table_mut()
+            .cell_accessor_mut(0, "FLAG")
+            .expect("flag cell")
+            .set(Value::Array(ArrayValue::Bool(flags)))
+            .expect("flag only the first selected channel in the first row");
+        ms.save().expect("save geometry fixture");
+        drop(ms);
+        let base = compiled_problem(&path, 2);
+        let source = &base.inputs().observation_snapshot().sources()[0];
+        let selection = source.selection();
+        let snapshot = compile_observation(ObservationSnapshotInput::new(
+            vec![ObservationSourceInput::new(
+                source.identity(),
+                source.provenance().clone(),
+                ObservationSelection::new(
+                    selection.rows().clone(),
+                    selection.rows_filter().clone(),
+                    selection.data_descriptions().to_vec(),
+                    vec![SpectralWindowSelection::new(0, selected.clone())],
+                    selection.correlations().to_vec(),
+                ),
+                source.generations().clone(),
+            )],
+            vec![(ReferenceDataKind::Measures, identity(90))],
+            ModelStateIdentity::Empty,
+        ))
+        .expect("compile exact selected channels");
+        let problem = compile(ImagingRequest::new(
+            specification(),
+            geometry(),
+            ProblemInputIdentities::new(snapshot),
+            model_lifecycle(ModelStateIdentity::Empty),
+        ))
+        .expect("compile geometry problem");
+        let source = &problem.inputs().observation_snapshot().sources()[0];
+        let binding = ObservationSourceBinding::new(
+            source_state(source),
+            content_budget_for_rows(&problem, source, 1, 1),
+        );
+        let mut observation = BoundSelectedObservation::open(
+            &problem,
+            test_measures(&problem),
+            vec![binding.clone()],
+        )
+        .expect("bind selected geometry source");
+        let mut scalar_samples = Vec::new();
+        let scalar_completion = observation
+            .traverse(&problem, |reported| {
+                let sample = reported.selected();
+                let evaluation = reported.spectral_evaluation();
+                let geometry = evaluation
+                    .row_geometry()
+                    .expect("source-issued row geometry");
+                assert_eq!(sample.row_spectral_geometry(), Some(geometry));
+                assert!(geometry.matches_sample(sample, FrequencyFrame::Topocentric));
+                assert_eq!(geometry.selected_channels(), selected.len());
+                assert_eq!(
+                    geometry.first(),
+                    (selected[0], frequencies[selected[0] as usize])
+                );
+                assert_eq!(
+                    geometry.second(),
+                    selected
+                        .get(1)
+                        .map(|&index| (index, frequencies[index as usize]))
+                );
+                if let Some([first, second]) = geometry.first_pair_hz() {
+                    assert_ne!(
+                        (second - first).abs(),
+                        sample.address().channel_width_hz.abs()
+                    );
+                }
+                assert_eq!(
+                    evaluation.is_valid(),
+                    !(sample.address().physical_row == 0
+                        && sample.address().channel_index == selected[0])
+                );
+                scalar_samples.push((sample.to_owned(), evaluation));
+                Ok::<_, Infallible>(())
+            })
+            .expect("traverse selected geometry");
+        assert_eq!(scalar_samples.len(), 2 * 2 * selected.len());
+        let block =
+            BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+                .expect("bind borrowed geometry source");
+        let (mut source, mut consumer) = block
+            .into_block_stream(&problem)
+            .expect("split borrowed source");
+        let mut storage = source.create_storage(0);
+        let mut borrowed_samples = Vec::new();
+        let mut peak_current = 0;
+        let mut peak_capacity = 0;
+        while source
+            .fill_next(&mut storage)
+            .expect("fill geometry block")
+            .is_some()
+        {
+            peak_current = peak_current.max(storage.resident_current_bytes().expect("block bytes"));
+            peak_capacity =
+                peak_capacity.max(storage.resident_capacity_bytes().expect("block capacity"));
+            consumer
+                .consume(&storage, |run| {
+                    for reported in run.samples() {
+                        assert_eq!(
+                            reported.selected().row_spectral_geometry(),
+                            reported.spectral_evaluation().row_geometry()
+                        );
+                        borrowed_samples.push((
+                            reported.selected().to_owned(),
+                            reported.spectral_evaluation(),
+                        ));
+                    }
+                    Ok::<_, Infallible>(())
+                })
+                .expect("consume geometry block");
+        }
+        let mut terminal = source.complete().expect("terminal source proof");
+        terminal
+            .record_runtime_residency(1, peak_current, peak_capacity)
+            .expect("one block residency");
+        let (_, borrowed_completion) = consumer
+            .complete(terminal)
+            .expect("complete borrowed source");
+        assert_eq!(
+            borrowed_completion.generation_id(),
+            scalar_completion.generation_id()
+        );
+        assert_eq!(borrowed_samples, scalar_samples);
+    }
 }
 
 #[test]
@@ -1372,6 +1532,18 @@ fn real_ms_cube_traversal_uses_the_native_field_frame_for_output_conversion() {
             assert!((image_anchor_hz - native_field_hz).abs() > 1.0);
             assert_ne!(image_anchor_boundaries, native_field_boundaries);
             let evaluation = reported.spectral_evaluation();
+            let geometry = evaluation.row_geometry().expect("transformed row geometry");
+            assert_eq!(sample.row_spectral_geometry(), Some(geometry));
+            assert!(geometry.matches_sample(sample, FrequencyFrame::Lsrk));
+            assert_eq!(geometry.selected_channels(), 2);
+            assert_eq!(
+                geometry.first(),
+                (0, transform_in_native_field_frame(1.4e9))
+            );
+            assert_eq!(
+                geometry.second(),
+                Some((2, transform_in_native_field_frame(1.402e9)))
+            );
             assert_eq!(
                 evaluation.native().centre_hz().to_bits(),
                 sample.address().frequency_centre_hz.to_bits()
@@ -4015,6 +4187,14 @@ fn generate_fixture(path: &std::path::Path) {
 }
 
 fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
+    generate_fixture_with_channel_count(path, row_count, 3);
+}
+
+fn generate_fixture_with_channel_count(
+    path: &std::path::Path,
+    row_count: usize,
+    channel_count: usize,
+) {
     let mut antennas = tutorial_vla_a_antennas();
     antennas.truncate(2);
     let mut request = SyntheticObservationRequest::vla_ppdisk("unused.fits", path, antennas);
@@ -4026,7 +4206,7 @@ fn generate_fixture_with_rows(path: &std::path::Path, row_count: usize) {
         name: "three-channel".to_string(),
         start_frequency_hz: 1.4e9,
         channel_width_hz: 1.0e6,
-        channel_count: 3,
+        channel_count,
     };
     request.worker_policy = SyntheticWorkerPolicy::Fixed;
     request.row_workers = Some(1);
@@ -4894,14 +5074,14 @@ fn specification_with_science(
                 PrimaryBeamValidityPolicy::new(
                     0.2,
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )
                 .expect("valid PB policy"),
                 TaylorValidityPolicy::new(
                     TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
                     0.1,
                     ProductSupportComparison::StrictlyGreater,
-                    ProductBlankingPolicy::ZeroAndFalseMask,
+                    ProductBlankingPolicy::Zero,
                 )
                 .expect("valid Taylor policy"),
             ),

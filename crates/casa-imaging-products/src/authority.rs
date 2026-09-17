@@ -11,11 +11,13 @@
 //! exact member set, exact content identities. Neither phase exposes any
 //! construction path for the records they mint.
 
+use std::{ops::Range, sync::Arc};
+
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ModelCell, ProductAxes,
-    ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductRole,
-    ProductSchema, ProductSupportComparison, ProductTerm, ProductUnit, ProductValidityRule,
-    ReconstructionBasis, RestoringBeamPolicy,
+    CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ProductAxes, ProductBeamRule,
+    ProductGraphId, ProductNodeId, ProductNormalization, ProductPixelMask, ProductRole,
+    ProductSchema, ProductStorageContract, ProductSupportComparison, ProductTerm, ProductUnit,
+    ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{ModelGeneration, NormalStateCatalog, SpectralChannelValidity};
 
@@ -23,23 +25,24 @@ use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::digest::{
     ARTIFACT_IDENTITY_DOMAIN, ARTIFACT_IDENTITY_VERSION, COMPLETIONS_DOMAIN, COMPLETIONS_VERSION,
     Encoder, PLANNED_GENERATION_DOMAIN, PLANNED_GENERATION_VERSION, SEAL_DOMAIN, SEAL_VERSION,
-    member_content_digest,
 };
 use crate::error::ProductsError;
 use crate::restore::{
     MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
 };
 use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
+use crate::storage::{ProductMemberBacking, ProductMemberWriter};
 use crate::taylor::{
     TaylorProducts, analytic_alma_airy_primary_beam, analytic_evla_primary_beam,
     analytic_vla_primary_beam,
 };
+use crate::{ProductStorageFactory, ProductStoragePlan, ProductWindow, ProductWindowLayout};
 
 /// Version of the native continuum product-algorithm catalog.
 ///
 /// The identity binds every product algorithm's semantics; changing any
 /// algorithm changes every derived artifact identity and seal.
-pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 8;
+pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 9;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
 pub const DEFAULT_PSF_CUTOFF: f32 = casa_imaging_reconstruction::DEFAULT_PSF_FIT_CUTOFF;
@@ -227,6 +230,25 @@ impl ProductGenerationAuthority {
                 .get(node_ordinal.ordinal())
                 .ok_or(ProductsError::UnsupportedProblem)?;
             ensure_producible(node.role())?;
+            let needs_primary_beam = |rule| {
+                matches!(
+                    rule,
+                    ProductValidityRule::PrimaryBeam(_)
+                        | ProductValidityRule::TaylorAndPrimaryBeam { .. }
+                )
+            };
+            let requires_primary_beam = needs_primary_beam(node.validity())
+                || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
+                    if needs_primary_beam(rule));
+            if requires_primary_beam
+                && (controls.primary_beam_model.is_none()
+                    || matches!(
+                        sources.problem().reconstruction().basis(),
+                        ReconstructionBasis::JointContinuumLine { .. }
+                    ))
+            {
+                return Err(ProductsError::UnsupportedProblem);
+            }
             let axes = node.axes();
             let shape = axes.shape();
             let payload_values = shape
@@ -253,6 +275,7 @@ impl ProductGenerationAuthority {
                 normalization: node.normalization(),
                 beam_rule: node.beam(),
                 validity: node.validity(),
+                storage: node.storage(),
                 dependencies: node.dependencies().to_vec().into_boxed_slice(),
                 artifact_id,
             });
@@ -332,19 +355,13 @@ impl ProductGenerationAuthority {
                     actual: completions.members.len(),
                 });
             }
-            if produced.payload.len() != member.payload_values {
+            if produced.backing.layout.values()? != member.payload_values {
                 return Err(ProductsError::PayloadLengthMismatch {
                     expected: member.payload_values,
-                    actual: produced.payload.len(),
+                    actual: produced.backing.layout.values()?,
                 });
             }
-            if produced.validity.len() != member.payload_values {
-                return Err(ProductsError::PayloadLengthMismatch {
-                    expected: member.payload_values,
-                    actual: produced.validity.len(),
-                });
-            }
-            let digest = member_content_digest(&produced.payload, &produced.validity);
+            let digest = produced.backing.content_digest()?;
             if digest != produced.digest.as_bytes() {
                 return Err(ProductsError::MemberContentMismatch);
             }
@@ -389,6 +406,7 @@ impl ProductGenerationAuthority {
                         axes: member.axes.clone(),
                         beam_rule: member.beam_rule,
                         validity: member.validity,
+                        storage: member.storage,
                         dependencies: member.dependencies.clone(),
                     },
                     resolved_beams: sealed_beams_for_member(
@@ -398,8 +416,7 @@ impl ProductGenerationAuthority {
                         &completions.fitted_beams,
                         &completions.restoring_beams,
                     )?,
-                    payload: produced.payload.clone(),
-                    validity: produced.validity.clone().into_boxed_slice(),
+                    backing: Arc::clone(&produced.backing),
                 })
             })
             .collect::<Result<Vec<_>, ProductsError>>()?
@@ -485,6 +502,24 @@ fn encode_contract(encoder: &mut Encoder, node: &casa_imaging_model::ProductNode
         ProductValidityRule::Taylor(_) => 3,
         ProductValidityRule::TaylorAndPrimaryBeam { .. } => 4,
     });
+    let storage = node.storage();
+    encoder.u8(match storage.pixel_mask() {
+        ProductPixelMask::Absent => 0,
+        ProductPixelMask::Explicit(ProductValidityRule::All) => 1,
+        ProductPixelMask::Explicit(ProductValidityRule::FinalNormalState) => 2,
+        ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(_)) => 3,
+        ProductPixelMask::Explicit(ProductValidityRule::Taylor(_)) => 4,
+        ProductPixelMask::Explicit(ProductValidityRule::TaylorAndPrimaryBeam { .. }) => 5,
+    });
+    encoder.u8(match storage.unit() {
+        None => 0,
+        Some(ProductUnit::NotApplicable) => 1,
+        Some(ProductUnit::JyPerBeam) => 2,
+        Some(ProductUnit::JyPerPixel) => 3,
+        Some(ProductUnit::Dimensionless) => 4,
+        Some(ProductUnit::VisibilityWeight) => 5,
+    });
+    encoder.u8(u8::from(storage.attach_beam()));
     let axes = node.axes();
     for extent in axes.shape() {
         encoder.usize(extent);
@@ -521,6 +556,114 @@ pub struct PlannedContinuumGeneration {
 }
 
 impl PlannedContinuumGeneration {
+    pub(crate) fn metadata_residency_bytes(
+        &self,
+        inputs: &ContinuumProductInputs<'_>,
+    ) -> Result<(u64, u64, u64), ProductsError> {
+        let overflow = || ProductsError::ResourceDemandOverflow("product metadata");
+        let domain_count = inputs.normal_state().domain_count();
+        if domain_count == 0 {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        let requires_beam = self
+            .members
+            .iter()
+            .any(|member| member.beam_rule != ProductBeamRule::None);
+        let fitted_count = if !requires_beam {
+            0
+        } else {
+            match inputs.normal_state().catalog() {
+                NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
+                NormalStateCatalog::UnnormalizedJointBlockV1 => {
+                    inputs.normal_state().channel_count()
+                }
+                _ => domain_count
+                    .checked_mul(inputs.normal_state().channel_count())
+                    .and_then(|count| count.checked_mul(inputs.normal_state().polarization_count()))
+                    .ok_or_else(overflow)?,
+            }
+        };
+        let restoring_count =
+            if inputs.problem().products().restoring_beam() == RestoringBeamPolicy::None {
+                0
+            } else {
+                fitted_count
+            };
+        let beam_bytes = fitted_count
+            .checked_add(restoring_count)
+            .and_then(|count| count.checked_mul(size_of::<Option<RestoringBeam>>()))
+            .ok_or_else(overflow)?;
+        let produced = self
+            .members
+            .len()
+            .checked_mul(
+                size_of::<ProducedMember>()
+                    + size_of::<ProductMemberBacking>()
+                    + 2 * size_of::<usize>(),
+            )
+            .and_then(|bytes| bytes.checked_add(size_of::<ContinuumProducedMembers>()))
+            .and_then(|bytes| bytes.checked_add(beam_bytes))
+            .ok_or_else(overflow)?;
+        let mut sealed = self
+            .members
+            .len()
+            .checked_mul(size_of::<SealedMember>())
+            .and_then(|bytes| bytes.checked_add(size_of::<SealedContinuumGeneration>()))
+            .and_then(|bytes| bytes.checked_add(beam_bytes))
+            .ok_or_else(overflow)?;
+        for member in &self.members {
+            let domain_name = match member.axes.domain() {
+                ImageDomainRole::Main => 0,
+                ImageDomainRole::Outlier(name) => name.len(),
+            };
+            let spectral = match member.axes.spectral().wcs() {
+                casa_imaging_model::SpectralWcs::Linear { .. } => 0,
+                casa_imaging_model::SpectralWcs::Tabular {
+                    channel_centres_hz,
+                    channel_boundaries_hz,
+                } => channel_centres_hz
+                    .len()
+                    .checked_add(channel_boundaries_hz.len())
+                    .and_then(|count| count.checked_mul(size_of::<f64>()))
+                    .ok_or_else(overflow)?,
+            };
+            let beams = match member.beam_rule {
+                ProductBeamRule::None
+                | ProductBeamRule::Restoring(RestoringBeamPolicy::None)
+                | ProductBeamRule::Metadata(RestoringBeamPolicy::None) => 0,
+                ProductBeamRule::Fitted => fitted_count / domain_count,
+                ProductBeamRule::Restoring(RestoringBeamPolicy::Common)
+                | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => 1,
+                _ => restoring_count / domain_count,
+            };
+            for bytes in [
+                member.name.len(),
+                domain_name,
+                spectral,
+                size_of_val(member.axes.polarization()),
+                size_of_val(member.dependencies.as_ref()),
+                beams
+                    .checked_mul(size_of::<Option<RestoringBeam>>())
+                    .ok_or_else(overflow)?,
+            ] {
+                sealed = sealed.checked_add(bytes).ok_or_else(overflow)?;
+            }
+        }
+        let beam_scratch =
+            if inputs.problem().products().restoring_beam() == RestoringBeamPolicy::Common {
+                (fitted_count / domain_count)
+                    .checked_mul(size_of::<RestoringBeam>())
+                    .ok_or_else(overflow)?
+            } else {
+                0
+            };
+        Ok((
+            u64::try_from(produced).map_err(|_| overflow())?,
+            u64::try_from(sealed).map_err(|_| overflow())?,
+            u64::try_from(beam_scratch).map_err(|_| overflow())?,
+        ))
+    }
+
     /// Return the exact compiled problem this generation was planned for.
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
@@ -596,6 +739,7 @@ pub struct PlannedMember {
     normalization: Option<ProductNormalization>,
     beam_rule: ProductBeamRule,
     validity: ProductValidityRule,
+    storage: ProductStorageContract,
     dependencies: Box<[ProductNodeId]>,
     artifact_id: MemberArtifactId,
 }
@@ -649,10 +793,16 @@ impl PlannedMember {
         self.beam_rule
     }
 
-    /// Return the output-validity rule of this member.
+    /// Return this member's numerical-support rule, independently of its stored mask.
     #[must_use]
     pub const fn validity(&self) -> ProductValidityRule {
         self.validity
+    }
+
+    /// Return the exact stored-mask and metadata contract.
+    #[must_use]
+    pub const fn storage(&self) -> ProductStorageContract {
+        self.storage
     }
 
     /// Return graph-node dependencies, all of which precede this node.
@@ -698,8 +848,7 @@ struct ProducedMember {
     node: ProductNodeId,
     artifact_id: MemberArtifactId,
     digest: MemberArtifactId,
-    payload: Vec<f32>,
-    validity: Vec<bool>,
+    backing: Arc<ProductMemberBacking>,
 }
 
 /// Produce every planned member through the continuum algorithm catalog.
@@ -715,6 +864,8 @@ struct ProducedMember {
 pub fn produce_continuum_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
+    storage_plan: ProductStoragePlan,
+    storage_factory: &dyn ProductStorageFactory,
 ) -> Result<ContinuumProducedMembers, ProductsError> {
     if inputs.final_model().generation_id() != planned.final_model_generation {
         return Err(ProductsError::CommitmentMismatch);
@@ -730,10 +881,10 @@ pub fn produce_continuum_members(
         return Err(ProductsError::CommitmentMismatch);
     }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
-        return produce_taylor_members(planned, inputs);
+        return produce_taylor_members(planned, inputs, storage_plan, storage_factory);
     }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
-        return produce_joint_members(planned, inputs);
+        return produce_joint_members(planned, inputs, storage_plan, storage_factory);
     }
     let normal_state = inputs.normal_state();
     let channel_count = normal_state.channel_count();
@@ -764,7 +915,9 @@ pub fn produce_continuum_members(
                 })
             })
             .map(|(domain, local_channel, polarization)| {
-                let plane = domain_plane(normal_state, domain.role(), local_channel, polarization)?;
+                let channel = normal_state.slab().core_range().start + local_channel;
+                let window = normal_state.read_window(channel..channel + 1)?;
+                let plane = domain_plane(&window, domain.role(), 0, polarization)?;
                 if plane.validity == SpectralChannelValidity::Valid {
                     fit_restoring_beam(
                         &psf_real_plane(&plane),
@@ -816,91 +969,92 @@ pub fn produce_continuum_members(
             .checked_mul(channel_count)
             .and_then(|offset| offset.checked_mul(normal_state.polarization_count()))
             .ok_or(ProductsError::SourceLineageMismatch)?;
-        let mut payload = vec![0.0_f32; member.payload_values];
-        let mut validity = vec![true; member.payload_values];
-        for local_channel in 0..channel_count {
-            for polarization in 0..normal_state.polarization_count() {
-                let plane = domain_plane(
-                    normal_state,
-                    member.axes().domain(),
-                    local_channel,
-                    polarization,
-                )?;
-                if plane.shape != plane_shape {
-                    return Err(ProductsError::SourceLineageMismatch);
-                }
-                let output_channel = plane.output_channel;
-                let plane_validity = if member.validity == ProductValidityRule::All {
-                    None
-                } else {
-                    let plane_validity = product_plane_validity(
-                        member.validity,
-                        &plane,
-                        planned.primary_beam_model,
+        let layout = storage_plan.layout(member.axes())?;
+        let mut writer = ProductMemberWriter::new(layout, storage_factory)?;
+        for window_start in (0..channel_count).step_by(layout.maximum_channels()) {
+            let window_end = (window_start + layout.maximum_channels()).min(channel_count);
+            let mut output = writer.window(window_start..window_end)?;
+            for local_channel in window_start..window_end {
+                let channel = normal_state.slab().core_range().start + local_channel;
+                let window = normal_state.read_window(channel..channel + 1)?;
+                for polarization in 0..normal_state.polarization_count() {
+                    let plane = domain_plane(&window, member.axes().domain(), 0, polarization)?;
+                    if plane.shape != plane_shape {
+                        return Err(ProductsError::SourceLineageMismatch);
+                    }
+                    let output_channel = plane.output_channel - window_start;
+                    if matches!(member.role, ProductRole::SumWeights(_)) {
+                        scatter_polarization_plane_state(
+                            &mut output.payload,
+                            member.axes(),
+                            output.shape,
+                            polarization,
+                            output_channel,
+                            plane.published_sum_weight as f32,
+                        )?;
+                        continue;
+                    }
+                    let beam_index = beam_offset
+                        + local_channel * normal_state.polarization_count()
+                        + polarization;
+                    let mut plane_payload = produce_plane_member(PlaneMemberRequest {
+                        member,
                         inputs,
-                        member.axes().domain(),
-                    )?;
+                        plane: &plane,
+                        domain_ordinal,
+                        polarization,
+                        fitted_beam: fitted_beams.get(beam_index).copied().flatten(),
+                        restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
+                        primary_beam_model: planned.primary_beam_model,
+                    })?;
+                    if member.validity != ProductValidityRule::All {
+                        let support = product_plane_validity(
+                            member.validity,
+                            &plane,
+                            planned.primary_beam_model,
+                            inputs,
+                            member.axes().domain(),
+                        )?;
+                        zero_invalid_plane_values(&mut plane_payload, &support)?;
+                    }
+                    if let ProductPixelMask::Explicit(rule) = member.storage.pixel_mask() {
+                        let support = product_plane_validity(
+                            rule,
+                            &plane,
+                            planned.primary_beam_model,
+                            inputs,
+                            member.axes().domain(),
+                        )?;
+                        scatter_image_polarization_plane(
+                            &mut output.validity,
+                            member.axes(),
+                            output.shape,
+                            polarization,
+                            output_channel,
+                            plane_shape,
+                            &support,
+                        )?;
+                    }
                     scatter_image_polarization_plane(
-                        &mut validity,
+                        &mut output.payload,
                         member.axes(),
+                        output.shape,
                         polarization,
                         output_channel,
                         plane_shape,
-                        &plane_validity,
+                        &plane_payload,
                     )?;
-                    Some(plane_validity)
-                };
-                if matches!(member.role, ProductRole::SumWeights(_)) {
-                    scatter_polarization_plane_state(
-                        &mut payload,
-                        member.axes(),
-                        polarization,
-                        output_channel,
-                        plane.published_sum_weight as f32,
-                    )?;
-                    continue;
                 }
-                let beam_index =
-                    beam_offset + local_channel * normal_state.polarization_count() + polarization;
-                let mut plane_payload = produce_plane_member(PlaneMemberRequest {
-                    member,
-                    inputs,
-                    plane: &plane,
-                    domain_ordinal,
-                    polarization,
-                    fitted_beam: fitted_beams.get(beam_index).copied().flatten(),
-                    restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
-                    primary_beam_model: planned.primary_beam_model,
-                })?;
-                if let Some(plane_validity) = plane_validity.as_deref() {
-                    zero_invalid_plane_values(&mut plane_payload, plane_validity)?;
-                }
-                scatter_image_polarization_plane(
-                    &mut payload,
-                    member.axes(),
-                    polarization,
-                    output_channel,
-                    plane_shape,
-                    &plane_payload,
-                )?;
             }
+            writer.write(&output)?;
         }
-        if payload.iter().any(|value| value.is_infinite()) {
-            return Err(ProductsError::GeneratedNonfinite);
-        }
-        if payload.len() != member.payload_values {
-            return Err(ProductsError::PayloadLengthMismatch {
-                expected: member.payload_values,
-                actual: payload.len(),
-            });
-        }
-        let digest = MemberArtifactId(member_content_digest(&payload, &validity));
+        let backing = writer.finish()?;
+        let digest = MemberArtifactId(backing.content_digest()?);
         members.push(ProducedMember {
             node: member.node,
             artifact_id: member.artifact_id,
             digest,
-            payload,
-            validity,
+            backing,
         });
     }
 
@@ -916,6 +1070,8 @@ pub fn produce_continuum_members(
 fn produce_taylor_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
+    storage_plan: ProductStoragePlan,
+    storage_factory: &dyn ProductStorageFactory,
 ) -> Result<ContinuumProducedMembers, ProductsError> {
     let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
     let requires_beam = planned
@@ -936,13 +1092,14 @@ fn produce_taylor_members(
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         let payload = products.payload(member.role)?;
-        let validity = if matches!(
-            member.validity,
-            ProductValidityRule::All | ProductValidityRule::FinalNormalState
-        ) {
-            vec![true; member.payload_values]
-        } else {
-            products.validity(member.validity)?
+        let validity = match member.storage.pixel_mask() {
+            ProductPixelMask::Absent
+            | ProductPixelMask::Explicit(
+                ProductValidityRule::All | ProductValidityRule::FinalNormalState,
+            ) => {
+                vec![true; member.payload_values]
+            }
+            ProductPixelMask::Explicit(rule) => products.validity(rule)?,
         };
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {
@@ -953,13 +1110,16 @@ fn produce_taylor_members(
         if payload.iter().any(|value| !value.is_finite()) {
             return Err(ProductsError::GeneratedNonfinite);
         }
-        let digest = MemberArtifactId(member_content_digest(&payload, &validity));
+        let mut writer =
+            ProductMemberWriter::new(storage_plan.layout(member.axes())?, storage_factory)?;
+        writer.write_coupled(&payload, &validity)?;
+        let backing = writer.finish()?;
+        let digest = MemberArtifactId(backing.content_digest()?);
         members.push(ProducedMember {
             node: member.node,
             artifact_id: member.artifact_id,
             digest,
-            payload,
-            validity,
+            backing,
         });
     }
     Ok(ContinuumProducedMembers {
@@ -974,8 +1134,11 @@ fn produce_taylor_members(
 fn produce_joint_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
+    storage_plan: ProductStoragePlan,
+    storage_factory: &dyn ProductStorageFactory,
 ) -> Result<ContinuumProducedMembers, ProductsError> {
     let normal = inputs.normal_state();
+    let normal = &normal.read_window(normal.slab().core_range())?;
     if normal.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
         return Err(ProductsError::SourceLineageMismatch);
     }
@@ -1041,7 +1204,7 @@ fn produce_joint_members(
     });
     let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
-        let (payload, validity) = produce_joint_member(
+        let (payload, mut validity) = produce_joint_member(
             member,
             inputs,
             shape,
@@ -1051,6 +1214,9 @@ fn produce_joint_members(
             fitted_beam,
             restoring_beam,
         )?;
+        if member.storage.pixel_mask() == ProductPixelMask::Absent {
+            validity.fill(true);
+        }
         if payload.len() != member.payload_values || validity.len() != member.payload_values {
             return Err(ProductsError::PayloadLengthMismatch {
                 expected: member.payload_values,
@@ -1060,13 +1226,16 @@ fn produce_joint_members(
         if payload.iter().any(|value| !value.is_finite()) {
             return Err(ProductsError::GeneratedNonfinite);
         }
-        let digest = MemberArtifactId(member_content_digest(&payload, &validity));
+        let mut writer =
+            ProductMemberWriter::new(storage_plan.layout(member.axes())?, storage_factory)?;
+        writer.write_coupled(&payload, &validity)?;
+        let backing = writer.finish()?;
+        let digest = MemberArtifactId(backing.content_digest()?);
         members.push(ProducedMember {
             node: member.node,
             artifact_id: member.artifact_id,
             digest,
-            payload,
-            validity,
+            backing,
         });
     }
     Ok(ContinuumProducedMembers {
@@ -1089,12 +1258,13 @@ fn produce_joint_member(
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
 ) -> Result<(Vec<f32>, Vec<bool>), ProductsError> {
+    let normal = inputs.normal_state();
+    let normal = &normal.read_window(normal.slab().core_range())?;
     let mut payload = vec![0.0_f32; member.payload_values];
     let mut validity = vec![true; member.payload_values];
     match member.role {
         ProductRole::Psf(ProductTerm::JointNormal { row, column }) => {
-            let block = inputs
-                .normal_state()
+            let block = normal
                 .normal_block(row, column)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             payload = normalize_plane(
@@ -1110,15 +1280,13 @@ fn produce_joint_member(
             )?;
         }
         ProductRole::SumWeights(ProductTerm::JointNormal { row, column }) => {
-            let block = inputs
-                .normal_state()
+            let block = normal
                 .normal_block(row, column)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             scatter_plane_state(&mut payload, member.axes(), 0, block.sum_weight() as f32)?;
         }
         ProductRole::Weight(ProductTerm::JointNormal { row, column }) => {
-            let block = inputs
-                .normal_state()
+            let block = normal
                 .normal_block(row, column)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             payload = block
@@ -1280,8 +1448,9 @@ fn evaluate_joint_residual_plane(
     channel: usize,
     normalization: ProductNormalization,
 ) -> Result<Vec<f32>, ProductsError> {
-    let residual = inputs
-        .normal_state()
+    let normal = inputs.normal_state();
+    let normal = &normal.read_window(normal.slab().core_range())?;
+    let residual = normal
         .joint_common_residual(channel)
         .ok_or(ProductsError::SourceLineageMismatch)?;
     if residual.len() != shape[0] * shape[1] {
@@ -1311,8 +1480,9 @@ fn joint_line_term(
 }
 
 fn h00_sensitivity(inputs: &ContinuumProductInputs<'_>) -> Result<Vec<f32>, ProductsError> {
-    Ok(inputs
-        .normal_state()
+    let normal = inputs.normal_state();
+    let normal = &normal.read_window(normal.slab().core_range())?;
+    Ok(normal
         .normal_block(0, 0)
         .ok_or(ProductsError::SourceLineageMismatch)?
         .sensitivity()
@@ -1333,7 +1503,7 @@ struct DomainPlane<'a> {
 }
 
 fn domain_plane<'a>(
-    normal: &'a casa_imaging_reconstruction::FinalNormalState,
+    normal: &'a casa_imaging_reconstruction::FinalNormalStateWindow<'_>,
     role: &ImageDomainRole,
     local_channel: usize,
     polarization: usize,
@@ -1546,20 +1716,7 @@ fn produce_plane_member(
             )
         }
         ProductRole::CleanMask => {
-            let mask = reconstruction_mask_for_domain(inputs, member.axes().domain())?;
-            Ok(plane
-                .sensitivity
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    let selected = mask.is_none_or(|mask| mask.support()[index]);
-                    if valid && selected && *value > 0.0 && value.is_finite() {
-                        1.0
-                    } else {
-                        0.0
-                    }
-                })
-                .collect())
+            reconstruction_support_plane(inputs, member.axes().domain(), cells)
         }
         role => Err(ProductsError::UnsupportedProductRole {
             role,
@@ -1626,7 +1783,24 @@ fn restored_plane(
     Ok(restored)
 }
 
-pub(crate) fn reconstruction_mask_for_domain<'a>(
+pub(crate) fn reconstruction_support_plane(
+    inputs: &ContinuumProductInputs<'_>,
+    role: &ImageDomainRole,
+    cells: usize,
+) -> Result<Vec<f32>, ProductsError> {
+    let mask = reconstruction_mask_for_domain(inputs, role)?;
+    Ok((0..cells)
+        .map(|index| {
+            if mask.is_none_or(|mask| mask.support()[index]) {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .collect())
+}
+
+fn reconstruction_mask_for_domain<'a>(
     inputs: &'a ContinuumProductInputs<'_>,
     role: &ImageDomainRole,
 ) -> Result<Option<&'a casa_imaging_reconstruction::ReconstructionMask>, ProductsError> {
@@ -1789,25 +1963,17 @@ fn model_real_plane(
             .get(domain_ordinal)
             .map(|shape| shape.pixels())
             != Some(plane_shape)
-        || model.samples().len() != model.shape().sample_count()
+        || model.sample_count() != model.shape().sample_count()
     {
         return Err(ProductsError::SourceLineageMismatch);
     }
     // Canonical model order is y-major (`flat = y * W + x`); product planes
     // are stored x-major like every normal-state primitive.
     let mut plane = vec![0.0_f32; width * height];
+    let samples = model.read_plane(domain_ordinal, output_channel, polarization)?;
     for y in 0..height {
         for x in 0..width {
-            let index = model
-                .shape()
-                .flat_index(ModelCell::new(
-                    domain_ordinal,
-                    output_channel,
-                    polarization,
-                    [x, y],
-                ))
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            plane[x * height + y] = model.samples()[index].value().value() as f32;
+            plane[x * height + y] = samples[y * width + x].value().value() as f32;
         }
     }
     Ok(plane)
@@ -1820,12 +1986,21 @@ fn scatter_image_plane<T: Copy>(
     plane_shape: [usize; 2],
     plane: &[T],
 ) -> Result<(), ProductsError> {
-    scatter_image_polarization_plane(payload, axes, 0, output_channel, plane_shape, plane)
+    scatter_image_polarization_plane(
+        payload,
+        axes,
+        axes.shape(),
+        0,
+        output_channel,
+        plane_shape,
+        plane,
+    )
 }
 
 fn scatter_image_polarization_plane<T: Copy>(
     payload: &mut [T],
     axes: &ProductAxes,
+    storage_shape: [usize; 4],
     polarization: usize,
     output_channel: usize,
     plane_shape: [usize; 2],
@@ -1837,7 +2012,7 @@ fn scatter_image_polarization_plane<T: Copy>(
     }
     for x in 0..width {
         for y in 0..height {
-            let offset = product_offset(axes, x, y, polarization, output_channel)?;
+            let offset = product_offset(axes, storage_shape, x, y, polarization, output_channel)?;
             payload[offset] = plane[x * height + y];
         }
     }
@@ -1850,23 +2025,25 @@ fn scatter_plane_state(
     output_channel: usize,
     value: f32,
 ) -> Result<(), ProductsError> {
-    scatter_polarization_plane_state(payload, axes, 0, output_channel, value)
+    scatter_polarization_plane_state(payload, axes, axes.shape(), 0, output_channel, value)
 }
 
 fn scatter_polarization_plane_state(
     payload: &mut [f32],
     axes: &ProductAxes,
+    storage_shape: [usize; 4],
     polarization: usize,
     output_channel: usize,
     value: f32,
 ) -> Result<(), ProductsError> {
-    let offset = product_offset(axes, 0, 0, polarization, output_channel)?;
+    let offset = product_offset(axes, storage_shape, 0, 0, polarization, output_channel)?;
     payload[offset] = value;
     Ok(())
 }
 
 fn product_offset(
     axes: &ProductAxes,
+    storage_shape: [usize; 4],
     longitude: usize,
     latitude: usize,
     polarization: usize,
@@ -1880,7 +2057,7 @@ fn product_offset(
             ImageAxis::Polarization => polarization,
             ImageAxis::Spectral => spectral,
         };
-        let extent = axes.shape()[position];
+        let extent = storage_shape[position];
         if coordinate >= extent {
             return Err(ProductsError::SourceLineageMismatch);
         }
@@ -1901,6 +2078,7 @@ pub struct SealedMemberContract {
     axes: ProductAxes,
     beam_rule: ProductBeamRule,
     validity: ProductValidityRule,
+    storage: ProductStorageContract,
     dependencies: Box<[ProductNodeId]>,
 }
 
@@ -1935,10 +2113,16 @@ impl SealedMemberContract {
         self.beam_rule
     }
 
-    /// Return the output-validity rule.
+    /// Return the numerical-support rule, independently of the stored mask.
     #[must_use]
     pub const fn validity(&self) -> ProductValidityRule {
         self.validity
+    }
+
+    /// Return the exact stored-mask and metadata contract authorized for publication.
+    #[must_use]
+    pub const fn storage(&self) -> ProductStorageContract {
+        self.storage
     }
 
     /// Return graph-node dependencies, all of which precede this node.
@@ -1957,8 +2141,7 @@ pub struct SealedMember {
     content_identity: MemberArtifactId,
     contract: SealedMemberContract,
     resolved_beams: Box<[Option<RestoringBeam>]>,
-    payload: Vec<f32>,
-    validity: Box<[bool]>,
+    backing: Arc<ProductMemberBacking>,
 }
 
 impl SealedMember {
@@ -2011,21 +2194,19 @@ impl SealedMember {
         &self.resolved_beams
     }
 
-    /// Borrow the sealed binary32 payload.
+    /// Return the admitted physical window contract for this member.
     #[must_use]
-    pub fn payload(&self) -> &[f32] {
-        &self.payload
+    pub fn window_layout(&self) -> ProductWindowLayout {
+        self.backing.layout
     }
 
-    /// Borrow the sealed product-validity mask in the same storage order as
-    /// the numeric payload.
+    /// Read one bounded window of the sealed payload and its stored-mask support.
     ///
-    /// This is independent of the numeric CLEAN-mask product. Invalid or
-    /// unmapped spectral planes are false here even when a CASA-compatible
-    /// persistence beam placeholder is later required.
-    #[must_use]
-    pub fn validity(&self) -> &[bool] {
-        &self.validity
+    /// This is independent of numerical blanking and the numeric CLEAN-mask
+    /// product. An absent stored mask has all-true support; an explicit mask
+    /// follows the compiled storage contract even on blank spectral planes.
+    pub fn read_window(&self, channels: Range<usize>) -> Result<ProductWindow, ProductsError> {
+        self.backing.read_window(channels)
     }
 }
 
@@ -2037,21 +2218,26 @@ fn sealed_beams_for_member(
     fitted: &[Option<RestoringBeam>],
     restoring: &[Option<RestoringBeam>],
 ) -> Result<Box<[Option<RestoringBeam>]>, ProductsError> {
-    let mut roles = Vec::<&ImageDomainRole>::new();
-    for planned in members {
+    let mut domain_count = 0;
+    let mut domain_ordinal = None;
+    for (index, planned) in members.iter().enumerate() {
         let role = planned.axes().domain();
-        if !roles.contains(&role) {
-            roles.push(role);
+        if members[..index]
+            .iter()
+            .any(|prior| prior.axes().domain() == role)
+        {
+            continue;
         }
+        if role == member.axes().domain() {
+            domain_ordinal = Some(domain_count);
+        }
+        domain_count += 1;
     }
-    let domain_ordinal = roles
-        .iter()
-        .position(|role| *role == member.axes().domain())
-        .ok_or(ProductsError::SourceLineageMismatch)?;
+    let domain_ordinal = domain_ordinal.ok_or(ProductsError::SourceLineageMismatch)?;
     Ok(sealed_beams(
         rule,
-        domain_beam_slice(fitted, domain_ordinal, roles.len())?,
-        domain_beam_slice(restoring, domain_ordinal, roles.len())?,
+        domain_beam_slice(fitted, domain_ordinal, domain_count)?,
+        domain_beam_slice(restoring, domain_ordinal, domain_count)?,
     ))
 }
 

@@ -30,6 +30,28 @@ const TARGET_INTERPOLATED_POINTS: usize = 3001;
 const PSF_PATCH_RADIUS: usize = 20;
 const REGION_PADDING: usize = 5;
 
+/// Heap envelope for the bounded two-pass lobe extraction, excluding its
+/// borrowed full PSF. The Gaussian solve uses fixed-size stack matrices.
+pub(crate) fn psf_fit_workspace_bytes(shape: [usize; 2]) -> u64 {
+    let first_samples = shape
+        .map(|axis| axis.min(2 * PSF_PATCH_RADIUS + 1))
+        .into_iter()
+        .product::<usize>();
+    let window_cells = shape
+        .map(|axis| axis.min(2 * PSF_PATCH_RADIUS + 1 + 2 * REGION_PADDING))
+        .into_iter()
+        .product::<usize>();
+    let resampled_cells = window_cells.max(TARGET_INTERPOLATED_POINTS);
+    let index_vectors = 2 * (first_samples + resampled_cells) * size_of::<SampleIndex>();
+    let image_vectors = (window_cells + resampled_cells) * size_of::<f32>();
+    let fit_samples = resampled_cells * size_of::<FitSample>();
+    (index_vectors
+        + image_vectors
+        + fit_samples
+        + 3 * size_of::<Vec<u8>>()
+        + 2 * size_of::<Array2<f32>>()) as u64
+}
+
 /// CASA's default main-lobe cutoff used by both restoring-beam fitting and
 /// the fitted-Gaussian PSF sidelobe measurement.
 pub const DEFAULT_PSF_FIT_CUTOFF: f32 = 0.35;

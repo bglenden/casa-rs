@@ -945,11 +945,13 @@ impl BoundSelectedObservation {
         let sources = &self.sources;
         let mut spectral_evaluator = SpectralEvaluationProjector::new();
         let pending_weight_group = Cell::new(None);
+        let pending_spectral_selection = Cell::new(None);
         let selected = std::iter::from_fn(|| {
             samples.next_projected().map(|projected| {
                 projected
                     .map(|projected| {
                         pending_weight_group.set(Some(projected.input_weight_group));
+                        pending_spectral_selection.set(Some(projected.spectral_selection));
                         projected.selected
                     })
                     .map_err(TraversalPassError::Source)
@@ -971,6 +973,10 @@ impl BoundSelectedObservation {
                         problem,
                         sample.as_view().with_input_weight_group(input_weight_group),
                         source.geometry_engine(),
+                        pending_spectral_selection
+                            .take()
+                            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+                            .map_err(TraversalPassError::Source)?,
                     )
                     .map_err(TraversalPassError::Source)?;
                 consume(projected).map_err(TraversalPassError::Consumer)
@@ -1239,7 +1245,7 @@ impl SelectedObservationBlockConsumer<'_> {
             .visit_selected_samples(
                 self.problem,
                 correlations,
-                |row, channel, correlations, geometry_engine| {
+                |row, channel, correlations, geometry_engine, spectral_selection| {
                     evaluations.clear();
                     if evaluations.capacity() < correlations.len() {
                         return Err(SelectedObservationTraversalError::Source(
@@ -1262,7 +1268,7 @@ impl SelectedObservationBlockConsumer<'_> {
                             SelectedObservationSampleView::from_run(row, &channel, correlation);
                         evaluations.push(
                             spectral_evaluator
-                                .project(self.problem, sample, geometry_engine)
+                                .project(self.problem, sample, geometry_engine, spectral_selection)
                                 .map_err(SelectedObservationTraversalError::Source)?
                                 .spectral_evaluation(),
                         );

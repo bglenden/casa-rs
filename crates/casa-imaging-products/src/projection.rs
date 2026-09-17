@@ -88,8 +88,13 @@ impl PublicationProjection {
                 artifact_id: member.artifact_id(),
                 content_identity: member.content_identity(),
                 name: member.name().to_string(),
-                payload_bytes: u64::try_from(member.payload().len())
-                    .expect("payload length fits in u64 on supported targets")
+                payload_bytes: u64::try_from(
+                    member
+                        .window_layout()
+                        .values()
+                        .expect("sealed shape was checked"),
+                )
+                .expect("payload length fits in u64 on supported targets")
                     * 4,
             })
             .collect::<Box<[_]>>();

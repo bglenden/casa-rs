@@ -47,14 +47,14 @@ fn product_validity() -> casa_imaging_model::ProductValidityPolicies {
         casa_imaging_model::PrimaryBeamValidityPolicy::new(
             0.2,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid PB policy"),
         casa_imaging_model::TaylorValidityPolicy::new(
             casa_imaging_model::TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             casa_imaging_model::ProductSupportComparison::StrictlyGreater,
-            casa_imaging_model::ProductBlankingPolicy::ZeroAndFalseMask,
+            casa_imaging_model::ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -140,7 +140,10 @@ fn compiled_problem_with_reference_data(
         casa_imaging_model::LogicalIdentity,
     )>,
 ) -> casa_imaging_model::CompiledProblem {
-    compiled_problem_with_reference_data_and_controls(reference_data, ReconstructionControls::new(10, 0.1, 0.0))
+    compiled_problem_with_reference_data_and_controls(
+        reference_data,
+        ReconstructionControls::new(10, 0.1, 0.0),
+    )
 }
 
 pub(crate) fn compiled_problem_with_reconstruction_controls(
@@ -150,7 +153,10 @@ pub(crate) fn compiled_problem_with_reconstruction_controls(
 }
 
 fn compiled_problem_with_reference_data_and_controls(
-    reference_data: Vec<(casa_imaging_model::ReferenceDataKind, casa_imaging_model::LogicalIdentity)>,
+    reference_data: Vec<(
+        casa_imaging_model::ReferenceDataKind,
+        casa_imaging_model::LogicalIdentity,
+    )>,
     controls: ReconstructionControls,
 ) -> casa_imaging_model::CompiledProblem {
     let direction = DirectionCoordinateSpec::new(
@@ -239,7 +245,7 @@ fn compiled_problem_with_reference_data_and_controls(
     .expect("valid scheduler test problem")
 }
 
-fn cpu_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> WorkNode {
+pub(super) fn cpu_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> WorkNode {
     WorkNode {
         id: WorkNodeId::new(id),
         kind: WorkKind::Compute,
@@ -271,7 +277,7 @@ fn synchronization_node(id: &str, dependencies: BTreeSet<WorkDependency>) -> Wor
     }
 }
 
-fn plan_spec(nodes: Vec<WorkNode>) -> ExecutionDagSpecification {
+pub(super) fn plan_spec(nodes: Vec<WorkNode>) -> ExecutionDagSpecification {
     let host = CapacityViewId::new("host-memory");
     ExecutionDagSpecification {
         required_resource_capabilities: BTreeSet::new(),
@@ -432,7 +438,10 @@ fn io_authority_with_workers(workers: u64) -> ResourceAuthority {
     io_authority_with_workers_and_memory(workers, 1_024)
 }
 
-fn io_authority_with_workers_and_memory(workers: u64, memory_bytes: u64) -> ResourceAuthority {
+pub(super) fn io_authority_with_workers_and_memory(
+    workers: u64,
+    memory_bytes: u64,
+) -> ResourceAuthority {
     let domain = CapacityDomainId::new("host-memory");
     let view = CapacityViewId::new("host-memory");
     let rate = RateResourceId::new("io-rate");
@@ -819,6 +828,7 @@ fn physical_work_binding_with_problem(
         compatibility: compatibility.clone(),
         physical_slot: publication_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: commit.clone(),
             release_after: BTreeSet::from([
                 WorkDependency::Fence(FenceId::new(commit.clone(), FenceKind::Io)),
@@ -833,6 +843,7 @@ fn physical_work_binding_with_problem(
         compatibility: compatibility.clone(),
         physical_slot: writer_slot.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: stage.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(stage.clone())]),
         },
@@ -1541,6 +1552,7 @@ fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag,
             compatibility: active_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("active-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: active_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Work(active_release_id.clone())]),
             },
@@ -1552,6 +1564,7 @@ fn inactive_release_predecessor_plan(fenced_predecessor: bool) -> (ExecutionDag,
             compatibility: inactive_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("inactive-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: inactive_prepare_id,
                 release_after: BTreeSet::from([inactive_release_after]),
             },
@@ -2478,6 +2491,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("reused-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: compute_id.clone(),
                 release_after: first_release,
             },
@@ -2489,6 +2503,7 @@ fn unified_physical_slot_reuse_waits_for_every_declared_fence() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("reused-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: reuse_id.clone(),
                 release_after: BTreeSet::from([WorkDependency::Work(reuse_id)]),
             },
@@ -2684,6 +2699,7 @@ fn disjoint_io_buffer_purposes_share_one_physical_memory_charge() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("io-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: id.clone(),
             release_after: fences
                 .iter()
@@ -2782,6 +2798,7 @@ fn io_buffer_claims_and_logical_allocations_match_exactly() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("prepare-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: WorkNodeId::new("prepare"),
             release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("prepare"))]),
         },
@@ -3014,6 +3031,7 @@ fn allocation_lifetime_rejects_release_before_an_async_use_fence() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: node_id.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(node_id.clone())]),
         },
@@ -3220,6 +3238,7 @@ fn mutable_allocation_use_waits_for_every_prior_async_use_fence() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: first_id,
             release_after: BTreeSet::from([
                 WorkDependency::Fence(FenceId::new(WorkNodeId::new("first-use"), FenceKind::Io)),
@@ -3337,6 +3356,7 @@ fn cancellation_prevents_pending_publication_from_starting() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("cancel-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: compute_id,
             release_after: BTreeSet::from([
                 WorkDependency::Fence(FenceId::new(publication_id.clone(), FenceKind::Io)),
@@ -3971,6 +3991,7 @@ fn adaptation_projection_cannot_strand_a_logical_allocation_terminal_fence() {
         compatibility: compatibility.clone(),
         physical_slot: slot_id.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: acquire_id,
             release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                 terminal_id.clone(),
@@ -4065,6 +4086,7 @@ fn adaptation_projection_cannot_strand_a_retained_resource_release() {
         compatibility: compatibility.clone(),
         physical_slot: slot_id.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: release_id.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
         },
@@ -4464,6 +4486,7 @@ fn release_node_can_atomically_own_multiple_external_allocations() {
             compatibility: first_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("first-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: first_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
             },
@@ -4475,6 +4498,7 @@ fn release_node_can_atomically_own_multiple_external_allocations() {
             compatibility: second_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("second-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: second_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Work(release_id)]),
             },
@@ -4578,6 +4602,7 @@ fn externally_retained_io_buffer_release_is_terminal_after_every_use() {
         compatibility: compatibility.clone(),
         physical_slot: PhysicalSlotId::new("mapped-slot"),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: prepare_id.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(later_id.clone())]),
         },
@@ -4806,6 +4831,7 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: mapped_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("mapped-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: mapped_prepare_id,
                 release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
                     first_release_id.clone(),
@@ -4820,6 +4846,7 @@ fn cancellation_cleanup_respects_release_to_release_dependencies() {
             compatibility: storage_compatibility.clone(),
             physical_slot: PhysicalSlotId::new("storage-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: storage_prepare_id.clone(),
                 release_after: BTreeSet::from([WorkDependency::Work(second_release_id.clone())]),
             },
@@ -4981,6 +5008,7 @@ fn temporal_reuse_rejects_preserved_contents_from_another_allocation() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("reused-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: WorkNodeId::new(node),
                 release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new(node))]),
             },
@@ -5040,6 +5068,7 @@ fn temporal_reuse_requires_release_strictly_before_the_next_acquisition() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("shared-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: WorkNodeId::new("first"),
                 release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("second"))]),
             },
@@ -5051,6 +5080,7 @@ fn temporal_reuse_requires_release_strictly_before_the_next_acquisition() {
             compatibility: compatibility.clone(),
             physical_slot: PhysicalSlotId::new("shared-slot"),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: WorkNodeId::new("second"),
                 release_after: BTreeSet::from([WorkDependency::Work(WorkNodeId::new("second"))]),
             },

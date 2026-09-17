@@ -41,6 +41,7 @@ impl ContinuumTransformedSample {
         self.selected
             .as_view()
             .with_input_weight_group(self.input_weight_group)
+            .with_row_spectral_geometry(self.spectral_evaluation.row_geometry())
     }
 
     /// Return the source/output spectral coordinate evaluation.

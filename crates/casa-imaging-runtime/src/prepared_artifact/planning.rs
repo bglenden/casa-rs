@@ -232,6 +232,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
                 compatibility: compatibility.clone(),
                 physical_slot: slot_id.clone(),
                 lifetime: AllocationLifetime {
+                    disposition: crate::AllocationDisposition::Release,
                     acquire_at: commit.clone(),
                     release_after: BTreeSet::from([
                         WorkDependency::Fence(crate::FenceId::new(
@@ -557,6 +558,7 @@ impl<'a> PreparedArtifactPlanFragment<'a> {
             compatibility: compatibility.clone(),
             physical_slot: slot_id.clone(),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: prepared_node.id.clone(),
                 release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
             },
@@ -1007,6 +1009,7 @@ pub(super) fn compose_catalog(
         compatibility: compatibility.clone(),
         physical_slot: slot_id.clone(),
         lifetime: AllocationLifetime {
+            disposition: crate::AllocationDisposition::Release,
             acquire_at: node_id.clone(),
             release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
         },
@@ -1048,6 +1051,7 @@ pub(super) fn compose_catalog(
             compatibility: compatibility.clone(),
             physical_slot: slot_id.clone(),
             lifetime: AllocationLifetime {
+                disposition: crate::AllocationDisposition::Release,
                 acquire_at: node_id.clone(),
                 release_after: BTreeSet::from([WorkDependency::Work(release_id.clone())]),
             },

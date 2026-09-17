@@ -312,9 +312,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn inventory_and_parameter_catalog_resolve_the_same_42_surfaces() {
+    fn inventory_and_parameter_catalog_resolve_the_same_41_surfaces() {
         let apps = registered_apps();
-        assert_eq!(apps.len(), 42);
+        assert_eq!(apps.len(), 41);
         for app in apps {
             let schema = app.load_schema().expect("canonical surface projection");
             assert_eq!(schema.command_id, app.id);

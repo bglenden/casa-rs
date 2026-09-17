@@ -99,6 +99,12 @@ implementation decision, test it instead of extending the measurement machinery.
 
 ## Work Record And State
 
+Anything needed after the current execution (inputs, reference binaries,
+results, logs, receipts, checkpoints, or handoffs) must live in durable storage,
+never under `/private` or any temporary/`tmp` directory. Use temporary storage
+only for disposable scratch. Keep restart-critical evidence outside removable
+worktrees and follow `docs/agent-reference.md` for verified checkpoints.
+
 GitHub issues and pull requests are the authoritative work record. Generic
 shaping, research, TDD, diagnosis, design, review, and conflict-resolution
 procedures belong to the globally installed Matt Pocock skills; this repository

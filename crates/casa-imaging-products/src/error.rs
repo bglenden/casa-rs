@@ -8,6 +8,26 @@ use thiserror::Error;
 /// Exact reason product planning, production, or authorization failed closed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ProductsError {
+    /// Physical product backing could not create, read, write, or flush a window.
+    #[error("product backing failed: {0}")]
+    Storage(String),
+    /// A product window exceeded its shape or admitted capacity.
+    #[error("product window exceeds its admitted shape or capacity")]
+    InvalidWindow,
+    /// Ordered product coverage was missing, repeated, or reordered.
+    #[error("product window coverage requires channel {expected}, found {actual}")]
+    WindowCoverage {
+        /// Next required channel, or complete channel count at sealing.
+        expected: usize,
+        /// Actual start or completed channel count.
+        actual: usize,
+    },
+    /// An authoritative Normal State window could not be read.
+    #[error(transparent)]
+    NormalAccess(#[from] casa_imaging_reconstruction::SpectralOperatorError),
+    /// An authoritative model plane could not be read for product generation.
+    #[error(transparent)]
+    ModelAccess(#[from] casa_imaging_reconstruction::ModelLifecycleError),
     /// Shared reconstruction response normalization failed.
     #[error(transparent)]
     ImageResponse(#[from] casa_imaging_reconstruction::ImageResponseError),

@@ -305,8 +305,11 @@ impl ReconstructionMaskPlan {
                 previous,
                 evolution_stopped,
             } => {
+                if base.sample_count() != shape[0] * shape[1] {
+                    return Err(MaskError::ShapeMismatch);
+                }
                 let valid_support = base
-                    .samples()
+                    .read_plane(0, 0, 0)?
                     .iter()
                     .map(|sample| sample.support() == casa_imaging_model::ModelSupport::Valid)
                     .collect::<Vec<_>>();
@@ -388,7 +391,9 @@ struct AutoMaskBeam {
     sidelobe_fraction: f64,
 }
 
-fn fit_auto_mask_beam(normal: &FinalNormalState) -> Result<AutoMaskBeam, MaskError> {
+fn fit_auto_mask_beam(
+    normal: &crate::FinalNormalStateWindow<'_>,
+) -> Result<AutoMaskBeam, MaskError> {
     let shape = normal.shape();
     let psf = normal
         .normal_approximation()
@@ -625,10 +630,12 @@ impl ImageDomainReconstructionMaskPlans {
             ));
         }
         let mut masks = Vec::with_capacity(self.plans.len());
-        for (plan, domain) in self.plans.iter().zip(normal.domains()) {
+        for (ordinal, plan) in self.plans.iter().enumerate() {
             let problem = normal.problem_id();
             let model_generation = base.generation_id();
-            let shape = domain.shape();
+            let shape = normal
+                .domain_shape(ordinal)
+                .ok_or(MaskError::DomainCardinalityMismatch)?;
             let mask = match plan {
                 ReconstructionMaskPlan::FullPlane { coordinate } => {
                     ReconstructionMask::full_plane(problem, model_generation, *coordinate, shape)?
@@ -1025,6 +1032,10 @@ pub fn auto_multithresh(
     evolution_stopped: bool,
     controls: AutoMultithreshControls,
 ) -> Result<(ReconstructionMask, AutoMultithreshEvidence), MaskError> {
+    if normal.channel_count() != 1 {
+        return Err(MaskError::ShapeMismatch);
+    }
+    let normal = &normal.read_window(normal.slab().core_range())?;
     let beam = fit_auto_mask_beam(normal)?;
     validate_auto_controls(controls, beam.area_pixels)?;
     let shape = normal.shape();
@@ -1191,6 +1202,12 @@ pub fn auto_multithresh(
 /// Mask construction or lineage failure.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum MaskError {
+    /// A required authoritative Normal State window could not be loaded.
+    #[error(transparent)]
+    NormalAccess(#[from] crate::SpectralOperatorError),
+    /// Authoritative model support could not be loaded.
+    #[error(transparent)]
+    ModelAccess(#[from] crate::ModelLifecycleError),
     /// Mask-plan cardinality does not equal the compiled image-domain count.
     #[error("reconstruction mask plans must name every compiled image domain exactly once")]
     DomainCardinalityMismatch,

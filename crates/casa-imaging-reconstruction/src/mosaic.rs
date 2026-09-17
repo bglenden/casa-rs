@@ -272,7 +272,8 @@ fn pointing_pair_geometry(
         crate::mask::direction_world_to_pixel(geometry.direction, direction)
             .map_err(|_| SpectralOperatorError::UnsupportedGeometry)
     });
-    let pixels = [pixels[0]?, pixels[1]?];
+    let [first, second] = pixels;
+    let pixels = [first?, second?];
     let midpoint = [
         (pixels[0][0] + pixels[1][0]) * 0.5,
         (pixels[0][1] + pixels[1][1]) * 0.5,
@@ -440,7 +441,8 @@ impl MosaicProjector {
             )
             .map_err(|_| SpectralOperatorError::UnsupportedGeometry)
         });
-        let [antenna1_pixel, antenna2_pixel] = [pointing_pixels[0]?, pointing_pixels[1]?];
+        let [antenna1_pixel, antenna2_pixel] = pointing_pixels;
+        let [antenna1_pixel, antenna2_pixel] = [antenna1_pixel?, antenna2_pixel?];
         let pointing_pixel = [
             (antenna1_pixel[0] + antenna2_pixel[0]) * 0.5,
             (antenna1_pixel[1] + antenna2_pixel[1]) * 0.5,

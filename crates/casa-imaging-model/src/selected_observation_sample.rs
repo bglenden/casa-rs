@@ -664,11 +664,124 @@ impl SelectedSpectralInterval {
     }
 }
 
+/// Row-local geometry of the complete selected native-channel vector.
+///
+/// The first two selected centres are evaluated in the requested output frame.
+/// They are not reconstructed from `CHAN_WIDTH`, and retain their exact values
+/// even when selected channels have gaps or descend in frequency. This is a
+/// non-persistent report: selected-source traversal owns its provenance.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectedRowSpectralGeometry {
+    measurement_set: MeasurementSetIdentity,
+    physical_row: u64,
+    data_description_id: i32,
+    spectral_window_id: u32,
+    polarization_id: u32,
+    field_id: i32,
+    time_mjd_days_bits: u64,
+    source_frame: FrequencyFrame,
+    output_frame: FrequencyFrame,
+    selected_channels: usize,
+    first: (u32, f64),
+    second: Option<(u32, f64)>,
+}
+
+impl SelectedRowSpectralGeometry {
+    /// Bind a singleton or the first pair of the complete selected vector to
+    /// one source row and frame-conversion context.
+    ///
+    /// Indices remain in canonical selected-channel order, independently of
+    /// frequency direction. The caller supplies both converted centres, not a
+    /// channel-width approximation. Flags never change this geometry.
+    #[must_use]
+    pub fn new(
+        sample: SelectedObservationSampleView<'_>,
+        output_frame: FrequencyFrame,
+        selected_channels: usize,
+        first: (u32, f64),
+        second: Option<(u32, f64)>,
+    ) -> Option<Self> {
+        if selected_channels == 0
+            || !first.1.is_finite()
+            || first.1 <= 0.0
+            || (selected_channels == 1) != second.is_none()
+            || second.is_some_and(|second| {
+                second.0 <= first.0
+                    || !second.1.is_finite()
+                    || second.1 <= 0.0
+                    || !(second.1 - first.1).is_finite()
+                    || second.1 == first.1
+            })
+        {
+            return None;
+        }
+        let address = sample.address();
+        Some(Self {
+            measurement_set: address.measurement_set,
+            physical_row: address.physical_row,
+            data_description_id: address.data_description_id,
+            spectral_window_id: address.spectral_window_id,
+            polarization_id: address.polarization_id,
+            field_id: sample.metadata().field_id,
+            time_mjd_days_bits: sample.coordinates().time.mjd_days().to_bits(),
+            source_frame: address.frequency_frame,
+            output_frame,
+            selected_channels,
+            first,
+            second,
+        })
+    }
+
+    /// Whether this descriptor belongs to the sample's row and conversion context.
+    #[must_use]
+    pub fn matches_sample(
+        self,
+        sample: SelectedObservationSampleView<'_>,
+        output_frame: FrequencyFrame,
+    ) -> bool {
+        let address = sample.address();
+        self.measurement_set == address.measurement_set
+            && self.physical_row == address.physical_row
+            && self.data_description_id == address.data_description_id
+            && self.spectral_window_id == address.spectral_window_id
+            && self.polarization_id == address.polarization_id
+            && self.field_id == sample.metadata().field_id
+            && self.time_mjd_days_bits == sample.coordinates().time.mjd_days().to_bits()
+            && self.source_frame == address.frequency_frame
+            && self.output_frame == output_frame
+    }
+
+    /// Number of native channels in the complete selected vector, including flagged channels.
+    #[must_use]
+    pub const fn selected_channels(self) -> usize {
+        self.selected_channels
+    }
+
+    /// Index and exact converted centre of the first selected channel.
+    #[must_use]
+    pub const fn first(self) -> (u32, f64) {
+        self.first
+    }
+
+    /// Index and exact converted centre of the second selected channel, absent for a singleton.
+    #[must_use]
+    pub const fn second(self) -> Option<(u32, f64)> {
+        self.second
+    }
+
+    /// Exact first-pair centres for row-local interpolation, absent for a singleton.
+    #[must_use]
+    pub fn first_pair_hz(self) -> Option<[f64; 2]> {
+        self.second.map(|second| [self.first.1, second.1])
+    }
+}
+
 /// Source-backed frame/interval evaluation for one selected spectral sample.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedSpectralEvaluation {
     native: SelectedSpectralInterval,
     output_frame: SelectedSpectralInterval,
+    row_geometry: Option<SelectedRowSpectralGeometry>,
     effective_weight: f64,
     valid: bool,
 }
@@ -685,6 +798,7 @@ impl SelectedSpectralEvaluation {
         (effective_weight.is_finite() && effective_weight >= 0.0).then_some(Self {
             native,
             output_frame,
+            row_geometry: None,
             effective_weight,
             valid,
         })
@@ -700,6 +814,22 @@ impl SelectedSpectralEvaluation {
     #[must_use]
     pub const fn output_frame(self) -> SelectedSpectralInterval {
         self.output_frame
+    }
+
+    /// Attach the source owner's exact selected-row geometry.
+    ///
+    /// Row-interpolating consumers require this descriptor; its absence never
+    /// authorizes a channel-width or catalogue approximation.
+    #[must_use]
+    pub const fn with_row_geometry(mut self, geometry: SelectedRowSpectralGeometry) -> Self {
+        self.row_geometry = Some(geometry);
+        self
+    }
+
+    /// Return the source owner's selected-row geometry, when the envelope carries it.
+    #[must_use]
+    pub const fn row_geometry(self) -> Option<SelectedRowSpectralGeometry> {
+        self.row_geometry
     }
 
     /// Return the source weight after exact flag validity has been applied.
@@ -895,6 +1025,7 @@ impl SelectedInputWeightGroup {
 pub struct SelectedObservationSampleView<'a> {
     storage: SelectedObservationSampleStorage<'a>,
     input_weight_group: SelectedInputWeightGroup,
+    row_spectral_geometry: Option<SelectedRowSpectralGeometry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -918,6 +1049,7 @@ impl<'a> SelectedObservationSampleView<'a> {
         Self {
             storage: SelectedObservationSampleStorage::Scalar(sample),
             input_weight_group: SelectedInputWeightGroup::single(sample.input_weight),
+            row_spectral_geometry: None,
         }
     }
 
@@ -935,6 +1067,7 @@ impl<'a> SelectedObservationSampleView<'a> {
                 correlation,
             },
             input_weight_group: SelectedInputWeightGroup::single(correlation.input_weight),
+            row_spectral_geometry: None,
         }
     }
 
@@ -954,6 +1087,24 @@ impl<'a> SelectedObservationSampleView<'a> {
     #[must_use]
     pub const fn input_weight_group(self) -> SelectedInputWeightGroup {
         self.input_weight_group
+    }
+
+    /// Attach the traversal-only spectral descriptor without changing the scalar value schema.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_row_spectral_geometry(
+        mut self,
+        geometry: Option<SelectedRowSpectralGeometry>,
+    ) -> Self {
+        self.row_spectral_geometry = geometry;
+        self
+    }
+
+    /// Borrow the source-issued row geometry carried through weighted traversal.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn row_spectral_geometry(self) -> Option<SelectedRowSpectralGeometry> {
+        self.row_spectral_geometry
     }
 
     /// Return the exact selected-sample address.

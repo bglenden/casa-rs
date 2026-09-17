@@ -144,6 +144,7 @@ impl TaylorProducts {
             .is_some()
             .then(std::time::Instant::now);
         let state = inputs.normal_state();
+        let state = &state.read_window(state.slab().core_range())?;
         if state.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
             return Err(ProductsError::SourceLineageMismatch);
         }
@@ -443,7 +444,7 @@ impl TaylorProducts {
         let validity = inputs.problem().products().validity();
         let pb_policy = validity.primary_beam();
         if pb_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || pb_policy.blanking() != ProductBlankingPolicy::ZeroAndFalseMask
+            || pb_policy.blanking() != ProductBlankingPolicy::Zero
         {
             return Err(ProductsError::UnsupportedProblem);
         }
@@ -467,7 +468,7 @@ impl TaylorProducts {
         if taylor_policy.reference()
             != TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum
             || taylor_policy.comparison() != ProductSupportComparison::StrictlyGreater
-            || taylor_policy.blanking() != ProductBlankingPolicy::ZeroAndFalseMask
+            || taylor_policy.blanking() != ProductBlankingPolicy::Zero
         {
             return Err(ProductsError::UnsupportedProblem);
         }
@@ -504,16 +505,8 @@ impl TaylorProducts {
         } else {
             vec![0.0; cells]
         };
-        let reconstruction_mask =
-            crate::authority::reconstruction_mask_for_domain(inputs, domain_role)?;
-        let clean_mask = weight[0]
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                let selected = reconstruction_mask.is_none_or(|mask| mask.support()[index]);
-                (selected && value.is_finite() && *value > 0.0) as u8 as f32
-            })
-            .collect();
+        let clean_mask =
+            crate::authority::reconstruction_support_plane(inputs, domain_role, cells)?;
 
         Ok(Self {
             shape,
@@ -920,8 +913,6 @@ fn model_term(
     coefficient: usize,
     shape: [usize; 2],
 ) -> Result<Vec<f32>, ProductsError> {
-    use casa_imaging_model::ModelCell;
-
     let model = inputs.final_model();
     if model.shape().domains().len() != 1
         || model.shape().polarizations() != 1
@@ -935,13 +926,10 @@ fn model_term(
         return Err(ProductsError::SourceLineageMismatch);
     }
     let mut plane = vec![0.0; shape[0] * shape[1]];
+    let samples = model.read_plane(0, coefficient, 0)?;
     for y in 0..shape[1] {
         for x in 0..shape[0] {
-            let index = model
-                .shape()
-                .flat_index(ModelCell::new(0, coefficient, 0, [x, y]))
-                .ok_or(ProductsError::SourceLineageMismatch)?;
-            plane[x * shape[1] + y] = model.samples()[index].value().value() as f32;
+            plane[x * shape[1] + y] = samples[y * shape[0] + x].value().value() as f32;
         }
     }
     Ok(plane)
@@ -1094,7 +1082,7 @@ mod tests {
     }
 
     #[test]
-    fn vla_q_band_uses_casa_annular_airy_lookup_and_other_bands_fail_closed() {
+    fn vla_l_and_q_bands_use_casa_annular_airy_lookup_and_other_bands_fail_closed() {
         let frequency_hz = 45_469_370_205.156_37;
         let table = super::vla_band_voltage_table(frequency_hz)
             .expect("issue #607 representative frequency is in VLA Q band");
@@ -1103,15 +1091,25 @@ mod tests {
         let voltage = table.evaluate(29.919_033_706_45);
         assert_eq!((voltage * voltage).to_bits(), 0x3e6d_1a6e);
 
+        // The L band shares the same CASA annular aperture inside its open
+        // 1--2 GHz interval.
+        let l_band = super::vla_band_voltage_table(1.5e9).expect("VLA L band is supported");
+        assert_eq!(l_band.maximum_radius(), table.maximum_radius());
+        assert_eq!(
+            l_band.evaluate(29.919_033_706_45).to_bits(),
+            table.evaluate(29.919_033_706_45).to_bits()
+        );
+
         for unsupported_hz in [
             f64::NAN,
-            35.0e9,
             55.0e9,
+            35.0e9,
             25.0e9,
             15.0e9,
             9.0e9,
             5.0e9,
-            1.5e9,
+            2.0e9,
+            1.0e9,
             0.3e9,
             0.05e9,
         ] {

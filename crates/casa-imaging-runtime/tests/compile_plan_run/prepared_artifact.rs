@@ -2761,6 +2761,9 @@ fn reusable_cf_identity_does_not_authorize_another_compiled_problem() {
                  supplied: &PreparedArtifactDescriptor,
                  operation: PreparedArtifactOperation,
                  catalog: bool| {
+        let _guard = super::run_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let store = open();
         let (mut suite, id) = if catalog {
             catalog_registry(problem, open(), vec![supplied.clone()])

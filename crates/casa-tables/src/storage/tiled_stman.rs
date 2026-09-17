@@ -958,12 +958,31 @@ fn write_tiled_header(
     header: &TiledStManHeader,
 ) -> Result<(), StorageError> {
     let mut io = AipsIo::open(path, AipsOpenOption::New)?;
+    write_tiled_header_contents(&mut io, variant, header)?;
+    io.close()?;
+    Ok(())
+}
 
+fn serialize_tiled_header(
+    variant: &TiledVariant,
+    header: &TiledStManHeader,
+) -> Result<Box<[u8]>, StorageError> {
+    let mut io = AipsIo::new_write_only(std::io::Cursor::new(Vec::new()));
+    write_tiled_header_contents(&mut io, variant, header)?;
+    let cursor: std::io::Cursor<Vec<u8>> = io.into_inner_typed()?;
+    Ok(cursor.into_inner().into_boxed_slice())
+}
+
+fn write_tiled_header_contents(
+    io: &mut AipsIo,
+    variant: &TiledVariant,
+    header: &TiledStManHeader,
+) -> Result<(), StorageError> {
     match variant {
         TiledVariant::Column { default_tile_shape } => {
             io.putstart("TiledColumnStMan", 1)?;
-            write_iposition(&mut io, default_tile_shape)?;
-            write_tiled_stman_base(&mut io, header)?;
+            write_iposition(io, default_tile_shape)?;
+            write_tiled_stman_base(io, header)?;
             io.putend()?;
         }
         TiledVariant::Shape {
@@ -974,18 +993,18 @@ fn write_tiled_header(
             pos_map,
         } => {
             io.putstart("TiledShapeStMan", 1)?;
-            write_tiled_stman_base(&mut io, header)?;
-            write_iposition(&mut io, default_tile_shape)?;
+            write_tiled_stman_base(io, header)?;
+            write_iposition(io, default_tile_shape)?;
             io.put_u32(*nr_used_row_map)?;
-            write_block_u32(&mut io, row_map)?;
-            write_block_u32(&mut io, cube_map)?;
-            write_block_u32(&mut io, pos_map)?;
+            write_block_u32(io, row_map)?;
+            write_block_u32(io, cube_map)?;
+            write_block_u32(io, pos_map)?;
             io.putend()?;
         }
         TiledVariant::Cell { default_tile_shape } => {
             io.putstart("TiledCellStMan", 1)?;
-            write_iposition(&mut io, default_tile_shape)?;
-            write_tiled_stman_base(&mut io, header)?;
+            write_iposition(io, default_tile_shape)?;
+            write_tiled_stman_base(io, header)?;
             io.putend()?;
         }
         TiledVariant::Data {
@@ -996,17 +1015,16 @@ fn write_tiled_header(
             pos_map,
         } => {
             io.putstart("TiledDataStMan", 2)?;
-            write_tiled_stman_base(&mut io, header)?;
-            write_iposition(&mut io, default_tile_shape)?;
+            write_tiled_stman_base(io, header)?;
+            write_iposition(io, default_tile_shape)?;
             io.put_u64(*nrrow_last)?;
-            write_block_u64(&mut io, row_map)?;
-            write_block_u32(&mut io, cube_map)?;
-            write_block_u32(&mut io, pos_map)?;
+            write_block_u64(io, row_map)?;
+            write_block_u32(io, cube_map)?;
+            write_block_u32(io, pos_map)?;
             io.putend()?;
         }
     }
 
-    io.close()?;
     Ok(())
 }
 
@@ -9177,10 +9195,10 @@ fn duration_nanos_usize(duration: Duration) -> usize {
 ///
 /// `TSMCube` + `BucketCache` in casacore's tiled storage manager.
 pub(crate) struct TiledFileIO {
-    tsm_path: PathBuf,
+    tsm_path: Box<Path>,
     #[allow(dead_code)]
-    header_path: PathBuf,
-    table_path: PathBuf,
+    header_path: Box<Path>,
+    table_path: Box<Path>,
     pixel_type: PrimitiveType,
     cube_shape: Vec<usize>,
     tile_shape: Vec<usize>,
@@ -9953,151 +9971,105 @@ impl TiledFileIO {
         dm_name: &str,
         max_cache_bytes: usize,
     ) -> Result<Self, StorageError> {
-        let dt = CasacoreDataType::from_primitive_type(pixel_type, false);
-        let ndim = cube_shape.len();
-        let elem_size = tile_element_size(dt);
-        crate::storage::TileLayoutPlanner::repository_default()
-            .plan_explicit_array(cube_shape, elem_size, tile_shape)
-            .map_err(|error| StorageError::FormatMismatch(error.to_string()))?;
-        let tile_nelem = checked_storage_product(tile_shape, "tile elements")?;
-        let tile_bytes = tile_nelem.checked_mul(elem_size).ok_or_else(|| {
-            StorageError::FormatMismatch("tile byte size overflows usize".to_string())
-        })?;
-        let file_tile_bytes = if dt == CasacoreDataType::TpBool {
-            tile_nelem.div_ceil(8)
-        } else {
-            tile_bytes
-        };
+        let layout = TiledArrayStorageLayout::new(
+            cube_shape,
+            tile_shape,
+            pixel_type,
+            big_endian,
+            dm_seq_nr,
+            dm_name,
+            if max_cache_bytes == 0 {
+                usize::MAX
+            } else {
+                max_cache_bytes
+            },
+        )?;
+        Self::create_planned(table_path, &layout)
+    }
 
-        let tiles_per_dim: Vec<usize> = (0..ndim)
-            .map(|d| cube_shape[d].div_ceil(tile_shape[d]))
-            .collect();
-        let nr_tiles = checked_storage_product(&tiles_per_dim, "tile count")?;
-        let total_bytes = nr_tiles.checked_mul(file_tile_bytes).ok_or_else(|| {
-            StorageError::FormatMismatch("tiled data file size overflows usize".to_string())
-        })?;
-        let total_bytes_u64 = u64::try_from(total_bytes).map_err(|_| {
-            StorageError::FormatMismatch("tiled data file size exceeds u64".to_string())
-        })?;
-        let total_bytes_i64 = i64::try_from(total_bytes).map_err(|_| {
-            StorageError::FormatMismatch("casacore tiled data file exceeds i64".to_string())
-        })?;
-
-        // Write zeroed TSM data file.
-        let tsm_path = tsm_data_path(table_path, dm_seq_nr, 0);
+    fn create_planned(
+        table_path: &Path,
+        layout: &TiledArrayStorageLayout,
+    ) -> Result<Self, StorageError> {
+        let tsm_path = tsm_data_path(table_path, layout.dm_seq_nr, 0).into_boxed_path();
+        let header_path = table_path
+            .join(format!("table.f{}", layout.dm_seq_nr))
+            .into_boxed_path();
         {
-            let f = OpenOptions::new()
+            let file = OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
                 .open(&tsm_path)?;
-            f.set_len(total_bytes_u64)?;
+            let bytes = checked_layout_mul(layout.tile_count, layout.file_tile_bytes)?;
+            file.set_len(u64::try_from(bytes).map_err(|_| {
+                StorageError::FormatMismatch("typed array file length exceeds u64".into())
+            })?)?;
         }
-
-        // Write AipsIO header file.
-        let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
-        let tile_shape_i32: Vec<i32> = tile_shape
-            .iter()
-            .map(|&extent| {
-                i32::try_from(extent).map_err(|_| {
-                    StorageError::FormatMismatch(
-                        "tile extent exceeds casacore i32 metadata".to_string(),
-                    )
-                })
-            })
-            .collect::<Result<_, _>>()?;
-        let header = TiledStManHeader {
-            big_endian,
-            seq_nr: dm_seq_nr,
-            nrrow: 1,
-            col_data_types: vec![dt],
-            hypercolumn_name: dm_name.to_string(),
-            max_cache_size: 0,
-            nrdim: ndim as u32,
-            files: vec![Some(TsmFileInfo {
-                seq_nr: 0,
-                length: total_bytes_i64,
-            })],
-            cubes: vec![TsmCubeInfo {
-                values: RecordValue::default(),
-                extensible: false,
-                cube_shape: cube_shape.to_vec(),
-                tile_shape: tile_shape.to_vec(),
-                file_seq_nr: 0,
-                file_offset: 0,
-            }],
-        };
-        let variant = TiledVariant::Cell {
-            default_tile_shape: tile_shape_i32,
-        };
-        write_tiled_header(&header_path, &variant, &header)?;
-
-        let tile_strides = fortran_order_strides(tile_shape);
-        let tiles_per_dim_strides = fortran_order_strides(&tiles_per_dim);
-        let needs_swap = big_endian != cfg!(target_endian = "big");
-
-        let total_data_bytes = total_bytes;
-        let use_lru = max_cache_bytes > 0 && max_cache_bytes < total_data_bytes;
-        let cache = if use_lru {
-            let max_slots = max_cache_bytes / tile_bytes;
-            let max_slots = max_slots.max(1);
+        std::fs::write(&header_path, &layout.header)?;
+        let cache = if layout.use_lru {
             let file = OpenOptions::new().read(true).write(true).open(&tsm_path)?;
             TileCache::Lru(LruTileCache {
-                data: vec![0u8; max_slots * tile_bytes],
-                slot_tile: vec![usize::MAX; max_slots],
-                slot_dirty: vec![false; max_slots],
-                tile_to_slot: vec![-1i32; nr_tiles],
-                slot_access: vec![0u64; max_slots],
+                data: vec![0; layout.cache_payload_bytes()?],
+                slot_tile: vec![usize::MAX; layout.cache_slots],
+                slot_dirty: vec![false; layout.cache_slots],
+                tile_to_slot: vec![-1; layout.tile_count],
+                slot_access: vec![0; layout.cache_slots],
                 access_counter: 0,
-                max_slots,
+                max_slots: layout.cache_slots,
                 used_slots: 0,
                 file,
             })
         } else {
             TileCache::Flat(FlatTileCache {
                 data: Vec::new(),
-                dirty: vec![false; nr_tiles],
-                tile_bytes,
-                nr_tiles,
+                dirty: vec![false; layout.tile_count],
+                tile_bytes: layout.tile_bytes,
+                nr_tiles: layout.tile_count,
                 allocated: false,
             })
         };
-
+        let tiles_per_dim = layout
+            .cube_shape
+            .iter()
+            .zip(&layout.tile_shape)
+            .map(|(&shape, &tile)| shape.div_ceil(tile))
+            .collect::<Vec<_>>();
+        let dt = CasacoreDataType::from_primitive_type(layout.pixel_type, false);
+        let elem_size = tile_element_size(dt);
         let swap_size = match dt {
             CasacoreDataType::TpComplex => 4,
             CasacoreDataType::TpDComplex => 8,
             _ => elem_size,
         };
-
         Ok(Self {
             tsm_path,
             header_path,
-            table_path: table_path.to_path_buf(),
-            pixel_type,
-            cube_shape: cube_shape.to_vec(),
-            tile_shape: tile_shape.to_vec(),
+            table_path: table_path.into(),
+            pixel_type: layout.pixel_type,
+            cube_shape: layout.cube_shape.clone(),
+            tile_shape: layout.tile_shape.clone(),
+            tile_strides: fortran_order_strides(&layout.tile_shape),
+            tiles_per_dim_strides: fortran_order_strides(&tiles_per_dim),
             tiles_per_dim,
-            nr_tiles,
+            nr_tiles: layout.tile_count,
             elem_size,
-            tile_bytes,
-            file_tile_bytes,
-            tile_nelem,
-            big_endian,
+            tile_bytes: layout.tile_bytes,
+            file_tile_bytes: layout.file_tile_bytes,
+            tile_nelem: layout.tile_elements,
+            big_endian: layout.big_endian,
             file_offset: 0,
-            dm_seq_nr,
+            dm_seq_nr: layout.dm_seq_nr,
             storage_data_type: dt,
-            tile_strides,
-            tiles_per_dim_strides,
             cache,
-            needs_swap,
+            needs_swap: layout.big_endian != cfg!(target_endian = "big"),
             swap_size,
-            tile_on_disk: vec![false; nr_tiles],
+            tile_on_disk: vec![false; layout.tile_count],
             read_file: None,
             direct_write_buffer: Vec::new(),
             stats: TiledFileIoStats::default(),
         })
     }
-
     /// Opens an existing `TiledFileIO` by reading the TSM header file.
     pub fn open(table_path: &Path, dm_seq_nr: u32) -> Result<Self, StorageError> {
         Self::open_impl(table_path, dm_seq_nr, 0)
@@ -10117,7 +10089,9 @@ impl TiledFileIO {
         dm_seq_nr: u32,
         max_cache_bytes: usize,
     ) -> Result<Self, StorageError> {
-        let header_path = table_path.join(format!("table.f{dm_seq_nr}"));
+        let header_path = table_path
+            .join(format!("table.f{dm_seq_nr}"))
+            .into_boxed_path();
         let (_variant, header) = read_tiled_header(&header_path)?;
 
         if header.cubes.is_empty() {
@@ -10158,7 +10132,8 @@ impl TiledFileIO {
             .collect();
         let nr_tiles = checked_storage_product(&tiles_per_dim, "tile count")?;
 
-        let tsm_path = tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32);
+        let tsm_path =
+            tsm_data_path(table_path, dm_seq_nr, cube.file_seq_nr as u32).into_boxed_path();
 
         let tile_strides = fortran_order_strides(&cube.tile_shape);
         let tiles_per_dim_strides = fortran_order_strides(&tiles_per_dim);
@@ -10170,8 +10145,8 @@ impl TiledFileIO {
             _ => elem_size,
         };
 
-        let total_data_bytes = nr_tiles.checked_mul(file_tile_bytes).ok_or_else(|| {
-            StorageError::FormatMismatch("tiled data file size overflows usize".to_string())
+        let total_data_bytes = nr_tiles.checked_mul(tile_bytes).ok_or_else(|| {
+            StorageError::FormatMismatch("resident tile data size overflows usize".to_string())
         })?;
         let use_lru = max_cache_bytes > 0 && max_cache_bytes < total_data_bytes;
         let (cache, read_file) = if use_lru {
@@ -10208,7 +10183,7 @@ impl TiledFileIO {
         Ok(Self {
             tsm_path,
             header_path,
-            table_path: table_path.to_path_buf(),
+            table_path: table_path.into(),
             pixel_type: dt.to_primitive_type().ok_or_else(|| {
                 StorageError::FormatMismatch(
                     "TiledFileIO: unsupported primitive type in header".to_string(),
@@ -11742,6 +11717,309 @@ pub struct TiledArrayStorage {
     cache_budget_bytes: usize,
 }
 
+/// Prepared physical layout for one typed tiled array and its standard table metadata.
+///
+/// Preparation performs no filesystem I/O and allocates no pixel payload. The
+/// encoded control files are produced by the same serializers as ordinary
+/// tables; creation writes those bytes directly without an eager placeholder
+/// row. Cache and index capacities are separate from caller-owned slice arrays.
+#[derive(Debug, Clone)]
+pub struct TiledArrayStorageLayout {
+    cube_shape: Vec<usize>,
+    tile_shape: Vec<usize>,
+    pixel_type: PrimitiveType,
+    big_endian: bool,
+    dm_seq_nr: u32,
+    cache_budget_bytes: usize,
+    tile_elements: usize,
+    tile_count: usize,
+    tile_bytes: usize,
+    file_tile_bytes: usize,
+    cache_slots: usize,
+    use_lru: bool,
+    control: Box<[u8]>,
+    header: Box<[u8]>,
+    info: Box<[u8]>,
+}
+
+impl TiledArrayStorageLayout {
+    /// Prepare an exact array shape, physical tile shape and explicit cache.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        cube_shape: &[usize],
+        tile_shape: &[usize],
+        pixel_type: PrimitiveType,
+        big_endian: bool,
+        dm_seq_nr: u32,
+        column_name: &str,
+        cache_budget_bytes: usize,
+    ) -> Result<Self, StorageError> {
+        TiledArrayStorage::validate_pixel_type(pixel_type)?;
+        validate_typed_cache_budget(cache_budget_bytes)?;
+        let dt = CasacoreDataType::from_primitive_type(pixel_type, false);
+        let element_bytes = tile_element_size(dt);
+        crate::storage::TileLayoutPlanner::repository_default()
+            .plan_explicit_array(cube_shape, element_bytes, tile_shape)
+            .map_err(|error| StorageError::FormatMismatch(error.to_string()))?;
+        if cube_shape.len() > MAX_NDIM
+            || cube_shape
+                .iter()
+                .chain(tile_shape)
+                .any(|&n| n > i32::MAX as usize)
+        {
+            return Err(StorageError::FormatMismatch(
+                "typed array shape exceeds casacore metadata bounds".into(),
+            ));
+        }
+        let tile_elements = checked_storage_product(tile_shape, "tile elements")?;
+        let tile_bytes = checked_layout_mul(tile_elements, element_bytes)?;
+        let file_tile_bytes = if pixel_type == PrimitiveType::Bool {
+            tile_elements.div_ceil(8)
+        } else {
+            tile_bytes
+        };
+        let tile_count = cube_shape
+            .iter()
+            .zip(tile_shape)
+            .try_fold(1usize, |count, (&shape, &tile)| {
+                checked_layout_mul(count, shape.div_ceil(tile))
+            })?;
+        let resident_payload = checked_layout_mul(tile_count, tile_bytes)?;
+        let file_payload = checked_layout_mul(tile_count, file_tile_bytes)?;
+        let file_length = i64::try_from(file_payload).map_err(|_| {
+            StorageError::FormatMismatch("casacore tiled file size exceeds i64".into())
+        })?;
+        let use_lru = cache_budget_bytes < resident_payload;
+        let cache_slots = if use_lru {
+            (cache_budget_bytes / tile_bytes).max(1)
+        } else {
+            tile_count
+        };
+        if use_lru && cache_slots > i32::MAX as usize {
+            return Err(StorageError::FormatMismatch(
+                "tile cache slot count exceeds i32 index".into(),
+            ));
+        }
+        let header = TiledStManHeader {
+            big_endian,
+            seq_nr: dm_seq_nr,
+            nrrow: 1,
+            col_data_types: vec![dt],
+            hypercolumn_name: column_name.into(),
+            max_cache_size: 0,
+            nrdim: cube_shape.len() as u32,
+            files: vec![Some(TsmFileInfo {
+                seq_nr: 0,
+                length: file_length,
+            })],
+            cubes: vec![TsmCubeInfo {
+                values: RecordValue::default(),
+                extensible: false,
+                cube_shape: cube_shape.to_vec(),
+                tile_shape: tile_shape.to_vec(),
+                file_seq_nr: 0,
+                file_offset: 0,
+            }],
+        };
+        let variant = TiledVariant::Cell {
+            default_tile_shape: tile_shape.iter().map(|&n| n as i32).collect(),
+        };
+        let header = serialize_tiled_header(&variant, &header)?;
+        let schema = crate::TableSchema::new(vec![crate::ColumnSchema::array_variable(
+            column_name,
+            pixel_type,
+            Some(cube_shape.len()),
+        )])
+        .map_err(|error| StorageError::FormatMismatch(error.to_string()))?;
+        let mut control = super::table_control::TableDatContents::from_snapshot(
+            &schema,
+            &RecordValue::default(),
+            &HashMap::new(),
+            1,
+            "TiledCellStMan",
+            &[],
+            big_endian,
+        );
+        control.column_set.data_managers[0].seq_nr = dm_seq_nr;
+        control.column_set.columns[0].dm_seq_nr = dm_seq_nr;
+        control.column_set.seq_count = dm_seq_nr
+            .checked_add(1)
+            .ok_or_else(|| StorageError::FormatMismatch("data manager sequence overflow".into()))?;
+        for column in &mut control.table_desc.columns {
+            column.data_manager_type = "TiledCellStMan".into();
+            column.data_manager_group = column_name.into();
+        }
+        let control = super::table_control::serialize_table_dat(&control)?;
+        let info = super::TableInfo::default()
+            .to_string()
+            .into_bytes()
+            .into_boxed_slice();
+        let layout = Self {
+            cube_shape: cube_shape.to_vec(),
+            tile_shape: tile_shape.to_vec(),
+            pixel_type,
+            big_endian,
+            dm_seq_nr,
+            cache_budget_bytes,
+            tile_elements,
+            tile_count,
+            tile_bytes,
+            file_tile_bytes,
+            cache_slots,
+            use_lru,
+            control,
+            header,
+            info,
+        };
+        layout.cache_metadata_bytes()?;
+        layout.storage_bytes()?;
+        Ok(layout)
+    }
+
+    /// Logical array dimensions, excluding tile padding.
+    pub fn cube_shape(&self) -> &[usize] {
+        &self.cube_shape
+    }
+    /// Physical tile dimensions.
+    pub fn tile_shape(&self) -> &[usize] {
+        &self.tile_shape
+    }
+    /// Pixel representation bound by the plan.
+    pub fn pixel_type(&self) -> PrimitiveType {
+        self.pixel_type
+    }
+    /// Explicit requested cache budget, before tile rounding.
+    pub fn cache_budget_bytes(&self) -> usize {
+        self.cache_budget_bytes
+    }
+    /// Maximum allocated unpacked tile payload, including edge-tile padding.
+    pub fn cache_payload_bytes(&self) -> Result<usize, StorageError> {
+        checked_layout_mul(self.cache_slots, self.tile_bytes)
+    }
+    /// Index/dirty/access arrays retained in addition to the cache payload.
+    pub fn cache_metadata_bytes(&self) -> Result<usize, StorageError> {
+        if self.use_lru {
+            checked_layout_add(
+                checked_layout_mul(self.tile_count, size_of::<i32>() + size_of::<bool>())?,
+                checked_layout_mul(
+                    self.cache_slots,
+                    size_of::<usize>() + size_of::<u64>() + size_of::<bool>(),
+                )?,
+            )
+        } else {
+            checked_layout_mul(self.tile_count, 2 * size_of::<bool>())
+        }
+    }
+    /// Retained dimension/stride vector contents in one storage handle.
+    pub fn shape_metadata_bytes(&self) -> Result<usize, StorageError> {
+        checked_layout_mul(self.cube_shape.len(), 5 * size_of::<usize>())
+    }
+    /// Exact path payload retained by the three storage-owned boxed paths.
+    pub fn path_metadata_bytes(&self, table_path: &Path) -> Result<usize, StorageError> {
+        checked_layout_add(
+            checked_layout_add(
+                table_path.as_os_str().len(),
+                tsm_data_path(table_path, self.dm_seq_nr, 0)
+                    .as_os_str()
+                    .len(),
+            )?,
+            table_path
+                .join(format!("table.f{}", self.dm_seq_nr))
+                .as_os_str()
+                .len(),
+        )
+    }
+    /// Cache, index, dimension and path heap at the largest retained state.
+    pub fn retained_heap_bytes(&self, table_path: &Path) -> Result<usize, StorageError> {
+        checked_layout_add(
+            checked_layout_add(self.cache_payload_bytes()?, self.cache_metadata_bytes()?)?,
+            checked_layout_add(
+                self.shape_metadata_bytes()?,
+                self.path_metadata_bytes(table_path)?,
+            )?,
+        )
+    }
+    /// Encoded standard control/header/info bytes retained by this prepared plan.
+    pub fn encoded_metadata_bytes(&self) -> Result<usize, StorageError> {
+        checked_layout_add(
+            checked_layout_add(self.control.len(), self.header.len())?,
+            self.info.len(),
+        )
+    }
+    /// Heap owned by this plan, excluding its inline owner and allocator bookkeeping.
+    pub fn owned_heap_bytes(&self) -> Result<usize, StorageError> {
+        checked_layout_add(
+            self.encoded_metadata_bytes()?,
+            checked_layout_mul(
+                self.cube_shape.capacity() + self.tile_shape.capacity(),
+                size_of::<usize>(),
+            )?,
+        )
+    }
+    /// Exact logical file lengths, including packed/padded tiles and all metadata files.
+    pub fn storage_bytes(&self) -> Result<usize, StorageError> {
+        checked_layout_add(
+            checked_layout_mul(self.tile_count, self.file_tile_bytes)?,
+            self.encoded_metadata_bytes()?,
+        )
+    }
+    /// Packed conversion scratch used while reading or writing one boolean tile.
+    pub fn packed_tile_scratch_bytes(&self) -> usize {
+        if self.file_tile_bytes != self.tile_bytes {
+            self.file_tile_bytes
+        } else {
+            0
+        }
+    }
+    /// Conversion bytes that can overlap a slice result or input array.
+    pub fn conversion_scratch_bytes(&self) -> Result<usize, StorageError> {
+        if self.big_endian != cfg!(target_endian = "big") {
+            if self.use_lru {
+                self.cache_payload_bytes()
+            } else {
+                Ok(self.tile_bytes)
+            }
+        } else {
+            Ok(self.packed_tile_scratch_bytes())
+        }
+    }
+    /// Heap scratch for one slice operation, excluding its ndarray payload.
+    pub fn slice_scratch_bytes(&self) -> Result<usize, StorageError> {
+        checked_layout_add(
+            self.conversion_scratch_bytes()?,
+            checked_layout_mul(self.cube_shape.len(), size_of::<usize>())?,
+        )
+    }
+    /// Flush scratch in addition to retained cache and metadata.
+    pub fn flush_scratch_bytes(&self) -> Result<usize, StorageError> {
+        let buffer = if self.use_lru {
+            0
+        } else {
+            std::io::BufWriter::new(std::io::sink()).capacity()
+        };
+        checked_layout_add(buffer, self.conversion_scratch_bytes()?)
+    }
+    /// Maximum file descriptors across creation, access, flush and reopen.
+    /// A reopened flat cache retains a read descriptor while flush opens a writer.
+    pub fn file_handles(&self) -> usize {
+        if self.use_lru { 1 } else { 2 }
+    }
+    /// Whether one complete unpacked array fits the explicit cache.
+    pub fn uses_flat_cache(&self) -> bool {
+        !self.use_lru
+    }
+}
+
+fn checked_layout_mul(left: usize, right: usize) -> Result<usize, StorageError> {
+    left.checked_mul(right)
+        .ok_or_else(|| StorageError::FormatMismatch("typed array layout size overflow".into()))
+}
+
+fn checked_layout_add(left: usize, right: usize) -> Result<usize, StorageError> {
+    left.checked_add(right)
+        .ok_or_else(|| StorageError::FormatMismatch("typed array layout size overflow".into()))
+}
+
 impl std::fmt::Debug for TiledArrayStorage {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -11755,6 +12033,79 @@ impl std::fmt::Debug for TiledArrayStorage {
 }
 
 impl TiledArrayStorage {
+    /// Materialize a previously prepared one-column CASA table without constructing rows.
+    ///
+    /// The encoded metadata remains borrowed from `layout` during creation and
+    /// is not retained by the returned handle. The caller owns its overlap with
+    /// the cache/index allocation and any other live storage.
+    pub fn create_planned_table(
+        table_path: &Path,
+        layout: &TiledArrayStorageLayout,
+    ) -> Result<Self, StorageError> {
+        std::fs::create_dir_all(table_path)?;
+        std::fs::write(table_path.join("table.dat"), &layout.control)?;
+        std::fs::write(table_path.join("table.info"), &layout.info)?;
+        let inner = TiledFileIO::create_planned(table_path, layout)?;
+        Ok(Self {
+            inner,
+            cache_budget_bytes: layout.cache_budget_bytes,
+        })
+    }
+
+    /// Complete allocated heap owned by this direct handle, excluding allocator bookkeeping.
+    /// Includes cache/index vectors, dimensions, paths and direct-write buffers.
+    pub fn owned_heap_bytes(&self) -> Result<usize, StorageError> {
+        let inner = &self.inner;
+        let mut bytes = checked_layout_add(
+            inner.tsm_path.as_os_str().len(),
+            inner.header_path.as_os_str().len(),
+        )?;
+        bytes = checked_layout_add(bytes, inner.table_path.as_os_str().len())?;
+        for values in [
+            &inner.cube_shape,
+            &inner.tile_shape,
+            &inner.tiles_per_dim,
+            &inner.tile_strides,
+            &inner.tiles_per_dim_strides,
+        ] {
+            bytes = checked_layout_add(
+                bytes,
+                checked_layout_mul(values.capacity(), size_of::<usize>())?,
+            )?;
+        }
+        bytes = checked_layout_add(bytes, inner.tile_on_disk.capacity())?;
+        bytes = checked_layout_add(bytes, inner.direct_write_buffer.capacity())?;
+        match &inner.cache {
+            TileCache::Flat(flat) => {
+                bytes = checked_layout_add(bytes, flat.data.capacity())?;
+                bytes = checked_layout_add(bytes, flat.dirty.capacity())?;
+            }
+            TileCache::Lru(lru) => {
+                bytes = checked_layout_add(bytes, lru.data.capacity())?;
+                bytes = checked_layout_add(
+                    bytes,
+                    checked_layout_mul(lru.slot_tile.capacity(), size_of::<usize>())?,
+                )?;
+                bytes = checked_layout_add(bytes, lru.slot_dirty.capacity())?;
+                bytes = checked_layout_add(
+                    bytes,
+                    checked_layout_mul(lru.tile_to_slot.capacity(), size_of::<i32>())?,
+                )?;
+                bytes = checked_layout_add(
+                    bytes,
+                    checked_layout_mul(lru.slot_access.capacity(), size_of::<u64>())?,
+                )?;
+            }
+        }
+        Ok(bytes)
+    }
+
+    /// File descriptors currently owned by the array, excluding transient flush handles.
+    pub fn owned_file_handles(&self) -> usize {
+        usize::from(matches!(self.inner.cache, TileCache::Lru(_)))
+            + usize::from(self.inner.read_file.is_some())
+    }
+
     fn validate_pixel_type(pixel_type: PrimitiveType) -> Result<(), StorageError> {
         if matches!(
             pixel_type,
@@ -13113,6 +13464,41 @@ mod tests {
         );
 
         reset_table_cache_budget_for_tests();
+    }
+
+    #[test]
+    fn typed_bool_cache_budget_counts_unpacked_tiles_on_create_and_reopen() {
+        let root = tempdir().unwrap();
+        let values = (0..65).map(|index| index % 3 == 0).collect::<Vec<_>>();
+        let mut storage = TiledArrayStorage::create_with_cache::<bool>(
+            root.path(),
+            &[65],
+            &[8],
+            false,
+            0,
+            "DATA",
+            16,
+        )
+        .unwrap();
+        assert!(matches!(storage.inner.cache, TileCache::Lru(_)));
+        storage.put_slice_c_order(&values, &[0], &[65]).unwrap();
+        assert_eq!(storage.owned_resident_bytes(), 16);
+        storage.flush().unwrap();
+        assert_eq!(std::fs::metadata(&storage.inner.tsm_path).unwrap().len(), 9);
+        drop(storage);
+
+        let mut storage = TiledArrayStorage::open_with_cache::<bool>(root.path(), 0, 16).unwrap();
+        assert!(matches!(storage.inner.cache, TileCache::Lru(_)));
+        assert_eq!(
+            storage
+                .get_slice::<bool>(&[0], &[65])
+                .unwrap()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            values
+        );
+        assert_eq!(storage.owned_resident_bytes(), 16);
     }
 
     #[test]

@@ -28,7 +28,7 @@ pub use compiled_problem::{
     ReconstructionContract, ReconstructionControls, ReductionPolicy, ReferenceDataKind,
     RequiredCapability, RestoringBeamPolicy, ScientificContract, SpectralContract,
     SpectralCoupling, SpectralCovariance, SpectralEdgePolicy, SpectralKernel, SpectralSamplingLaw,
-    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UnitResponseValidityPolicy,
+    StageErrorBudget, TaylorSupportReference, TaylorValidityPolicy, UncorrectedImageMaskPolicy,
     UvTaper, WProjectionContract, WProjectionContractError, WeightDensityScope, WeightingContract,
     WeightingScheme, compile, validate_compiled_problem_identity,
 };
@@ -61,7 +61,8 @@ pub use model_state::{
     ModelReprojectedSeedProjection, ModelReprojectionPolicy, ModelSample, ModelSourceShape,
     ModelStateEncoding, ModelSupport, ModelSupportSemantics, ModelUncoveredTargetPolicy,
     ModelValue, model_reprojected_seed_mapping_identity, model_support_identity,
-    validate_model_lifecycle_contract_identity, validate_model_reprojection_contract_identity,
+    try_model_support_identity, validate_model_lifecycle_contract_identity,
+    validate_model_reprojection_contract_identity,
 };
 
 pub use observation::{
@@ -102,16 +103,16 @@ pub use selected_observation_sample::{
     SelectedImageDomainProjections, SelectedInputWeightGroup, SelectedObservationGenerationId,
     SelectedObservationRunChannel, SelectedObservationRunCorrelation, SelectedObservationRunRow,
     SelectedObservationSample, SelectedObservationSampleView, SelectedPhaseCentreProjection,
-    SelectedPointingDirections, SelectedPredictionTarget, SelectedSampleAddress,
-    SelectedSampleCoordinates, SelectedSampleMetadata, SelectedSpectralContribution,
-    SelectedSpectralContributions, SelectedSpectralEvaluation, SelectedSpectralInterval,
-    SelectedVisibilitySample,
+    SelectedPointingDirections, SelectedPredictionTarget, SelectedRowSpectralGeometry,
+    SelectedSampleAddress, SelectedSampleCoordinates, SelectedSampleMetadata,
+    SelectedSpectralContribution, SelectedSpectralContributions, SelectedSpectralEvaluation,
+    SelectedSpectralInterval, SelectedVisibilitySample,
 };
 
 pub use product_graph::{
     IndependentProductStoreProtocol, ProductAxes, ProductAxisKind, ProductBeamRule, ProductGraph,
-    ProductGraphId, ProductNode, ProductNodeId, ProductPublication, ProductRole, ProductSchema,
-    ProductTerm, ProductUnit, ProductValidityRule,
+    ProductGraphId, ProductNode, ProductNodeId, ProductPixelMask, ProductPublication, ProductRole,
+    ProductSchema, ProductStorageContract, ProductTerm, ProductUnit, ProductValidityRule,
 };
 
 pub use transaction::{

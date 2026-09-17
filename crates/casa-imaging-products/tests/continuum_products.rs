@@ -5,6 +5,9 @@
 
 use std::{convert::Infallible, mem::size_of};
 
+mod common;
+use common::{MemoryStorageFactory, SealedMemberFixtureRead, full_window};
+
 use casa_imaging_model::{
     AntennaSelection, AxisOrder, CentreLaws, ColumnGeneration, ConsistencyToken,
     CorrelationProduct, CorrelationSelection, CorrelationType, DataDescriptionSelection,
@@ -158,14 +161,14 @@ fn validity() -> ProductValidityPolicies {
         PrimaryBeamValidityPolicy::new(
             0.2,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid primary-beam policy"),
         TaylorValidityPolicy::new(
             TaylorSupportReference::PrincipalResidualTaylor0PositiveMaximum,
             0.1,
             ProductSupportComparison::StrictlyGreater,
-            ProductBlankingPolicy::ZeroAndFalseMask,
+            ProductBlankingPolicy::Zero,
         )
         .expect("valid Taylor policy"),
     )
@@ -582,27 +585,6 @@ fn run_round_with_contributions(
     samples: Vec<SelectedObservationSample>,
     contributions: fn(&SelectedObservationSample) -> SelectedSpectralContributions,
 ) -> ContinuumRound {
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(attempt_byte),
-        7,
-    )
-    .expect("bind model lifecycle");
-    let named = lifecycle.initial_empty().expect("empty named generation");
-
-    // One pending delta so the final model is non-trivial.
-    let delta = lifecycle
-        .compile_delta(
-            &named,
-            [casa_imaging_model::ModelDeltaTerm::new(
-                casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
-                casa_imaging_model::ModelValue::new(0.75).expect("finite value"),
-            )],
-        )
-        .expect("pending delta");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("prepare model");
-
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -614,32 +596,26 @@ fn run_round_with_contributions(
     let (blocks, summary) = replay(&generation, problem, &plan, &samples, contributions);
     assert!(!blocks.is_empty(), "replay must emit bounded blocks");
 
-    let specification =
-        SpectralOperatorSpecification::new(problem).expect("spectral operator specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
+    run_product_fixture_cycles(
+        problem,
+        attempt_byte,
+        &plan,
+        &generation,
+        (blocks, summary),
+        selected_generation,
+        [casa_imaging_model::ModelDeltaTerm::new(
+            casa_imaging_model::ModelCell::new(
+                0,
+                0,
+                0,
+                problem.geometry().domains()[0]
+                    .shape()
+                    .pixels()
+                    .map(|extent| extent / 2),
+            ),
+            casa_imaging_model::ModelValue::new(0.75).expect("finite value"),
+        )],
     )
-    .expect("workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
-    let mut state = prepared
-        .begin(problem, &generation)
-        .expect("begin complete-data owner");
-    state
-        .bind_major_cycle_model(preparation.final_model(), None)
-        .expect("bind exact final model before replay");
-    for block in &blocks {
-        state.consume_block(block).expect("consume weighted block");
-    }
-    let evidence: CompleteDataOwnerResult = state
-        .complete(&summary, selected_generation, None)
-        .expect("complete T19 evidence");
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("T20 owner from T19")
-        .reconcile(&mut lifecycle)
-        .expect("atomic Major-Cycle reconciliation");
-    ContinuumRound { join: joined }
 }
 
 fn run_two_domain_round(
@@ -647,30 +623,6 @@ fn run_two_domain_round(
     attempt_byte: u8,
 ) -> ContinuumRound {
     let runs = two_domain_fixture_runs(problem);
-    let mut lifecycle = ModelLifecycle::bind(
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
-        attempt(attempt_byte),
-        7,
-    )
-    .expect("bind model lifecycle");
-    let named = lifecycle.initial_empty().expect("empty named generation");
-    let delta = lifecycle
-        .compile_delta(
-            &named,
-            [
-                casa_imaging_model::ModelDeltaTerm::new(
-                    casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
-                    casa_imaging_model::ModelValue::new(0.75).expect("main model value"),
-                ),
-                casa_imaging_model::ModelDeltaTerm::new(
-                    casa_imaging_model::ModelCell::new(1, 0, 0, [2, 1]),
-                    casa_imaging_model::ModelValue::new(0.25).expect("outlier model value"),
-                ),
-            ],
-        )
-        .expect("two-domain delta");
-    let preparation =
-        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("prepare model");
     let plan = plan_weighting(
         problem,
         WeightingExecutionLimits::new(1, 1).expect("weighting limits"),
@@ -731,32 +683,106 @@ fn run_two_domain_round(
         blocks.push(block);
     }
 
-    let specification =
-        SpectralOperatorSpecification::new(problem).expect("two-domain specification");
-    let workload = spectral_operator_workload(
-        &specification,
-        plan.limits().max_block_samples(),
-        SpectralOperatorPass::InitialMajor,
+    run_product_fixture_cycles(
+        problem,
+        attempt_byte,
+        &plan,
+        &generation,
+        (blocks, summary),
+        selected_generation,
+        [
+            casa_imaging_model::ModelDeltaTerm::new(
+                casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
+                casa_imaging_model::ModelValue::new(0.75).expect("main model value"),
+            ),
+            casa_imaging_model::ModelDeltaTerm::new(
+                casa_imaging_model::ModelCell::new(1, 0, 0, [2, 1]),
+                casa_imaging_model::ModelValue::new(0.25).expect("outlier model value"),
+            ),
+        ],
     )
-    .expect("two-domain workload");
-    let prepared = prepare_spectral_operator(specification, workload).expect("prepare operator");
-    let mut state = prepared
-        .begin(problem, &generation)
-        .expect("begin complete-data owner");
-    state
-        .bind_major_cycle_model(preparation.final_model(), None)
-        .expect("bind two-domain model");
-    for block in &blocks {
-        state.consume_block(block).expect("consume weighted block");
-    }
-    let evidence = state
-        .complete(&summary, selected_generation, None)
-        .expect("complete two-domain evidence");
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
+}
+
+fn run_product_fixture_cycles(
+    problem: &casa_imaging_model::CompiledProblem,
+    attempt_byte: u8,
+    plan: &WeightingPlan,
+    generation: &WeightingAlgorithmState,
+    replay: (Vec<WeightingReplayChunk>, WeightingReplaySummary),
+    selected_generation: SelectedObservationGenerationId,
+    delta_terms: impl IntoIterator<Item = casa_imaging_model::ModelDeltaTerm>,
+) -> ContinuumRound {
+    let (blocks, summary) = replay;
+    let run = |lifecycle: &mut ModelLifecycle,
+               preparation: MajorCyclePreparation,
+               prior: Option<casa_imaging_reconstruction::FinalNormalState>| {
+        let specification = SpectralOperatorSpecification::new(problem).expect("specification");
+        let pass = if prior.is_some() {
+            SpectralOperatorPass::ResidualRefresh
+        } else {
+            SpectralOperatorPass::InitialMajor
+        };
+        let workload =
+            spectral_operator_workload(&specification, plan.limits().max_block_samples(), pass)
+                .expect("workload");
+        let prepared =
+            prepare_spectral_operator(specification, workload).expect("prepare operator");
+        let mut state = prepared
+            .begin(problem, generation)
+            .expect("begin complete-data owner");
+        state
+            .bind_major_cycle_model(preparation.final_model(), prior)
+            .expect("bind exact model");
+        for block in &blocks {
+            state.consume_block(block).expect("consume weighted block");
+        }
+        let evidence: CompleteDataOwnerResult = state
+            .complete(&summary, selected_generation, None)
+            .expect("complete evidence");
+        MajorCycleOwner::from_complete_data(
+            {
+                let storage =
+                    casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                        evidence.primitives().slab().total_channels(),
+                    )
+                    .expect("fixture normal window");
+                evidence.seal(&storage).expect("seal fixture normal state")
+            },
+            preparation,
+        )
         .expect("major-cycle owner")
-        .reconcile(&mut lifecycle)
-        .expect("two-domain reconciliation");
-    ContinuumRound { join: joined }
+        .reconcile(lifecycle)
+        .expect("reconcile")
+    };
+    let mut lifecycle = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(attempt_byte),
+        7,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("initial lifecycle");
+    let named = lifecycle.initial_empty().expect("empty model");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, None).expect("initial model");
+    let (normal, continuation) = run(&mut lifecycle, preparation, None).into_continuation();
+    let (mut lifecycle, named) = ModelLifecycle::continue_from(
+        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable problem"),
+        attempt(attempt_byte),
+        8,
+        continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
+    )
+    .expect("continued lifecycle");
+    let delta = lifecycle
+        .compile_delta(&named, delta_terms)
+        .expect("nonzero model delta");
+    let preparation =
+        MajorCyclePreparation::prepare(&lifecycle, named, Some(delta)).expect("final model");
+    ContinuumRound {
+        join: run(&mut lifecycle, preparation, Some(normal)),
+    }
 }
 
 fn rerun_two_domain_with_masks(
@@ -772,6 +798,8 @@ fn rerun_two_domain_with_masks(
         attempt(attempt_byte),
         8,
         continuation,
+        casa_imaging_reconstruction::ModelStoragePlan::resident(usize::MAX)
+            .expect("positive model window"),
     )
     .expect("continue model lifecycle");
     let preparation =
@@ -853,12 +881,22 @@ fn rerun_two_domain_with_masks(
     let evidence = state
         .complete(&summary, selected_generation, None)
         .expect("complete two-domain evidence");
-    let joined = MajorCycleOwner::from_complete_data(evidence, preparation)
-        .expect("major-cycle owner")
-        .bind_reconstruction_masks(&ReconstructionMaskSet::Domains(masks.clone()))
-        .expect("bind exact domain masks")
-        .reconcile(&mut lifecycle)
-        .expect("masked two-domain reconciliation");
+    let joined = MajorCycleOwner::from_complete_data(
+        {
+            let storage =
+                casa_imaging_reconstruction::runtime_adapter::NormalStoragePlan::resident(
+                    evidence.primitives().slab().total_channels(),
+                )
+                .expect("fixture normal window");
+            evidence.seal(&storage).expect("seal fixture normal state")
+        },
+        preparation,
+    )
+    .expect("major-cycle owner")
+    .bind_reconstruction_masks(&ReconstructionMaskSet::Domains(masks.clone()))
+    .expect("bind exact domain masks")
+    .reconcile(&mut lifecycle)
+    .expect("masked two-domain reconciliation");
     ContinuumRound { join: joined }
 }
 
@@ -972,35 +1010,72 @@ fn prechange_commitment_bytes(
     encoded
 }
 
-#[test]
-fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
-    const CONSTANT_DIGEST: [u8; 32] = [
-        0xe3, 0xe5, 0x7c, 0x95, 0x4a, 0xb0, 0x46, 0x0b, 0xec, 0xd2, 0x2b, 0xf9, 0x26, 0x61, 0xc6,
-        0x7f, 0x71, 0xb1, 0x6b, 0x8f, 0xdb, 0xcf, 0xea, 0x70, 0xb0, 0x92, 0x2a, 0x41, 0x9c, 0x01,
-        0x12, 0xc2,
-    ];
-    const CHANNEL_DIGEST: [u8; 32] = [
-        0xc2, 0xd7, 0xfe, 0x01, 0x06, 0xe3, 0xa3, 0x16, 0xcf, 0x62, 0x91, 0xb6, 0x37, 0x01, 0xae,
-        0x2e, 0x3b, 0xe9, 0x64, 0xde, 0x4e, 0xe5, 0x17, 0xc3, 0xda, 0x64, 0x3a, 0x8c, 0x14, 0x36,
-        0xf6, 0x99,
-    ];
-    const CONSTANT_V3_DIGEST: [u8; 32] = [
-        0xa8, 0xfa, 0x62, 0x1b, 0x7e, 0x24, 0x24, 0x37, 0xbd, 0x4a, 0x09, 0x3c, 0x74, 0x54, 0x44,
-        0x42, 0x6c, 0xbb, 0xfe, 0x55, 0xd7, 0x8f, 0xd7, 0xfe, 0xd3, 0xdf, 0x1e, 0xe3, 0x1e, 0xc1,
-        0x9a, 0x98,
-    ];
-    const CHANNEL_V3_DIGEST: [u8; 32] = [
-        0x95, 0xc4, 0x69, 0x1d, 0x06, 0xa5, 0x40, 0x6b, 0x93, 0xc0, 0xbf, 0x96, 0x7e, 0x04, 0x54,
-        0xa1, 0x20, 0x2f, 0x6d, 0x4c, 0x18, 0x9e, 0xec, 0x8b, 0xf1, 0x0b, 0xb7, 0x04, 0x44, 0xa9,
-        0xf6, 0x66,
-    ];
-    const TAYLOR_V3_DIGEST: [u8; 32] = [
-        0xd8, 0x7e, 0x61, 0xf3, 0x96, 0x65, 0x9d, 0xd8, 0xb9, 0x7b, 0xc8, 0x4b, 0x61, 0x27, 0x9b,
-        0x25, 0xc5, 0x6a, 0x7a, 0xeb, 0x5f, 0x01, 0xac, 0x4f, 0x0b, 0xee, 0x48, 0x7b, 0xb5, 0xdb,
-        0x84, 0x8e,
-    ];
+// Identity fixtures use one phase-centre pixel so exact commitments do not
+// depend on off-axis FFT or convolution reduction roundoff.
+const EXPECTED_COMMITMENTS: [[u8; 32]; 5] = [
+    [
+        148, 91, 43, 59, 171, 102, 102, 171, 27, 65, 150, 126, 165, 106, 62, 24, 78, 199, 83, 35,
+        15, 243, 197, 150, 70, 208, 11, 79, 99, 158, 115, 108,
+    ],
+    [
+        100, 158, 71, 231, 73, 202, 6, 60, 43, 60, 92, 184, 239, 61, 106, 245, 99, 37, 0, 51, 218,
+        109, 10, 104, 42, 98, 130, 173, 112, 43, 128, 47,
+    ],
+    [
+        44, 17, 136, 147, 156, 119, 179, 169, 20, 235, 180, 225, 2, 17, 249, 88, 104, 105, 94, 223,
+        21, 58, 18, 46, 167, 170, 108, 88, 253, 77, 224, 200,
+    ],
+    [
+        240, 206, 187, 127, 103, 6, 84, 247, 224, 122, 37, 64, 213, 203, 239, 111, 73, 110, 187,
+        124, 18, 199, 209, 90, 235, 160, 15, 142, 47, 96, 181, 172,
+    ],
+    [
+        31, 101, 52, 17, 68, 100, 194, 19, 96, 136, 211, 128, 77, 75, 190, 247, 228, 45, 195, 61,
+        27, 202, 3, 197, 15, 223, 105, 142, 210, 104, 52, 53,
+    ],
+];
 
-    let constant_problem = continuum_problem(131, &CONTINUUM_PRODUCTS);
+#[test]
+fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity() {
+    let identity_problem =
+        |observation, products: &[ProductKind], restoring_beam, basis, algorithm, channels| {
+            continuum_problem_with_domains_and_reconstruction(
+                observation,
+                products,
+                restoring_beam,
+                InstrumentResponse::Scalar,
+                basis,
+                algorithm,
+                channels,
+                vec![ImageDomainSpec::new(
+                    ImageDomainRole::Main,
+                    ImageShape::new(1, 1),
+                    DirectionCoordinateSpec::new(
+                        Projection::Sin,
+                        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+                        [0.0, 0.0],
+                        [-1.0e-6, 1.0e-6],
+                        [[1.0, 0.0], [0.0, 1.0]],
+                        [180.0, 0.0],
+                    ),
+                    FacetLayout::Single,
+                    AxisOrder::new([
+                        ImageAxis::DirectionLongitude,
+                        ImageAxis::DirectionLatitude,
+                        ImageAxis::Polarization,
+                        ImageAxis::Spectral,
+                    ]),
+                )],
+            )
+        };
+    let constant_problem = identity_problem(
+        131,
+        &CONTINUUM_PRODUCTS,
+        RestoringBeamPolicy::PerPlane,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+    );
     let constant_round = run_continuum_round(&constant_problem, 132);
     let constant_catalog =
         ContinuumSourceCatalog::from_major_cycle(&constant_problem, &constant_round.join)
@@ -1009,14 +1084,11 @@ fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
     let constant_digest = <[u8; 32]>::from(Sha256::digest(&constant_bytes));
     assert_eq!(constant_bytes.len(), 411);
     assert_eq!(constant_bytes[200], 0, "PlaneV1 retains catalog tag zero");
-    assert_eq!(constant_digest, CONSTANT_DIGEST);
-    assert_eq!(constant_catalog.commitment_id(), CONSTANT_V3_DIGEST);
 
-    let channel_problem = continuum_problem_with_reconstruction(
+    let channel_problem = identity_problem(
         133,
         &CONTINUUM_PRODUCTS,
         RestoringBeamPolicy::PerPlane,
-        InstrumentResponse::Scalar,
         ReconstructionBasis::ChannelLocal { channels: 2 },
         ReconstructionAlgorithm::Dirty,
         2,
@@ -1037,8 +1109,6 @@ fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
         channel_bytes[200], 1,
         "ChannelSlabV1 retains catalog tag one"
     );
-    assert_eq!(channel_digest, CHANNEL_DIGEST);
-    assert_eq!(channel_catalog.commitment_id(), CHANNEL_V3_DIGEST);
 
     let taylor_products = [
         ProductKind::Psf,
@@ -1048,11 +1118,10 @@ fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
         ProductKind::Sensitivity,
         ProductKind::TaylorTerms,
     ];
-    let taylor_problem = continuum_problem_with_reconstruction(
+    let taylor_problem = identity_problem(
         135,
         &taylor_products,
         RestoringBeamPolicy::None,
-        InstrumentResponse::Scalar,
         ReconstructionBasis::Taylor { terms: 2 },
         ReconstructionAlgorithm::Mtmfs {
             scales_px: vec![0.0],
@@ -1063,11 +1132,15 @@ fn v2_commitments_stay_pinned_and_v3_adds_exact_taylor_identity() {
     let taylor_round = run_continuum_round(&taylor_problem, 136);
     let taylor_catalog =
         ContinuumSourceCatalog::from_major_cycle(&taylor_problem, &taylor_round.join)
-            .expect("v3 Taylor source catalog");
-    assert_eq!(taylor_catalog.commitment_id(), TAYLOR_V3_DIGEST);
-
-    assert_eq!(constant_catalog.commitment_id(), CONSTANT_V3_DIGEST);
-    assert_eq!(channel_catalog.commitment_id(), CHANNEL_V3_DIGEST);
+            .expect("current Taylor source catalog");
+    let actual = [
+        constant_digest,
+        channel_digest,
+        constant_catalog.commitment_id(),
+        channel_catalog.commitment_id(),
+        taylor_catalog.commitment_id(),
+    ];
+    assert_eq!(actual, EXPECTED_COMMITMENTS);
 }
 
 #[test]
@@ -1153,7 +1226,13 @@ fn produce_then_authorize_seals_the_exact_member_set_once() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("product inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced members");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("produced members");
     let sealed = authority
         .authorize(&planned, &produced)
         .expect("authorized seal");
@@ -1180,6 +1259,8 @@ fn produce_then_authorize_seals_the_exact_member_set_once() {
     let expected_psf = round
         .join
         .normal_state()
+        .read_window(0..1)
+        .expect("single-plane continuum fixture window")
         .normal_approximation()
         .iter()
         .map(|value| value.re as f32 / sensitivity as f32)
@@ -1201,7 +1282,13 @@ fn produce_then_authorize_seals_the_exact_member_set_once() {
     let reproduced = authority
         .authorize(
             &planned,
-            &produce_continuum_members(&planned, &inputs).expect("reproduced"),
+            &produce_continuum_members(
+                &planned,
+                &inputs,
+                full_window(&planned),
+                &MemoryStorageFactory,
+            )
+            .expect("reproduced"),
         )
         .expect("resealed");
     assert_eq!(sealed.seal_id(), reproduced.seal_id());
@@ -1338,13 +1425,23 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
             .with_domain_reconstruction_masks(&masks)
             .expect("domain-mask inputs");
     planned
-        .demand(&inputs)
+        .demand(&inputs, full_window(&planned))
         .expect("two-domain product residency demand");
-    let produced = produce_continuum_members(&planned, &inputs).expect("two-domain production");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("two-domain production");
     let sealed = authority
         .authorize(&planned, &produced)
         .expect("two-domain seal");
     assert_eq!(sealed.members().len(), products.len() * 2);
+
+    let window = normal
+        .read_window(normal.slab().core_range())
+        .expect("continuum fixture window");
 
     for (ordinal, role) in [
         ImageDomainRole::Main,
@@ -1353,7 +1450,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
     .iter()
     .enumerate()
     {
-        let domain = normal.domain_by_role(role).expect("domain normal state");
+        let domain = window.domain_by_role(role).expect("domain normal state");
         let expected_shape = problem.geometry().domains()[ordinal].shape().pixels();
         let model_member = sealed
             .members()
@@ -1407,17 +1504,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
                     && member.contract().role() == ProductRole::CleanMask
             })
             .expect("domain mask member");
-        let expected_mask = domain
-            .sensitivity()
-            .iter()
-            .map(|value| {
-                if sum_weight > 0.0 && value.is_finite() && *value > 0.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            })
-            .collect::<Vec<_>>();
+        let expected_mask = vec![1.0; expected_shape[0] * expected_shape[1]];
         assert_eq!(mask_member.payload(), expected_mask);
     }
 }
@@ -1442,8 +1529,13 @@ fn authorization_fails_closed_on_any_substitution_or_tampering() {
         .plan(&catalog, &tighter_controls)
         .expect("tighter plan");
     assert_ne!(planned.generation_id(), tighter_planned.generation_id());
-    let tighter_produced =
-        produce_continuum_members(&tighter_planned, &inputs).expect("tighter production");
+    let tighter_produced = produce_continuum_members(
+        &tighter_planned,
+        &inputs,
+        full_window(&tighter_planned),
+        &MemoryStorageFactory,
+    )
+    .expect("tighter production");
     // Completions from another planned generation cannot satisfy this plan.
     assert!(matches!(
         authority.authorize(&planned, &tighter_produced),
@@ -1457,15 +1549,25 @@ fn authorization_fails_closed_on_any_substitution_or_tampering() {
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&other, &other_round.join)
             .expect("other inputs");
     assert!(matches!(
-        produce_continuum_members(&planned, &other_inputs),
+        produce_continuum_members(
+            &planned,
+            &other_inputs,
+            full_window(&planned),
+            &MemoryStorageFactory
+        ),
         Err(ProductsError::CommitmentMismatch)
     ));
 
     // A foreign authority cannot authorize this plan.
     let foreign_problem = continuum_problem(91, &CONTINUUM_PRODUCTS);
     let foreign = ProductGenerationAuthority::bind(&foreign_problem);
-    let produced =
-        produce_continuum_members(&planned, &inputs).expect("foreign-authority probe production");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("foreign-authority probe production");
     assert!(matches!(
         foreign.authorize(&planned, &produced),
         Err(ProductsError::ForeignPlannedGeneration)
@@ -1509,7 +1611,7 @@ fn mosaic_sensitivity_owns_normalization_primary_beam_and_valid_support() {
     let policy = PrimaryBeamValidityPolicy::new(
         0.25,
         ProductSupportComparison::StrictlyGreater,
-        ProductBlankingPolicy::ZeroAndFalseMask,
+        ProductBlankingPolicy::Zero,
     )
     .expect("valid PB policy");
     assert_eq!(sensitivity.validity(policy), [true, true, false, false]);
@@ -1576,7 +1678,13 @@ fn projection_publishes_the_sealed_set_once_and_retains_prepared_evidence() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("produced");
     let sealed = authority.authorize(&planned, &produced).expect("seal");
     let projection =
         casa_imaging_products::PublicationProjection::from_sealed(&sealed).expect("projection");
@@ -1662,7 +1770,9 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("product inputs");
-    let demand = planned.demand(&inputs).expect("generic demand");
+    let demand = planned
+        .demand(&inputs, full_window(&planned))
+        .expect("generic demand");
     let values = planned
         .members()
         .iter()
@@ -1674,18 +1784,31 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
         .map(|member| member.payload_values() as u64)
         .max()
         .expect("members");
-    assert_eq!(demand.produced_residency_bytes(), values * 5);
-    assert_eq!(demand.sealed_residency_bytes(), values * 5);
+    assert_eq!(demand.backing_payload_bytes(), values * 5);
+    assert!(demand.produced_residency_bytes() > 0);
+    assert!(demand.sealed_residency_bytes() > 0);
     assert_eq!(demand.maximum_member_payload_bytes(), maximum * 4);
     assert_eq!(demand.maximum_member_validity_bytes(), maximum);
+    assert_eq!(demand.maximum_window_payload_bytes(), maximum * 4);
+    assert_eq!(demand.maximum_window_validity_bytes(), maximum);
     assert_eq!(
         demand.algorithm_scratch_bytes(),
-        (SHAPE[0] * SHAPE[1] * 2 * size_of::<f32>()) as u64,
-        "generic normalization overlaps one converted plane and one result"
+        (SHAPE[0]
+            * SHAPE[1]
+            * (2 * size_of::<f32>() + size_of::<casa_imaging_model::ModelSample>())) as u64
+            + casa_imaging_reconstruction::normal_state_window_residency_bytes(SHAPE, 1, 1, 1)
+                .unwrap()
+            + maximum * 5,
+        "generic normalization overlaps input windows, its converted plane/result, and one output window"
     );
     assert_eq!(
         demand.peak_residency_bytes(),
-        (values * 5 * 2).max(values * 5 + demand.algorithm_scratch_bytes())
+        demand.produced_residency_bytes()
+            + demand.algorithm_scratch_bytes().max(
+                demand
+                    .sealed_residency_bytes()
+                    .max(demand.maximum_window_payload_bytes())
+            )
     );
 }
 
@@ -1715,7 +1838,13 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("produced");
     let sealed = authority.authorize(&planned, &produced).expect("seal");
     let weight = sealed
         .members()
@@ -1725,6 +1854,8 @@ fn weight_products_plan_and_produce_the_exact_normal_state_sensitivity_plane() {
     let expected: Vec<f32> = round
         .join
         .normal_state()
+        .read_window(0..1)
+        .expect("single-plane continuum fixture window")
         .sensitivity()
         .iter()
         .map(|value| *value as f32)
@@ -1765,7 +1896,13 @@ fn standard_products_publish_the_selected_analytic_primary_beam() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("analytic PB products");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("analytic PB products");
     let sealed = authority.authorize(&planned, &produced).expect("seal");
     let pb = sealed
         .members()
@@ -1816,7 +1953,13 @@ fn standard_cube_products_publish_analytic_primary_beams_per_output_channel() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("analytic cube PB products");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("analytic cube PB products");
     let sealed = authority.authorize(&planned, &produced).expect("seal");
     let pb = sealed
         .members()
@@ -1826,15 +1969,16 @@ fn standard_cube_products_publish_analytic_primary_beams_per_output_channel() {
     assert_eq!(pb.payload().len(), SHAPE[0] * SHAPE[1] * 2);
     assert_eq!(pb.payload().iter().copied().reduce(f32::max), Some(1.0),);
     assert!(pb.payload().iter().any(|value| *value < 1.0));
+    let payload = pb.payload();
     for channel in 0..2 {
-        let plane = pb.payload().iter().skip(channel).step_by(2);
+        let plane = payload.iter().skip(channel).step_by(2);
         assert_eq!(plane.clone().copied().reduce(f32::max), Some(1.0));
         assert!(plane.copied().any(|value| value < 1.0));
     }
 }
 
 #[test]
-fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_validity() {
+fn clean_mask_product_is_the_committed_reconstruction_support() {
     let problem = continuum_problem(117, &CONTINUUM_PRODUCTS);
     let round = run_continuum_round(&problem, 118);
     let normal = round.join.normal_state();
@@ -1859,14 +2003,25 @@ fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_vali
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("unbound inputs");
     assert!(matches!(
-        produce_continuum_members(&planned, &unbound_inputs),
+        produce_continuum_members(
+            &planned,
+            &unbound_inputs,
+            full_window(&planned),
+            &MemoryStorageFactory
+        ),
         Err(ProductsError::CommitmentMismatch)
     ));
 
     let inputs = unbound_inputs
         .with_reconstruction_mask(&mask)
         .expect("mask-bound inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("produced");
     let sealed = authority.authorize(&planned, &produced).expect("sealed");
     let published_mask = sealed
         .members()
@@ -1877,18 +2032,10 @@ fn clean_mask_product_is_the_committed_reconstruction_mask_intersected_with_vali
         published_mask.validity().iter().all(|valid| *valid),
         "the numeric CLEAN-mask support is not the product-validity mask"
     );
-    let expected = normal
-        .sensitivity()
+    let expected = mask
+        .support()
         .iter()
-        .enumerate()
-        .map(|(index, sensitivity)| {
-            let selected = mask.support()[index];
-            if selected && sensitivity.is_finite() && *sensitivity > 0.0 {
-                1.0
-            } else {
-                0.0
-            }
-        })
+        .map(|selected| if *selected { 1.0 } else { 0.0 })
         .collect::<Vec<_>>();
     assert_eq!(published_mask.payload(), expected);
 }
@@ -2001,7 +2148,13 @@ fn restoration_adds_the_published_residual_without_scaling_the_convolved_model()
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("produced");
     let sealed = authority.authorize(&planned, &produced).expect("seal");
 
     let sensitivity = round.join.normal_state().sum_weight();
@@ -2034,7 +2187,7 @@ fn restoration_adds_the_published_residual_without_scaling_the_convolved_model()
     let cell = inputs.cell_size_rad();
     let kernel = gaussian_beam_image(cells, &beam, cell);
     let convolved = casa_imaging_products::fft_convolve(
-        model_member.payload(),
+        &model_member.payload(),
         kernel.as_slice().expect("contiguous"),
         cells,
     );
@@ -2083,7 +2236,13 @@ fn sealed_members_carry_the_complete_graph_contract() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("produced");
     let sealed = authority.authorize(&planned, &produced).expect("seal");
 
     let graph = problem.product_graph();
@@ -2119,20 +2278,7 @@ fn sealed_members_carry_the_complete_graph_contract() {
         .expect("mask member");
     assert_eq!(mask.resolved_beam(), None);
 
-    // The mask is the actual usable-sensitivity support of this state.
-    let expected_mask: Vec<f32> = round
-        .join
-        .normal_state()
-        .sensitivity()
-        .iter()
-        .map(|value| {
-            if *value > 0.0 && value.is_finite() {
-                1.0
-            } else {
-                0.0
-            }
-        })
-        .collect();
+    let expected_mask = vec![1.0; SHAPE[0] * SHAPE[1]];
     assert_eq!(mask.payload(), expected_mask);
 }
 
@@ -2154,7 +2300,13 @@ fn authorization_binds_produced_content_to_the_planned_identities() {
     let inputs =
         casa_imaging_products::ContinuumProductInputs::from_major_cycle(&problem, &round.join)
             .expect("inputs");
-    let produced = produce_continuum_members(&planned, &inputs).expect("produced");
+    let produced = produce_continuum_members(
+        &planned,
+        &inputs,
+        full_window(&planned),
+        &MemoryStorageFactory,
+    )
+    .expect("produced");
 
     // The honest path binds identities: every sealed member carries its
     // planned artifact identity plus a distinct bound content identity, and

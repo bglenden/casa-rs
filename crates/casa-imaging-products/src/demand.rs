@@ -9,7 +9,9 @@ use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
 use rustfft::FftPlanner;
 
-use crate::{ContinuumProductInputs, PlannedContinuumGeneration, ProductsError};
+use crate::{
+    ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
+};
 
 /// Checked numeric-array demand for one planned continuum generation.
 ///
@@ -20,15 +22,44 @@ use crate::{ContinuumProductInputs, PlannedContinuumGeneration, ProductsError};
 /// here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContinuumGenerationDemand {
+    storage_plan: ProductStoragePlan,
+    backing_payload_bytes: u64,
     produced_residency_bytes: u64,
     sealed_residency_bytes: u64,
     algorithm_scratch_bytes: u64,
     maximum_member_payload_bytes: u64,
     maximum_member_validity_bytes: u64,
+    maximum_window_payload_bytes: u64,
+    maximum_window_validity_bytes: u64,
     peak_residency_bytes: u64,
 }
 
 impl ContinuumGenerationDemand {
+    /// Explicit selected window bound used by this generation.
+    #[must_use]
+    pub const fn storage_plan(self) -> ProductStoragePlan {
+        self.storage_plan
+    }
+
+    /// Complete logical numeric and byte-validity backing, independent of residency.
+    /// Physical storage padding and metadata belong to the backing owner.
+    #[must_use]
+    pub const fn backing_payload_bytes(self) -> u64 {
+        self.backing_payload_bytes
+    }
+
+    /// Largest resident numeric window used by generation, hashing, or staging.
+    #[must_use]
+    pub const fn maximum_window_payload_bytes(self) -> u64 {
+        self.maximum_window_payload_bytes
+    }
+
+    /// Largest resident stored-mask window.
+    #[must_use]
+    pub const fn maximum_window_validity_bytes(self) -> u64 {
+        self.maximum_window_validity_bytes
+    }
+
     /// Numeric payload and validity bytes retained by produced members.
     #[must_use]
     pub const fn produced_residency_bytes(self) -> u64 {
@@ -80,6 +111,7 @@ impl PlannedContinuumGeneration {
     pub fn demand(
         &self,
         inputs: &ContinuumProductInputs<'_>,
+        storage_plan: ProductStoragePlan,
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
         if inputs.problem().problem_id() != self.problem_id()
             || inputs.final_model().generation_id() != self.final_model_generation()
@@ -92,9 +124,11 @@ impl PlannedContinuumGeneration {
             return Err(ProductsError::CommitmentMismatch);
         }
 
-        let mut produced_residency_bytes = 0_u64;
+        let mut backing_payload_bytes = 0_u64;
         let mut maximum_member_payload_bytes = 0_u64;
         let mut maximum_member_validity_bytes = 0_u64;
+        let mut maximum_window_payload_bytes = 0_u64;
+        let mut maximum_window_validity_bytes = 0_u64;
         for member in self.members() {
             let values = checked_shape_values(member.shape())?;
             if values != member.payload_values() {
@@ -105,21 +139,53 @@ impl PlannedContinuumGeneration {
             }
             let payload = bytes_for::<f32>(values, "member payload")?;
             let validity = bytes_for::<bool>(values, "member validity")?;
-            produced_residency_bytes = checked_add(
-                produced_residency_bytes,
+            backing_payload_bytes = checked_add(
+                backing_payload_bytes,
                 checked_add(payload, validity, "member payload plus validity")?,
                 "produced generation residency",
             )?;
             maximum_member_payload_bytes = maximum_member_payload_bytes.max(payload);
             maximum_member_validity_bytes = maximum_member_validity_bytes.max(validity);
+            let window_values = storage_plan.layout(member.axes())?.maximum_values();
+            maximum_window_payload_bytes = maximum_window_payload_bytes
+                .max(bytes_for::<f32>(window_values, "product window payload")?);
+            maximum_window_validity_bytes = maximum_window_validity_bytes
+                .max(bytes_for::<bool>(window_values, "product window validity")?);
         }
 
-        let algorithm_scratch_bytes = match inputs.normal_state().catalog() {
+        let mut algorithm_scratch_bytes = match inputs.normal_state().catalog() {
             NormalStateCatalog::UnnormalizedTaylorBlockV1 => taylor_scratch_bytes(inputs)?,
             NormalStateCatalog::UnnormalizedJointBlockV1 => generic_scratch_bytes(self, inputs)?,
             NormalStateCatalog::UnnormalizedPlaneV1
             | NormalStateCatalog::UnnormalizedChannelSlabV1 => generic_scratch_bytes(self, inputs)?,
         };
+        if matches!(
+            inputs.normal_state().catalog(),
+            NormalStateCatalog::UnnormalizedTaylorBlockV1
+                | NormalStateCatalog::UnnormalizedJointBlockV1
+        ) {
+            algorithm_scratch_bytes = checked_add(
+                algorithm_scratch_bytes,
+                checked_add(
+                    maximum_member_payload_bytes,
+                    maximum_member_validity_bytes,
+                    "coupled member arrays",
+                )?,
+                "coupled member production scratch",
+            )?;
+        }
+        algorithm_scratch_bytes = checked_add(
+            algorithm_scratch_bytes,
+            checked_add(
+                maximum_window_payload_bytes,
+                maximum_window_validity_bytes,
+                "active product window",
+            )?,
+            "windowed production scratch",
+        )?;
+        let (produced_residency_bytes, sealed_residency_bytes, beam_scratch) =
+            self.metadata_residency_bytes(inputs)?;
+        algorithm_scratch_bytes = algorithm_scratch_bytes.max(beam_scratch);
         let production_peak = checked_add(
             produced_residency_bytes,
             algorithm_scratch_bytes,
@@ -127,15 +193,19 @@ impl PlannedContinuumGeneration {
         )?;
         let authorization_peak = checked_add(
             produced_residency_bytes,
-            produced_residency_bytes,
+            sealed_residency_bytes.max(maximum_window_payload_bytes),
             "product authorization peak residency",
         )?;
         Ok(ContinuumGenerationDemand {
+            storage_plan,
+            backing_payload_bytes,
             produced_residency_bytes,
-            sealed_residency_bytes: produced_residency_bytes,
+            sealed_residency_bytes,
             algorithm_scratch_bytes,
             maximum_member_payload_bytes,
             maximum_member_validity_bytes,
+            maximum_window_payload_bytes,
+            maximum_window_validity_bytes,
             peak_residency_bytes: production_peak.max(authorization_peak),
         })
     }
@@ -154,11 +224,25 @@ fn generic_scratch_bytes(
         .iter()
         .any(|member| matches!(member.role(), ProductRole::RestoredImage(_)));
     let mut maximum = 0;
-    for domain in inputs.normal_state().domains() {
-        let shape = domain.shape();
+    let mut normal_window = 0;
+    for ordinal in 0..inputs.normal_state().domain_count() {
+        let shape = inputs
+            .normal_state()
+            .domain_shape(ordinal)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
         let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
         let plane = bytes_for::<f32>(cells, "generic plane")?;
         let validity = bytes_for::<bool>(cells, "generic validity plane")?;
+        normal_window = checked_add(
+            normal_window,
+            casa_imaging_reconstruction::normal_state_window_residency_bytes(
+                shape,
+                inputs.normal_state().polarization_count(),
+                inputs.normal_state().channel_count(),
+                1,
+            )?,
+            "generic normal-state input window",
+        )?;
         let mut scratch = if requires_validity { validity } else { 0 };
 
         // Normalization overlaps one converted source plane with its result.
@@ -172,9 +256,17 @@ fn generic_scratch_bytes(
                 "generic restoration scratch",
             )?);
         }
-        maximum = maximum.max(scratch);
+        maximum = maximum.max(checked_add(
+            scratch,
+            bytes_for::<casa_imaging_model::ModelSample>(cells, "generic model input plane")?,
+            "generic loaded model and algorithm scratch",
+        )?);
     }
-    Ok(maximum)
+    checked_add(
+        maximum,
+        normal_window,
+        "generic loaded normal state and algorithm scratch",
+    )
 }
 
 fn taylor_scratch_bytes(inputs: &ContinuumProductInputs<'_>) -> Result<u64, ProductsError> {

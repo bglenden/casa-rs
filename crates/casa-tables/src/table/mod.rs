@@ -1988,38 +1988,52 @@ impl Table {
     /// this logical payload projection.
     #[doc(hidden)]
     pub fn retained_read_metadata_bytes(&self) -> Option<usize> {
+        self.retained_table_metadata_bytes(false)
+    }
+
+    /// Logical owned heap for a metadata writer, including explicit eager rows.
+    /// Returns `None` for unmodeled lazy cell caches or pending column writes.
+    /// Uses the same collection-capacity projection as the read-only ledger.
+    #[doc(hidden)]
+    pub fn retained_owned_metadata_bytes(&self) -> Option<usize> {
+        self.retained_table_metadata_bytes(true)
+    }
+
+    fn retained_table_metadata_bytes(&self, eager: bool) -> Option<usize> {
         if !self.virtual_bindings.is_empty()
             || self.external_sync.is_some()
             || self.measures.is_some()
         {
             return None;
         }
-        let mut bytes = self
-            .inner
-            .retained_lazy_metadata_heap_bytes()?
-            .checked_add(
-                self.virtual_columns
-                    .capacity()
-                    .checked_mul(size_of::<String>())?,
-            )?
-            .checked_add(
-                self.virtual_bindings
-                    .capacity()
-                    .checked_mul(size_of::<VirtualColumnBinding>())?,
-            )?
-            .checked_add(self.table_info.table_type.capacity())?
-            .checked_add(self.table_info.sub_type.capacity())?
-            .checked_add(
-                self.table_info
-                    .readme
-                    .capacity()
-                    .checked_mul(size_of::<String>())?,
-            )?
-            .checked_add(
-                self.dm_info
-                    .capacity()
-                    .checked_mul(size_of::<crate::storage::DataManagerInfo>())?,
-            )?;
+        let mut bytes = if eager {
+            self.inner.retained_owned_metadata_heap_bytes()?
+        } else {
+            self.inner.retained_lazy_metadata_heap_bytes()?
+        }
+        .checked_add(
+            self.virtual_columns
+                .capacity()
+                .checked_mul(size_of::<String>())?,
+        )?
+        .checked_add(
+            self.virtual_bindings
+                .capacity()
+                .checked_mul(size_of::<VirtualColumnBinding>())?,
+        )?
+        .checked_add(self.table_info.table_type.capacity())?
+        .checked_add(self.table_info.sub_type.capacity())?
+        .checked_add(
+            self.table_info
+                .readme
+                .capacity()
+                .checked_mul(size_of::<String>())?,
+        )?
+        .checked_add(
+            self.dm_info
+                .capacity()
+                .checked_mul(size_of::<crate::storage::DataManagerInfo>())?,
+        )?;
         if let Some(path) = &self.source_path {
             bytes = bytes.checked_add(crate::table_impl::path_heap_bytes(path))?;
         }

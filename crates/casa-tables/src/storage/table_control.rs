@@ -973,18 +973,33 @@ pub(crate) fn write_table_dat(
     contents: &TableDatContents,
 ) -> Result<(), StorageError> {
     let mut io = AipsIo::open(path, AipsOpenOption::New)?;
+    write_table_dat_contents(&mut io, contents)?;
+    io.close()?;
+    Ok(())
+}
 
+/// Encode the same control file before a typed array's storage is admitted.
+pub(crate) fn serialize_table_dat(contents: &TableDatContents) -> Result<Box<[u8]>, StorageError> {
+    let mut io = AipsIo::new_write_only(std::io::Cursor::new(Vec::new()));
+    write_table_dat_contents(&mut io, contents)?;
+    let cursor: std::io::Cursor<Vec<u8>> = io.into_inner_typed()?;
+    Ok(cursor.into_inner().into_boxed_slice())
+}
+
+fn write_table_dat_contents(
+    io: &mut AipsIo,
+    contents: &TableDatContents,
+) -> Result<(), StorageError> {
     // Write Table version 2 (nrrow as u32)
     io.putstart("Table", 2)?;
     io.put_u32(contents.nrrow as u32)?;
     io.put_u32(if contents.big_endian { 0 } else { 1 })?;
     io.put_string("PlainTable")?;
 
-    write_table_desc(&mut io, &contents.table_desc)?;
-    write_column_set(&mut io, contents)?;
+    write_table_desc(io, &contents.table_desc)?;
+    write_column_set(io, contents)?;
 
     io.putend()?;
-    io.close()?;
     Ok(())
 }
 

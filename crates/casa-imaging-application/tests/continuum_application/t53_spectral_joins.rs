@@ -89,8 +89,8 @@ fn t53_w_cube_reads_native_uvw_and_publishes_vla_l_band_products() {
 
 #[test]
 fn t53_mosaic_cube_publishes_the_complete_casa_product_inventory() {
-    if !isolated_case(
-        "t53_mosaic_cube_publishes_the_complete_casa_product_inventory",
+    if !isolated_application_case(
+        "t53_spectral_joins::t53_mosaic_cube_publishes_the_complete_casa_product_inventory",
         "mosaic",
     ) {
         return;
@@ -142,8 +142,8 @@ fn t53_mosaic_cube_publishes_the_complete_casa_product_inventory() {
 
 #[test]
 fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
-    if !isolated_case(
-        "t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis",
+    if !isolated_application_case(
+        "t53_spectral_joins::t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis",
         "standard",
     ) {
         return;
@@ -191,8 +191,8 @@ fn t53_cube_rest_frequency_uses_selected_native_channels_not_the_output_axis() {
 
 #[test]
 fn t53_one_channel_standard_w_and_mosaic_cubes_preserve_all_products() {
-    if !isolated_case(
-        "t53_one_channel_standard_w_and_mosaic_cubes_preserve_all_products",
+    if !isolated_application_case(
+        "t53_spectral_joins::t53_one_channel_standard_w_and_mosaic_cubes_preserve_all_products",
         "direction-independent",
     ) {
         return;
@@ -319,8 +319,8 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra_across_all_families(
     set_production_io_environment();
     let root = tempfile::tempdir().expect("test root");
     for family in ["standard", "w", "mosaic", "aw"] {
-        if !isolated_case(
-            "t53_nonidentity_linear_sampling_preserves_affine_spectra_across_all_families",
+        if !isolated_application_case(
+            "t53_spectral_joins::t53_nonidentity_linear_sampling_preserves_affine_spectra_across_all_families",
             family,
         ) {
             continue;
@@ -465,8 +465,8 @@ fn t53_nonidentity_linear_sampling_preserves_affine_spectra_across_all_families(
 
 #[test]
 fn t53_one_channel_native_aw_cube_reduces_to_the_single_plane_law() {
-    if !isolated_case(
-        "t53_one_channel_native_aw_cube_reduces_to_the_single_plane_law",
+    if !isolated_application_case(
+        "t53_spectral_joins::t53_one_channel_native_aw_cube_reduces_to_the_single_plane_law",
         "aw",
     ) {
         return;
@@ -533,27 +533,4 @@ fn t53_one_channel_native_aw_cube_reduces_to_the_single_plane_law() {
             "one-channel law for {suffix}"
         );
     }
-}
-
-// The production Resource Authority admits one immutable storage calibration
-// per process. AW includes its additional prepared-reader queue and IOPS rate.
-fn isolated_case(test: &str, family: &str) -> bool {
-    let selected = format!("{test}:{family}");
-    if let Ok(active) = std::env::var("CASA_RS_T53_ISOLATED_CASE") {
-        return active == selected;
-    }
-    let status = std::process::Command::new(std::env::current_exe().expect("test binary"))
-        .args([
-            format!("t53_spectral_joins::{test}"),
-            "--exact".into(),
-            "--nocapture".into(),
-        ])
-        .env("CASA_RS_T53_ISOLATED_CASE", selected)
-        .status()
-        .expect("isolated production application process");
-    assert!(
-        status.success(),
-        "{test} {family}: isolated execution failed"
-    );
-    false
 }

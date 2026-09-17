@@ -202,6 +202,451 @@ fn lock_only_demand() -> DemandEnvelope {
     }
 }
 
+fn t55_artifact_fixture() -> (ResourceAuthority, DemandEnvelope) {
+    let host = CapacityViewId::new("host-memory");
+    let alias = CapacityViewId::new("host-alias");
+    let domain = CapacityDomainId::new("unified-memory");
+    let storage = StorageDomainId::new("artifact-storage");
+    let read = RateResourceId::new("artifact-read");
+    let write = RateResourceId::new("artifact-write");
+    let queue = QueueResourceId::new("artifact-queue");
+    let mut inventory = inventory_with_views(vec![
+        MemoryView {
+            id: host.clone(),
+            domain: domain.clone(),
+            kind: MemoryViewKind::Host,
+        },
+        MemoryView {
+            id: alias.clone(),
+            domain,
+            kind: MemoryViewKind::Host,
+        },
+    ]);
+    inventory.topology.storage_domains.push(StorageDomain {
+        id: storage.clone(),
+        root: "/artifact-test".into(),
+        capacity_bytes: 1_000,
+        read_rate: read.clone(),
+        write_rate: write.clone(),
+        operations_rate: None,
+        queue: queue.clone(),
+    });
+    inventory.topology.rate_resources = vec![
+        RateResource::new(read.clone(), RateUnit::BytesPerSecond, 10),
+        RateResource::new(write.clone(), RateUnit::BytesPerSecond, 10),
+    ];
+    inventory
+        .topology
+        .queue_resources
+        .push(QueueResource::new(queue.clone(), 2));
+    inventory
+        .pressure
+        .storage_available_bytes
+        .insert(storage.clone(), 1_000);
+    inventory.pressure.rate_available_per_second = BTreeMap::from([(read, 10), (write, 10)]);
+    inventory.pressure.queue_available_slots.insert(queue, 2);
+    let mut demand = lock_only_demand();
+    demand.memory.push(MemoryDemand {
+        allocation_id: "artifact-metadata".to_string(),
+        hard_bytes: 600,
+        preferred_bytes: 600,
+        views: vec![host, alias],
+    });
+    demand.workers = CountDemand::new(4, 4);
+    demand.file_descriptors = CountDemand::new(10, 10);
+    demand.storage.push(StorageDemand {
+        demand_id: "artifact-bytes".to_string(),
+        domain: storage,
+        temporary_bytes: 700,
+        staged_output_bytes: 0,
+        final_output_bytes: 0,
+        persistent_cache_bytes: 0,
+        read_rate: CountDemand::new(10, 10),
+        write_rate: CountDemand::new(10, 10),
+        operations_rate: CountDemand::zero(),
+        queue_slots: CountDemand::new(2, 2),
+    });
+    (
+        ResourceAuthority::with_inventory(inventory).expect("tiny artifact inventory"),
+        demand,
+    )
+}
+
+#[test]
+fn t55_artifact_file_descriptors_stay_reserved_until_the_backing_drops() {
+    let (authority, demand) = t55_artifact_fixture();
+    let lease = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand.clone()),
+        )
+        .unwrap();
+    let lease_id = lease.lease_id;
+    let resource = LeaseResource::FileDescriptors;
+    let permit = lease
+        .prepare_artifact_retention(lease.permit(resource.clone(), 3).unwrap())
+        .unwrap();
+    assert_eq!(
+        ResourcePermit::artifact_retention_heap_bytes(&resource, "host-memory", "artifact-storage",),
+        Some(0)
+    );
+    lease
+        .release_retaining_artifact_resources(&BTreeSet::from([resource]))
+        .unwrap();
+    assert_eq!(
+        authority.inner.state.lock().unwrap().leases[&lease_id]
+            .reserved
+            .file_descriptors,
+        3
+    );
+    let mut competitor = lock_only_demand();
+    let descriptor_capacity = authority
+        .inner
+        .state
+        .lock()
+        .unwrap()
+        .pressure
+        .available_file_descriptors;
+    competitor.file_descriptors =
+        CountDemand::new(descriptor_capacity - 2, descriptor_capacity - 2);
+    assert!(matches!(
+        authority.acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(competitor.clone())
+        ),
+        Err(ResourceError::NoFeasibleAlternative(_))
+    ));
+    drop(permit);
+    assert!(authority.inner.state.lock().unwrap().leases.is_empty());
+    authority
+        .acquire(ResourcePolicy::Exclusive, single_alternative(competitor))
+        .unwrap()
+        .release()
+        .unwrap();
+}
+
+#[test]
+fn t55_artifact_memory_and_storage_survive_finalization_and_release_independently() {
+    for memory_first in [true, false] {
+        let (authority, demand) = t55_artifact_fixture();
+        let lease = authority
+            .acquire(
+                ResourcePolicy::Exclusive,
+                single_alternative(demand.clone()),
+            )
+            .unwrap();
+        let lease_id = lease.lease_id;
+        let memory_resource = LeaseResource::Memory {
+            allocation_id: "artifact-metadata".to_string(),
+        };
+        let memory = lease
+            .prepare_artifact_retention(lease.permit(memory_resource.clone(), 600).unwrap())
+            .unwrap();
+        let storage = lease
+            .permit(
+                LeaseResource::Storage {
+                    demand_id: "artifact-bytes".to_string(),
+                    use_kind: StorageUseKind::Temporary,
+                },
+                700,
+            )
+            .unwrap();
+        let mut storage = lease.prepare_artifact_retention(storage).unwrap();
+        let Some(ArtifactCapacity::Memory(domains)) = memory.artifact_capacity.as_ref() else {
+            panic!("memory permit needs domain provenance");
+        };
+        assert_eq!(domains.as_ref(), &[CapacityDomainId::new("unified-memory")]);
+        assert_eq!(
+            ResourcePermit::artifact_retention_heap_bytes(
+                memory.resource(),
+                "unified-memory",
+                "artifact-storage"
+            ),
+            Some(std::mem::size_of_val(domains.as_ref()) + domains[0].as_str().len())
+        );
+        assert!(
+            matches!(storage.artifact_capacity.as_ref(), Some(ArtifactCapacity::Storage(domain))
+            if domain.as_str() == "artifact-storage")
+        );
+        assert_eq!(
+            ResourcePermit::artifact_retention_heap_bytes(
+                storage.resource(),
+                "unified-memory",
+                "artifact-storage"
+            ),
+            Some("artifact-storage".len())
+        );
+        storage.narrow_temporary_storage_to(300).unwrap();
+        let memory_domain = CapacityDomainId::new("unified-memory");
+        let storage_domain = StorageDomainId::new("artifact-storage");
+        assert_eq!(
+            authority.inner.state.lock().unwrap().leases[&lease_id]
+                .reserved
+                .memory_bytes(&memory_domain),
+            600
+        );
+        let mut competitor = demand.clone();
+        competitor.memory[0].hard_bytes = 401;
+        competitor.memory[0].preferred_bytes = 401;
+        competitor.storage[0].temporary_bytes = 700;
+        assert!(
+            matches!(
+                authority.acquire(
+                    ResourcePolicy::Exclusive,
+                    single_alternative(competitor.clone())
+                ),
+                Err(ResourceError::NoFeasibleAlternative(_))
+            ),
+            "memory is reserved before finalization"
+        );
+        assert!(
+            !lease
+                .release_retaining_artifact_resources(&BTreeSet::from([
+                    memory_resource,
+                    storage.resource().clone()
+                ]))
+                .unwrap()
+                .is_released()
+        );
+        let first_memory_owner = Arc::new(memory);
+        let memory = Arc::clone(&first_memory_owner);
+        drop(first_memory_owner);
+        {
+            let state = authority.inner.state.lock().unwrap();
+            let retained = &state.leases[&lease_id].reserved;
+            assert_eq!(
+                retained.memory_bytes(&memory_domain),
+                600,
+                "two host views charge one physical domain"
+            );
+            assert_eq!(retained.storage_bytes(&storage_domain), 300);
+            assert_eq!(retained.workers(), 0);
+            assert_eq!(retained.file_descriptors(), 0);
+            assert_eq!(retained.locks(), 0);
+            assert_eq!(
+                retained.rate_per_second(&RateResourceId::new("artifact-read")),
+                0
+            );
+            assert_eq!(
+                retained.rate_per_second(&RateResourceId::new("artifact-write")),
+                0
+            );
+            assert_eq!(
+                retained.queue_slots(&QueueResourceId::new("artifact-queue")),
+                0
+            );
+        }
+        assert!(
+            matches!(
+                authority.acquire(
+                    ResourcePolicy::Exclusive,
+                    single_alternative(competitor.clone())
+                ),
+                Err(ResourceError::NoFeasibleAlternative(_))
+            ),
+            "401 bytes cannot enter the retained 600-byte reservation"
+        );
+        competitor.memory[0].hard_bytes = 400;
+        competitor.memory[0].preferred_bytes = 400;
+        let exact = authority
+            .acquire(
+                ResourcePolicy::Exclusive,
+                single_alternative(competitor.clone()),
+            )
+            .expect(
+                "exact remaining memory/storage and all released worker/IO capacity are available",
+            );
+        drop(exact);
+        competitor.storage[0].temporary_bytes = 701;
+        assert!(
+            matches!(
+                authority.acquire(ResourcePolicy::Exclusive, single_alternative(competitor)),
+                Err(ResourceError::NoFeasibleAlternative(_))
+            ),
+            "storage remains reserved after finalization"
+        );
+        if memory_first {
+            drop(memory);
+            {
+                let state = authority.inner.state.lock().unwrap();
+                assert_eq!(
+                    state.leases[&lease_id]
+                        .reserved
+                        .memory_bytes(&memory_domain),
+                    0
+                );
+                assert_eq!(
+                    state.leases[&lease_id]
+                        .reserved
+                        .storage_bytes(&storage_domain),
+                    300
+                );
+            }
+            drop(storage);
+        } else {
+            drop(storage);
+            {
+                let state = authority.inner.state.lock().unwrap();
+                assert_eq!(
+                    state.leases[&lease_id]
+                        .reserved
+                        .memory_bytes(&memory_domain),
+                    600
+                );
+                assert_eq!(
+                    state.leases[&lease_id]
+                        .reserved
+                        .storage_bytes(&storage_domain),
+                    0
+                );
+            }
+            drop(memory);
+        }
+        assert!(
+            !authority
+                .inner
+                .state
+                .lock()
+                .unwrap()
+                .leases
+                .contains_key(&lease_id)
+        );
+        authority
+            .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+            .expect("final artifact drop restores full capacity");
+    }
+}
+
+#[test]
+fn t55_artifact_retention_rejects_unauthorized_or_nonexact_memory() {
+    for (exported, amount) in [(false, 600), (true, 599)] {
+        let (authority, demand) = t55_artifact_fixture();
+        let lease = authority
+            .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+            .unwrap();
+        let memory_resource = LeaseResource::Memory {
+            allocation_id: "artifact-metadata".to_string(),
+        };
+        let permit = lease
+            .prepare_artifact_retention(lease.permit(memory_resource.clone(), amount).unwrap())
+            .unwrap();
+        let exports = if exported {
+            BTreeSet::from([memory_resource])
+        } else {
+            BTreeSet::new()
+        };
+        let error = lease
+            .release_retaining_artifact_resources(&exports)
+            .expect_err("invalid retention must fail closed");
+        assert!(matches!(error, ResourceError::Invalid(ref message) if
+            if exported { message.contains("exact admitted physical capacity") }
+            else { message.contains("scheduler-exported immutable memory") }));
+        drop(permit);
+        assert!(authority.inner.state.lock().unwrap().leases.is_empty());
+    }
+    let (authority, demand) = t55_artifact_fixture();
+    let lease = authority
+        .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+        .unwrap();
+    let storage = lease
+        .permit(
+            LeaseResource::Storage {
+                demand_id: "artifact-bytes".to_string(),
+                use_kind: StorageUseKind::Temporary,
+            },
+            700,
+        )
+        .unwrap();
+    let storage = lease.prepare_artifact_retention(storage).unwrap();
+    assert!(
+        matches!(
+            lease.release_retaining_artifact_resources(&BTreeSet::new()),
+            Err(ResourceError::Invalid(_))
+        ),
+        "temporary storage also needs explicit export authorization"
+    );
+    drop(storage);
+    assert!(authority.inner.state.lock().unwrap().leases.is_empty());
+}
+
+#[test]
+fn t55_artifact_no_live_permits_releases_without_retention() {
+    for create_then_drop in [false, true] {
+        let (authority, demand) = t55_artifact_fixture();
+        let lease = authority
+            .acquire(
+                ResourcePolicy::Exclusive,
+                single_alternative(demand.clone()),
+            )
+            .unwrap();
+        let memory_resource = LeaseResource::Memory {
+            allocation_id: "artifact-metadata".to_string(),
+        };
+        if create_then_drop {
+            let memory = lease
+                .prepare_artifact_retention(lease.permit(memory_resource.clone(), 600).unwrap())
+                .unwrap();
+            let storage = lease
+                .permit(
+                    LeaseResource::Storage {
+                        demand_id: "artifact-bytes".to_string(),
+                        use_kind: StorageUseKind::Temporary,
+                    },
+                    700,
+                )
+                .unwrap();
+            let storage = lease.prepare_artifact_retention(storage).unwrap();
+            drop((memory, storage));
+        }
+        assert!(
+            lease
+                .release_retaining_artifact_resources(&BTreeSet::from([memory_resource]))
+                .unwrap()
+                .is_released()
+        );
+        assert!(authority.inner.state.lock().unwrap().leases.is_empty());
+        authority
+            .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+            .expect("all capacity immediately reusable");
+    }
+}
+
+#[test]
+fn t55_artifact_preparation_rejects_foreign_lease_and_second_preparation() {
+    let (authority, mut demand) = t55_artifact_fixture();
+    demand.memory[0].hard_bytes = 100;
+    demand.memory[0].preferred_bytes = 100;
+    demand.workers = CountDemand::new(1, 1);
+    demand.file_descriptors = CountDemand::zero();
+    demand.storage.clear();
+    let first = authority
+        .acquire(
+            ResourcePolicy::Exclusive,
+            single_alternative(demand.clone()),
+        )
+        .unwrap();
+    let second = authority
+        .acquire(ResourcePolicy::Exclusive, single_alternative(demand))
+        .unwrap();
+    let resource = LeaseResource::Memory {
+        allocation_id: "artifact-metadata".to_string(),
+    };
+    let foreign = second.permit(resource.clone(), 100).unwrap();
+    assert!(matches!(
+        first.prepare_artifact_retention(foreign),
+        Err(ResourceError::Invalid(_))
+    ));
+    let own = first.permit(resource, 100).unwrap();
+    assert!(own.artifact_capacity.is_none());
+    let prepared = first.prepare_artifact_retention(own).unwrap();
+    assert!(matches!(
+        first.prepare_artifact_retention(prepared),
+        Err(ResourceError::Invalid(_))
+    ));
+    drop((first, second));
+    assert!(authority.inner.state.lock().unwrap().leases.is_empty());
+}
+
 #[test]
 fn exact_measurement_set_lock_conflicts_are_source_scoped() {
     let authority = ResourceAuthority::with_inventory(inventory_with_views(vec![MemoryView {
@@ -1866,7 +2311,7 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
         Some(2)
     );
 
-    let mut retained = lease
+    let retained = lease
         .permit(
             LeaseResource::Storage {
                 demand_id: "scratch-io".to_string(),
@@ -1875,12 +2320,15 @@ fn storage_transfer_and_accelerator_demands_bind_their_topology_resources() {
             1_000,
         )
         .expect("artifact storage fits the admitted plan");
+    let mut retained = lease
+        .prepare_artifact_retention(retained)
+        .expect("prepared storage provenance");
     retained
         .narrow_temporary_storage_to(100)
         .expect("sealed artifact returns unused planned storage");
     assert!(
         !lease
-            .release_retaining_artifact_storage()
+            .release_retaining_artifact_resources(&BTreeSet::from([retained.resource().clone()]))
             .expect("plan narrows to its artifact storage permit")
             .is_released()
     );
