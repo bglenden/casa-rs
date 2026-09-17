@@ -9425,7 +9425,12 @@ impl SpectralSlabOperator {
         let predicted = self.gridder.degrid(
             &self.forward_grids[self.polarization_plane(resident, polarization)],
             taps,
-        )? * forward_scale;
+        )?;
+        let predicted = if forward_scale.im == 0.0 {
+            predicted * forward_scale.re
+        } else {
+            predicted * forward_scale
+        };
         if !predicted.re.is_finite() || !predicted.im.is_finite() {
             return Err(SpectralOperatorError::GeneratedNonfinite);
         }
@@ -12591,6 +12596,54 @@ mod tests {
         let fft = PreparedFft::new([10, 10], workload.fft_resident_complex_values)
             .expect("reserved FFT workspace");
         SpectralSlabOperator::new_with_geometry(geometry(), workload.slab, workload, fft)
+    }
+
+    #[test]
+    fn gridded_prediction_real_and_complex_scales_preserve_validation() {
+        let mut operator = operator();
+        for ((x, y), value) in operator.forward_grids[0].indexed_iter_mut() {
+            *value = Complex64::new(x as f64 * 0.13 - 0.4, y as f64 * 0.09 - 0.2);
+        }
+        let taps = operator.gridder.taps([0.0; 3]).unwrap();
+        let unscaled = operator
+            .gridder
+            .degrid(&operator.forward_grids[0], taps)
+            .unwrap();
+        for scale in [
+            Complex64::new(0.0, 0.0),
+            Complex64::new(0.0, -0.0),
+            Complex64::new(1.0, 0.0),
+            Complex64::new(-2.5, 0.0),
+            Complex64::new(0.25, -0.75),
+        ] {
+            assert_eq!(
+                operator
+                    .predict_gridded_normal_polarization(0, 0, taps, scale)
+                    .unwrap(),
+                unscaled * scale
+            );
+        }
+        for scale in [
+            Complex64::new(f64::INFINITY, 0.0),
+            Complex64::new(1.0, f64::NAN),
+        ] {
+            assert!(matches!(
+                operator.predict_gridded_normal_polarization(0, 0, taps, scale),
+                Err(SpectralOperatorError::GriddedRecordMismatch)
+            ));
+        }
+        for grid_value in [Complex64::new(2.0, 2.0), Complex64::new(f64::NAN, 0.0)] {
+            operator.forward_grids[0].fill(grid_value);
+            assert!(matches!(
+                operator.predict_gridded_normal_polarization(
+                    0,
+                    0,
+                    taps,
+                    Complex64::new(f64::MAX, 0.0)
+                ),
+                Err(SpectralOperatorError::GeneratedNonfinite)
+            ));
+        }
     }
 
     fn samples(visibilities: &[[f64; 2]]) -> Vec<SpectralOperatorSample> {
