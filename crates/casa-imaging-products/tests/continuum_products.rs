@@ -604,7 +604,15 @@ fn run_round_with_contributions(
         (blocks, summary),
         selected_generation,
         [casa_imaging_model::ModelDeltaTerm::new(
-            casa_imaging_model::ModelCell::new(0, 0, 0, [4, 4]),
+            casa_imaging_model::ModelCell::new(
+                0,
+                0,
+                0,
+                problem.geometry().domains()[0]
+                    .shape()
+                    .pixels()
+                    .map(|extent| extent / 2),
+            ),
             casa_imaging_model::ModelValue::new(0.75).expect("finite value"),
         )],
     )
@@ -1002,62 +1010,72 @@ fn prechange_commitment_bytes(
     encoded
 }
 
-// The legacy-v2 commitment bytes and the current catalog commitments hash
-// normal-state float evidence. The SIMD FFT and gridder round those values
-// differently on arm64 and x86_64, so each supported test architecture pins
-// its own exact digests; architecture-internal determinism is exercised by the
-// repeated fixture rounds throughout this file. Update both tables together
-// when the identity encoders or fixture science change.
-#[cfg(target_arch = "aarch64")]
+// Identity fixtures use one phase-centre pixel so exact commitments do not
+// depend on off-axis FFT or convolution reduction roundoff.
 const EXPECTED_COMMITMENTS: [[u8; 32]; 5] = [
     [
-        244, 164, 190, 178, 133, 70, 166, 45, 211, 89, 47, 99, 69, 217, 21, 122, 23, 15, 213, 71,
-        20, 89, 86, 156, 172, 70, 153, 113, 246, 11, 192, 52,
+        148, 91, 43, 59, 171, 102, 102, 171, 27, 65, 150, 126, 165, 106, 62, 24, 78, 199, 83, 35,
+        15, 243, 197, 150, 70, 208, 11, 79, 99, 158, 115, 108,
     ],
     [
-        66, 50, 87, 34, 63, 40, 29, 62, 0, 204, 58, 203, 232, 29, 154, 103, 75, 77, 142, 202, 201,
-        170, 60, 176, 2, 2, 163, 167, 119, 86, 38, 213,
+        100, 158, 71, 231, 73, 202, 6, 60, 43, 60, 92, 184, 239, 61, 106, 245, 99, 37, 0, 51, 218,
+        109, 10, 104, 42, 98, 130, 173, 112, 43, 128, 47,
     ],
     [
-        157, 253, 106, 2, 170, 223, 8, 168, 92, 90, 109, 19, 143, 77, 179, 22, 38, 58, 103, 80,
-        212, 228, 126, 50, 132, 207, 246, 90, 253, 234, 149, 51,
+        44, 17, 136, 147, 156, 119, 179, 169, 20, 235, 180, 225, 2, 17, 249, 88, 104, 105, 94, 223,
+        21, 58, 18, 46, 167, 170, 108, 88, 253, 77, 224, 200,
     ],
     [
-        212, 194, 232, 13, 7, 85, 57, 249, 169, 189, 66, 234, 203, 119, 140, 239, 240, 82, 27, 235,
-        203, 10, 170, 232, 22, 218, 11, 68, 5, 154, 250, 170,
+        240, 206, 187, 127, 103, 6, 84, 247, 224, 122, 37, 64, 213, 203, 239, 111, 73, 110, 187,
+        124, 18, 199, 209, 90, 235, 160, 15, 142, 47, 96, 181, 172,
     ],
     [
-        199, 173, 156, 100, 11, 224, 129, 229, 78, 209, 81, 186, 25, 242, 243, 27, 66, 23, 65, 86,
-        158, 122, 48, 63, 87, 115, 146, 81, 153, 126, 14, 62,
-    ],
-];
-#[cfg(target_arch = "x86_64")]
-const EXPECTED_COMMITMENTS: [[u8; 32]; 5] = [
-    [
-        77, 148, 61, 70, 161, 215, 152, 154, 200, 33, 147, 43, 246, 164, 248, 219, 7, 28, 54, 132,
-        230, 2, 91, 148, 171, 77, 115, 237, 184, 90, 83, 63,
-    ],
-    [
-        51, 59, 221, 155, 120, 36, 88, 99, 109, 205, 56, 122, 35, 40, 37, 182, 1, 46, 97, 239, 39,
-        106, 145, 180, 136, 48, 200, 55, 106, 56, 209, 248,
-    ],
-    [
-        8, 218, 26, 19, 181, 81, 207, 234, 87, 61, 124, 95, 68, 123, 209, 86, 240, 247, 11, 189,
-        28, 80, 229, 160, 181, 98, 247, 88, 214, 2, 210, 11,
-    ],
-    [
-        172, 209, 213, 211, 42, 97, 220, 110, 183, 139, 166, 213, 0, 50, 0, 129, 130, 109, 74, 49,
-        153, 172, 138, 211, 104, 253, 235, 119, 136, 34, 35, 82,
-    ],
-    [
-        242, 77, 105, 64, 154, 76, 220, 254, 41, 9, 224, 160, 169, 2, 211, 14, 44, 66, 14, 176,
-        127, 45, 70, 242, 199, 49, 122, 22, 245, 158, 21, 254,
+        31, 101, 52, 17, 68, 100, 194, 19, 96, 136, 211, 128, 77, 75, 190, 247, 228, 45, 195, 61,
+        27, 202, 3, 197, 15, 223, 105, 142, 210, 104, 52, 53,
     ],
 ];
 
 #[test]
 fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity() {
-    let constant_problem = continuum_problem(131, &CONTINUUM_PRODUCTS);
+    let identity_problem =
+        |observation, products: &[ProductKind], restoring_beam, basis, algorithm, channels| {
+            continuum_problem_with_domains_and_reconstruction(
+                observation,
+                products,
+                restoring_beam,
+                InstrumentResponse::Scalar,
+                basis,
+                algorithm,
+                channels,
+                vec![ImageDomainSpec::new(
+                    ImageDomainRole::Main,
+                    ImageShape::new(1, 1),
+                    DirectionCoordinateSpec::new(
+                        Projection::Sin,
+                        SkyDirection::new(DirectionFrame::J2000, 1.0, -0.5),
+                        [0.0, 0.0],
+                        [-1.0e-6, 1.0e-6],
+                        [[1.0, 0.0], [0.0, 1.0]],
+                        [180.0, 0.0],
+                    ),
+                    FacetLayout::Single,
+                    AxisOrder::new([
+                        ImageAxis::DirectionLongitude,
+                        ImageAxis::DirectionLatitude,
+                        ImageAxis::Polarization,
+                        ImageAxis::Spectral,
+                    ]),
+                )],
+            )
+        };
+    let constant_problem = identity_problem(
+        131,
+        &CONTINUUM_PRODUCTS,
+        RestoringBeamPolicy::PerPlane,
+        ReconstructionBasis::Constant,
+        ReconstructionAlgorithm::Dirty,
+        1,
+    );
     let constant_round = run_continuum_round(&constant_problem, 132);
     let constant_catalog =
         ContinuumSourceCatalog::from_major_cycle(&constant_problem, &constant_round.join)
@@ -1067,11 +1085,10 @@ fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity
     assert_eq!(constant_bytes.len(), 411);
     assert_eq!(constant_bytes[200], 0, "PlaneV1 retains catalog tag zero");
 
-    let channel_problem = continuum_problem_with_reconstruction(
+    let channel_problem = identity_problem(
         133,
         &CONTINUUM_PRODUCTS,
         RestoringBeamPolicy::PerPlane,
-        InstrumentResponse::Scalar,
         ReconstructionBasis::ChannelLocal { channels: 2 },
         ReconstructionAlgorithm::Dirty,
         2,
@@ -1101,11 +1118,10 @@ fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity
         ProductKind::Sensitivity,
         ProductKind::TaylorTerms,
     ];
-    let taylor_problem = continuum_problem_with_reconstruction(
+    let taylor_problem = identity_problem(
         135,
         &taylor_products,
         RestoringBeamPolicy::None,
-        InstrumentResponse::Scalar,
         ReconstructionBasis::Taylor { terms: 2 },
         ReconstructionAlgorithm::Mtmfs {
             scales_px: vec![0.0],
@@ -1124,20 +1140,7 @@ fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity
         channel_catalog.commitment_id(),
         taylor_catalog.commitment_id(),
     ];
-    #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     assert_eq!(actual, EXPECTED_COMMITMENTS);
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    {
-        // Other architectures have no pinned science hashes; the identity
-        // contract still requires five distinct, non-zero commitments.
-        for (index, commitment) in actual.iter().enumerate() {
-            assert!(commitment.iter().any(|byte| *byte != 0));
-            assert!(
-                !actual[..index].contains(commitment),
-                "commitment {index} collides with an earlier identity"
-            );
-        }
-    }
 }
 
 #[test]
