@@ -284,7 +284,7 @@ where
         let continuum = &mut self.continuum;
         let spectral_support_sample_count = &mut self.spectral_support_sample_count;
         let spectral_contributions = &mut self.spectral_contributions;
-        let emit = &mut self.emit;
+        let emit = &mut |block: &ReconstructionWeightedBlock| (self.emit)(block, execution);
         self.consumer
             .consume(storage, |run| {
                 for reported in run.samples() {
@@ -295,7 +295,6 @@ where
                         spectral_support_sample_count,
                         spectral_contributions,
                         emit,
-                        execution,
                         reported,
                     )?;
                 }
@@ -428,15 +427,11 @@ fn consume_weighting_sample<W, F, E>(
     spectral_support_sample_count: &mut u64,
     spectral_contributions: &mut WeightingSpectralCache<'_>,
     emit: &mut F,
-    execution: crate::bounded_stream::BoundedExecution<'_>,
     reported: SelectedObservationTraversalSample<'_>,
 ) -> Result<(), ReplayCallbackError<E>>
 where
     W: StreamingWeightPhase,
-    F: FnMut(
-        &ReconstructionWeightedBlock,
-        crate::bounded_stream::BoundedExecution<'_>,
-    ) -> Result<(), E>,
+    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E>,
 {
     if let Some(transform) = continuum {
         let completed = transform
@@ -460,7 +455,7 @@ where
                 )
                 .map_err(ReplayCallbackError::Owner)?
             {
-                emit(&block, execution).map_err(ReplayCallbackError::Consumer)?;
+                emit(&block).map_err(ReplayCallbackError::Consumer)?;
                 weights
                     .reuse_emitted_block(block)
                     .map_err(ReplayCallbackError::Owner)?;
@@ -479,7 +474,7 @@ where
             )
             .map_err(ReplayCallbackError::Owner)?
         {
-            emit(&block, execution).map_err(ReplayCallbackError::Consumer)?;
+            emit(&block).map_err(ReplayCallbackError::Consumer)?;
             weights
                 .reuse_emitted_block(block)
                 .map_err(ReplayCallbackError::Owner)?;

@@ -1023,8 +1023,9 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                     &replay,
                     pass,
                     artifact_budget.ok_or(SpectralCyclePlanError::Overflow)?,
-                    ManagedSpillMode::Write,
-                    replay_workers,
+                    ManagedSpillMode::Write {
+                        initial_consumer_workers: replay_workers,
+                    },
                 )?;
             }
             (physical, source_resources, replay, Some(fragment))
@@ -1058,7 +1059,6 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                 ManagedSpillMode::Read(
                     gridded_window_plan.ok_or(SpectralCyclePlanError::Overflow)?,
                 ),
-                1,
             )?;
             (physical, source_resources, replay, None)
         }
@@ -2409,7 +2409,7 @@ fn base_gridded_physical<R: ImplementationRegistry>(
 #[derive(Clone, Copy)]
 enum ManagedSpillMode<'a> {
     Read(&'a crate::complete_data_operator::GriddedNormalReplayWindowPlan),
-    Write,
+    Write { initial_consumer_workers: u64 },
 }
 
 struct ManagedSpillModeSpec {
@@ -2433,7 +2433,7 @@ impl ManagedSpillMode<'_> {
                 bytes_per_slot: window.source_slot_bytes(),
                 is_read: true,
             },
-            Self::Write => ManagedSpillModeSpec {
+            Self::Write { .. } => ManagedSpillModeSpec {
                 suffix: "write",
                 io_kind: IoBufferKind::SpillWrite,
                 source_slots: 1,
@@ -2484,8 +2484,13 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     pass: SpectralPassIdentity,
     admission: crate::complete_data_operator::GriddedNormalCompilationAdmission,
     mode: ManagedSpillMode<'_>,
-    initial_consumer_workers: u64,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
+    let initial_consumer_workers = match mode {
+        ManagedSpillMode::Write {
+            initial_consumer_workers,
+        } => initial_consumer_workers,
+        ManagedSpillMode::Read(_) => 1,
+    };
     let budget = admission.spill;
     let storage = policy
         .gridded_normal_storage
