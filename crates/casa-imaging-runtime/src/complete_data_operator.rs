@@ -1886,6 +1886,7 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
         _work: WorkIdentity,
         _storage: &ManagedSpillWindowStorage,
         partial: Self::Partial,
+        _execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), Self::Error> {
         self.state
             .state
@@ -1893,7 +1894,10 @@ impl PartitionedKernel<ManagedSpillWindowStorage> for GriddedNormalReplayKernel 
             .map_err(CompleteDataOperatorError::Owner)
     }
 
-    fn complete(self) -> Result<Self::Completion, Self::Error> {
+    fn complete(
+        self,
+        _execution: crate::bounded_stream::BoundedExecution<'_>,
+    ) -> Result<Self::Completion, Self::Error> {
         self.timings.emit();
         self.state.complete()
     }

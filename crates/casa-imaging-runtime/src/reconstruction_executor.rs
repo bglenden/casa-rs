@@ -173,11 +173,15 @@ impl<'a> PartitionedKernel<()> for PlaneKernel<'a> {
         _: WorkIdentity,
         _: &(),
         partial: Self::Partial,
+        _execution: crate::bounded_stream::BoundedExecution<'_>,
     ) -> Result<(), Self::Error> {
         self.work.commit_plane(partial)
     }
 
-    fn complete(self) -> Result<Self::Completion, Self::Error> {
+    fn complete(
+        self,
+        _execution: crate::bounded_stream::BoundedExecution<'_>,
+    ) -> Result<Self::Completion, Self::Error> {
         self.work.finish()
     }
 }

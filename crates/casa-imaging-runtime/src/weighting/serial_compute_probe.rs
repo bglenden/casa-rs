@@ -476,7 +476,9 @@ fn rebuild_density_for_stage_local_probe(
     for block in blocks {
         kernel.consume_selected_block(block)?;
     }
-    Ok(kernel.complete()?.density)
+    Ok(kernel
+        .complete(crate::bounded_stream::BoundedExecution::serial())?
+        .density)
 }
 
 impl InitialWeightedProbe<'_> {
@@ -532,25 +534,29 @@ impl InitialWeightedProbe<'_> {
             weights: (_weighting, replay_summary),
             ..
         } = {
-            let mut emit = |block: &ReconstructionWeightedBlock| {
-                let callback_started = observe_timings.then(Instant::now);
-                let science_started = observe_timings.then(Instant::now);
-                let predicted = operator.consume_block(block)?;
-                if let Some(started) = science_started {
-                    science_consume += started.elapsed();
-                }
-                compilation.consume_block(block)?;
-                final_visibility_samples = final_visibility_samples
-                    .checked_add(u64::try_from(predicted.len()).expect("prediction count fits u64"))
-                    .expect("prediction count does not overflow");
-                emitted_blocks = emitted_blocks
-                    .checked_add(1)
-                    .expect("block count does not overflow");
-                if let Some(started) = callback_started {
-                    callback_elapsed += started.elapsed();
-                }
-                Ok::<(), ReplayProbeError>(())
-            };
+            let mut emit =
+                |block: &ReconstructionWeightedBlock,
+                 _execution: crate::bounded_stream::BoundedExecution<'_>| {
+                    let callback_started = observe_timings.then(Instant::now);
+                    let science_started = observe_timings.then(Instant::now);
+                    let predicted = operator.consume_block(block)?;
+                    if let Some(started) = science_started {
+                        science_consume += started.elapsed();
+                    }
+                    compilation.consume_block(block)?;
+                    final_visibility_samples = final_visibility_samples
+                        .checked_add(
+                            u64::try_from(predicted.len()).expect("prediction count fits u64"),
+                        )
+                        .expect("prediction count does not overflow");
+                    emitted_blocks = emitted_blocks
+                        .checked_add(1)
+                        .expect("block count does not overflow");
+                    if let Some(started) = callback_started {
+                        callback_elapsed += started.elapsed();
+                    }
+                    Ok::<(), ReplayProbeError>(())
+                };
             replay_weighting_kernel(
                 WeightingBlockKernel {
                     problem,
@@ -1142,11 +1148,13 @@ where
     initial_operator.bind_major_cycle_model(initial_preparation.final_model(), None)?;
     let initial_consumer = fresh_consumer(&request, &problem)?;
     let (weighting, initial_summary) = {
-        let mut initial_emit = |block: &ReconstructionWeightedBlock| {
-            initial_operator.consume_block(block)?;
-            consume_current_format(block)?;
-            Ok::<(), ReplayProbeError>(())
-        };
+        let mut initial_emit =
+            |block: &ReconstructionWeightedBlock,
+             _execution: crate::bounded_stream::BoundedExecution<'_>| {
+                initial_operator.consume_block(block)?;
+                consume_current_format(block)?;
+                Ok::<(), ReplayProbeError>(())
+            };
         let initial_kernel = WeightingBlockKernel {
             problem: &problem,
             consumer: initial_consumer,
@@ -1284,21 +1292,23 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
         let mut normal_replay_probe_elapsed = Duration::ZERO;
         let mut predicted_samples = 0_u64;
         let mut emitted_blocks = 0_u64;
-        let mut emit = |block: &ReconstructionWeightedBlock| {
-            let probe_started = Instant::now();
-            normal_replay_probe.observe(block)?;
-            normal_replay_probe_elapsed += probe_started.elapsed();
-            let started = Instant::now();
-            let predicted = operator.consume_block(block)?;
-            operator_elapsed += started.elapsed();
-            predicted_samples = predicted_samples
-                .checked_add(u64::try_from(predicted.len()).expect("prediction count fits u64"))
-                .expect("prediction count does not overflow");
-            emitted_blocks = emitted_blocks
-                .checked_add(1)
-                .expect("block count does not overflow");
-            Ok::<(), ReplayProbeError>(())
-        };
+        let mut emit =
+            |block: &ReconstructionWeightedBlock,
+             _execution: crate::bounded_stream::BoundedExecution<'_>| {
+                let probe_started = Instant::now();
+                normal_replay_probe.observe(block)?;
+                normal_replay_probe_elapsed += probe_started.elapsed();
+                let started = Instant::now();
+                let predicted = operator.consume_block(block)?;
+                operator_elapsed += started.elapsed();
+                predicted_samples = predicted_samples
+                    .checked_add(u64::try_from(predicted.len()).expect("prediction count fits u64"))
+                    .expect("prediction count does not overflow");
+                emitted_blocks = emitted_blocks
+                    .checked_add(1)
+                    .expect("block count does not overflow");
+                Ok::<(), ReplayProbeError>(())
+            };
         let kernel = WeightingBlockKernel {
             problem: &problem,
             consumer,
@@ -1932,7 +1942,7 @@ fn freeze_density<'a>(
     for block in blocks {
         kernel.consume_selected_block(block)?;
     }
-    let resolved = kernel.complete()?;
+    let resolved = kernel.complete(crate::bounded_stream::BoundedExecution::serial())?;
     terminal.record_runtime_residency(blocks.len(), residency_bytes[0], residency_bytes[1])?;
     let (_, completion) = resolved.consumer.complete(terminal)?;
     if completion.sample_count() != expected_samples {
@@ -1981,13 +1991,18 @@ fn replay_weighting_kernel<'a, W, F, E>(
 ) -> Result<WeightingBlockKernelCompletion<'a, W::Finish>, WeightingBlockKernelError<E>>
 where
     W: StreamingWeightPhase + Sync,
-    F: FnMut(&ReconstructionWeightedBlock) -> Result<(), E> + Send + Sync,
+    F: FnMut(
+            &ReconstructionWeightedBlock,
+            crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<(), E>
+        + Send
+        + Sync,
     E: Error + Send + 'static,
 {
     for block in blocks {
-        kernel.consume_selected_block(block)?;
+        kernel.consume_selected_block(block, crate::bounded_stream::BoundedExecution::serial())?;
     }
-    kernel.complete()
+    kernel.complete(crate::bounded_stream::BoundedExecution::serial())
 }
 
 fn dataset_path() -> Result<PathBuf, Box<dyn Error>> {

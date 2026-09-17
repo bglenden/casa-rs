@@ -1761,6 +1761,19 @@ impl SpectralCycleExecutor {
                 self.weighting_plan.limits().max_block_samples(),
             )?);
         }
+        let paired_allocation =
+            crate::weighting::initial_consumer_team_allocation(&context.node().id);
+        if context
+            .node()
+            .allocations
+            .iter()
+            .any(|usage| usage.allocation == paired_allocation)
+            && (state.gridded_compilation.is_none() || self.final_visibility_sink.is_some())
+        {
+            return Err(io::Error::other(
+                "paired initial plan lacks exclusive science/compiler ownership",
+            ));
+        }
         if let Some(sink) = &self.final_visibility_sink {
             sink.lock()
                 .map_err(|_| io::Error::other("final visibility sink poisoned"))?
@@ -1796,24 +1809,37 @@ impl SpectralCycleExecutor {
             .authorize_imported_operator(&mut first_operator)
             .map_err(io::Error::other)?;
         *operator = Some(first_operator);
-        let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
-            let predicted = operator
-                .as_mut()
-                .ok_or_else(|| io::Error::other("complete-data operator missing"))?
-                .consume_bounded_replay_chunk(block)
-                .map_err(io::Error::other)?;
-            if !predicted.is_empty()
-                && let Some(sink) = &self.final_visibility_sink
-            {
-                sink.lock()
-                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                    .consume(predicted)?;
-            }
-            if let Some(compilation) = gridded_compilation.as_mut() {
-                compilation.consume_block(block)?;
-            }
-            Ok::<(), io::Error>(())
-        };
+        let mut consume =
+            |block: &casa_imaging_reconstruction::WeightingReplayChunk,
+             execution: crate::bounded_stream::BoundedExecution<'_>| {
+                if execution.is_parallel()
+                    && (gridded_compilation.is_none() || self.final_visibility_sink.is_some())
+                {
+                    return Err(io::Error::other(
+                        "paired initial plan lacks exclusive science/compiler ownership",
+                    ));
+                }
+                let mut science = || {
+                    let predicted = operator
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("complete-data operator missing"))?
+                        .consume_bounded_replay_chunk(block)
+                        .map_err(io::Error::other)?;
+                    if !predicted.is_empty()
+                        && let Some(sink) = &self.final_visibility_sink
+                    {
+                        sink.lock()
+                            .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                            .consume(predicted)?;
+                    }
+                    Ok::<(), io::Error>(())
+                };
+                if let Some(compilation) = gridded_compilation.as_mut() {
+                    execution.consume_pair(science, || compilation.consume_block(block))
+                } else {
+                    science()
+                }
+            };
         let result = match fragment.streaming_mode() {
             Some(crate::WeightingStreamingMode::NaturalInitial)
             | Some(crate::WeightingStreamingMode::DensityInitial) => weighting
@@ -1876,14 +1902,16 @@ impl SpectralCycleExecutor {
                 .bind_major_cycle_model(preparation, None)
                 .map_err(io::Error::other)?;
             *operator = Some(next_operator);
-            let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
-                operator
-                    .as_mut()
-                    .ok_or_else(|| io::Error::other("channel slab operator missing"))?
-                    .consume_bounded_replay_chunk(block)
-                    .map(|_| ())
-                    .map_err(io::Error::other)
-            };
+            let mut consume =
+                |block: &casa_imaging_reconstruction::WeightingReplayChunk,
+                 _execution: crate::bounded_stream::BoundedExecution<'_>| {
+                    operator
+                        .as_mut()
+                        .ok_or_else(|| io::Error::other("channel slab operator missing"))?
+                        .consume_bounded_replay_chunk(block)
+                        .map(|_| ())
+                        .map_err(io::Error::other)
+                };
             weighting
                 .traverse_additional_initial_slab_stream(
                     context,
@@ -1966,16 +1994,18 @@ impl SpectralCycleExecutor {
             operator,
             ..
         } = state;
-        let mut consume = |block: &casa_imaging_reconstruction::WeightingReplayChunk| {
-            let predicted = operator
-                .as_mut()
-                .ok_or_else(|| io::Error::other("selected-output operator missing"))?
-                .predict_final_visibility_chunk(block)
-                .map_err(io::Error::other)?;
-            sink.lock()
-                .map_err(|_| io::Error::other("final visibility sink poisoned"))?
-                .consume(predicted)
-        };
+        let mut consume =
+            |block: &casa_imaging_reconstruction::WeightingReplayChunk,
+             _execution: crate::bounded_stream::BoundedExecution<'_>| {
+                let predicted = operator
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("selected-output operator missing"))?
+                    .predict_final_visibility_chunk(block)
+                    .map_err(io::Error::other)?;
+                sink.lock()
+                    .map_err(|_| io::Error::other("final visibility sink poisoned"))?
+                    .consume(predicted)
+            };
         let result = weighting
             .traverse_selected_output_bounded_stream(
                 context,
@@ -2222,7 +2252,7 @@ impl SpectralCycleExecutor {
             .process_peak_rss_bytes
             .map_or_else(|| "unavailable".to_owned(), |bytes| bytes.to_string());
         eprintln!(
-            "imaging_source_read_ahead_summary mode=bounded_spectral stage={stage} phase={phase} ordinal={} enabled={} max_live_row_blocks={} queue_capacity={} live_row_block_high_water={} row_blocks={} pass_count={} stored_rows={} stored_samples={} selected_channel_runs={} streamed_samples={} source_bytes={} modeled_physical_read_bytes={} source_read_operations={} request_handoff_bytes={} selected_sample_handoff_bytes={} peak_consumer_scratch_current_bytes={} consumer_scratch_capacity_bytes={} allocated_storage_buffers={} reused_storage_buffers={} peak_live_current_bytes={} peak_live_capacity_bytes={} source_slots={} workers={} maximum_partitions_per_block={} planned_source_capacity_bytes={} ready_queue_high_water={} ready_queue_current_bytes_high_water={} ready_queue_capacity_bytes_high_water={} planned_kernel_window_capacity_bytes={} peak_kernel_window_capacity_bytes={} process_peak_rss_bytes={} source_read_nanos={} source_fill_nanos={} source_arrangement_nanos={} stream_source_fill_nanos={} process_block_prepare_nanos={} process_block_execute_nanos={} route_consume_combined_nanos={} producer_wait_nanos={} source_starved_nanos={} terminal_wait_nanos={} consumer_wait_total_nanos={} lease_return_nanos={} producer_consumer_overlap_nanos={} wall_nanos={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} producer_consumer_overlap_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} effective_read_bandwidth_mib_s={:.3}",
+            "imaging_source_read_ahead_summary mode=bounded_spectral stage={stage} phase={phase} ordinal={} enabled={} max_live_row_blocks={} queue_capacity={} live_row_block_high_water={} row_blocks={} pass_count={} stored_rows={} stored_samples={} selected_channel_runs={} streamed_samples={} source_bytes={} modeled_physical_read_bytes={} source_read_operations={} request_handoff_bytes={} selected_sample_handoff_bytes={} peak_consumer_scratch_current_bytes={} consumer_scratch_capacity_bytes={} allocated_storage_buffers={} reused_storage_buffers={} peak_live_current_bytes={} peak_live_capacity_bytes={} source_slots={} workers={} worker_threads_started={} peak_worker_stack_capacity_bytes={} maximum_partitions_per_block={} planned_source_capacity_bytes={} ready_queue_high_water={} ready_queue_current_bytes_high_water={} ready_queue_capacity_bytes_high_water={} planned_kernel_window_capacity_bytes={} peak_kernel_window_capacity_bytes={} process_peak_rss_bytes={} source_read_nanos={} source_fill_nanos={} source_arrangement_nanos={} stream_source_fill_nanos={} process_block_prepare_nanos={} process_block_execute_nanos={} route_consume_combined_nanos={} producer_wait_nanos={} source_starved_nanos={} terminal_wait_nanos={} consumer_wait_total_nanos={} lease_return_nanos={} producer_consumer_overlap_nanos={} wall_nanos={} consumer_recv_blocked_ms={:.3} producer_send_blocked_ms={:.3} producer_consumer_overlap_ms={:.3} source_read_ms={:.3} source_route_ms={:.3} consumer_ms={:.3} source_prepare_ms={:.3} effective_read_bandwidth_mib_s={:.3}",
             self.pass.ordinal(),
             stream.source_slots > 1,
             stream.source_slots,
@@ -2247,6 +2277,8 @@ impl SpectralCycleExecutor {
             stream.peak_live_source_capacity_bytes,
             stream.source_slots,
             stream.workers,
+            stream.worker_threads_started,
+            stream.peak_worker_stack_capacity_bytes,
             stream.maximum_partitions_per_block,
             stream.planned_source_capacity_bytes,
             stream.ready_queue_high_water,

@@ -545,6 +545,12 @@ impl SpectralCyclePlan {
             None
         };
         let replay_workers = match pass.phase() {
+            SpectralPassPhase::InitialMajor
+                if strategy == GriddedNormalStrategy::CreateManagedSpill
+                    && policy.visibility_write.is_none() =>
+            {
+                2
+            }
             SpectralPassPhase::InitialMajor => 1,
             SpectralPassPhase::FinalMajor => GRIDDED_NORMAL_LANE_COUNT as u64,
         };
@@ -971,6 +977,12 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
         None
     };
     let replay_workers = match pass.phase() {
+        SpectralPassPhase::InitialMajor
+            if strategy == GriddedNormalStrategy::CreateManagedSpill
+                && policy.visibility_write.is_none() =>
+        {
+            workers.min(2)
+        }
         SpectralPassPhase::InitialMajor => 1,
         SpectralPassPhase::FinalMajor => workers.min(GRIDDED_NORMAL_LANE_COUNT as u64),
     };
@@ -1012,6 +1024,7 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                     pass,
                     artifact_budget.ok_or(SpectralCyclePlanError::Overflow)?,
                     ManagedSpillMode::Write,
+                    replay_workers,
                 )?;
             }
             (physical, source_resources, replay, Some(fragment))
@@ -1045,6 +1058,7 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                 ManagedSpillMode::Read(
                     gridded_window_plan.ok_or(SpectralCyclePlanError::Overflow)?,
                 ),
+                1,
             )?;
             (physical, source_resources, replay, None)
         }
@@ -2470,6 +2484,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     pass: SpectralPassIdentity,
     admission: crate::complete_data_operator::GriddedNormalCompilationAdmission,
     mode: ManagedSpillMode<'_>,
+    initial_consumer_workers: u64,
 ) -> Result<PhysicalWorkBinding, SpectralCyclePlanError> {
     let budget = admission.spill;
     let storage = policy
@@ -2477,6 +2492,40 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .as_ref()
         .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
     let mode = mode.specification(budget);
+    let initial_team = if initial_consumer_workers == 2 {
+        let stack_bytes = bounded_worker_stack_bytes(initial_consumer_workers)?;
+        let bytes = crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(2, 1, 0)
+            .map_err(|_| SpectralCyclePlanError::Overflow)?
+            .capacity_bytes()
+            .checked_sub(stack_bytes)
+            .ok_or(SpectralCyclePlanError::Overflow)?;
+        let allocation = crate::weighting::initial_consumer_team_allocation(node);
+        Some(LogicalAllocation {
+            physical_slot: PhysicalSlotId::new(format!("{}-slot", allocation.as_str())),
+            id: allocation,
+            bytes,
+            purpose: AllocationPurpose::Data,
+            compatibility: SlotCompatibility {
+                memory_domain: CapacityDomainId::new("host-memory"),
+                views: BTreeSet::from([CapacityViewId::new("host-memory")]),
+                alignment_bytes: 64,
+                storage_mode: StorageMode::Host,
+                layout: AllocationLayout::new("initial-consumer-team"),
+                initialization: InitializationPolicy::OverwriteBeforeRead,
+                access: AllocationAccess::ReadWrite,
+            },
+            lifetime: AllocationLifetime {
+                disposition: AllocationDisposition::Release,
+                acquire_at: node.clone(),
+                release_after: BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                    node.clone(),
+                    FenceKind::Io,
+                ))]),
+            },
+        })
+    } else {
+        None
+    };
     let reconciliation = base
         .observation_transaction()
         .post_replay_reconciliation()
@@ -2654,6 +2703,49 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     }
     let mut alternative = base.execution_dag().resource_alternative().clone();
     alternative.id = AlternativeId::new(format!("{}-gridded-{suffix}", alternative.id.as_str()));
+    let mut knobs = base.execution_dag().initial_knobs().clone();
+    if let Some(allocation) = &initial_team {
+        alternative.id = AlternativeId::new(format!(
+            "{}-initial-consumers-{initial_consumer_workers}",
+            alternative.id.as_str()
+        ));
+        owner
+            .claims
+            .retain(|claim| claim.resource != LeaseResource::Workers);
+        owner.claims.extend([
+            ResourceClaim {
+                resource: LeaseResource::Workers,
+                amount: initial_consumer_workers,
+                lifetime: ClaimLifetime::Work,
+            },
+            ResourceClaim {
+                resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
+                amount: bounded_worker_stack_bytes(initial_consumer_workers)?,
+                lifetime: ClaimLifetime::Work,
+            },
+        ]);
+        owner.allocations.push(AllocationUse {
+            allocation: allocation.id.clone(),
+            lifetime: ClaimLifetime::through_fence(FenceKind::Io),
+        });
+        alternative.demand.workers =
+            CountDemand::new(initial_consumer_workers, initial_consumer_workers);
+        alternative.scaling.minimum_workers = initial_consumer_workers;
+        alternative.scaling.maximum_workers = initial_consumer_workers;
+        alternative.demand.overhead.thread_stack_bytes = alternative
+            .demand
+            .overhead
+            .thread_stack_bytes
+            .checked_add(bounded_worker_stack_bytes(initial_consumer_workers)?)
+            .ok_or(SpectralCyclePlanError::Overflow)?;
+        alternative.demand.memory.push(MemoryDemand {
+            allocation_id: allocation.id.as_str().to_owned(),
+            hard_bytes: allocation.bytes,
+            preferred_bytes: allocation.bytes,
+            views: vec![CapacityViewId::new("host-memory")],
+        });
+        knobs.workers = initial_consumer_workers;
+    }
     if reused_slot.is_none() {
         alternative.demand.memory.push(MemoryDemand {
             allocation_id: allocation.as_str().to_string(),
@@ -2813,6 +2905,7 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                     }),
             )
             .chain(metadata_allocation.iter().cloned())
+            .chain(initial_team.iter().cloned())
             .collect(),
         physical_slots: base
             .execution_dag()
@@ -2856,8 +2949,16 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
                 capacity_bytes: allocation.bytes,
                 compatibility: allocation.compatibility.clone(),
             }))
+            .chain(initial_team.iter().map(|allocation| PhysicalSlot {
+                id: allocation.physical_slot.clone(),
+                lease_resource: LeaseResource::Memory {
+                    allocation_id: allocation.id.as_str().to_owned(),
+                },
+                capacity_bytes: allocation.bytes,
+                compatibility: allocation.compatibility.clone(),
+            }))
             .collect(),
-        initial_knobs: base.execution_dag().initial_knobs().clone(),
+        initial_knobs: knobs,
         adaptations: base
             .execution_dag()
             .adaptations()

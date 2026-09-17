@@ -9,6 +9,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc,
     },
+    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -115,7 +116,8 @@ fn fixed_kernel_window_capacity_bytes<Partition, Partial>(
         0
     } else {
         BOUNDED_WORKER_STACK_BYTES
-            .checked_mul(workers)
+            .checked_add(size_of::<JoinHandle<()>>())
+            .and_then(|bytes| bytes.checked_mul(workers))
             .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?
     };
     let total = vectors
@@ -318,8 +320,71 @@ pub(crate) trait PartitionedKernel<S>: Send + Sync {
         work: WorkIdentity,
         storage: &S,
         partial: Self::Partial,
+        execution: BoundedExecution<'_>,
     ) -> Result<(), Self::Error>;
-    fn complete(self) -> Result<Self::Completion, Self::Error>;
+    fn complete(self, execution: BoundedExecution<'_>) -> Result<Self::Completion, Self::Error>;
+}
+
+/// Borrowed authority for work inside the executor's installed worker team.
+#[derive(Clone, Copy)]
+pub(crate) struct BoundedExecution<'a>(Option<&'a FixedWorkerTeam>);
+
+impl BoundedExecution<'_> {
+    #[cfg(test)]
+    pub(crate) const fn serial() -> Self {
+        Self(None)
+    }
+
+    pub(crate) fn is_parallel(self) -> bool {
+        self.0.is_some_and(|team| team.pool.is_some())
+    }
+
+    pub(crate) fn consume_pair(
+        self,
+        science: impl FnOnce() -> std::io::Result<()> + Send,
+        compilation: impl FnOnce() -> std::io::Result<()> + Send,
+    ) -> std::io::Result<()> {
+        let Some(pool) = self.0.and_then(|team| team.pool.as_ref()) else {
+            science()?;
+            return compilation();
+        };
+        if pool.current_thread_index().is_none() {
+            return Err(std::io::Error::other(
+                "consumer pair is outside its admitted worker team",
+            ));
+        }
+        fn catch_consumer_panic(
+            label: &str,
+            consumer: impl FnOnce() -> std::io::Result<()>,
+        ) -> std::io::Result<()> {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(consumer)).unwrap_or_else(
+                |payload| {
+                    let message = payload
+                        .downcast_ref::<String>()
+                        .map(String::as_str)
+                        .or_else(|| payload.downcast_ref::<&str>().copied())
+                        .unwrap_or("non-string panic payload");
+                    Err(std::io::Error::other(format!(
+                        "{label} panicked: {message}"
+                    )))
+                },
+            )
+        }
+
+        // Catch inside each branch so a panic cannot discard its sibling's
+        // failure. Neither owner is reused after the joined result is an error.
+        let results = rayon::join(
+            || catch_consumer_panic("science consumer", science),
+            || catch_consumer_panic("replay compiler", compilation),
+        );
+        match results {
+            (Err(science), Err(compilation)) => Err(std::io::Error::new(
+                science.kind(),
+                format!("{science}; replay compilation also failed: {compilation}"),
+            )),
+            (science, compilation) => science.and(compilation),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -445,6 +510,7 @@ enum WorkerExecution<P, E> {
 
 struct FixedWorkerTeam {
     pool: Option<rayon::ThreadPool>,
+    threads: Vec<JoinHandle<()>>,
     threads_started: Arc<AtomicU64>,
     #[cfg(test)]
     external_pool_installs: AtomicU64,
@@ -453,6 +519,17 @@ struct FixedWorkerTeam {
 
 impl FixedWorkerTeam {
     fn new(workers: usize) -> Result<Self, BoundedStreamPlanError> {
+        Self::new_with_spawn(workers, |thread| {
+            std::thread::Builder::new()
+                .stack_size(BOUNDED_WORKER_STACK_BYTES)
+                .spawn(move || thread.run())
+        })
+    }
+
+    fn new_with_spawn(
+        workers: usize,
+        mut spawn: impl FnMut(rayon::ThreadBuilder) -> std::io::Result<JoinHandle<()>>,
+    ) -> Result<Self, BoundedStreamPlanError> {
         if workers == 0 {
             return Err(BoundedStreamPlanError::Workers);
         }
@@ -460,6 +537,7 @@ impl FixedWorkerTeam {
         if workers == 1 {
             return Ok(Self {
                 pool: None,
+                threads: Vec::new(),
                 threads_started,
                 #[cfg(test)]
                 external_pool_installs: AtomicU64::new(0),
@@ -471,21 +549,28 @@ impl FixedWorkerTeam {
             .and_then(|bytes| bytes.checked_mul(u64::try_from(workers).ok()?))
             .ok_or(BoundedStreamPlanError::KernelWindowCapacity)?;
         let started = Arc::clone(&threads_started);
+        let mut team = Self {
+            pool: None,
+            threads: Vec::with_capacity(workers),
+            threads_started,
+            #[cfg(test)]
+            external_pool_installs: AtomicU64::new(0),
+            stack_capacity_bytes,
+        };
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(workers)
             .stack_size(BOUNDED_WORKER_STACK_BYTES)
             .start_handler(move |_| {
                 started.fetch_add(1, Ordering::Relaxed);
             })
+            .spawn_handler(|thread| {
+                team.threads.push(spawn(thread)?);
+                Ok(())
+            })
             .build()
             .map_err(|_| BoundedStreamPlanError::Workers)?;
-        Ok(Self {
-            pool: Some(pool),
-            threads_started,
-            #[cfg(test)]
-            external_pool_installs: AtomicU64::new(0),
-            stack_capacity_bytes,
-        })
+        team.pool = Some(pool);
+        Ok(team)
     }
 
     fn install<R>(&self, operation: impl FnOnce() -> R + Send) -> R
@@ -578,14 +663,23 @@ impl FixedWorkerTeam {
         self.external_pool_installs.load(Ordering::Relaxed)
     }
 
-    fn shutdown(self) -> u64 {
-        let Self {
-            pool,
-            threads_started,
-            ..
-        } = self;
-        drop(pool);
-        threads_started.load(Ordering::Acquire)
+    fn shutdown(mut self) -> u64 {
+        self.join_threads();
+        self.threads_started.load(Ordering::Acquire)
+    }
+
+    fn join_threads(&mut self) {
+        drop(self.pool.take());
+        for thread in self.threads.drain(..) {
+            // Join every worker even during unwinding; Rayon propagates job panics.
+            let _ = thread.join();
+        }
+    }
+}
+
+impl Drop for FixedWorkerTeam {
+    fn drop(&mut self) {
+        self.join_threads();
     }
 }
 
@@ -954,6 +1048,7 @@ where
     let fixed_wave_bytes = vector_capacity_bytes(&wave)
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&completed)?))
         .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&exclusive_regions)?))
+        .and_then(|bytes| bytes.checked_add(vector_capacity_bytes(&worker_team.threads)?))
         .and_then(|bytes| bytes.checked_add(worker_measurement_capacity_bytes))
         .and_then(|bytes| {
             bytes.checked_add(
@@ -1198,7 +1293,12 @@ where
             };
             let reduction_started = Instant::now();
             kernel
-                .commit(identity, storage, partial)
+                .commit(
+                    identity,
+                    storage,
+                    partial,
+                    BoundedExecution(Some(worker_team)),
+                )
                 .map_err(BoundedStreamError::Kernel)?;
             let reduction_nanos = reduction_started.elapsed().as_nanos();
             let worker = worker_measurements
@@ -1464,7 +1564,9 @@ where
         measurements
             .record_process(process)
             .ok_or(BoundedStreamError::MeasurementOverflow)?;
-        kernel.complete().map_err(BoundedStreamError::Kernel)
+        kernel
+            .complete(BoundedExecution(Some(&worker_team)))
+            .map_err(BoundedStreamError::Kernel)
     });
     #[cfg(test)]
     {
@@ -1710,7 +1812,7 @@ where
     })();
     let result = source_result.and_then(|source_completion| {
         kernel
-            .complete()
+            .complete(BoundedExecution(Some(worker_team)))
             .map(|kernel_completion| (source_completion, kernel_completion))
             .map_err(BoundedStreamError::Kernel)
     });
@@ -2265,7 +2367,7 @@ where
             });
         }
     };
-    let kernel_completion = match kernel.complete() {
+    let kernel_completion = match kernel.complete(BoundedExecution(Some(worker_team))) {
         Ok(completion) => completion,
         Err(error) => {
             return Err(BoundedStreamFailure {
@@ -2324,6 +2426,306 @@ mod tests {
             completed_blocks: 0,
             completed_logical_units: 0,
         }
+    }
+
+    fn spawn_observed_worker(
+        thread: rayon::ThreadBuilder,
+        exits: Arc<AtomicUsize>,
+    ) -> std::io::Result<JoinHandle<()>> {
+        struct ThreadExit(Arc<AtomicUsize>);
+        impl Drop for ThreadExit {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Release);
+            }
+        }
+        thread_local! {
+            static EXIT: std::cell::RefCell<Option<ThreadExit>> = const {
+                std::cell::RefCell::new(None)
+            };
+        }
+        std::thread::Builder::new()
+            .stack_size(BOUNDED_WORKER_STACK_BYTES)
+            .spawn(move || {
+                EXIT.with(|exit| *exit.borrow_mut() = Some(ThreadExit(exits)));
+                thread.run();
+            })
+    }
+
+    #[test]
+    fn fixed_worker_team_shutdown_joins_os_threads() {
+        let exits = Arc::new(AtomicUsize::new(0));
+        let team = FixedWorkerTeam::new_with_spawn(3, |thread| {
+            spawn_observed_worker(thread, Arc::clone(&exits))
+        })
+        .unwrap();
+        assert_eq!(team.threads.capacity(), 3);
+        assert_eq!(team.shutdown(), 3);
+        assert_eq!(exits.load(Ordering::Acquire), 3);
+    }
+
+    #[test]
+    fn fixed_worker_team_unwind_joins_os_threads() {
+        let exits = Arc::new(AtomicUsize::new(0));
+        let result = std::panic::catch_unwind(|| {
+            let team = FixedWorkerTeam::new_with_spawn(2, |thread| {
+                spawn_observed_worker(thread, Arc::clone(&exits))
+            })
+            .unwrap();
+            team.install(|| panic!("injected operation panic"));
+        });
+        assert!(result.is_err());
+        assert_eq!(exits.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn fixed_worker_team_partial_startup_failure_joins_os_threads() {
+        for panic_on_spawn in [false, true] {
+            let exits = Arc::new(AtomicUsize::new(0));
+            let result = std::panic::catch_unwind(|| {
+                FixedWorkerTeam::new_with_spawn(3, |thread| {
+                    if thread.index() == 1 {
+                        assert!(!panic_on_spawn, "injected spawn panic");
+                        return Err(std::io::Error::other("injected spawn error"));
+                    }
+                    spawn_observed_worker(thread, Arc::clone(&exits))
+                })
+            });
+            if panic_on_spawn {
+                assert!(result.is_err());
+            } else {
+                assert!(matches!(result, Ok(Err(BoundedStreamPlanError::Workers))));
+            }
+            assert_eq!(exits.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_serial_preserves_order_and_short_circuit_in_foreign_pool() {
+        let inline = FixedWorkerTeam::new(1).unwrap();
+        let foreign = FixedWorkerTeam::new(2).unwrap();
+        for execution in [BoundedExecution::serial(), BoundedExecution(Some(&inline))] {
+            foreign.install(|| {
+                let calls = Mutex::new(Vec::new());
+                execution
+                    .consume_pair(
+                        || {
+                            calls.lock().unwrap().push("science");
+                            Ok(())
+                        },
+                        || {
+                            calls.lock().unwrap().push("compilation");
+                            Ok(())
+                        },
+                    )
+                    .unwrap();
+                assert_eq!(*calls.lock().unwrap(), ["science", "compilation"]);
+                calls.lock().unwrap().clear();
+                let error = execution
+                    .consume_pair(
+                        || {
+                            calls.lock().unwrap().push("science");
+                            Err(std::io::Error::other("science failure"))
+                        },
+                        || {
+                            calls.lock().unwrap().push("compilation");
+                            Ok(())
+                        },
+                    )
+                    .unwrap_err();
+                assert_eq!(error.to_string(), "science failure");
+                assert_eq!(*calls.lock().unwrap(), ["science"]);
+            });
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_overlaps_only_inside_its_admitted_pool() {
+        let team = FixedWorkerTeam::new(2).unwrap();
+        let foreign = FixedWorkerTeam::new(2).unwrap();
+        let execution = BoundedExecution(Some(&team));
+        let calls = AtomicUsize::new(0);
+        let check_rejected = || {
+            let error = execution
+                .consume_pair(
+                    || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                    || {
+                        calls.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("outside its admitted worker team")
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+        };
+        check_rejected();
+        foreign.install(check_rejected);
+
+        let (science_tx, science_rx) = mpsc::channel();
+        let (compilation_tx, compilation_rx) = mpsc::channel();
+        team.install(|| {
+            let pool = team.pool.as_ref().unwrap();
+            execution
+                .consume_pair(
+                    move || {
+                        let index = pool.current_thread_index().unwrap();
+                        science_tx.send(index).unwrap();
+                        let sibling = compilation_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                        assert_ne!(index, sibling);
+                        Ok(())
+                    },
+                    move || {
+                        let index = pool.current_thread_index().unwrap();
+                        compilation_tx.send(index).unwrap();
+                        let sibling = science_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                        assert_ne!(index, sibling);
+                        Ok(())
+                    },
+                )
+                .unwrap();
+        });
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    enum ConsumerResult {
+        Success,
+        Error,
+        Panic,
+    }
+
+    fn consumer_result(
+        result: ConsumerResult,
+        label: &str,
+        kind: std::io::ErrorKind,
+    ) -> std::io::Result<()> {
+        match result {
+            ConsumerResult::Success => Ok(()),
+            ConsumerResult::Error => Err(std::io::Error::new(kind, label.to_owned())),
+            ConsumerResult::Panic => panic!("{label}"),
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_errors_and_panics_wait_for_both_branches() {
+        use ConsumerResult::{Error, Panic, Success};
+        let team = FixedWorkerTeam::new(2).unwrap();
+        for (science, compilation) in [
+            (Error, Success),
+            (Success, Error),
+            (Error, Error),
+            (Panic, Success),
+            (Success, Panic),
+            (Panic, Panic),
+            (Error, Panic),
+            (Panic, Error),
+        ] {
+            let completed = AtomicUsize::new(0);
+            let (science_tx, science_rx) = mpsc::channel();
+            let (compilation_tx, compilation_rx) = mpsc::channel();
+            let error = team.install(|| {
+                let completed = &completed;
+                BoundedExecution(Some(&team))
+                    .consume_pair(
+                        move || {
+                            science_tx.send(()).unwrap();
+                            compilation_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                            completed.fetch_add(1, Ordering::SeqCst);
+                            consumer_result(
+                                science,
+                                "science failure",
+                                std::io::ErrorKind::InvalidData,
+                            )
+                        },
+                        move || {
+                            compilation_tx.send(()).unwrap();
+                            science_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                            completed.fetch_add(1, Ordering::SeqCst);
+                            consumer_result(
+                                compilation,
+                                "compiler failure",
+                                std::io::ErrorKind::PermissionDenied,
+                            )
+                        },
+                    )
+                    .unwrap_err()
+            });
+            assert_eq!(
+                completed.load(Ordering::SeqCst),
+                2,
+                "{science:?}/{compilation:?}"
+            );
+            let (kind, message) = match (science, compilation) {
+                (Error, Success) => (std::io::ErrorKind::InvalidData, "science failure"),
+                (Success, Error) => (std::io::ErrorKind::PermissionDenied, "compiler failure"),
+                (Error, Error) => (
+                    std::io::ErrorKind::InvalidData,
+                    "science failure; replay compilation also failed: compiler failure",
+                ),
+                (Panic, Success) => (
+                    std::io::ErrorKind::Other,
+                    "science consumer panicked: science failure",
+                ),
+                (Success, Panic) => (
+                    std::io::ErrorKind::Other,
+                    "replay compiler panicked: compiler failure",
+                ),
+                (Panic, Panic) => (
+                    std::io::ErrorKind::Other,
+                    "science consumer panicked: science failure; replay compilation also failed: replay compiler panicked: compiler failure",
+                ),
+                (Error, Panic) => (
+                    std::io::ErrorKind::InvalidData,
+                    "science failure; replay compilation also failed: replay compiler panicked: compiler failure",
+                ),
+                (Panic, Error) => (
+                    std::io::ErrorKind::Other,
+                    "science consumer panicked: science failure; replay compilation also failed: compiler failure",
+                ),
+                (Success, Success) => unreachable!("failure matrix excludes success"),
+            };
+            assert_eq!(error.kind(), kind);
+            assert_eq!(error.to_string(), message);
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_preserves_static_and_opaque_panic_diagnostics() {
+        let team = FixedWorkerTeam::new(2).unwrap();
+        let error = team.install(|| {
+            BoundedExecution(Some(&team))
+                .consume_pair(
+                    || std::panic::panic_any("static science failure"),
+                    || std::panic::panic_any(17_u32),
+                )
+                .unwrap_err()
+        });
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert_eq!(
+            error.to_string(),
+            "science consumer panicked: static science failure; replay compilation also failed: replay compiler panicked: non-string panic payload"
+        );
+    }
+
+    #[test]
+    fn bounded_consumer_pair_serial_panic_still_unwinds_without_compiling() {
+        let compiled = AtomicBool::new(false);
+        let result = std::panic::catch_unwind(|| {
+            BoundedExecution::serial().consume_pair(
+                || panic!("serial science failure"),
+                || {
+                    compiled.store(true, Ordering::SeqCst);
+                    Ok(())
+                },
+            )
+        });
+        assert!(result.is_err());
+        assert!(!compiled.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -2579,12 +2981,16 @@ mod tests {
             work: WorkIdentity,
             _values: &Vec<u64>,
             partial: Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             self.commits.push((work, partial));
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.commits)
         }
     }
@@ -3052,12 +3458,16 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             partial: Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             self.commits.push(partial);
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.commits)
         }
     }
@@ -3189,11 +3599,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -3314,12 +3728,16 @@ mod tests {
             _work: WorkIdentity,
             _values: &Vec<u64>,
             partial: Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             self.committed_capacities.push(partial.capacity() as u64);
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.committed_capacities)
         }
     }
@@ -3518,11 +3936,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Err(TestFailure)
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -3555,6 +3977,119 @@ mod tests {
         assert_eq!(failure.measurements.worker_threads_started, 2);
         assert_eq!(failure.measurements.external_pool_installs, 1);
         assert_eq!(completions.load(Ordering::SeqCst), 0);
+    }
+
+    struct FailingPairKernel {
+        science: ConsumerResult,
+        compilation: ConsumerResult,
+        callbacks: Arc<[AtomicUsize; 5]>,
+    }
+
+    impl PartitionedKernel<Vec<u64>> for FailingPairKernel {
+        type Partition = ();
+        type Partial = ();
+        type Completion = ();
+        type Error = std::io::Error;
+
+        fn partition_count(&self, _: BlockIdentity, _: &Vec<u64>) -> Result<usize, Self::Error> {
+            self.callbacks[0].fetch_add(1, Ordering::SeqCst);
+            Ok(1)
+        }
+
+        fn partition(
+            &self,
+            _: BlockIdentity,
+            _: &Vec<u64>,
+            _: usize,
+        ) -> Result<KernelPartition<()>, Self::Error> {
+            Ok(KernelPartition::exclusive(0, 0, ()))
+        }
+
+        fn execute(&self, _: WorkIdentity, _: &Vec<u64>, _: &()) -> Result<(), Self::Error> {
+            self.callbacks[1].fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn commit(
+            &mut self,
+            _: WorkIdentity,
+            _: &Vec<u64>,
+            _: (),
+            execution: BoundedExecution<'_>,
+        ) -> Result<(), Self::Error> {
+            self.callbacks[2].fetch_add(1, Ordering::SeqCst);
+            execution.consume_pair(
+                || {
+                    self.callbacks[4].fetch_add(1, Ordering::SeqCst);
+                    consumer_result(
+                        self.science,
+                        "science failure",
+                        std::io::ErrorKind::InvalidData,
+                    )
+                },
+                || {
+                    self.callbacks[4].fetch_add(1, Ordering::SeqCst);
+                    consumer_result(
+                        self.compilation,
+                        "compiler failure",
+                        std::io::ErrorKind::PermissionDenied,
+                    )
+                },
+            )
+        }
+
+        fn complete(self, _: BoundedExecution<'_>) -> Result<(), Self::Error> {
+            self.callbacks[3].fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn bounded_consumer_pair_failure_cancels_two_slot_source_without_later_callbacks() {
+        use ConsumerResult::{Error, Panic, Success};
+        for (science, compilation) in [
+            (Error, Success),
+            (Success, Error),
+            (Panic, Success),
+            (Success, Panic),
+            (Panic, Panic),
+            (Error, Panic),
+        ] {
+            let completions = Arc::new(AtomicUsize::new(0));
+            let pointers = Arc::new(Mutex::new(Vec::new()));
+            let callbacks = Arc::new(std::array::from_fn(|_| AtomicUsize::new(0)));
+            let failure = execute_bounded(
+                BoundedStreamPlan::new::<(), ()>(2, 2, 64, 1, 0).unwrap(),
+                0,
+                NumberSource {
+                    blocks: (0..100).map(|value| vec![value]).collect(),
+                    next: 0,
+                    pointers: Arc::clone(&pointers),
+                    completions: Arc::clone(&completions),
+                },
+                FailingPairKernel {
+                    science,
+                    compilation,
+                    callbacks: Arc::clone(&callbacks),
+                },
+            )
+            .unwrap_err();
+            assert!(matches!(*failure.cause, BoundedStreamError::Kernel(_)));
+            assert_eq!(completions.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                callbacks
+                    .each_ref()
+                    .map(|count| count.load(Ordering::SeqCst)),
+                [1, 1, 1, 0, 2]
+            );
+            assert!((1..=2).contains(&failure.measurements.blocks_filled));
+            assert_eq!(
+                pointers.lock().unwrap().len() as u64,
+                failure.measurements.blocks_filled
+            );
+            assert_eq!(failure.measurements.worker_threads_started, 2);
+            assert_eq!(failure.measurements.external_pool_installs, 1);
+        }
     }
 
     struct CancellationDelayedSource {
@@ -3648,6 +4183,7 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             while !self.second_fill_started.load(Ordering::Acquire) {
                 std::thread::yield_now();
@@ -3655,7 +4191,10 @@ mod tests {
             Err(TestFailure)
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -3802,11 +4341,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(self.maximum.load(Ordering::SeqCst))
         }
     }
@@ -3874,11 +4417,15 @@ mod tests {
             _work: WorkIdentity,
             _storage: &Vec<u64>,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(())
         }
     }
@@ -4159,6 +4706,7 @@ mod tests {
             _work: WorkIdentity,
             storage: &LargeGateStorage,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             let samples = consume_large_gate_block(&storage.buffer, &mut self.digest)?;
             self.samples = self
@@ -4168,7 +4716,10 @@ mod tests {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok((self.digest, self.samples))
         }
     }

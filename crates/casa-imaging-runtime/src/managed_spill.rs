@@ -3041,6 +3041,7 @@ mod tests {
             _work: WorkIdentity,
             storage: &ManagedSpillWindowStorage,
             (): Self::Partial,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
         ) -> Result<(), Self::Error> {
             self.storage_addresses
                 .insert(storage.bytes.as_ptr() as usize);
@@ -3054,7 +3055,10 @@ mod tests {
             Ok(())
         }
 
-        fn complete(self) -> Result<Self::Completion, Self::Error> {
+        fn complete(
+            self,
+            _execution: crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<Self::Completion, Self::Error> {
             Ok(CollectCompletion {
                 payloads: self.payloads,
                 storage_addresses: self.storage_addresses,

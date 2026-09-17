@@ -326,7 +326,7 @@ fn complete_data_mfs_products_and_identities_are_exact_for_one_two_and_four_work
     }
 
     for (workers, run) in [(1, &runs[0]), (2, &runs[1]), (4, &runs[2])] {
-        assert_stream_contract(&run.initial_stream, 1, 2, 0);
+        assert_stream_contract(&run.initial_stream, workers.min(2), 2, 0);
         assert_stream_contract(&run.final_stream, workers, 0, 1);
         assert_eq!(run.initial_stream.planned_gridded_route_capacity_bytes, 0);
         assert_eq!(
@@ -442,7 +442,7 @@ fn faceted_replay_budget_covers_every_physical_chart_in_one_source_block() {
 fn balanced_policy_selects_the_largest_feasible_production_replay_team() {
     let run =
         execute_complete_data_mfs_with_policy(ResourcePolicy::Balanced, 17, FacetLayout::Single);
-    assert_eq!(run.initial_stream.planned_workers, 1);
+    assert_eq!(run.initial_stream.planned_workers, 2);
     assert_eq!(run.final_stream.planned_workers, 3);
     assert_eq!(run.final_stream.actual_workers, 3);
 }

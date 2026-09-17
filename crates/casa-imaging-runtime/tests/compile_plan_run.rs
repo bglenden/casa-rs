@@ -4941,6 +4941,146 @@ fn t55_small_cube_admits_owner_workspace_with_one_worker() {
 }
 
 #[test]
+fn t55_initial_consumer_pair_is_terminal_only_and_separately_accounted() {
+    for weighting in [
+        WeightingContract::new(WeightingScheme::Natural, WeightDensityScope::NotApplicable),
+        WeightingContract::new(
+            WeightingScheme::Uniform,
+            WeightDensityScope::GlobalSelection,
+        ),
+    ] {
+        let problem = compile(request_with_geometry_references_and_weighting(
+            1,
+            geometry_with_shape([256.0, 256.0], ImageShape::new(512, 512)),
+            default_references(),
+            weighting,
+        ))
+        .unwrap();
+        let registry = test_registry(&problem, 3, 6, None);
+        let policy = SpectralCycleExecutionPolicy::new(
+            implementation(6),
+            WeightingExecutionLimits::new(2, 3).unwrap(),
+            selected_content_residency(&problem),
+            serial_storage_io(),
+            SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+            authority().clone(),
+            ResourcePolicy::Explicit(ResourceOverride {
+                workers: Some(3),
+                ..ResourceOverride::default()
+            }),
+        );
+        let dirty = SpectralCyclePlan::dirty(&problem, &registry, policy.clone()).unwrap();
+        assert!(dirty.physical_candidates().iter().all(|physical| {
+            physical
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .all(|allocation| {
+                    allocation.compatibility.layout.as_str() != "initial-consumer-team"
+                })
+        }));
+        let plan = SpectralCyclePlan::initial(
+            &problem,
+            &registry,
+            policy.with_gridded_normal_storage(artifact_storage()),
+        )
+        .unwrap();
+        let candidates = plan.physical_candidates();
+        let serial = candidates
+            .iter()
+            .find(|physical| physical.execution_dag().initial_knobs().workers == 1)
+            .unwrap();
+        let serial_dag = serial.execution_dag();
+        assert!(serial_dag.logical_allocations().values().all(|allocation| {
+            allocation.compatibility.layout.as_str() != "initial-consumer-team"
+        }));
+        let pair = candidates
+            .iter()
+            .find(|physical| physical.execution_dag().initial_knobs().workers == 2)
+            .unwrap();
+        let dag = pair.execution_dag();
+        let teams = dag
+            .logical_allocations()
+            .values()
+            .filter(|allocation| {
+                allocation.compatibility.layout.as_str() == "initial-consumer-team"
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(teams.len(), 1);
+        let team = teams[0];
+        let terminal = &team.lifetime.acquire_at;
+        assert_eq!(
+            team.lifetime.release_after,
+            BTreeSet::from([WorkDependency::Fence(FenceId::new(
+                terminal.clone(),
+                FenceKind::Io,
+            ))])
+        );
+        assert_eq!(team.purpose, AllocationPurpose::Data);
+        let slot = &dag.physical_slots()[&team.physical_slot];
+        assert_eq!(slot.capacity_bytes, team.bytes);
+        let demand = dag
+            .resource_alternative()
+            .demand
+            .memory
+            .iter()
+            .find(|demand| demand.allocation_id == team.id.as_str())
+            .unwrap();
+        assert_eq!(demand.hard_bytes, team.bytes);
+        assert_eq!(demand.preferred_bytes, team.bytes);
+        assert!(team.bytes > 0);
+        let owner = &dag.nodes()[terminal];
+        assert!(
+            owner
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == team.id
+                    && usage.lifetime == ClaimLifetime::through_fence(FenceKind::Io))
+        );
+        assert!(
+            owner
+                .claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::Workers
+                    && claim.amount == 2
+                    && claim.lifetime == ClaimLifetime::Work)
+        );
+        assert!(owner.claims.iter().any(|claim| {
+            claim.resource
+                == LeaseResource::RuntimeOverhead(
+                    casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+                )
+                && claim.amount
+                    == dag
+                        .resource_alternative()
+                        .demand
+                        .overhead
+                        .thread_stack_bytes
+                && claim.lifetime == ClaimLifetime::Work
+        }));
+        for (id, node) in dag.nodes() {
+            if id != terminal && id.as_str() != "spectral-cycle-minor-cycle" {
+                assert_eq!(node.claims, serial_dag.nodes()[id].claims);
+            }
+        }
+        assert_eq!(
+            dag.resource_alternative().demand.io_buffers,
+            serial_dag.resource_alternative().demand.io_buffers
+        );
+        for allocation in serial_dag
+            .logical_allocations()
+            .values()
+            .filter(|allocation| matches!(allocation.purpose, AllocationPurpose::IoBuffer(_)))
+        {
+            assert_eq!(
+                dag.logical_allocations()[&allocation.id].bytes,
+                allocation.bytes
+            );
+        }
+    }
+}
+
+#[test]
 fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor() {
     let problem = compile(channel_local_hogbom_request(238, 3, 2)).unwrap();
     let owner =
@@ -4996,6 +5136,21 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
         let dag = physical.execution_dag();
         let alternative = dag.resource_alternative();
         let workers = dag.initial_knobs().workers;
+        if workers > 1 {
+            let team = dag
+                .logical_allocations()
+                .values()
+                .find(|allocation| {
+                    allocation.compatibility.layout.as_str() == "initial-consumer-team"
+                })
+                .expect("initial terminal pair allocation");
+            assert!(
+                dag.nodes()[&team.lifetime.acquire_at]
+                    .claims
+                    .iter()
+                    .any(|claim| { claim.resource == LeaseResource::Workers && claim.amount == 2 })
+            );
+        }
         assert_eq!(alternative.scaling.minimum_workers, workers);
         assert_eq!(alternative.scaling.maximum_workers, workers);
         assert_eq!(
@@ -5036,6 +5191,8 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
     assert_eq!(
         heap_by_workers[&2] - heap_by_workers[&1],
         heap_by_workers[&3] - heap_by_workers[&2]
+            + std::mem::size_of::<std::thread::JoinHandle<()>>() as u64,
+        "W1 has no thread handles; W2 adds two, while W3 adds one more"
     );
     assert_eq!(stacks_by_workers[&1], 0);
     let memory_ceiling = stacks_by_workers[&2] / 2;
