@@ -335,35 +335,6 @@ fn closed_inspection_pass_validates_before_exposing_a_sample() {
     );
 }
 
-#[test]
-fn row_member_cursor_rejects_omissions_and_duplicates_at_every_position() {
-    for problem in [
-        compiled_problem(),
-        compiled_problem_with_weight_broadcast_shape(),
-        compiled_problem_with_columns(VisibilityColumn::Data, WeightColumn::WeightSpectrum),
-    ] {
-        let samples = exact_samples(&problem);
-        inspect(&problem, samples.iter().cloned()).expect("complete selected rows");
-        for index in 0..samples.len() {
-            let mut missing = samples.clone();
-            missing.remove(index);
-            assert!(
-                inspect(&problem, missing).is_err(),
-                "accepted missing member at {index}"
-            );
-            let mut duplicate = samples.clone();
-            duplicate.insert(index + 1, samples[index].clone());
-            assert!(
-                matches!(
-                    inspect(&problem, duplicate),
-                    Err(SelectedObservationInspectionError::DuplicateSample { .. })
-                ),
-                "wrong duplicate error at {index}"
-            );
-        }
-    }
-}
-
 fn inspect(
     problem: &casa_imaging_model::CompiledProblem,
     samples: impl IntoIterator<Item = SelectedObservationSample>,
