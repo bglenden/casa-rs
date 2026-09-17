@@ -799,7 +799,6 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.frame_record_counts.clear();
         self.groups.clear();
         self.classifications.clear();
-        self.routes.clear();
         self.tasks.clear();
         self.tile_counts.fill(0);
         self.tile_cursors.fill(0);
@@ -1199,7 +1198,6 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.frame_record_counts.clear();
         self.groups.clear();
         self.classifications.clear();
-        self.routes.clear();
         self.tasks.clear();
         self.tile_counts.fill(0);
         self.tile_cursors.fill(0);
@@ -2157,6 +2155,61 @@ mod tests {
             prepared.prepare_tile_routes(),
             Err(SpectralOperatorError::ResidencyOverflow)
         ));
+    }
+
+    #[test]
+    fn replay_routes_overwrite_reused_slots_across_window_sizes() {
+        let mut prepared = PreparedGriddedNormalTwoDomainWindow::with_record_capacities(
+            &[16],
+            4,
+            GriddedNormalRecordLayout::Scalar,
+        )
+        .unwrap();
+        let capacity_bytes = prepared.route_capacity_bytes().unwrap();
+        for (window, counts) in [[4, 1, 3, 0], [0, 0, 1, 0], [0; 4], [2, 4, 0, 3]]
+            .into_iter()
+            .enumerate()
+        {
+            prepared.reset_active().unwrap();
+            let mut expected = Vec::new();
+            for (tile, count) in counts.into_iter().enumerate() {
+                prepared.tile_counts[tile] = count;
+                for local in 0..count {
+                    let record = window as u32 * 100 + tile as u32 * 10 + local;
+                    prepared.classifications.push(GriddedNormalClassification {
+                        tile_ordinal: tile as u32,
+                        group_ordinal: record + 1,
+                        frame_ordinal: window as u32,
+                        record_ordinal: record,
+                        tap_count: record + 2,
+                    });
+                    expected.push((record + 1, window as u32, record, record + 2));
+                }
+            }
+            prepared.prepare_tile_routes().unwrap();
+            let actual = prepared
+                .routes
+                .iter()
+                .map(|route| {
+                    (
+                        route.group_ordinal,
+                        route.frame_ordinal,
+                        route.record_ordinal,
+                        route.tap_count,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+            assert_eq!(prepared.route_capacity_bytes().unwrap(), capacity_bytes);
+            assert_eq!(
+                prepared
+                    .tasks
+                    .iter()
+                    .map(|task| task.record_count())
+                    .sum::<usize>(),
+                expected.len()
+            );
+        }
     }
 
     #[test]
