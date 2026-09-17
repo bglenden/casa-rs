@@ -208,7 +208,6 @@ impl GriddedNormalOperatorCompiler {
                                     imaging_weight: spectral.imaging_weight(),
                                 },
                                 &operator.coefficients()[row * columns..(row + 1) * columns],
-                                &mut None,
                             )?;
                         }
                         emit_atom(&mut scratch.atom, prediction_len, emit, &mut cardinality)?;
@@ -245,7 +244,6 @@ impl GriddedNormalOperatorCompiler {
         } else {
             SmallVec::new()
         };
-        let mut projection_cache = None;
         for coefficients in operator
             .coefficients()
             .chunks_exact(operator.model_coordinates().len())
@@ -264,7 +262,6 @@ impl GriddedNormalOperatorCompiler {
                         imaging_weight: 0.0,
                     },
                     coefficients,
-                    &mut projection_cache,
                 )?;
                 if bank.records.len() - start > maximum_native_terms_per_correlation {
                     return Err(SpectralOperatorError::ResidencyOverflow);
@@ -337,7 +334,6 @@ impl GriddedNormalOperatorCompiler {
                     imaging_weight: resampled.weights[row],
                 },
                 &operator.coefficients()[row * columns..(row + 1) * columns],
-                &mut None,
             )?;
             emit_atom(&mut scratch.atom, prediction_len, emit, cardinality)?;
         }
@@ -350,7 +346,6 @@ impl GriddedNormalOperatorCompiler {
         selected: &WeightingSelectedSample,
         stencil: RecordStencil,
         coefficients: &[Complex64],
-        projection_cache: &mut Option<(usize, [f64; 3], f64)>,
     ) -> Result<(), SpectralOperatorError> {
         if stencil.role == RecordRole::Accumulation && stencil.imaging_weight == 0.0 {
             return Ok(());
@@ -364,21 +359,12 @@ impl GriddedNormalOperatorCompiler {
             return Err(SpectralOperatorError::InvalidSample);
         }
         for (chart_ordinal, chart) in self.specification.charts().iter().enumerate() {
-            let (uvw_m, phase_shift_m) = match *projection_cache {
-                Some((ordinal, uvw_m, phase_shift_m)) if ordinal == chart_ordinal => {
-                    (uvw_m, phase_shift_m)
-                }
-                _ => {
-                    let (uvw_m, phase_shift_m) = selected_model_projection(
-                        selected,
-                        self.specification.chart_count(),
-                        chart.domain_ordinal(),
-                        chart.facet_ordinal(),
-                    )?;
-                    *projection_cache = Some((chart_ordinal, uvw_m, phase_shift_m));
-                    (uvw_m, phase_shift_m)
-                }
-            };
+            let (uvw_m, phase_shift_m) = selected_model_projection(
+                selected,
+                self.specification.chart_count(),
+                chart.domain_ordinal(),
+                chart.facet_ordinal(),
+            )?;
             let scale = stencil.frequency_hz / SPEED_OF_LIGHT_M_PER_S;
             let Some(taps) = self.gridders[chart_ordinal].taps(uvw_m.map(|value| value * scale))
             else {
