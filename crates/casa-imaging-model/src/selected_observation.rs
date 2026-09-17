@@ -628,7 +628,8 @@ struct RowInspection<'a> {
     data_description: DataDescriptionSelection,
     spectral_window: &'a SpectralWindowSelection,
     correlation: &'a CorrelationSelection,
-    next_ordinal: usize,
+    next_channel: usize,
+    next_correlation: usize,
     previous: Option<(u32, u32)>,
     weight_column: WeightColumn,
     broadcast_weights: Vec<Option<f32>>,
@@ -675,13 +676,22 @@ impl<'a> RowInspection<'a> {
             .iter()
             .find(|selection| selection.polarization_id() == data_description.polarization_id())
             .expect("compiled DATA_DESCRIPTION references an exact polarization");
+        assert!(
+            spectral_window
+                .channel_indices()
+                .len()
+                .checked_mul(correlation.products().len())
+                .is_some(),
+            "compiled selected-sample count fits usize"
+        );
         Ok(Self {
             measurement_set: row.measurement_set,
             physical_row: row.physical_row,
             data_description,
             spectral_window,
             correlation,
-            next_ordinal: 0,
+            next_channel: 0,
+            next_correlation: 0,
             previous: None,
             weight_column: expected.selected_columns().weights(),
             broadcast_weights: vec![None; correlation.products().len()],
@@ -746,20 +756,15 @@ impl<'a> RowInspection<'a> {
         input_weight: f32,
     ) -> Result<(), SelectedObservationInspectionError> {
         let products = self.correlation.products();
-        let expected_count = self
-            .spectral_window
-            .channel_indices()
-            .len()
-            .checked_mul(products.len())
-            .expect("compiled selected-sample count fits usize");
-        if self.next_ordinal >= expected_count {
+        let channels = self.spectral_window.channel_indices();
+        if self.next_channel >= channels.len() {
             return Err(SelectedObservationInspectionError::DuplicateSample {
                 measurement_set: self.measurement_set,
                 physical_row: self.physical_row,
             });
         }
-        let channel = self.spectral_window.channel_indices()[self.next_ordinal / products.len()];
-        let product = products[self.next_ordinal % products.len()];
+        let channel = channels[self.next_channel];
+        let product = products[self.next_correlation];
         let actual = (channel_index, correlation_index);
         if self.previous == Some(actual) {
             return Err(SelectedObservationInspectionError::DuplicateSample {
@@ -776,8 +781,7 @@ impl<'a> RowInspection<'a> {
             });
         }
         if self.weight_column == WeightColumn::Weight {
-            let correlation_ordinal = self.next_ordinal % products.len();
-            let observed = &mut self.broadcast_weights[correlation_ordinal];
+            let observed = &mut self.broadcast_weights[self.next_correlation];
             if let Some(expected) = observed {
                 if !canonical_f32_eq(*expected, input_weight) {
                     return Err(
@@ -792,18 +796,18 @@ impl<'a> RowInspection<'a> {
             }
         }
         self.previous = Some(actual);
-        self.next_ordinal += 1;
+        self.next_correlation += 1;
+        if self.next_correlation == products.len() {
+            self.next_correlation = 0;
+            self.next_channel += 1;
+        }
         Ok(())
     }
 
     fn finish(self) -> Result<(), SelectedObservationInspectionError> {
-        let expected_count = self
-            .spectral_window
-            .channel_indices()
-            .len()
-            .checked_mul(self.correlation.products().len())
-            .expect("compiled selected-sample count fits usize");
-        if self.next_ordinal != expected_count {
+        if self.next_channel != self.spectral_window.channel_indices().len()
+            || self.next_correlation != 0
+        {
             return Err(SelectedObservationInspectionError::MissingSample {
                 measurement_set: self.measurement_set,
                 physical_row: self.physical_row,
