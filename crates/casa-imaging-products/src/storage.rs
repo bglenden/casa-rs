@@ -316,7 +316,16 @@ impl ProductMemberBacking {
             let count = values_for(shape)?;
             self.storage
                 .read_payload(start, shape, &mut values[..count])?;
-            for value in &values[..count] {
+            let mut pairs = values[..count].chunks_exact(2);
+            for pair in &mut pairs {
+                let mut word = 0u64;
+                for (index, value) in pair.iter().enumerate() {
+                    let bits = if *value == 0.0 { 0 } else { value.to_bits() };
+                    word |= u64::from(bits) << (index * 32);
+                }
+                payload.u64(word);
+            }
+            for value in pairs.remainder() {
                 payload.f32_bits(*value);
             }
         }
@@ -329,7 +338,12 @@ impl ProductMemberBacking {
             let count = values_for(shape)?;
             self.storage
                 .read_validity(start, shape, &mut validity[..count])?;
-            for valid in &validity[..count] {
+            let mut groups = validity[..count].chunks_exact(8);
+            for group in &mut groups {
+                let bytes = std::array::from_fn(|index| u8::from(group[index]));
+                member.u64(u64::from_le_bytes(bytes));
+            }
+            for valid in groups.remainder() {
                 member.u8(u8::from(*valid));
             }
         }
@@ -449,7 +463,7 @@ mod tests {
                 return Err(ProductsError::Storage("injected read failure".into()));
             }
             for (local, value) in values.iter_mut().enumerate() {
-                *value = index(self.shape, start, shape, local) as f32;
+                *value = fixture_value(index(self.shape, start, shape, local));
             }
             Ok(())
         }
@@ -482,31 +496,42 @@ mod tests {
             .zip(full)
             .fold(0, |value, (coordinate, extent)| value * extent + coordinate)
     }
+    fn fixture_value(index: usize) -> f32 {
+        match index % 5 {
+            0 => -0.0,
+            1 => f32::from_bits(1),
+            2 => f32::from_bits(0x7fc0_1234),
+            3 => -3.5,
+            _ => index as f32,
+        }
+    }
+
     #[test]
     fn canonical_hash_is_independent_of_spectral_position_and_window_partition() {
-        let shape = [2, 3, 4, 5];
-        let mut reference = None;
-        for spectral_axis in 0..4 {
-            for maximum_channels in 1..=shape[spectral_axis] {
-                let maximum_values =
-                    shape.iter().product::<usize>() / shape[spectral_axis] * maximum_channels;
-                let layout = ProductWindowLayout {
-                    shape,
-                    spectral_axis,
-                    maximum_channels,
-                    maximum_values,
-                };
-                let backing = ProductMemberBacking {
-                    layout,
-                    storage: Box::new(FixtureStorage {
+        for shape in [[2, 3, 4, 5], [3, 5, 1, 7]] {
+            let count = shape.iter().product();
+            let values: Vec<_> = (0..count).map(fixture_value).collect();
+            let validity: Vec<_> = (0..count).map(|index| index % 3 != 0).collect();
+            let reference = crate::digest::member_content_digest(&values, &validity);
+            for spectral_axis in 0..4 {
+                for maximum_channels in 1..=shape[spectral_axis] {
+                    let maximum_values =
+                        shape.iter().product::<usize>() / shape[spectral_axis] * maximum_channels;
+                    let layout = ProductWindowLayout {
                         shape,
-                        fail_read: false,
-                    }),
-                };
-                let digest = backing.content_digest().unwrap();
-                match reference {
-                    Some(expected) => assert_eq!(digest, expected),
-                    None => reference = Some(digest),
+                        spectral_axis,
+                        maximum_channels,
+                        maximum_values,
+                    };
+                    let backing = ProductMemberBacking {
+                        layout,
+                        storage: Box::new(FixtureStorage {
+                            shape,
+                            fail_read: false,
+                        }),
+                    };
+                    let digest = backing.content_digest().unwrap();
+                    assert_eq!(digest, reference);
                 }
             }
         }
