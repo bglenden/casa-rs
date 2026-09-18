@@ -126,8 +126,8 @@ fn publication_tile_shape(
     spectral_axis: usize,
     maximum_values: usize,
 ) -> [usize; 4] {
-    // Balance plane-write tile count against canonical-read amplification.
-    // The geometric mean uses only the two traversal footprints.
+    // Intersect a canonical hash rectangle with a single-channel write window.
+    // Neither traversal then fetches unrelated spatial cells from a full plane.
     let mut tile = shape;
     let mut remaining = maximum_values;
     for extent in tile.iter_mut().rev() {
@@ -135,16 +135,6 @@ fn publication_tile_shape(
         remaining /= *extent;
     }
     tile[spectral_axis] = 1;
-    let canonical_values: usize = tile.iter().product();
-    let mut plane = shape;
-    plane[spectral_axis] = 1;
-    let plane_values: usize = plane.iter().product();
-    remaining = canonical_values * (plane_values / canonical_values).isqrt();
-    tile = plane;
-    for extent in tile.iter_mut().rev() {
-        *extent = (*extent).min(remaining);
-        remaining /= *extent;
-    }
     tile
 }
 
@@ -248,17 +238,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn publication_tiles_balance_write_and_hash_windows() {
+    fn publication_tiles_intersect_write_and_hash_windows() {
         assert_eq!(
             publication_tile_shape([128, 128, 1, 512], 3, 16384),
-            [5, 128, 1, 1]
+            [1, 32, 1, 1]
         );
         assert_eq!(
             publication_tile_shape([128, 128, 1, 1], 3, 16384),
             [128, 128, 1, 1]
         );
         assert_eq!(publication_tile_shape([64, 8, 8, 1], 0, 64), [1, 8, 8, 1]);
-        assert_eq!(publication_tile_shape([3, 4, 2, 5], 3, 24), [1, 4, 2, 1]);
+        assert_eq!(publication_tile_shape([3, 4, 2, 5], 3, 24), [1, 2, 2, 1]);
     }
 
     #[test]
@@ -328,12 +318,10 @@ mod tests {
         let payload = arrays.0.io_stats().delta_since(before_payload);
         let validity = arrays.1.io_stats().delta_since(before_validity);
         assert!(
-            payload.lru_read_bytes + payload.lru_batch_load_bytes
-                <= plane_values * shape[3] * 4 * shape[3].isqrt()
+            payload.lru_read_bytes + payload.lru_batch_load_bytes <= plane_values * shape[3] * 4
         );
         assert!(
-            validity.lru_read_bytes + validity.lru_batch_load_bytes
-                <= plane_values * shape[3] / 8 * shape[3].isqrt()
+            validity.lru_read_bytes + validity.lru_batch_load_bytes <= plane_values * shape[3] / 8
         );
         let record = format!(
             "shape={shape:?}\nwindow_channels=1\nseconds={seconds}\nlogical_payload_bytes={}\nlogical_validity_disk_bytes={}\npayload={payload:?}\nvalidity={validity:?}\n",
