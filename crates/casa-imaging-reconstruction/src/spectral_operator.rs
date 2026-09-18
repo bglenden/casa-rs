@@ -11433,15 +11433,11 @@ impl StandardConvolution {
     pub(crate) fn degrid(&self, grid: &Array2<Complex64>, taps: SampleTaps) -> Complex64 {
         let x_weights = self.weights[taps.x.weight_index];
         let y_weights = self.weights[taps.y.weight_index];
-        let patch = grid.slice(ndarray::s![
-            taps.x.start..taps.x.start + TAP_COUNT,
-            taps.y.start..taps.y.start + TAP_COUNT
-        ]);
         let mut value = Complex64::new(0.0, 0.0);
-        for (row, x_weight) in patch.rows().into_iter().zip(x_weights) {
+        for (x, x_weight) in x_weights.into_iter().enumerate() {
             let mut row_values = [Complex64::new(0.0, 0.0); 2];
-            for (y, (&cell, y_weight)) in row.iter().zip(y_weights).enumerate() {
-                row_values[y % 2] += cell * y_weight;
+            for (y, y_weight) in y_weights.into_iter().enumerate() {
+                row_values[y % 2] += grid[(taps.x.start + x, taps.y.start + y)] * y_weight;
             }
             value += (row_values[0] + row_values[1]) * x_weight;
         }
@@ -11876,54 +11872,6 @@ mod tests {
         AwPreparedCellProvider, AwProjectionOperator, AwVisibilitySample, ModelDeltaId,
         ModelGenerationId, ModelGenerationOrigin, MuellerMatrix, PolarizationOperator,
     };
-
-    #[test]
-    fn degrid_row_views_match_indexed_reduction_for_both_layouts() {
-        let mut geometry = geometry();
-        geometry.grid_shape = [17, 23];
-        let gridder = StandardConvolution::new(&geometry);
-        let contiguous = Array2::from_shape_fn((17, 23), |(x, y)| {
-            Complex64::new(
-                (x * 23 + y) as f64 * 0.03125,
-                (x as f64 - y as f64) * 0.0625,
-            )
-        });
-        let strided = Array2::from_shape_fn((23, 17), |(y, x)| contiguous[(x, y)]).reversed_axes();
-        assert!(!strided.is_standard_layout());
-        for grid in [contiguous, strided] {
-            for x_start in [0, 5, 17 - super::TAP_COUNT] {
-                for y_start in [0, 8, 23 - super::TAP_COUNT] {
-                    for fraction in 0..gridder.weights.len() {
-                        let taps = SampleTaps {
-                            x: TapSpan {
-                                start: x_start,
-                                weight_index: fraction,
-                            },
-                            y: TapSpan {
-                                start: y_start,
-                                weight_index: gridder.weights.len() - 1 - fraction,
-                            },
-                        };
-                        let mut expected = Complex64::default();
-                        for (x, x_weight) in
-                            gridder.weights[taps.x.weight_index].into_iter().enumerate()
-                        {
-                            let mut rows = [Complex64::default(); 2];
-                            for (y, y_weight) in
-                                gridder.weights[taps.y.weight_index].into_iter().enumerate()
-                            {
-                                rows[y % 2] += grid[(x_start + x, y_start + y)] * y_weight;
-                            }
-                            expected += (rows[0] + rows[1]) * x_weight;
-                        }
-                        let actual = gridder.degrid(&grid, taps);
-                        assert_eq!(actual.re.to_bits(), expected.re.to_bits());
-                        assert_eq!(actual.im.to_bits(), expected.im.to_bits());
-                    }
-                }
-            }
-        }
-    }
 
     #[test]
     fn separable_degrid_matches_scalar_kernel_with_bounded_roundoff() {
