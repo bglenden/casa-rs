@@ -5,7 +5,7 @@ use casa_imaging_products::{
     ProductWindow, ProductWindowLayout, ProductsError,
 };
 use casa_lattices::{Lattice, LatticeMut, PagedArray, TiledArrayStorageLayout, TiledShape};
-use ndarray::{ArrayD, IxDyn};
+use ndarray::{Array, ArrayD, IxDyn, ShapeBuilder};
 use std::{path::PathBuf, sync::Mutex};
 use tempfile::TempDir;
 
@@ -212,15 +212,13 @@ impl ProductArrayStorage for PagedProductArray {
     }
     fn write(&mut self, window: &ProductWindow) -> Result<(), ProductsError> {
         let arrays = self.arrays.get_mut().map_err(error)?;
-        let payload = ArrayD::from_shape_vec(IxDyn(&window.shape()), window.payload().to_vec())
-            .map_err(error)?;
+        let payload = product_write_array(window.shape(), window.payload());
         arrays
             .0
             .put_slice(&payload, &window.start())
             .map_err(error)?;
         drop(payload);
-        let validity = ArrayD::from_shape_vec(IxDyn(&window.shape()), window.validity().to_vec())
-            .map_err(error)?;
+        let validity = product_write_array(window.shape(), window.validity());
         arrays
             .1
             .put_slice(&validity, &window.start())
@@ -231,6 +229,16 @@ impl ProductArrayStorage for PagedProductArray {
         arrays.0.flush().map_err(error)?;
         arrays.1.flush().map_err(error)
     }
+}
+
+fn product_write_array<T: Copy>(shape: [usize; 4], values: &[T]) -> ArrayD<T> {
+    Array::from_shape_fn(
+        (shape[0], shape[1], shape[2], shape[3]).f(),
+        |(x, y, polarization, channel)| {
+            values[((x * shape[1] + y) * shape[2] + polarization) * shape[3] + channel]
+        },
+    )
+    .into_dyn()
 }
 
 fn copy_product_read<T: Copy>(
@@ -274,7 +282,6 @@ fn error(value: impl std::fmt::Display) -> ProductsError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::ShapeBuilder;
 
     #[test]
     fn product_read_copy_preserves_plane_hash_and_multiaxis_order() {
@@ -286,6 +293,9 @@ mod tests {
                 let mut values = vec![0; source.len()];
                 copy_product_read(&source, shape, &mut values).unwrap();
                 assert_eq!(values, source.iter().copied().collect::<Vec<_>>());
+                let written = product_write_array(shape, &values);
+                assert_eq!(written, source);
+                assert!(written.reversed_axes().is_standard_layout());
                 assert!(copy_product_read(&source, shape, &mut []).is_err());
             }
         }
