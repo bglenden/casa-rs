@@ -5,7 +5,7 @@ use casa_imaging_products::{
     ProductWindow, ProductWindowLayout, ProductsError,
 };
 use casa_lattices::{Lattice, LatticeMut, PagedArray, TiledArrayStorageLayout, TiledShape};
-use ndarray::{ArrayD, ArrayViewMut, IxDyn};
+use ndarray::{ArrayD, IxDyn};
 use std::{path::PathBuf, sync::Mutex};
 use tempfile::TempDir;
 
@@ -198,10 +198,7 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.0.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        ArrayViewMut::from_shape(IxDyn(&shape), values)
-            .map_err(error)?
-            .assign(&window);
-        Ok(())
+        copy_product_read(&window, shape, values)
     }
     fn read_validity(
         &self,
@@ -211,10 +208,7 @@ impl ProductArrayStorage for PagedProductArray {
     ) -> Result<(), ProductsError> {
         let arrays = self.arrays.lock().map_err(error)?;
         let window = arrays.1.get_slice(&start, &shape, &[1; 4]).map_err(error)?;
-        ArrayViewMut::from_shape(IxDyn(&shape), values)
-            .map_err(error)?
-            .assign(&window);
-        Ok(())
+        copy_product_read(&window, shape, values)
     }
     fn write(&mut self, window: &ProductWindow) -> Result<(), ProductsError> {
         let arrays = self.arrays.get_mut().map_err(error)?;
@@ -239,6 +233,40 @@ impl ProductArrayStorage for PagedProductArray {
     }
 }
 
+fn copy_product_read<T: Copy>(
+    source: &ArrayD<T>,
+    shape: [usize; 4],
+    values: &mut [T],
+) -> Result<(), ProductsError> {
+    if source.shape() != shape || source.len() != values.len() {
+        return Err(ProductsError::InvalidWindow);
+    }
+    let input = source
+        .as_slice_memory_order()
+        .ok_or(ProductsError::InvalidWindow)?;
+    if source.is_standard_layout() {
+        values.copy_from_slice(input);
+        return Ok(());
+    }
+    let mut strides = [0usize; 4];
+    for (stride, &source_stride) in strides.iter_mut().zip(source.strides()) {
+        *stride = usize::try_from(source_stride).map_err(error)?;
+    }
+    let mut rows = values.chunks_exact_mut(shape[3]);
+    for x in 0..shape[0] {
+        for y in 0..shape[1] {
+            for polarization in 0..shape[2] {
+                let start = x * strides[0] + y * strides[1] + polarization * strides[2];
+                let row = rows.next().expect("validated product window shape");
+                for (channel, value) in row.iter_mut().enumerate() {
+                    *value = input[start + channel * strides[3]];
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn error(value: impl std::fmt::Display) -> ProductsError {
     ProductsError::Storage(value.to_string())
 }
@@ -246,6 +274,22 @@ fn error(value: impl std::fmt::Display) -> ProductsError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::ShapeBuilder;
+
+    #[test]
+    fn product_read_copy_preserves_plane_hash_and_multiaxis_order() {
+        for shape in [[3, 4, 2, 5], [128, 128, 1, 1], [1, 32, 1, 512], [1; 4]] {
+            for fortran in [false, true] {
+                let source = ArrayD::from_shape_fn(IxDyn(&shape).set_f(fortran), |index| {
+                    10000 * index[0] + 1000 * index[1] + 100 * index[2] + index[3]
+                });
+                let mut values = vec![0; source.len()];
+                copy_product_read(&source, shape, &mut values).unwrap();
+                assert_eq!(values, source.iter().copied().collect::<Vec<_>>());
+                assert!(copy_product_read(&source, shape, &mut []).is_err());
+            }
+        }
+    }
 
     #[test]
     fn publication_tiles_balance_write_and_hash_windows() {
