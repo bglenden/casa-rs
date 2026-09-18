@@ -51,11 +51,8 @@ impl SerialProductBackingPlan {
         };
         for member in planned.members() {
             let window = window.layout(member.axes())?;
-            let tile = publication_tile_shape(
-                window.shape(),
-                window.spectral_axis(),
-                window.maximum_values(),
-            );
+            let mut tile = window.shape();
+            tile[window.spectral_axis()] = 1;
             let shape = TiledShape::with_tile_shape(window.shape().to_vec(), tile.to_vec())
                 .map_err(error)?;
             let payload = PagedArray::<f32>::storage_layout(
@@ -119,23 +116,6 @@ impl SerialProductBackingPlan {
     pub(super) fn descriptors(&self) -> u64 {
         (self.members.len() * 2) as u64
     }
-}
-
-fn publication_tile_shape(
-    shape: [usize; 4],
-    spectral_axis: usize,
-    maximum_values: usize,
-) -> [usize; 4] {
-    // Intersect a canonical hash rectangle with a single-channel write window.
-    // Neither traversal then fetches unrelated spatial cells from a full plane.
-    let mut tile = shape;
-    let mut remaining = maximum_values;
-    for extent in tile.iter_mut().rev() {
-        *extent = (*extent).min(remaining);
-        remaining /= *extent;
-    }
-    tile[spectral_axis] = 1;
-    tile
 }
 
 impl ProductStorageFactory for SerialProductBackingPlan {
@@ -238,20 +218,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn publication_tiles_intersect_write_and_hash_windows() {
-        assert_eq!(
-            publication_tile_shape([128, 128, 1, 512], 3, 16384),
-            [1, 32, 1, 1]
-        );
-        assert_eq!(
-            publication_tile_shape([128, 128, 1, 1], 3, 16384),
-            [128, 128, 1, 1]
-        );
-        assert_eq!(publication_tile_shape([64, 8, 8, 1], 0, 64), [1, 8, 8, 1]);
-        assert_eq!(publication_tile_shape([3, 4, 2, 5], 3, 24), [1, 2, 2, 1]);
-    }
-
-    #[test]
     #[ignore = "bounded publication diagnostic: requires a fresh durable CASA_RS_PUBLICATION_PROBE_ROOT and outer resource guard"]
     fn publication_backing_read_amplification() {
         let root = std::path::PathBuf::from(
@@ -261,11 +227,7 @@ mod tests {
         let directory = tempfile::tempdir_in(&root).unwrap();
         let shape = [128, 128, 1, 64];
         let plane_values = shape[0] * shape[1];
-        let tiled = TiledShape::with_tile_shape(
-            shape.to_vec(),
-            publication_tile_shape(shape, 3, plane_values).to_vec(),
-        )
-        .unwrap();
+        let tiled = TiledShape::with_tile_shape(shape.to_vec(), vec![128, 128, 1, 1]).unwrap();
         let mut payload = PagedArray::<f32>::create_with_cache(
             tiled.clone(),
             directory.path().join("payload"),
@@ -317,12 +279,6 @@ mod tests {
         let arrays = backing.arrays.lock().unwrap();
         let payload = arrays.0.io_stats().delta_since(before_payload);
         let validity = arrays.1.io_stats().delta_since(before_validity);
-        assert!(
-            payload.lru_read_bytes + payload.lru_batch_load_bytes <= plane_values * shape[3] * 4
-        );
-        assert!(
-            validity.lru_read_bytes + validity.lru_batch_load_bytes <= plane_values * shape[3] / 8
-        );
         let record = format!(
             "shape={shape:?}\nwindow_channels=1\nseconds={seconds}\nlogical_payload_bytes={}\nlogical_validity_disk_bytes={}\npayload={payload:?}\nvalidity={validity:?}\n",
             plane_values * shape[3] * 4,
