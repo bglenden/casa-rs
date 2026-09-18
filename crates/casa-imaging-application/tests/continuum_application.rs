@@ -90,6 +90,65 @@ mod t55_cube_pipeline;
 #[path = "continuum_application/t55_real_cube.rs"]
 mod t55_real_cube;
 
+#[test]
+fn unsupported_primary_beam_frequency_rejects_before_execution_receipts() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    // This existing fixture labels 44 GHz as EVLA; the selected common EVLA
+    // model represents only L/S/C, unlike the separate legacy-VLA Q model.
+    let measurement_set = vla_aw_measurement_set(root.path());
+    let image_name = root.path().join("unsupported-beam");
+    let mut imaging = request(measurement_set, image_name, ContinuumAlgorithm::Dirty);
+    imaging.write_primary_beam = true;
+    let error = execute_continuum(imaging)
+        .err()
+        .expect("unsupported beam frequency");
+    let casa_imaging_application::ApplicationDispatchError::Native(error) = error else {
+        panic!("expected native coverage validation, found {error:?}");
+    };
+    let Some(casa_imaging_products::ProductsError::UnsupportedPrimaryBeamFrequency {
+        model: casa_imaging_products::AnalyticPrimaryBeamModel::CasaEvlaCommon,
+        output_channel: 0,
+        frequency_hz,
+    }) = error.downcast_ref::<casa_imaging_products::ProductsError>()
+    else {
+        panic!("expected explicit coverage error, found {error:?}");
+    };
+    // The default continuum axis is LSRK: validate the transformed output
+    // frequency, not the source's exactly 44-GHz TOPO channel.
+    assert_ne!(*frequency_hz, 44.0e9);
+    assert!((*frequency_hz - 44.0e9).abs() < 2.0e6);
+    assert!(
+        std::fs::read_dir(root.path().join(".casa-rs-imaging-receipts"))
+            .expect("prepared receipt directory")
+            .next()
+            .is_none(),
+        "no weighting, replay, reconstruction or publication may execute"
+    );
+    assert!(!root.path().join("unsupported-beam.pb").exists());
+}
+
+#[test]
+fn image_pointing_center_preserves_casa_positive_pi_longitude() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    set_production_io_environment();
+    let root = tempfile::tempdir().expect("test root");
+    let image_name = root.path().join("antimeridian");
+    let mut imaging = request(
+        tiny_measurement_set(root.path()),
+        image_name.clone(),
+        ContinuumAlgorithm::Dirty,
+    );
+    imaging.phase_center = Some("J2000 12h00m00s +34d04m43.5s".to_string());
+    execute_continuum(imaging).unwrap_or_else(|error| panic!("dirty image: {error}"));
+    let image = PagedImage::<f32>::open(root.path().join("antimeridian.image")).expect("image");
+    assert_eq!(
+        image.coordinates().obs_info().pointing_center_rad[0],
+        std::f64::consts::PI
+    );
+}
+
 fn assert_standard_products(image_name: &Path, product_names: &[String]) {
     assert_products(image_name, product_names, &PRODUCT_SUFFIXES);
 }

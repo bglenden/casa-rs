@@ -3987,6 +3987,16 @@ fn execute_spectral_cycle_with_weighting_mode(
         ..
     } = final_planned.into_parts(&final_plan).unwrap();
     assert!(final_minor.is_none());
+    let model_samples = problem.model_lifecycle().target().sample_count();
+    let planned_model_bytes = final_complete.residency().major_cycle_model_bytes();
+    let maximum_accepted_terms = 2 * problem.model_lifecycle().target().coefficients();
+    assert!(
+        final_complete.residency().major_cycle_model_bytes()
+            <= model_samples * std::mem::size_of::<casa_imaging_model::ModelSample>()
+                + 2 * maximum_accepted_terms
+                    * std::mem::size_of::<casa_imaging_model::ModelDeltaTerm>(),
+        "final-major admission must bind the accepted sparse update, not the logical whole-model delta ceiling"
+    );
     if verify_low_memory_plan {
         assert_t59_low_memory_production_routes(&final_physical);
         let dag = final_physical.execution_dag();
@@ -4513,6 +4523,14 @@ fn execute_spectral_cycle_with_weighting_mode(
         .take_completion()
         .expect("final-major completion")
         .into_completion();
+    assert_eq!(
+        planned_model_bytes as u64,
+        (model_samples * std::mem::size_of::<casa_imaging_model::ModelSample>()) as u64
+            + 2 * final_receipt
+                .artifact_actual_bytes(accepted_update)
+                .unwrap(),
+        "the plan reserves the model and both exact pending-update copies"
+    );
     assert_eq!(
         final_completion.normal_state().selected_generation(),
         selected_generation

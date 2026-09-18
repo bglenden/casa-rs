@@ -34,7 +34,7 @@ use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
 use crate::storage::{ProductMemberBacking, ProductMemberWriter};
 use crate::taylor::{
     TaylorProducts, analytic_alma_airy_primary_beam, analytic_evla_primary_beam,
-    analytic_vla_primary_beam,
+    analytic_vla_primary_beam, primary_beam_frequency_supported,
 };
 use crate::{ProductStorageFactory, ProductStoragePlan, ProductWindow, ProductWindowLayout};
 
@@ -102,6 +102,58 @@ impl ContinuumProductControls {
     #[must_use]
     pub const fn primary_beam_model(self) -> Option<AnalyticPrimaryBeamModel> {
         self.primary_beam_model
+    }
+
+    /// Check beam-frequency coverage before visibility processing or production.
+    ///
+    /// Uses compiled output frequencies, including frame conversion and channel
+    /// ordering. Taylor products evaluate the beam at output channel zero;
+    /// channel-local products require coverage of every output channel. Unused
+    /// models impose no additional restriction on non-Taylor products.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first unsupported output channel and its frequency without
+    /// constructing any beam planes or reading visibility payloads.
+    pub fn validate_for_problem(&self, problem: &CompiledProblem) -> Result<(), ProductsError> {
+        let Some(model) = self.primary_beam_model else {
+            return Ok(());
+        };
+        let taylor = matches!(
+            problem.reconstruction().basis(),
+            ReconstructionBasis::Taylor { .. }
+        );
+        let graph = problem.product_graph();
+        let needs_beam = taylor || graph.publication().members().iter().any(|ordinal| {
+            let node = &graph.nodes()[ordinal.ordinal()];
+            let needs_validity = |rule| matches!(rule,
+                ProductValidityRule::PrimaryBeam(_) | ProductValidityRule::TaylorAndPrimaryBeam { .. });
+            matches!(node.role(), ProductRole::PrimaryBeam(_) | ProductRole::PbCorrectedImage(_))
+                || needs_validity(node.validity())
+                || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule) if needs_validity(rule))
+        });
+        if !needs_beam {
+            return Ok(());
+        }
+        let spectral = problem.geometry().spectral();
+        let channels = if taylor {
+            1
+        } else {
+            spectral.output_channels()
+        };
+        for output_channel in 0..channels {
+            let frequency_hz = spectral
+                .channel_centre_hz(output_channel)
+                .ok_or(ProductsError::UnsupportedProblem)?;
+            if !primary_beam_frequency_supported(model, frequency_hz) {
+                return Err(ProductsError::UnsupportedPrimaryBeamFrequency {
+                    model,
+                    output_channel,
+                    frequency_hz,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -221,6 +273,7 @@ impl ProductGenerationAuthority {
         {
             return Err(ProductsError::ForeignPlannedGeneration);
         }
+        controls.validate_for_problem(sources.problem())?;
         let graph = sources.problem().product_graph();
         let commitment_id = ContinuumCommitmentId(sources.commitment_id());
         let mut members = Vec::with_capacity(graph.publication().members().len());

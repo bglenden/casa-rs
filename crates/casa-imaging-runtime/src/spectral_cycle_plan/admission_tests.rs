@@ -121,6 +121,55 @@ fn full_aw_problem() -> CompiledProblem {
     .unwrap()
 }
 
+#[test]
+fn accepted_delta_residency_preserves_both_live_copies_and_logical_limit() {
+    let problem = full_aw_problem();
+    let specifications = [SpectralOperatorSpecification::new(&problem).unwrap()];
+    let layout = GriddedNormalStorageLayout::new([[4096; 2]], 2, 50, true).unwrap();
+    let window =
+        GriddedNormalReplayWindowPlan::plan_frame_payloads(&[], 4096, 96, 1, layout).unwrap();
+    let fragment = |terms| {
+        CompleteDataPlanFragment::gridded_replay_with_preparation_node(
+            &problem,
+            4096,
+            WorkNodeId::new("replay"),
+            WorkNodeId::new("prepare"),
+            &window,
+            &specifications,
+            terms,
+        )
+    };
+    let samples = problem.model_lifecycle().target().sample_count();
+    let limit = samples.min(problem.model_lifecycle().bounds().max_delta_terms());
+    let model_bytes = samples * std::mem::size_of::<ModelSample>();
+    for terms in [0, 1, 9, limit] {
+        let planned = fragment(terms).unwrap();
+        assert_eq!(planned.pending_delta_terms(), Some(terms));
+        assert_eq!(
+            planned.residency().major_cycle_model_bytes(),
+            model_bytes + 2 * terms * std::mem::size_of::<ModelDeltaTerm>()
+        );
+    }
+    assert!(matches!(
+        fragment(limit + 1),
+        Err(CompleteDataPlanError::PlanMismatch)
+    ));
+
+    let unbound = CompleteDataPlanFragment::new_with_preparation_node(
+        &problem,
+        4096,
+        WorkNodeId::new("unbound-replay"),
+        WorkNodeId::new("unbound-prepare"),
+        SpectralOperatorPass::ResidualRefresh,
+    )
+    .unwrap();
+    assert_eq!(unbound.pending_delta_terms(), None);
+    assert_eq!(
+        unbound.residency().major_cycle_model_bytes(),
+        model_bytes + 2 * limit * std::mem::size_of::<ModelDeltaTerm>()
+    );
+}
+
 #[derive(Clone)]
 struct UnreadProvider;
 impl AwPreparedCellProvider for UnreadProvider {
@@ -258,6 +307,13 @@ fn t51_full_aw_residual_phase_adapts_complete_allocations_and_rejects_below_floo
         pass: SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, 1),
         include_minor: true,
         phase_input: Some(ArtifactIdentity::from_owner_digest([50; 32])),
+        pending_delta_terms: Some(
+            problem
+                .model_lifecycle()
+                .target()
+                .sample_count()
+                .min(problem.model_lifecycle().bounds().max_delta_terms()),
+        ),
         strategy: GriddedNormalStrategy::ReuseManagedSpill,
         artifact_budget: Some(
             crate::complete_data_operator::project_gridded_normal_compilation(&problem, 4096)

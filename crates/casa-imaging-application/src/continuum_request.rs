@@ -1565,9 +1565,14 @@ fn prepare(
     } else {
         (String::new(), String::new())
     };
-    let pointing_longitude = (right_ascension + std::f64::consts::PI)
-        .rem_euclid(std::f64::consts::TAU)
-        - std::f64::consts::PI;
+    // ObsInfo::toRecord uses MVDirection::get, preserving the signed atan2
+    // endpoint rather than mapping an exactly positive pi to negative pi.
+    let [pointing_x, pointing_y, _] = image_centre.cosines();
+    let pointing_longitude = if pointing_x == 0.0 && pointing_y == 0.0 {
+        0.0
+    } else {
+        pointing_y.atan2(pointing_x)
+    };
     let observation_info = ObsInfo::new(telescope_name)
         .with_observer(observer)
         .with_date(MEpoch::from_mjd(

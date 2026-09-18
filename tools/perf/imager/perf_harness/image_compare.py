@@ -67,6 +67,9 @@ FULL_STRUCTURE_EVIDENCE_FIELDS = {
     "left_raw_finite_pixels",
     "right_raw_finite_pixels",
     "paired_raw_finite_pixels",
+    "paired_raw_left_abs_max",
+    "paired_raw_right_abs_max",
+    "paired_raw_diff_abs_max",
     "paired_image_mask_finite_pixels",
     "central_mask_mismatch_pixels",
     "workspace_lifecycle",
@@ -2096,6 +2099,13 @@ def _validate_full_structure_evidence(
         raise ValueError(
             f"image comparison product {suffix} native expected_pixels is invalid"
         )
+    for field in (
+        "paired_raw_left_abs_max",
+        "paired_raw_right_abs_max",
+        "paired_raw_diff_abs_max",
+    ):
+        if _finite_number(evidence[field], label=f"{suffix} native {field}") < 0.0:
+            raise ValueError(f"image comparison product {suffix} native {field} is negative")
     exact_values = {
         "method": FULL_STRUCTURE_METHOD,
         "storage": FULL_STRUCTURE_STORAGE,
@@ -2210,15 +2220,16 @@ def _validate_structure_semantics(
         expected_review = {
             "label": expected_label,
             "summary": (
-                f"{suffix}: structured difference is not applicable because full "
-                "evidence proves both operands and their difference are exactly zero."
+                f"{suffix}: structured difference is not applicable on the review plane; "
+                "both operands and their difference are exactly zero there. "
+                "Full-array numerical checks remain applicable."
             ),
             "checks": [
                 {
                     "name": "exact_zero_operands",
                     "label": expected_label,
                     "value": True,
-                    "meaning": "full comparison domain proves both operands are zero",
+                    "meaning": "complete central review plane proves both operands are zero",
                 }
             ],
             "legend": _structured_difference_review_legend(),
@@ -2235,25 +2246,25 @@ def _validate_structure_semantics(
             or structure.get("scale_offset_gradient_fit")
             != {
                 "status": expected_label,
-                "reason": "both operands and their difference are exactly zero",
+                "reason": "both operands and their difference are exactly zero on the review plane",
             }
             or structure.get("beam_block_rms_by_scale") != []
             or structure.get("block_rms_decay_slope_vs_independent_beams") is not None
         ):
             raise ValueError(f"{label} exact-zero structure result is inconsistent")
-        full = product["full_array"]
-        zero_values = (
-            full["left"]["min"],
-            full["left"]["max"],
-            full["left"]["sum_squares"],
-            full["right"]["min"],
-            full["right"]["max"],
-            full["right"]["sum_squares"],
-            full["difference"]["sum_squares"],
-            full["difference"]["abs_max"],
-        )
-        if any(value != 0.0 for value in zero_values):
-            raise ValueError(f"{label} exact-zero review contradicts full-array values")
+        evidence = structure["native_spatial_evidence"]
+        if (
+            evidence["paired_raw_finite_pixels"] != evidence["expected_pixels"]
+            or any(
+                evidence[field] != 0.0
+                for field in (
+                    "paired_raw_left_abs_max",
+                    "paired_raw_right_abs_max",
+                    "paired_raw_diff_abs_max",
+                )
+            )
+        ):
+            raise ValueError(f"{label} exact-zero review contradicts central-plane values")
         return
     if status != "computed":
         raise ValueError(f"{label} full structure result is incomplete")
@@ -2916,7 +2927,8 @@ def _structured_difference_review_legend() -> dict[str, str]:
         ),
         "unknown": "Check could not be evaluated for this product.",
         "not_applicable_exact_zero": (
-            "Full evidence proves both operands and their difference are exactly zero."
+            "Both operands and their difference are exactly zero on the complete "
+            "central review plane; full-array numerical checks remain applicable."
         ),
     }
 

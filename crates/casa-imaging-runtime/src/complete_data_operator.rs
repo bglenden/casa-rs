@@ -2259,7 +2259,7 @@ enum CompleteDataExecutionRole {
 
 enum CompleteDataExecution<'a> {
     Selected(SpectralOperatorPass),
-    Gridded(&'a GriddedNormalReplayWindowPlan),
+    Gridded(&'a GriddedNormalReplayWindowPlan, usize),
 }
 
 /// Hard physical allocations and FFT preparation bound to one T18 replay.
@@ -2272,6 +2272,7 @@ pub struct CompleteDataPlanFragment {
     admitted_slab_depth: usize,
     sequential_channel_major: bool,
     execution_role: CompleteDataExecutionRole,
+    pending_delta_terms: Option<usize>,
     gridded_route_residency: Option<GriddedNormalRouteResidency>,
     residency: CompleteDataResidency,
     preparation_node: WorkNodeId,
@@ -2409,6 +2410,7 @@ impl CompleteDataPlanFragment {
                 CompleteDataExecutionRole::SelectedObservation,
                 None,
                 0,
+                None,
             )?;
             if depth < total_channels {
                 residency = residency.with_sequential_fold_accumulator(fold_accumulator_bytes)?;
@@ -2466,6 +2468,7 @@ impl CompleteDataPlanFragment {
                 CompleteDataExecutionRole::SelectedObservation,
                 None,
                 0,
+                None,
             )?;
             if admitted_depth < total_channels {
                 residency = residency.with_sequential_fold_accumulator(fold_accumulator_bytes)?;
@@ -2492,6 +2495,7 @@ impl CompleteDataPlanFragment {
             admitted_slab_depth: admitted_depth,
             sequential_channel_major: true,
             execution_role: CompleteDataExecutionRole::SelectedObservation,
+            pending_delta_terms: None,
             gridded_route_residency: None,
             residency: peak_residency.ok_or(CompleteDataPlanError::PlanMismatch)?,
             preparation_node,
@@ -2511,6 +2515,7 @@ impl CompleteDataPlanFragment {
         preparation_node: WorkNodeId,
         window_plan: &GriddedNormalReplayWindowPlan,
         specifications: &[SpectralOperatorSpecification],
+        pending_delta_terms: usize,
     ) -> Result<Self, CompleteDataPlanError> {
         let mut next_channel = 0;
         let mut fragments = Vec::with_capacity(specifications.len());
@@ -2529,7 +2534,7 @@ impl CompleteDataPlanFragment {
                 replay_node.clone(),
                 preparation_node.clone(),
                 specification.clone(),
-                CompleteDataExecution::Gridded(window_plan),
+                CompleteDataExecution::Gridded(window_plan, pending_delta_terms),
             )?);
         }
         if next_channel != problem.geometry().spectral().output_channels() {
@@ -2563,14 +2568,18 @@ impl CompleteDataPlanFragment {
         specification: SpectralOperatorSpecification,
         execution: CompleteDataExecution<'_>,
     ) -> Result<Self, CompleteDataPlanError> {
-        let (pass, execution_role, window_plan) = match execution {
-            CompleteDataExecution::Selected(pass) => {
-                (pass, CompleteDataExecutionRole::SelectedObservation, None)
-            }
-            CompleteDataExecution::Gridded(window_plan) => (
+        let (pass, execution_role, window_plan, pending_delta_terms) = match execution {
+            CompleteDataExecution::Selected(pass) => (
+                pass,
+                CompleteDataExecutionRole::SelectedObservation,
+                None,
+                None,
+            ),
+            CompleteDataExecution::Gridded(window_plan, terms) => (
                 SpectralOperatorPass::ResidualRefresh,
                 CompleteDataExecutionRole::GriddedArtifact,
                 Some(window_plan),
+                Some(terms),
             ),
         };
         let workload = spectral_operator_workload(&specification, max_replay_block_samples, pass)?;
@@ -2594,6 +2603,7 @@ impl CompleteDataPlanFragment {
             execution_role,
             gridded_route_residency,
             gridded_replay_schedule_bytes,
+            pending_delta_terms,
         )?;
         Ok(Self {
             slab_specifications: vec![specification.clone()].into_boxed_slice(),
@@ -2603,6 +2613,7 @@ impl CompleteDataPlanFragment {
             specification,
             workload,
             execution_role,
+            pending_delta_terms,
             gridded_route_residency,
             residency,
             preparation_node,
@@ -2613,6 +2624,10 @@ impl CompleteDataPlanFragment {
             initial_working_set: None,
             cube_state: None,
         })
+    }
+
+    pub(crate) const fn pending_delta_terms(&self) -> Option<usize> {
+        self.pending_delta_terms
     }
 
     /// Bind a fixed, application-validated AW prepared-cell capability.
@@ -3815,6 +3830,7 @@ fn project_residency(
     execution_role: CompleteDataExecutionRole,
     gridded_route_residency: Option<GriddedNormalRouteResidency>,
     gridded_replay_schedule_bytes: usize,
+    pending_delta_terms: Option<usize>,
 ) -> Result<CompleteDataResidency, CompleteDataPlanError> {
     let complex_bytes = size_of::<num_complex::Complex64>();
     let grid_bytes = match execution_role {
@@ -3888,11 +3904,20 @@ fn project_residency(
         .checked_div(workload.total_model_terms())
         .and_then(|plane_samples| plane_samples.checked_mul(workload.resident_model_terms()))
         .ok_or(CompleteDataPlanError::ResidencyOverflow)?;
-    let pending_delta_terms = if specification.is_initial_certified_zero(workload.pass()) {
+    let logical_delta_limit = model.bounds().max_delta_terms().min(total_model_samples);
+    let pending_delta_terms = if let Some(terms) = pending_delta_terms {
+        if terms > logical_delta_limit {
+            return Err(CompleteDataPlanError::PlanMismatch);
+        }
+        terms
+    } else if specification.is_initial_certified_zero(workload.pass()) {
         0
     } else {
-        model.bounds().max_delta_terms().min(total_model_samples)
+        logical_delta_limit
     };
+    // FinalMajorPhaseInput and its recompiled ModelDelta coexist during model
+    // preparation. Their exact count is already sealed by the accepted input;
+    // generic fragments without that input still reserve the logical ceiling.
     let major_cycle_model_bytes = model_samples
         .checked_mul(size_of::<ModelSample>())
         .and_then(|bytes| {

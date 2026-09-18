@@ -1059,6 +1059,10 @@ pub struct FinalMajorPhaseInput {
 }
 
 impl FinalMajorPhaseInput {
+    pub(crate) fn pending_delta_terms(&self) -> usize {
+        self.terms.len()
+    }
+
     pub(crate) fn maximum_read_channels(&self) -> usize {
         self.evidence.normal_state.maximum_read_channels()
     }
@@ -1246,6 +1250,15 @@ impl SpectralCycleExecutor {
         pass_input: SpectralCyclePassInput,
         planned_gridded_normal: crate::PlannedGriddedNormalBinding,
     ) -> io::Result<Self> {
+        match &pass_input {
+            SpectralCyclePassInput::FinalMajor(input)
+                if complete_data.pending_delta_terms() == Some(input.pending_delta_terms()) => {}
+            _ => {
+                return Err(io::Error::other(
+                    "pending model update does not match planned residency",
+                ));
+            }
+        }
         let (planned_replay, replay) = planned_gridded_normal.into_replay().ok_or_else(|| {
             io::Error::other("later major requires a plan-issued gridded-normal replay")
         })?;

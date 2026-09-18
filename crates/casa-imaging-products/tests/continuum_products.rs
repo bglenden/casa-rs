@@ -236,6 +236,7 @@ fn continuum_problem_with_reconstruction(
         basis,
         algorithm,
         channels,
+        [1.4e9, 1.0e6],
         vec![ImageDomainSpec::new(
             ImageDomainRole::Main,
             ImageShape::new(SHAPE[0], SHAPE[1]),
@@ -260,6 +261,7 @@ fn continuum_problem_with_domains_and_reconstruction(
     basis: ReconstructionBasis,
     algorithm: ReconstructionAlgorithm,
     channels: usize,
+    frequency: [f64; 2],
     domains: Vec<ImageDomainSpec>,
 ) -> casa_imaging_model::CompiledProblem {
     let controls = if matches!(algorithm, ReconstructionAlgorithm::Mtmfs { .. }) {
@@ -288,8 +290,8 @@ fn continuum_problem_with_domains_and_reconstruction(
             SpectralWcs::Linear {
                 channels,
                 reference_pixel: 0.0,
-                reference_frequency_hz: 1.4e9,
-                increment_hz: 1.0e6,
+                reference_frequency_hz: frequency[0],
+                increment_hz: frequency[1],
             },
             RestFrequency::NotApplicable,
             DopplerConvention::NotApplicable,
@@ -1047,6 +1049,7 @@ fn legacy_v2_and_current_commitments_pin_exact_plane_channel_and_taylor_identity
                 basis,
                 algorithm,
                 channels,
+                [1.4e9, 1.0e6],
                 vec![ImageDomainSpec::new(
                     ImageDomainRole::Main,
                     ImageShape::new(1, 1),
@@ -1356,6 +1359,7 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         ReconstructionBasis::Constant,
         ReconstructionAlgorithm::Dirty,
         1,
+        [1.4e9, 1.0e6],
         domains,
     );
     let first_round = run_two_domain_round(&problem, 142);
@@ -1916,6 +1920,64 @@ fn standard_products_publish_the_selected_analytic_primary_beam() {
         corner < centre,
         "analytic PB must fall away from phase centre"
     );
+}
+
+#[test]
+fn primary_beam_plan_rejects_a_cube_crossing_the_vla_band_boundary() {
+    let products = [ProductKind::Psf, ProductKind::PrimaryBeam];
+    let template = continuum_problem_with_reconstruction(
+        111,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+    );
+    let problem = continuum_problem_with_domains_and_reconstruction(
+        111,
+        &products,
+        RestoringBeamPolicy::None,
+        InstrumentResponse::Scalar,
+        ReconstructionBasis::ChannelLocal { channels: 2 },
+        ReconstructionAlgorithm::Dirty,
+        2,
+        [54.880e9, 128.0e6],
+        vec![ImageDomainSpec::new(
+            ImageDomainRole::Main,
+            ImageShape::new(SHAPE[0], SHAPE[1]),
+            template.geometry().domains()[0].direction(),
+            FacetLayout::Single,
+            AxisOrder::new([
+                ImageAxis::DirectionLongitude,
+                ImageAxis::DirectionLatitude,
+                ImageAxis::Polarization,
+                ImageAxis::Spectral,
+            ]),
+        )],
+    );
+    let round = run_round_with_contributions(
+        &problem,
+        112,
+        fixture_samples(&problem),
+        channel_contributions,
+    );
+    let catalog =
+        ContinuumSourceCatalog::from_major_cycle(&problem, &round.join).expect("source catalog");
+    let controls = ContinuumProductControls::default()
+        .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand);
+    let error = ProductGenerationAuthority::bind(&problem)
+        .plan(&catalog, &controls)
+        .expect_err("unsupported frequency must fail during planning, not production");
+    assert_eq!(
+        error,
+        ProductsError::UnsupportedPrimaryBeamFrequency {
+            model: AnalyticPrimaryBeamModel::CasaVlaBand,
+            output_channel: 1,
+            frequency_hz: 55.008e9,
+        }
+    );
+    assert_eq!(controls.validate_for_problem(&problem), Err(error));
 }
 
 #[test]

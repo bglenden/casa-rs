@@ -383,6 +383,7 @@ where
         publication,
         aw_preparation,
     } = input.native?;
+    publication.controls.validate_for_problem(problem)?;
     let initial_access = SelectedObservationSourceResources::finalize_access(
         problem,
         input.initial_access,

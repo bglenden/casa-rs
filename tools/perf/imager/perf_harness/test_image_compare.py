@@ -16,6 +16,7 @@ from unittest import mock
 import numpy as np
 
 from perf_harness import casa_image_compare as comparator
+from perf_harness import image_compare as validator
 from perf_harness.image_compare import (
     apply_tolerance_contract,
     compare_products,
@@ -815,6 +816,82 @@ class ImageComparisonProtocolTests(unittest.TestCase):
         )
         self.assertTrue(structure["native_spatial_evidence"]["coverage_complete"])
         self.assertEqual(16, result["comparison_domain_count"])
+
+    def test_empty_review_plane_does_not_exempt_noncentral_cube_values(self) -> None:
+        for error, expected in ((0.0, "passed"), (0.1, "failed")):
+            with self.subTest(error=error):
+                right = np.zeros((5, 4, 1, 3), dtype=np.float64)
+                right[:, :, 0, 0] = 1.0
+                left = right.copy()
+                left[:, :, 0, 0] += error
+                masks = np.ones_like(right, dtype=bool)
+                full = comparator.full_array_statistics(
+                    "left", "right", max_elements=7,
+                    image_factory=FakeImageFactory(
+                        {"left": left, "right": right},
+                        {"left": masks, "right": masks},
+                    ),
+                    structure_suffix=".model",
+                    structure_beam_info={"status": "missing_psf"},
+                )
+                structure = full["structured_difference"]
+                self.assertEqual("not_applicable_exact_zero", structure["status"])
+                product = {
+                    "status": "compared", "full_array": full,
+                    "structured_difference": structure,
+                    "diff_rms_over_right_rms": full["diff_rms_over_right_rms"],
+                }
+                validator._validate_full_structure_evidence(
+                    product, suffix=".model",
+                    comparison_beam_info=structure["beam_info"],
+                )
+                result = apply_tolerance_contract(
+                    {"status": "completed", "comparison_mode": "full",
+                     "products": {".model": product}},
+                    {"tolerances": {"contract_version": 2, "require_full_array": True,
+                     "default": {"diff_rms_over_right_rms": 0.001}, "products": {}}},
+                )
+                self.assertEqual(expected, result["tolerance_evaluation"]["status"])
+
+    def test_exact_zero_review_requires_complete_finite_plane_and_zero_extrema(self) -> None:
+        request = normalize_comparison_request(comparison_request())
+        for field, value in (
+            ("paired_raw_left_abs_max", 1.0),
+            ("paired_raw_right_abs_max", 1.0),
+            ("paired_raw_diff_abs_max", 1.0),
+            ("paired_raw_left_abs_max", float("nan")),
+            ("paired_raw_right_abs_max", -1.0),
+            ("paired_raw_finite_pixels", 0),
+        ):
+            with self.subTest(field=field, value=value):
+                output = comparison_output(request)
+                product = output["products"][".image.tt0"]
+                evidence = product["structured_difference"]["native_spatial_evidence"]
+                evidence[field] = value
+                if field == "paired_raw_finite_pixels":
+                    evidence["paired_image_mask_finite_pixels"] = 0
+                product["full_array"]["structured_difference"] = copy.deepcopy(
+                    product["structured_difference"]
+                )
+                with self.assertRaises(ValueError):
+                    validate_comparison_output(output, request)
+
+    def test_nonfinite_review_plane_is_not_proven_exact_zero(self) -> None:
+        values = np.zeros((5, 4, 1, 3), dtype=np.float64)
+        values[0, 0, 0, 1] = np.nan
+        masks = np.ones_like(values, dtype=bool)
+        full = comparator.full_array_statistics(
+            "left", "right", max_elements=7,
+            image_factory=FakeImageFactory(
+                {"left": values, "right": values.copy()},
+                {"left": masks, "right": masks},
+            ),
+            structure_suffix=".model",
+            structure_beam_info={"status": "missing_psf"},
+        )
+        self.assertNotEqual(
+            "not_applicable_exact_zero", full["structured_difference"]["status"]
+        )
 
     def test_full_streamed_structure_detects_off_sampling_lattice_pattern(self) -> None:
         right = np.ones((9, 9), dtype=np.float64)
@@ -1995,6 +2072,9 @@ def full_structure_evidence(suffix):
         "left_raw_finite_pixels": 1,
         "right_raw_finite_pixels": 1,
         "paired_raw_finite_pixels": 1,
+        "paired_raw_left_abs_max": 0.0,
+        "paired_raw_right_abs_max": 0.0,
+        "paired_raw_diff_abs_max": 0.0,
         "paired_image_mask_finite_pixels": 1,
         "central_mask_mismatch_pixels": 0,
         "workspace_lifecycle": "remove_on_success_retain_on_failure",

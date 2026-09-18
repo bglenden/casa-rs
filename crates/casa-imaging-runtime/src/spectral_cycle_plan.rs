@@ -326,7 +326,6 @@ impl SpectralCyclePlan {
             false,
             None,
             None,
-            None,
         )
     }
 
@@ -342,7 +341,6 @@ impl SpectralCyclePlan {
             policy,
             SpectralPassIdentity::new(SpectralPassPhase::InitialMajor, 0),
             true,
-            None,
             None,
             None,
         )
@@ -362,9 +360,8 @@ impl SpectralCyclePlan {
             policy,
             SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, 1),
             false,
-            Some(input.identity()),
+            Some(input),
             Some(gridded_replay),
-            Some(input.maximum_read_channels()),
         )
     }
 
@@ -383,9 +380,8 @@ impl SpectralCyclePlan {
             policy,
             SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, ordinal),
             true,
-            Some(input.identity()),
+            Some(input),
             Some(gridded_replay),
-            Some(input.maximum_read_channels()),
         )
     }
 
@@ -404,9 +400,8 @@ impl SpectralCyclePlan {
             policy,
             SpectralPassIdentity::new(SpectralPassPhase::FinalMajor, ordinal),
             false,
-            Some(input.identity()),
+            Some(input),
             Some(gridded_replay),
-            Some(input.maximum_read_channels()),
         )
     }
 
@@ -471,16 +466,14 @@ impl SpectralCyclePlan {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn build<R: ImplementationRegistry>(
         problem: &CompiledProblem,
         registry: &R,
         policy: SpectralCycleExecutionPolicy,
         pass: SpectralPassIdentity,
         include_minor: bool,
-        phase_input: Option<ArtifactIdentity>,
+        phase_input: Option<&FinalMajorPhaseInput>,
         gridded_replay: Option<crate::FrozenGriddedNormalReplay>,
-        prior_window_channels: Option<usize>,
     ) -> Result<Self, SpectralCyclePlanError> {
         validate_aw_projection_binding(problem, &policy)?;
         let weighting = plan_weighting(problem, policy.weighting_limits)?;
@@ -580,7 +573,8 @@ impl SpectralCyclePlan {
                     casa_imaging_model::ModelInputCommitment::Empty
                 ));
         let maximum_depth = if bounded_channels {
-            prior_window_channels
+            phase_input
+                .map(FinalMajorPhaseInput::maximum_read_channels)
                 .unwrap_or(total_channels)
                 .min(total_channels)
         } else {
@@ -595,7 +589,8 @@ impl SpectralCyclePlan {
                 let phase = SpectralCyclePhasePlanning {
                     pass,
                     include_minor,
-                    phase_input,
+                    phase_input: phase_input.map(FinalMajorPhaseInput::identity),
+                    pending_delta_terms: phase_input.map(FinalMajorPhaseInput::pending_delta_terms),
                     strategy,
                     artifact_budget,
                     gridded_replay_descriptor,
@@ -810,6 +805,7 @@ struct SpectralCyclePhasePlanning<'a> {
     pass: SpectralPassIdentity,
     include_minor: bool,
     phase_input: Option<ArtifactIdentity>,
+    pending_delta_terms: Option<usize>,
     strategy: GriddedNormalStrategy,
     artifact_budget: Option<crate::complete_data_operator::GriddedNormalCompilationAdmission>,
     gridded_replay_descriptor: Option<GriddedNormalReplayDescriptor>,
@@ -956,6 +952,7 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
         pass,
         include_minor,
         phase_input,
+        pending_delta_terms,
         strategy,
         artifact_budget,
         gridded_replay_descriptor,
@@ -1159,6 +1156,7 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                 preparation_node,
                 gridded_window_plan.ok_or(SpectralCyclePlanError::Overflow)?,
                 gridded_spectral_windows.ok_or(SpectralCyclePlanError::Overflow)?,
+                pending_delta_terms.ok_or(SpectralCyclePlanError::Overflow)?,
             )?
         }
     };

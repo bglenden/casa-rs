@@ -6,7 +6,7 @@ use casa_imaging_model::{ProductRole, ProductTerm};
 use thiserror::Error;
 
 /// Exact reason product planning, production, or authorization failed closed.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 pub enum ProductsError {
     /// Physical product backing could not create, read, write, or flush a window.
     #[error("product backing failed: {0}")]
@@ -37,6 +37,18 @@ pub enum ProductsError {
     /// The compiled problem is not a supported single-plane continuum problem.
     #[error("problem is not a supported single-plane constant-basis continuum problem")]
     UnsupportedProblem,
+    /// The selected beam law cannot represent an output channel's frequency.
+    #[error(
+        "primary-beam model {model:?} does not support output channel {output_channel} at {frequency_hz} Hz"
+    )]
+    UnsupportedPrimaryBeamFrequency {
+        /// Explicitly selected primary-beam law.
+        model: crate::AnalyticPrimaryBeamModel,
+        /// Zero-based output channel, after spectral coordinate conversion.
+        output_channel: usize,
+        /// Output channel centre, in Hz.
+        frequency_hz: f64,
+    },
     /// The Product Graph requested a role this catalog version cannot produce.
     #[error("product role {role:?} is not producible by algorithm catalog {catalog}")]
     UnsupportedProductRole {

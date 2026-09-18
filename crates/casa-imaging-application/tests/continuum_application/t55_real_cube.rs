@@ -42,6 +42,155 @@ fn required_path(variable: &str) -> PathBuf {
 }
 
 #[test]
+#[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and external 600s/8GiB guard"]
+fn t55_q_band_rebaseline_preflight() {
+    let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
+    let image_size: usize = std::env::var("CASA_RS_T55_PREFLIGHT_IMAGE_SIZE")
+        .map(|value| value.parse().expect("positive diagnostic image size"))
+        .unwrap_or(64);
+    assert!([64, 128, 512].contains(&image_size));
+    let expected_rows: usize = std::env::var("CASA_RS_T55_PREFLIGHT_ROWS")
+        .map(|value| value.parse().expect("positive diagnostic row count"))
+        .unwrap_or(351);
+    assert!(expected_rows > 0 && expected_rows <= 35_100 && expected_rows % 351 == 0);
+    let measurement_set = required_path("CASA_RS_T55_REAL_MS");
+    let ms = MeasurementSet::open(&measurement_set).expect("preflight MS");
+    assert_eq!(
+        ms.row_count(),
+        expected_rows,
+        "explicit reduced-row fixture"
+    );
+    drop(ms);
+    let root = required_path("CASA_RS_T55_ARTIFACT_ROOT");
+    fs::create_dir(&root).expect("fresh retained artifact directory");
+    let image_name = root.join("image");
+    let mut imaging = request(
+        measurement_set,
+        image_name.clone(),
+        ContinuumAlgorithm::Clark,
+    );
+    imaging.image_size = image_size;
+    imaging.cell_arcsec = 0.35;
+    imaging.data_description = None;
+    imaging.spectral_window = Some("0".into());
+    imaging.channel_count = Some(512);
+    imaging.spectral_mode = SpectralImagingMode::Cube {
+        axis: CubeAxisConfig {
+            outframe: FrequencyRef::LSRK,
+            start: Some(CubeAxisValue::Channel(0)),
+            width: Some(CubeAxisValue::Channel(1)),
+            ..CubeAxisConfig::default()
+        },
+        output_channels: Some(512),
+    };
+    imaging.iterations = 9;
+    imaging.cycle_iterations = 1;
+    imaging.maximum_major_cycles = Some(3);
+    imaging.gain = 0.1;
+    imaging.psf_cutoff = casa_imaging_products::DEFAULT_PSF_CUTOFF;
+    imaging.primary_beam_limit = -0.2;
+    imaging.write_primary_beam = true;
+    imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
+    imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+        workers: Some(1),
+        memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 4 << 30)]),
+        ..ResourceOverride::default()
+    });
+    fs::write(root.join("request.txt"), format!("{imaging:#?}\n")).unwrap();
+    let started = std::time::Instant::now();
+    let result = execute_continuum(imaging).unwrap_or_else(|error| {
+        fs::write(root.join("failure.txt"), format!("{error:#?}\n")).unwrap();
+        panic!("Q-band preflight failed: {error}");
+    });
+    let task_wall_seconds = started.elapsed().as_secs_f64();
+    assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
+    let pb = PagedImage::<f32>::open(root.join("image.pb")).expect("published PB");
+    assert_eq!(pb.shape(), &[image_size, image_size, 1, 512]);
+    let publication = &result.outcome.output.publication_receipt;
+    assert_eq!(publication.status(), ReceiptStatus::Completed);
+    let publication_stage_nanos = [
+        "product-publication-check",
+        "product-generation-generate",
+        "product-generation-seal",
+        "product-publication-stage",
+        "product-publication-commit",
+    ]
+    .into_iter()
+    .map(|name| {
+        (
+            name,
+            publication
+                .stage_actual_elapsed_nanos(&WorkNodeId::new(name))
+                .expect("completed publication stage timing"),
+        )
+    })
+    .collect::<BTreeMap<_, _>>();
+    let publication_seconds = publication_stage_nanos.values().sum::<u64>() as f64 / 1.0e9;
+    let fingerprints = std::env::var_os("CASA_RS_T55_PUBLICATION_PROBE")
+        .map(|_| publication_probe_fingerprints(&root));
+    fs::write(
+        root.join("summary.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "scope": "diagnostic only: reduced rows, all 512 Q-band channels, serial Clark cube",
+            "rows": expected_rows,
+            "image_size": image_size,
+            "task_wall_seconds": task_wall_seconds,
+            "publication_seconds": publication_seconds,
+            "publication_stage_nanos": publication_stage_nanos,
+            "product_fingerprints": fingerprints,
+            "major_cycles": result.outcome.output.major_cycle_count,
+            "minor_iterations": result.minor_iterations,
+            "actual_minor_iterations": result.actual_minor_iterations,
+            "products": result.product_names,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn publication_probe_fingerprints(root: &std::path::Path) -> BTreeMap<&'static str, String> {
+    use sha2::{Digest, Sha256};
+
+    REAL_PRODUCTS
+        .into_iter()
+        .map(|suffix| {
+            let image = PagedImage::<f32>::open(root.join(format!("image{suffix}"))).unwrap();
+            let shape = image.shape().to_vec();
+            let mut digest = Sha256::new();
+            digest.update(format!(
+                "{:?}|{:?}|{:?}|{:?}|{:?}",
+                shape,
+                image.coordinates().to_record(),
+                image.units(),
+                image.image_info().unwrap(),
+                image.default_mask_name(),
+            ));
+            for channel in 0..shape[3] {
+                let pixels = image
+                    .get_slice(&[0, 0, 0, channel], &[shape[0], shape[1], shape[2], 1])
+                    .unwrap();
+                for value in &pixels {
+                    assert!(value.is_finite(), "nonfinite {suffix}");
+                    digest.update(value.to_bits().to_le_bytes());
+                }
+            }
+            let mut names = image.mask_names();
+            names.sort();
+            for name in names {
+                digest.update((name.len() as u64).to_le_bytes());
+                digest.update(name.as_bytes());
+                let mask = image.get_named_mask(&name).unwrap();
+                assert_eq!(mask.shape(), shape);
+                for value in &mask {
+                    digest.update([u8::from(*value)]);
+                }
+            }
+            (suffix, format!("{:x}", digest.finalize()))
+        })
+        .collect()
+}
+
+#[test]
 #[ignore = "requires isolated complete 32 GiB VLA input, explicit resources, fresh artifacts, and an external wall/RSS guard"]
 fn t55_full_dataset_clark_timing() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");

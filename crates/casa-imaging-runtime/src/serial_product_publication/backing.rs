@@ -218,6 +218,77 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "bounded publication diagnostic: requires a fresh durable CASA_RS_PUBLICATION_PROBE_ROOT and outer resource guard"]
+    fn publication_backing_read_amplification() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("CASA_RS_PUBLICATION_PROBE_ROOT").expect("durable probe root"),
+        );
+        std::fs::create_dir(&root).unwrap();
+        let directory = tempfile::tempdir_in(&root).unwrap();
+        let shape = [128, 128, 1, 64];
+        let plane_values = shape[0] * shape[1];
+        let tiled = TiledShape::with_tile_shape(shape.to_vec(), vec![128, 128, 1, 1]).unwrap();
+        let mut payload = PagedArray::<f32>::create_with_cache(
+            tiled.clone(),
+            directory.path().join("payload"),
+            plane_values * 4,
+        )
+        .unwrap();
+        let mut validity = PagedArray::<bool>::create_with_cache(
+            tiled,
+            directory.path().join("validity"),
+            plane_values,
+        )
+        .unwrap();
+        for channel in 0..shape[3] {
+            let plane = ArrayD::from_shape_fn(IxDyn(&[128, 128, 1, 1]), |index| {
+                ((index[0] * 128 + index[1]) * 64 + channel) as f32
+            });
+            let support = plane.mapv(|value| value as usize % 3 != 0);
+            payload.put_slice(&plane, &[0, 0, 0, channel]).unwrap();
+            validity.put_slice(&support, &[0, 0, 0, channel]).unwrap();
+        }
+        payload.flush().unwrap();
+        validity.flush().unwrap();
+        let before_payload = payload.io_stats();
+        let before_validity = validity.io_stats();
+        let backing = PagedProductArray {
+            arrays: Mutex::new((payload, validity)),
+            shape,
+            _directory: directory,
+        };
+        let mut values = vec![0.0; plane_values];
+        let mut support = vec![false; plane_values];
+        let started = std::time::Instant::now();
+        // These are the canonical hash rectangles at a one-plane window bound.
+        // This diagnoses backing reads; the application benchmark times hashing.
+        for x in (0..128).step_by(2) {
+            backing
+                .read_payload([x, 0, 0, 0], [2, 128, 1, 64], &mut values)
+                .unwrap();
+            backing
+                .read_validity([x, 0, 0, 0], [2, 128, 1, 64], &mut support)
+                .unwrap();
+            for (index, (&value, &valid)) in values.iter().zip(&support).enumerate() {
+                let expected = x * 128 * 64 + index;
+                assert_eq!(value, expected as f32);
+                assert_eq!(valid, expected % 3 != 0);
+            }
+        }
+        let seconds = started.elapsed().as_secs_f64();
+        let arrays = backing.arrays.lock().unwrap();
+        let payload = arrays.0.io_stats().delta_since(before_payload);
+        let validity = arrays.1.io_stats().delta_since(before_validity);
+        let record = format!(
+            "shape={shape:?}\nwindow_channels=1\nseconds={seconds}\nlogical_payload_bytes={}\nlogical_validity_disk_bytes={}\npayload={payload:?}\nvalidity={validity:?}\n",
+            plane_values * shape[3] * 4,
+            plane_values * shape[3] / 8,
+        );
+        std::fs::write(root.join("result.txt"), &record).unwrap();
+        println!("{record}");
+    }
+
+    #[test]
     fn product_backing_reads_multiaxis_windows_in_canonical_order() {
         let directory = tempfile::tempdir().unwrap();
         let shape = [3, 4, 2, 5];

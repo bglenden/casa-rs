@@ -793,13 +793,31 @@ fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTab
     // CASA selects VLA_L and VLA_Q in these open intervals. Both use this
     // aperture; SIMapper::addPB applies BeamSquint::NONE for PB images.
     // Other legacy-VLA bands retain their explicit unsupported boundary.
-    if frequency_hz.is_finite()
-        && ((frequency_hz > 1.0e9 && frequency_hz < 2.0e9)
-            || (frequency_hz > 35.0e9 && frequency_hz < 55.0e9))
-    {
+    if vla_band_supported(frequency_hz) {
         Ok(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
     } else {
         Err(ProductsError::UnsupportedProblem)
+    }
+}
+
+fn vla_band_supported(frequency_hz: f64) -> bool {
+    frequency_hz.is_finite()
+        && ((frequency_hz > 1.0e9 && frequency_hz < 2.0e9)
+            || (frequency_hz > 35.0e9 && frequency_hz < 55.0e9))
+}
+
+pub(crate) fn primary_beam_frequency_supported(
+    model: AnalyticPrimaryBeamModel,
+    frequency_hz: f64,
+) -> bool {
+    match model {
+        AnalyticPrimaryBeamModel::CasaVlaBand => vla_band_supported(frequency_hz),
+        AnalyticPrimaryBeamModel::CasaEvlaCommon => {
+            nearest_evla_common_coefficients(frequency_hz * 1.0e-6).is_some()
+        }
+        AnalyticPrimaryBeamModel::CasaAlma12mAiry
+        | AnalyticPrimaryBeamModel::CasaAca7mAiry
+        | AnalyticPrimaryBeamModel::MosaicSensitivity => true,
     }
 }
 
@@ -938,6 +956,35 @@ fn model_term(
 #[cfg(test)]
 mod tests {
     use casa_imaging_model::ProductNormalization;
+
+    #[test]
+    fn beam_coverage_preserves_the_existing_open_band_boundaries() {
+        use crate::AnalyticPrimaryBeamModel::{CasaEvlaCommon, CasaVlaBand};
+        for (model, frequency_hz, supported) in [
+            (CasaVlaBand, 1.0e9, false),
+            (CasaVlaBand, 1.4e9, true),
+            (CasaVlaBand, 2.0e9, false),
+            (CasaVlaBand, 8.0e9, false),
+            (CasaVlaBand, 35.0e9, false),
+            (CasaVlaBand, 44.0e9, true),
+            (CasaVlaBand, 45.022e9, true),
+            (CasaVlaBand, 54.880e9, true),
+            (CasaVlaBand, 55.0e9, false),
+            (CasaVlaBand, 55.008e9, false),
+            (CasaEvlaCommon, 0.9e9, false),
+            (CasaEvlaCommon, 1.4e9, true),
+            (CasaEvlaCommon, 3.0e9, true),
+            (CasaEvlaCommon, 6.0e9, true),
+            (CasaEvlaCommon, 8.001e9, false),
+            (CasaEvlaCommon, 44.0e9, false),
+        ] {
+            assert_eq!(
+                super::primary_beam_frequency_supported(model, frequency_hz),
+                supported,
+                "{model:?} at {frequency_hz}"
+            );
+        }
+    }
 
     #[test]
     fn mosaic_primary_beam_excludes_negative_fft_ringing() {
