@@ -972,6 +972,7 @@ dependencies = [
  "flate2",
  "image 0.25.10",
  "ndarray",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tar",

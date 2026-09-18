@@ -1,17 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! The two-phase Product Generation Authority for complete continuum products.
+//! Direct, bounded continuum product generation.
 //!
-//! Phase one ([`ProductGenerationAuthority::plan`]) binds the exact
-//! compiler-owned Product Graph and the closed typed source commitments into
-//! one schema-versioned planned generation whose members carry derived
-//! artifact identities. Phase two
-//! ([`ProductGenerationAuthority::authorize`]) seals the produced artifacts
-//! only against the matching closed typed completions: identical lineage,
-//! exact member set, exact content identities. Neither phase exposes any
-//! construction path for the records they mint.
-
-use std::{ops::Range, sync::Arc};
+//! This owner compiles the exact Product Graph inventory, validates its
+//! scientific source association, and transfers every generated window to a
+//! write-only output owner. It retains useful contracts, beams, and run
+//! association for publication without hashing or rereading product content.
 
 use casa_imaging_model::{
     CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ProductAxes, ProductBeamRule,
@@ -21,27 +15,20 @@ use casa_imaging_model::{
 };
 use casa_imaging_reconstruction::{ModelGeneration, NormalStateCatalog, SpectralChannelValidity};
 
+use crate::ProductStoragePlan;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
-use crate::digest::{
-    ARTIFACT_IDENTITY_DOMAIN, ARTIFACT_IDENTITY_VERSION, COMPLETIONS_DOMAIN, COMPLETIONS_VERSION,
-    Encoder, PLANNED_GENERATION_DOMAIN, PLANNED_GENERATION_VERSION, SEAL_DOMAIN, SEAL_VERSION,
-};
 use crate::error::ProductsError;
 use crate::restore::{
     MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
 };
-use crate::source::{ContinuumProductInputs, ContinuumSourceCatalog};
-use crate::storage::{ProductMemberBacking, ProductMemberWriter};
+use crate::source::ContinuumProductInputs;
+use crate::storage::{ProductMemberWriter, ProductOutput};
 use crate::taylor::{
     TaylorProducts, analytic_alma_airy_primary_beam, analytic_evla_primary_beam,
     analytic_vla_primary_beam, primary_beam_frequency_supported,
 };
-use crate::{ProductStorageFactory, ProductStoragePlan, ProductWindow, ProductWindowLayout};
 
 /// Version of the native continuum product-algorithm catalog.
-///
-/// The identity binds every product algorithm's semantics; changing any
-/// algorithm changes every derived artifact identity and seal.
 pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 9;
 
 /// Default main-lobe cutoff fraction for restoring-beam fitting.
@@ -166,342 +153,6 @@ impl Default for ContinuumProductControls {
     }
 }
 
-/// Stable identity of one source-role commitment set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContinuumCommitmentId([u8; 32]);
-
-impl ContinuumCommitmentId {
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-/// Stable identity of one planned continuum product generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlannedGenerationId([u8; 32]);
-
-impl PlannedGenerationId {
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-/// Stable content-addressed identity of one planned member artifact.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MemberArtifactId([u8; 32]);
-
-impl MemberArtifactId {
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-/// Stable identity of one closed typed completions record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContinuumCompletionsId([u8; 32]);
-
-impl ContinuumCompletionsId {
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-/// Stable identity of one authorized Product Generation seal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ContinuumSealId([u8; 32]);
-
-impl ContinuumSealId {
-    /// Return the exact SHA-256 digest.
-    #[must_use]
-    pub const fn as_bytes(self) -> [u8; 32] {
-        self.0
-    }
-}
-
-/// One two-phase Product Generation Authority bound to one compiled graph.
-#[derive(Debug)]
-pub struct ProductGenerationAuthority {
-    problem_id: CompiledProblemId,
-    graph_id: ProductGraphId,
-    identity: [u8; 32],
-}
-
-impl ProductGenerationAuthority {
-    /// Bind one affine authority to one compiled continuum problem.
-    #[must_use]
-    pub fn bind(problem: &CompiledProblem) -> Self {
-        let mut encoder = Encoder::new(b"casa-rs-product-generation-authority", 1);
-        encoder.identity(problem.problem_id().as_bytes());
-        encoder.identity(problem.product_graph().graph_id().as_bytes());
-        Self {
-            problem_id: problem.problem_id(),
-            graph_id: problem.product_graph().graph_id(),
-            identity: encoder.finish(),
-        }
-    }
-
-    /// Return the exact compiled problem this authority plans against.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
-    }
-
-    /// Plan the exact Product Graph over closed typed source commitments.
-    ///
-    /// Every publication member of the compiler-owned graph receives one
-    /// derived artifact identity binding its role, name, schema, shape,
-    /// physical unit, beam rule, validity rule, dependencies, and exact
-    /// WCS/axes law under this algorithm catalog version.
-    ///
-    /// # Errors
-    ///
-    /// Rejects catalogs minted against another problem or graph.
-    pub fn plan(
-        &self,
-        sources: &ContinuumSourceCatalog,
-        controls: &ContinuumProductControls,
-    ) -> Result<PlannedContinuumGeneration, ProductsError> {
-        if sources.graph_id() != self.graph_id || sources.problem().problem_id() != self.problem_id
-        {
-            return Err(ProductsError::ForeignPlannedGeneration);
-        }
-        controls.validate_for_problem(sources.problem())?;
-        let graph = sources.problem().product_graph();
-        let commitment_id = ContinuumCommitmentId(sources.commitment_id());
-        let mut members = Vec::with_capacity(graph.publication().members().len());
-        for node_ordinal in graph.publication().members() {
-            let node = graph
-                .nodes()
-                .get(node_ordinal.ordinal())
-                .ok_or(ProductsError::UnsupportedProblem)?;
-            ensure_producible(node.role())?;
-            let needs_primary_beam = |rule| {
-                matches!(
-                    rule,
-                    ProductValidityRule::PrimaryBeam(_)
-                        | ProductValidityRule::TaylorAndPrimaryBeam { .. }
-                )
-            };
-            let requires_primary_beam = needs_primary_beam(node.validity())
-                || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
-                    if needs_primary_beam(rule));
-            if requires_primary_beam
-                && (controls.primary_beam_model.is_none()
-                    || matches!(
-                        sources.problem().reconstruction().basis(),
-                        ReconstructionBasis::JointContinuumLine { .. }
-                    ))
-            {
-                return Err(ProductsError::UnsupportedProblem);
-            }
-            let axes = node.axes();
-            let shape = axes.shape();
-            let payload_values = shape
-                .iter()
-                .copied()
-                .fold(1usize, |total, extent| total.saturating_mul(extent));
-            let mut encoder = Encoder::new(ARTIFACT_IDENTITY_DOMAIN, ARTIFACT_IDENTITY_VERSION);
-            encoder.identity(self.identity);
-            encoder.identity(commitment_id.as_bytes());
-            encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
-            encoder.usize(node.node_id().ordinal());
-            encoder.bytes(node.name().unwrap_or_default().as_bytes());
-            encode_contract(&mut encoder, node);
-            let artifact_id = MemberArtifactId(encoder.finish());
-            members.push(PlannedMember {
-                node: node.node_id(),
-                role: node.role(),
-                name: node.name().unwrap_or_default().to_string(),
-                shape,
-                payload_values,
-                unit: node.unit(),
-                schema: node.schema(),
-                axes: axes.clone(),
-                normalization: node.normalization(),
-                beam_rule: node.beam(),
-                validity: node.validity(),
-                storage: node.storage(),
-                dependencies: node.dependencies().to_vec().into_boxed_slice(),
-                artifact_id,
-            });
-        }
-
-        let mut encoder = Encoder::new(PLANNED_GENERATION_DOMAIN, PLANNED_GENERATION_VERSION);
-        encoder.identity(self.identity);
-        encoder.identity(commitment_id.as_bytes());
-        encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
-        encoder.u32(controls.psf_cutoff().to_bits());
-        match controls.primary_beam_model() {
-            Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => encoder.u8(1),
-            Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => encoder.u8(2),
-            Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => encoder.u8(3),
-            Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => encoder.u8(4),
-            Some(AnalyticPrimaryBeamModel::CasaVlaBand) => encoder.u8(5),
-            None => encoder.u8(0),
-        }
-        encoder.usize(members.len());
-        for member in &members {
-            encoder.identity(member.artifact_id.as_bytes());
-        }
-        Ok(PlannedContinuumGeneration {
-            authority: self.identity,
-            problem_id: self.problem_id,
-            graph_id: self.graph_id,
-            generation_id: PlannedGenerationId(encoder.finish()),
-            commitment_id,
-            psf_cutoff: controls.psf_cutoff(),
-            primary_beam_model: controls.primary_beam_model(),
-            members: members.into_boxed_slice(),
-            final_model_generation: sources.final_model_generation(),
-            reconstruction_mask_generation: sources.reconstruction_mask_generation(),
-            line_reconstruction_mask_generation: sources.line_reconstruction_mask_generation(),
-        })
-    }
-
-    /// Authorize one sealed generation over matching typed completions.
-    ///
-    /// The completions must name exactly the planned generation and its
-    /// committed lineage, and every produced payload must re-digest to its
-    /// claimed and planned artifact identity in the planned order with no
-    /// missing, additional, reordered, or substituted members.
-    ///
-    /// # Errors
-    ///
-    /// Rejects foreign generations, mismatched commitments or member sets,
-    /// and any content-identity mismatch.
-    pub fn authorize(
-        &self,
-        planned: &PlannedContinuumGeneration,
-        completions: &ContinuumProducedMembers,
-    ) -> Result<SealedContinuumGeneration, ProductsError> {
-        if planned.authority != self.identity
-            || completions.planned_generation != planned.generation_id
-        {
-            return Err(ProductsError::ForeignPlannedGeneration);
-        }
-        if completions.commitment_id != planned.commitment_id {
-            return Err(ProductsError::CommitmentMismatch);
-        }
-        if completions.members.len() != planned.members.len() {
-            return Err(ProductsError::MemberSetMismatch {
-                expected: planned.members.len(),
-                actual: completions.members.len(),
-            });
-        }
-        for (member, produced) in planned.members.iter().zip(&completions.members) {
-            // The produced member must claim exactly this planned slot: same
-            // graph node and same planned artifact identity. The recomputed
-            // content identity must then match the produced claim, so any
-            // substitution or tampering fails closed here rather than at
-            // publication time.
-            if member.node != produced.node || member.artifact_id != produced.artifact_id {
-                return Err(ProductsError::MemberSetMismatch {
-                    expected: planned.members.len(),
-                    actual: completions.members.len(),
-                });
-            }
-            if produced.backing.layout.values()? != member.payload_values {
-                return Err(ProductsError::PayloadLengthMismatch {
-                    expected: member.payload_values,
-                    actual: produced.backing.layout.values()?,
-                });
-            }
-            let digest = produced.backing.content_digest()?;
-            if digest != produced.digest.as_bytes() {
-                return Err(ProductsError::MemberContentMismatch);
-            }
-        }
-
-        let mut encoder = Encoder::new(COMPLETIONS_DOMAIN, COMPLETIONS_VERSION);
-        encoder.identity(planned.generation_id.as_bytes());
-        encoder.identity(planned.commitment_id.as_bytes());
-        encoder.u32(CONTINUUM_ALGORITHM_CATALOG_VERSION);
-        encode_beams(&mut encoder, &completions.fitted_beams);
-        encode_beams(&mut encoder, &completions.restoring_beams);
-        for pair in planned.members.iter().zip(&completions.members) {
-            let (member, produced) = pair;
-            // Bind the planned artifact identity and the exact produced
-            // content together: a payload digest matching itself is not
-            // authorization without this pairing.
-            encoder.identity(member.artifact_id.as_bytes());
-            encoder.identity(produced.digest.as_bytes());
-        }
-        let completions_id = ContinuumCompletionsId(encoder.finish());
-
-        let mut encoder = Encoder::new(SEAL_DOMAIN, SEAL_VERSION);
-        encoder.identity(planned.generation_id.as_bytes());
-        encoder.identity(completions_id.as_bytes());
-        encoder.identity(self.identity);
-        let seal_id = ContinuumSealId(encoder.finish());
-
-        let members = planned
-            .members
-            .iter()
-            .zip(&completions.members)
-            .map(|(member, produced)| {
-                Ok(SealedMember {
-                    node: member.node,
-                    name: member.name.clone(),
-                    artifact_id: member.artifact_id,
-                    content_identity: produced.digest,
-                    contract: SealedMemberContract {
-                        role: member.role,
-                        unit: member.unit,
-                        schema: member.schema,
-                        axes: member.axes.clone(),
-                        beam_rule: member.beam_rule,
-                        validity: member.validity,
-                        storage: member.storage,
-                        dependencies: member.dependencies.clone(),
-                    },
-                    resolved_beams: sealed_beams_for_member(
-                        member,
-                        &planned.members,
-                        member.beam_rule,
-                        &completions.fitted_beams,
-                        &completions.restoring_beams,
-                    )?,
-                    backing: Arc::clone(&produced.backing),
-                })
-            })
-            .collect::<Result<Vec<_>, ProductsError>>()?
-            .into_boxed_slice();
-        Ok(SealedContinuumGeneration {
-            problem_id: self.problem_id,
-            graph_id: self.graph_id,
-            seal_id,
-            generation_id: planned.generation_id,
-            completions_id,
-            fitted_beams: completions.fitted_beams.clone(),
-            restoring_beams: completions.restoring_beams.clone(),
-            members,
-        })
-    }
-}
-
-fn encode_beams(encoder: &mut Encoder, beams: &[Option<RestoringBeam>]) {
-    encoder.usize(beams.len());
-    for beam in beams {
-        match beam {
-            Some(beam) => {
-                encoder.u8(1);
-                encoder.u64(beam.major_fwhm_rad().to_bits());
-                encoder.u64(beam.minor_fwhm_rad().to_bits());
-                encoder.u64(beam.position_angle_rad().to_bits());
-            }
-            None => encoder.u8(0),
-        }
-    }
-}
-
 fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
     match role {
         ProductRole::Psf(_)
@@ -526,78 +177,14 @@ fn ensure_producible(role: ProductRole) -> Result<(), ProductsError> {
     }
 }
 
-/// Bind every compiled contract dimension of one node into an encoder.
-fn encode_contract(encoder: &mut Encoder, node: &casa_imaging_model::ProductNode) {
-    encoder.u8(match node.schema() {
-        ProductSchema::ImageF32V1 => 0,
-        ProductSchema::LogicalCollectionV1 => 1,
-        ProductSchema::EmbeddedImageMetadataV1 => 2,
-        ProductSchema::InternalImageF32V1 => 3,
-    });
-    encoder.u8(match node.unit() {
-        ProductUnit::NotApplicable => 0,
-        ProductUnit::JyPerBeam => 1,
-        ProductUnit::JyPerPixel => 2,
-        ProductUnit::Dimensionless => 3,
-        ProductUnit::VisibilityWeight => 4,
-    });
-    encoder.u8(match node.beam() {
-        ProductBeamRule::None => 0,
-        ProductBeamRule::Fitted => 1,
-        ProductBeamRule::Restoring(_) => 2,
-        ProductBeamRule::Inherit(_) => 3,
-        ProductBeamRule::Metadata(_) => 4,
-    });
-    encoder.u8(match node.validity() {
-        ProductValidityRule::All => 0,
-        ProductValidityRule::FinalNormalState => 1,
-        ProductValidityRule::PrimaryBeam(_) => 2,
-        ProductValidityRule::Taylor(_) => 3,
-        ProductValidityRule::TaylorAndPrimaryBeam { .. } => 4,
-    });
-    let storage = node.storage();
-    encoder.u8(match storage.pixel_mask() {
-        ProductPixelMask::Absent => 0,
-        ProductPixelMask::Explicit(ProductValidityRule::All) => 1,
-        ProductPixelMask::Explicit(ProductValidityRule::FinalNormalState) => 2,
-        ProductPixelMask::Explicit(ProductValidityRule::PrimaryBeam(_)) => 3,
-        ProductPixelMask::Explicit(ProductValidityRule::Taylor(_)) => 4,
-        ProductPixelMask::Explicit(ProductValidityRule::TaylorAndPrimaryBeam { .. }) => 5,
-    });
-    encoder.u8(match storage.unit() {
-        None => 0,
-        Some(ProductUnit::NotApplicable) => 1,
-        Some(ProductUnit::JyPerBeam) => 2,
-        Some(ProductUnit::JyPerPixel) => 3,
-        Some(ProductUnit::Dimensionless) => 4,
-        Some(ProductUnit::VisibilityWeight) => 5,
-    });
-    encoder.u8(u8::from(storage.attach_beam()));
-    let axes = node.axes();
-    for extent in axes.shape() {
-        encoder.usize(extent);
-    }
-    for dependency in node.dependencies() {
-        encoder.usize(dependency.ordinal());
-    }
-}
-
-/// Schema-versioned planned continuum generation.
-///
-/// Minted only by [`ProductGenerationAuthority::plan`]:
-///
-/// ```compile_fail
-/// use casa_imaging_products::PlannedContinuumGeneration;
-///
-/// let _ = PlannedContinuumGeneration {};
-/// ```
+/// Exact compiler-owned inventory and source/run association for one
+/// continuum generation.
 #[derive(Debug)]
 pub struct PlannedContinuumGeneration {
-    authority: [u8; 32],
     problem_id: CompiledProblemId,
     graph_id: ProductGraphId,
-    generation_id: PlannedGenerationId,
-    commitment_id: ContinuumCommitmentId,
+    major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
+    normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     psf_cutoff: f32,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     members: Box<[PlannedMember]>,
@@ -609,112 +196,76 @@ pub struct PlannedContinuumGeneration {
 }
 
 impl PlannedContinuumGeneration {
-    pub(crate) fn metadata_residency_bytes(
-        &self,
+    /// Compile the exact publication inventory for these scientific inputs.
+    pub fn new(
         inputs: &ContinuumProductInputs<'_>,
-    ) -> Result<(u64, u64, u64), ProductsError> {
-        let overflow = || ProductsError::ResourceDemandOverflow("product metadata");
-        let domain_count = inputs.normal_state().domain_count();
-        if domain_count == 0 {
-            return Err(ProductsError::SourceLineageMismatch);
-        }
-        let requires_beam = self
-            .members
-            .iter()
-            .any(|member| member.beam_rule != ProductBeamRule::None);
-        let fitted_count = if !requires_beam {
-            0
-        } else {
-            match inputs.normal_state().catalog() {
-                NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
-                NormalStateCatalog::UnnormalizedJointBlockV1 => {
-                    inputs.normal_state().channel_count()
-                }
-                _ => domain_count
-                    .checked_mul(inputs.normal_state().channel_count())
-                    .and_then(|count| count.checked_mul(inputs.normal_state().polarization_count()))
-                    .ok_or_else(overflow)?,
+        controls: &ContinuumProductControls,
+    ) -> Result<Self, ProductsError> {
+        controls.validate_for_problem(inputs.problem())?;
+        let graph = inputs.problem().product_graph();
+        let mut members = Vec::with_capacity(graph.publication().members().len());
+        for node_ordinal in graph.publication().members() {
+            let node = graph
+                .nodes()
+                .get(node_ordinal.ordinal())
+                .ok_or(ProductsError::UnsupportedProblem)?;
+            ensure_producible(node.role())?;
+            let needs_primary_beam = |rule| {
+                matches!(
+                    rule,
+                    ProductValidityRule::PrimaryBeam(_)
+                        | ProductValidityRule::TaylorAndPrimaryBeam { .. }
+                )
+            };
+            let requires_primary_beam = needs_primary_beam(node.validity())
+                || matches!(node.storage().pixel_mask(), ProductPixelMask::Explicit(rule)
+                    if needs_primary_beam(rule));
+            if requires_primary_beam
+                && (controls.primary_beam_model.is_none()
+                    || matches!(
+                        inputs.problem().reconstruction().basis(),
+                        ReconstructionBasis::JointContinuumLine { .. }
+                    ))
+            {
+                return Err(ProductsError::UnsupportedProblem);
             }
-        };
-        let restoring_count =
-            if inputs.problem().products().restoring_beam() == RestoringBeamPolicy::None {
-                0
-            } else {
-                fitted_count
-            };
-        let beam_bytes = fitted_count
-            .checked_add(restoring_count)
-            .and_then(|count| count.checked_mul(size_of::<Option<RestoringBeam>>()))
-            .ok_or_else(overflow)?;
-        let produced = self
-            .members
-            .len()
-            .checked_mul(
-                size_of::<ProducedMember>()
-                    + size_of::<ProductMemberBacking>()
-                    + 2 * size_of::<usize>(),
-            )
-            .and_then(|bytes| bytes.checked_add(size_of::<ContinuumProducedMembers>()))
-            .and_then(|bytes| bytes.checked_add(beam_bytes))
-            .ok_or_else(overflow)?;
-        let mut sealed = self
-            .members
-            .len()
-            .checked_mul(size_of::<SealedMember>())
-            .and_then(|bytes| bytes.checked_add(size_of::<SealedContinuumGeneration>()))
-            .and_then(|bytes| bytes.checked_add(beam_bytes))
-            .ok_or_else(overflow)?;
-        for member in &self.members {
-            let domain_name = match member.axes.domain() {
-                ImageDomainRole::Main => 0,
-                ImageDomainRole::Outlier(name) => name.len(),
-            };
-            let spectral = match member.axes.spectral().wcs() {
-                casa_imaging_model::SpectralWcs::Linear { .. } => 0,
-                casa_imaging_model::SpectralWcs::Tabular {
-                    channel_centres_hz,
-                    channel_boundaries_hz,
-                } => channel_centres_hz
-                    .len()
-                    .checked_add(channel_boundaries_hz.len())
-                    .and_then(|count| count.checked_mul(size_of::<f64>()))
-                    .ok_or_else(overflow)?,
-            };
-            let beams = match member.beam_rule {
-                ProductBeamRule::None
-                | ProductBeamRule::Restoring(RestoringBeamPolicy::None)
-                | ProductBeamRule::Metadata(RestoringBeamPolicy::None) => 0,
-                ProductBeamRule::Fitted => fitted_count / domain_count,
-                ProductBeamRule::Restoring(RestoringBeamPolicy::Common)
-                | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => 1,
-                _ => restoring_count / domain_count,
-            };
-            for bytes in [
-                member.name.len(),
-                domain_name,
-                spectral,
-                size_of_val(member.axes.polarization()),
-                size_of_val(member.dependencies.as_ref()),
-                beams
-                    .checked_mul(size_of::<Option<RestoringBeam>>())
-                    .ok_or_else(overflow)?,
-            ] {
-                sealed = sealed.checked_add(bytes).ok_or_else(overflow)?;
-            }
+            let axes = node.axes();
+            let shape = axes.shape();
+            let payload_values = shape
+                .iter()
+                .copied()
+                .try_fold(1usize, |total, extent| total.checked_mul(extent))
+                .ok_or(ProductsError::ResourceDemandOverflow("product shape"))?;
+            members.push(PlannedMember {
+                node: node.node_id(),
+                role: node.role(),
+                name: node.name().unwrap_or_default().to_string(),
+                shape,
+                payload_values,
+                unit: node.unit(),
+                schema: node.schema(),
+                axes: axes.clone(),
+                normalization: node.normalization(),
+                beam_rule: node.beam(),
+                validity: node.validity(),
+                storage: node.storage(),
+                dependencies: node.dependencies().to_vec().into_boxed_slice(),
+            });
         }
-        let beam_scratch =
-            if inputs.problem().products().restoring_beam() == RestoringBeamPolicy::Common {
-                (fitted_count / domain_count)
-                    .checked_mul(size_of::<RestoringBeam>())
-                    .ok_or_else(overflow)?
-            } else {
-                0
-            };
-        Ok((
-            u64::try_from(produced).map_err(|_| overflow())?,
-            u64::try_from(sealed).map_err(|_| overflow())?,
-            u64::try_from(beam_scratch).map_err(|_| overflow())?,
-        ))
+        Ok(Self {
+            problem_id: inputs.problem().problem_id(),
+            graph_id: graph.graph_id(),
+            major_cycle_completion: inputs.major_cycle_completion(),
+            normal_state_completion: inputs.normal_state_completion(),
+            psf_cutoff: controls.psf_cutoff(),
+            primary_beam_model: controls.primary_beam_model(),
+            members: members.into_boxed_slice(),
+            final_model_generation: inputs.final_model().generation_id(),
+            reconstruction_mask_generation: inputs.reconstruction_mask_generation(),
+            line_reconstruction_mask_generation: inputs
+                .coupled_reconstruction_masks()
+                .map(|masks| masks.line().generation_id()),
+        })
     }
 
     /// Return the exact compiled problem this generation was planned for.
@@ -729,16 +280,20 @@ impl PlannedContinuumGeneration {
         self.graph_id
     }
 
-    /// Return the stable planned-generation identity.
+    /// Return the released Major-Cycle run association.
     #[must_use]
-    pub const fn generation_id(&self) -> PlannedGenerationId {
-        self.generation_id
+    pub const fn major_cycle_completion(
+        &self,
+    ) -> casa_imaging_reconstruction::MajorCycleCompletionId {
+        self.major_cycle_completion
     }
 
-    /// Return the committed source-lineage digest behind the plan.
+    /// Return the released Normal-State completion association.
     #[must_use]
-    pub const fn commitment_id(&self) -> ContinuumCommitmentId {
-        self.commitment_id
+    pub const fn normal_state_completion(
+        &self,
+    ) -> casa_imaging_reconstruction::FinalNormalStateCompletionId {
+        self.normal_state_completion
     }
 
     /// Return planned members in exact publication order.
@@ -794,7 +349,6 @@ pub struct PlannedMember {
     validity: ProductValidityRule,
     storage: ProductStorageContract,
     dependencies: Box<[ProductNodeId]>,
-    artifact_id: MemberArtifactId,
 }
 
 impl PlannedMember {
@@ -875,33 +429,82 @@ impl PlannedMember {
     pub const fn normalization(&self) -> Option<ProductNormalization> {
         self.normalization
     }
+}
 
-    /// Return the derived artifact identity of this member.
-    #[must_use]
-    pub const fn artifact_id(&self) -> MemberArtifactId {
-        self.artifact_id
+/// Complete compiled contract carried by one generated member.
+#[derive(Debug, Clone)]
+pub struct ProductMemberContract {
+    role: ProductRole,
+    unit: ProductUnit,
+    schema: ProductSchema,
+    axes: ProductAxes,
+    beam_rule: ProductBeamRule,
+    validity: ProductValidityRule,
+    storage: ProductStorageContract,
+    dependencies: Box<[ProductNodeId]>,
+}
+
+impl ProductMemberContract {
+    fn from_planned(member: &PlannedMember) -> Self {
+        Self {
+            role: member.role,
+            unit: member.unit,
+            schema: member.schema,
+            axes: member.axes.clone(),
+            beam_rule: member.beam_rule,
+            validity: member.validity,
+            storage: member.storage,
+            dependencies: member.dependencies.clone(),
+        }
     }
-}
 
-/// Produced artifacts awaiting authorization.
-///
-/// Minted only by [`produce_continuum_members`].
-#[derive(Debug)]
-pub struct ContinuumProducedMembers {
-    planned_generation: PlannedGenerationId,
-    commitment_id: ContinuumCommitmentId,
-    fitted_beams: Box<[Option<RestoringBeam>]>,
-    restoring_beams: Box<[Option<RestoringBeam>]>,
-    members: Box<[ProducedMember]>,
-}
+    /// Return the exact logical product meaning.
+    #[must_use]
+    pub const fn role(&self) -> ProductRole {
+        self.role
+    }
 
-/// One produced member payload with its computed content identity.
-#[derive(Debug)]
-struct ProducedMember {
-    node: ProductNodeId,
-    artifact_id: MemberArtifactId,
-    digest: MemberArtifactId,
-    backing: Arc<ProductMemberBacking>,
+    /// Return the required physical unit.
+    #[must_use]
+    pub const fn unit(&self) -> ProductUnit {
+        self.unit
+    }
+
+    /// Return the backend-independent logical payload schema.
+    #[must_use]
+    pub const fn schema(&self) -> ProductSchema {
+        self.schema
+    }
+
+    /// Return the exact WCS and storage-axis binding.
+    #[must_use]
+    pub const fn axes(&self) -> &ProductAxes {
+        &self.axes
+    }
+
+    /// Return fitted, restoring, inherited, or absent beam semantics.
+    #[must_use]
+    pub const fn beam_rule(&self) -> ProductBeamRule {
+        self.beam_rule
+    }
+
+    /// Return the numerical-support rule, independently of the stored mask.
+    #[must_use]
+    pub const fn validity(&self) -> ProductValidityRule {
+        self.validity
+    }
+
+    /// Return the exact stored-mask and metadata contract.
+    #[must_use]
+    pub const fn storage(&self) -> ProductStorageContract {
+        self.storage
+    }
+
+    /// Return graph-node dependencies, all of which precede this node.
+    #[must_use]
+    pub const fn dependencies(&self) -> &[ProductNodeId] {
+        &self.dependencies
+    }
 }
 
 /// Produce every planned member through the continuum algorithm catalog.
@@ -912,32 +515,37 @@ struct ProducedMember {
 ///
 /// # Errors
 ///
-/// Rejects plans minted from other lineages, unsupported roles, failed beam
-/// fits, and generated non-finite payloads.
+/// Rejects source/run mismatches, unsupported roles, failed beam fits, and
+/// generated non-finite payloads.
 pub fn produce_continuum_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
     storage_plan: ProductStoragePlan,
-    storage_factory: &dyn ProductStorageFactory,
-) -> Result<ContinuumProducedMembers, ProductsError> {
-    if inputs.final_model().generation_id() != planned.final_model_generation {
-        return Err(ProductsError::CommitmentMismatch);
+    output: &dyn ProductOutput,
+) -> Result<PublishedContinuumGeneration, ProductsError> {
+    if inputs.problem().problem_id() != planned.problem_id
+        || inputs.problem().product_graph().graph_id() != planned.graph_id
+        || inputs.major_cycle_completion() != planned.major_cycle_completion
+        || inputs.normal_state_completion() != planned.normal_state_completion
+        || inputs.final_model().generation_id() != planned.final_model_generation
+    {
+        return Err(ProductsError::SourceLineageMismatch);
     }
     if inputs.reconstruction_mask_generation() != planned.reconstruction_mask_generation {
-        return Err(ProductsError::CommitmentMismatch);
+        return Err(ProductsError::SourceLineageMismatch);
     }
     if inputs
         .coupled_reconstruction_masks()
         .map(|masks| masks.line().generation_id())
         != planned.line_reconstruction_mask_generation
     {
-        return Err(ProductsError::CommitmentMismatch);
+        return Err(ProductsError::SourceLineageMismatch);
     }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedTaylorBlockV1 {
-        return produce_taylor_members(planned, inputs, storage_plan, storage_factory);
+        return produce_taylor_members(planned, inputs, storage_plan, output);
     }
     if inputs.normal_state().catalog() == NormalStateCatalog::UnnormalizedJointBlockV1 {
-        return produce_joint_members(planned, inputs, storage_plan, storage_factory);
+        return produce_joint_members(planned, inputs, storage_plan, output);
     }
     let normal_state = inputs.normal_state();
     let channel_count = normal_state.channel_count();
@@ -956,7 +564,15 @@ pub fn produce_continuum_members(
         .iter()
         .any(|member| member.beam_rule != ProductBeamRule::None);
     let fitted_beams = if requires_beam {
-        inputs
+        let beam_count = normal_state
+            .domain_count()
+            .checked_mul(channel_count)
+            .and_then(|count| count.checked_mul(normal_state.polarization_count()))
+            .ok_or(ProductsError::ResourceDemandOverflow(
+                "generation beam count",
+            ))?;
+        let mut fitted = Vec::with_capacity(beam_count);
+        for (domain, local_channel, polarization) in inputs
             .problem()
             .geometry()
             .domains()
@@ -967,23 +583,23 @@ pub fn produce_continuum_members(
                         .map(move |polarization| (domain, local_channel, polarization))
                 })
             })
-            .map(|(domain, local_channel, polarization)| {
-                let channel = normal_state.slab().core_range().start + local_channel;
-                let window = normal_state.read_window(channel..channel + 1)?;
-                let plane = domain_plane(&window, domain.role(), 0, polarization)?;
-                if plane.validity == SpectralChannelValidity::Valid {
-                    fit_restoring_beam(
-                        &psf_real_plane(&plane),
-                        plane.shape,
-                        inputs.cell_size_rad_for_domain(domain.role())?,
-                        planned.psf_cutoff(),
-                    )
-                    .map(Some)
-                } else {
-                    Ok(None)
-                }
-            })
-            .collect::<Result<Box<[_]>, _>>()?
+        {
+            let channel = normal_state.slab().core_range().start + local_channel;
+            let window = normal_state.read_window(channel..channel + 1)?;
+            let plane = domain_plane(&window, domain.role(), 0, polarization)?;
+            fitted.push(if plane.validity == SpectralChannelValidity::Valid {
+                fit_restoring_beam(
+                    &psf_real_plane(&plane),
+                    plane.shape,
+                    inputs.cell_size_rad_for_domain(domain.role())?,
+                    planned.psf_cutoff(),
+                )
+                .map(Some)?
+            } else {
+                None
+            });
+        }
+        fitted.into_boxed_slice()
     } else {
         Box::new([])
     };
@@ -995,7 +611,8 @@ pub fn produce_continuum_members(
             for domain_beams in
                 fitted_beams.chunks(channel_count * normal_state.polarization_count())
             {
-                let valid = domain_beams.iter().flatten().copied().collect::<Vec<_>>();
+                let mut valid = Vec::with_capacity(domain_beams.len());
+                valid.extend(domain_beams.iter().flatten().copied());
                 if valid.is_empty() {
                     selected.extend_from_slice(domain_beams);
                 } else {
@@ -1008,7 +625,6 @@ pub fn produce_continuum_members(
         }
     };
 
-    let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         let domain_ordinal = inputs.model_domain_ordinal(member.axes().domain())?;
         let plane_shape = inputs
@@ -1023,7 +639,15 @@ pub fn produce_continuum_members(
             .and_then(|offset| offset.checked_mul(normal_state.polarization_count()))
             .ok_or(ProductsError::SourceLineageMismatch)?;
         let layout = storage_plan.layout(member.axes())?;
-        let mut writer = ProductMemberWriter::new(layout, storage_factory)?;
+        let member_beams = beams_for_member(
+            member,
+            &planned.members,
+            member.beam_rule,
+            &fitted_beams,
+            &restoring_beams,
+        )?;
+        let writer = output.begin_member(member, layout, &member_beams)?;
+        let mut writer = ProductMemberWriter::new(layout, writer)?;
         for window_start in (0..channel_count).step_by(layout.maximum_channels()) {
             let window_end = (window_start + layout.maximum_channels()).min(channel_count);
             let mut output = writer.window(window_start..window_end)?;
@@ -1099,33 +723,20 @@ pub fn produce_continuum_members(
                     )?;
                 }
             }
-            writer.write(&output)?;
+            writer.write(output)?;
         }
-        let backing = writer.finish()?;
-        let digest = MemberArtifactId(backing.content_digest()?);
-        members.push(ProducedMember {
-            node: member.node,
-            artifact_id: member.artifact_id,
-            digest,
-            backing,
-        });
+        writer.finish()?;
     }
 
-    Ok(ContinuumProducedMembers {
-        planned_generation: planned.generation_id,
-        commitment_id: planned.commitment_id,
-        fitted_beams,
-        restoring_beams,
-        members: members.into_boxed_slice(),
-    })
+    published_generation(planned, fitted_beams, restoring_beams)
 }
 
 fn produce_taylor_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
     storage_plan: ProductStoragePlan,
-    storage_factory: &dyn ProductStorageFactory,
-) -> Result<ContinuumProducedMembers, ProductsError> {
+    output: &dyn ProductOutput,
+) -> Result<PublishedContinuumGeneration, ProductsError> {
     let products = TaylorProducts::build(inputs, planned.psf_cutoff, planned.primary_beam_model)?;
     let requires_beam = planned
         .members
@@ -1142,7 +753,6 @@ fn produce_taylor_members(
             vec![products.restoring_beam()].into_boxed_slice()
         }
     };
-    let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         let payload = products.payload(member.role)?;
         let validity = match member.storage.pixel_mask() {
@@ -1160,36 +770,28 @@ fn produce_taylor_members(
                 actual: payload.len().max(validity.len()),
             });
         }
-        if payload.iter().any(|value| !value.is_finite()) {
-            return Err(ProductsError::GeneratedNonfinite);
-        }
-        let mut writer =
-            ProductMemberWriter::new(storage_plan.layout(member.axes())?, storage_factory)?;
+        let layout = storage_plan.layout(member.axes())?;
+        let member_beams = beams_for_member(
+            member,
+            &planned.members,
+            member.beam_rule,
+            &fitted_beams,
+            &restoring_beams,
+        )?;
+        let writer = output.begin_member(member, layout, &member_beams)?;
+        let mut writer = ProductMemberWriter::new(layout, writer)?;
         writer.write_coupled(&payload, &validity)?;
-        let backing = writer.finish()?;
-        let digest = MemberArtifactId(backing.content_digest()?);
-        members.push(ProducedMember {
-            node: member.node,
-            artifact_id: member.artifact_id,
-            digest,
-            backing,
-        });
+        writer.finish()?;
     }
-    Ok(ContinuumProducedMembers {
-        planned_generation: planned.generation_id,
-        commitment_id: planned.commitment_id,
-        fitted_beams,
-        restoring_beams,
-        members: members.into_boxed_slice(),
-    })
+    published_generation(planned, fitted_beams, restoring_beams)
 }
 
 fn produce_joint_members(
     planned: &PlannedContinuumGeneration,
     inputs: &ContinuumProductInputs<'_>,
     storage_plan: ProductStoragePlan,
-    storage_factory: &dyn ProductStorageFactory,
-) -> Result<ContinuumProducedMembers, ProductsError> {
+    output: &dyn ProductOutput,
+) -> Result<PublishedContinuumGeneration, ProductsError> {
     let normal = inputs.normal_state();
     let normal = &normal.read_window(normal.slab().core_range())?;
     if normal.domain_count() != 1 || inputs.final_model().shape().domains().len() != 1 {
@@ -1255,7 +857,6 @@ fn produce_joint_members(
     let restoring_beams = restoring_beam.map_or_else(Box::default, |beam| {
         vec![Some(beam); channels].into_boxed_slice()
     });
-    let mut members = Vec::with_capacity(planned.members.len());
     for member in &planned.members {
         let (payload, mut validity) = produce_joint_member(
             member,
@@ -1276,28 +877,20 @@ fn produce_joint_members(
                 actual: payload.len(),
             });
         }
-        if payload.iter().any(|value| !value.is_finite()) {
-            return Err(ProductsError::GeneratedNonfinite);
-        }
-        let mut writer =
-            ProductMemberWriter::new(storage_plan.layout(member.axes())?, storage_factory)?;
+        let layout = storage_plan.layout(member.axes())?;
+        let member_beams = beams_for_member(
+            member,
+            &planned.members,
+            member.beam_rule,
+            &fitted_beams,
+            &restoring_beams,
+        )?;
+        let writer = output.begin_member(member, layout, &member_beams)?;
+        let mut writer = ProductMemberWriter::new(layout, writer)?;
         writer.write_coupled(&payload, &validity)?;
-        let backing = writer.finish()?;
-        let digest = MemberArtifactId(backing.content_digest()?);
-        members.push(ProducedMember {
-            node: member.node,
-            artifact_id: member.artifact_id,
-            digest,
-            backing,
-        });
+        writer.finish()?;
     }
-    Ok(ContinuumProducedMembers {
-        planned_generation: planned.generation_id,
-        commitment_id: planned.commitment_id,
-        fitted_beams,
-        restoring_beams,
-        members: members.into_boxed_slice(),
-    })
+    published_generation(planned, fitted_beams, restoring_beams)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2122,149 +1715,8 @@ fn product_offset(
     Ok(offset)
 }
 
-/// The complete compiled contract carried by one sealed member.
-#[derive(Debug, Clone)]
-pub struct SealedMemberContract {
-    role: ProductRole,
-    unit: ProductUnit,
-    schema: ProductSchema,
-    axes: ProductAxes,
-    beam_rule: ProductBeamRule,
-    validity: ProductValidityRule,
-    storage: ProductStorageContract,
-    dependencies: Box<[ProductNodeId]>,
-}
-
-impl SealedMemberContract {
-    /// Return the exact logical product meaning.
-    #[must_use]
-    pub const fn role(&self) -> ProductRole {
-        self.role
-    }
-
-    /// Return the required physical unit.
-    #[must_use]
-    pub const fn unit(&self) -> ProductUnit {
-        self.unit
-    }
-
-    /// Return the backend-independent logical payload schema.
-    #[must_use]
-    pub const fn schema(&self) -> ProductSchema {
-        self.schema
-    }
-
-    /// Return the exact WCS and storage-axis binding.
-    #[must_use]
-    pub const fn axes(&self) -> &ProductAxes {
-        &self.axes
-    }
-
-    /// Return fitted, restoring, inherited, or absent beam semantics.
-    #[must_use]
-    pub const fn beam_rule(&self) -> ProductBeamRule {
-        self.beam_rule
-    }
-
-    /// Return the numerical-support rule, independently of the stored mask.
-    #[must_use]
-    pub const fn validity(&self) -> ProductValidityRule {
-        self.validity
-    }
-
-    /// Return the exact stored-mask and metadata contract authorized for publication.
-    #[must_use]
-    pub const fn storage(&self) -> ProductStorageContract {
-        self.storage
-    }
-
-    /// Return graph-node dependencies, all of which precede this node.
-    #[must_use]
-    pub const fn dependencies(&self) -> &[ProductNodeId] {
-        &self.dependencies
-    }
-}
-
-/// One authorized member of an exactly-once sealed member set.
-#[derive(Debug, Clone)]
-pub struct SealedMember {
-    node: ProductNodeId,
-    name: String,
-    artifact_id: MemberArtifactId,
-    content_identity: MemberArtifactId,
-    contract: SealedMemberContract,
-    resolved_beams: Box<[Option<RestoringBeam>]>,
-    backing: Arc<ProductMemberBacking>,
-}
-
-impl SealedMember {
-    /// Return the graph-local node identity.
-    #[must_use]
-    pub const fn node(&self) -> ProductNodeId {
-        self.node
-    }
-
-    /// Return the compiled product name.
-    #[must_use]
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    /// Return the planned-and-sealed artifact identity.
-    #[must_use]
-    pub const fn artifact_id(&self) -> MemberArtifactId {
-        self.artifact_id
-    }
-
-    /// Return the content identity bound to this member's artifact identity
-    /// by the authorization seal.
-    #[must_use]
-    pub const fn content_identity(&self) -> MemberArtifactId {
-        self.content_identity
-    }
-
-    /// Return the complete compiled contract of this member.
-    #[must_use]
-    pub const fn contract(&self) -> &SealedMemberContract {
-        &self.contract
-    }
-
-    /// Return the single resolved beam when exactly one valid plane exists.
-    #[must_use]
-    pub fn resolved_beam(&self) -> Option<&RestoringBeam> {
-        match self.resolved_beams.as_ref() {
-            [Some(beam)] => Some(beam),
-            _ => None,
-        }
-    }
-
-    /// Return resolved beam metadata in output-channel order.
-    ///
-    /// Blank and unmapped channel planes carry `None` rather than fabricated
-    /// beam metadata.
-    #[must_use]
-    pub const fn resolved_beams(&self) -> &[Option<RestoringBeam>] {
-        &self.resolved_beams
-    }
-
-    /// Return the admitted physical window contract for this member.
-    #[must_use]
-    pub fn window_layout(&self) -> ProductWindowLayout {
-        self.backing.layout
-    }
-
-    /// Read one bounded window of the sealed payload and its stored-mask support.
-    ///
-    /// This is independent of numerical blanking and the numeric CLEAN-mask
-    /// product. An absent stored mask has all-true support; an explicit mask
-    /// follows the compiled storage contract even on blank spectral planes.
-    pub fn read_window(&self, channels: Range<usize>) -> Result<ProductWindow, ProductsError> {
-        self.backing.read_window(channels)
-    }
-}
-
 /// Resolve one member's compiled beam rule against the fitted generation beam.
-fn sealed_beams_for_member(
+fn beams_for_member(
     member: &PlannedMember,
     members: &[PlannedMember],
     rule: ProductBeamRule,
@@ -2287,7 +1739,7 @@ fn sealed_beams_for_member(
         domain_count += 1;
     }
     let domain_ordinal = domain_ordinal.ok_or(ProductsError::SourceLineageMismatch)?;
-    Ok(sealed_beams(
+    Ok(resolve_beams(
         rule,
         domain_beam_slice(fitted, domain_ordinal, domain_count)?,
         domain_beam_slice(restoring, domain_ordinal, domain_count)?,
@@ -2314,7 +1766,7 @@ fn domain_beam_slice(
         .ok_or(ProductsError::SourceLineageMismatch)
 }
 
-fn sealed_beams(
+fn resolve_beams(
     rule: ProductBeamRule,
     fitted: &[Option<RestoringBeam>],
     restoring: &[Option<RestoringBeam>],
@@ -2330,140 +1782,47 @@ fn sealed_beams(
         | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => {
             vec![restoring.iter().flatten().next().copied()].into_boxed_slice()
         }
-        // Inherit rules resolve through their referenced member; the
-        // embedded metadata is identical because the generation carries one
-        // fitted beam set, so resolving to it preserves the contract.
         ProductBeamRule::Inherit(_) => restoring.into(),
     }
 }
 
-/// One authorized continuum generation carrying its exact sealed member set.
-///
-/// Minted only by [`ProductGenerationAuthority::authorize`]:
-///
-/// ```compile_fail
-/// use casa_imaging_products::SealedContinuumGeneration;
-///
-/// let _ = SealedContinuumGeneration {};
-/// ```
-#[derive(Debug)]
-pub struct SealedContinuumGeneration {
-    problem_id: CompiledProblemId,
-    graph_id: ProductGraphId,
-    seal_id: ContinuumSealId,
-    generation_id: PlannedGenerationId,
-    completions_id: ContinuumCompletionsId,
+fn published_generation(
+    planned: &PlannedContinuumGeneration,
     fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
-    members: Box<[SealedMember]>,
+) -> Result<PublishedContinuumGeneration, ProductsError> {
+    let mut members = Vec::with_capacity(planned.members.len());
+    for member in &planned.members {
+        members.push(PublishedMember {
+            node: member.node,
+            name: member.name.clone(),
+            contract: ProductMemberContract::from_planned(member),
+            resolved_beams: beams_for_member(
+                member,
+                &planned.members,
+                member.beam_rule,
+                &fitted_beams,
+                &restoring_beams,
+            )?,
+        });
+    }
+    Ok(PublishedContinuumGeneration {
+        problem_id: planned.problem_id,
+        graph_id: planned.graph_id,
+        major_cycle_completion: planned.major_cycle_completion,
+        normal_state_completion: planned.normal_state_completion,
+        fitted_beams,
+        restoring_beams,
+        members: members.into_boxed_slice(),
+    })
 }
 
-impl SealedContinuumGeneration {
-    /// Return the exact compiled problem authorized by this seal.
-    #[must_use]
-    pub const fn problem_id(&self) -> CompiledProblemId {
-        self.problem_id
-    }
-
-    /// Return the exact compiled Product Graph authorized by this seal.
-    #[must_use]
-    pub const fn graph_id(&self) -> ProductGraphId {
-        self.graph_id
-    }
-
-    /// Return the Product Generation seal identity.
-    #[must_use]
-    pub const fn seal_id(&self) -> ContinuumSealId {
-        self.seal_id
-    }
-
-    /// Return the planned generation this seal authorizes.
-    #[must_use]
-    pub const fn generation_id(&self) -> PlannedGenerationId {
-        self.generation_id
-    }
-
-    /// Return the typed completions record behind this seal.
-    #[must_use]
-    pub const fn completions_id(&self) -> ContinuumCompletionsId {
-        self.completions_id
-    }
-
-    /// Return the fitted restoring beam, when the graph required one.
-    #[must_use]
-    pub fn restoring_beam(&self) -> Option<&RestoringBeam> {
-        match self.restoring_beams.as_ref() {
-            [Some(beam)] => Some(beam),
-            _ => None,
-        }
-    }
-
-    /// Return all selected restoring beams in canonical domain-major,
-    /// output-channel-minor order.
-    #[must_use]
-    pub const fn restoring_beams(&self) -> &[Option<RestoringBeam>] {
-        &self.restoring_beams
-    }
-
-    /// Return all independently fitted PSF beams in canonical domain-major,
-    /// output-channel-minor order.
-    ///
-    /// Common restoration may select a different beam while PSF and residual
-    /// products retain this fitted topology.
-    #[must_use]
-    pub const fn fitted_beams(&self) -> &[Option<RestoringBeam>] {
-        &self.fitted_beams
-    }
-
-    /// Return the exact sealed member set in canonical publication order.
-    #[must_use]
-    pub const fn members(&self) -> &[SealedMember] {
-        &self.members
-    }
-
-    /// Consume staged sealed payloads into their payload-free terminal record.
-    ///
-    /// The publication runtime calls this only after all member arrays have
-    /// been staged. Consuming the seal releases those arrays while preserving
-    /// every identity, contract, name, and beam needed for terminal receipts.
-    #[must_use]
-    pub fn into_published_summary(self) -> PublishedContinuumGeneration {
-        PublishedContinuumGeneration {
-            problem_id: self.problem_id,
-            graph_id: self.graph_id,
-            seal_id: self.seal_id,
-            generation_id: self.generation_id,
-            completions_id: self.completions_id,
-            fitted_beams: self.fitted_beams,
-            restoring_beams: self.restoring_beams,
-            members: self
-                .members
-                .into_vec()
-                .into_iter()
-                .map(|member| PublishedMember {
-                    node: member.node,
-                    name: member.name,
-                    artifact_id: member.artifact_id,
-                    content_identity: member.content_identity,
-                    contract: member.contract,
-                    resolved_beams: member.resolved_beams,
-                })
-                .collect(),
-        }
-    }
-}
-
-/// Payload-free terminal record for one published member.
-///
-/// This type has no public constructor and is minted only when a sealed
-/// generation relinquishes its staged numeric and validity arrays.
+/// Payload-free metadata for one generated member.
 #[derive(Debug, Clone)]
 pub struct PublishedMember {
     node: ProductNodeId,
     name: String,
-    artifact_id: MemberArtifactId,
-    content_identity: MemberArtifactId,
-    contract: SealedMemberContract,
+    contract: ProductMemberContract,
     resolved_beams: Box<[Option<RestoringBeam>]>,
 }
 
@@ -2480,21 +1839,9 @@ impl PublishedMember {
         &self.name
     }
 
-    /// Return the planned-and-published artifact identity.
-    #[must_use]
-    pub const fn artifact_id(&self) -> MemberArtifactId {
-        self.artifact_id
-    }
-
-    /// Return the exact published content identity.
-    #[must_use]
-    pub const fn content_identity(&self) -> MemberArtifactId {
-        self.content_identity
-    }
-
     /// Return the complete compiled member contract.
     #[must_use]
-    pub const fn contract(&self) -> &SealedMemberContract {
+    pub const fn contract(&self) -> &ProductMemberContract {
         &self.contract
     }
 
@@ -2503,74 +1850,71 @@ impl PublishedMember {
     pub const fn resolved_beams(&self) -> &[Option<RestoringBeam>] {
         &self.resolved_beams
     }
+
+    /// Return the single resolved beam when exactly one valid plane exists.
+    #[must_use]
+    pub fn resolved_beam(&self) -> Option<&RestoringBeam> {
+        match self.resolved_beams.as_ref() {
+            [Some(beam)] => Some(beam),
+            _ => None,
+        }
+    }
 }
 
-/// Payload-free terminal record for one published continuum generation.
-///
-/// This type has no public constructor and can only be obtained by consuming
-/// an authorized sealed generation after its member arrays have been staged.
+/// Payload-free metadata for one generated continuum run.
 #[derive(Debug, Clone)]
 pub struct PublishedContinuumGeneration {
     problem_id: CompiledProblemId,
     graph_id: ProductGraphId,
-    seal_id: ContinuumSealId,
-    generation_id: PlannedGenerationId,
-    completions_id: ContinuumCompletionsId,
+    major_cycle_completion: casa_imaging_reconstruction::MajorCycleCompletionId,
+    normal_state_completion: casa_imaging_reconstruction::FinalNormalStateCompletionId,
     fitted_beams: Box<[Option<RestoringBeam>]>,
     restoring_beams: Box<[Option<RestoringBeam>]>,
     members: Box<[PublishedMember]>,
 }
 
 impl PublishedContinuumGeneration {
-    /// Return numeric and validity array residency retained after staging.
-    #[must_use]
-    pub const fn payload_residency_bytes(&self) -> u64 {
-        0
-    }
-
-    /// Return the exact compiled problem authorized by the publication seal.
+    /// Return the exact compiled problem for this generated run.
     #[must_use]
     pub const fn problem_id(&self) -> CompiledProblemId {
         self.problem_id
     }
 
-    /// Return the exact compiled Product Graph authorized by the seal.
+    /// Return the exact compiler-owned Product Graph realized by this run.
     #[must_use]
     pub const fn graph_id(&self) -> ProductGraphId {
         self.graph_id
     }
 
-    /// Return the terminal Product Generation seal identity.
+    /// Return the released Major-Cycle run association.
     #[must_use]
-    pub const fn seal_id(&self) -> ContinuumSealId {
-        self.seal_id
+    pub const fn major_cycle_completion(
+        &self,
+    ) -> casa_imaging_reconstruction::MajorCycleCompletionId {
+        self.major_cycle_completion
     }
 
-    /// Return the planned generation authorized by the seal.
+    /// Return the released Normal-State completion association.
     #[must_use]
-    pub const fn generation_id(&self) -> PlannedGenerationId {
-        self.generation_id
+    pub const fn normal_state_completion(
+        &self,
+    ) -> casa_imaging_reconstruction::FinalNormalStateCompletionId {
+        self.normal_state_completion
     }
 
-    /// Return the typed completions identity behind this publication.
-    #[must_use]
-    pub const fn completions_id(&self) -> ContinuumCompletionsId {
-        self.completions_id
-    }
-
-    /// Return the fitted restoring beams retained as terminal metadata.
+    /// Return the fitted restoring beams retained as metadata.
     #[must_use]
     pub const fn fitted_beams(&self) -> &[Option<RestoringBeam>] {
         &self.fitted_beams
     }
 
-    /// Return selected restoring beams retained as terminal metadata.
+    /// Return selected restoring beams retained as metadata.
     #[must_use]
     pub const fn restoring_beams(&self) -> &[Option<RestoringBeam>] {
         &self.restoring_beams
     }
 
-    /// Return published members in exact graph order.
+    /// Return generated members in exact graph order.
     #[must_use]
     pub const fn members(&self) -> &[PublishedMember] {
         &self.members

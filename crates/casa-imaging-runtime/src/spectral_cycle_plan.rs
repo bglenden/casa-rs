@@ -1689,7 +1689,7 @@ fn append_low_memory_adaptation(
         base.artifacts().to_vec(),
         base.observation_transaction().clone(),
         base.publication_layouts().clone(),
-        base.product_publication_authority(),
+        base.product_publication_plan(),
     )?)
 }
 

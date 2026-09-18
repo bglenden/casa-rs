@@ -110,9 +110,7 @@ fn t55_q_band_rebaseline_preflight() {
     assert_eq!(publication.status(), ReceiptStatus::Completed);
     let publication_stage_nanos = [
         "product-publication-check",
-        "product-generation-generate",
-        "product-generation-seal",
-        "product-publication-stage",
+        "product-generation-write",
         "product-publication-commit",
     ]
     .into_iter()
@@ -600,22 +598,7 @@ fn real_clark_worker_cases(
                     actual_products,
                     REAL_PRODUCTS.into_iter().map(str::to_owned).collect()
                 );
-                let mut publication_identities = output
-                    .publication_receipt
-                    .artifact_identities()
-                    .into_iter()
-                    .map(|planned| {
-                        let observed = output
-                            .publication_receipt
-                            .artifact_observed_identity(planned)
-                            .expect("observed identity for published product");
-                        let hex = |bytes: [u8; 32]| -> String {
-                            bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-                        };
-                        (hex(planned.as_bytes()), hex(observed))
-                    })
-                    .collect::<BTreeMap<_, _>>();
-                assert_eq!(publication_identities.len(), REAL_PRODUCTS.len());
+                assert_eq!(output.products.members().len(), REAL_PRODUCTS.len());
                 let products = REAL_PRODUCTS
                     .into_iter()
                     .map(|suffix| {
@@ -661,25 +644,12 @@ fn real_clark_worker_cases(
                                 (name, mask.iter().copied().collect())
                             })
                             .collect();
-                        // Publication identities bind this run, not just its pixels.
                         let misc = product.misc_info();
-                        let Some(Value::Scalar(ScalarValue::String(planned))) =
-                            misc.get("casa_rs_planned_product_identity")
-                        else {
-                            panic!("{suffix}: missing planned publication identity");
-                        };
-                        let observed = publication_identities.remove(planned).expect(
-                            "unique planned identity from the reopened publication receipt",
-                        );
                         let expected_misc = RecordValue::new(
-                            [
-                                ("casars_imager_role", suffix[1..].to_owned()),
-                                ("casa_rs_planned_product_identity", planned.clone()),
-                                ("casa_rs_observed_product_identity", observed),
-                            ]
-                            .into_iter()
-                            .map(|(name, value)| RecordField::new(name, string(&value)))
-                            .collect(),
+                            [("casars_imager_role", suffix[1..].to_owned())]
+                                .into_iter()
+                                .map(|(name, value)| RecordField::new(name, string(&value)))
+                                .collect(),
                         );
                         assert_eq!(misc, expected_misc, "{suffix} publication metadata");
                         ProductSnapshot {
@@ -694,7 +664,6 @@ fn real_clark_worker_cases(
                         }
                     })
                     .collect::<Vec<_>>();
-                assert!(publication_identities.is_empty());
                 let science = &output.scientific;
                 let normal = science.normal_state();
                 let windows = (0..normal.sum_weights().len())

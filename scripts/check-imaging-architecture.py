@@ -51,15 +51,15 @@ ACCEPTED_ISSUE_OUTCOMES_SHA256 = (
     "1d2a77232fdc25a50053097b644b64cbdf0d21e1970590ec4180de6dce29738d"
 )
 ACCEPTED_ACCEPTANCE_CONTRACTS_SHA256 = (
-    "daafa560c0e941fb3f2cea5c02a46de8a3363c2dd327cb839ef8ab2111f09835"
+    "f992a51a25a086e44cbd9be28453a8a345f7dbd0c6bce0cfc44fb8a6796db2c0"
 )
 ACCEPTED_MATRIX_ROWS_SHA256 = (
-    "1e6e924803b005cbcd7d4d3bc0b456e90705cf1516b2c37d2a7efe642e860ed0"
+    "0a18b35e75f5778273081c65ed683c466f0ef6812e37474c2b7ed8250c5777ae"
 )
 ACCEPTED_BASELINE_MANIFEST_DIGESTS_SHA256 = (
-    "754610731252b48fa6126a1a447d8779619ff35cc947990d326913c244e5c9e5"
+    "b3c62c635516f68a542729b64f9f61f7450e47ef78d6f0fbb5938cc3106b47b3"
 )
-ACCEPTED_MATRIX_CONTRACT_REVISION = 88
+ACCEPTED_MATRIX_CONTRACT_REVISION = 89
 ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "scientific-products-v1",
@@ -164,7 +164,7 @@ ACCEPTED_CONTRACT_REQUIREMENT_SHA256 = {
     (
         "observation-transaction-v1",
         "laws",
-    ): "a40814e45997e423400d832bed908ad4240aab607f27ad3fd2884710bb74ac53",
+    ): "558610ecf88a5bf9247e90176e9abd8bdd92c3b44495cf90a6b97954824ed76a",
     (
         "observation-transaction-v1",
         "resource_gates",
@@ -3362,6 +3362,97 @@ def resolve_input(path: Path, base: Path = REPO_ROOT) -> Path:
     return path if path.is_absolute() else base / path
 
 
+def without_inline_rust_tests(source: str) -> str:
+    """Remove cfg(test) modules while retaining production items after them."""
+    pattern = re.compile(r"#\[cfg\(test\)\]\s*mod\s+\w+\s*\{")
+    while match := pattern.search(source):
+        depth = 1
+        end = match.end()
+        while depth and end < len(source):
+            depth += (source[end] == "{") - (source[end] == "}")
+            end += 1
+        if depth:
+            raise ArchitectureError("ADR-0014: unterminated inline test module")
+        source = source[:match.start()] + source[end:]
+    return source
+
+
+def validate_product_write_only_sources(
+    product_sources: dict[str, str], sink_source: str
+) -> None:
+    """Guard ADR-0014's ownership seam, not the spelling of attestation types.
+
+    The visibility stream has an independent MeasurementSet-generation consumer.
+    Image generation has no hashing or persisted-output read capability. Runtime
+    counting/error tests additionally exercise the actual bounded write path.
+    """
+    storage = product_sources.get("storage.rs", "")
+    for trait, methods in {
+        "ProductOutput": {"begin_member"},
+        "ProductWriter": {"write", "finish"},
+    }.items():
+        declaration = re.search(
+            rf"pub\s+trait\s+{trait}\s*\{{(.*?)\n\}}", storage, re.S
+        )
+        if declaration is None or set(
+            re.findall(r"\bfn\s+(\w+)", declaration.group(1))
+        ) != methods:
+            raise ArchitectureError(
+                f"ADR-0014: {trait} must expose only its bounded write lifecycle"
+            )
+    if not re.search(
+        r"fn\s+write\s*\(\s*&mut\s+self\s*,\s*window\s*:\s*ProductWindow\s*\)",
+        storage,
+    ):
+        raise ArchitectureError("ADR-0014: the writer must consume an owned window")
+    forbidden = re.compile(
+        r"\b(?:sha1|sha2|sha3|blake3|crc32c|crc32fast|xxhash_rust|"
+        r"Sha256|Sha512|DefaultHasher|SipHasher)\b"
+        r"|\bstd\s*::\s*hash\b|\bHasher\s*::"
+        r"|\b(?:ProductMemberBacking|ProductArrayStorage|CanonicalWindows)\b"
+        r"|\b(?:std|tokio)\s*::\s*fs\b"
+    )
+    for name, source in product_sources.items():
+        if name == "visibility.rs":
+            continue
+        production = without_inline_rust_tests(source)
+        production = re.sub(r"//[^\n]*", "", production)
+        if forbidden.search(production):
+            raise ArchitectureError(
+                f"ADR-0014: {name} adds product hashing or readable output backing"
+            )
+    sink_production = without_inline_rust_tests(sink_source)
+    if re.search(
+        r"\bPagedImage\s*(?:::\s*<[^>]+>)?\s*::\s*open\b"
+        r"|\.(?:get_slice|read_window|read_payload|read_validity|content_digest)\s*\(",
+        sink_production,
+    ):
+        raise ArchitectureError("ADR-0014: publication must not reread product arrays")
+
+
+def validate_prepared_model_transfer(source: str) -> None:
+    body = rust_function_body(source, "initial_reprojected", Path("reconstruction/lib.rs"))
+    body = re.sub(r"//[^\n]*", "", body)
+    # The opaque prepared buffer may move into storage, but this trusted
+    # lifecycle transition has no scientific reason to inspect its samples.
+    body = re.sub(r"prepared\s*\.\s*samples\s*\.\s*into_vec\s*\(\s*\)", "", body)
+    if re.search(r"prepared\s*\.\s*samples\b", body):
+        raise ArchitectureError("ADR-0014: trusted prepared-model transfer must not inspect samples")
+
+
+def validate_product_write_only_path(repo_root: Path = REPO_ROOT) -> None:
+    root = repo_root / "crates/casa-imaging-products/src"
+    sources = {
+        str(path.relative_to(root)): path.read_text(encoding="utf-8")
+        for path in root.rglob("*.rs")
+        if path.name != "tests.rs" and "tests" not in path.relative_to(root).parts
+    }
+    sink = repo_root / "crates/casa-imaging-application/src/casa_product_sink.rs"
+    validate_product_write_only_sources(sources, sink.read_text(encoding="utf-8"))
+    reconstruction = repo_root / "crates/casa-imaging-reconstruction/src/lib.rs"
+    validate_prepared_model_transfer(reconstruction.read_text(encoding="utf-8"))
+
+
 def main() -> int:
     args = parse_args()
     try:
@@ -3378,6 +3469,7 @@ def main() -> int:
         validate_workspace(policy, metadata)
         validate_forward_invariants(policy, metadata)
         validate_source_boundaries(policy)
+        validate_product_write_only_path()
 
         matrix_path = (
             resolve_input(args.migration_matrix)

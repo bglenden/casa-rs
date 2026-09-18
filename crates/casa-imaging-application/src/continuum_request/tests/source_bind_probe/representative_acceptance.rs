@@ -335,7 +335,7 @@ fn run_full_products(require_cold_dirty: bool) {
                 path.display()
             );
             serde_json::json!({"name": member.name(), "path": path,
-            "content_identity": format!("{:?}", member.content_identity())})
+            "contract": format!("{:?}", member.contract())})
         })
         .collect::<Vec<_>>();
     assert_eq!(

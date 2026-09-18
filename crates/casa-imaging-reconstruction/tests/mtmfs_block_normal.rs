@@ -2746,7 +2746,7 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     }
 
     let direct_prior = initial_normal_from_frozen(&problem, &frozen);
-    let initial_content = direct_prior.content_identity();
+    let initial_content = direct_prior.diagnostic_content_identity().unwrap();
     assert_eq!(direct_prior.coefficient_term_count(), 2);
     assert_eq!(direct_prior.normal_moment_count(), 3);
     let direct = complete_frozen_taylor_operator(
@@ -2765,7 +2765,10 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
     let direct_residual = direct.primitives().dirty().to_vec();
 
     let serial_prior = initial_normal_from_frozen(&problem, &frozen);
-    assert_eq!(serial_prior.content_identity(), initial_content);
+    assert_eq!(
+        serial_prior.diagnostic_content_identity().unwrap(),
+        initial_content
+    );
     let serial = execute_compact_taylor(
         &problem,
         &frozen,
@@ -2776,7 +2779,10 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
         1,
     );
     let two_worker_prior = initial_normal_from_frozen(&problem, &frozen);
-    assert_eq!(two_worker_prior.content_identity(), initial_content);
+    assert_eq!(
+        two_worker_prior.diagnostic_content_identity().unwrap(),
+        initial_content
+    );
     let two_workers = execute_compact_taylor(
         &problem,
         &frozen,
@@ -2787,7 +2793,10 @@ fn t42_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable() {
         2,
     );
     let four_worker_prior = initial_normal_from_frozen(&problem, &frozen);
-    assert_eq!(four_worker_prior.content_identity(), initial_content);
+    assert_eq!(
+        four_worker_prior.diagnostic_content_identity().unwrap(),
+        initial_content
+    );
     let four_workers = execute_compact_taylor(
         &problem,
         &frozen,
@@ -2863,7 +2872,7 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
     assert_eq!(program.record_bytes(), GRIDDED_NORMAL_OPERATOR_RECORD_BYTES);
     assert_eq!(program.prediction_width(), 1);
     let direct_prior = initial_normal_from_frozen(&problem, &frozen);
-    let initial_content = direct_prior.content_identity();
+    let initial_content = direct_prior.diagnostic_content_identity().unwrap();
     assert_eq!(direct_prior.coefficient_term_count(), 2);
     assert_eq!(direct_prior.normal_moment_count(), 4);
     let direct = complete_frozen_taylor_operator(
@@ -2887,7 +2896,10 @@ fn t46_joint_compact_replay_matches_direct_residual_and_is_worker_bitwise_stable
 
     for workers in [1, 2] {
         let prior = initial_normal_from_frozen(&problem, &frozen);
-        assert_eq!(prior.content_identity(), initial_content);
+        assert_eq!(
+            prior.diagnostic_content_identity().unwrap(),
+            initial_content
+        );
         let compact = execute_compact_taylor(
             &problem,
             &frozen,

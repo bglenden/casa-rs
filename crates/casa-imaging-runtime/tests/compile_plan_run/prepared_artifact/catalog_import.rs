@@ -745,7 +745,13 @@ fn catalog_cold_import_receipt_failure_preserves_objects_without_claiming_comple
         )),
     )
     .expect_err("receipt persistence fails");
-    assert!(matches!(error, RunError::Receipt(_)), "{error}");
+    assert!(
+        matches!(
+            error,
+            RunError::Receipt(casa_imaging_runtime::ReceiptError::Io { .. })
+        ),
+        "{error}"
+    );
     assert_eq!(fixture.completed.load(Ordering::SeqCst), 3);
     assert!(fixture.descriptors.iter().all(|descriptor| {
         fixture
@@ -762,24 +768,51 @@ fn catalog_cold_import_receipt_failure_preserves_objects_without_claiming_comple
         receipts.root_path(),
     )
     .expect("restore original receipt directory");
-    let receipt = receipts
-        .open(attempt)
-        .expect("last successfully persisted checkpoint");
-    assert_eq!(receipt.status(), ReceiptStatus::Running);
+    let marker = receipts.root_path().join(format!("{attempt}.active"));
+    let reservation = fs::read(&marker).expect("preserved active reservation");
+    assert_eq!(reservation.len(), 8);
+    let reopened = ExecutionReceiptStore::new(
+        receipts.root_path(),
+        ReceiptRetention::new(4, 1 << 20).expect("retention"),
+    )
+    .expect("reopen receipt store");
     assert_eq!(
-        receipt.node_status(&fixture.catalog_node),
-        Some(ReceiptStatus::Running)
+        fs::read(&marker).expect("reservation survives reopen"),
+        reservation
     );
-    assert!(fixture.descriptors.iter().all(|descriptor| {
-        receipt
-            .artifact_disposition(descriptor.identity())
-            .is_none()
-    }));
-    let recovery = self::fixture(&problem, 3, None);
+    assert!(
+        !reopened
+            .root_path()
+            .join(format!("{attempt}.receipt.json"))
+            .exists(),
+        "failed final persistence must not claim import completion"
+    );
+    assert!(matches!(
+        reopened.open(attempt),
+        Err(casa_imaging_runtime::ReceiptError::Io { .. })
+    ));
+    fixture.started.store(false, Ordering::SeqCst);
+    let duplicate = run_prepared(
+        &problem,
+        &execution_plan,
+        &fixture.suite,
+        reopened.bind(execution_provenance(
+            attempt,
+            BuildIdentity::from_sha256([211; 32]),
+        )),
+    )
+    .expect_err("failed attempt remains reserved");
+    assert!(matches!(
+        duplicate,
+        RunError::Receipt(casa_imaging_runtime::ReceiptError::AttemptAlreadyExists)
+    ));
+    assert!(!fixture.started.load(Ordering::SeqCst));
+    assert_eq!(fixture.completed.load(Ordering::SeqCst), 3);
+    let subsequent = self::fixture(&problem, 3, None);
     plan(
         &problem,
         PlanningBindings::new(registry(3), ResourcePolicy::Balanced, planning_profile(4)),
-        |_, _| Ok::<_, ()>(recovery.physical),
+        |_, _| Ok::<_, ()>(subsequent.physical),
     )
     .expect("verified cleanup returns capacity even when receipt persistence failed");
 }

@@ -1,32 +1,35 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Exact numeric-array residency owned by continuum product generation.
+//! Checked array and metadata residency owned by continuum product generation.
 
 use std::mem::size_of;
 
-use casa_imaging_model::{ProductRole, ProductValidityRule, RestoringBeamPolicy};
+use casa_imaging_model::{
+    ImageDomainRole, ProductBeamRule, ProductRole, ProductValidityRule, RestoringBeamPolicy,
+    SpectralWcs,
+};
 use casa_imaging_reconstruction::NormalStateCatalog;
 use num_complex::Complex64;
 use rustfft::FftPlanner;
 
 use crate::{
     ContinuumProductInputs, PlannedContinuumGeneration, ProductStoragePlan, ProductsError,
+    PublishedContinuumGeneration, PublishedMember, RestoringBeam,
 };
 
-/// Checked numeric-array demand for one planned continuum generation.
+/// Checked owned-array and metadata demand for one planned continuum generation.
 ///
 /// This is deliberately non-persistent. It describes the current algorithm
 /// catalog's owned payload, validity, and working arrays so the runtime can
-/// acquire one bounded lease before production starts. Metadata containers,
-/// allocator bookkeeping, and borrowed reconstruction inputs are not charged
-/// here.
+/// acquire one bounded lease before production starts. The generated summary's
+/// owned metadata and temporary beam arrays are included; allocator bookkeeping,
+/// the borrowed plan and borrowed reconstruction inputs are not charged here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContinuumGenerationDemand {
     storage_plan: ProductStoragePlan,
-    backing_payload_bytes: u64,
-    produced_residency_bytes: u64,
-    sealed_residency_bytes: u64,
     algorithm_scratch_bytes: u64,
+    retained_metadata_bytes: u64,
+    beam_scratch_bytes: u64,
     maximum_member_payload_bytes: u64,
     maximum_member_validity_bytes: u64,
     maximum_window_payload_bytes: u64,
@@ -41,14 +44,7 @@ impl ContinuumGenerationDemand {
         self.storage_plan
     }
 
-    /// Complete logical numeric and byte-validity backing, independent of residency.
-    /// Physical storage padding and metadata belong to the backing owner.
-    #[must_use]
-    pub const fn backing_payload_bytes(self) -> u64 {
-        self.backing_payload_bytes
-    }
-
-    /// Largest resident numeric window used by generation, hashing, or staging.
+    /// Largest resident numeric output window used by generation.
     #[must_use]
     pub const fn maximum_window_payload_bytes(self) -> u64 {
         self.maximum_window_payload_bytes
@@ -60,22 +56,22 @@ impl ContinuumGenerationDemand {
         self.maximum_window_validity_bytes
     }
 
-    /// Numeric payload and validity bytes retained by produced members.
-    #[must_use]
-    pub const fn produced_residency_bytes(self) -> u64 {
-        self.produced_residency_bytes
-    }
-
-    /// Numeric payload and validity bytes retained by sealed members.
-    #[must_use]
-    pub const fn sealed_residency_bytes(self) -> u64 {
-        self.sealed_residency_bytes
-    }
-
     /// Maximum product-algorithm working-array bytes retained with production.
     #[must_use]
     pub const fn algorithm_scratch_bytes(self) -> u64 {
         self.algorithm_scratch_bytes
+    }
+
+    /// Owned generation summary, member contracts, WCS and beam arrays.
+    #[must_use]
+    pub const fn retained_metadata_bytes(self) -> u64 {
+        self.retained_metadata_bytes
+    }
+
+    /// Peak temporary beam-selection, fitting or active-member metadata storage.
+    #[must_use]
+    pub const fn beam_scratch_bytes(self) -> u64 {
+        self.beam_scratch_bytes
     }
 
     /// Largest single member's binary32 payload.
@@ -90,11 +86,7 @@ impl ContinuumGenerationDemand {
         self.maximum_member_validity_bytes
     }
 
-    /// Peak owned numeric-array residency across production and authorization.
-    ///
-    /// Production overlaps the produced generation with algorithm scratch;
-    /// authorization overlaps produced and sealed generations after scratch is
-    /// released.
+    /// Bounded owned arrays plus retained metadata and temporary beam storage.
     #[must_use]
     pub const fn peak_residency_bytes(self) -> u64 {
         self.peak_residency_bytes
@@ -102,7 +94,7 @@ impl ContinuumGenerationDemand {
 }
 
 impl PlannedContinuumGeneration {
-    /// Derive the exact current-catalog numeric-array demand for these inputs.
+    /// Derive current-catalog array and metadata demand for these inputs.
     ///
     /// # Errors
     ///
@@ -114,6 +106,9 @@ impl PlannedContinuumGeneration {
         storage_plan: ProductStoragePlan,
     ) -> Result<ContinuumGenerationDemand, ProductsError> {
         if inputs.problem().problem_id() != self.problem_id()
+            || inputs.problem().product_graph().graph_id() != self.graph_id()
+            || inputs.major_cycle_completion() != self.major_cycle_completion()
+            || inputs.normal_state_completion() != self.normal_state_completion()
             || inputs.final_model().generation_id() != self.final_model_generation()
             || inputs.reconstruction_mask_generation() != self.reconstruction_mask_generation()
             || inputs
@@ -121,10 +116,9 @@ impl PlannedContinuumGeneration {
                 .map(|masks| masks.line().generation_id())
                 != self.line_reconstruction_mask_generation()
         {
-            return Err(ProductsError::CommitmentMismatch);
+            return Err(ProductsError::SourceLineageMismatch);
         }
 
-        let mut backing_payload_bytes = 0_u64;
         let mut maximum_member_payload_bytes = 0_u64;
         let mut maximum_member_validity_bytes = 0_u64;
         let mut maximum_window_payload_bytes = 0_u64;
@@ -139,11 +133,6 @@ impl PlannedContinuumGeneration {
             }
             let payload = bytes_for::<f32>(values, "member payload")?;
             let validity = bytes_for::<bool>(values, "member validity")?;
-            backing_payload_bytes = checked_add(
-                backing_payload_bytes,
-                checked_add(payload, validity, "member payload plus validity")?,
-                "produced generation residency",
-            )?;
             maximum_member_payload_bytes = maximum_member_payload_bytes.max(payload);
             maximum_member_validity_bytes = maximum_member_validity_bytes.max(validity);
             let window_values = storage_plan.layout(member.axes())?.maximum_values();
@@ -183,31 +172,147 @@ impl PlannedContinuumGeneration {
             )?,
             "windowed production scratch",
         )?;
-        let (produced_residency_bytes, sealed_residency_bytes, beam_scratch) =
-            self.metadata_residency_bytes(inputs)?;
-        algorithm_scratch_bytes = algorithm_scratch_bytes.max(beam_scratch);
-        let production_peak = checked_add(
-            produced_residency_bytes,
+        let (retained_metadata_bytes, beam_scratch_bytes) = self.metadata_demand(inputs)?;
+        let peak_residency_bytes = checked_add(
             algorithm_scratch_bytes,
-            "product production peak residency",
-        )?;
-        let authorization_peak = checked_add(
-            produced_residency_bytes,
-            sealed_residency_bytes.max(maximum_window_payload_bytes),
-            "product authorization peak residency",
+            checked_add(
+                retained_metadata_bytes,
+                beam_scratch_bytes,
+                "product metadata",
+            )?,
+            "product generation residency",
         )?;
         Ok(ContinuumGenerationDemand {
             storage_plan,
-            backing_payload_bytes,
-            produced_residency_bytes,
-            sealed_residency_bytes,
             algorithm_scratch_bytes,
+            retained_metadata_bytes,
+            beam_scratch_bytes,
             maximum_member_payload_bytes,
             maximum_member_validity_bytes,
             maximum_window_payload_bytes,
             maximum_window_validity_bytes,
-            peak_residency_bytes: production_peak.max(authorization_peak),
+            peak_residency_bytes,
         })
+    }
+
+    fn metadata_demand(
+        &self,
+        inputs: &ContinuumProductInputs<'_>,
+    ) -> Result<(u64, u64), ProductsError> {
+        let state = inputs.normal_state();
+        let domains = state.domain_count();
+        if domains == 0 {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
+        let requires_beam = self
+            .members()
+            .iter()
+            .any(|member| member.beam_rule() != ProductBeamRule::None);
+        let fitted = if !requires_beam {
+            0
+        } else {
+            match state.catalog() {
+                NormalStateCatalog::UnnormalizedTaylorBlockV1 => 1,
+                NormalStateCatalog::UnnormalizedJointBlockV1 => state.channel_count(),
+                _ => domains
+                    .checked_mul(state.channel_count())
+                    .and_then(|count| count.checked_mul(state.polarization_count()))
+                    .ok_or(ProductsError::ResourceDemandOverflow(
+                        "generation beam count",
+                    ))?,
+            }
+        };
+        let restoring_policy = inputs.problem().products().restoring_beam();
+        let restoring = match (restoring_policy, state.catalog()) {
+            (RestoringBeamPolicy::None, _) => 0,
+            (_, NormalStateCatalog::UnnormalizedTaylorBlockV1) => 1,
+            _ => fitted,
+        };
+        let mut retained = checked_add(
+            size_of::<PublishedContinuumGeneration>() as u64,
+            bytes_for::<PublishedMember>(self.members().len(), "published members")?,
+            "generation summary",
+        )?;
+        for count in [fitted, restoring] {
+            retained = checked_add(
+                retained,
+                bytes_for::<Option<RestoringBeam>>(count, "generation beams")?,
+                "generation metadata",
+            )?;
+        }
+        let mut active_member_beams = 0;
+        for member in self.members() {
+            let domain_name = match member.axes().domain() {
+                ImageDomainRole::Main => 0,
+                ImageDomainRole::Outlier(name) => name.len(),
+            };
+            let spectral_values = match member.axes().spectral().wcs() {
+                SpectralWcs::Linear { .. } => 0,
+                SpectralWcs::Tabular {
+                    channel_centres_hz,
+                    channel_boundaries_hz,
+                } => channel_centres_hz
+                    .len()
+                    .checked_add(channel_boundaries_hz.len())
+                    .ok_or(ProductsError::ResourceDemandOverflow("member WCS"))?,
+            };
+            let beams = match member.beam_rule() {
+                ProductBeamRule::None
+                | ProductBeamRule::Restoring(RestoringBeamPolicy::None)
+                | ProductBeamRule::Metadata(RestoringBeamPolicy::None) => 0,
+                ProductBeamRule::Fitted => fitted / domains,
+                ProductBeamRule::Restoring(RestoringBeamPolicy::Common)
+                | ProductBeamRule::Metadata(RestoringBeamPolicy::Common) => 1,
+                _ => restoring / domains,
+            };
+            let beam_bytes = bytes_for::<Option<RestoringBeam>>(beams, "member beams")?;
+            active_member_beams = active_member_beams.max(beam_bytes);
+            for bytes in [
+                bytes_for::<u8>(member.name().len(), "member name")?,
+                bytes_for::<u8>(domain_name, "member domain")?,
+                bytes_for::<f64>(spectral_values, "member WCS")?,
+                std::mem::size_of_val(member.axes().polarization()) as u64,
+                std::mem::size_of_val(member.dependencies()) as u64,
+                beam_bytes,
+            ] {
+                retained = checked_add(retained, bytes, "member metadata")?;
+            }
+        }
+        let common_scratch = if restoring_policy == RestoringBeamPolicy::Common
+            && matches!(
+                state.catalog(),
+                NormalStateCatalog::UnnormalizedPlaneV1
+                    | NormalStateCatalog::UnnormalizedChannelSlabV1
+            ) {
+            checked_add(
+                bytes_for::<RestoringBeam>(fitted / domains, "common valid beams")?,
+                checked_mul(
+                    bytes_for::<casa_numerics::EllipticalGaussian>(
+                        fitted / domains,
+                        "common numeric beams",
+                    )?,
+                    2,
+                    "common converted and mutable numeric beams",
+                )?,
+                "common beam scratch",
+            )?
+        } else {
+            0
+        };
+        let mut fitting_scratch = 0;
+        if requires_beam {
+            for ordinal in 0..domains {
+                let shape = state
+                    .domain_shape(ordinal)
+                    .ok_or(ProductsError::SourceLineageMismatch)?;
+                fitting_scratch = fitting_scratch
+                    .max(casa_imaging_reconstruction::psf_fit_workspace_bytes(shape));
+            }
+        }
+        Ok((
+            retained,
+            active_member_beams.max(common_scratch).max(fitting_scratch),
+        ))
     }
 }
 

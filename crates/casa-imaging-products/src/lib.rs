@@ -1,57 +1,40 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #![warn(missing_docs)]
 
-//! Native continuum product algorithms and the Product Generation Authority.
+//! Native continuum product algorithms and bounded write-only generation.
 //!
 //! This owner turns one authoritative Major-Cycle result into complete,
 //! generation-consistent continuum products: restoring-beam fitting,
 //! restoration, residual scaling, normalization, validity, metadata, and the
 //! exact member set declared by the compiler-owned Product Graph. It owns the
-//! entire generation-construction capability behind one two-phase authority:
-//!
-//! 1. [`ProductGenerationAuthority::plan`] binds the exact Product Graph and
-//!    closed typed source commitments into one schema-versioned planned
-//!    generation; and
-//! 2. [`ProductGenerationAuthority::authorize`] seals the produced artifacts
-//!    only against the matching closed typed completions.
-//!
-//! There is no other construction path: planned generations, artifact
-//! identities, and seals have no public constructors and cannot be
-//! reconstructed from digest bytes. Publication consumes only the exact
-//! sealed member set through private prepare → independently atomic member
-//! replacement → per-member terminal receipt choreography.
+//! generation-construction capability and transfers bounded windows directly
+//! to a caller-owned write-only output.
 
-mod authority;
 mod beam;
 mod demand;
-mod digest;
 mod error;
-mod projection;
+mod generation;
 mod restore;
 mod source;
 mod storage;
 mod taylor;
 mod visibility;
 
-pub use authority::{
-    AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumCommitmentId,
-    ContinuumCompletionsId, ContinuumProducedMembers, ContinuumProductControls, ContinuumSealId,
-    DEFAULT_PSF_CUTOFF, MemberArtifactId, PlannedContinuumGeneration, PlannedGenerationId,
-    PlannedMember, ProductGenerationAuthority, PublishedContinuumGeneration, PublishedMember,
-    SealedContinuumGeneration, SealedMember, SealedMemberContract, produce_continuum_members,
-};
 pub use beam::{RestoringBeam, fit_restoring_beam};
 pub use demand::ContinuumGenerationDemand;
 pub use error::ProductsError;
-pub use projection::{PublicationMemberProjection, PublicationProjection};
+pub use generation::{
+    AnalyticPrimaryBeamModel, CONTINUUM_ALGORITHM_CATALOG_VERSION, ContinuumProductControls,
+    DEFAULT_PSF_CUTOFF, PlannedContinuumGeneration, PlannedMember, ProductMemberContract,
+    PublishedContinuumGeneration, PublishedMember, produce_continuum_members,
+};
 pub use restore::{
     MosaicSensitivity, ResidualBeamScaling, fft_convolve, gaussian_beam_image, normalize_plane,
     rescale_residual_to_beam,
 };
-pub use source::{ContinuumProductInputs, ContinuumSourceCatalog};
+pub use source::ContinuumProductInputs;
 pub use storage::{
-    ProductArrayStorage, ProductStorageFactory, ProductStoragePlan, ProductWindow,
-    ProductWindowLayout,
+    ProductOutput, ProductStoragePlan, ProductWindow, ProductWindowLayout, ProductWriter,
 };
 pub use visibility::{
     ModelVisibilityProductId, ResidualVisibilityProductId, VisibilityProductAuthority,

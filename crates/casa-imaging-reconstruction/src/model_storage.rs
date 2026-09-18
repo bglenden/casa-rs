@@ -84,6 +84,7 @@ impl ModelStoragePlan {
         Ok(ModelSamples {
             storage,
             window_samples: self.window_samples.min(count),
+            maximum_magnitude: 0.0,
         })
     }
 }
@@ -92,9 +93,17 @@ impl ModelStoragePlan {
 pub(crate) struct ModelSamples {
     storage: Box<dyn ModelSampleStorage>,
     window_samples: usize,
+    maximum_magnitude: f64,
 }
 
 impl ModelSamples {
+    pub(crate) fn maximum_magnitude(&self) -> f64 {
+        self.maximum_magnitude
+    }
+
+    pub(crate) fn record_validated_bound(&mut self, bound: f64) {
+        self.maximum_magnitude = self.maximum_magnitude.min(bound);
+    }
     pub(crate) fn iter(&self) -> ModelSampleReader<'_> {
         ModelSampleReader {
             owner: self,
@@ -147,7 +156,11 @@ impl ModelSamples {
                 self.window_samples
             )));
         }
-        self.storage.write(start, samples)
+        self.storage.write(start, samples)?;
+        for sample in samples {
+            self.maximum_magnitude = self.maximum_magnitude.max(sample.value().value().abs());
+        }
+        Ok(())
     }
 
     pub(crate) fn for_each_window(

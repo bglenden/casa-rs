@@ -934,8 +934,8 @@ fn t51_taylor_publication_persists_casa_metadata_without_changing_logical_contra
     assert_eq!(planned.members().len(), published.members().len());
     for (planned, published) in planned.members().iter().zip(published.members()) {
         assert_eq!(
-            planned.artifact_id(),
-            published.artifact_id(),
+            planned.node(),
+            published.node(),
             "{} identity",
             planned.name()
         );
@@ -1623,9 +1623,9 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        result.outcome.output.planned_products.generation_id(),
-        result.outcome.output.products.generation_id(),
-        "publication must retain the exact canonical domain generation"
+        result.outcome.output.planned_products.graph_id(),
+        result.outcome.output.products.graph_id(),
+        "publication must retain the canonical domain inventory"
     );
     for (planned, published) in result
         .outcome
@@ -1635,7 +1635,7 @@ fn t31_application_canonicalizes_reversed_outliers_before_domain_indexed_derivat
         .iter()
         .zip(result.outcome.output.products.members())
     {
-        assert_eq!(planned.artifact_id(), published.artifact_id());
+        assert_eq!(planned.node(), published.node());
         assert_eq!(
             planned.axes().domain(),
             published.contract().axes().domain()

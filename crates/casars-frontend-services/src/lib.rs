@@ -613,6 +613,20 @@ pub struct ProjectProbe {
     pub diagnostics: Vec<String>,
     pub scanned_entry_count: u64,
     pub truncated: bool,
+    /// Bounded transient directory inventory shared by dataset and file views.
+    pub entries: Vec<ProjectFileEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct ProjectFileEntry {
+    pub path: String,
+    pub relative_path: String,
+    pub is_directory: bool,
+    pub size_bytes: u64,
+    /// Optional recognition obtained during this same walk.
+    pub dataset: Option<DatasetProbe>,
+    pub show_in_tree: bool,
+    pub loose_file_candidate: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
@@ -5914,7 +5928,7 @@ pub fn probe_project(path: String) -> FrontendResult<ProjectProbe> {
     }
 
     let mut scan = ProjectScan::default();
-    scan_path(&root, 0, &mut scan);
+    scan.discover(&root, metadata);
     let name = root
         .file_name()
         .and_then(|value| value.to_str())
@@ -5929,6 +5943,7 @@ pub fn probe_project(path: String) -> FrontendResult<ProjectProbe> {
         diagnostics: scan.diagnostics,
         scanned_entry_count: scan.scanned_entry_count as u64,
         truncated: scan.truncated,
+        entries: scan.entries,
     })
 }
 
@@ -8642,60 +8657,300 @@ fn selection_summary(request: &MeasurementSetPlotRequest) -> String {
     parts.join(", ")
 }
 
+#[derive(Clone)]
+struct DirectoryCandidate {
+    path: PathBuf,
+    metadata: fs::Metadata,
+    raw_order: usize,
+    loose_order: Option<usize>,
+    tree_order: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+enum DirectoryOrder {
+    Raw,
+    Loose,
+    Tree,
+}
+
 #[derive(Default)]
 struct ProjectScan {
     datasets: Vec<DatasetProbe>,
     diagnostics: Vec<String>,
     scanned_entry_count: usize,
     truncated: bool,
+    entries: Vec<ProjectFileEntry>,
+    entry_indexes: std::collections::BTreeMap<PathBuf, usize>,
+    directories: std::collections::BTreeMap<PathBuf, Vec<std::sync::Arc<DirectoryCandidate>>>,
+    recognized: std::collections::BTreeMap<PathBuf, Option<DatasetProbe>>,
+    loose_entry_count: usize,
+    tree_entry_count: usize,
+    #[cfg(test)]
+    maximum_retained_directory_candidates: usize,
 }
 
-fn scan_path(path: &Path, depth: usize, scan: &mut ProjectScan) {
-    if scan.scanned_entry_count >= MAX_PROJECT_SCAN_ENTRIES {
-        scan.truncated = true;
-        return;
+impl ProjectScan {
+    fn discover(&mut self, root: &Path, metadata: fs::Metadata) {
+        let root_entry = DirectoryCandidate {
+            path: root.to_path_buf(),
+            metadata,
+            raw_order: 0,
+            loose_order: None,
+            tree_order: None,
+        };
+        self.walk_primary(root, &root_entry, 0);
+        self.walk_presentation(root, root, 0, DirectoryOrder::Loose);
+        self.walk_presentation(root, root, 0, DirectoryOrder::Tree);
     }
-    scan.scanned_entry_count += 1;
 
-    match probe_dataset_path(path) {
-        Ok(Some(dataset)) => {
-            scan.datasets.push(dataset);
+    fn children(
+        &mut self,
+        directory: &Path,
+        order: DirectoryOrder,
+    ) -> Vec<std::sync::Arc<DirectoryCandidate>> {
+        if !self.directories.contains_key(directory) {
+            let mut children = std::collections::BTreeMap::<usize, DirectoryCandidate>::new();
+            let mut tree = Vec::with_capacity(701);
+            let mut loose_index = 0;
+            let mut first_error = None;
+            let mut error_count = 0usize;
+            match fs::read_dir(directory) {
+                Ok(entries) => {
+                    for (index, entry) in entries.enumerate() {
+                        let (path, metadata) = match entry.and_then(|entry| {
+                            fs::metadata(entry.path()).map(|metadata| (entry.path(), metadata))
+                        }) {
+                            Ok(entry) => entry,
+                            Err(error) => {
+                                error_count = error_count.saturating_add(1);
+                                first_error.get_or_insert(error);
+                                continue;
+                            }
+                        };
+                        let name = path.file_name().unwrap_or_default();
+                        let loose_order = if name.to_string_lossy().starts_with('.') {
+                            None
+                        } else {
+                            let rank = loose_index;
+                            loose_index += 1;
+                            Some(rank)
+                        };
+                        let in_tree = name != ".DS_Store";
+                        let child = DirectoryCandidate {
+                            path,
+                            metadata,
+                            raw_order: index,
+                            loose_order,
+                            tree_order: None,
+                        };
+                        let tree_position = in_tree
+                            .then(|| {
+                                tree.binary_search_by(|prior| {
+                                    let prior = &children[prior];
+                                    child
+                                        .metadata
+                                        .is_dir()
+                                        .cmp(&prior.metadata.is_dir())
+                                        .then_with(|| {
+                                            project_file_name_order(&prior.path, &child.path)
+                                        })
+                                        .then_with(|| prior.raw_order.cmp(&index))
+                                })
+                                .unwrap_or_else(|position| position)
+                            })
+                            .filter(|position| *position < 700);
+                        if index < MAX_PROJECT_SCAN_ENTRIES
+                            || loose_order.is_some_and(|rank| rank < 500)
+                            || tree_position.is_some()
+                        {
+                            children.insert(index, child);
+                        }
+                        #[cfg(test)]
+                        {
+                            self.maximum_retained_directory_candidates = self
+                                .maximum_retained_directory_candidates
+                                .max(children.len());
+                        }
+                        if let Some(position) = tree_position {
+                            tree.insert(position, index);
+                            if tree.len() > 700 {
+                                let evicted = tree.pop().unwrap();
+                                let entry = &children[&evicted];
+                                if entry.raw_order >= MAX_PROJECT_SCAN_ENTRIES
+                                    && !entry.loose_order.is_some_and(|rank| rank < 500)
+                                {
+                                    children.remove(&evicted);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    first_error = Some(error);
+                    error_count = 1;
+                }
+            }
+            if let Some(error) = first_error {
+                self.diagnostics.push(format!(
+                    "read {}: {error} ({error_count} failed entries)",
+                    directory.display()
+                ));
+            }
+            for (rank, index) in tree.into_iter().enumerate() {
+                children.get_mut(&index).unwrap().tree_order = Some(rank);
+            }
+            // The sorted top-700 selection and first-entry prefixes retain only
+            // their bounded union, even while enumerating a very large directory.
+            self.directories.insert(
+                directory.to_path_buf(),
+                children.into_values().map(std::sync::Arc::new).collect(),
+            );
+        }
+        let rank = |entry: &DirectoryCandidate| match order {
+            DirectoryOrder::Raw => {
+                (entry.raw_order < MAX_PROJECT_SCAN_ENTRIES).then_some(entry.raw_order)
+            }
+            DirectoryOrder::Loose => entry.loose_order.filter(|rank| *rank < 500),
+            DirectoryOrder::Tree => entry.tree_order,
+        };
+        let mut entries = self.directories[directory]
+            .iter()
+            .filter(|entry| rank(entry).is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| rank(entry).unwrap());
+        entries
+    }
+
+    fn probe(&mut self, entry: &DirectoryCandidate) -> Option<DatasetProbe> {
+        if !self.recognized.contains_key(&entry.path) {
+            let dataset = match probe_dataset_metadata(&entry.path, &entry.metadata) {
+                Ok(dataset) => dataset,
+                Err(error) => {
+                    self.diagnostics
+                        .push(format!("{}: {error}", entry.path.display()));
+                    None
+                }
+            };
+            self.recognized.insert(entry.path.clone(), dataset);
+        }
+        self.recognized[&entry.path].clone()
+    }
+
+    fn record(&mut self, root: &Path, entry: &DirectoryCandidate, order: DirectoryOrder) {
+        if entry.path == root {
             return;
         }
-        Ok(None) => {}
-        Err(error) => scan
-            .diagnostics
-            .push(format!("{}: {error}", path.display())),
+        let next_index = self.entries.len();
+        let index = *self
+            .entry_indexes
+            .entry(entry.path.clone())
+            .or_insert_with(|| {
+                self.entries.push(ProjectFileEntry {
+                    path: entry.path.display().to_string(),
+                    relative_path: entry
+                        .path
+                        .strip_prefix(root)
+                        .unwrap_or(&entry.path)
+                        .display()
+                        .to_string(),
+                    is_directory: entry.metadata.is_dir(),
+                    size_bytes: entry.metadata.len(),
+                    dataset: None,
+                    show_in_tree: false,
+                    loose_file_candidate: false,
+                });
+                next_index
+            });
+        let output = &mut self.entries[index];
+        output.dataset = self.recognized.get(&entry.path).cloned().flatten();
+        match order {
+            DirectoryOrder::Raw => {}
+            DirectoryOrder::Loose => output.loose_file_candidate = true,
+            DirectoryOrder::Tree => output.show_in_tree = true,
+        }
     }
 
-    if depth >= MAX_PROJECT_SCAN_DEPTH {
-        return;
-    }
-    let Ok(metadata) = fs::metadata(path) else {
-        return;
-    };
-    if !metadata.is_dir() {
-        return;
-    }
-
-    let entries = match fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(error) => {
-            scan.diagnostics
-                .push(format!("read {}: {error}", path.display()));
+    fn walk_primary(&mut self, root: &Path, entry: &DirectoryCandidate, depth: usize) {
+        if self.scanned_entry_count >= MAX_PROJECT_SCAN_ENTRIES {
+            self.truncated = true;
             return;
         }
-    };
-    for entry in entries {
-        if scan.scanned_entry_count >= MAX_PROJECT_SCAN_ENTRIES {
-            scan.truncated = true;
-            break;
+        self.scanned_entry_count += 1;
+        let dataset = self.probe(entry);
+        self.record(root, entry, DirectoryOrder::Raw);
+        if let Some(dataset) = dataset {
+            self.datasets.push(dataset);
+            return;
         }
-        match entry {
-            Ok(entry) => scan_path(&entry.path(), depth + 1, scan),
-            Err(error) => scan.diagnostics.push(format!("directory entry: {error}")),
+        if !entry.metadata.is_dir() || depth >= MAX_PROJECT_SCAN_DEPTH {
+            return;
+        }
+        for child in self.children(&entry.path, DirectoryOrder::Raw) {
+            if self.scanned_entry_count >= MAX_PROJECT_SCAN_ENTRIES {
+                self.truncated = true;
+                break;
+            }
+            self.walk_primary(root, &child, depth + 1);
         }
     }
+
+    fn walk_presentation(
+        &mut self,
+        root: &Path,
+        directory: &Path,
+        depth: usize,
+        order: DirectoryOrder,
+    ) {
+        if depth > 5 {
+            return;
+        }
+        for entry in self.children(directory, order) {
+            let (count, limit) = match order {
+                DirectoryOrder::Loose => (&mut self.loose_entry_count, 500),
+                DirectoryOrder::Tree => (&mut self.tree_entry_count, 700),
+                DirectoryOrder::Raw => unreachable!(),
+            };
+            if *count >= limit {
+                self.truncated = true;
+                break;
+            }
+            *count += 1;
+            let known = self
+                .recognized
+                .get(&entry.path)
+                .is_some_and(Option::is_some);
+            if matches!(order, DirectoryOrder::Loose)
+                && !known
+                && entry.metadata.is_dir()
+                && entry.path.join("table.dat").is_file()
+            {
+                self.probe(&entry);
+            }
+            self.record(root, &entry, order);
+            if entry.metadata.is_dir()
+                && !self
+                    .recognized
+                    .get(&entry.path)
+                    .is_some_and(Option::is_some)
+            {
+                self.walk_presentation(root, &entry.path, depth + 1, order);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn project_file_name_order(left: &Path, right: &Path) -> std::cmp::Ordering {
+    use objc2_foundation::NSString;
+    let left = NSString::from_str(&left.file_name().unwrap_or_default().to_string_lossy());
+    let right = NSString::from_str(&right.file_name().unwrap_or_default().to_string_lossy());
+    left.localizedStandardCompare(&right).into()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn project_file_name_order(left: &Path, right: &Path) -> std::cmp::Ordering {
+    left.file_name().cmp(&right.file_name())
 }
 
 fn probe_dataset_path(path: &Path) -> Result<Option<DatasetProbe>, String> {
@@ -8703,18 +8958,25 @@ fn probe_dataset_path(path: &Path) -> Result<Option<DatasetProbe>, String> {
         Ok(metadata) => metadata,
         Err(error) => return Err(format!("metadata failed: {error}")),
     };
+    probe_dataset_metadata(path, &metadata)
+}
+
+fn probe_dataset_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<Option<DatasetProbe>, String> {
     if !(metadata.is_dir() || metadata.is_file()) {
         return Ok(None);
     }
 
     if metadata.is_dir() {
-        if let Some(probe) = probe_measurement_set(path, &metadata)? {
+        if let Some(probe) = probe_measurement_set(path, metadata)? {
             return Ok(Some(probe));
         }
-        if let Some(probe) = probe_image(path, &metadata)? {
+        if let Some(probe) = probe_image(path, metadata)? {
             return Ok(Some(probe));
         }
-        if let Some(probe) = probe_table(path, &metadata)? {
+        if let Some(probe) = probe_table(path, metadata)? {
             return Ok(Some(probe));
         }
     }
@@ -10338,6 +10600,125 @@ mod tests {
                 .datasets
                 .iter()
                 .any(|dataset| dataset.name == "notes.txt")
+        );
+        assert!(
+            project
+                .entries
+                .iter()
+                .any(|entry| entry.relative_path == "notes.txt")
+        );
+        assert!(!project.entries.iter().any(|entry| {
+            entry
+                .path
+                .starts_with(&format!("{}/", table_path.display()))
+        }));
+        assert!(
+            !project
+                .entries
+                .iter()
+                .any(|entry| entry.path.starts_with(&format!("{}/", ms_path.display())))
+        );
+    }
+
+    #[test]
+    fn project_inventory_preserves_independent_view_and_probe_limits_and_refresh() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join(".hidden")).unwrap();
+        fs::write(directory.path().join(".hidden/hidden.fits"), b"x").unwrap();
+        fs::create_dir_all(directory.path().join("a/b/c/d/e/f/g")).unwrap();
+        fs::write(directory.path().join("a/b/c/d/e/visible.fits"), b"x").unwrap();
+        fs::write(directory.path().join("a/b/c/d/e/f/too-deep.fits"), b"x").unwrap();
+        let first = probe_project(directory.path().display().to_string()).unwrap();
+        let hidden = first
+            .entries
+            .iter()
+            .find(|entry| entry.relative_path == ".hidden/hidden.fits")
+            .unwrap();
+        assert!(hidden.show_in_tree);
+        assert!(!hidden.loose_file_candidate);
+        assert!(
+            first
+                .entries
+                .iter()
+                .any(|entry| entry.relative_path == "a/b/c/d/e/visible.fits")
+        );
+        assert!(
+            !first
+                .entries
+                .iter()
+                .any(|entry| entry.relative_path.ends_with("too-deep.fits"))
+        );
+        fs::write(directory.path().join("fresh.fits"), b"new").unwrap();
+        let refreshed = probe_project(directory.path().display().to_string()).unwrap();
+        assert!(
+            refreshed
+                .entries
+                .iter()
+                .any(|entry| entry.relative_path == "fresh.fits")
+        );
+        for index in 0..900 {
+            fs::write(directory.path().join(format!("file-{index}.txt")), b"x").unwrap();
+        }
+        let bounded = probe_project(directory.path().display().to_string()).unwrap();
+        assert!(bounded.scanned_entry_count <= 512);
+        assert!(
+            bounded
+                .entries
+                .iter()
+                .filter(|entry| entry.show_in_tree)
+                .count()
+                <= 700
+        );
+        assert!(
+            bounded
+                .entries
+                .iter()
+                .filter(|entry| entry.loose_file_candidate)
+                .count()
+                <= 500
+        );
+        assert!(bounded.entries.len() <= 1712);
+        assert!(bounded.truncated);
+    }
+
+    #[test]
+    fn project_tree_truncates_after_native_name_order_not_filesystem_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut names = Vec::new();
+        for index in (0..3000).rev() {
+            let path = directory.path().join(format!("file-{index}.txt"));
+            fs::write(&path, b"x").unwrap();
+            names.push(path);
+        }
+        names.sort_by(|left, right| project_file_name_order(left, right));
+        let expected = names
+            .into_iter()
+            .take(700)
+            .map(|path| path.display().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        let metadata = fs::metadata(directory.path()).unwrap();
+        let mut scan = ProjectScan::default();
+        scan.discover(directory.path(), metadata);
+        let actual = scan
+            .entries
+            .iter()
+            .filter(|entry| entry.show_in_tree)
+            .map(|entry| entry.path.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(actual, expected);
+        assert!(
+            scan.maximum_retained_directory_candidates <= 1713,
+            "retained prefix union plus at most one candidate awaiting eviction"
+        );
+        assert_eq!(
+            scan.directories.len(),
+            1,
+            "all logical consumers share the root directory read"
+        );
+        assert!(
+            scan.directories
+                .values()
+                .all(|entries| entries.len() <= 1712)
         );
     }
 

@@ -8354,6 +8354,81 @@ class _UniffiConverterTypePlotSeriesMetadata(_UniffiConverterRustBuffer):
         _UniffiConverterOptionalUInt64.write(value.last_row, buf)
 
 
+class ProjectFileEntry:
+    path: "str"
+    relative_path: "str"
+    is_directory: "bool"
+    size_bytes: "int"
+    dataset: "typing.Optional[DatasetProbe]"
+    """
+    Optional recognition obtained during this same walk.
+    """
+
+    show_in_tree: "bool"
+    loose_file_candidate: "bool"
+    def __init__(self, *, path: "str", relative_path: "str", is_directory: "bool", size_bytes: "int", dataset: "typing.Optional[DatasetProbe]", show_in_tree: "bool", loose_file_candidate: "bool"):
+        self.path = path
+        self.relative_path = relative_path
+        self.is_directory = is_directory
+        self.size_bytes = size_bytes
+        self.dataset = dataset
+        self.show_in_tree = show_in_tree
+        self.loose_file_candidate = loose_file_candidate
+
+    def __str__(self):
+        return "ProjectFileEntry(path={}, relative_path={}, is_directory={}, size_bytes={}, dataset={}, show_in_tree={}, loose_file_candidate={})".format(self.path, self.relative_path, self.is_directory, self.size_bytes, self.dataset, self.show_in_tree, self.loose_file_candidate)
+
+    def __eq__(self, other):
+        if self.path != other.path:
+            return False
+        if self.relative_path != other.relative_path:
+            return False
+        if self.is_directory != other.is_directory:
+            return False
+        if self.size_bytes != other.size_bytes:
+            return False
+        if self.dataset != other.dataset:
+            return False
+        if self.show_in_tree != other.show_in_tree:
+            return False
+        if self.loose_file_candidate != other.loose_file_candidate:
+            return False
+        return True
+
+class _UniffiConverterTypeProjectFileEntry(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return ProjectFileEntry(
+            path=_UniffiConverterString.read(buf),
+            relative_path=_UniffiConverterString.read(buf),
+            is_directory=_UniffiConverterBool.read(buf),
+            size_bytes=_UniffiConverterUInt64.read(buf),
+            dataset=_UniffiConverterOptionalTypeDatasetProbe.read(buf),
+            show_in_tree=_UniffiConverterBool.read(buf),
+            loose_file_candidate=_UniffiConverterBool.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiConverterString.check_lower(value.path)
+        _UniffiConverterString.check_lower(value.relative_path)
+        _UniffiConverterBool.check_lower(value.is_directory)
+        _UniffiConverterUInt64.check_lower(value.size_bytes)
+        _UniffiConverterOptionalTypeDatasetProbe.check_lower(value.dataset)
+        _UniffiConverterBool.check_lower(value.show_in_tree)
+        _UniffiConverterBool.check_lower(value.loose_file_candidate)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiConverterString.write(value.path, buf)
+        _UniffiConverterString.write(value.relative_path, buf)
+        _UniffiConverterBool.write(value.is_directory, buf)
+        _UniffiConverterUInt64.write(value.size_bytes, buf)
+        _UniffiConverterOptionalTypeDatasetProbe.write(value.dataset, buf)
+        _UniffiConverterBool.write(value.show_in_tree, buf)
+        _UniffiConverterBool.write(value.loose_file_candidate, buf)
+
+
 class ProjectProbe:
     name: "str"
     root_path: "str"
@@ -8361,16 +8436,22 @@ class ProjectProbe:
     diagnostics: "typing.List[str]"
     scanned_entry_count: "int"
     truncated: "bool"
-    def __init__(self, *, name: "str", root_path: "str", datasets: "typing.List[DatasetProbe]", diagnostics: "typing.List[str]", scanned_entry_count: "int", truncated: "bool"):
+    entries: "typing.List[ProjectFileEntry]"
+    """
+    Bounded transient directory inventory shared by dataset and file views.
+    """
+
+    def __init__(self, *, name: "str", root_path: "str", datasets: "typing.List[DatasetProbe]", diagnostics: "typing.List[str]", scanned_entry_count: "int", truncated: "bool", entries: "typing.List[ProjectFileEntry]"):
         self.name = name
         self.root_path = root_path
         self.datasets = datasets
         self.diagnostics = diagnostics
         self.scanned_entry_count = scanned_entry_count
         self.truncated = truncated
+        self.entries = entries
 
     def __str__(self):
-        return "ProjectProbe(name={}, root_path={}, datasets={}, diagnostics={}, scanned_entry_count={}, truncated={})".format(self.name, self.root_path, self.datasets, self.diagnostics, self.scanned_entry_count, self.truncated)
+        return "ProjectProbe(name={}, root_path={}, datasets={}, diagnostics={}, scanned_entry_count={}, truncated={}, entries={})".format(self.name, self.root_path, self.datasets, self.diagnostics, self.scanned_entry_count, self.truncated, self.entries)
 
     def __eq__(self, other):
         if self.name != other.name:
@@ -8385,6 +8466,8 @@ class ProjectProbe:
             return False
         if self.truncated != other.truncated:
             return False
+        if self.entries != other.entries:
+            return False
         return True
 
 class _UniffiConverterTypeProjectProbe(_UniffiConverterRustBuffer):
@@ -8397,6 +8480,7 @@ class _UniffiConverterTypeProjectProbe(_UniffiConverterRustBuffer):
             diagnostics=_UniffiConverterSequenceString.read(buf),
             scanned_entry_count=_UniffiConverterUInt64.read(buf),
             truncated=_UniffiConverterBool.read(buf),
+            entries=_UniffiConverterSequenceTypeProjectFileEntry.read(buf),
         )
 
     @staticmethod
@@ -8407,6 +8491,7 @@ class _UniffiConverterTypeProjectProbe(_UniffiConverterRustBuffer):
         _UniffiConverterSequenceString.check_lower(value.diagnostics)
         _UniffiConverterUInt64.check_lower(value.scanned_entry_count)
         _UniffiConverterBool.check_lower(value.truncated)
+        _UniffiConverterSequenceTypeProjectFileEntry.check_lower(value.entries)
 
     @staticmethod
     def write(value, buf):
@@ -8416,6 +8501,7 @@ class _UniffiConverterTypeProjectProbe(_UniffiConverterRustBuffer):
         _UniffiConverterSequenceString.write(value.diagnostics, buf)
         _UniffiConverterUInt64.write(value.scanned_entry_count, buf)
         _UniffiConverterBool.write(value.truncated, buf)
+        _UniffiConverterSequenceTypeProjectFileEntry.write(value.entries, buf)
 
 
 class ScientificNotebookProjectProjection:
@@ -18660,6 +18746,31 @@ class _UniffiConverterSequenceTypePlotSeriesMetadata(_UniffiConverterRustBuffer)
 
 
 
+class _UniffiConverterSequenceTypeProjectFileEntry(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiConverterTypeProjectFileEntry.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiConverterTypeProjectFileEntry.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiConverterTypeProjectFileEntry.read(buf) for i in range(count)
+        ]
+
+
+
 class _UniffiConverterSequenceTypeSurfaceNarrowingConstraint(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -20666,6 +20777,7 @@ __all__ = [
     "PlotRenderProvenance",
     "PlotSamplingDiagnostics",
     "PlotSeriesMetadata",
+    "ProjectFileEntry",
     "ProjectProbe",
     "ScientificNotebookProjectProjection",
     "SurfaceExecutionProjection",

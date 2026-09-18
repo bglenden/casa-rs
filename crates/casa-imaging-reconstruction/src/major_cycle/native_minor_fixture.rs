@@ -369,7 +369,6 @@ pub(crate) fn build(
         replay,
         coverage,
         catalog: NormalStateCatalog::UnnormalizedTaylorBlockV1,
-        content: primitives.normal_state_content_identity(),
         sample_count,
         block_count: 1,
         input_model_generation: base.generation_id(),

@@ -506,7 +506,7 @@ impl TaylorProducts {
             vec![0.0; cells]
         };
         let clean_mask =
-            crate::authority::reconstruction_support_plane(inputs, domain_role, cells)?;
+            crate::generation::reconstruction_support_plane(inputs, domain_role, cells)?;
 
         Ok(Self {
             shape,

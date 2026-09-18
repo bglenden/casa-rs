@@ -217,7 +217,7 @@ fn planning_rejects_an_explicit_science_contract_mismatch() {
     let problem = compile(request(1)).expect("logical compilation");
     let other_problem = compile(request(2)).expect("distinct logical compilation");
     assert_ne!(problem.problem_id(), other_problem.problem_id());
-    let (other_publication, _) = super::sealed_publication_plan_for_problem(&other_problem);
+    let other_publication = super::publication_plan_for_problem(&other_problem);
     let divergent = super::physical_work_with_optional_seal(
         &other_problem,
         6,

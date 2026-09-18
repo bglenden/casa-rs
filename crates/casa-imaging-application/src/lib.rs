@@ -44,9 +44,8 @@ use casa_imaging_model::{
     SpectralWindowSelection, compile, compile_observation,
 };
 use casa_imaging_products::{
-    ContinuumProductControls, ContinuumProductInputs, ContinuumSourceCatalog,
-    PlannedContinuumGeneration, ProductGenerationAuthority, PublishedContinuumGeneration,
-    VisibilityProductCompletion,
+    ContinuumProductControls, ContinuumProductInputs, PlannedContinuumGeneration,
+    PublishedContinuumGeneration, VisibilityProductCompletion,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MajorCycleCompletion,
@@ -1090,25 +1089,7 @@ where
     S: SerialProductPublicationSink + Send + 'static,
     S::Error: Send + Sync,
 {
-    let sources = match reconstruction_masks.as_ref() {
-        Some(ReconstructionMaskSet::Shared(mask)) => {
-            ContinuumSourceCatalog::from_major_cycle_with_mask(problem, &scientific, Some(mask))?
-        }
-        Some(ReconstructionMaskSet::Coupled(masks)) => {
-            ContinuumSourceCatalog::from_major_cycle_with_coupled_masks(
-                problem,
-                &scientific,
-                masks,
-            )?
-        }
-        Some(ReconstructionMaskSet::Domains(masks)) => {
-            ContinuumSourceCatalog::from_major_cycle_with_domain_masks(problem, &scientific, masks)?
-        }
-        None => ContinuumSourceCatalog::from_major_cycle(problem, &scientific)?,
-    };
-    let authority = ProductGenerationAuthority::bind(problem);
-    let planned_products = authority.plan(&sources, &publication_config.controls)?;
-    let generation_demand = {
+    let (planned_products, generation_demand) = {
         let mut inputs = ContinuumProductInputs::from_major_cycle(problem, &scientific)?;
         if let Some(masks) = reconstruction_masks.as_ref() {
             inputs = match masks {
@@ -1121,11 +1102,13 @@ where
                 }
             };
         }
-        planned_products.demand(&inputs, casa_imaging_products::ProductStoragePlan::new(1)?)?
+        let planned = PlannedContinuumGeneration::new(&inputs, &publication_config.controls)?;
+        let demand = planned.demand(&inputs, casa_imaging_products::ProductStoragePlan::new(1)?)?;
+        (planned, demand)
     };
     let staging_residency_bytes = publication_config
         .sink
-        .staging_residency_bytes(&planned_products, &generation_demand)?;
+        .residency(&planned_products, &generation_demand)?;
 
     let visibility_write_receipt = prior
         .visibility_replay
@@ -1140,9 +1123,6 @@ where
         });
     let planning_registry =
         PlanningRegistry::new(runtime.registry, runtime.implementation.clone(), problem);
-    // The ordinary publication plan is deliberately constructed before member
-    // production and sealing; the executor later presents the completed
-    // projection to the runtime for authorization at the commit gate.
     let publication_plan = SerialProductPublicationPlan::new(
         problem,
         &planned_products,
@@ -1154,12 +1134,10 @@ where
             runtime.storage_io.clone(),
             runtime.stage_nanos,
             runtime.confidence_parts_per_million,
-            runtime.gridded_normal_storage.clone(),
         ),
     )?;
-    let (physical, publication, backing) = publication_plan.into_parts();
-    // Admission covers production, validity, sealing overlap, and staging.
-    // Obtain it before allocating any product payload.
+    let (physical, publication, window) = publication_plan.into_parts();
+    // Admit the generation windows and direct writer before opening output images.
     let execution_plan = plan(
         problem,
         PlanningBindings::new(
@@ -1180,7 +1158,7 @@ where
         scientific,
         reconstruction_masks,
         publication_config.sink,
-        backing,
+        window,
     )?;
     let registry = SerialProductPublicationRegistry::new(
         runtime.registry,

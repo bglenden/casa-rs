@@ -11671,6 +11671,124 @@ public func FfiConverterTypePlotSeriesMetadata_lower(_ value: PlotSeriesMetadata
 }
 
 
+public struct ProjectFileEntry {
+    public var path: String
+    public var relativePath: String
+    public var isDirectory: Bool
+    public var sizeBytes: UInt64
+    /**
+     * Optional recognition obtained during this same walk.
+     */
+    public var dataset: DatasetProbe?
+    public var showInTree: Bool
+    public var looseFileCandidate: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(path: String, relativePath: String, isDirectory: Bool, sizeBytes: UInt64,
+        /**
+         * Optional recognition obtained during this same walk.
+         */dataset: DatasetProbe?, showInTree: Bool, looseFileCandidate: Bool) {
+        self.path = path
+        self.relativePath = relativePath
+        self.isDirectory = isDirectory
+        self.sizeBytes = sizeBytes
+        self.dataset = dataset
+        self.showInTree = showInTree
+        self.looseFileCandidate = looseFileCandidate
+    }
+}
+
+#if compiler(>=6)
+extension ProjectFileEntry: Sendable {}
+#endif
+
+
+extension ProjectFileEntry: Equatable, Hashable {
+    public static func ==(lhs: ProjectFileEntry, rhs: ProjectFileEntry) -> Bool {
+        if lhs.path != rhs.path {
+            return false
+        }
+        if lhs.relativePath != rhs.relativePath {
+            return false
+        }
+        if lhs.isDirectory != rhs.isDirectory {
+            return false
+        }
+        if lhs.sizeBytes != rhs.sizeBytes {
+            return false
+        }
+        if lhs.dataset != rhs.dataset {
+            return false
+        }
+        if lhs.showInTree != rhs.showInTree {
+            return false
+        }
+        if lhs.looseFileCandidate != rhs.looseFileCandidate {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(path)
+        hasher.combine(relativePath)
+        hasher.combine(isDirectory)
+        hasher.combine(sizeBytes)
+        hasher.combine(dataset)
+        hasher.combine(showInTree)
+        hasher.combine(looseFileCandidate)
+    }
+}
+
+extension ProjectFileEntry: Codable {}
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeProjectFileEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ProjectFileEntry {
+        return
+            try ProjectFileEntry(
+                path: FfiConverterString.read(from: &buf),
+                relativePath: FfiConverterString.read(from: &buf),
+                isDirectory: FfiConverterBool.read(from: &buf),
+                sizeBytes: FfiConverterUInt64.read(from: &buf),
+                dataset: FfiConverterOptionTypeDatasetProbe.read(from: &buf),
+                showInTree: FfiConverterBool.read(from: &buf),
+                looseFileCandidate: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ProjectFileEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterString.write(value.relativePath, into: &buf)
+        FfiConverterBool.write(value.isDirectory, into: &buf)
+        FfiConverterUInt64.write(value.sizeBytes, into: &buf)
+        FfiConverterOptionTypeDatasetProbe.write(value.dataset, into: &buf)
+        FfiConverterBool.write(value.showInTree, into: &buf)
+        FfiConverterBool.write(value.looseFileCandidate, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProjectFileEntry_lift(_ buf: RustBuffer) throws -> ProjectFileEntry {
+    return try FfiConverterTypeProjectFileEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeProjectFileEntry_lower(_ value: ProjectFileEntry) -> RustBuffer {
+    return FfiConverterTypeProjectFileEntry.lower(value)
+}
+
+
 public struct ProjectProbe {
     public var name: String
     public var rootPath: String
@@ -11678,16 +11796,24 @@ public struct ProjectProbe {
     public var diagnostics: [String]
     public var scannedEntryCount: UInt64
     public var truncated: Bool
+    /**
+     * Bounded transient directory inventory shared by dataset and file views.
+     */
+    public var entries: [ProjectFileEntry]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(name: String, rootPath: String, datasets: [DatasetProbe], diagnostics: [String], scannedEntryCount: UInt64, truncated: Bool) {
+    public init(name: String, rootPath: String, datasets: [DatasetProbe], diagnostics: [String], scannedEntryCount: UInt64, truncated: Bool,
+        /**
+         * Bounded transient directory inventory shared by dataset and file views.
+         */entries: [ProjectFileEntry]) {
         self.name = name
         self.rootPath = rootPath
         self.datasets = datasets
         self.diagnostics = diagnostics
         self.scannedEntryCount = scannedEntryCount
         self.truncated = truncated
+        self.entries = entries
     }
 }
 
@@ -11716,6 +11842,9 @@ extension ProjectProbe: Equatable, Hashable {
         if lhs.truncated != rhs.truncated {
             return false
         }
+        if lhs.entries != rhs.entries {
+            return false
+        }
         return true
     }
 
@@ -11726,6 +11855,7 @@ extension ProjectProbe: Equatable, Hashable {
         hasher.combine(diagnostics)
         hasher.combine(scannedEntryCount)
         hasher.combine(truncated)
+        hasher.combine(entries)
     }
 }
 
@@ -11745,7 +11875,8 @@ public struct FfiConverterTypeProjectProbe: FfiConverterRustBuffer {
                 datasets: FfiConverterSequenceTypeDatasetProbe.read(from: &buf),
                 diagnostics: FfiConverterSequenceString.read(from: &buf),
                 scannedEntryCount: FfiConverterUInt64.read(from: &buf),
-                truncated: FfiConverterBool.read(from: &buf)
+                truncated: FfiConverterBool.read(from: &buf),
+                entries: FfiConverterSequenceTypeProjectFileEntry.read(from: &buf)
         )
     }
 
@@ -11756,6 +11887,7 @@ public struct FfiConverterTypeProjectProbe: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.diagnostics, into: &buf)
         FfiConverterUInt64.write(value.scannedEntryCount, into: &buf)
         FfiConverterBool.write(value.truncated, into: &buf)
+        FfiConverterSequenceTypeProjectFileEntry.write(value.entries, into: &buf)
     }
 }
 
@@ -24041,6 +24173,31 @@ fileprivate struct FfiConverterSequenceTypePlotSeriesMetadata: FfiConverterRustB
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePlotSeriesMetadata.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeProjectFileEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [ProjectFileEntry]
+
+    public static func write(_ value: [ProjectFileEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeProjectFileEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ProjectFileEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ProjectFileEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeProjectFileEntry.read(from: &buf))
         }
         return seq
     }

@@ -456,6 +456,71 @@ fn t38_two_channel_hogbom_cycle_is_ordered_and_model_plane_complete() {
     );
 }
 
+#[test]
+fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
+    use casa_imaging_reconstruction::runtime_adapter::{NormalArrayStorage, NormalStorageFactory};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    #[derive(Debug)]
+    struct Factory(Arc<AtomicUsize>);
+    #[derive(Debug)]
+    struct Storage {
+        values: Vec<f64>,
+        reads: Arc<AtomicUsize>,
+    }
+    impl NormalStorageFactory for Factory {
+        fn create(
+            &self,
+            _domain: usize,
+            scalars: usize,
+        ) -> Result<Box<dyn NormalArrayStorage>, SpectralOperatorError> {
+            Ok(Box::new(Storage {
+                values: vec![0.0; scalars],
+                reads: self.0.clone(),
+            }))
+        }
+    }
+    impl NormalArrayStorage for Storage {
+        fn len(&self) -> usize {
+            self.values.len()
+        }
+        fn read(&self, start: usize, values: &mut [f64]) -> Result<(), SpectralOperatorError> {
+            self.reads.fetch_add(values.len(), Ordering::Relaxed);
+            values.copy_from_slice(&self.values[start..start + values.len()]);
+            Ok(())
+        }
+        fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+            self.values[start..start + values.len()].copy_from_slice(values);
+            Ok(())
+        }
+    }
+    let problem = t38_cube_problem(238);
+    let mut lifecycle = bind_lifecycle(&problem, attempt(239));
+    let initial = lifecycle.initial_empty().unwrap();
+    let preparation = MajorCyclePreparation::prepare(&lifecycle, initial, None).unwrap();
+    let complete = run_t19_complete_data(&problem, Some(&preparation));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let storage = NormalStoragePlan::new(Arc::new(Factory(reads.clone())), 2).unwrap();
+    let stored = complete.seal(&storage).unwrap();
+    reads.store(0, Ordering::Relaxed);
+    let joined = MajorCycleOwner::from_complete_data(stored, preparation)
+        .unwrap()
+        .reconcile(&mut lifecycle)
+        .unwrap();
+    assert_eq!(
+        reads.load(Ordering::Relaxed),
+        0,
+        "completion must not authorize trusted ownership by rereading normal arrays"
+    );
+    joined.normal_state().diagnostic_content_identity().unwrap();
+    assert!(
+        reads.load(Ordering::Relaxed) > 0,
+        "an explicitly requested diagnostic still reads and fingerprints arrays"
+    );
+}
+
 #[cfg(feature = "cpp-interop-tests")]
 // Reconstruct the finite-support residual implied by Rust's recorded
 // components without treating casacore's working residual as a Major-Cycle
@@ -861,7 +926,7 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     .reconcile(&mut lifecycle)
     .unwrap();
     let (prior, continuation) = joined.into_continuation();
-    let prior_content = prior.content_identity();
+    let prior_content = prior.diagnostic_content_identity().unwrap();
     let (mut lifecycle, named) = ModelLifecycle::continue_from(
         ExecutableModelProblem::from_compiled(problem.clone()).unwrap(),
         attempt(250),
@@ -900,7 +965,10 @@ fn t55_all_flagged_program_finishes_without_encoded_frames() {
     .unwrap()
     .reconcile(&mut lifecycle)
     .unwrap();
-    assert_eq!(joined.normal_state().content_identity(), prior_content);
+    assert_eq!(
+        joined.normal_state().diagnostic_content_identity().unwrap(),
+        prior_content
+    );
 }
 
 #[test]
@@ -1079,7 +1147,10 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
         first_model_generation
     );
     let first_completion = first_join.completion_id();
-    let first_content = first_join.normal_state().content_identity();
+    let first_content = first_join
+        .normal_state()
+        .diagnostic_content_identity()
+        .unwrap();
     let (first_normal, first_continuation) = first_join.into_continuation();
 
     let (mut second_lifecycle, second_named) = ModelLifecycle::continue_from(
@@ -1143,7 +1214,13 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
 
     assert_ne!(first_model_generation, second_model_generation);
     assert_ne!(first_completion, second_join.completion_id());
-    assert_ne!(first_content, second_join.normal_state().content_identity());
+    assert_ne!(
+        first_content,
+        second_join
+            .normal_state()
+            .diagnostic_content_identity()
+            .unwrap()
+    );
     assert_eq!(program.identity(), program_alias.identity());
 }
 
@@ -1635,9 +1712,10 @@ fn check_linear_cube_replay(
             .all(|value| value.re.is_finite() && value.im.is_finite())
     );
     let (mut direct_lifecycle, direct_preparation, direct_initial_normal) = prepare_case();
-    assert_eq!(
+    assert_ne!(
         direct_preparation.final_model_generation(),
-        final_model_generation
+        final_model_generation,
+        "independent owner executions must not share a generation token"
     );
     assert_eq!(
         direct_preparation
@@ -1705,6 +1783,10 @@ fn check_linear_cube_replay(
     .expect("direct major owner")
     .reconcile(&mut direct_lifecycle)
     .expect("reconciled direct residual");
+    assert_eq!(
+        direct.normal_state().final_model_generation(),
+        direct.final_model().generation_id()
+    );
     assert_eq!(direct.normal_state().sum_weights(), initial_sum_weights);
     let direct_window = direct
         .normal_state()
@@ -1733,7 +1815,7 @@ fn check_linear_cube_replay(
         gridded_residual[maximum_index],
     );
     LinearReplayResult {
-        normal_content: joined.normal_state().content_identity(),
+        normal_content: joined.normal_state().diagnostic_content_identity().unwrap(),
         predictions: predictions
             .iter()
             .map(|sample| sample.predicted())
@@ -2776,7 +2858,7 @@ fn schema_versions_record_the_t20_completion_records() {
     assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
     assert_eq!(
         casa_imaging_reconstruction::FinalNormalStateCompletionId::SCHEMA_VERSION,
-        3
+        4
     );
     assert_eq!(
         casa_imaging_reconstruction::MajorCycleCompletionId::SCHEMA_VERSION,
@@ -2842,7 +2924,10 @@ fn reconciliation_applies_one_pending_delta_through_the_model_owner() {
     );
     // The residual content is model-dependent: a nonzero final model never
     // relabels the data-side dirty plane.
-    assert_ne!(normal_state.content_identity(), data_side_content);
+    assert_ne!(
+        normal_state.diagnostic_content_identity().unwrap(),
+        data_side_content
+    );
     assert_eq!(
         normal_state.input_model_generation(),
         model_completion.base()
@@ -2904,8 +2989,13 @@ fn reconciliation_without_a_pending_delta_confirms_the_named_generation_final() 
     // An empty final model reconciles to the exact T19 dirty plane bit-for-bit,
     // and its domain-level content identity matches an independent confirm
     // reconciliation over the same frozen evidence.
-    let confirm_content = confirm_prior_normal_state(&problem).content_identity();
-    assert_eq!(joined.normal_state().content_identity(), confirm_content);
+    let confirm_content = confirm_prior_normal_state(&problem)
+        .diagnostic_content_identity()
+        .unwrap();
+    assert_eq!(
+        joined.normal_state().diagnostic_content_identity().unwrap(),
+        confirm_content
+    );
     let window = joined
         .normal_state()
         .read_window(0..1)
@@ -3076,7 +3166,10 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
     .expect("initial major owner")
     .reconcile(&mut initial_lifecycle)
     .expect("initial normal state");
-    let initial_content = initial_join.normal_state().content_identity();
+    let initial_content = initial_join
+        .normal_state()
+        .diagnostic_content_identity()
+        .unwrap();
     let (initial_normal, continuation) = initial_join.into_continuation();
     let (mut continued_lifecycle, carried_model) = ModelLifecycle::continue_from(
         ExecutableModelProblem::from_compiled(problem.clone()).expect("continued problem"),
@@ -3118,7 +3211,13 @@ fn empty_origin_residual_refresh_uses_the_general_operator() {
     .expect("refresh major owner")
     .reconcile(&mut continued_lifecycle)
     .expect("refresh normal state");
-    assert_eq!(refreshed.normal_state().content_identity(), initial_content);
+    assert_eq!(
+        refreshed
+            .normal_state()
+            .diagnostic_content_identity()
+            .unwrap(),
+        initial_content
+    );
 }
 
 #[test]
@@ -3327,8 +3426,14 @@ fn residual_content_depends_on_the_exact_final_model() {
     .expect("delta reconciliation");
 
     assert_ne!(
-        empty_join.normal_state().content_identity(),
-        delta_join.normal_state().content_identity(),
+        empty_join
+            .normal_state()
+            .diagnostic_content_identity()
+            .unwrap(),
+        delta_join
+            .normal_state()
+            .diagnostic_content_identity()
+            .unwrap(),
         "a nonzero final model must change the authoritative residual content"
     );
     assert_ne!(
@@ -3352,7 +3457,7 @@ fn residual_content_depends_on_the_exact_final_model() {
 }
 
 #[test]
-fn completion_ids_stay_stable_across_owner_allocations() {
+fn completion_ids_distinguish_owners_while_science_and_replay_remain_stable() {
     let problem = t19_compatible_problem(30);
     // Two independent reconciliation passes over identical evidence, each with
     // its own process-local lifecycle allocation but the same stable
@@ -3399,15 +3504,54 @@ fn completion_ids_stay_stable_across_owner_allocations() {
     .reconcile(&mut second)
     .expect("second reconciliation");
 
-    assert_eq!(
+    assert_ne!(
         first_join.completion_id(),
         second_join.completion_id(),
-        "completion IDs hash the stable lifecycle authority, not a process-local seal"
+        "completion IDs retain the unique model owner association"
     );
-    assert_eq!(
+    assert_ne!(
         first_join.normal_state().completion_id(),
         second_join.normal_state().completion_id()
     );
+    let first_normal = first_join.normal_state();
+    let second_normal = second_join.normal_state();
+    assert_eq!(first_normal.problem_id(), second_normal.problem_id());
+    assert_eq!(
+        first_normal.selected_generation(),
+        second_normal.selected_generation()
+    );
+    assert_eq!(
+        first_normal.weighting_generation(),
+        second_normal.weighting_generation()
+    );
+    assert_eq!(first_normal.replay_id(), second_normal.replay_id());
+    assert_eq!(first_normal.coverage(), second_normal.coverage());
+    assert_eq!(
+        first_normal.diagnostic_content_identity().unwrap(),
+        second_normal.diagnostic_content_identity().unwrap()
+    );
+    assert_eq!(
+        first_join
+            .final_model()
+            .read_samples(0..first_join.final_model().sample_count())
+            .unwrap(),
+        second_join
+            .final_model()
+            .read_samples(0..second_join.final_model().sample_count())
+            .unwrap()
+    );
+    for joined in [&first_join, &second_join] {
+        assert_eq!(joined.model_completion().attempt(), attempt(31));
+        assert_eq!(joined.model_completion().epoch(), 7);
+        assert_eq!(
+            joined.model_completion().generation(),
+            joined.final_model().generation_id()
+        );
+        assert_eq!(
+            joined.normal_state().final_model_generation(),
+            joined.final_model().generation_id()
+        );
+    }
 }
 
 #[test]

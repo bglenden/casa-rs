@@ -35,6 +35,66 @@ def live_metadata() -> dict:
     return checker.load_cargo_metadata(None)
 
 
+class ProductOwnershipTests(unittest.TestCase):
+    def test_prepared_model_may_transfer_but_not_rescan_owned_samples(self) -> None:
+        source = "fn initial_reprojected() { mint(prepared.samples.into_vec()); }"
+        checker.validate_prepared_model_transfer(source)
+        for inspection in ["audit(&prepared.samples);", "prepared.samples.iter().for_each(check);"]:
+            with self.assertRaisesRegex(checker.ArchitectureError, "must not inspect samples"):
+                checker.validate_prepared_model_transfer(source.replace("mint(", inspection + "mint("))
+
+    def setUp(self) -> None:
+        self.sources = {
+            "storage.rs": """pub trait ProductOutput {
+    fn begin_member(&self);
+}
+pub trait ProductWriter {
+    fn write(&mut self, window: ProductWindow);
+    fn finish(self: Box<Self>);
+}
+""",
+            "generation.rs": "fn generate(output: &dyn ProductOutput) {}",
+            "visibility.rs": "use sha2::Sha256;",
+        }
+
+    def test_write_only_contract_and_independent_visibility_hash_are_allowed(self) -> None:
+        checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_hashing_under_a_different_name_is_rejected(self) -> None:
+        self.sources["audit.rs"] = "use sha2::Sha256 as PublicationCheck;"
+        with self.assertRaisesRegex(checker.ArchitectureError, "product hashing"):
+            checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_arbitrary_new_reader_capability_is_rejected(self) -> None:
+        self.sources["storage.rs"] = self.sources["storage.rs"].replace(
+            "fn finish", "fn inspect(&self) -> Vec<f32>;\n    fn finish"
+        )
+        with self.assertRaisesRegex(checker.ArchitectureError, "write lifecycle"):
+            checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_borrowed_window_substitution_is_rejected(self) -> None:
+        self.sources["storage.rs"] = self.sources["storage.rs"].replace(
+            "window: ProductWindow", "window: &ProductWindow"
+        )
+        with self.assertRaisesRegex(checker.ArchitectureError, "owned window"):
+            checker.validate_product_write_only_sources(self.sources, "")
+
+    def test_output_verification_pass_without_hashing_is_rejected(self) -> None:
+        with self.assertRaisesRegex(checker.ArchitectureError, "reread product"):
+            checker.validate_product_write_only_sources(
+                self.sources, "fn check(image: Image) { image.get_slice(start, shape); }"
+            )
+
+    def test_test_fingerprint_does_not_hide_later_production_read(self) -> None:
+        source = "#[cfg(test)] mod tests { fn fingerprint() { use sha2::Sha256; } }"
+        self.sources["checks.rs"] = source
+        checker.validate_product_write_only_sources(self.sources, "")
+        with self.assertRaisesRegex(checker.ArchitectureError, "reread product"):
+            checker.validate_product_write_only_sources(
+                self.sources, source + "\nfn publish() { output.read_window(0..1); }"
+            )
+
+
 class PolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = load_json(POLICY_PATH)
@@ -45,6 +105,7 @@ class PolicyTests(unittest.TestCase):
         checker.validate_workspace(self.policy, self.metadata)
         checker.validate_forward_invariants(self.policy, self.metadata)
         checker.validate_source_boundaries(self.policy)
+        checker.validate_product_write_only_path()
 
     def test_every_workspace_package_is_classified(self) -> None:
         packages, _edges, _dependencies = checker.workspace_edges(self.metadata)

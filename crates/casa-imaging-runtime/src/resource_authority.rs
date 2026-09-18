@@ -11,8 +11,6 @@ use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use crate::{ExecutionAttemptId, ReceiptStatus};
-
 use casa_imaging_model::MeasurementSetIdentity;
 use sha2::{Digest, Sha256};
 use tempfile::Builder;
@@ -1284,31 +1282,6 @@ pub struct DemandAlternatives {
     pub alternatives: Vec<DemandAlternative>,
 }
 
-/// One integrity-checked quantitative receipt constraint supplied to Resource
-/// Authority during planning.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RecordedAdmissionConstraint {
-    pub(crate) alternative: AlternativeId,
-    pub(crate) resource: ResourceIdentity,
-    pub(crate) required: u64,
-    pub(crate) available: u64,
-    pub(crate) attempt: ExecutionAttemptId,
-    pub(crate) status: ReceiptStatus,
-}
-
-impl RecordedAdmissionConstraint {
-    fn current_available(
-        &self,
-        alternative: &AlternativeId,
-        available: &ResourceGrant,
-    ) -> Result<Option<u64>, ResourceError> {
-        if self.alternative != *alternative {
-            return Ok(None);
-        }
-        resource_available(available, &self.resource).map(Some)
-    }
-}
-
 /// Named runtime-overhead category owned by a lease.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RuntimeOverheadKind {
@@ -1698,16 +1671,6 @@ pub enum AlternativeRejectionReason {
         /// Amount available after policy, pressure, and active leases.
         available: u64,
     },
-    /// Resource Authority applied an explicit prior terminal receipt constraint
-    /// for the same quantitative pressure region. A later admission with
-    /// recovered capacity is retried normally. This is an admission input,
-    /// not cost-model learning.
-    RecordedFailure {
-        /// Attempt whose terminal receipt recorded the failure.
-        attempt: ExecutionAttemptId,
-        /// Terminal status retained by that receipt.
-        status: ReceiptStatus,
-    },
 }
 
 /// Machine-readable refusal evidence for one named demand alternative.
@@ -1766,8 +1729,7 @@ impl AdmissionInfeasibilityCertificate {
                     available,
                     ..
                 } => Some((*required, *available)),
-                AlternativeRejectionReason::NoCapableAlternative
-                | AlternativeRejectionReason::RecordedFailure { .. } => None,
+                AlternativeRejectionReason::NoCapableAlternative => None,
             })
     }
 }
@@ -1790,10 +1752,6 @@ impl fmt::Display for AdmissionInfeasibilityCertificate {
                 } => write!(
                     formatter,
                     "{alternative} requires {required} {resource}, but only {available} is available"
-                )?,
-                AlternativeRejectionReason::RecordedFailure { attempt, status } => write!(
-                    formatter,
-                    "{alternative} was recorded terminally {status:?} by attempt {attempt}"
                 )?,
             }
         }
@@ -2214,19 +2172,6 @@ impl ResourceAuthority {
         policy: ResourcePolicy,
         alternatives: DemandAlternatives,
     ) -> Result<ResourceLease, ResourceError> {
-        self.acquire_with_recorded_constraints(policy, alternatives, &[])
-    }
-
-    /// Atomically selects, admits, and reserves one demand alternative while
-    /// applying explicit integrity-checked receipt constraints. Receipt
-    /// evidence is an admission input owned by this authority; it is never a
-    /// planner-side candidate filter or a cost-model update.
-    pub(crate) fn acquire_with_recorded_constraints(
-        &self,
-        policy: ResourcePolicy,
-        alternatives: DemandAlternatives,
-        recorded_constraints: &[RecordedAdmissionConstraint],
-    ) -> Result<ResourceLease, ResourceError> {
         validate_policy(&self.inner.topology, &policy)?;
         if alternatives.alternatives.is_empty() {
             return Err(ResourceError::Invalid(
@@ -2277,36 +2222,6 @@ impl ResourceAuthority {
                 hard: reserved.clone(),
                 preferred: reserved.clone(),
             };
-            let mut recorded = None;
-            for constraint in recorded_constraints {
-                let Some(current_available) =
-                    constraint.current_available(&alternative.id, &policy_available.hard)?
-                else {
-                    continue;
-                };
-                // A receipt constrains only the pressure region it observed.
-                // Any increase above that recorded availability reopens the
-                // candidate for normal current admission.
-                if current_available <= constraint.available
-                    && recorded.as_ref().is_none_or(
-                        |(current, _): &(&RecordedAdmissionConstraint, u64)| {
-                            constraint.available > current.available
-                        },
-                    )
-                {
-                    recorded = Some((constraint, current_available));
-                }
-            }
-            if let Some((constraint, _current_available)) = recorded {
-                rejections.push(AlternativeRejection::new(
-                    alternative.id.clone(),
-                    AlternativeRejectionReason::RecordedFailure {
-                        attempt: constraint.attempt,
-                        status: constraint.status,
-                    },
-                ));
-                continue;
-            }
             if let Err(ResourceError::Infeasible {
                 resource,
                 required,
@@ -3435,47 +3350,6 @@ fn admit_totals(
         &available.preferred.accelerator_slots,
     )?;
     Ok(GrantedTotals { hard, preferred })
-}
-
-fn resource_available(
-    available: &ResourceGrant,
-    resource: &ResourceIdentity,
-) -> Result<u64, ResourceError> {
-    let identity = resource.as_str();
-    let scalar = match identity {
-        "workers" => Some(available.workers),
-        "cache-bytes" => Some(available.cache_bytes),
-        "locks" => Some(available.locks),
-        "file-descriptors" => Some(available.file_descriptors),
-        _ => None,
-    };
-    scalar
-        .or_else(|| {
-            available.memory_bytes.iter().find_map(|(id, amount)| {
-                (identity
-                    == ResourceIdentity::new(format!("memory-domain:{}", id.as_str())).as_str())
-                .then_some(*amount)
-            })
-        })
-        .or_else(|| resource_map_available("storage-domain", &available.storage_bytes, identity))
-        .or_else(|| resource_map_available("rate-resource", &available.rates_per_second, identity))
-        .or_else(|| resource_map_available("queue-resource", &available.queue_slots, identity))
-        .or_else(|| resource_map_available("accelerator", &available.accelerator_slots, identity))
-        .ok_or_else(|| {
-            ResourceError::Invalid(format!(
-                "recorded receipt names unknown resource identity {identity}"
-            ))
-        })
-}
-
-fn resource_map_available<Id: fmt::Debug>(
-    kind: &str,
-    available: &BTreeMap<Id, u64>,
-    identity: &str,
-) -> Option<u64> {
-    available.iter().find_map(|(id, amount)| {
-        (identity == ResourceIdentity::new(format!("{kind}:{id:?}")).as_str()).then_some(*amount)
-    })
 }
 
 fn admit_resource_map<Id: Clone + Ord + fmt::Debug>(

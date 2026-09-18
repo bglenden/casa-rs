@@ -1421,7 +1421,7 @@ impl<'a> WeightingPlanFragment<'a> {
             base.artifacts().to_vec(),
             base.observation_transaction().clone(),
             base.publication_layouts().clone(),
-            base.product_publication_authority(),
+            base.product_publication_plan(),
         )?)
     }
 
@@ -1578,7 +1578,7 @@ impl<'a> WeightingPlanFragment<'a> {
             legacy.artifacts().to_vec(),
             legacy.observation_transaction().clone(),
             legacy.publication_layouts().clone(),
-            legacy.product_publication_authority(),
+            legacy.product_publication_plan(),
         )?)
     }
 

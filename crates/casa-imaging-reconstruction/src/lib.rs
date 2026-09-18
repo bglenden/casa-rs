@@ -138,7 +138,7 @@ pub use polarization_operator::{
 #[doc(hidden)]
 pub use psf_beam::{
     DEFAULT_PSF_FIT_CUTOFF, PsfBeamFitError, RestoringBeam, fit_restoring_beam,
-    fitted_psf_sidelobe_fraction,
+    fitted_psf_sidelobe_fraction, psf_fit_workspace_bytes,
 };
 pub use reconstruction_cycle::{
     ChannelComponentDivergence, ChannelCycleEvidence, ChannelCyclePolicy, ReconstructionCycle,
@@ -160,7 +160,7 @@ pub use weighting::{
 const AUTHORITY_DOMAIN: &[u8] = b"casa-rs-model-lifecycle-authority";
 const AUTHORITY_VERSION: u32 = 2;
 const GENERATION_DOMAIN: &[u8] = b"casa-rs-model-generation";
-const GENERATION_VERSION: u32 = 2;
+const GENERATION_VERSION: u32 = 4;
 const DELTA_DOMAIN: &[u8] = b"casa-rs-model-delta";
 const DELTA_VERSION: u32 = 2;
 const REPROJECTION_VERSION: u32 = 3;
@@ -173,7 +173,7 @@ const REPROJECTED_PROOF_VERSION: u32 = 1;
 const FINAL_COMPLETION_DOMAIN: &[u8] = b"casa-rs-final-model-completion";
 const FINAL_COMPLETION_VERSION: u32 = 2;
 const FINAL_NORMAL_STATE_DOMAIN: &[u8] = b"casa-rs-final-normal-state";
-const FINAL_NORMAL_STATE_VERSION: u32 = 3;
+const FINAL_NORMAL_STATE_VERSION: u32 = 4;
 const MAJOR_CYCLE_DOMAIN: &[u8] = b"casa-rs-major-cycle-completion";
 const MAJOR_CYCLE_VERSION: u32 = 2;
 
@@ -545,60 +545,18 @@ impl ModelGenerationWindow<'_> {
     }
 }
 
-/// Barrier-scoped proof that an immutable model was checked by its lifecycle.
-/// All windows derived from this proof share that exact validation and base.
-#[doc(hidden)]
-#[derive(Debug, Clone, Copy)]
-pub struct ModelGenerationValidation<'a> {
-    lifecycle: &'a ModelLifecycle,
-    generation: &'a ModelGeneration,
-}
-
-impl<'a> ModelGenerationValidation<'a> {
-    /// Load one admitted model window before dispatching its computation.
-    pub fn read_window(
-        self,
-        domain: usize,
-        coefficients: std::ops::Range<usize>,
-    ) -> Result<ValidatedModelWindow<'a>, ModelLifecycleError> {
-        Ok(ValidatedModelWindow {
-            validation: self,
-            window: self.generation.read_window(domain, coefficients)?,
-        })
-    }
-}
-
-/// Loaded immutable samples carrying their lifecycle's barrier validation.
-#[doc(hidden)]
-#[derive(Debug)]
-pub struct ValidatedModelWindow<'a> {
-    validation: ModelGenerationValidation<'a>,
-    window: ModelGenerationWindow<'a>,
-}
-
-impl<'a> Deref for ValidatedModelWindow<'a> {
-    type Target = ModelGenerationWindow<'a>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.window
-    }
-}
-
-impl ValidatedModelWindow<'_> {
+impl ModelGenerationWindow<'_> {
     pub(crate) fn compile_delta(
         &self,
+        lifecycle: &ModelLifecycle,
         terms: impl IntoIterator<Item = ModelDeltaTerm>,
     ) -> Result<ModelDelta, ModelLifecycleError> {
-        self.validation.lifecycle.compile_delta_with_support(
-            self.validation.generation.generation_id(),
-            terms,
-            |index| {
-                self.window
-                    .sample(index)
-                    .map(|sample| sample.support())
-                    .ok_or(ModelLifecycleError::CellOutsideShape)
-            },
-        )
+        lifecycle.validate_base(self.generation)?;
+        lifecycle.compile_delta_with_support(self.generation.generation_id(), terms, |index| {
+            self.sample(index)
+                .map(|sample| sample.support())
+                .ok_or(ModelLifecycleError::CellOutsideShape)
+        })
     }
 }
 
@@ -864,10 +822,9 @@ impl FinalModelUpdate {
 
 /// Solver-independent owner of one compiled model lifecycle.
 ///
-/// This authority is deliberately not `Clone`. Stable IDs bind the complete
-/// problem, attempt, and epoch, while a private per-instance seal prevents
-/// values minted by a separately constructed owner from crossing into this
-/// owner even when their stable content happens to be equal. Its final
+/// This authority is deliberately not `Clone`. Generation IDs bind the complete
+/// problem, attempt, epoch, and unique owner instance, without hashing content.
+/// The private instance binding rejects values minted by another owner. Its final
 /// completion authority is consumed by the first finalization attempt.
 #[derive(Debug)]
 pub struct ModelLifecycle {
@@ -881,6 +838,7 @@ pub struct ModelLifecycle {
     continuation: Option<ContinuationAuthority>,
     prepared: Option<PreparedReprojectedSeed>,
     storage: ModelStoragePlan,
+    next_generation: AtomicU64,
 }
 
 impl ModelLifecycle {
@@ -913,6 +871,7 @@ impl ModelLifecycle {
             continuation: None,
             prepared,
             storage,
+            next_generation: AtomicU64::new(1),
         })
     }
 
@@ -920,7 +879,7 @@ impl ModelLifecycle {
     ///
     /// This is the sole cross-attempt model handoff. The previous completion
     /// and generation stay inseparable until this method validates their
-    /// problem, content, and private owner seal. The returned generation is
+    /// problem, generation, and private owner binding. The returned generation is
     /// accepted only by this newly bound lifecycle and remains affine.
     pub fn continue_from(
         problem: ExecutableModelProblem,
@@ -930,8 +889,8 @@ impl ModelLifecycle {
         storage: ModelStoragePlan,
     ) -> Result<(Self, ModelGeneration), ModelLifecycleError> {
         let mut lifecycle = Self::bind(problem, attempt, epoch, storage)?;
-        let (completion, generation) = continuation.into_parts();
-        lifecycle.validate_generation_integrity(&generation)?;
+        let (completion, mut generation) = continuation.into_parts();
+        lifecycle.validate_generation_shape_and_bounds(&generation)?;
         let completion_identity = final_completion_id(
             generation.authority,
             completion.problem,
@@ -953,6 +912,9 @@ impl ModelLifecycle {
             seal: generation.seal,
             generation: generation.generation_id,
         });
+        generation
+            .samples
+            .record_validated_bound(lifecycle.contract.bounds().max_absolute_model_value());
         Ok((lifecycle, generation))
     }
 
@@ -983,8 +945,8 @@ impl ModelLifecycle {
     /// Return the stable lifecycle authority behind every owner-minted ID.
     ///
     /// Unlike the per-instance process-local seal, this identity binds the
-    /// compiled problem, lifecycle commitment, attempt, and epoch, so IDs
-    /// derived from it remain stable across separate owner allocations.
+    /// compiled problem, lifecycle commitment, attempt, and epoch. Generation
+    /// identities additionally bind the unique process-local owner instance.
     #[must_use]
     pub(crate) const fn authority(&self) -> LogicalIdentity {
         self.authority
@@ -1080,11 +1042,6 @@ impl ModelLifecycle {
         {
             return Err(ModelLifecycleError::SourceProvenanceMismatch);
         }
-        if model_support_identity(prepared.samples.iter().map(|sample| sample.support()))
-            != commitment.support()
-        {
-            return Err(ModelLifecycleError::SupportIdentityMismatch);
-        }
         if prepared.projection != *commitment {
             return Err(ModelLifecycleError::ReprojectionIdentityMismatch);
         }
@@ -1102,18 +1059,21 @@ impl ModelLifecycle {
     /// Adopt the exact generation named by the compiled input.
     pub fn resume(
         &self,
-        generation: ModelGeneration,
+        mut generation: ModelGeneration,
     ) -> Result<ModelGeneration, ModelLifecycleError> {
         self.ensure_open()?;
         let ModelInputCommitment::Generation(expected) = self.contract.input() else {
             return Err(ModelLifecycleError::InitialModelKindMismatch);
         };
-        self.validate_generation_integrity(&generation)?;
+        self.validate_generation_shape_and_bounds(&generation)?;
         if generation.shape != *self.contract.target()
             || generation.generation_id.identity() != *expected
         {
             return Err(ModelLifecycleError::GenerationIdentityMismatch);
         }
+        generation
+            .samples
+            .record_validated_bound(self.contract.bounds().max_absolute_model_value());
         Ok(generation)
     }
 
@@ -1207,16 +1167,13 @@ impl ModelLifecycle {
     /// without consuming it.
     ///
     /// A Major Cycle names its exact input generation through this owner check
-    /// before any mutation; foreign, stale, or tampered evidence fails closed.
-    pub fn validate_named_generation<'a>(
-        &'a self,
-        generation: &'a ModelGeneration,
-    ) -> Result<ModelGenerationValidation<'a>, ModelLifecycleError> {
-        self.validate_base(generation)?;
-        Ok(ModelGenerationValidation {
-            lifecycle: self,
-            generation,
-        })
+    /// before any mutation; foreign or stale generations fail closed without
+    /// rereading trusted model contents.
+    pub fn validate_named_generation(
+        &self,
+        generation: &ModelGeneration,
+    ) -> Result<(), ModelLifecycleError> {
+        self.validate_base(generation)
     }
 
     /// Prepare one final-model candidate without consuming final-completion
@@ -1324,8 +1281,6 @@ impl ModelLifecycle {
                 }
             }
         }
-        generation.generation_id =
-            generation_id(self.authority, &generation.samples, generation.origin)?;
         Ok(())
     }
 
@@ -1407,29 +1362,6 @@ impl ModelLifecycle {
         {
             return Err(ModelLifecycleError::DeltaBaseMismatch);
         }
-        let expected = delta_id(
-            self.authority,
-            base.generation_id,
-            self.contract.target(),
-            &delta.terms,
-        );
-        if expected != delta.delta_id {
-            return Err(ModelLifecycleError::DeltaIdentityMismatch);
-        }
-        for term in &delta.terms {
-            let index = self
-                .contract
-                .target()
-                .flat_index(term.cell())
-                .ok_or(ModelLifecycleError::CellOutsideShape)?;
-            let updated = add_with_precision(
-                self.contract.arithmetic_precision(),
-                base.samples.read(index..index + 1)?[0].value().value(),
-                term.increment().value(),
-            );
-            let updated = ModelValue::new(updated)?;
-            validate_model_value(updated, self.contract.bounds().max_absolute_model_value())?;
-        }
         Ok(())
     }
 
@@ -1466,11 +1398,13 @@ impl ModelLifecycle {
                     break;
                 }
                 let sample = &mut window[index - start];
-                *sample = ModelSample::valid(ModelValue::new(add_with_precision(
+                let updated = ModelValue::new(add_with_precision(
                     self.contract.arithmetic_precision(),
                     sample.value().value(),
                     increment,
-                ))?);
+                ))?;
+                validate_model_value(updated, self.contract.bounds().max_absolute_model_value())?;
+                *sample = ModelSample::valid(updated);
                 terms.next();
             }
             candidate.write(start, &window)?;
@@ -1492,14 +1426,13 @@ impl ModelLifecycle {
         if generation.authority != self.authority || generation.seal != self.seal {
             generation.authority = self.authority;
             generation.seal = self.seal;
-            generation.generation_id =
-                generation_id(self.authority, &generation.samples, generation.origin)?;
+            generation.generation_id = self.next_generation_id();
         }
         Ok(generation)
     }
 
     fn validate_base(&self, generation: &ModelGeneration) -> Result<(), ModelLifecycleError> {
-        self.validate_generation_integrity(generation)?;
+        self.validate_generation_shape_and_bounds(generation)?;
         if generation.shape != *self.contract.target() {
             return Err(ModelLifecycleError::ForeignModelSpace);
         }
@@ -1523,12 +1456,20 @@ impl ModelLifecycle {
         }
     }
 
-    fn validate_generation_integrity(
+    fn validate_generation_shape_and_bounds(
         &self,
         generation: &ModelGeneration,
     ) -> Result<(), ModelLifecycleError> {
         if generation.samples.len() != generation.shape.sample_count() {
             return Err(ModelLifecycleError::GenerationIdentityMismatch);
+        }
+        // A tighter scientific bound is a new constraint, unlike a routine
+        // transfer of an already validated model. Overlap restoration can lower
+        // the recorded maximum, so validate rather than reject this transition.
+        if generation.samples.maximum_magnitude()
+            <= self.contract.bounds().max_absolute_model_value()
+        {
+            return Ok(());
         }
         generation.samples.for_each_window(|_, samples| {
             for sample in samples {
@@ -1543,11 +1484,6 @@ impl ModelLifecycle {
             }
             Ok(())
         })?;
-        if generation_id(generation.authority, &generation.samples, generation.origin)?
-            != generation.generation_id
-        {
-            return Err(ModelLifecycleError::GenerationIdentityMismatch);
-        }
         Ok(())
     }
 
@@ -1574,7 +1510,7 @@ impl ModelLifecycle {
         samples: ModelSamples,
         origin: ModelGenerationOrigin,
     ) -> Result<ModelGeneration, ModelLifecycleError> {
-        let generation_id = generation_id(self.authority, &samples, origin)?;
+        let generation_id = self.next_generation_id();
         Ok(ModelGeneration {
             generation_id,
             authority: self.authority,
@@ -1583,6 +1519,20 @@ impl ModelLifecycle {
             samples,
             origin,
         })
+    }
+
+    fn next_generation_id(&self) -> ModelGenerationId {
+        let ordinal = self
+            .next_generation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |ordinal| {
+                ordinal.checked_add(1)
+            })
+            .expect("model generation ordinal exhausted");
+        let mut encoder = Encoder::new(GENERATION_DOMAIN, GENERATION_VERSION);
+        encoder.identity(self.authority.as_bytes());
+        encoder.u64(self.seal.0);
+        encoder.u64(ordinal);
+        ModelGenerationId(LogicalIdentity::from_sha256(encoder.finish()))
     }
 
     fn ensure_open(&self) -> Result<(), ModelLifecycleError> {
@@ -1687,8 +1637,8 @@ pub enum ModelLifecycleError {
     /// A generation belonged to a separately constructed lifecycle owner.
     #[error("model generation belongs to a different lifecycle owner")]
     ForeignModelLifecycle,
-    /// A generation did not have its claimed content identity.
-    #[error("model generation identity does not match its content")]
+    /// A generation did not match the named input or its declared shape.
+    #[error("model generation does not match its named input or shape")]
     GenerationIdentityMismatch,
     /// Invalid support carried a numeric payload.
     #[error("invalid model support may not carry a numeric value")]
@@ -1696,9 +1646,6 @@ pub enum ModelLifecycleError {
     /// A Model Delta did not name this exact base and owner.
     #[error("Model Delta does not name this base generation and owner")]
     DeltaBaseMismatch,
-    /// A Model Delta did not have its claimed identity.
-    #[error("Model Delta identity does not match its terms")]
-    DeltaIdentityMismatch,
     /// The lifecycle's affine final-completion authority was already consumed.
     #[error("final-model completion authority has already been consumed")]
     FinalModelAlreadyCompleted,
@@ -2385,8 +2332,11 @@ const fn coordinate_tolerance(precision: NumericPrecision) -> f64 {
 }
 
 fn next_authority_seal() -> AuthoritySeal {
-    let seal = NEXT_AUTHORITY_SEAL.fetch_add(1, Ordering::Relaxed);
-    assert_ne!(seal, 0, "model lifecycle authority seal space exhausted");
+    let seal = NEXT_AUTHORITY_SEAL
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |seal| {
+            seal.checked_add(1)
+        })
+        .expect("model lifecycle authority seal space exhausted");
     AuthoritySeal(seal)
 }
 
@@ -2483,30 +2433,6 @@ pub fn validate_reprojected_seed_proof_identity(
     }
 }
 
-fn generation_id(
-    authority: LogicalIdentity,
-    samples: &ModelSamples,
-    origin: ModelGenerationOrigin,
-) -> Result<ModelGenerationId, ModelLifecycleError> {
-    let mut encoder = Encoder::new(GENERATION_DOMAIN, GENERATION_VERSION);
-    encoder.identity(authority.as_bytes());
-    encoder.usize(samples.len());
-    samples.for_each_window(|_, window| {
-        for sample in window {
-            encoder.u64(canonical_f64_bits(sample.value().value()));
-            encoder.u8(match sample.support() {
-                ModelSupport::Valid => 1,
-                ModelSupport::Invalid => 0,
-            });
-        }
-        Ok(())
-    })?;
-    encode_origin(&mut encoder, origin);
-    Ok(ModelGenerationId(LogicalIdentity::from_sha256(
-        encoder.finish(),
-    )))
-}
-
 fn delta_id(
     authority: LogicalIdentity,
     base: ModelGenerationId,
@@ -2553,31 +2479,6 @@ fn final_completion_id(
     }
     encoder.identity(generation.as_bytes());
     FinalModelCompletionId(LogicalIdentity::from_sha256(encoder.finish()))
-}
-
-fn encode_origin(encoder: &mut Encoder, origin: ModelGenerationOrigin) {
-    match origin {
-        ModelGenerationOrigin::Empty => encoder.u8(0),
-        ModelGenerationOrigin::Ingested {
-            source,
-            reprojection,
-        } => {
-            encoder.u8(1);
-            encoder.identity(source.as_bytes());
-            match reprojection {
-                Some(reprojection) => {
-                    encoder.u8(1);
-                    encoder.identity(reprojection.as_bytes());
-                }
-                None => encoder.u8(0),
-            }
-        }
-        ModelGenerationOrigin::Delta { base, delta } => {
-            encoder.u8(2);
-            encoder.identity(base.as_bytes());
-            encoder.identity(delta.as_bytes());
-        }
-    }
 }
 
 fn store_exact_samples<E>(

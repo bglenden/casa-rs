@@ -503,6 +503,7 @@ impl ReconstructionCycle {
             .checked_mul(normal.polarization_count())
             .filter(|count| *count > 0)
             .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
+        lifecycle.validate_named_generation(base)?;
         Ok(ReconstructionPlaneWork {
             binding: ReconstructionPlaneBinding {
                 cycle: self,
@@ -511,7 +512,6 @@ impl ReconstructionCycle {
                 normal,
                 mask,
             },
-            validated_model: lifecycle.validate_named_generation(base)?,
             shared_cycle_threshold: shared_cycle_threshold(&self.program, normal)?,
             plane_count,
             terms: Vec::new(),
@@ -587,7 +587,6 @@ impl ReconstructionPlaneBinding<'_> {
 /// state changes until the complete collection is finalized.
 pub struct ReconstructionPlaneWork<'a> {
     binding: ReconstructionPlaneBinding<'a>,
-    validated_model: crate::ModelGenerationValidation<'a>,
     shared_cycle_threshold: Option<f64>,
     plane_count: usize,
     terms: Vec<ModelDeltaTerm>,
@@ -598,7 +597,7 @@ pub struct ReconstructionPlaneWork<'a> {
 pub struct ReconstructionPlaneInput<'a> {
     binding: ReconstructionPlaneBinding<'a>,
     ordinal: usize,
-    model: Option<crate::ValidatedModelWindow<'a>>,
+    model: Option<crate::ModelGenerationWindow<'a>>,
     normal: crate::FinalNormalStateWindow<'a>,
 }
 
@@ -790,7 +789,8 @@ impl<'a> ReconstructionPlaneWork<'a> {
             .ok_or(ReconstructionCycleError::InvalidNormalStateSlab)?;
         let model = if plane.validity() == SpectralChannelValidity::Valid {
             Some(
-                self.validated_model
+                self.binding
+                    .base
                     .read_window(0, plane.output_channel()..plane.output_channel() + 1)?,
             )
         } else {

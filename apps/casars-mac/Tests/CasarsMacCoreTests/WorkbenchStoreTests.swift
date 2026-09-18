@@ -6062,7 +6062,18 @@ private struct StubProjectProbeClient: ProjectProbeClient {
     var probedPaths: [String: DatasetSummary] = [:]
 
     func probeProject(path: String) throws -> ProjectFixtureProbe {
-        result
+        var snapshot = result
+        if snapshot.entries.isEmpty,
+           let disk = try? UniFFIProjectProbeClient().probeProject(path: path) {
+            snapshot.entries = disk.entries.map { entry in
+                var entry = entry
+                if FileManager.default.fileExists(atPath: URL(fileURLWithPath: entry.path).appendingPathComponent("table.dat").path) {
+                    entry.dataset = probedPaths[entry.path] ?? entry.dataset
+                }
+                return entry
+            }
+        }
+        return snapshot
     }
 
     func probePath(path: String) throws -> DatasetSummary? {

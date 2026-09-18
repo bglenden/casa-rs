@@ -160,6 +160,8 @@ _Avoid_: Resolved mode, backend choice
 A versioned projection of the effective problem and plan, identities,
 predictions and confidence, actual resource and I/O use, adaptations, output
 manifest, and final or failed completion outcome.
+Routine progress is indexed in memory; the receipt is not an event-by-event
+full-plan checkpoint or an admission input from historical runs (ADR-0014).
 _Avoid_: Log, metrics blob
 
 **Acceptance Contract**:

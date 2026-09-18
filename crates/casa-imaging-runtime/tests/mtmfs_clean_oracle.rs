@@ -10,7 +10,8 @@ use std::{collections::BTreeMap, convert::Infallible, error::Error, fs, io, path
 use casa_imaging_model::{ProductRole, ProductTerm, ProductUnit};
 use casa_imaging_products::{
     AnalyticPrimaryBeamModel, ContinuumProductControls, ContinuumProductInputs,
-    ContinuumSourceCatalog, ProductGenerationAuthority, produce_continuum_members,
+    PlannedContinuumGeneration, PlannedMember, ProductOutput, ProductWindow, ProductWindowLayout,
+    ProductWriter, ProductsError, RestoringBeam, produce_continuum_members,
 };
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, ImageDomainReconstructionMaskPlans, MinorCycleProgram,
@@ -26,16 +27,55 @@ use casa_imaging_runtime::{
     PlannerCostModelProfileBootstrap, PlannerCostModelProfileId, PlanningBindings, QueueResource,
     QueueResourceId, RateResource, RateResourceId, RateUnit, ReceiptRetention, ResourceAuthority,
     ResourceOverride, ResourcePolicy, ResourceTopology, RunBindings, RunToCompletion,
-    SerialProductBackingPlan, SpectralCycleExecutionPolicy, SpectralCycleExecutor,
-    SpectralCyclePassInput, SpectralCyclePlan, SpectralCyclePlanParts, SpectralCyclePlanningLimits,
-    SpectralCycleRegistry, StorageDomain, StorageDomainId, StorageIoResourceBinding,
-    WorkExecutionContext, WorkImplementation, WorkImplementationId, WorkMeasurements,
-    plan as runtime_plan, run as runtime_run,
+    SpectralCycleExecutionPolicy, SpectralCycleExecutor, SpectralCyclePassInput, SpectralCyclePlan,
+    SpectralCyclePlanParts, SpectralCyclePlanningLimits, SpectralCycleRegistry, StorageDomain,
+    StorageDomainId, StorageIoResourceBinding, WorkExecutionContext, WorkImplementation,
+    WorkImplementationId, WorkMeasurements, plan as runtime_plan, run as runtime_run,
 };
 use serde_json::json;
 
 const T43_OUTPUT_ENV: &str = "CASA_RS_T43_RUST_OUTPUT";
 const T44_OUTPUT_ENV: &str = "CASA_RS_T44_RUST_OUTPUT";
+
+#[derive(Default)]
+struct OracleProductOutput(std::sync::Mutex<BTreeMap<String, ProductWindow>>);
+struct OracleProductWriter<'a> {
+    output: &'a OracleProductOutput,
+    name: String,
+    window: Option<ProductWindow>,
+}
+impl ProductOutput for OracleProductOutput {
+    fn begin_member<'a>(
+        &'a self,
+        member: &PlannedMember,
+        _: ProductWindowLayout,
+        _: &[Option<RestoringBeam>],
+    ) -> Result<Box<dyn ProductWriter + 'a>, ProductsError> {
+        Ok(Box::new(OracleProductWriter {
+            output: self,
+            name: member.name().to_owned(),
+            window: None,
+        }))
+    }
+}
+impl ProductWriter for OracleProductWriter<'_> {
+    fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
+        assert!(
+            self.window.is_none(),
+            "oracle fixture deliberately admits one full window"
+        );
+        self.window = Some(window);
+        Ok(())
+    }
+    fn finish(self: Box<Self>) -> Result<(), ProductsError> {
+        self.output
+            .0
+            .lock()
+            .unwrap()
+            .insert(self.name, self.window.unwrap());
+        Ok(())
+    }
+}
 const IMAGE_SIZE: usize = 128;
 const CELLS: usize = IMAGE_SIZE * IMAGE_SIZE;
 const IMPLEMENTATION_BYTE: u8 = 0x43;
@@ -400,41 +440,34 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
         cycles,
         artifact_directory,
     } = execute_four_cycle_clean(true)?;
-    let catalog = ContinuumSourceCatalog::from_major_cycle(&problem, &final_completion)?;
-    let authority = ProductGenerationAuthority::bind(&problem);
     let controls = ContinuumProductControls::default()
         .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaEvlaCommon);
-    let planned = authority.plan(&catalog, &controls)?;
+    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &final_completion)?;
+    let planned = PlannedContinuumGeneration::new(&inputs, &controls)?;
     if planned.primary_beam_model() != Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) {
         return Err("T44 product plan did not pin the CASA EVLA common beam".into());
     }
-    let inputs = ContinuumProductInputs::from_major_cycle(&problem, &final_completion)?;
     let window = full_product_window(&planned);
-    let products_directory = artifact_directory.path().join("products");
-    fs::create_dir_all(&products_directory)?;
-    let products_storage = ManagedSpillStorage::bind(
-        ResourceAuthority::production()?,
-        artifact_storage_io(),
-        products_directory,
-    )?;
-    let backing = SerialProductBackingPlan::prepare(&planned, window, &products_storage)?;
-    let produced = produce_continuum_members(&planned, &inputs, window, &backing)?;
-    let sealed = authority.authorize(&planned, &produced)?;
-    let names = sealed
+    let output_windows = OracleProductOutput::default();
+    let generated = produce_continuum_members(&planned, &inputs, window, &output_windows)?;
+    let names = generated
         .members()
         .iter()
         .map(|member| member.name())
         .collect::<Vec<_>>();
     if names != T44_PRODUCT_NAMES {
-        return Err(format!("T44 sealed product set changed: {names:?}").into());
+        return Err(format!("T44 product set changed: {names:?}").into());
     }
     if names.iter().any(|name| name.starts_with(".weight")) || names.contains(&".alpha.pbcor") {
         return Err("T44 standard product set contains weight or alpha.pbcor".into());
     }
-    let common_beam = sealed
-        .restoring_beam()
+    let common_beam = generated
+        .restoring_beams()
+        .iter()
+        .flatten()
+        .next()
         .ok_or("T44 common restoring beam is missing")?;
-    for member in sealed.members().iter().filter(|member| {
+    for member in generated.members().iter().filter(|member| {
         matches!(
             member.contract().role(),
             ProductRole::RestoredImage(_)
@@ -462,11 +495,9 @@ fn t44_real_ms_mtmfs_products_match_frozen_casa() -> Result<(), Box<dyn Error>> 
             "stop_reason": "iteration_limit",
         },
         "common_beam": beam_json(common_beam),
-        "members": sealed.members().iter().map(|member| {
-            let layout = member.window_layout();
-            let full = member
-                .read_window(0..layout.shape()[layout.spectral_axis()])
-                .expect("T44 sealed member full window");
+        "members": generated.members().iter().map(|member| {
+            let windows = output_windows.0.lock().unwrap();
+            let full = &windows[member.name()];
             json!({
                 "name": member.name(),
                 "role": product_role_name(member.contract().role()),

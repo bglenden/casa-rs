@@ -168,6 +168,12 @@ publication.
 
 ### Products
 
+ADR-0014 clarifies this contract: trusted in-process generation transfers
+bounded windows to the CASA-compatible writer without product-content hashing
+or full-array rereads solely to authorize publication. Prior product-attestation
+interpretations are superseded; the scientific contract and atomic replacement
+guarantees below remain normative.
+
 A Product Contract and Product Graph own required/optional products,
 authoritative source generations, WCS and axes, units and normalization,
 per-plane/common-beam policy, residual scaling and restoration, PB/sensitivity

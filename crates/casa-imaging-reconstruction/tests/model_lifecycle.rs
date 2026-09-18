@@ -501,7 +501,7 @@ fn final_model_restores_highest_ordinal_domain_across_overlaps() {
 }
 
 #[test]
-fn t55_model_windows_preserve_generation_delta_and_support_identities() {
+fn t55_model_windows_preserve_values_and_support_with_owner_scoped_identities() {
     let compiled = problem_with_geometry(
         1,
         geometry(5),
@@ -510,6 +510,7 @@ fn t55_model_windows_preserve_generation_delta_and_support_identities() {
         NumericPrecision::F64,
     );
     let mut expected = None;
+    let mut identities = std::collections::BTreeSet::new();
     for window in [5, 1, 2, 3] {
         let mut owner = ModelLifecycle::bind(
             ExecutableModelProblem::from_compiled(compiled.clone()).unwrap(),
@@ -537,23 +538,142 @@ fn t55_model_windows_preserve_generation_delta_and_support_identities() {
         let samples = (0..5)
             .map(|index| update.generation().read_samples(index..index + 1).unwrap()[0])
             .collect::<Vec<_>>();
-        let actual = (
+        assert!(identities.insert((
             initial,
             delta_id,
             update.generation().generation_id(),
             update.completion().completion_id(),
-            samples,
-        );
+        )));
         if let Some(expected) = &expected {
-            assert_eq!(&actual, expected);
+            assert_eq!(&samples, expected);
         } else {
-            expected = Some(actual);
+            expected = Some(samples);
         }
     }
 }
 
+#[derive(Debug, Default)]
+struct ModelIoCounts {
+    reads: std::sync::atomic::AtomicUsize,
+    fail_reads: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Debug)]
+struct CountedModelStorage {
+    counts: std::sync::Arc<ModelIoCounts>,
+    samples: Vec<ModelSample>,
+}
+
+#[derive(Debug)]
+struct CountedModelFactory(std::sync::Arc<ModelIoCounts>);
+
+impl casa_imaging_reconstruction::ModelStorageFactory for CountedModelFactory {
+    fn create(
+        &self,
+        count: usize,
+    ) -> Result<Box<dyn casa_imaging_reconstruction::ModelSampleStorage>, ModelLifecycleError> {
+        Ok(Box::new(CountedModelStorage {
+            counts: self.0.clone(),
+            samples: vec![ModelSample::invalid(); count],
+        }))
+    }
+}
+
+impl casa_imaging_reconstruction::ModelSampleStorage for CountedModelStorage {
+    fn sample_count(&self) -> usize {
+        self.samples.len()
+    }
+
+    fn read(
+        &self,
+        start: usize,
+        destination: &mut [ModelSample],
+    ) -> Result<(), ModelLifecycleError> {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.counts.reads.fetch_add(destination.len(), Relaxed);
+        if self.counts.fail_reads.load(Relaxed) {
+            return Err(ModelLifecycleError::Storage("injected read failure".into()));
+        }
+        destination.copy_from_slice(&self.samples[start..start + destination.len()]);
+        Ok(())
+    }
+
+    fn write(&mut self, start: usize, samples: &[ModelSample]) -> Result<(), ModelLifecycleError> {
+        self.samples[start..start + samples.len()].copy_from_slice(samples);
+        Ok(())
+    }
+}
+
 #[test]
-fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_affine() {
+fn owned_model_handoffs_do_not_read_contents_and_scientific_reads_remain_fallible() {
+    use std::sync::{Arc, atomic::Ordering::Relaxed};
+    let compiled = problem(
+        1,
+        8,
+        ModelStateIdentity::Empty,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let counts = Arc::new(ModelIoCounts::default());
+    let mut owner = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(compiled.clone()).unwrap(),
+        attempt(90),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::new(
+            Arc::new(CountedModelFactory(counts.clone())),
+            2,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let base = owner.initial_empty().unwrap();
+    owner.validate_named_generation(&base).unwrap();
+    owner.validate_named_generation(&base).unwrap();
+    let prepared = owner.prepare_final_model(base, None).unwrap();
+    let update = owner.commit_final_model(prepared).unwrap();
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        0,
+        "mint, handoff and completion must not inspect owned contents"
+    );
+    let (base, _) = update.into_parts();
+    let id = base.generation_id();
+    let resumed_problem = problem(
+        1,
+        8,
+        ModelStateIdentity::Generation(id.identity()),
+        ModelLifecycleRequirements::new(
+            bounds(),
+            NumericPrecision::F64,
+            ModelInputCommitment::Generation(id.identity()),
+        ),
+        NumericPrecision::F64,
+    );
+    let resumed = bind_direct(&resumed_problem, attempt(91), 2);
+    let base = resumed.resume(base).unwrap();
+    assert_eq!(counts.reads.load(Relaxed), 0);
+    let _delta = resumed
+        .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))])
+        .unwrap();
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        1,
+        "sparse delta checks only its affected support"
+    );
+    counts.fail_reads.store(true, Relaxed);
+    resumed.validate_named_generation(&base).unwrap();
+    assert!(matches!(
+        base.read_samples(0..1),
+        Err(ModelLifecycleError::Storage(_))
+    ));
+    assert!(matches!(
+        resumed.compile_delta(&base, [ModelDeltaTerm::new(cell(1), value(1.0))]),
+        Err(ModelLifecycleError::Storage(_))
+    ));
+}
+
+#[test]
+fn generations_are_distinct_and_finalization_is_affine() {
     let compiled = problem(
         1,
         2,
@@ -564,14 +684,11 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
     let mut owner = bind_direct(&compiled, attempt(90), 1);
     let base = owner.initial_empty().expect("empty generation");
     let replay_base = owner.initial_empty().expect("second pre-final base");
-    assert_eq!(ModelGenerationId::SCHEMA_VERSION, 2);
+    assert_eq!(ModelGenerationId::SCHEMA_VERSION, 4);
     assert_eq!(ModelDeltaId::SCHEMA_VERSION, 2);
     assert_eq!(ModelReprojectionId::SCHEMA_VERSION, 3);
     assert_eq!(FinalModelCompletionId::SCHEMA_VERSION, 2);
-    assert_eq!(
-        base.generation_id().to_string(),
-        "16e298142042c9be1e0dde2a8a46815863da47102f1fcb1bb50ef2e07a376647"
-    );
+    assert_ne!(base.generation_id(), replay_base.generation_id());
 
     let delta = owner
         .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.5))])
@@ -579,10 +696,7 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
     let replay_delta = owner
         .compile_delta(&replay_base, [ModelDeltaTerm::new(cell(0), value(1.5))])
         .expect("compile replay delta");
-    assert_eq!(
-        delta.delta_id().to_string(),
-        "2c2e2b274fcb16a239dd3b0d510ced82161a9d37f18f7bc891626267d02b47f2"
-    );
+    assert_ne!(delta.delta_id(), replay_delta.delta_id());
     let update = owner
         .apply_final_delta(base, delta)
         .expect("apply final affine update");
@@ -611,6 +725,152 @@ fn empty_generation_and_delta_have_exact_golden_identities_and_finalization_is_a
         owner.initial_empty(),
         Err(ModelLifecycleError::FinalModelAlreadyCompleted)
     ));
+}
+
+#[test]
+fn named_resume_preserves_new_scientific_value_bounds() {
+    use std::sync::{Arc, atomic::Ordering::Relaxed};
+    for maximum in [0.5, 2.0] {
+        let compiled = problem(
+            1,
+            2,
+            ModelStateIdentity::Empty,
+            empty_requirements(NumericPrecision::F64),
+            NumericPrecision::F64,
+        );
+        let counts = Arc::new(ModelIoCounts::default());
+        let owner = ModelLifecycle::bind(
+            ExecutableModelProblem::from_compiled(compiled).unwrap(),
+            attempt(90),
+            1,
+            casa_imaging_reconstruction::ModelStoragePlan::new(
+                Arc::new(CountedModelFactory(counts.clone())),
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let base = owner.initial_empty().unwrap();
+        let delta = owner
+            .compile_delta(&base, [ModelDeltaTerm::new(cell(0), value(1.0))])
+            .unwrap();
+        let generation = owner.apply_delta(base, delta).unwrap();
+        let id = generation.generation_id();
+        let tighter = problem(
+            1,
+            2,
+            ModelStateIdentity::Generation(id.identity()),
+            ModelLifecycleRequirements::new(
+                ModelBounds::new(16, 16, 32, 8, maximum, 1.0e30).unwrap(),
+                NumericPrecision::F64,
+                ModelInputCommitment::Generation(id.identity()),
+            ),
+            NumericPrecision::F64,
+        );
+        let resumed = bind_direct(&tighter, attempt(91), 2);
+        counts.reads.store(0, Relaxed);
+        if maximum < 1.0 {
+            assert!(matches!(
+                resumed.resume(generation),
+                Err(ModelLifecycleError::ModelValueBoundExceeded)
+            ));
+            assert!(
+                counts.reads.load(Relaxed) > 0,
+                "new narrower scientific constraint is validated"
+            );
+        } else {
+            resumed.resume(generation).unwrap();
+            assert_eq!(
+                counts.reads.load(Relaxed),
+                0,
+                "known value range satisfies new bound without a reread"
+            );
+        }
+    }
+}
+
+#[test]
+fn tighter_bound_after_overlap_decrease_is_checked_only_at_owned_introduction() {
+    use std::sync::{Arc, atomic::Ordering::Relaxed};
+    let compiled = problem_with_geometry(
+        3,
+        overlapping_geometry(3, 3),
+        ModelStateIdentity::Empty,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let counts = Arc::new(ModelIoCounts::default());
+    let mut owner = ModelLifecycle::bind(
+        ExecutableModelProblem::from_compiled(compiled).unwrap(),
+        attempt(90),
+        1,
+        casa_imaging_reconstruction::ModelStoragePlan::new(
+            Arc::new(CountedModelFactory(counts.clone())),
+            3,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let base = owner.initial_empty().unwrap();
+    let delta = owner
+        .compile_delta(
+            &base,
+            [
+                ModelDeltaTerm::new(ModelCell::new(0, 0, 0, [0, 0]), value(10.0)),
+                ModelDeltaTerm::new(ModelCell::new(2, 0, 0, [2, 0]), value(1.0)),
+            ],
+        )
+        .unwrap();
+    let (generation, _) = owner.apply_final_delta(base, delta).unwrap().into_parts();
+    let id = generation.generation_id();
+    let tighter = problem_with_geometry(
+        3,
+        overlapping_geometry(3, 3),
+        ModelStateIdentity::Generation(id.identity()),
+        ModelLifecycleRequirements::new(
+            ModelBounds::new(16, 16, 32, 8, 2.0, 1.0e30).unwrap(),
+            NumericPrecision::F64,
+            ModelInputCommitment::Generation(id.identity()),
+        ),
+        NumericPrecision::F64,
+    );
+    let mut resumed = bind_direct(&tighter, attempt(91), 2);
+    counts.reads.store(0, Relaxed);
+    let generation = resumed.resume(generation).unwrap();
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        9,
+        "new bound is checked once after overlap lowered the old maximum"
+    );
+    counts.reads.store(0, Relaxed);
+    resumed.validate_named_generation(&generation).unwrap();
+    resumed.validate_named_generation(&generation).unwrap();
+    assert_eq!(counts.reads.load(Relaxed), 0);
+    resumed
+        .compile_delta(
+            &generation,
+            [ModelDeltaTerm::new(
+                ModelCell::new(0, 0, 0, [2, 0]),
+                value(0.5),
+            )],
+        )
+        .unwrap();
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        1,
+        "only affected support is read"
+    );
+    counts.reads.store(0, Relaxed);
+    let prepared = resumed.prepare_final_model(generation, None).unwrap();
+    // Four overlapping pixels each need target support and source value.
+    assert_eq!(
+        counts.reads.load(Relaxed),
+        8,
+        "preparation reads only the scientific overlap inputs"
+    );
+    counts.reads.store(0, Relaxed);
+    resumed.commit_final_model(prepared).unwrap();
+    assert_eq!(counts.reads.load(Relaxed), 0);
 }
 
 #[test]
@@ -1292,6 +1552,51 @@ fn compiled_precision_governs_delta_arithmetic() {
             .value(),
         16_777_217.0
     );
+}
+
+#[test]
+fn identical_lifecycle_bindings_cannot_substitute_a_different_owners_generation() {
+    let initial_problem = problem(
+        7,
+        2,
+        ModelStateIdentity::Empty,
+        empty_requirements(NumericPrecision::F64),
+        NumericPrecision::F64,
+    );
+    let first_owner = bind_direct(&initial_problem, attempt(96), 1);
+    let other_owner = bind_direct(&initial_problem, attempt(96), 1);
+    let first_base = first_owner.initial_empty().unwrap();
+    let other_base = other_owner.initial_empty().unwrap();
+    assert_ne!(first_base.generation_id(), other_base.generation_id());
+    let first_delta = first_owner
+        .compile_delta(&first_base, [ModelDeltaTerm::new(cell(0), value(1.0))])
+        .unwrap();
+    let other_delta = other_owner
+        .compile_delta(&other_base, [ModelDeltaTerm::new(cell(0), value(2.0))])
+        .unwrap();
+    let first = first_owner.apply_delta(first_base, first_delta).unwrap();
+    let other = other_owner.apply_delta(other_base, other_delta).unwrap();
+    assert_ne!(first.generation_id(), other.generation_id());
+    assert_eq!(first.read_samples(0..1).unwrap()[0].value().value(), 1.0);
+    assert_eq!(other.read_samples(0..1).unwrap()[0].value().value(), 2.0);
+    let id = first.generation_id();
+    let resume_problem = problem(
+        7,
+        2,
+        ModelStateIdentity::Generation(id.identity()),
+        ModelLifecycleRequirements::new(
+            bounds(),
+            NumericPrecision::F64,
+            ModelInputCommitment::Generation(id.identity()),
+        ),
+        NumericPrecision::F64,
+    );
+    let resumed = bind_direct(&resume_problem, attempt(97), 2);
+    assert!(matches!(
+        resumed.resume(other),
+        Err(ModelLifecycleError::GenerationIdentityMismatch)
+    ));
+    assert_eq!(resumed.resume(first).unwrap().generation_id(), id);
 }
 
 #[test]

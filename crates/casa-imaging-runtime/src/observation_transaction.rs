@@ -31,8 +31,8 @@ pub enum ObservationTransactionPublicationScope {
     ReconstructionOnly,
     /// Stage and atomically publish every required Product Graph member.
     ProductPublication,
-    /// Publish already sealed conventional products without observation I/O.
-    SealedProductPublication,
+    /// Publish generated conventional products without observation I/O.
+    GeneratedProductPublication,
 }
 
 /// Exact execution-DAG events that implement one observation transaction.
@@ -114,14 +114,14 @@ impl ObservationTransactionWork {
         }
     }
 
-    /// Name a publication-only transaction over already sealed products.
+    /// Name a publication-only transaction over generated products.
     #[must_use]
-    pub const fn new_sealed_product_publication(
+    pub const fn new_generated_product_publication(
         publication_check: WorkNodeId,
         commit: WorkNodeId,
     ) -> Self {
         Self {
-            publication_scope: ObservationTransactionPublicationScope::SealedProductPublication,
+            publication_scope: ObservationTransactionPublicationScope::GeneratedProductPublication,
             source_free_reconstruction: false,
             initial_consistency_check: publication_check,
             observation_reads: BTreeSet::new(),
@@ -317,10 +317,10 @@ pub(crate) fn bind_observation_transaction(
                 ));
             }
         }
-        ObservationTransactionPublicationScope::SealedProductPublication => {
+        ObservationTransactionPublicationScope::GeneratedProductPublication => {
             if declared_products != expected_products {
                 return invalid(format!(
-                    "sealed publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
+                    "generated publication product nodes {declared_products:?} do not match graph members {expected_products:?}"
                 ));
             }
         }
@@ -374,9 +374,9 @@ pub(crate) fn bind_observation_transaction(
                 return invalid("product publication layout is empty");
             }
         }
-        ObservationTransactionPublicationScope::SealedProductPublication => {
+        ObservationTransactionPublicationScope::GeneratedProductPublication => {
             if work.product_staging.is_empty() {
-                return invalid("sealed product publication layout is empty");
+                return invalid("generated product publication layout is empty");
             }
         }
     }
@@ -392,7 +392,7 @@ pub(crate) fn bind_observation_transaction(
     };
     work.observation_reads =
         validate_transaction_nodes(read_sources, phase_visibility_columns, dag.nodes(), &work)?;
-    if work.publication_scope != ObservationTransactionPublicationScope::SealedProductPublication
+    if work.publication_scope != ObservationTransactionPublicationScope::GeneratedProductPublication
         && !work.source_free_reconstruction
     {
         validate_measurement_set_lock_identities(&measurement_sets, dag.nodes(), &work)?;
@@ -412,7 +412,8 @@ fn validate_transaction_nodes(
     nodes: &BTreeMap<WorkNodeId, WorkNode>,
     work: &ObservationTransactionWork,
 ) -> Result<BTreeSet<WorkDependency>, ObservationTransactionPlanError> {
-    if work.publication_scope == ObservationTransactionPublicationScope::SealedProductPublication {
+    if work.publication_scope == ObservationTransactionPublicationScope::GeneratedProductPublication
+    {
         return validate_product_publication_nodes(nodes, work);
     }
     if let Some(node) = nodes

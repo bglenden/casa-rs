@@ -380,8 +380,9 @@ impl CompleteDataNormalState {
         })
     }
 
-    /// Canonical complete-state identity, independent of the storage window.
-    pub fn content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
+    /// Explicit diagnostic fingerprint, independent of the storage window.
+    /// This reads the arrays and is not part of ordinary completion or handoff.
+    pub fn diagnostic_content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
         self.primitives.content_identity()
     }
 }

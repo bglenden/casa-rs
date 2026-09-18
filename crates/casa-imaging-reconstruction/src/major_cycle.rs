@@ -90,7 +90,7 @@ pub enum NormalStateCatalog {
 /// Reconstruction-owned proof that the final Normal State generation exists.
 ///
 /// The record names exact lineage, the authoritative observation generation,
-/// and the content identity of the model-dependent unnormalized residual; it
+/// and the owned model-dependent unnormalized residual; it
 /// makes no promise that the state is fully resident, dense, or
 /// shift-invariant. It is not a Product Graph artifact and mints no
 /// publication authority.
@@ -112,7 +112,6 @@ pub struct FinalNormalState {
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
     catalog: NormalStateCatalog,
-    content: LogicalIdentity,
     sample_count: u64,
     block_count: u64,
     input_model_generation: ModelGenerationId,
@@ -279,13 +278,10 @@ impl FinalNormalState {
         self.catalog
     }
 
-    /// Return the owner-derived content identity of the exact residual evidence.
-    ///
-    /// The identity covers the model-dependent unnormalized normal state, so a
-    /// nonzero final model never shares content with an empty-model state.
-    #[must_use]
-    pub const fn content_identity(&self) -> LogicalIdentity {
-        self.content
+    /// Explicitly fingerprint the residual arrays for tests or diagnostics.
+    /// This reads the backing and is never required by the execution lifecycle.
+    pub fn diagnostic_content_identity(&self) -> Result<LogicalIdentity, SpectralOperatorError> {
+        self.primitives.content_identity()
     }
 
     /// Return the exhaustive selected-sample count behind the state.
@@ -1175,10 +1171,6 @@ impl MajorCycleOwner {
         if lifecycle.problem() != self.problem {
             return Err(MajorCycleError::StaleModelEvidence);
         }
-        let content = self
-            .primitives
-            .content_identity()
-            .map_err(MajorCycleError::Residual)?;
         let update = lifecycle.commit_final_model(self.preparation.model)?;
         let (final_model, model_completion) = update.into_parts();
         let input_model_generation = model_completion.base();
@@ -1194,7 +1186,6 @@ impl MajorCycleOwner {
                 self.weighting_generation,
                 self.replay,
                 self.coverage,
-                content,
                 input_model_generation,
                 final_model_generation,
                 self.selected_generation,
@@ -1223,7 +1214,6 @@ impl MajorCycleOwner {
                     NormalStateCatalog::UnnormalizedJointBlockV1
                 }
             },
-            content,
             sample_count: self.sample_count,
             block_count: self.block_count,
             input_model_generation,
@@ -1262,7 +1252,6 @@ fn final_normal_state_id(
     weighting_generation: WeightingGenerationId,
     replay: WeightingReplayId,
     coverage: WeightingReplayCoverageId,
-    content: LogicalIdentity,
     input_model_generation: ModelGenerationId,
     final_model_generation: ModelGenerationId,
     selected_generation: SelectedObservationGenerationId,
@@ -1277,7 +1266,6 @@ fn final_normal_state_id(
     encoder.identity(weighting_generation.as_bytes());
     encoder.identity(replay.as_bytes());
     encoder.identity(coverage.as_bytes());
-    encoder.identity(content.as_bytes());
     encoder.identity(input_model_generation.as_bytes());
     encoder.identity(final_model_generation.as_bytes());
     encoder.identity(selected_generation.as_bytes());

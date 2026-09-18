@@ -82,6 +82,25 @@ inputs and parameters have not changed.
 
 ## Acceptance and reporting
 
+ADR-0014 removes production product attestation. Trusted in-process product
+generation must transfer bounded windows to the CASA writer without content
+hashing or verification-only full-array rereads for publication permission.
+Do not optimize or recreate the retired mechanism, including initial hashes,
+backing stores or phases used only by it. Preserve science, inventory, shape,
+run/lifecycle and I/O checks plus atomic individual-image replacement. Failed
+publication means an incomplete run requiring rerun; do not retain resumable
+per-member recovery or whole-set rollback. Genuine persistence/external-input
+checksums and diagnostic test/benchmark fingerprints remain distinct. Any
+reintroduction needs an explicit ADR and user approval with a concrete failure
+model and measured cost.
+
+The rule also covers reconstruction-model ownership across execution attempts:
+validate scientific values/support when introduced or modified, not by repeated
+model hashes or verification-only lifecycle scans. Routine operational progress
+must not serialize or hash full receipts/plans, or scan historical receipt
+stores; current admission is authoritative. Exceptions need a concrete failure
+model and demonstrated benefit.
+
 Use the smallest existing check that exercises the change, then the applicable
 issue-named acceptance. Reuse unaffected green evidence; do not mechanically
 rerun an eight-stage ladder or broaden the ticket's gates.

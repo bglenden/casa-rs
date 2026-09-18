@@ -959,10 +959,6 @@ fn minor_cycle_delta_composes_with_the_next_major_cycle_reconciliation() {
         evidence.normal_state_completion(),
         round.normal_state.completion_id()
     );
-    assert_eq!(
-        evidence.normal_state_content(),
-        round.normal_state.content_identity()
-    );
     assert!(
         evidence.iterations() > 1,
         "the fixture must clean repeatedly"

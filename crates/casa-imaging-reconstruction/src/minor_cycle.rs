@@ -38,7 +38,7 @@ use crate::{
 };
 
 const MINOR_CYCLE_EVIDENCE_DOMAIN: &[u8] = b"casa-rs-minor-cycle-evidence";
-const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 10;
+const MINOR_CYCLE_EVIDENCE_VERSION: u32 = 11;
 const TAYLOR_PSF_PEAK_TIE_RELATIVE_TOLERANCE: f64 = 1.0e-12;
 
 /// Return the hard resident-memory envelope for one solver-owned Minor Cycle.
@@ -843,7 +843,7 @@ pub enum MinorCycleStopReason {
 /// Owner-minted evidence of one minor-cycle solve.
 ///
 /// The evidence names the exact consumed approximation (the Final Normal
-/// State completion and content identities) and the exact input model
+/// State completion identity) and the exact input model
 /// generation, and reports whether Major-Cycle reconciliation is explicitly
 /// requested. It carries no product meaning and mints no publication
 /// authority.
@@ -855,7 +855,6 @@ pub struct MinorCycleEvidence {
     epoch: u64,
     input_generation: ModelGenerationId,
     normal_state_completion: FinalNormalStateCompletionId,
-    normal_state_content: LogicalIdentity,
     iterations: usize,
     controller_iterations: usize,
     total_flux: f64,
@@ -997,12 +996,6 @@ impl MinorCycleEvidence {
     #[must_use]
     pub const fn normal_state_completion(&self) -> FinalNormalStateCompletionId {
         self.normal_state_completion
-    }
-
-    /// Return the consumed normal-state approximation content identity.
-    #[must_use]
-    pub const fn normal_state_content(&self) -> LogicalIdentity {
-        self.normal_state_content
     }
 
     /// Return the number of components actually applied.
@@ -1350,7 +1343,8 @@ pub fn run_minor_cycle(
     }
     let view = &view.read_window(view.slab().core_range())?;
     let model_plane = controls.model_plane();
-    let base = &lifecycle.validate_named_generation(base)?.read_window(
+    lifecycle.validate_named_generation(base)?;
+    let base = &base.read_window(
         model_plane.domain(),
         model_plane.coefficient()..model_plane.coefficient() + 1,
     )?;
@@ -1422,7 +1416,7 @@ pub(crate) fn run_image_domain_minor_cycle(
 
     let view = &view.read_window(view.slab().core_range())?;
     let mut work = Vec::with_capacity(view.domain_count());
-    let validated = lifecycle.validate_named_generation(base)?;
+    lifecycle.validate_named_generation(base)?;
     let mut maximum_sidelobe = 0.0_f64;
     for (domain, mask) in view.domains().zip(masks.iter()) {
         let plane = domain
@@ -1431,7 +1425,7 @@ pub(crate) fn run_image_domain_minor_cycle(
         let shape = plane.shape();
         let model_plane =
             MinorCycleModelPlane::new(domain.ordinal(), 0, controls.model_plane().polarization());
-        let base = &validated.read_window(domain.ordinal(), 0..1)?;
+        let base = &base.read_window(domain.ordinal(), 0..1)?;
         if base
             .shape()
             .domains()
@@ -1590,7 +1584,6 @@ pub(crate) fn run_image_domain_minor_cycle(
         lifecycle.epoch(),
         base.generation_id(),
         view.completion_id(),
-        view.content_identity(),
         &mask_generations,
         &controls,
         iterations,
@@ -1613,7 +1606,6 @@ pub(crate) fn run_image_domain_minor_cycle(
             epoch: lifecycle.epoch(),
             input_generation: base.generation_id(),
             normal_state_completion: view.completion_id(),
-            normal_state_content: view.content_identity(),
             iterations,
             controller_iterations,
             total_flux,
@@ -1750,7 +1742,8 @@ fn run_joint_block_minor_cycle(
     controls: MinorCycleProgram,
 ) -> Result<MinorCycleResult, MinorCycleError> {
     let view = &view.read_window(view.slab().core_range())?;
-    let base = &lifecycle.validate_named_generation(base)?.read_window(
+    lifecycle.validate_named_generation(base)?;
+    let base = &base.read_window(
         controls.model_plane().domain(),
         0..base.shape().coefficients(),
     )?;
@@ -2063,7 +2056,8 @@ fn run_taylor_minor_cycle(
     controls: MinorCycleProgram,
 ) -> Result<MinorCycleResult, MinorCycleError> {
     let view = &view.read_window(view.slab().core_range())?;
-    let base = &lifecycle.validate_named_generation(base)?.read_window(
+    lifecycle.validate_named_generation(base)?;
+    let base = &base.read_window(
         controls.model_plane().domain(),
         0..base.shape().coefficients(),
     )?;
@@ -2374,7 +2368,7 @@ fn run_taylor_minor_cycle(
 #[allow(clippy::too_many_arguments)]
 fn finish_taylor_minor_cycle(
     lifecycle: &ModelLifecycle,
-    base: &crate::ValidatedModelWindow<'_>,
+    base: &crate::ModelGenerationWindow<'_>,
     view: &FinalNormalState,
     mask: &ReconstructionMask,
     secondary_mask: Option<&ReconstructionMask>,
@@ -2428,7 +2422,7 @@ fn finish_taylor_minor_cycle(
                 Ok(ModelDeltaTerm::new(cell, ModelValue::new(*value)?))
             })
             .collect::<Result<Vec<_>, MinorCycleError>>()?;
-        Some(base.compile_delta(values)?)
+        Some(base.compile_delta(lifecycle, values)?)
     };
     let effective_threshold =
         cycle_threshold.map_or(global_threshold, |value| value.max(global_threshold));
@@ -2443,7 +2437,6 @@ fn finish_taylor_minor_cycle(
         lifecycle.epoch(),
         base.generation_id(),
         view.completion_id(),
-        view.content_identity(),
         &mask_generations,
         &controls,
         iterations,
@@ -2466,7 +2459,6 @@ fn finish_taylor_minor_cycle(
             epoch: lifecycle.epoch(),
             input_generation: base.generation_id(),
             normal_state_completion: view.completion_id(),
-            normal_state_content: view.content_identity(),
             iterations,
             controller_iterations,
             total_flux,
@@ -2487,7 +2479,7 @@ fn finish_taylor_minor_cycle(
 
 pub(crate) fn run_minor_cycle_plane(
     lifecycle: &ModelLifecycle,
-    base: &crate::ValidatedModelWindow<'_>,
+    base: &crate::ModelGenerationWindow<'_>,
     plane: FinalNormalStatePlane<'_>,
     mask: &ReconstructionMask,
     controls: MinorCycleProgram,
@@ -2837,7 +2829,7 @@ pub(crate) fn run_minor_cycle_plane(
                 Ok(ModelDeltaTerm::new(cell, ModelValue::new(*flux)?))
             })
             .collect::<Result<Vec<_>, MinorCycleError>>()?;
-        Some(base.compile_delta(deltas)?)
+        Some(base.compile_delta(lifecycle, deltas)?)
     };
 
     let evidence_id = minor_cycle_evidence_id(
@@ -2846,7 +2838,6 @@ pub(crate) fn run_minor_cycle_plane(
         lifecycle.epoch(),
         base.generation_id(),
         view.completion_id(),
-        view.content_identity(),
         &[mask.generation_id()],
         &controls,
         iterations,
@@ -2869,7 +2860,6 @@ pub(crate) fn run_minor_cycle_plane(
             epoch: lifecycle.epoch(),
             input_generation: base.generation_id(),
             normal_state_completion: view.completion_id(),
-            normal_state_content: view.content_identity(),
             iterations,
             controller_iterations,
             total_flux,
@@ -4138,7 +4128,6 @@ fn minor_cycle_evidence_id(
     epoch: u64,
     input_generation: ModelGenerationId,
     normal_state_completion: FinalNormalStateCompletionId,
-    normal_state_content: LogicalIdentity,
     mask_generations: &[ReconstructionMaskGenerationId],
     controls: &MinorCycleProgram,
     iterations: usize,
@@ -4158,7 +4147,6 @@ fn minor_cycle_evidence_id(
     encoder.u64(epoch);
     encoder.identity(input_generation.as_bytes());
     encoder.identity(normal_state_completion.as_bytes());
-    encoder.identity(normal_state_content.as_bytes());
     encoder.usize(mask_generations.len());
     for generation in mask_generations {
         encoder.identity(generation.as_bytes());
@@ -4479,7 +4467,7 @@ mod tests {
             controls = controls.with_image_response(binding);
         }
         let response = super::TaylorSolveResponse::new(&window, binding).unwrap();
-        let raw_identity = normal.content_identity();
+        let raw_identity = normal.diagnostic_content_identity().unwrap();
         if raw_response {
             let mut missing_binding = controls.clone();
             missing_binding.requires_image_response = true;
@@ -4510,7 +4498,6 @@ mod tests {
                     lifecycle.epoch(),
                     base.generation_id(),
                     normal.completion_id(),
-                    normal.content_identity(),
                     &[mask.generation_id()],
                     program,
                     0,
@@ -4543,7 +4530,7 @@ mod tests {
             .expect("production minor cycle on native normalized inputs");
         let evidence = result.evidence();
         assert_eq!(
-            normal.content_identity(),
+            normal.diagnostic_content_identity().unwrap(),
             raw_identity,
             "solve only borrows raw normal state"
         );

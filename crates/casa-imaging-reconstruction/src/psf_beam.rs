@@ -32,7 +32,10 @@ const REGION_PADDING: usize = 5;
 
 /// Heap envelope for the bounded two-pass lobe extraction, excluding its
 /// borrowed full PSF. The Gaussian solve uses fixed-size stack matrices.
-pub(crate) fn psf_fit_workspace_bytes(shape: [usize; 2]) -> u64 {
+///
+/// The fit's fixed patch bounds clamp both dimensions before arithmetic.
+#[must_use]
+pub fn psf_fit_workspace_bytes(shape: [usize; 2]) -> u64 {
     let first_samples = shape
         .map(|axis| axis.min(2 * PSF_PATCH_RADIUS + 1))
         .into_iter()

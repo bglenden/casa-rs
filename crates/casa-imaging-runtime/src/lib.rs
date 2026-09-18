@@ -36,10 +36,10 @@ pub use execution_bindings::{
     ImplementationRegistryId, IoMeasurement, IoPrediction, ObservationCompletionBindingError,
     ObservationReadCompletionContext, PhysicalWorkBinding, PhysicalWorkBindingError,
     PhysicalWorkId, PlanError, PlanPrediction, PlannedArtifact, PlannerCostModelProfileId,
-    PlanningBindings, PredictionConfidence, PredictionUncertainty, ProductMemberPublicationFailure,
-    PublicationResources, RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings,
-    RunController, RunDirective, RunError, RunToCompletion, StagePrediction, WorkExecutionContext,
-    WorkImplementation, WorkMeasurements, plan, run,
+    PlanningBindings, PredictionConfidence, PredictionUncertainty, PublicationResources,
+    RedactedPath, ResourceMeasurement, ResourcePolicyId, RunBindings, RunController, RunDirective,
+    RunError, RunToCompletion, StagePrediction, WorkExecutionContext, WorkImplementation,
+    WorkMeasurements, plan, run,
 };
 
 pub use casa_imaging_model::{ContinuumFitWeightGenerationId, ContinuumTransformGenerationId};
@@ -95,8 +95,7 @@ pub use prepared_artifact::{
     PreparedArtifactStore, PreparedArtifactUvAffine,
 };
 pub use product_publication::{
-    AuthorizedProductPublicationEntry, ProductPublicationAuthorization, ProductPublicationEntry,
-    ProductPublicationError, ProductPublicationPlan,
+    ProductPublicationEntry, ProductPublicationError, ProductPublicationPlan,
 };
 pub use publication_layout::{
     PhysicalLayoutId, PublicationBoundKind, PublicationLayoutError, PublicationLayoutLedger,
@@ -126,11 +125,10 @@ pub use resource_authority::{
     TransferLink, TransferLinkId,
 };
 pub use serial_product_publication::{
-    MemberPromotionFailure, MemberPromotionFailureKind, SerialProductBackingPlan,
-    SerialProductPublicationCompletion, SerialProductPublicationExecutionError,
-    SerialProductPublicationExecutor, SerialProductPublicationPlan,
-    SerialProductPublicationPlanError, SerialProductPublicationPolicy,
-    SerialProductPublicationRegistry, SerialProductPublicationSink,
+    ProductSinkResidency, SerialProductPublicationCompletion,
+    SerialProductPublicationExecutionError, SerialProductPublicationExecutor,
+    SerialProductPublicationPlan, SerialProductPublicationPlanError,
+    SerialProductPublicationPolicy, SerialProductPublicationRegistry, SerialProductPublicationSink,
 };
 pub use spectral_cycle::{
     FinalMajorPhaseInput, FinalVisibilityReplay, FinalVisibilitySink,
