@@ -537,6 +537,7 @@ impl GriddedNormalTileCatalog {
 
 pub(super) struct GriddedNormalTileAccumulator {
     cell_capacity: usize,
+    touched: [Range<usize>; 2],
     pub(super) grids: Vec<Array2<Complex64>>,
     pub(super) compensations: Vec<Array2<Complex64>>,
 }
@@ -547,6 +548,7 @@ impl GriddedNormalTileAccumulator {
         let planes = || (0..core_depth).map(|_| Array2::zeros(shape)).collect();
         Self {
             cell_capacity,
+            touched: [0..0, 0..0],
             grids: planes(),
             compensations: planes(),
         }
@@ -560,16 +562,34 @@ impl GriddedNormalTileAccumulator {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
         for plane in self.grids.iter_mut().chain(&mut self.compensations) {
+            // Clear the old footprint before reshaping: untouched storage is
+            // already zero, including when a pooled buffer changes row stride.
+            let stride = plane.ncols();
             let (mut values, offset) = std::mem::take(plane).into_raw_vec_and_offset();
             if offset.is_some_and(|offset| offset != 0) || values.capacity() != self.cell_capacity {
                 return Err(SpectralOperatorError::ResidencyOverflow);
             }
+            for x in self.touched[0].clone() {
+                values[x * stride + self.touched[1].start..x * stride + self.touched[1].end]
+                    .fill(Complex64::default());
+            }
             values.resize(cells, Complex64::default());
-            values.fill(Complex64::default());
             *plane = Array2::from_shape_vec((shape[0], shape[1]), values)
                 .map_err(|_| SpectralOperatorError::UnsupportedGeometry)?;
         }
+        self.touched = [0..0, 0..0];
         Ok(())
+    }
+
+    fn include_taps(touched: &mut [Range<usize>; 2], taps: SampleTaps, support: usize) {
+        for (range, start) in touched.iter_mut().zip([taps.x.start, taps.y.start]) {
+            range.start = if range.start == range.end {
+                start
+            } else {
+                range.start.min(start)
+            };
+            range.end = range.end.max(start + 2 * support + 1);
+        }
     }
 
     fn commit_into(
@@ -578,7 +598,7 @@ impl GriddedNormalTileAccumulator {
         grids: &mut [Array2<Complex64>],
         compensations: &mut [Array2<Complex64>],
     ) {
-        let [width, height] = geometry.shape;
+        let height = geometry.shape[1];
         for plane in 0..grids.len() {
             let row_stride = grids[plane].ncols();
             let cells = grids[plane].as_slice_mut().expect("owned standard grid");
@@ -589,15 +609,18 @@ impl GriddedNormalTileAccumulator {
             let local_corrections = self.compensations[plane]
                 .as_slice()
                 .expect("owned standard compensation tile");
-            for x in 0..width {
-                let target = (geometry.origin[0] + x) * row_stride + geometry.origin[1];
-                let source = x * height;
+            for x in self.touched[0].clone() {
+                let target = (geometry.origin[0] + x) * row_stride
+                    + geometry.origin[1]
+                    + self.touched[1].start;
+                let source = x * height + self.touched[1].start;
+                let count = self.touched[1].len();
                 for (((cell, compensation), &value), &local_compensation) in cells
-                    [target..target + height]
+                    [target..target + count]
                     .iter_mut()
-                    .zip(&mut corrections[target..target + height])
-                    .zip(&values[source..source + height])
-                    .zip(&local_corrections[source..source + height])
+                    .zip(&mut corrections[target..target + count])
+                    .zip(&values[source..source + count])
+                    .zip(&local_corrections[source..source + count])
                 {
                     if value != Complex64::default() {
                         let contribution = value - local_compensation;
@@ -1713,6 +1736,7 @@ impl GriddedNormalOperatorApply {
                             let GriddedNormalTileAccumulator {
                                 grids,
                                 compensations,
+                                touched,
                                 ..
                             } = &mut *accumulator;
                             match prepared.record_layout {
@@ -1744,6 +1768,7 @@ impl GriddedNormalOperatorApply {
                                     let polarizations =
                                         self.program.manifest.specification.polarization_count();
                                     if let Some(aw) = record.aw {
+                                        *touched = [0..geometry.shape[0], 0..geometry.shape[1]];
                                         self.operators[domain_ordinal]
                                             .grid_gridded_normal_local_aw_polarization(
                                                 grids,
@@ -1757,12 +1782,18 @@ impl GriddedNormalOperatorApply {
                                                 aw,
                                             )?;
                                     } else {
+                                        let taps = geometry.translated_taps(record.taps)?;
+                                        GriddedNormalTileAccumulator::include_taps(
+                                            touched,
+                                            taps,
+                                            geometry.support,
+                                        );
                                         self.operators[domain_ordinal]
                                             .grid_gridded_normal_local_polarization(
                                                 grids,
                                                 compensations,
                                                 GriddedNormalLocalContribution::new(
-                                                    geometry.translated_taps(record.taps)?,
+                                                    taps,
                                                     record.output_channel / polarizations,
                                                     record.output_channel % polarizations,
                                                     predicted,
@@ -1780,10 +1811,16 @@ impl GriddedNormalOperatorApply {
                                             .ok_or(SpectralOperatorError::InvalidGriddedRecord)?,
                                         plan.normal_moment_count(),
                                     )?;
+                                    let taps = geometry.translated_taps(record.taps)?;
+                                    GriddedNormalTileAccumulator::include_taps(
+                                        touched,
+                                        taps,
+                                        geometry.support,
+                                    );
                                     self.operators[0].grid_gridded_block_normal_local(
                                         grids,
                                         compensations,
-                                        geometry.translated_taps(record.taps)?,
+                                        taps,
                                         predicted,
                                     )?;
                                 }
@@ -1937,6 +1974,7 @@ mod tests {
         let mut accumulator = GriddedNormalTileAccumulator::new(24, 3);
         for shape in [[2, 12], [1, 1], [12, 2], [6, 4], [2, 2], [4, 6]] {
             accumulator.bind_geometry(shape).unwrap();
+            accumulator.touched = [0..shape[0], 0..shape[1]];
             for plane in accumulator
                 .grids
                 .iter_mut()
@@ -1963,6 +2001,86 @@ mod tests {
     }
 
     #[test]
+    fn touched_tiles_match_full_scan_across_empty_disjoint_and_reshaped_windows() {
+        let mut accumulator = GriddedNormalTileAccumulator::new(38 * 38, 2);
+        let mut grids = vec![Array2::from_elem((48, 48), Complex64::new(0.25, -0.5)); 2];
+        let mut corrections = vec![Array2::from_elem((48, 48), Complex64::new(0.125, 0.25)); 2];
+        let mut expected = grids.clone();
+        let mut expected_corrections = corrections.clone();
+        let mut full_cells = 0;
+        let mut visited_cells = 0;
+        for (shape, starts) in [
+            ([38, 38], vec![[0, 0], [2, 3]]),
+            ([38, 38], vec![[30, 31]]),
+            ([17, 29], vec![[10, 22], [9, 21]]),
+            ([29, 17], vec![]),
+            ([38, 38], vec![[1, 1]]),
+        ] {
+            accumulator.bind_geometry(shape).unwrap();
+            assert!(
+                accumulator
+                    .grids
+                    .iter()
+                    .chain(&accumulator.compensations)
+                    .all(|plane| plane.iter().all(|value| *value == Complex64::default()))
+            );
+            let geometry = GriddedNormalTileGeometry {
+                key: GriddedNormalTileKey { x: 0, y: 0 },
+                origin: [3, 4],
+                shape,
+                support: 3,
+            };
+            for [x0, y0] in starts {
+                GriddedNormalTileAccumulator::include_taps(
+                    &mut accumulator.touched,
+                    taps(x0, y0),
+                    3,
+                );
+                for plane in 0..2 {
+                    for x in x0..x0 + 7 {
+                        for y in y0..y0 + 7 {
+                            accumulator.grids[plane][[x, y]] +=
+                                Complex64::new((x + plane) as f64 * 0.125, -(y as f64));
+                            accumulator.compensations[plane][[x, y]] =
+                                Complex64::new(1.0e-12, -1.0e-10);
+                        }
+                    }
+                }
+            }
+            full_cells += shape[0] * shape[1] * 2;
+            visited_cells += accumulator.touched[0].len() * accumulator.touched[1].len() * 2;
+            for plane in 0..2 {
+                for x in 0..shape[0] {
+                    for y in 0..shape[1] {
+                        let value = accumulator.grids[plane][[x, y]];
+                        if value != Complex64::default() {
+                            let target = [geometry.origin[0] + x, geometry.origin[1] + y];
+                            let cell = &mut expected[plane][target];
+                            let contribution = value - accumulator.compensations[plane][[x, y]];
+                            let updated = *cell + contribution;
+                            expected_corrections[plane][target] = (updated - *cell) - contribution;
+                            *cell = updated;
+                        }
+                    }
+                }
+            }
+            accumulator.commit_into(geometry, &mut grids, &mut corrections);
+            for (actual, expected) in grids
+                .iter()
+                .chain(&corrections)
+                .zip(expected.iter().chain(&expected_corrections))
+            {
+                for (actual, expected) in actual.iter().zip(expected.iter()) {
+                    assert_eq!(actual.re.to_bits(), expected.re.to_bits());
+                    assert_eq!(actual.im.to_bits(), expected.im.to_bits());
+                }
+            }
+        }
+        assert_eq!(visited_cells, 504);
+        assert_eq!(full_cells, 10636);
+    }
+
+    #[test]
     fn tile_commit_matches_scalar_arithmetic_for_overlapping_clipped_tiles() {
         let grid_shape = [75, 69];
         let mut grids: Vec<_> = (0..2)
@@ -1985,6 +2103,7 @@ mod tests {
         ] {
             let geometry = GriddedNormalTileGeometry::new(grid_shape, key, 3).unwrap();
             accumulator.bind_geometry(geometry.shape).unwrap();
+            accumulator.touched = [0..geometry.shape[0], 0..geometry.shape[1]];
             for plane in 0..2 {
                 for ((x, y), value) in accumulator.grids[plane].indexed_iter_mut() {
                     *value = [
@@ -2093,6 +2212,7 @@ mod tests {
         let mut pooled = GriddedNormalTileAccumulator::new(132 * 132, 4);
         for shape in [[132, 132], [101, 110], [110, 101], [132, 132]] {
             pooled.bind_geometry(shape).unwrap();
+            pooled.touched = [0..shape[0], 0..shape[1]];
             let sample =
                 AwVisibilitySample::new(1.0e9, 1.0e9, 1.0, 0, 0.0, [50.0, 50.0], [0.0; 2]).unwrap();
             let plan = operator.prepare_imaging_grid(shape, sample).unwrap();
