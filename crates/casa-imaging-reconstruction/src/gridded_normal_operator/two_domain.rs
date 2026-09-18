@@ -1679,6 +1679,26 @@ impl GriddedNormalOperatorApply {
             }
             GriddedNormalWorkKind::Accumulation => {
                 prepared.with_published_predictions(|predictions| {
+                    let prediction_for = |route: &GriddedNormalRoute| {
+                        let group = prepared
+                            .groups
+                            .get(
+                                usize::try_from(route.group_ordinal)
+                                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                            )
+                            .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+                        let start = usize::try_from(group.prediction_index)
+                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?
+                            .checked_mul(prepared.prediction_width)
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                        let end = start
+                            .checked_add(prepared.prediction_width)
+                            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                        predictions[usize::from(group.prediction_lane)]
+                            .values
+                            .get(start..end)
+                            .ok_or(SpectralOperatorError::IncompleteCoverage)
+                    };
                     for task in prepared
                         .tasks
                         .iter()
@@ -1715,24 +1735,6 @@ impl GriddedNormalOperatorApply {
                             let record_bytes = encoded
                                 .get(start..end)
                                 .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
-                            let group = prepared
-                                .groups
-                                .get(
-                                    usize::try_from(route.group_ordinal)
-                                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                                )
-                                .ok_or(SpectralOperatorError::IncompleteCoverage)?;
-                            let prediction_start = usize::try_from(group.prediction_index)
-                                .map_err(|_| SpectralOperatorError::CoverageOverflow)?
-                                .checked_mul(prepared.prediction_width)
-                                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                            let prediction_end = prediction_start
-                                .checked_add(prepared.prediction_width)
-                                .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-                            let predicted = predictions[usize::from(group.prediction_lane)]
-                                .values
-                                .get(prediction_start..prediction_end)
-                                .ok_or(SpectralOperatorError::IncompleteCoverage)?;
                             let GriddedNormalTileAccumulator {
                                 grids,
                                 compensations,
@@ -1761,7 +1763,7 @@ impl GriddedNormalOperatorApply {
                                     if record.chart_ordinal != domain_ordinal {
                                         return Err(SpectralOperatorError::GriddedRecordMismatch);
                                     }
-                                    let predicted = predicted
+                                    let predicted = prediction_for(route)?
                                         .first()
                                         .copied()
                                         .ok_or(SpectralOperatorError::IncompleteCoverage)?;
@@ -1821,7 +1823,7 @@ impl GriddedNormalOperatorApply {
                                         grids,
                                         compensations,
                                         taps,
-                                        predicted,
+                                        prediction_for(route)?,
                                     )?;
                                 }
                             }
