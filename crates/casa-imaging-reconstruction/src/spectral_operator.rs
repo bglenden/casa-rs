@@ -10925,7 +10925,6 @@ impl ConvolutionOperator {
         Ok(())
     }
 
-    #[inline]
     pub(crate) fn degrid(
         &self,
         grid: &Array2<Complex64>,
