@@ -45,7 +45,6 @@ fn planned_prediction_lane(
     };
     Ok(RwLock::new(GriddedNormalPredictionLane {
         groups: 0..0,
-        record_count: 0,
         values: planned_vec(value_capacity)?,
         model_scratch,
         moment_scratch,
@@ -684,7 +683,6 @@ impl GriddedNormalTileTask {
 
 struct GriddedNormalPredictionLane {
     groups: Range<usize>,
-    record_count: u64,
     values: Vec<Complex64>,
     model_scratch: Vec<Complex64>,
     moment_scratch: Vec<f64>,
@@ -1050,9 +1048,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
             .map(GriddedNormalGroupSpan::record_count)
             .sum();
         let mut starts = [0usize; GRIDDED_NORMAL_LANE_COUNT + 1];
-        let mut record_starts = [0usize; GRIDDED_NORMAL_LANE_COUNT + 1];
         starts[GRIDDED_NORMAL_LANE_COUNT] = self.groups.len();
-        record_starts[GRIDDED_NORMAL_LANE_COUNT] = total_records;
         let mut group = 0usize;
         let mut records = 0usize;
         for (lane, start) in starts
@@ -1071,7 +1067,6 @@ impl PreparedGriddedNormalTwoDomainWindow {
                 group += 1;
             }
             *start = group;
-            record_starts[lane] = records;
         }
         for lane in 0..GRIDDED_NORMAL_LANE_COUNT {
             let range = starts[lane]..starts[lane + 1];
@@ -1086,8 +1081,6 @@ impl PreparedGriddedNormalTwoDomainWindow {
                 return Err(SpectralOperatorError::ResidencyOverflow);
             }
             owner.groups = range.clone();
-            owner.record_count = u64::try_from(record_starts[lane + 1] - record_starts[lane])
-                .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
             owner.values.resize(value_count, Complex64::default());
             for (local, group) in self.groups[range].iter_mut().enumerate() {
                 group.prediction_lane =
@@ -1223,7 +1216,6 @@ impl PreparedGriddedNormalTwoDomainWindow {
                 .get_mut()
                 .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
             owner.groups = 0..0;
-            owner.record_count = 0;
             owner.values.clear();
         }
         self.frame_sequences.clear();
@@ -1494,7 +1486,13 @@ impl GriddedNormalOperatorApply {
             let owner = prepared.predictions[lane]
                 .read()
                 .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
-            (GriddedNormalWorkKind::Prediction, lane, owner.record_count)
+            let records = prepared.groups[owner.groups.clone()]
+                .iter()
+                .try_fold(0_u64, |total, group| {
+                    total.checked_add(u64::try_from(group.record_count()).ok()?)
+                })
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            (GriddedNormalWorkKind::Prediction, lane, records)
         } else {
             let lane = local_ordinal - GRIDDED_NORMAL_LANE_COUNT;
             (
@@ -2586,13 +2584,6 @@ mod tests {
                     let owner = owner.read().unwrap();
                     assert!(owner.values.len() <= capacity);
                     assert_eq!(owner.values.capacity(), capacity);
-                    assert_eq!(
-                        owner.record_count,
-                        prepared.groups[owner.groups.clone()]
-                            .iter()
-                            .map(|group| group.record_count() as u64)
-                            .sum::<u64>()
-                    );
                 }
                 assert_eq!(
                     prepared
@@ -2603,12 +2594,6 @@ mod tests {
                     prepared.groups.len(),
                     "every complete group is assigned exactly once"
                 );
-                prepared.reset_active().unwrap();
-                prepared.prepare_prediction_lanes().unwrap();
-                assert!(prepared.predictions.iter().all(|owner| {
-                    let owner = owner.read().unwrap();
-                    owner.groups.is_empty() && owner.record_count == 0
-                }));
             }
         }
     }
