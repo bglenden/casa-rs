@@ -155,9 +155,11 @@ fn t55_full_dataset_clark_timing() {
 fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
     real_clark_worker_cases(
         "tools/perf/imager/workloads/t55-clark-cube-development.json",
+        "refim_point_withline.ms",
         128,
         8,
         4,
+        9,
         &[
             ("natural", ContinuumWeighting::Natural),
             ("briggs-0.5", ContinuumWeighting::Briggs(0.5)),
@@ -170,18 +172,41 @@ fn t55_real_clark_cube_products_are_exact_for_one_two_three_workers() {
 fn t55_intermediate_clark_cube_worker_scaling() {
     real_clark_worker_cases(
         "t55-intermediate-256-square-16-channel-natural-clark",
+        "refim_point_withline.ms",
         256,
         2,
         16,
+        9,
+        &[("natural", ContinuumWeighting::Natural)],
+    );
+}
+
+#[test]
+#[ignore = "diagnostic synthetic scaling only; requires explicit fixture, resources and external guard"]
+fn t55_synthetic_clark_cube_worker_scaling() {
+    let channels = std::env::var("CASA_RS_T55_SYNTHETIC_CHANNELS")
+        .expect("explicit synthetic channel count")
+        .parse::<usize>()
+        .expect("integer synthetic channel count");
+    assert!(matches!(channels, 16 | 64));
+    real_clark_worker_cases(
+        "t55-exploratory-synthetic-channel-scaling",
+        "scaling-cube.ms",
+        256,
+        2,
+        channels,
+        64,
         &[("natural", ContinuumWeighting::Natural)],
     );
 }
 
 fn real_clark_worker_cases(
     workload: &str,
+    expected_filename: &str,
     image_size: usize,
     first_channel: usize,
     channels: usize,
+    iterations: usize,
     weightings: &[(&str, ContinuumWeighting)],
 ) {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
@@ -191,8 +216,8 @@ fn real_clark_worker_cases(
     assert!(measurement_set.is_dir());
     assert_eq!(
         measurement_set.file_name().unwrap(),
-        "refim_point_withline.ms",
-        "this gate is bounded to the named T55 real-data workload"
+        expected_filename,
+        "this gate is bounded to its named T55 workload"
     );
     let memory_bytes: u64 = std::env::var("CASA_RS_T55_NATIVE_MEMORY_BYTES")
         .expect("CASA_RS_T55_NATIVE_MEMORY_BYTES is required")
@@ -231,7 +256,7 @@ fn real_clark_worker_cases(
             "channel_start": 0, "channel_count": channels, "start": first_channel, "width": 1,
             "outframe": "LSRK", "interpolation": "linear", "gridder": "standard",
             "perchanweightdensity": true,
-            "deconvolver": "clark", "niter": 9, "cycle_iterations": 1,
+            "deconvolver": "clark", "niter": iterations, "cycle_iterations": 1,
             "maximum_major_cycles": 3, "gain": 0.1, "threshold_jy": 0,
             "psf_cutoff": casa_imaging_products::DEFAULT_PSF_CUTOFF,
             "pblimit": -0.2, "write_pb": true, "pbcor": false, "wterm": "none",
@@ -285,7 +310,7 @@ fn real_clark_worker_cases(
                     },
                     output_channels: Some(channels),
                 };
-                imaging.iterations = 9;
+                imaging.iterations = iterations;
                 imaging.cycle_iterations = 1;
                 imaging.maximum_major_cycles = Some(3);
                 imaging.gain = 0.1;
