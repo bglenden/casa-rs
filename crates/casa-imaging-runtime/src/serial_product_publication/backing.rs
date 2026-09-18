@@ -62,7 +62,7 @@ impl SerialProductBackingPlan {
             let shape = TiledShape::with_tile_shape(window.shape().to_vec(), tile.to_vec())
                 .map_err(error)?;
             let cache_values =
-                publication_cache_values(window.shape(), tile, window.maximum_values())?;
+                publication_cache_values(window.shape(), tile, window.window_shape())?;
             let payload = PagedArray::<f32>::storage_layout(
                 shape.clone(),
                 cache_values
@@ -138,18 +138,21 @@ fn canonical_window_shape(shape: [usize; 4], maximum_values: usize) -> [usize; 4
 fn publication_cache_values(
     shape: [usize; 4],
     tile: [usize; 4],
-    maximum_values: usize,
+    write_window: [usize; 4],
 ) -> Result<usize, ProductsError> {
-    // Keep one canonical cursor's tiles resident across adjacent hash strips.
+    // Retain either traversal footprint across adjacent hash strips or writes.
     // The prepared storage layout accounts for this cache before admission.
-    let traversal = TraversalCursorIter::new(
-        shape.to_vec(),
-        tile.to_vec(),
-        TraversalSpec::chunks(canonical_window_shape(shape, maximum_values).to_vec())
-            .axis_path(vec![3, 2, 1, 0]),
-    );
-    let hint = traversal.cache_hint().ok_or(ProductsError::InvalidWindow)?;
-    let tiles = recommended_tile_cache_size(&shape, &tile, &hint, None);
+    let maximum_values = write_window.iter().product();
+    let mut tiles = 1;
+    for cursor in [canonical_window_shape(shape, maximum_values), write_window] {
+        let traversal = TraversalCursorIter::new(
+            shape.to_vec(),
+            tile.to_vec(),
+            TraversalSpec::chunks(cursor.to_vec()).axis_path(vec![3, 2, 1, 0]),
+        );
+        let hint = traversal.cache_hint().ok_or(ProductsError::InvalidWindow)?;
+        tiles = tiles.max(recommended_tile_cache_size(&shape, &tile, &hint, None));
+    }
     tile.into_iter()
         .try_fold(tiles, |values, extent| values.checked_mul(extent))
         .map(|values| values.max(maximum_values))
@@ -175,6 +178,9 @@ fn publication_tile_shape(
         *extent = (*extent).min(remaining);
         remaining /= *extent;
     }
+    // Coalesce spectral reads without making a physical tile exceed one window.
+    let spatial_values: usize = tile.iter().product();
+    tile[spectral_axis] = shape[spectral_axis].min(maximum_values / spatial_values);
     tile
 }
 
@@ -325,35 +331,42 @@ mod tests {
     fn publication_tiles_balance_write_and_hash_windows() {
         assert_eq!(
             publication_tile_shape([128, 128, 1, 512], 3, 16384),
-            [5, 128, 1, 1]
+            [5, 128, 1, 25]
         );
         assert_eq!(
             publication_tile_shape([128, 128, 1, 1], 3, 16384),
             [128, 128, 1, 1]
         );
         assert_eq!(publication_tile_shape([64, 8, 8, 1], 0, 64), [1, 8, 8, 1]);
-        assert_eq!(publication_tile_shape([3, 4, 2, 5], 3, 24), [1, 4, 2, 1]);
+        assert_eq!(publication_tile_shape([3, 4, 2, 5], 3, 24), [1, 4, 2, 3]);
     }
 
     #[test]
     fn publication_cache_retains_a_canonical_cursor_tile_footprint() {
         assert_eq!(
-            publication_cache_values([512, 512, 1, 512], [22, 512, 1, 1], 512 * 512).unwrap(),
-            22 * 512 * 512
+            publication_cache_values([512, 512, 1, 512], [22, 512, 1, 23], [512, 512, 1, 1])
+                .unwrap(),
+            24 * 22 * 512 * 23
         );
         assert_eq!(
-            publication_cache_values([64, 8, 8, 1], [1, 8, 8, 1], 64).unwrap(),
+            publication_cache_values([64, 8, 8, 1], [1, 8, 8, 1], [1, 8, 8, 1]).unwrap(),
             64
         );
         let root = tempfile::tempdir().unwrap();
         let shape = [16, 8, 1, 16];
         let tile = publication_tile_shape(shape, 3, 128);
-        let cache_values = publication_cache_values(shape, tile, 128).unwrap();
+        let cache_values = publication_cache_values(shape, tile, [16, 8, 1, 1]).unwrap();
         let tiled = TiledShape::with_tile_shape(shape.to_vec(), tile.to_vec()).unwrap();
         let mut payload = PagedArray::<f32>::create_with_cache(
-            tiled,
+            tiled.clone(),
             root.path().join("payload"),
             cache_values * 4,
+        )
+        .unwrap();
+        let mut validity = PagedArray::<bool>::create_with_cache(
+            tiled,
+            root.path().join("validity"),
+            cache_values,
         )
         .unwrap();
         for channel in 0..16 {
@@ -361,11 +374,19 @@ mod tests {
                 ((index[0] * 8 + index[1]) * 16 + channel) as f32
             });
             payload.put_slice(&plane, &[0, 0, 0, channel]).unwrap();
+            validity
+                .put_slice(&plane.mapv(|v| v as usize % 3 != 0), &[0, 0, 0, channel])
+                .unwrap();
         }
         payload.flush().unwrap();
+        validity.flush().unwrap();
         let before = payload.io_stats();
+        let before_validity = validity.io_stats();
         for x in 0..16 {
             let values = payload
+                .get_slice(&[x, 0, 0, 0], &[1, 8, 1, 16], &[1; 4])
+                .unwrap();
+            let support = validity
                 .get_slice(&[x, 0, 0, 0], &[1, 8, 1, 16], &[1; 4])
                 .unwrap();
             for y in 0..8 {
@@ -374,11 +395,17 @@ mod tests {
                         values[[0, y, 0, channel]],
                         ((x * 8 + y) * 16 + channel) as f32
                     );
+                    assert_eq!(
+                        support[[0, y, 0, channel]],
+                        ((x * 8 + y) * 16 + channel) % 3 != 0
+                    );
                 }
             }
         }
         let reads = payload.io_stats().delta_since(before);
         assert!(reads.lru_read_bytes + reads.lru_batch_load_bytes <= 16 * 8 * 16 * 4);
+        let reads = validity.io_stats().delta_since(before_validity);
+        assert!(reads.lru_read_bytes + reads.lru_batch_load_bytes <= 16 * 8 * 16 / 8);
     }
 
     #[test]
@@ -391,21 +418,19 @@ mod tests {
         let directory = tempfile::tempdir_in(&root).unwrap();
         let shape = [128, 128, 1, 64];
         let plane_values = shape[0] * shape[1];
-        let tiled = TiledShape::with_tile_shape(
-            shape.to_vec(),
-            publication_tile_shape(shape, 3, plane_values).to_vec(),
-        )
-        .unwrap();
+        let tile = publication_tile_shape(shape, 3, plane_values);
+        let cache_values = publication_cache_values(shape, tile, [128, 128, 1, 1]).unwrap();
+        let tiled = TiledShape::with_tile_shape(shape.to_vec(), tile.to_vec()).unwrap();
         let mut payload = PagedArray::<f32>::create_with_cache(
             tiled.clone(),
             directory.path().join("payload"),
-            plane_values * 4,
+            cache_values * 4,
         )
         .unwrap();
         let mut validity = PagedArray::<bool>::create_with_cache(
             tiled,
             directory.path().join("validity"),
-            plane_values,
+            cache_values,
         )
         .unwrap();
         for channel in 0..shape[3] {
@@ -448,12 +473,10 @@ mod tests {
         let payload = arrays.0.io_stats().delta_since(before_payload);
         let validity = arrays.1.io_stats().delta_since(before_validity);
         assert!(
-            payload.lru_read_bytes + payload.lru_batch_load_bytes
-                <= plane_values * shape[3] * 4 * shape[3].isqrt()
+            payload.lru_read_bytes + payload.lru_batch_load_bytes <= plane_values * shape[3] * 4
         );
         assert!(
-            validity.lru_read_bytes + validity.lru_batch_load_bytes
-                <= plane_values * shape[3] / 8 * shape[3].isqrt()
+            validity.lru_read_bytes + validity.lru_batch_load_bytes <= plane_values * shape[3] / 8
         );
         let record = format!(
             "shape={shape:?}\nwindow_channels=1\nseconds={seconds}\nlogical_payload_bytes={}\nlogical_validity_disk_bytes={}\npayload={payload:?}\nvalidity={validity:?}\n",
