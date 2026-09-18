@@ -68,6 +68,10 @@ impl SerialProductBackingPlan {
             .map_err(error)?;
             let validity = PagedArray::<bool>::storage_layout(shape, window.maximum_values())
                 .map_err(error)?;
+            let write_buffer_bytes = window
+                .maximum_values()
+                .checked_mul(size_of::<f32>() + size_of::<bool>())
+                .ok_or(ProductsError::InvalidWindow)?;
             let parent = result.directory.join(".casa-rs-product-XXXXXX");
             let heap =
                 PagedArray::<f32>::planned_persistent_heap_bytes(&payload, &parent.join("payload"))
@@ -81,6 +85,7 @@ impl SerialProductBackingPlan {
                     + validity.owned_heap_bytes().map_err(error)?
                     + size_of::<PagedProductArray>()
                     + size_of::<MemberLayout>()
+                    + write_buffer_bytes
                     + parent.as_os_str().len();
             result.heap_bytes = result
                 .heap_bytes
@@ -173,6 +178,8 @@ impl ProductStorageFactory for SerialProductBackingPlan {
         .map_err(error)?;
         Ok(Box::new(PagedProductArray {
             arrays: Mutex::new((payload, validity)),
+            payload_buffer: None,
+            validity_buffer: None,
             shape: layout.shape(),
             _directory: directory,
         }))
@@ -182,6 +189,8 @@ impl ProductStorageFactory for SerialProductBackingPlan {
 #[derive(Debug)]
 struct PagedProductArray {
     arrays: Mutex<(PagedArray<f32>, PagedArray<bool>)>,
+    payload_buffer: Option<ArrayD<f32>>,
+    validity_buffer: Option<ArrayD<bool>>,
     shape: [usize; 4],
     _directory: TempDir,
 }
@@ -212,25 +221,43 @@ impl ProductArrayStorage for PagedProductArray {
     }
     fn write(&mut self, window: &ProductWindow) -> Result<(), ProductsError> {
         let arrays = self.arrays.get_mut().map_err(error)?;
-        let payload = ArrayD::from_shape_vec(IxDyn(&window.shape()), window.payload().to_vec())
-            .map_err(error)?;
+        let payload =
+            fill_write_buffer(&mut self.payload_buffer, window.shape(), window.payload())?;
         arrays
             .0
-            .put_slice(&payload, &window.start())
+            .put_slice(payload, &window.start())
             .map_err(error)?;
-        drop(payload);
-        let validity = ArrayD::from_shape_vec(IxDyn(&window.shape()), window.validity().to_vec())
-            .map_err(error)?;
-        arrays
-            .1
-            .put_slice(&validity, &window.start())
-            .map_err(error)
+        let validity =
+            fill_write_buffer(&mut self.validity_buffer, window.shape(), window.validity())?;
+        arrays.1.put_slice(validity, &window.start()).map_err(error)
     }
     fn flush(&mut self) -> Result<(), ProductsError> {
         let arrays = self.arrays.get_mut().map_err(error)?;
         arrays.0.flush().map_err(error)?;
-        arrays.1.flush().map_err(error)
+        arrays.1.flush().map_err(error)?;
+        self.payload_buffer = None;
+        self.validity_buffer = None;
+        Ok(())
     }
+}
+
+fn fill_write_buffer<'a, T: Copy>(
+    buffer: &'a mut Option<ArrayD<T>>,
+    shape: [usize; 4],
+    values: &[T],
+) -> Result<&'a ArrayD<T>, ProductsError> {
+    match buffer {
+        Some(array) if array.shape() == shape => {
+            array
+                .as_slice_mut()
+                .expect("write buffer has canonical contiguous layout")
+                .copy_from_slice(values);
+        }
+        _ => {
+            *buffer = Some(ArrayD::from_shape_vec(IxDyn(&shape), values.to_vec()).map_err(error)?);
+        }
+    }
+    Ok(buffer.as_ref().expect("initialized write buffer"))
 }
 
 fn copy_product_read<T: Copy>(
@@ -275,6 +302,20 @@ fn error(value: impl std::fmt::Display) -> ProductsError {
 mod tests {
     use super::*;
     use ndarray::ShapeBuilder;
+
+    #[test]
+    fn write_buffers_reuse_storage_and_resize_for_tail_windows() {
+        let mut buffer = None;
+        let first = fill_write_buffer(&mut buffer, [2, 3, 1, 1], &[1u32; 6])
+            .unwrap()
+            .as_ptr();
+        let second = fill_write_buffer(&mut buffer, [2, 3, 1, 1], &[2u32; 6]).unwrap();
+        assert_eq!(second.as_ptr(), first);
+        assert_eq!(second.as_slice().unwrap(), &[2; 6]);
+        let tail = fill_write_buffer(&mut buffer, [1, 3, 1, 1], &[3u32; 3]).unwrap();
+        assert_eq!(tail.shape(), [1, 3, 1, 1]);
+        assert_eq!(tail.as_slice().unwrap(), &[3; 3]);
+    }
 
     #[test]
     fn product_read_copy_preserves_plane_hash_and_multiaxis_order() {
@@ -346,6 +387,8 @@ mod tests {
         let before_validity = validity.io_stats();
         let backing = PagedProductArray {
             arrays: Mutex::new((payload, validity)),
+            payload_buffer: None,
+            validity_buffer: None,
             shape,
             _directory: directory,
         };
@@ -405,6 +448,8 @@ mod tests {
         validity.put_slice(&support, &[0; 4]).unwrap();
         let backing = PagedProductArray {
             arrays: Mutex::new((payload, validity)),
+            payload_buffer: None,
+            validity_buffer: None,
             shape,
             _directory: directory,
         };
