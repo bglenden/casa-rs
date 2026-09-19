@@ -1698,6 +1698,8 @@ impl<T: ImagePixel> PagedImage<T> {
     ///
     /// If the mask does not exist yet, it is created with all pixels initialized
     /// to false before writing the supplied slice.
+    /// Persistent writes are flushed before returning; at most one mask handle
+    /// is retained across writes under the image's existing cache budget.
     pub fn put_mask_slice(
         &mut self,
         name: &str,
@@ -1721,20 +1723,23 @@ impl<T: ImagePixel> PagedImage<T> {
 
         if let Some(path) = &self.path {
             let mask_path = resolve_mask_table_path(path, &table_ref);
-            if !mask_path.exists() {
-                let mut mask = PagedArray::<bool>::create_with_cache(
+            let cached = self.persistent_masks.get_mut().remove(name);
+            self.persistent_masks.get_mut().clear();
+            let mut mask = match cached {
+                Some(mask) => mask,
+                None if !mask_path.exists() => PagedArray::<bool>::create_with_cache(
                     TiledShape::with_tile_shape(self.shape.clone(), self.tile_shape.clone())?,
                     &mask_path,
                     self.cache_bytes(),
                 )
-                .map_err(ImageError::from)?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
-            } else {
-                let mut mask = PagedArray::<bool>::open_with_cache(&mask_path, self.cache_bytes())?;
-                mask.put_slice(data, start)?;
-                mask.flush().map_err(ImageError::from)?;
-            }
+                .map_err(ImageError::from)?,
+                None => PagedArray::<bool>::open_with_cache(&mask_path, self.cache_bytes())?,
+            };
+            mask.put_slice(data, start)?;
+            mask.flush().map_err(ImageError::from)?;
+            self.persistent_masks
+                .get_mut()
+                .insert(name.to_string(), mask);
         } else {
             let mask = self
                 .temp_masks
@@ -1742,7 +1747,6 @@ impl<T: ImagePixel> PagedImage<T> {
                 .or_insert_with(|| ArrayD::from_elem(IxDyn(&self.shape), false));
             assign_mask_slice(mask, data, start)?;
         }
-        self.persistent_masks.borrow_mut().remove(name);
         Ok(())
     }
 
@@ -3471,6 +3475,86 @@ mod tests {
         std::fs::rename(&staging, &visible).unwrap();
         let reopened = PagedImage::<f32>::open(&visible).unwrap();
         assert_eq!(reopened.get_mask().unwrap(), Some(expected));
+    }
+
+    #[test]
+    fn mask_slice_writes_reuse_one_flushed_handle_and_evict_other_masks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_handle_reuse.image");
+        let mut image = PagedImage::<f32>::create_with_tile_shape_and_cache(
+            vec![4, 4, 1, 3],
+            vec![4, 4, 1, 1],
+            make_coords(),
+            &path,
+            128,
+        )
+        .unwrap();
+        let mut previous_calls = 0;
+        for channel in 0..3 {
+            let plane = ArrayD::from_shape_fn(IxDyn(&[4, 4, 1, 1]), |idx| {
+                (idx[0] + idx[1] + channel) % 2 == 0
+            });
+            image
+                .put_mask_slice("mask0", &plane, &[0, 0, 0, channel])
+                .unwrap();
+            let cached = image.persistent_masks.borrow();
+            assert_eq!(cached.len(), 1);
+            let mask = cached.get("mask0").unwrap();
+            let calls = mask.io_stats().put_slice_c_order_calls;
+            assert!(
+                calls > previous_calls,
+                "I/O counters must survive between writes"
+            );
+            previous_calls = calls;
+            let independent =
+                PagedArray::<bool>::open_with_cache(mask.path().unwrap(), 128).unwrap();
+            assert_eq!(
+                independent
+                    .get_slice(&[0, 0, 0, channel], &[4, 4, 1, 1], &[1; 4])
+                    .unwrap(),
+                plane,
+                "every successful write must already be flushed"
+            );
+        }
+        let plane = ArrayD::from_elem(IxDyn(&[4, 4, 1, 1]), true);
+        image
+            .put_mask_slice("other", &plane, &[0, 0, 0, 0])
+            .unwrap();
+        image.get_named_mask("mask0").unwrap();
+        assert_eq!(image.persistent_masks.borrow().len(), 2);
+        image
+            .put_mask_slice("other", &plane, &[0, 0, 0, 1])
+            .unwrap();
+        assert_eq!(image.persistent_masks.borrow().len(), 1);
+        assert!(image.persistent_masks.borrow().contains_key("other"));
+        image.set_cache_bytes_shared(256).unwrap();
+        assert!(image.persistent_masks.borrow().is_empty());
+        image
+            .put_mask_slice("mask0", &plane, &[0, 0, 0, 2])
+            .unwrap();
+        image.remove_mask("mask0").unwrap();
+        assert!(!image.persistent_masks.borrow().contains_key("mask0"));
+    }
+
+    #[test]
+    fn failed_mask_slice_write_does_not_retain_the_failed_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mask_handle_failure.image");
+        let mut image = PagedImage::<f32>::create(vec![2, 2], make_coords(), &path).unwrap();
+        let plane = ArrayD::from_elem(IxDyn(&[2, 2]), true);
+        image.put_mask_slice("mask0", &plane, &[0, 0]).unwrap();
+        let incompatible = PagedArray::<bool>::new_scratch(
+            TiledShape::new(vec![1], std::mem::size_of::<bool>()).unwrap(),
+        )
+        .unwrap();
+        image
+            .persistent_masks
+            .get_mut()
+            .insert("mask0".into(), incompatible);
+        assert!(image.put_mask_slice("mask0", &plane, &[0, 0]).is_err());
+        assert!(image.persistent_masks.borrow().is_empty());
+        image.put_mask_slice("mask0", &plane, &[0, 0]).unwrap();
+        assert_eq!(image.get_named_mask("mask0").unwrap(), plane);
     }
 
     #[test]
