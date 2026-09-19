@@ -647,12 +647,42 @@ pub fn produce_continuum_members(
             &fitted_beams,
             &restoring_beams,
         )?;
+        let published_weights = if matches!(member.role, ProductRole::SumWeights(_)) {
+            if normal_state.domain_shape(domain_ordinal) != Some(plane_shape) {
+                return Err(ProductsError::SourceLineageMismatch);
+            }
+            Some(
+                normal_state
+                    .domain_published_sum_weights(domain_ordinal)
+                    .ok_or(ProductsError::SourceLineageMismatch)?,
+            )
+        } else {
+            None
+        };
         let writer = output.begin_member(member, layout, &member_beams)?;
         let mut writer = ProductMemberWriter::new(layout, writer)?;
         for window_start in (0..channel_count).step_by(layout.maximum_channels()) {
             let window_end = (window_start + layout.maximum_channels()).min(channel_count);
             let mut output = writer.window(window_start..window_end)?;
             for local_channel in window_start..window_end {
+                if let Some(weights) = published_weights {
+                    for polarization in 0..normal_state.polarization_count() {
+                        let index =
+                            local_channel * normal_state.polarization_count() + polarization;
+                        let weight = *weights
+                            .get(index)
+                            .ok_or(ProductsError::SourceLineageMismatch)?;
+                        scatter_polarization_plane_state(
+                            &mut output.payload,
+                            member.axes(),
+                            output.shape,
+                            polarization,
+                            local_channel - window_start,
+                            weight as f32,
+                        )?;
+                    }
+                    continue;
+                }
                 let channel = normal_state.slab().core_range().start + local_channel;
                 let window = normal_state.read_window(channel..channel + 1)?;
                 for polarization in 0..normal_state.polarization_count() {
@@ -661,17 +691,6 @@ pub fn produce_continuum_members(
                         return Err(ProductsError::SourceLineageMismatch);
                     }
                     let output_channel = plane.output_channel - window_start;
-                    if matches!(member.role, ProductRole::SumWeights(_)) {
-                        scatter_polarization_plane_state(
-                            &mut output.payload,
-                            member.axes(),
-                            output.shape,
-                            polarization,
-                            output_channel,
-                            plane.published_sum_weight as f32,
-                        )?;
-                        continue;
-                    }
                     let beam_index = beam_offset
                         + local_channel * normal_state.polarization_count()
                         + polarization;
@@ -1145,7 +1164,6 @@ struct DomainPlane<'a> {
     psf: &'a [num_complex::Complex64],
     sensitivity: &'a [f64],
     sum_weight: f64,
-    published_sum_weight: f64,
     validity: SpectralChannelValidity,
 }
 
@@ -1194,10 +1212,6 @@ fn domain_plane<'a>(
             .ok_or(ProductsError::SourceLineageMismatch)?,
         sum_weight: *domain
             .sum_weights()
-            .get(plane)
-            .ok_or(ProductsError::SourceLineageMismatch)?,
-        published_sum_weight: *domain
-            .published_sum_weights()
             .get(plane)
             .ok_or(ProductsError::SourceLineageMismatch)?,
         validity: *domain

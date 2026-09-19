@@ -1261,6 +1261,12 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
         .read_window(normal.slab().core_range())
         .expect("continuum fixture window");
 
+    assert!(
+        normal
+            .domain_published_sum_weights(normal.domain_count())
+            .is_none()
+    );
+
     for (ordinal, role) in [
         ImageDomainRole::Main,
         ImageDomainRole::Outlier("east".into()),
@@ -1269,6 +1275,10 @@ fn two_domain_members_consume_their_matching_normal_and_model_chart() {
     .enumerate()
     {
         let domain = window.domain_by_role(role).expect("domain normal state");
+        assert_eq!(
+            normal.domain_published_sum_weights(ordinal),
+            Some(domain.published_sum_weights())
+        );
         let expected_shape = problem.geometry().domains()[ordinal].shape().pixels();
         let model_member = generated
             .members()
