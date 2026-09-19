@@ -53,6 +53,10 @@ fn t55_q_band_rebaseline_preflight() {
         .map(|value| value.parse().expect("positive diagnostic row count"))
         .unwrap_or(351);
     assert!(expected_rows > 0 && expected_rows <= 35_100 && expected_rows % 351 == 0);
+    let workers: u64 = std::env::var("CASA_RS_T55_PREFLIGHT_WORKERS")
+        .map(|value| value.parse().expect("positive diagnostic worker count"))
+        .unwrap_or(1);
+    assert!([1, 2, 4].contains(&workers));
     let measurement_set = required_path("CASA_RS_T55_REAL_MS");
     let ms = MeasurementSet::open(&measurement_set).expect("preflight MS");
     assert_eq!(
@@ -92,7 +96,7 @@ fn t55_q_band_rebaseline_preflight() {
     imaging.write_primary_beam = true;
     imaging.task_requirements = vec![TaskRequirement::PerChannelWeightDensity];
     imaging.resource_policy = ResourcePolicy::Explicit(ResourceOverride {
-        workers: Some(1),
+        workers: Some(workers),
         memory_bytes: BTreeMap::from([(CapacityDomainId::new("host-memory"), 4 << 30)]),
         ..ResourceOverride::default()
     });
@@ -103,6 +107,39 @@ fn t55_q_band_rebaseline_preflight() {
         panic!("Q-band preflight failed: {error}");
     });
     let task_wall_seconds = started.elapsed().as_secs_f64();
+    let worker_evidence = [
+        ("initial-major", &result.outcome.output.initial_receipt),
+        (
+            "final-major",
+            result
+                .outcome
+                .output
+                .final_major_receipt
+                .as_ref()
+                .expect("final-major receipt"),
+        ),
+    ]
+    .into_iter()
+    .map(|(phase, receipt)| {
+        assert_eq!(receipt.initial_execution_knobs().workers, workers);
+        let peaks = receipt
+            .plan_node_identities()
+            .into_iter()
+            .map(|node| {
+                let peak = receipt.actual_resource_peak(
+                    &node,
+                    &LeaseResource::Workers,
+                    &ClaimLifetime::Work,
+                );
+                (node.as_str().to_owned(), peak)
+            })
+            .collect::<BTreeMap<_, _>>();
+        (
+            phase,
+            serde_json::json!({"admitted_workers": workers, "worker_peaks": peaks}),
+        )
+    })
+    .collect::<BTreeMap<_, _>>();
     assert_products(&image_name, &result.product_names, &REAL_PRODUCTS);
     let pb = PagedImage::<f32>::open(root.join("image.pb")).expect("published PB");
     assert_eq!(pb.shape(), &[image_size, image_size, 1, 512]);
@@ -125,8 +162,10 @@ fn t55_q_band_rebaseline_preflight() {
     fs::write(
         root.join("summary.json"),
         serde_json::to_vec_pretty(&serde_json::json!({
-            "scope": "diagnostic only: reduced rows, all 512 Q-band channels, serial Clark cube",
+            "scope": "diagnostic only: reduced rows, all 512 Q-band channels, CPU Clark cube",
             "rows": expected_rows,
+            "requested_workers": workers,
+            "worker_evidence": worker_evidence,
             "image_size": image_size,
             "task_wall_seconds": task_wall_seconds,
             "publication_seconds": publication_seconds,
