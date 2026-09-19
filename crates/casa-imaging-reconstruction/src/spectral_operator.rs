@@ -6172,6 +6172,23 @@ impl CompleteDataOwnerState {
             .is_some_and(ReconstructionModelBinding::is_initial_certified_zero);
         let (predicted, touches_core) = if self.specification.aw_projection.is_some() {
             self.predict_aw_correlation_group(group, mosaic_response, predicts_residual)?
+        } else if predicts_zero
+            && !self.emit_final_visibilities
+            && matches!(self.specification.basis, SpectralBasisPlan::ChannelLocal)
+        {
+            self.specification
+                .direction_independent_polarization(&correlations)?;
+            for chart in &self.specification.charts {
+                selected_model_projection(
+                    selected,
+                    self.specification.chart_count(),
+                    chart.domain_ordinal,
+                    chart.facet_ordinal,
+                )?;
+            }
+            let mut predicted = SmallVec::new();
+            predicted.resize(group.len(), Complex64::default());
+            (predicted, false)
         } else {
             let polarization = self
                 .specification
