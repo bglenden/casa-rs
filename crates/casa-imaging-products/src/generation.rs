@@ -1710,6 +1710,10 @@ fn scatter_image_polarization_plane<T: Copy>(
             .checked_mul(extent)
             .ok_or(ProductsError::SourceLineageMismatch)?;
     }
+    if latitude_stride == 1 && longitude_stride == height {
+        payload[base..=last].copy_from_slice(plane);
+        return Ok(());
+    }
     for (x, column) in plane.chunks_exact(height).enumerate() {
         let start = base + x * longitude_stride;
         for (y, value) in column.iter().enumerate() {
@@ -1985,6 +1989,39 @@ impl PublishedContinuumGeneration {
 #[cfg(test)]
 mod scatter_tests {
     use super::*;
+
+    #[test]
+    fn scatter_contiguous_and_padded_planes_preserve_bits_and_surrounding_values() {
+        let order = AxisOrder::new([
+            ImageAxis::Polarization,
+            ImageAxis::DirectionLongitude,
+            ImageAxis::DirectionLatitude,
+            ImageAxis::Spectral,
+        ]);
+        let plane = [0.0_f32, -0.0, f32::from_bits(0x7fc0_0001), 2.5, -3.0, 1.0];
+        for stored_height in [3, 4] {
+            let shape = [2, 2, stored_height, 1];
+            let mut output = vec![17.0; 4 * stored_height];
+            let mut expected = output.clone();
+            for x in 0..2 {
+                for y in 0..3 {
+                    expected[2 * stored_height + x * stored_height + y] = plane[x * 3 + y];
+                }
+            }
+            scatter_image_polarization_plane(&mut output, &order, shape, 1, 0, [2, 3], &plane)
+                .unwrap();
+            assert_eq!(
+                output
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                expected
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
 
     #[test]
     fn scatter_matches_scalar_offsets_for_all_axis_orders() {
