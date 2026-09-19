@@ -31,8 +31,8 @@ pub trait NormalArrayStorage: fmt::Debug + Send + Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    /// Read into an already allocated, bounded scalar window.
-    fn read(&self, start: usize, values: &mut [f64]) -> Result<(), SpectralOperatorError>;
+    /// Return exactly `len` scalars in an owned, bounded window.
+    fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError>;
     /// Replace a bounded scalar window without resizing the array.
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError>;
 }
@@ -138,11 +138,10 @@ mod tests {
         fn len(&self) -> usize {
             self.values.len()
         }
-        fn read(&self, start: usize, values: &mut [f64]) -> Result<(), SpectralOperatorError> {
-            assert!(values.len() <= self.allowed);
-            self.maximum_access
-                .fetch_max(values.len(), Ordering::Relaxed);
-            self.values.read(start, values)
+        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+            assert!(len <= self.allowed);
+            self.maximum_access.fetch_max(len, Ordering::Relaxed);
+            self.values.read(start, len)
         }
         fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
             assert!(values.len() <= self.allowed);
@@ -150,6 +149,53 @@ mod tests {
                 .fetch_max(values.len(), Ordering::Relaxed);
             self.values.write(start, values)
         }
+    }
+
+    #[test]
+    fn resident_normal_reads_return_independent_exact_bit_windows() {
+        let bits = [0, (-0.0_f64).to_bits(), 0x7ff8000000000042, 1];
+        let mut storage: Box<[f64]> = bits.into_iter().map(f64::from_bits).collect();
+        let window = storage.read(1, 3).unwrap();
+        storage.write(1, &[2.0, 3.0, 4.0]).unwrap();
+        assert_eq!(
+            window
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            bits[1..]
+        );
+        assert!(storage.read(4, 0).unwrap().is_empty());
+        assert_eq!(storage.read(5, 0), Err(SpectralOperatorError::InvalidSlab));
+        assert_eq!(storage.read(3, 2), Err(SpectralOperatorError::InvalidSlab));
+        assert_eq!(
+            storage.read(usize::MAX, 1),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        );
+    }
+
+    #[test]
+    fn normal_owner_rejects_incorrect_owned_window_length() {
+        #[derive(Debug)]
+        struct ShortRead;
+        impl NormalArrayStorage for ShortRead {
+            fn len(&self) -> usize {
+                3
+            }
+            fn read(&self, _: usize, _: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+                Ok(Box::new([1.0, 2.0]))
+            }
+            fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
+                unreachable!("fixture is installed after generation")
+            }
+        }
+        let plan = NormalStoragePlan::new(Arc::new(ResidentNormalStorage), CHANNELS).unwrap();
+        let mut stored =
+            StoredChannelNormalDomain::begin(domain(0..CHANNELS, false), &plan).unwrap();
+        stored.storage = Box::new(ShortRead);
+        assert!(matches!(
+            stored.read_scalars(0..3),
+            Err(SpectralOperatorError::NormalStorage(_))
+        ));
     }
 
     #[test]
@@ -687,15 +733,14 @@ impl NormalArrayStorage for Box<[f64]> {
         self.as_ref().len()
     }
 
-    fn read(&self, start: usize, values: &mut [f64]) -> Result<(), SpectralOperatorError> {
+    fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
         let end = start
-            .checked_add(values.len())
+            .checked_add(len)
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        values.copy_from_slice(
-            self.get(start..end)
-                .ok_or(SpectralOperatorError::InvalidSlab)?,
-        );
-        Ok(())
+        Ok(self
+            .get(start..end)
+            .ok_or(SpectralOperatorError::InvalidSlab)?
+            .into())
     }
 
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
@@ -922,8 +967,12 @@ impl StoredChannelNormalDomain {
     }
 
     fn read_scalars(&self, range: Range<usize>) -> Result<Box<[f64]>, SpectralOperatorError> {
-        let mut result = vec![0.0; range.len()].into_boxed_slice();
-        self.storage.read(range.start, &mut result)?;
+        let result = self.storage.read(range.start, range.len())?;
+        if result.len() != range.len() {
+            return Err(SpectralOperatorError::NormalStorage(
+                "normal backing returned an incorrect window length".into(),
+            ));
+        }
         Ok(result)
     }
 

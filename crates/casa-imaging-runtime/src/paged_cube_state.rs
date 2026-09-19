@@ -440,24 +440,30 @@ impl NormalArrayStorage for PagedNormalArray {
         self.scalars
     }
 
-    fn read(&self, start: usize, values: &mut [f64]) -> Result<(), SpectralOperatorError> {
-        self.check_window(start, values.len())?;
-        if values.is_empty() {
-            return Ok(());
+    fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+        self.check_window(start, len)?;
+        if len == 0 {
+            return Ok(Box::new([]));
         }
         let array = self.array.lock().map_err(normal_storage_error)?;
         let before = array.io_stats();
         let window = array
-            .get_slice(&[start], &[values.len()], &[1])
+            .get_slice(&[start], &[len], &[1])
             .map_err(normal_storage_error)?;
-        values.copy_from_slice(
-            window
-                .as_slice()
-                .ok_or_else(|| normal_storage_error("normal backing slice is not contiguous"))?,
-        );
+        if window.shape() != [len] || !window.is_standard_layout() {
+            return Err(normal_storage_error(
+                "normal backing slice is not contiguous",
+            ));
+        }
+        let (values, offset) = window.into_raw_vec_and_offset();
+        if offset != Some(0) || values.len() != len {
+            return Err(normal_storage_error(
+                "normal backing slice has invalid bounds",
+            ));
+        }
         self.observation
-            .record(values.len(), array.io_stats().delta_since(before));
-        Ok(())
+            .record(len, array.io_stats().delta_since(before));
+        Ok(values.into_boxed_slice())
     }
 
     fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
@@ -891,7 +897,7 @@ mod tests {
                 .unwrap();
         array.write(0, &[1.0; 7]).unwrap();
         array.write(16, &[2.0; 7]).unwrap();
-        array.read(0, &mut [0.0; 7]).unwrap();
+        array.read(0, 7).unwrap();
         let live = metrics.snapshot();
         assert_eq!(live.live_owned_bytes, ledger.retained_bytes);
         assert_eq!(live.live_storage_bytes, ledger.storage_bytes);
@@ -931,12 +937,12 @@ mod tests {
         for (index, values) in expected.chunks(7).enumerate() {
             storage.write(index * 7, values).unwrap();
         }
-        let mut actual = [0.0; 7];
         for start in (0..257).step_by(7) {
             let count = 7.min(257 - start);
-            storage.read(start, &mut actual[..count]).unwrap();
+            let actual = storage.read(start, count).unwrap();
+            assert_eq!(actual.len(), count);
             assert_eq!(
-                actual[..count]
+                actual
                     .iter()
                     .map(|value| value.to_bits())
                     .collect::<Vec<_>>(),
@@ -961,48 +967,53 @@ mod tests {
         let last_owner = owner.clone();
         drop(owner);
         assert!(path.exists());
-        last_owner.read(256, &mut actual[..1]).unwrap();
+        let actual = last_owner.read(256, 1).unwrap();
         assert_eq!(actual[0].to_bits(), expected[256].to_bits());
         drop(last_owner);
         assert!(!path.exists());
     }
 
     #[test]
-    fn t55_paged_normal_rejects_padding_and_overflow_without_changing_destination() {
+    fn t55_paged_normal_rejects_padding_and_overflow_without_backing_access() {
         let parent = tempfile::tempdir().unwrap();
         let layout = CubeArrayLayout::new(11, 8, 2, 1).unwrap();
+        let metrics = Arc::new(CubeBackingMetrics::default());
         let factory = PagedNormalStorageFactory::new(
             parent.path(),
             vec![layout].into_boxed_slice(),
             Arc::new(()),
-            Arc::default(),
+            metrics.clone(),
         );
         let mut storage = factory.create(0, 9).unwrap();
         assert!(factory.create(1, 9).is_err());
         assert!(factory.create(0, 12).is_err());
         storage.write(8, &[-0.0]).unwrap();
-        let mut destination = [123.0; 2];
-        assert_eq!(
-            storage.read(8, &mut destination),
-            Err(SpectralOperatorError::InvalidSlab)
-        );
-        assert_eq!(destination, [123.0; 2]);
+        let before = metrics.snapshot();
+        assert_eq!(storage.read(8, 2), Err(SpectralOperatorError::InvalidSlab));
         assert_eq!(
             storage.write(9, &[1.0]),
             Err(SpectralOperatorError::InvalidSlab)
         );
-        assert_eq!(
-            storage.read(10, &mut []),
-            Err(SpectralOperatorError::InvalidSlab)
-        );
+        assert_eq!(storage.read(10, 0), Err(SpectralOperatorError::InvalidSlab));
         assert_eq!(
             storage.write(usize::MAX, &[1.0]),
             Err(SpectralOperatorError::ResidencyOverflow)
         );
-        storage.read(9, &mut []).unwrap();
+        assert_eq!(
+            storage.read(usize::MAX, 1),
+            Err(SpectralOperatorError::ResidencyOverflow)
+        );
+        assert_eq!(storage.read(0, 3), Err(SpectralOperatorError::InvalidSlab));
+        assert!(storage.read(9, 0).unwrap().is_empty());
         storage.write(9, &[]).unwrap();
-        storage.read(8, &mut destination[..1]).unwrap();
-        assert_eq!(destination[0].to_bits(), (-0.0_f64).to_bits());
+        let after = metrics.snapshot();
+        assert_eq!(after.read_bytes, before.read_bytes);
+        assert_eq!(after.write_bytes, before.write_bytes);
+        assert_eq!(after.max_access_scalars, before.max_access_scalars);
+        assert_eq!(
+            storage.read(8, 1).unwrap()[0].to_bits(),
+            (-0.0_f64).to_bits()
+        );
     }
 
     #[test]

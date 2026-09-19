@@ -486,10 +486,9 @@ fn normal_reconciliation_transfers_owned_storage_without_reading_arrays() {
         fn len(&self) -> usize {
             self.values.len()
         }
-        fn read(&self, start: usize, values: &mut [f64]) -> Result<(), SpectralOperatorError> {
-            self.reads.fetch_add(values.len(), Ordering::Relaxed);
-            values.copy_from_slice(&self.values[start..start + values.len()]);
-            Ok(())
+        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+            self.reads.fetch_add(len, Ordering::Relaxed);
+            Ok(self.values[start..start + len].into())
         }
         fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
             self.values[start..start + values.len()].copy_from_slice(values);
