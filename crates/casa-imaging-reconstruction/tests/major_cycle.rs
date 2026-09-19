@@ -1264,6 +1264,7 @@ struct LinearReplayConfiguration {
     check_rejections: bool,
     replay_core_channels: usize,
     output_channels: usize,
+    initial_core_channels: Option<usize>,
 }
 
 impl Default for LinearReplayConfiguration {
@@ -1274,6 +1275,7 @@ impl Default for LinearReplayConfiguration {
             check_rejections: false,
             replay_core_channels: 2,
             output_channels: 2,
+            initial_core_channels: None,
         }
     }
 }
@@ -1570,28 +1572,51 @@ fn check_linear_cube_replay(
         let initial_preparation =
             MajorCyclePreparation::prepare(&initial_lifecycle, initial_model, None)
                 .expect("initial preparation");
-        let specification =
-            SpectralOperatorSpecification::new(&problem).expect("initial spectral specification");
-        let workload = spectral_operator_workload(
-            &specification,
-            plan.limits().max_block_samples(),
-            SpectralOperatorPass::InitialMajor,
-        )
-        .expect("initial workload");
-        let prepared =
-            prepare_spectral_operator(specification, workload).expect("initial operator");
-        let mut owner = prepared
-            .begin(&problem, &generation)
-            .expect("initial complete-data owner");
-        owner
-            .bind_major_cycle_model(initial_preparation.final_model(), None)
-            .expect("bind initial model");
-        for block in &weighted_blocks {
-            owner.consume_block(block).expect("consume selected block");
+        let run_initial_slab = |start, depth| {
+            let specification = SpectralOperatorSpecification::for_slab(&problem, start, depth)
+                .expect("initial spectral specification");
+            let workload = spectral_operator_workload(
+                &specification,
+                plan.limits().max_block_samples(),
+                SpectralOperatorPass::InitialMajor,
+            )
+            .expect("initial workload");
+            let prepared =
+                prepare_spectral_operator(specification, workload).expect("initial operator");
+            let mut owner = prepared
+                .begin(&problem, &generation)
+                .expect("initial complete-data owner");
+            owner
+                .bind_major_cycle_model(initial_preparation.final_model(), None)
+                .expect("bind initial model");
+            for block in &weighted_blocks {
+                owner.consume_block(block).expect("consume selected block");
+            }
+            owner
+                .complete(&summary, selected_generation, None)
+                .expect("complete initial normal state")
+        };
+        let initial_complete = run_initial_slab(0, output_channels);
+        if let Some(depth) = configuration.initial_core_channels {
+            let mut dirty = Vec::new();
+            let mut psf = Vec::new();
+            let mut sensitivity = Vec::new();
+            let mut sum_weights = Vec::new();
+            let mut validity = Vec::new();
+            for start in (0..output_channels).step_by(depth) {
+                let slab = run_initial_slab(start, depth.min(output_channels - start));
+                dirty.extend_from_slice(slab.primitives().dirty());
+                psf.extend_from_slice(slab.primitives().psf());
+                sensitivity.extend_from_slice(slab.primitives().sensitivity());
+                sum_weights.extend_from_slice(slab.primitives().sum_weights());
+                validity.extend_from_slice(slab.primitives().channel_validity());
+            }
+            assert_eq!(dirty, initial_complete.primitives().dirty());
+            assert_eq!(psf, initial_complete.primitives().psf());
+            assert_eq!(sensitivity, initial_complete.primitives().sensitivity());
+            assert_eq!(sum_weights, initial_complete.primitives().sum_weights());
+            assert_eq!(validity, initial_complete.primitives().channel_validity());
         }
-        let initial_complete = owner
-            .complete(&summary, selected_generation, None)
-            .expect("complete initial normal state");
         let initial_join = MajorCycleOwner::from_complete_data(
             {
                 let storage =
@@ -1826,6 +1851,22 @@ fn check_linear_cube_replay(
         source_records_per_source,
         gridded_residual,
         direct_residual: direct_window.residual().to_vec(),
+    }
+}
+
+#[test]
+fn t55_linear_initial_slabs_preserve_native_interpolation_and_normal_planes() {
+    for initial_core_channels in [1, 2, 3, 5] {
+        check_linear_cube_replay(
+            &[1.0e9, 2.6e9],
+            1.6e9,
+            None,
+            LinearReplayConfiguration {
+                output_channels: 17,
+                initial_core_channels: Some(initial_core_channels),
+                ..LinearReplayConfiguration::default()
+            },
+        );
     }
 }
 
