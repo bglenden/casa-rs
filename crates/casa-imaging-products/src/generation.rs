@@ -685,24 +685,39 @@ pub fn produce_continuum_members(
                         restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
                         primary_beam_model: planned.primary_beam_model,
                     })?;
+                    let mut shared_support = None;
                     if member.validity != ProductValidityRule::All {
-                        let support = product_plane_validity(
-                            member.validity,
-                            &plane,
-                            planned.primary_beam_model,
-                            inputs,
-                            member.axes().domain(),
-                        )?;
+                        let support = match (member.role, member.validity) {
+                            (
+                                ProductRole::PrimaryBeam(_),
+                                ProductValidityRule::PrimaryBeam(policy),
+                            ) => primary_beam_support(&plane_payload, policy),
+                            _ => product_plane_validity(
+                                member.validity,
+                                &plane,
+                                planned.primary_beam_model,
+                                inputs,
+                                member.axes().domain(),
+                            )?,
+                        };
                         zero_invalid_plane_values(&mut plane_payload, &support)?;
+                        if member.storage.pixel_mask()
+                            == ProductPixelMask::Explicit(member.validity)
+                        {
+                            shared_support = Some(support);
+                        }
                     }
                     if let ProductPixelMask::Explicit(rule) = member.storage.pixel_mask() {
-                        let support = product_plane_validity(
-                            rule,
-                            &plane,
-                            planned.primary_beam_model,
-                            inputs,
-                            member.axes().domain(),
-                        )?;
+                        let support = match shared_support {
+                            Some(support) => support,
+                            None => product_plane_validity(
+                                rule,
+                                &plane,
+                                planned.primary_beam_model,
+                                inputs,
+                                member.axes().domain(),
+                            )?,
+                        };
                         scatter_image_polarization_plane(
                             &mut output.validity,
                             member.axes().order(),
@@ -1503,20 +1518,26 @@ fn product_plane_validity(
                 && plane.sum_weight > 0.0;
             Ok(vec![valid; shape[0] * shape[1]])
         }
-        ProductValidityRule::PrimaryBeam(policy) => {
-            Ok(
-                primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?
-                    .into_iter()
-                    .map(|value| match policy.comparison() {
-                        ProductSupportComparison::StrictlyGreater => value > policy.cutoff(),
-                    })
-                    .collect(),
-            )
-        }
+        ProductValidityRule::PrimaryBeam(policy) => Ok(primary_beam_support(
+            &primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?,
+            policy,
+        )),
         ProductValidityRule::Taylor(_) | ProductValidityRule::TaylorAndPrimaryBeam { .. } => {
             Err(ProductsError::UnsupportedProblem)
         }
     }
+}
+
+fn primary_beam_support(
+    values: &[f32],
+    policy: casa_imaging_model::PrimaryBeamValidityPolicy,
+) -> Vec<bool> {
+    values
+        .iter()
+        .map(|value| match policy.comparison() {
+            ProductSupportComparison::StrictlyGreater => *value > policy.cutoff(),
+        })
+        .collect()
 }
 
 fn primary_beam_plane(
@@ -1952,8 +1973,26 @@ impl PublishedContinuumGeneration {
 }
 
 #[cfg(test)]
-mod scatter_tests {
+mod tests {
     use super::*;
+
+    #[test]
+    fn primary_beam_support_keeps_strict_cutoff_and_preblanking_values() {
+        use casa_imaging_model::{PrimaryBeamValidityPolicy, ProductBlankingPolicy};
+        for cutoff in [0.2_f32, 0.8] {
+            let policy = PrimaryBeamValidityPolicy::new(
+                cutoff,
+                ProductSupportComparison::StrictlyGreater,
+                ProductBlankingPolicy::Zero,
+            )
+            .unwrap();
+            let mut values = vec![cutoff - 0.1, cutoff, cutoff + 0.1, f32::NAN];
+            let support = primary_beam_support(&values, policy);
+            assert_eq!(support, [false, false, true, false]);
+            zero_invalid_plane_values(&mut values, &support).unwrap();
+            assert_eq!(values, [0.0, 0.0, cutoff + 0.1, 0.0]);
+        }
+    }
 
     #[test]
     fn scatter_matches_scalar_offsets_for_all_axis_orders() {
