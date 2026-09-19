@@ -88,6 +88,29 @@ pub fn gaussian_beam_image(
     kernel
 }
 
+pub(crate) fn restore_model_plane(
+    model: &[f32],
+    residual: Vec<f32>,
+    shape: [usize; 2],
+    beam: &RestoringBeam,
+    cell_size_rad: [f64; 2],
+) -> Vec<f32> {
+    // FFT zero signs cannot affect addition except when the residual is -0.
+    if model.iter().all(|value| *value == 0.0)
+        && residual
+            .iter()
+            .all(|value| value.to_bits() != (-0.0_f32).to_bits())
+    {
+        return residual;
+    }
+    let kernel = gaussian_beam_image(shape, beam, cell_size_rad);
+    let mut restored = fft_convolve(model, kernel.as_slice().expect("contiguous"), shape);
+    for (restored, residual) in restored.iter_mut().zip(residual) {
+        *restored += residual;
+    }
+    restored
+}
+
 /// Result of rescaling one normalized residual plane to a selected beam.
 ///
 /// The diagnostics are the first-divergence seam used by the focused CASA
@@ -280,6 +303,41 @@ fn shift_even(data: &mut Array2<Complex64>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_restoration_matches_fft_for_empty_sparse_and_dense_planes() {
+        let beam = RestoringBeam::new(4.0e-6, 3.0e-6, 0.2).unwrap();
+        let shape = [8, 16];
+        let kernel = gaussian_beam_image(shape, &beam, [1.0e-6; 2]);
+        let mut sparse = vec![0.0; 128];
+        sparse[37] = -2.5;
+        for model in [
+            vec![0.0; 128],
+            vec![-0.0; 128],
+            sparse,
+            (0..128)
+                .map(|index| (index as f32 - 60.0) / 128.0)
+                .collect(),
+        ] {
+            for residual in [vec![0.0; 128], vec![-0.0; 128], vec![1.25; 128]] {
+                let mut expected = fft_convolve(&model, kernel.as_slice().unwrap(), shape);
+                for (value, residual) in expected.iter_mut().zip(&residual) {
+                    *value += residual;
+                }
+                let actual = restore_model_plane(&model, residual, shape, &beam, [1.0e-6; 2]);
+                assert_eq!(
+                    actual
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
 
     #[test]
     fn identical_beams_leave_the_residual_bit_exact() {

@@ -19,7 +19,8 @@ use crate::ProductStoragePlan;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
 use crate::error::ProductsError;
 use crate::restore::{
-    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane, rescale_residual_to_beam,
+    MosaicSensitivity, fft_convolve, gaussian_beam_image, normalize_plane,
+    rescale_residual_to_beam, restore_model_plane,
 };
 use crate::source::ContinuumProductInputs;
 use crate::storage::{ProductMemberWriter, ProductOutput};
@@ -1315,8 +1316,6 @@ fn produce_plane_member(
                 shape,
             )?;
             let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
-            let kernel = gaussian_beam_image(shape, beam, cell_size);
-            let mut restored = fft_convolve(&model, kernel.as_slice().expect("contiguous"), shape);
             let residual = normalize_domain_plane(
                 &residual_real_plane(plane),
                 required_normalization(member)?,
@@ -1330,10 +1329,9 @@ fn produce_plane_member(
             let residual =
                 rescale_residual_to_beam(&residual, shape, cell_size, fitted_beam, *beam)?
                     .into_values();
-            for (restored, residual) in restored.iter_mut().zip(residual) {
-                *restored += residual;
-            }
-            Ok(restored)
+            Ok(restore_model_plane(
+                &model, residual, shape, beam, cell_size,
+            ))
         }
         ProductRole::PrimaryBeam(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
@@ -1409,8 +1407,6 @@ fn restored_plane(
         plane.shape,
     )?;
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
-    let kernel = gaussian_beam_image(plane.shape, &beam, cell_size);
-    let mut restored = fft_convolve(&model, kernel.as_slice().expect("contiguous"), plane.shape);
     let residual = normalize_domain_plane(
         &residual_real_plane(plane),
         required_normalization(member)?,
@@ -1423,10 +1419,13 @@ fn restored_plane(
     })?;
     let residual = rescale_residual_to_beam(&residual, plane.shape, cell_size, fitted_beam, beam)?
         .into_values();
-    for (restored, residual) in restored.iter_mut().zip(residual) {
-        *restored += residual;
-    }
-    Ok(restored)
+    Ok(restore_model_plane(
+        &model,
+        residual,
+        plane.shape,
+        &beam,
+        cell_size,
+    ))
 }
 
 pub(crate) fn reconstruction_support_plane(
