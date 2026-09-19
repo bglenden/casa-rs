@@ -206,16 +206,6 @@ impl FinalNormalState {
         self.primitives.metadata(ordinal).map(|domain| domain.shape)
     }
 
-    /// Borrow one canonical domain's CASA publication-statistic numerators
-    /// without loading image payloads. Values are normal-moment-major and
-    /// polarization-minor, as in [`Self::published_sum_weights`].
-    #[must_use]
-    pub fn domain_published_sum_weights(&self, ordinal: usize) -> Option<&[f64]> {
-        self.primitives
-            .metadata(ordinal)
-            .map(|domain| domain.published_sum_weights)
-    }
-
     /// Read channel support metadata without loading image payloads.
     #[must_use]
     pub fn domain_channel_validity(

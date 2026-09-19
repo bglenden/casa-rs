@@ -218,18 +218,6 @@ mod tests {
                     stored.append(domain(0..1, published_differ)),
                     Err(SpectralOperatorError::IncompleteCoverage)
                 );
-                let primitives = NormalStatePrimitives::ChannelLocal(vec![stored].into());
-                maximum_access.store(0, Ordering::Relaxed);
-                let metadata = primitives.metadata(0).unwrap();
-                assert_eq!(
-                    metadata.published_sum_weights,
-                    expected_final.published_sum_weights()
-                );
-                assert_eq!(
-                    maximum_access.load(Ordering::Relaxed),
-                    0,
-                    "publication metadata must not read the scalar-array backing"
-                );
             }
         }
     }
