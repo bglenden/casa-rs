@@ -102,7 +102,7 @@ T13/#499 lands the Product Graph and atomic store, T22/#508 owns the first
 continuum product algorithms and publication (its attestation design was later
 superseded by ADR-0014), T39/#525 owns
 common-beam restoration, and T47/#533 owns broader PB/sensitivity and mosaic
-normalization, including the still-unavailable `product.alpha-pbcor`.
+normalization, including the native `product.alpha-pbcor`.
 Displaced writers are removed only under the transfer ratchet above.
 
 The next tranche corrects one dependency discovered during composition: model
