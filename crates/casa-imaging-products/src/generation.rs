@@ -635,6 +635,20 @@ pub fn produce_continuum_members(
             .get(domain_ordinal)
             .ok_or(ProductsError::SourceLineageMismatch)?
             .pixels();
+        let reconstruction_only = matches!(
+            member.role,
+            ProductRole::Model(
+                casa_imaging_model::ProductTerm::Single
+                    | casa_imaging_model::ProductTerm::Taylor(0)
+            ) | ProductRole::CleanMask
+        );
+        if normal_state.domain_shape(domain_ordinal) != Some(plane_shape)
+            || (reconstruction_only
+                && (member.validity != ProductValidityRule::All
+                    || member.storage.pixel_mask() != ProductPixelMask::Absent))
+        {
+            return Err(ProductsError::SourceLineageMismatch);
+        }
         let beam_offset = domain_ordinal
             .checked_mul(channel_count)
             .and_then(|offset| offset.checked_mul(normal_state.polarization_count()))
@@ -654,6 +668,35 @@ pub fn produce_continuum_members(
             let mut output = writer.window(window_start..window_end)?;
             for local_channel in window_start..window_end {
                 let channel = normal_state.slab().core_range().start + local_channel;
+                if reconstruction_only {
+                    for polarization in 0..normal_state.polarization_count() {
+                        let payload = if member.role == ProductRole::CleanMask {
+                            reconstruction_support_plane(
+                                inputs,
+                                member.axes().domain(),
+                                plane_shape[0] * plane_shape[1],
+                            )?
+                        } else {
+                            model_real_plane(
+                                inputs.final_model(),
+                                domain_ordinal,
+                                channel,
+                                polarization,
+                                plane_shape,
+                            )?
+                        };
+                        scatter_image_polarization_plane(
+                            &mut output.payload,
+                            member.axes().order(),
+                            output.shape,
+                            polarization,
+                            channel - window_start,
+                            plane_shape,
+                            &payload,
+                        )?;
+                    }
+                    continue;
+                }
                 let window = normal_state.read_window(channel..channel + 1)?;
                 for polarization in 0..normal_state.polarization_count() {
                     let plane = domain_plane(&window, member.axes().domain(), 0, polarization)?;
@@ -1266,15 +1309,6 @@ fn produce_plane_member(
                 Ok(invalid_residual())
             }
         }
-        ProductRole::Model(
-            casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => model_real_plane(
-            inputs.final_model(),
-            domain_ordinal,
-            plane.output_channel,
-            polarization,
-            shape,
-        ),
         ProductRole::Weight(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
@@ -1358,9 +1392,6 @@ fn produce_plane_member(
                 &primary_beam,
                 inputs.problem().products().validity().primary_beam(),
             )
-        }
-        ProductRole::CleanMask => {
-            reconstruction_support_plane(inputs, member.axes().domain(), cells)
         }
         role => Err(ProductsError::UnsupportedProductRole {
             role,

@@ -1571,6 +1571,7 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         ProductKind::Residual,
         ProductKind::Model,
         ProductKind::SumWeights,
+        ProductKind::Mask,
     ];
     let problem = continuum_problem_with_reconstruction(
         96,
@@ -1598,6 +1599,13 @@ fn direct_generation_counts_bounded_windows_and_finishes_each_member() {
         let channels = member.axes().spectral().output_channels();
         assert_eq!(output.write_count(member.node()), channels);
         assert!(output.finished(member.node()));
+    }
+    let bounded = GeneratedProducts::from_output(&generated, &output);
+    let full = generate_for(&planned, &inputs);
+    for (bounded, full) in bounded.members().iter().zip(full.members()) {
+        assert_eq!(bounded.name(), full.name());
+        assert_eq!(bounded.payload(), full.payload());
+        assert_eq!(bounded.validity(), full.validity());
     }
 }
 
