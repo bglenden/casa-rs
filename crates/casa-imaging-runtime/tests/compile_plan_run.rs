@@ -847,6 +847,8 @@ fn channel_major_taylor_request_with_shape(
         ReconstructionControls::new(1, 0.1, 0.0),
         None,
         shape,
+        44.0e9,
+        model_lifecycle(ModelStateIdentity::Empty),
     )
 }
 
@@ -936,6 +938,8 @@ fn spectral_request_with_inputs(
         controls,
         visibility_transform,
         ImageShape::new(8, 8),
+        44.0e9,
+        model_lifecycle(ModelStateIdentity::Empty),
     )
 }
 
@@ -948,6 +952,8 @@ fn spectral_request_with_inputs_and_shape(
     controls: ReconstructionControls,
     visibility_transform: Option<SequentialContinuumTransform>,
     shape: ImageShape,
+    reference_frequency_hz: f64,
+    model_requirements: casa_imaging_model::ModelLifecycleRequirements,
 ) -> ImagingRequest {
     let pixels = shape.pixels();
     let geometry = geometry_with_shape_and_increment(
@@ -958,7 +964,7 @@ fn spectral_request_with_inputs_and_shape(
     let spectral = geometry.spectral().clone().with_wcs(SpectralWcs::Linear {
         channels,
         reference_pixel: 0.0,
-        reference_frequency_hz: 44.0e9,
+        reference_frequency_hz,
         increment_hz: 128.0e6,
     });
     let geometry = geometry.with_spectral(spectral);
@@ -1004,12 +1010,7 @@ fn spectral_request_with_inputs_and_shape(
     if let Some(transform) = visibility_transform {
         specification = specification.with_visibility_transform(transform);
     }
-    ImagingRequest::new(
-        specification,
-        geometry,
-        inputs,
-        model_lifecycle(ModelStateIdentity::Empty),
-    )
+    ImagingRequest::new(specification, geometry, inputs, model_requirements)
 }
 
 fn request(observation: u8) -> ImagingRequest {
@@ -4458,6 +4459,7 @@ fn execute_initial_reconstruction_cycle(
             resource_policy: ResourcePolicy::Balanced,
             expected_workers: 1,
             require_multiple_slabs: false,
+            model_executables: None,
         },
     )
     .completion
@@ -4469,6 +4471,7 @@ struct InitialCycleTestPlan<'a> {
     resource_policy: ResourcePolicy,
     expected_workers: u64,
     require_multiple_slabs: bool,
+    model_executables: Option<[ExecutableModelProblem; 2]>,
 }
 
 struct InitialCycleTestResult {
@@ -4489,7 +4492,13 @@ fn execute_planned_initial_reconstruction_cycle(
         resource_policy,
         expected_workers,
         require_multiple_slabs,
+        model_executables,
     } = plan;
+    let [executor_model, executable] = model_executables.unwrap_or_else(|| {
+        std::array::from_fn(|_| {
+            ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model")
+        })
+    });
     let replay_proof_bytes = initial_access
         .replay_proof_retained_heap_bytes(problem)
         .expect("bounded channel-cycle replay-proof residency");
@@ -4536,8 +4545,6 @@ fn execute_planned_initial_reconstruction_cycle(
     .expect("channel-cycle runtime plan");
     let dag = execution_plan.execution_dag();
     assert_eq!(dag.initial_knobs().workers, expected_workers);
-    let slab_count = (problem.geometry().spectral().output_channels() as u64)
-        .div_ceil(dag.initial_knobs().slab_depth);
     if require_multiple_slabs {
         assert!(
             dag.initial_knobs().slab_depth > 0
@@ -4571,6 +4578,35 @@ fn execute_planned_initial_reconstruction_cycle(
         gridded_normal: planned_gridded_normal,
         ..
     } = planned.into_parts(&execution_plan).unwrap();
+    let slab_count = (problem.geometry().spectral().output_channels() as u64)
+        .div_ceil(complete.slab().core_depth() as u64);
+    if require_multiple_slabs {
+        assert!(
+            slab_count > 1,
+            "the initial operator must actually replay multiple slabs"
+        );
+    } else if !matches!(
+        problem.model_lifecycle().input(),
+        casa_imaging_model::ModelInputCommitment::Empty
+    ) {
+        assert_eq!(
+            slab_count, 1,
+            "supplied initial models currently use a full-channel slab"
+        );
+        assert!(
+            execution_plan
+                .execution_dag()
+                .logical_allocations()
+                .values()
+                .all(|allocation| {
+                    !allocation
+                        .id
+                        .as_str()
+                        .starts_with("initial-replay-preparation-")
+                }),
+            "a single initial slab must not reserve unused replay preparation"
+        );
+    }
     let cycle_node = minor_cycle_node.expect("initial plan owns reconstruction cycle");
     let planned_gridded_normal =
         planned_gridded_normal.expect("channel-cycle plan binds gridded-normal compilation");
@@ -4589,7 +4625,7 @@ fn execute_planned_initial_reconstruction_cycle(
         pass,
         complete,
         initial_access.into_deferred(),
-        ExecutableModelProblem::from_compiled(problem.clone()).expect("executable model"),
+        executor_model,
         SpectralCyclePassInput::Initial,
     )
     .with_frozen_weighting_reservation(reservation)
@@ -4608,7 +4644,6 @@ fn execute_planned_initial_reconstruction_cycle(
     let runtime_registry =
         SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(byte));
-    let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([byte; 32]);
     runtime_run(
         &executable,
@@ -4753,6 +4788,27 @@ fn owner_resolved_channel_local_hogbom_problem(
     casa_imaging_model::CompiledProblem,
     ResolvedSelectedObservationAccess,
 ) {
+    let (problem, access, _) = owner_resolved_channel_local_hogbom_with_frequency(
+        observation,
+        output_channels,
+        selected_channels,
+        44.0e9,
+        None,
+    );
+    (problem, access)
+}
+
+fn owner_resolved_channel_local_hogbom_with_frequency(
+    observation: u8,
+    output_channels: usize,
+    selected_channels: usize,
+    reference_frequency_hz: f64,
+    model_value: Option<f64>,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    ResolvedSelectedObservationAccess,
+    Option<[ExecutableModelProblem; 2]>,
+) {
     let fixture = compile(channel_local_hogbom_request(
         observation,
         output_channels,
@@ -4764,31 +4820,105 @@ fn owner_resolved_channel_local_hogbom_problem(
         Ok(_) | Err(casa_ms::ObservationOwnerError::AlreadyInitialized) => {}
         Err(error) => panic!("initialize channel-cycle owner fixture: {error}"),
     }
-    let resolution = SelectedObservationResolutionRequest::new(
-        fixture_source.provenance().locator(),
-        fixture_source.provenance().selection_request_identity(),
-        fixture_source.selection().clone(),
-        VisibilityColumn::Data,
-        WeightColumn::Weight,
-        Vec::new(),
-        ModelStateIdentity::Empty,
-        SelectedObservationContentBudget::new(256 * 1024, 1, 4),
-        casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
-    );
-    let (snapshot_input, initial_access) = resolve_selected_observation(resolution)
-        .expect("resolve channel-cycle owner fixture")
-        .into_parts();
-    let snapshot =
-        compile_observation(snapshot_input).expect("compile channel-cycle owner snapshot");
-    let problem = compile(channel_local_request_with_inputs(
-        ProblemInputIdentities::new(snapshot),
-        output_channels,
-        ReconstructionAlgorithm::Hogbom,
-        ReconstructionControls::new(2, 0.5, 0.0),
-        None,
+    let resolve = |model| {
+        let resolution = SelectedObservationResolutionRequest::new(
+            fixture_source.provenance().locator(),
+            fixture_source.provenance().selection_request_identity(),
+            fixture_source.selection().clone(),
+            VisibilityColumn::Data,
+            WeightColumn::Weight,
+            Vec::new(),
+            model,
+            SelectedObservationContentBudget::new(256 * 1024, 1, 4),
+            casa_test_support::deterministic_measures_provider_for_identity([90; 32]),
+        );
+        let (snapshot_input, initial_access) = resolve_selected_observation(resolution)
+            .expect("resolve channel-cycle owner fixture")
+            .into_parts();
+        let snapshot =
+            compile_observation(snapshot_input).expect("compile channel-cycle owner snapshot");
+        (ProblemInputIdentities::new(snapshot), initial_access)
+    };
+    let make_request = |inputs, shape, requirements| {
+        spectral_request_with_inputs_and_shape(
+            inputs,
+            output_channels,
+            ReconstructionBasis::ChannelLocal {
+                channels: output_channels,
+            },
+            ReconstructionAlgorithm::Hogbom,
+            ReconstructionControls::new(2, 0.5, 0.0),
+            None,
+            shape,
+            reference_frequency_hz,
+            requirements,
+        )
+    };
+    let (inputs, initial_access) = resolve(ModelStateIdentity::Empty);
+    let problem = compile(make_request(
+        inputs.clone(),
+        ImageShape::new(8, 8),
+        model_lifecycle(ModelStateIdentity::Empty),
     ))
     .expect("owner-resolved channel-cycle compilation");
-    (problem, initial_access)
+    let Some(value) = model_value else {
+        return (problem, initial_access, None);
+    };
+    let source_problem = compile(make_request(
+        inputs,
+        ImageShape::new(9, 9),
+        model_lifecycle(ModelStateIdentity::Empty),
+    ))
+    .expect("larger source model footprint");
+    let source = identity(if value == 0.0 { 252 } else { 253 });
+    let mut reader = ConstantInitialModel {
+        source,
+        shape: source_problem.model_lifecycle().target().clone(),
+        value: ModelValue::new(value).unwrap(),
+    };
+    let prepared: [_; 2] = std::array::from_fn(|_| {
+        casa_imaging_reconstruction::prepare_reprojected_seed(&mut reader, &problem)
+            .expect("owner-prepared initial model")
+    });
+    let (inputs, initial_access) = resolve(ModelStateIdentity::Seed(source));
+    let problem = compile(make_request(
+        inputs,
+        ImageShape::new(8, 8),
+        prepared[0].lifecycle_requirements(),
+    ))
+    .expect("compile supplied-model problem");
+    let executables = prepared.map(|prepared| {
+        prepared
+            .bind_compiled_problem(problem.clone())
+            .expect("bind supplied model")
+    });
+    (problem, initial_access, Some(executables))
+}
+
+struct ConstantInitialModel {
+    source: LogicalIdentity,
+    shape: casa_imaging_model::ModelSourceShape,
+    value: ModelValue,
+}
+
+impl casa_imaging_reconstruction::ModelSourceReader for ConstantInitialModel {
+    type Error = io::Error;
+
+    fn source_identity(&self) -> LogicalIdentity {
+        self.source
+    }
+
+    fn source_shape(&self) -> &casa_imaging_model::ModelSourceShape {
+        &self.shape
+    }
+
+    fn read_sample(
+        &mut self,
+        cell: ModelCell,
+    ) -> Result<casa_imaging_model::ModelSample, Self::Error> {
+        assert!(self.shape.flat_index(cell).is_some());
+        Ok(casa_imaging_model::ModelSample::valid(self.value))
+    }
 }
 
 #[test]
@@ -5332,11 +5462,26 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
     let authority = ResourceAuthority::detected_with_storage_profile(&storage).unwrap();
     let spill =
         ManagedSpillStorage::bind(&authority, storage.io_resources(), directory.path()).unwrap();
-    for selected_channels in [8, 2] {
+    let mut identity_channel_weights = None;
+    let mut empty_model_planes = None;
+    for (selected_channels, reference_frequency_hz, model_value) in [
+        (8, 44.0e9, None),
+        (2, 44.0e9, None),
+        (8, 43.936e9, None),
+        (8, 44.0e9, Some(0.0)),
+        (8, 44.0e9, Some(0.25)),
+        (8, 43.936e9, Some(0.25)),
+    ] {
         let mut baseline = None;
         for workers in [1, 2, 4] {
-            let (problem, access) =
-                owner_resolved_channel_local_hogbom_problem(246, 8, selected_channels);
+            let (problem, access, model_executables) =
+                owner_resolved_channel_local_hogbom_with_frequency(
+                    246,
+                    8,
+                    selected_channels,
+                    reference_frequency_hz,
+                    model_value,
+                );
             let planning_registry = ContractOnlyRegistry::new(
                 registry(81),
                 implementation_metadata(&problem),
@@ -5425,12 +5570,24 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                     authority: &authority,
                     resource_policy,
                     expected_workers: workers,
-                    require_multiple_slabs: true,
+                    require_multiple_slabs: model_value.is_none(),
+                    model_executables,
                 },
             );
             let final_input = result.completion.into_final_major_input();
             let normal = final_input.evidence().normal_state();
             assert_eq!(normal.sample_count(), selected_channels as u64);
+            if workers == 1 && selected_channels == 8 {
+                if reference_frequency_hz == 44.0e9 {
+                    identity_channel_weights = Some(normal.sum_weights().to_vec());
+                } else {
+                    assert_ne!(
+                        normal.sum_weights(),
+                        identity_channel_weights.as_ref().unwrap(),
+                        "half-channel-shifted output grid must exercise nonidentity interpolation"
+                    );
+                }
+            }
             assert_eq!(
                 result.parallel_preparation_samples,
                 if workers == 1 {
@@ -5460,6 +5617,30 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                         .map(|value| value.to_bits())
                         .collect::<Vec<_>>(),
                 ));
+            }
+            if workers == 1 && selected_channels == 8 && reference_frequency_hz == 44.0e9 {
+                match model_value {
+                    None => empty_model_planes = Some(planes.clone()),
+                    Some(0.0) => assert_eq!(
+                        &planes,
+                        empty_model_planes.as_ref().unwrap(),
+                        "ingested zero and empty models must give identical science"
+                    ),
+                    Some(_) => {
+                        let empty_planes = empty_model_planes.as_ref().unwrap();
+                        assert!(
+                            planes
+                                .iter()
+                                .zip(empty_planes)
+                                .any(|(seeded, empty)| seeded.0 != empty.0),
+                            "nonzero input model must affect the residual"
+                        );
+                        for (seeded, empty) in planes.iter().zip(empty_planes) {
+                            assert_eq!(seeded.1, empty.1, "model-independent normal operator");
+                            assert_eq!(seeded.2, empty.2, "model-independent sensitivity");
+                        }
+                    }
+                }
             }
             let cycle = final_input.evidence().reconstruction_cycle();
             if selected_channels == 2 {

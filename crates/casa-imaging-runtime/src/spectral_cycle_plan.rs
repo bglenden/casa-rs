@@ -2511,6 +2511,10 @@ fn supports_replay_preparation(
         problem.reconstruction().basis(),
         casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
     ) && problem.weighting().scheme() == casa_imaging_model::WeightingScheme::Natural
+        && matches!(
+            problem.model_lifecycle().input(),
+            casa_imaging_model::ModelInputCommitment::Empty
+        )
         && problem.visibility_transform().is_none()
         && policy.aw_projection.is_none()
         && policy.visibility_write.is_none()
