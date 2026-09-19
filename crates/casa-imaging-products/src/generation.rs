@@ -8,10 +8,10 @@
 //! association for publication without hashing or rereading product content.
 
 use casa_imaging_model::{
-    CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ProductAxes, ProductBeamRule,
-    ProductGraphId, ProductNodeId, ProductNormalization, ProductPixelMask, ProductRole,
-    ProductSchema, ProductStorageContract, ProductSupportComparison, ProductTerm, ProductUnit,
-    ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
+    AxisOrder, CompiledProblem, CompiledProblemId, ImageAxis, ImageDomainRole, ProductAxes,
+    ProductBeamRule, ProductGraphId, ProductNodeId, ProductNormalization, ProductPixelMask,
+    ProductRole, ProductSchema, ProductStorageContract, ProductSupportComparison, ProductTerm,
+    ProductUnit, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
 };
 use casa_imaging_reconstruction::{ModelGeneration, NormalStateCatalog, SpectralChannelValidity};
 
@@ -705,7 +705,7 @@ pub fn produce_continuum_members(
                         )?;
                         scatter_image_polarization_plane(
                             &mut output.validity,
-                            member.axes(),
+                            member.axes().order(),
                             output.shape,
                             polarization,
                             output_channel,
@@ -715,7 +715,7 @@ pub fn produce_continuum_members(
                     }
                     scatter_image_polarization_plane(
                         &mut output.payload,
-                        member.axes(),
+                        member.axes().order(),
                         output.shape,
                         polarization,
                         output_channel,
@@ -1633,7 +1633,7 @@ fn scatter_image_plane<T: Copy>(
 ) -> Result<(), ProductsError> {
     scatter_image_polarization_plane(
         payload,
-        axes,
+        axes.order(),
         axes.shape(),
         0,
         output_channel,
@@ -1644,7 +1644,7 @@ fn scatter_image_plane<T: Copy>(
 
 fn scatter_image_polarization_plane<T: Copy>(
     payload: &mut [T],
-    axes: &ProductAxes,
+    order: &AxisOrder,
     storage_shape: [usize; 4],
     polarization: usize,
     output_channel: usize,
@@ -1652,13 +1652,37 @@ fn scatter_image_polarization_plane<T: Copy>(
     plane: &[T],
 ) -> Result<(), ProductsError> {
     let [width, height] = plane_shape;
-    if plane.len() != width * height {
+    if width == 0 || height == 0 || width.checked_mul(height) != Some(plane.len()) {
         return Err(ProductsError::SourceLineageMismatch);
     }
-    for x in 0..width {
-        for y in 0..height {
-            let offset = product_offset(axes, storage_shape, x, y, polarization, output_channel)?;
-            payload[offset] = plane[x * height + y];
+    let last = product_offset(
+        order,
+        storage_shape,
+        width - 1,
+        height - 1,
+        polarization,
+        output_channel,
+    )?;
+    if last >= payload.len() {
+        return Err(ProductsError::SourceLineageMismatch);
+    }
+    let base = product_offset(order, storage_shape, 0, 0, polarization, output_channel)?;
+    let (mut longitude_stride, mut latitude_stride) = (0, 0);
+    let mut stride = 1usize;
+    for (axis, extent) in order.positions().iter().zip(storage_shape).rev() {
+        match axis {
+            ImageAxis::DirectionLongitude => longitude_stride = stride,
+            ImageAxis::DirectionLatitude => latitude_stride = stride,
+            _ => {}
+        }
+        stride = stride
+            .checked_mul(extent)
+            .ok_or(ProductsError::SourceLineageMismatch)?;
+    }
+    for (x, column) in plane.chunks_exact(height).enumerate() {
+        let start = base + x * longitude_stride;
+        for (y, value) in column.iter().enumerate() {
+            payload[start + y * latitude_stride] = *value;
         }
     }
     Ok(())
@@ -1681,13 +1705,20 @@ fn scatter_polarization_plane_state(
     output_channel: usize,
     value: f32,
 ) -> Result<(), ProductsError> {
-    let offset = product_offset(axes, storage_shape, 0, 0, polarization, output_channel)?;
+    let offset = product_offset(
+        axes.order(),
+        storage_shape,
+        0,
+        0,
+        polarization,
+        output_channel,
+    )?;
     payload[offset] = value;
     Ok(())
 }
 
 fn product_offset(
-    axes: &ProductAxes,
+    order: &AxisOrder,
     storage_shape: [usize; 4],
     longitude: usize,
     latitude: usize,
@@ -1695,7 +1726,7 @@ fn product_offset(
     spectral: usize,
 ) -> Result<usize, ProductsError> {
     let mut offset = 0usize;
-    for (position, axis) in axes.order().positions().iter().enumerate() {
+    for (position, axis) in order.positions().iter().enumerate() {
         let coordinate = match axis {
             ImageAxis::DirectionLongitude => longitude,
             ImageAxis::DirectionLatitude => latitude,
@@ -1917,5 +1948,104 @@ impl PublishedContinuumGeneration {
     #[must_use]
     pub const fn members(&self) -> &[PublishedMember] {
         &self.members
+    }
+}
+
+#[cfg(test)]
+mod scatter_tests {
+    use super::*;
+
+    #[test]
+    fn scatter_matches_scalar_offsets_for_all_axis_orders() {
+        let axes = [
+            ImageAxis::DirectionLongitude,
+            ImageAxis::DirectionLatitude,
+            ImageAxis::Polarization,
+            ImageAxis::Spectral,
+        ];
+        for a in 0..4 {
+            for b in (0..4).filter(|b| *b != a) {
+                for c in (0..4).filter(|c| *c != a && *c != b) {
+                    let d = (0..4).find(|d| *d != a && *d != b && *d != c).unwrap();
+                    let order = AxisOrder::new([axes[a], axes[b], axes[c], axes[d]]);
+                    let shape = [a, b, c, d].map(|axis| [3, 5, 2, 4][axis]);
+                    let mut actual = vec![usize::MAX; 120];
+                    let mut expected = actual.clone();
+                    for polarization in 0..2 {
+                        for channel in 0..4 {
+                            let plane = (0..15)
+                                .map(|value| value + 15 * (channel + 4 * polarization))
+                                .collect::<Vec<_>>();
+                            scatter_image_polarization_plane(
+                                &mut actual,
+                                &order,
+                                shape,
+                                polarization,
+                                channel,
+                                [3, 5],
+                                &plane,
+                            )
+                            .unwrap();
+                            for x in 0..3 {
+                                for y in 0..5 {
+                                    let offset =
+                                        product_offset(&order, shape, x, y, polarization, channel)
+                                            .unwrap();
+                                    expected[offset] = plane[x * 5 + y];
+                                }
+                            }
+                        }
+                    }
+                    assert_eq!(actual, expected, "{:?}", order.positions());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scatter_rejects_invalid_bounds_before_writing() {
+        let order = AxisOrder::new([
+            ImageAxis::DirectionLongitude,
+            ImageAxis::DirectionLatitude,
+            ImageAxis::Polarization,
+            ImageAxis::Spectral,
+        ]);
+        for (shape, polarization, channel, plane_shape) in [
+            ([3, 5, 2, 4], 2, 0, [3, 5]),
+            ([3, 5, 2, 4], 0, 4, [3, 5]),
+            ([2, 5, 2, 4], 0, 0, [3, 5]),
+            ([3, 4, 2, 4], 0, 0, [3, 5]),
+            ([3, 5, 2, 4], 0, 0, [5, 3]),
+            ([usize::MAX, 5, 2, 4], 0, 0, [3, 5]),
+        ] {
+            let mut output = vec![usize::MAX; 120];
+            assert!(
+                scatter_image_polarization_plane(
+                    &mut output,
+                    &order,
+                    shape,
+                    polarization,
+                    channel,
+                    plane_shape,
+                    &[1; 15]
+                )
+                .is_err()
+            );
+            assert!(output.iter().all(|value| *value == usize::MAX));
+        }
+        let mut short = vec![usize::MAX; 119];
+        assert!(
+            scatter_image_polarization_plane(
+                &mut short,
+                &order,
+                [3, 5, 2, 4],
+                1,
+                3,
+                [3, 5],
+                &[1; 15]
+            )
+            .is_err()
+        );
+        assert!(short.iter().all(|value| *value == usize::MAX));
     }
 }
