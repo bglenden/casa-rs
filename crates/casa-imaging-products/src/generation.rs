@@ -24,10 +24,7 @@ use crate::restore::{
 };
 use crate::source::ContinuumProductInputs;
 use crate::storage::{ProductMemberWriter, ProductOutput};
-use crate::taylor::{
-    TaylorProducts, analytic_alma_airy_primary_beam, analytic_evla_primary_beam,
-    analytic_vla_primary_beam, primary_beam_frequency_supported,
-};
+use crate::taylor::{PreparedPrimaryBeam, TaylorProducts, primary_beam_frequency_supported};
 
 /// Version of the native continuum product-algorithm catalog.
 pub const CONTINUUM_ALGORITHM_CATALOG_VERSION: u32 = 9;
@@ -626,6 +623,7 @@ pub fn produce_continuum_members(
         }
     };
 
+    let primary_beam = PreparedPrimaryBeam::new(planned.primary_beam_model);
     for member in &planned.members {
         let domain_ordinal = inputs.model_domain_ordinal(member.axes().domain())?;
         let plane_shape = inputs
@@ -726,13 +724,13 @@ pub fn produce_continuum_members(
                         polarization,
                         fitted_beam: fitted_beams.get(beam_index).copied().flatten(),
                         restoring_beam: restoring_beams.get(beam_index).copied().flatten(),
-                        primary_beam_model: planned.primary_beam_model,
+                        primary_beam: &primary_beam,
                     })?;
                     if member.validity != ProductValidityRule::All {
                         let support = product_plane_validity(
                             member.validity,
                             &plane,
-                            planned.primary_beam_model,
+                            &primary_beam,
                             inputs,
                             member.axes().domain(),
                         )?;
@@ -742,7 +740,7 @@ pub fn produce_continuum_members(
                         let support = product_plane_validity(
                             rule,
                             &plane,
-                            planned.primary_beam_model,
+                            &primary_beam,
                             inputs,
                             member.axes().domain(),
                         )?;
@@ -1258,7 +1256,7 @@ struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     polarization: usize,
     fitted_beam: Option<RestoringBeam>,
     restoring_beam: Option<RestoringBeam>,
-    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    primary_beam: &'request PreparedPrimaryBeam,
 }
 
 fn produce_plane_member(
@@ -1272,7 +1270,7 @@ fn produce_plane_member(
         polarization,
         fitted_beam,
         restoring_beam,
-        primary_beam_model,
+        primary_beam,
     } = request;
     let scalar_sensitivity = plane.sum_weight;
     let valid = plane.validity == SpectralChannelValidity::Valid
@@ -1312,7 +1310,8 @@ fn produce_plane_member(
         ProductRole::Weight(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
-            let scale = if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
+            let scale = if primary_beam.model() == Some(AnalyticPrimaryBeamModel::MosaicSensitivity)
+            {
                 if !plane.sum_weight.is_finite() || plane.sum_weight <= 0.0 {
                     return Err(ProductsError::GeneratedNonfinite);
                 }
@@ -1369,7 +1368,7 @@ fn produce_plane_member(
         }
         ProductRole::PrimaryBeam(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
-        ) => primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane),
+        ) => primary_beam_plane(primary_beam, inputs, member.axes().domain(), plane),
         ProductRole::PbCorrectedImage(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
@@ -1386,7 +1385,7 @@ fn produce_plane_member(
                 restoring_beam,
             )?;
             let primary_beam =
-                primary_beam_plane(primary_beam_model, inputs, member.axes().domain(), plane)?;
+                primary_beam_plane(primary_beam, inputs, member.axes().domain(), plane)?;
             correct_primary_beam(
                 &restored,
                 &primary_beam,
@@ -1521,7 +1520,7 @@ fn residual_real_plane(plane: &DomainPlane<'_>) -> Vec<f32> {
 fn product_plane_validity(
     rule: ProductValidityRule,
     plane: &DomainPlane<'_>,
-    primary_beam_model: Option<AnalyticPrimaryBeamModel>,
+    primary_beam: &PreparedPrimaryBeam,
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &ImageDomainRole,
 ) -> Result<Vec<bool>, ProductsError> {
@@ -1536,7 +1535,7 @@ fn product_plane_validity(
         }
         ProductValidityRule::PrimaryBeam(policy) => {
             Ok(
-                primary_beam_plane(primary_beam_model, inputs, domain_role, plane)?
+                primary_beam_plane(primary_beam, inputs, domain_role, plane)?
                     .into_iter()
                     .map(|value| match policy.comparison() {
                         ProductSupportComparison::StrictlyGreater => value > policy.cutoff(),
@@ -1551,32 +1550,18 @@ fn product_plane_validity(
 }
 
 fn primary_beam_plane(
-    model: Option<AnalyticPrimaryBeamModel>,
+    beam: &PreparedPrimaryBeam,
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &ImageDomainRole,
     plane: &DomainPlane<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
-    match model {
-        Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-            analytic_evla_primary_beam(inputs, domain_role, plane.shape, plane.output_channel)
-        }
-        Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-            analytic_vla_primary_beam(inputs, domain_role, plane.shape, plane.output_channel)
-        }
-        Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => analytic_alma_airy_primary_beam(
-            inputs,
-            domain_role,
-            plane.shape,
-            plane.output_channel,
-            10.7,
-        ),
-        Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => analytic_alma_airy_primary_beam(
-            inputs,
-            domain_role,
-            plane.shape,
-            plane.output_channel,
-            6.25,
-        ),
+    match beam.model() {
+        Some(
+            AnalyticPrimaryBeamModel::CasaEvlaCommon
+            | AnalyticPrimaryBeamModel::CasaVlaBand
+            | AnalyticPrimaryBeamModel::CasaAlma12mAiry
+            | AnalyticPrimaryBeamModel::CasaAca7mAiry,
+        ) => beam.analytic_plane(inputs, domain_role, plane.shape, plane.output_channel),
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
             Ok(MosaicSensitivity::new(plane.sensitivity)?.primary_beam())
         }

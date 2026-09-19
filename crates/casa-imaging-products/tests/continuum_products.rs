@@ -1650,6 +1650,22 @@ fn generic_generation_demand_charges_exact_owned_arrays() {
     let demand = planned
         .demand(&inputs, full_window(&planned))
         .expect("generic demand");
+    let annular_plan = planned_for(
+        &inputs,
+        &ContinuumProductControls::default()
+            .with_primary_beam_model(AnalyticPrimaryBeamModel::CasaVlaBand),
+    );
+    let annular_demand = annular_plan
+        .demand(&inputs, full_window(&annular_plan))
+        .unwrap();
+    let table_charge = annular_demand.algorithm_scratch_bytes() - demand.algorithm_scratch_bytes();
+    assert!(
+        table_charge >= casa_numerics::AnnularApertureVoltageTable::table_resident_bytes() as u64
+    );
+    assert_eq!(
+        annular_demand.peak_residency_bytes() - demand.peak_residency_bytes(),
+        table_charge
+    );
     let values = planned
         .members()
         .iter()
