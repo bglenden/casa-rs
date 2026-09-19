@@ -3983,7 +3983,7 @@ fn work_execution_context<'a>(
         )
     } else {
         common(
-            (transaction_work.initial_consistency_check() == &work.node().id)
+            (transaction_work.initial_consistency_check() == Some(&work.node().id))
                 .then_some(problem.observation_transaction()),
             None,
             None,
@@ -5225,7 +5225,9 @@ fn encode_observation_transaction(
     encoder.digest(transaction.transaction_id().as_bytes());
     encoder.digest(transaction.physical_work_id().as_bytes());
     let work = transaction.work();
-    encoder.string(work.initial_consistency_check().as_str());
+    if let Some(check) = work.initial_consistency_check() {
+        encoder.string(check.as_str());
+    }
     encode_dependencies(encoder, work.observation_reads());
     match work.final_model_preparation() {
         Some(node) => {

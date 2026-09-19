@@ -56,6 +56,12 @@ Source/run association, inventory, shape, complete writes, metadata and I/O
 checks remain. Each image replacement is atomic; a failure leaves the run and
 its output set incomplete and requires rerun. There is no per-member resumable
 recovery, content-based idempotency or whole-set rollback protocol.
+Generated publication has only generation/write and terminal publication work;
+it does not schedule an empty observation-consistency check. Planning and
+execution share one immutable routing inventory. The generation writer owns
+window shape, finite-value and complete-coverage validation; the CASA writer
+owns physical I/O. Explicit pending, generated, published and consumed states
+make generation/publication failures terminal and completion available once.
 The same ownership rule applies to model lifecycle and normal-state completion:
 validate scientific values/support at introduction or modification, retain exact
 run/model/weighting/replay/coverage associations, and do not hash or reread full

@@ -40,7 +40,7 @@ pub enum ObservationTransactionPublicationScope {
 pub struct ObservationTransactionWork {
     publication_scope: ObservationTransactionPublicationScope,
     source_free_reconstruction: bool,
-    initial_consistency_check: WorkNodeId,
+    initial_consistency_check: Option<WorkNodeId>,
     observation_reads: BTreeSet<WorkDependency>,
     final_model_preparation: Option<WorkNodeId>,
     post_replay_reconciliation: Option<WorkNodeId>,
@@ -63,7 +63,7 @@ impl ObservationTransactionWork {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
             source_free_reconstruction: false,
-            initial_consistency_check,
+            initial_consistency_check: Some(initial_consistency_check),
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
@@ -84,7 +84,7 @@ impl ObservationTransactionWork {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ReconstructionOnly,
             source_free_reconstruction: true,
-            initial_consistency_check,
+            initial_consistency_check: Some(initial_consistency_check),
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
@@ -104,7 +104,7 @@ impl ObservationTransactionWork {
         Self {
             publication_scope: ObservationTransactionPublicationScope::ProductPublication,
             source_free_reconstruction: false,
-            initial_consistency_check,
+            initial_consistency_check: Some(initial_consistency_check),
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: Some(post_replay_reconciliation),
@@ -116,14 +116,11 @@ impl ObservationTransactionWork {
 
     /// Name a publication-only transaction over generated products.
     #[must_use]
-    pub const fn new_generated_product_publication(
-        publication_check: WorkNodeId,
-        commit: WorkNodeId,
-    ) -> Self {
+    pub const fn new_generated_product_publication(commit: WorkNodeId) -> Self {
         Self {
             publication_scope: ObservationTransactionPublicationScope::GeneratedProductPublication,
             source_free_reconstruction: false,
-            initial_consistency_check: publication_check,
+            initial_consistency_check: None,
             observation_reads: BTreeSet::new(),
             final_model_preparation: None,
             post_replay_reconciliation: None,
@@ -157,8 +154,8 @@ impl ObservationTransactionWork {
 
     /// Return the consistency check that must precede observation reads.
     #[must_use]
-    pub const fn initial_consistency_check(&self) -> &WorkNodeId {
-        &self.initial_consistency_check
+    pub const fn initial_consistency_check(&self) -> Option<&WorkNodeId> {
+        self.initial_consistency_check.as_ref()
     }
 
     /// Return exact completion events for all physical observation reads.
@@ -428,7 +425,11 @@ fn validate_transaction_nodes(
 
     let initial = require_node(
         nodes,
-        &work.initial_consistency_check,
+        work.initial_consistency_check.as_ref().ok_or_else(|| {
+            ObservationTransactionPlanError::InvalidPlan {
+                reason: "observation transaction lacks initial consistency check".into(),
+            }
+        })?,
         "initial consistency",
     )?;
     require_kind(initial, WorkKind::DataCensus, "initial consistency")?;
@@ -649,10 +650,9 @@ fn validate_product_publication_nodes(
         ));
     }
 
-    let initial = require_node(nodes, &work.initial_consistency_check, "publication check")?;
-    require_kind(initial, WorkKind::DataCensus, "publication check")?;
-    require_exact_lock_count(initial, 0, "publication check")?;
-    let initial_completions = completion_events(initial);
+    if work.initial_consistency_check.is_some() {
+        return invalid("generated publication declares an observation consistency check");
+    }
 
     let mut staged_nodes = Vec::new();
     for producer in
@@ -665,9 +665,6 @@ fn validate_product_publication_nodes(
             "staged-output storage",
             "product staging",
         )?;
-        for completion in &initial_completions {
-            require_precedes(nodes, completion, &producer.id, "publication check")?;
-        }
         staged_nodes.push(producer);
     }
 
@@ -887,7 +884,11 @@ fn validate_measurement_set_lock_identities(
     let mut lock_nodes = vec![
         require_node(
             nodes,
-            &work.initial_consistency_check,
+            work.initial_consistency_check.as_ref().ok_or_else(|| {
+                ObservationTransactionPlanError::InvalidPlan {
+                    reason: "observation transaction lacks initial consistency check".into(),
+                }
+            })?,
             "initial consistency",
         )?,
         require_node(nodes, &work.commit, "atomic commit")?,
@@ -1754,7 +1755,10 @@ mod tests {
         assert!(validate_transaction_nodes(1, 0, &nodes, &writable).is_err());
 
         let mut read_only = ObservationTransactionWork::new_product_publication(
-            writable.initial_consistency_check.clone(),
+            writable
+                .initial_consistency_check
+                .clone()
+                .expect("observation check"),
             writable
                 .post_replay_reconciliation
                 .clone()

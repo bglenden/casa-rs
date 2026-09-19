@@ -108,21 +108,17 @@ fn t55_q_band_rebaseline_preflight() {
     assert_eq!(pb.shape(), &[image_size, image_size, 1, 512]);
     let publication = &result.outcome.output.publication_receipt;
     assert_eq!(publication.status(), ReceiptStatus::Completed);
-    let publication_stage_nanos = [
-        "product-publication-check",
-        "product-generation-write",
-        "product-publication-commit",
-    ]
-    .into_iter()
-    .map(|name| {
-        (
-            name,
-            publication
-                .stage_actual_elapsed_nanos(&WorkNodeId::new(name))
-                .expect("completed publication stage timing"),
-        )
-    })
-    .collect::<BTreeMap<_, _>>();
+    let publication_stage_nanos = ["product-generation-write", "product-publication-commit"]
+        .into_iter()
+        .map(|name| {
+            (
+                name,
+                publication
+                    .stage_actual_elapsed_nanos(&WorkNodeId::new(name))
+                    .expect("completed publication stage timing"),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let publication_seconds = publication_stage_nanos.values().sum::<u64>() as f64 / 1.0e9;
     let fingerprints = std::env::var_os("CASA_RS_T55_PUBLICATION_PROBE")
         .map(|_| publication_probe_fingerprints(&root));

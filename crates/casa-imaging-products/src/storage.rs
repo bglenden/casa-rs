@@ -128,9 +128,13 @@ pub trait ProductOutput {
 
 /// Bounded write-only destination for one product member.
 pub trait ProductWriter {
-    /// Transfer one owned window into the destination.
+    /// Transfer one owned, generation-validated window into the destination.
+    ///
+    /// `ProductMemberWriter` owns shape, coverage, and generated-value
+    /// validation before forwarding a window here; implementations own only
+    /// the physical write and its I/O errors.
     fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError>;
-    /// Flush the destination and complete the member.
+    /// Flush the physical destination after generation-owned coverage is complete.
     fn finish(self: Box<Self>) -> Result<(), ProductsError>;
 }
 

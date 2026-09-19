@@ -251,8 +251,6 @@ impl CasaImageProductSink {
         Ok(CasaProductWriter {
             image,
             explicit_mask,
-            layout,
-            next_channel: 0,
             sink: self,
             staged: StagedProduct {
                 _directory: directory,
@@ -266,8 +264,6 @@ impl CasaImageProductSink {
 struct CasaProductWriter<'a> {
     image: PagedImage<f32>,
     explicit_mask: bool,
-    layout: ProductWindowLayout,
-    next_channel: usize,
     sink: &'a CasaImageProductSink,
     staged: StagedProduct,
 }
@@ -275,21 +271,6 @@ struct CasaProductWriter<'a> {
 impl ProductWriter for CasaProductWriter<'_> {
     fn write(&mut self, window: ProductWindow) -> Result<(), ProductsError> {
         let (start, shape, payload, validity) = window.into_parts();
-        let axis = self.layout.spectral_axis();
-        let expected_shape = self.layout.shape();
-        if start[axis] != self.next_channel
-            || shape[axis] == 0
-            || shape[axis] > self.layout.maximum_channels()
-            || start[axis]
-                .checked_add(shape[axis])
-                .is_none_or(|end| end > expected_shape[axis])
-            || (0..4).any(|index| {
-                index != axis && (start[index] != 0 || shape[index] != expected_shape[index])
-            })
-            || payload.len() != validity.len()
-        {
-            return Err(ProductsError::InvalidWindow);
-        }
         let data = ArrayD::from_shape_vec(IxDyn(&shape), payload)
             .map_err(|error| ProductsError::Storage(error.to_string()))?;
         self.image
@@ -302,13 +283,9 @@ impl ProductWriter for CasaProductWriter<'_> {
                 .put_mask_slice("mask0", &mask, &start)
                 .map_err(|error| ProductsError::Storage(error.to_string()))?;
         }
-        self.next_channel += shape[axis];
         Ok(())
     }
     fn finish(mut self: Box<Self>) -> Result<(), ProductsError> {
-        if self.next_channel != self.layout.shape()[self.layout.spectral_axis()] {
-            return Err(ProductsError::InvalidWindow);
-        }
         if self.explicit_mask {
             self.image
                 .set_default_mask("mask0")

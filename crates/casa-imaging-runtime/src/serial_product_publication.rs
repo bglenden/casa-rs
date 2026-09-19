@@ -17,7 +17,6 @@ use std::{
     sync::Mutex,
 };
 
-const CHECK: &str = "product-publication-check";
 const GENERATE: &str = "product-generation-write";
 const COMMIT: &str = "product-publication-commit";
 
@@ -123,7 +122,6 @@ fn build_physical<R: ImplementationRegistry>(
     demand: &ContinuumGenerationDemand,
     sink_residency: ProductSinkResidency,
 ) -> Result<PhysicalWorkBinding, SerialProductPublicationPlanError> {
-    let check = WorkNodeId::new(CHECK);
     let generate = WorkNodeId::new(GENERATE);
     let commit = WorkNodeId::new(COMMIT);
     let payload_bytes = publication
@@ -164,22 +162,11 @@ fn build_physical<R: ImplementationRegistry>(
     };
     let nodes = vec![
         WorkNode {
-            id: check.clone(),
-            kind: WorkKind::DataCensus,
-            domain: WorkDomain::Cpu,
-            implementation: policy.implementation.clone(),
-            dependencies: BTreeSet::new(),
-            claims: vec![claim(LeaseResource::Workers, 1, ClaimLifetime::Work)],
-            allocations: vec![],
-            fences: BTreeSet::new(),
-            quiescence_after: BTreeSet::new(),
-        },
-        WorkNode {
             id: generate.clone(),
             kind: WorkKind::Serialization,
             domain: WorkDomain::Cpu,
             implementation: policy.implementation.clone(),
-            dependencies: BTreeSet::from([WorkDependency::Work(check.clone())]),
+            dependencies: BTreeSet::new(),
             claims: vec![
                 claim(LeaseResource::Workers, 1, ClaimLifetime::Work),
                 claim(LeaseResource::FileDescriptors, 1, ClaimLifetime::Work),
@@ -484,7 +471,7 @@ fn build_physical<R: ImplementationRegistry>(
         dag,
         prediction,
         artifacts,
-        ObservationTransactionWork::new_generated_product_publication(check, commit),
+        ObservationTransactionWork::new_generated_product_publication(commit),
         layouts,
         publication,
     )?)
@@ -607,14 +594,16 @@ impl SerialProductPublicationCompletion {
         (self.planned, self.scientific, self.published)
     }
 }
-struct SerialProductPublicationState {
-    problem: CompiledProblem,
-    planned: Option<PlannedContinuumGeneration>,
-    scientific: Option<MajorCycleCompletion>,
-    reconstruction_masks: Option<ReconstructionMaskSet>,
-    generation_started: bool,
-    generated: Option<PublishedContinuumGeneration>,
-    published: bool,
+enum SerialProductPublicationState {
+    Pending {
+        problem: CompiledProblem,
+        planned: PlannedContinuumGeneration,
+        scientific: MajorCycleCompletion,
+        reconstruction_masks: Option<ReconstructionMaskSet>,
+    },
+    Generated(SerialProductPublicationCompletion),
+    Published(SerialProductPublicationCompletion),
+    Consumed,
 }
 /// Stateful owner of bounded generation and final output publication.
 pub struct SerialProductPublicationExecutor<S> {
@@ -637,9 +626,10 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
         sink: S,
         window: ProductStoragePlan,
     ) -> Result<Self, SerialProductPublicationExecutionError<S::Error>> {
-        if publication
-            != ProductPublicationPlan::bind(&problem, &planned)
-                .map_err(|_| SerialProductPublicationExecutionError::State)?
+        publication
+            .validate_generation(&planned)
+            .map_err(|_| SerialProductPublicationExecutionError::State)?;
+        if publication.problem_id() != problem.problem_id()
             || scientific.normal_state().problem_id() != problem.problem_id()
             || scientific.model_completion().problem() != problem.problem_id()
         {
@@ -648,14 +638,11 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
         Ok(Self {
             id,
             publication,
-            state: Mutex::new(SerialProductPublicationState {
+            state: Mutex::new(SerialProductPublicationState::Pending {
                 problem,
-                planned: Some(planned),
-                scientific: Some(scientific),
+                planned,
+                scientific,
                 reconstruction_masks,
-                generation_started: false,
-                generated: None,
-                published: false,
             }),
             sink,
             window,
@@ -668,14 +655,13 @@ impl<S: SerialProductPublicationSink> SerialProductPublicationExecutor<S> {
     /// Take the summary only after successful publication, once.
     pub fn take_completion(&self) -> Option<SerialProductPublicationCompletion> {
         let mut state = self.state.lock().ok()?;
-        if !state.published {
-            return None;
+        match std::mem::replace(&mut *state, SerialProductPublicationState::Consumed) {
+            SerialProductPublicationState::Published(completion) => Some(completion),
+            other => {
+                *state = other;
+                None
+            }
         }
-        Some(SerialProductPublicationCompletion {
-            planned: state.planned.take()?,
-            scientific: state.scientific.take()?,
-            published: state.generated.take()?,
-        })
     }
 }
 impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublicationExecutor<S> {
@@ -690,19 +676,22 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                 .state
                 .lock()
                 .map_err(|_| SerialProductPublicationExecutionError::State)?;
-            if state.generation_started {
-                return Err(SerialProductPublicationExecutionError::State);
-            }
-            state.generation_started = true;
-            let mut inputs = ContinuumProductInputs::from_major_cycle(
-                &state.problem,
-                state
-                    .scientific
-                    .as_ref()
-                    .ok_or(SerialProductPublicationExecutionError::State)?,
-            )
-            .map_err(SerialProductPublicationExecutionError::Products)?;
-            if let Some(masks) = state.reconstruction_masks.as_ref() {
+            let (problem, planned, scientific, reconstruction_masks) =
+                match std::mem::replace(&mut *state, SerialProductPublicationState::Consumed) {
+                    SerialProductPublicationState::Pending {
+                        problem,
+                        planned,
+                        scientific,
+                        reconstruction_masks,
+                    } => (problem, planned, scientific, reconstruction_masks),
+                    other => {
+                        *state = other;
+                        return Err(SerialProductPublicationExecutionError::State);
+                    }
+                };
+            let mut inputs = ContinuumProductInputs::from_major_cycle(&problem, &scientific)
+                .map_err(SerialProductPublicationExecutionError::Products)?;
+            if let Some(masks) = reconstruction_masks.as_ref() {
                 inputs = match masks {
                     ReconstructionMaskSet::Shared(mask) => inputs.with_reconstruction_mask(mask),
                     ReconstructionMaskSet::Domains(masks) => {
@@ -714,24 +703,19 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
                 }
                 .map_err(SerialProductPublicationExecutionError::Products)?;
             }
-            let generated = produce_continuum_members(
-                state
-                    .planned
-                    .as_ref()
-                    .ok_or(SerialProductPublicationExecutionError::State)?,
-                &inputs,
-                self.window,
-                &self.sink,
-            )
-            .map_err(SerialProductPublicationExecutionError::Products)?;
-            state.reconstruction_masks = None;
-            state.generated = Some(generated);
+            let generated = produce_continuum_members(&planned, &inputs, self.window, &self.sink)
+                .map_err(SerialProductPublicationExecutionError::Products)?;
+            *state = SerialProductPublicationState::Generated(SerialProductPublicationCompletion {
+                planned,
+                scientific,
+                published: generated,
+            });
         } else if context.node().id.as_str() == COMMIT {
             let state = self
                 .state
                 .lock()
                 .map_err(|_| SerialProductPublicationExecutionError::State)?;
-            if state.generated.is_none() || state.published {
+            if !matches!(*state, SerialProductPublicationState::Generated(_)) {
                 return Err(SerialProductPublicationExecutionError::State);
             }
             artifacts = self
@@ -794,20 +778,23 @@ impl<S: SerialProductPublicationSink> WorkImplementation for SerialProductPublic
             .state
             .lock()
             .map_err(|_| SerialProductPublicationExecutionError::State)?;
-        if context.node().id.as_str() != COMMIT || state.generated.is_none() || state.published {
+        if context.node().id.as_str() != COMMIT {
             return Err(SerialProductPublicationExecutionError::State);
         }
         // Consume the generated set before I/O: failure requires a fresh run,
         // not another publish call against an already partially moved set.
-        let generated = state
-            .generated
-            .take()
-            .ok_or(SerialProductPublicationExecutionError::State)?;
+        let completion =
+            match std::mem::replace(&mut *state, SerialProductPublicationState::Consumed) {
+                SerialProductPublicationState::Generated(completion) => completion,
+                other => {
+                    *state = other;
+                    return Err(SerialProductPublicationExecutionError::State);
+                }
+            };
         self.sink
             .publish()
             .map_err(SerialProductPublicationExecutionError::Sink)?;
-        state.generated = Some(generated);
-        state.published = true;
+        *state = SerialProductPublicationState::Published(completion);
         Ok(())
     }
 }

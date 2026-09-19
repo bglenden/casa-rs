@@ -6,13 +6,12 @@ use crate::ArtifactIdentity;
 use casa_imaging_model::{CompiledProblem, CompiledProblemId, ProductGraphId, ProductNodeId};
 use casa_imaging_products::PlannedContinuumGeneration;
 use sha2::{Digest, Sha256};
-use std::{error::Error, fmt};
+use std::{error::Error, fmt, sync::Arc};
 
 /// One graph member and its planned output size.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductPublicationEntry {
     node: ProductNodeId,
-    name: String,
     artifact: ArtifactIdentity,
     payload_bytes: u64,
 }
@@ -20,10 +19,6 @@ impl ProductPublicationEntry {
     /// Graph-local node.
     pub const fn node(&self) -> ProductNodeId {
         self.node
-    }
-    /// Compiled product suffix.
-    pub fn name(&self) -> &str {
-        &self.name
     }
     /// Stable routing identity, not a content fingerprint.
     pub const fn artifact(&self) -> ArtifactIdentity {
@@ -70,7 +65,7 @@ impl Error for ProductPublicationError {}
 pub struct ProductPublicationPlan {
     problem_id: CompiledProblemId,
     graph_id: ProductGraphId,
-    entries: Box<[ProductPublicationEntry]>,
+    entries: Arc<[ProductPublicationEntry]>,
 }
 impl ProductPublicationPlan {
     /// Check the planned inventory against the compiled product graph.
@@ -107,7 +102,6 @@ impl ProductPublicationPlan {
             hash.update((member.node().ordinal() as u64).to_le_bytes());
             entries.push(ProductPublicationEntry {
                 node: member.node(),
-                name: member.name().to_owned(),
                 artifact: ArtifactIdentity::from_sha256(hash.finalize().into()),
                 payload_bytes: member.payload_values() as u64 * 4,
             });
@@ -115,8 +109,36 @@ impl ProductPublicationPlan {
         Ok(Self {
             problem_id: problem.problem_id(),
             graph_id: graph.graph_id(),
-            entries: entries.into_boxed_slice(),
+            entries: entries.into(),
         })
+    }
+    /// Check the generation's immutable association without rebuilding routing metadata.
+    pub(crate) fn validate_generation(
+        &self,
+        planned: &PlannedContinuumGeneration,
+    ) -> Result<(), ProductPublicationError> {
+        if planned.problem_id() != self.problem_id || planned.graph_id() != self.graph_id {
+            return Err(ProductPublicationError::ForeignGeneration {
+                expected_problem: self.problem_id,
+                expected_graph: self.graph_id,
+            });
+        }
+        if planned.members().len() != self.entries.len() {
+            return Err(ProductPublicationError::MemberSetMismatch {
+                expected: self.entries.len(),
+                actual: planned.members().len(),
+            });
+        }
+        for (entry, member) in self.entries.iter().zip(planned.members()) {
+            if entry.node != member.node()
+                || entry.payload_bytes != member.payload_values() as u64 * 4
+            {
+                return Err(ProductPublicationError::MemberContractMismatch {
+                    node: member.node(),
+                });
+            }
+        }
+        Ok(())
     }
     /// Compiled problem owning the inventory.
     pub const fn problem_id(&self) -> CompiledProblemId {
@@ -127,7 +149,7 @@ impl ProductPublicationPlan {
         self.graph_id
     }
     /// Members in publication order.
-    pub const fn entries(&self) -> &[ProductPublicationEntry] {
+    pub fn entries(&self) -> &[ProductPublicationEntry] {
         &self.entries
     }
     /// Look up a member's routing identity.

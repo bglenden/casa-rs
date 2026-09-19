@@ -158,6 +158,8 @@ mod common;
 
 mod cost_model_profile;
 mod imaging_plan_selection;
+#[path = "compile_plan_run/publication_lifecycle.rs"]
+mod publication_lifecycle;
 #[path = "compile_plan_run/receipt_progress.rs"]
 mod receipt_progress;
 mod walking_skeleton;
@@ -5650,6 +5652,7 @@ fn reconstruction_physical_work_for_problem(
     let transaction = ObservationTransactionWork::new_reconstruction(
         base.observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         base.observation_transaction()
             .post_replay_reconciliation()
@@ -8019,6 +8022,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         io_base
             .observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         io_base
             .observation_transaction()
@@ -8100,6 +8104,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         contract_base
             .observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         contract_base
             .observation_transaction()
@@ -8136,6 +8141,7 @@ fn physical_work_binding_rejects_io_and_publication_evidence_outside_plan_semant
         publication_base
             .observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         publication_base
             .observation_transaction()
@@ -8177,6 +8183,7 @@ fn physical_work_binding_rejects_typed_io_contracts_without_predictions() {
     let transaction = ObservationTransactionWork::new_reconstruction(
         base.observation_transaction()
             .initial_consistency_check()
+            .expect("observation consistency check")
             .clone(),
         base.observation_transaction()
             .post_replay_reconciliation()
@@ -8663,7 +8670,9 @@ fn native_product_publication_rejects_reconstruction_only_transaction_scope() {
     let base = problem_bound_sealed_work(&problem, &publication);
     let work = base.observation_transaction();
     let reconstruction = ObservationTransactionWork::new_reconstruction(
-        work.initial_consistency_check().clone(),
+        work.initial_consistency_check()
+            .expect("observation consistency check")
+            .clone(),
         work.post_replay_reconciliation()
             .expect("reconstruction has reconciliation")
             .clone(),
@@ -13805,6 +13814,12 @@ fn planned_publication_rejects_another_problem_with_the_same_product_graph() {
     assert_ne!(source.problem_id(), foreign.problem_id());
 
     let (planned, _, _) = pending_generation_for_problem(&source);
+    let publication = ProductPublicationPlan::bind(&source, &planned).unwrap();
+    let shared = publication.clone();
+    assert!(
+        std::ptr::eq(publication.entries(), shared.entries()),
+        "planning and execution share one routing inventory"
+    );
     let error = ProductPublicationPlan::bind(&foreign, &planned)
         .expect_err("a plan from another problem must not enter publication planning");
     assert_eq!(
@@ -13927,7 +13942,14 @@ fn direct_product_publication_has_bounded_write_only_generation_and_one_terminal
         )
         .unwrap();
         let dag = planned_runtime.physical_work().execution_dag();
-        assert_eq!(dag.nodes().len(), 3);
+        assert_eq!(dag.nodes().len(), 2);
+        assert!(
+            planned_runtime
+                .physical_work()
+                .observation_transaction()
+                .initial_consistency_check()
+                .is_none()
+        );
         let metadata =
             &dag.logical_allocations()[&AllocationId::new("product-generation-metadata")];
         assert_eq!(metadata.bytes, demand.retained_metadata_bytes());
