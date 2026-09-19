@@ -165,11 +165,6 @@ impl PlannedContinuumGeneration {
         }
         algorithm_scratch_bytes = checked_add(
             algorithm_scratch_bytes,
-            crate::taylor::PreparedPrimaryBeam::resident_bytes(self.primary_beam_model()) as u64,
-            "generation-owned primary-beam table",
-        )?;
-        algorithm_scratch_bytes = checked_add(
-            algorithm_scratch_bytes,
             checked_add(
                 maximum_window_payload_bytes,
                 maximum_window_validity_bytes,

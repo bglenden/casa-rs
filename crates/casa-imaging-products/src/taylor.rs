@@ -16,89 +16,6 @@ use crate::restore::{MosaicSensitivity, fft_convolve, gaussian_beam_image, norma
 use crate::source::ContinuumProductInputs;
 use casa_numerics::AnnularApertureVoltageTable;
 
-pub(crate) struct PreparedPrimaryBeam {
-    model: Option<AnalyticPrimaryBeamModel>,
-    annular_table: Option<AnnularApertureVoltageTable>,
-}
-
-impl PreparedPrimaryBeam {
-    pub(crate) fn new(model: Option<AnalyticPrimaryBeamModel>) -> Self {
-        let annular_table = match model {
-            Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-                Some(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
-            }
-            Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
-                Some(AnnularApertureVoltageTable::new(10.7, 0.75, 3.568 * 60.0))
-            }
-            Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
-                Some(AnnularApertureVoltageTable::new(6.25, 0.75, 3.568 * 60.0))
-            }
-            _ => None,
-        };
-        Self {
-            model,
-            annular_table,
-        }
-    }
-
-    pub(crate) const fn model(&self) -> Option<AnalyticPrimaryBeamModel> {
-        self.model
-    }
-
-    pub(crate) fn resident_bytes(model: Option<AnalyticPrimaryBeamModel>) -> usize {
-        match model {
-            Some(
-                AnalyticPrimaryBeamModel::CasaVlaBand
-                | AnalyticPrimaryBeamModel::CasaAlma12mAiry
-                | AnalyticPrimaryBeamModel::CasaAca7mAiry,
-            ) => std::mem::size_of::<Self>() + AnnularApertureVoltageTable::table_resident_bytes(),
-            _ => 0,
-        }
-    }
-
-    pub(crate) fn analytic_plane(
-        &self,
-        inputs: &ContinuumProductInputs<'_>,
-        domain_role: &casa_imaging_model::ImageDomainRole,
-        shape: [usize; 2],
-        output_channel: usize,
-    ) -> Result<Vec<f32>, ProductsError> {
-        if self.model == Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) {
-            return analytic_evla_primary_beam(inputs, domain_role, shape, output_channel);
-        }
-        let table = self
-            .annular_table
-            .as_ref()
-            .ok_or(ProductsError::UnsupportedProblem)?;
-        let domain = inputs
-            .problem()
-            .geometry()
-            .domains()
-            .iter()
-            .find(|domain| domain.role() == domain_role)
-            .ok_or(ProductsError::UnsupportedProblem)?;
-        let direction = domain.direction();
-        let frequency_hz = inputs
-            .problem()
-            .geometry()
-            .spectral()
-            .channel_centre_hz(output_channel)
-            .ok_or(ProductsError::UnsupportedProblem)?;
-        if self.model == Some(AnalyticPrimaryBeamModel::CasaVlaBand)
-            && !vla_band_supported(frequency_hz)
-        {
-            return Err(ProductsError::UnsupportedProblem);
-        }
-        Ok(annular_aperture_power_plane(
-            shape,
-            direction.reference_pixel(),
-            direction.increment_rad(),
-            frequency_hz,
-            table,
-        ))
-    }
-}
-
 pub(crate) struct TaylorProducts {
     shape: [usize; 2],
     psf: Vec<Vec<f32>>,
@@ -494,17 +411,18 @@ impl TaylorProducts {
                 )
             });
         let pb0 = match primary_beam_model {
-            Some(
-                AnalyticPrimaryBeamModel::CasaEvlaCommon
-                | AnalyticPrimaryBeamModel::CasaVlaBand
-                | AnalyticPrimaryBeamModel::CasaAlma12mAiry
-                | AnalyticPrimaryBeamModel::CasaAca7mAiry,
-            ) => PreparedPrimaryBeam::new(primary_beam_model).analytic_plane(
-                inputs,
-                domain_role,
-                shape,
-                0,
-            )?,
+            Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
+                analytic_evla_primary_beam(inputs, domain_role, shape, 0)?
+            }
+            Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
+                analytic_vla_primary_beam(inputs, domain_role, shape, 0)?
+            }
+            Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => {
+                analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 10.7)?
+            }
+            Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => {
+                analytic_alma_airy_primary_beam(inputs, domain_role, shape, 0, 6.25)?
+            }
             Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
                 if aw_projection {
                     mosaic_sensitivity
@@ -751,6 +669,71 @@ pub(crate) fn analytic_evla_primary_beam(
     Ok(values)
 }
 
+pub(crate) fn analytic_vla_primary_beam(
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &casa_imaging_model::ImageDomainRole,
+    shape: [usize; 2],
+    output_channel: usize,
+) -> Result<Vec<f32>, ProductsError> {
+    let domain = inputs
+        .problem()
+        .geometry()
+        .domains()
+        .iter()
+        .find(|domain| domain.role() == domain_role)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let direction = domain.direction();
+    let reference_pixel = direction.reference_pixel();
+    let increment_rad = direction.increment_rad();
+    let frequency_hz = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(output_channel)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let table = vla_band_voltage_table(frequency_hz)?;
+    Ok(annular_aperture_power_plane(
+        shape,
+        reference_pixel,
+        increment_rad,
+        frequency_hz,
+        &table,
+    ))
+}
+
+pub(crate) fn analytic_alma_airy_primary_beam(
+    inputs: &ContinuumProductInputs<'_>,
+    domain_role: &casa_imaging_model::ImageDomainRole,
+    shape: [usize; 2],
+    output_channel: usize,
+    effective_diameter_m: f64,
+) -> Result<Vec<f32>, ProductsError> {
+    let domain = inputs
+        .problem()
+        .geometry()
+        .domains()
+        .iter()
+        .find(|domain| domain.role() == domain_role)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let direction = domain.direction();
+    let reference_pixel = direction.reference_pixel();
+    let increment_rad = direction.increment_rad();
+    let frequency_hz = inputs
+        .problem()
+        .geometry()
+        .spectral()
+        .channel_centre_hz(output_channel)
+        .ok_or(ProductsError::UnsupportedProblem)?;
+    let table = AnnularApertureVoltageTable::new(effective_diameter_m, 0.75, 3.568 * 60.0);
+    Ok(annular_aperture_power_plane(
+        shape,
+        reference_pixel,
+        increment_rad,
+        frequency_hz,
+        &table,
+    ))
+}
+
 fn annular_aperture_power_plane(
     shape: [usize; 2],
     reference_pixel: [f64; 2],
@@ -806,8 +789,18 @@ fn evla_common_power_pattern(radius_rad: f64, frequency_hz: f64, coefficients: [
     }
 }
 
+fn vla_band_voltage_table(frequency_hz: f64) -> Result<AnnularApertureVoltageTable, ProductsError> {
+    // CASA selects VLA_L and VLA_Q in these open intervals. Both use this
+    // aperture; SIMapper::addPB applies BeamSquint::NONE for PB images.
+    // Other legacy-VLA bands retain their explicit unsupported boundary.
+    if vla_band_supported(frequency_hz) {
+        Ok(AnnularApertureVoltageTable::new(25.0, 2.36, 0.8564 * 60.0))
+    } else {
+        Err(ProductsError::UnsupportedProblem)
+    }
+}
+
 fn vla_band_supported(frequency_hz: f64) -> bool {
-    // CASA selects VLA_L and VLA_Q in these open intervals with BeamSquint::NONE.
     frequency_hz.is_finite()
         && ((frequency_hz > 1.0e9 && frequency_hz < 2.0e9)
             || (frequency_hz > 35.0e9 && frequency_hz < 55.0e9))
@@ -962,7 +955,6 @@ fn model_term(
 
 #[cfg(test)]
 mod tests {
-    use super::AnalyticPrimaryBeamModel;
     use casa_imaging_model::ProductNormalization;
 
     #[test]
@@ -1139,9 +1131,8 @@ mod tests {
     #[test]
     fn vla_l_and_q_bands_use_casa_annular_airy_lookup_and_other_bands_fail_closed() {
         let frequency_hz = 45_469_370_205.156_37;
-        assert!(super::vla_band_supported(frequency_hz));
-        let prepared = super::PreparedPrimaryBeam::new(Some(AnalyticPrimaryBeamModel::CasaVlaBand));
-        let table = prepared.annular_table.as_ref().unwrap();
+        let table = super::vla_band_voltage_table(frequency_hz)
+            .expect("issue #607 representative frequency is in VLA Q band");
         assert_eq!(table.maximum_radius(), 0.8564 * 60.0);
 
         let voltage = table.evaluate(29.919_033_706_45);
@@ -1149,10 +1140,7 @@ mod tests {
 
         // The L band shares the same CASA annular aperture inside its open
         // 1--2 GHz interval.
-        assert!(super::vla_band_supported(1.5e9));
-        let l_prepared =
-            super::PreparedPrimaryBeam::new(Some(AnalyticPrimaryBeamModel::CasaVlaBand));
-        let l_band = l_prepared.annular_table.as_ref().unwrap();
+        let l_band = super::vla_band_voltage_table(1.5e9).expect("VLA L band is supported");
         assert_eq!(l_band.maximum_radius(), table.maximum_radius());
         assert_eq!(
             l_band.evaluate(29.919_033_706_45).to_bits(),
@@ -1172,79 +1160,7 @@ mod tests {
             0.3e9,
             0.05e9,
         ] {
-            assert!(!super::vla_band_supported(unsupported_hz));
-        }
-    }
-
-    #[test]
-    fn prepared_annular_tables_preserve_all_samples_and_account_retained_storage() {
-        for (model, diameter, blockage, radius) in [
-            (
-                AnalyticPrimaryBeamModel::CasaVlaBand,
-                25.0,
-                2.36,
-                0.8564 * 60.0,
-            ),
-            (
-                AnalyticPrimaryBeamModel::CasaAlma12mAiry,
-                10.7,
-                0.75,
-                3.568 * 60.0,
-            ),
-            (
-                AnalyticPrimaryBeamModel::CasaAca7mAiry,
-                6.25,
-                0.75,
-                3.568 * 60.0,
-            ),
-        ] {
-            let prepared = super::PreparedPrimaryBeam::new(Some(model));
-            let table = prepared.annular_table.as_ref().unwrap();
-            let reference =
-                casa_numerics::AnnularApertureVoltageTable::new(diameter, blockage, radius);
-            assert_eq!(
-                super::PreparedPrimaryBeam::resident_bytes(Some(model)),
-                std::mem::size_of_val(&prepared) + table.resident_bytes()
-            );
-            for index in 0..=10_001 {
-                let radius = index as f64 * radius / 9_999.0;
-                assert_eq!(
-                    table.evaluate(radius).to_bits(),
-                    reference.evaluate(radius).to_bits()
-                );
-            }
-            for frequency in [1.5e9, 45.5e9, 50.0e9] {
-                let actual = super::annular_aperture_power_plane(
-                    [8, 12],
-                    [3.5, 5.5],
-                    [-1e-6, 2e-6],
-                    frequency,
-                    table,
-                );
-                let expected = super::annular_aperture_power_plane(
-                    [8, 12],
-                    [3.5, 5.5],
-                    [-1e-6, 2e-6],
-                    frequency,
-                    &reference,
-                );
-                assert_eq!(
-                    actual.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
-                    expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
-                );
-            }
-        }
-        for model in [
-            None,
-            Some(AnalyticPrimaryBeamModel::CasaEvlaCommon),
-            Some(AnalyticPrimaryBeamModel::MosaicSensitivity),
-        ] {
-            assert!(
-                super::PreparedPrimaryBeam::new(model)
-                    .annular_table
-                    .is_none()
-            );
-            assert_eq!(super::PreparedPrimaryBeam::resident_bytes(model), 0);
+            assert!(super::vla_band_voltage_table(unsupported_hz).is_err());
         }
     }
 }
