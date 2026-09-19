@@ -94,7 +94,7 @@ impl ObservationTransactionWork {
         }
     }
 
-    /// Name every checkpoint for an atomic product-publication transaction.
+    /// Name checkpoints for publication with independent atomic image replacements.
     #[must_use]
     pub const fn new_product_publication(
         initial_consistency_check: WorkNodeId,
@@ -194,10 +194,10 @@ impl ObservationTransactionWork {
 
     /// Return the sole node permitted to revalidate and publish side effects.
     ///
-    /// The node holds every MeasurementSet lock while it rechecks the exact
-    /// read/write preconditions. Successful completion of its publication
-    /// fence establishes readiness only; the runtime's final publish call
-    /// atomically activates conventional-product members. In-place
+    /// For MS-backed transactions, the node holds source locks while it rechecks
+    /// exact read/write preconditions. Generated-product publication takes no MS
+    /// locks. Its fence establishes readiness only; the runtime's final publish
+    /// call replaces each image atomically, not the whole output set. In-place
     /// selected visibility completion is owned by its terminal replay instead.
     #[must_use]
     pub const fn commit(&self) -> &WorkNodeId {

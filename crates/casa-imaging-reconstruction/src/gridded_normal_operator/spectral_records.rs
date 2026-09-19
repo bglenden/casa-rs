@@ -147,6 +147,7 @@ impl GriddedNormalOperatorCompiler {
                     rows.push(
                         native,
                         self.specification.casa_linear_output_grid()?,
+                        0..self.specification.slab().total_channels(),
                         self.finite_values,
                         self.specification.cube_native_weight_transfer,
                         |left, right, factors| {

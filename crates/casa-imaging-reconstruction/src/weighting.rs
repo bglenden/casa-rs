@@ -1976,6 +1976,7 @@ mod selected_sample_tests {
                     predicted: 1,
                 },
                 output,
+                0..5,
                 FiniteValuePolicy::RejectAll,
                 true,
                 |_, _, _| -> Result<(), SpectralOperatorError> {
@@ -2000,6 +2001,7 @@ mod selected_sample_tests {
                     predicted: 2,
                 },
                 output,
+                0..5,
                 FiniteValuePolicy::RejectAll,
                 true,
                 |left, right, _| {
@@ -2041,6 +2043,7 @@ mod selected_sample_tests {
                     predicted: 3,
                 },
                 output,
+                0..5,
                 FiniteValuePolicy::RejectAll,
                 true,
                 |left, right, _| {
@@ -2062,6 +2065,7 @@ mod selected_sample_tests {
                     predicted: 4,
                 },
                 output,
+                0..5,
                 FiniteValuePolicy::RejectAll,
                 true,
                 |_, _, _| -> Result<(), SpectralOperatorError> {
@@ -2074,6 +2078,130 @@ mod selected_sample_tests {
                 rows.finish(),
                 Err(SpectralOperatorError::IncompleteCoverage)
             ));
+        }
+    }
+
+    #[test]
+    fn native_row_output_windows_skip_prediction_but_preserve_interpolation_and_coverage() {
+        use super::{CasaLinearOutputGrid, FiniteValuePolicy};
+        use crate::spectral_operator::{CasaLinearRowResampler, NativeSpectralGroup};
+        use num_complex::Complex64;
+
+        let output = CasaLinearOutputGrid::compile(&[100.0, 150.0, 200.0, 250.0, 300.0]).unwrap();
+        let mut full = Vec::new();
+        for window in [0..5, 2..4, 0..1, 4..5, 5..5] {
+            let mut rows = CasaLinearRowResampler::<f64>::new();
+            let mut emitted = Vec::new();
+            let mut predictions = 0;
+            for channel in 0..3 {
+                let samples = [native_row_sample(channel, 0)];
+                let observed = [Complex64::new(f64::from(channel), 0.0)];
+                rows.push(
+                    NativeSpectralGroup {
+                        frequency_hz: 100.0 + 100.0 * f64::from(channel),
+                        samples: &samples,
+                        observed: &observed,
+                        predicted: f64::from(channel),
+                    },
+                    output,
+                    window.clone(),
+                    FiniteValuePolicy::RejectAll,
+                    true,
+                    |left, right, [a, b]| {
+                        predictions += 1;
+                        Ok(left * a + right * b)
+                    },
+                    |group| {
+                        emitted.push((
+                            group.output_channel,
+                            group.frequency_hz,
+                            group.observed[0],
+                            group.predicted,
+                            group.weights[0],
+                            group.flags[0],
+                        ));
+                        Ok(())
+                    },
+                )
+                .unwrap();
+                if channel < 2 {
+                    assert!(
+                        rows.finish().is_err(),
+                        "window must not shorten row coverage"
+                    );
+                }
+            }
+            rows.finish().unwrap();
+            assert_eq!(predictions, window.len());
+            if window == (0..5) {
+                full = emitted;
+            } else {
+                assert_eq!(
+                    emitted,
+                    full.iter()
+                        .copied()
+                        .filter(|row| window.contains(&row.0))
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn native_row_skipped_outputs_still_reject_invalid_native_pairs() {
+        use super::{CasaLinearOutputGrid, FiniteValuePolicy};
+        use crate::spectral_operator::{
+            CasaLinearRowResampler, NativeSpectralGroup, SpectralOperatorError,
+        };
+        use num_complex::Complex64;
+
+        let output = CasaLinearOutputGrid::compile(&[100.0, 150.0, 200.0, 250.0, 300.0]).unwrap();
+        for failure in 0..5 {
+            let mut rows = CasaLinearRowResampler::<()>::new();
+            for channel in 0..3 {
+                let mut samples = [native_row_sample(channel, 0)];
+                let observed = [Complex64::new(1.0, 0.0)];
+                let mut values = observed.as_slice();
+                if channel == 2 {
+                    match failure {
+                        0 => values = &[],
+                        1 => samples[0].sample.address.correlation_index = 1,
+                        2 => {
+                            samples[0].sample.visibility =
+                                super::SelectedVisibilitySample::Complex32([f32::NAN, 0.0])
+                        }
+                        3 => samples[0].source_imaging_weight = None,
+                        4 => samples[0].sample.raw_input_weight = f32::NAN,
+                        _ => unreachable!(),
+                    }
+                }
+                let result = rows.push(
+                    NativeSpectralGroup {
+                        frequency_hz: 100.0 + 100.0 * f64::from(channel),
+                        samples: &samples,
+                        observed: values,
+                        predicted: (),
+                    },
+                    output,
+                    0..1,
+                    FiniteValuePolicy::RejectAll,
+                    true,
+                    |_, _, _| {
+                        assert!(channel < 2, "off-core prediction must not run");
+                        Ok(())
+                    },
+                    |_| {
+                        assert!(channel < 2, "off-core output must not be emitted");
+                        Ok(())
+                    },
+                );
+                if channel == 2 {
+                    assert!(matches!(result, Err(SpectralOperatorError::InvalidSample)));
+                } else {
+                    result.unwrap();
+                }
+            }
+            rows.finish().unwrap();
         }
     }
 
@@ -2109,6 +2237,7 @@ mod selected_sample_tests {
                         predicted: count,
                     },
                     output,
+                    0..5,
                     FiniteValuePolicy::RejectAll,
                     true,
                     |left, right, _| {

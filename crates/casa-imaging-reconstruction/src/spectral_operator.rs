@@ -5057,6 +5057,7 @@ impl<P> CasaLinearRowResampler<P> {
         &mut self,
         current: NativeSpectralGroup<'_, P>,
         output: CasaLinearOutputGrid,
+        output_channels: std::ops::Range<usize>,
         finite_values: FiniteValuePolicy,
         cube_native_weight_transfer: bool,
         mut interpolate_prediction: impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
@@ -5085,14 +5086,18 @@ impl<P> CasaLinearRowResampler<P> {
             .as_ref()
             .ok_or(SpectralOperatorError::InvalidSample)?;
         let result = samples.into_iter().try_for_each(|sample| {
-            emit(resample_native_pair(
+            if let Some(resampled) = resample_native_pair(
                 previous,
                 &current,
                 sample,
+                output_channels.contains(&sample.output_channel()),
                 finite_values,
                 cube_native_weight_transfer,
                 &mut interpolate_prediction,
-            )?)
+            )? {
+                emit(resampled)?;
+            }
+            Ok(())
         });
         self.retain_current(current);
         result
@@ -5143,10 +5148,11 @@ fn resample_native_pair<P, T>(
     left: &RetainedNativeSpectralGroup<P>,
     right: &NativeSpectralGroup<'_, P>,
     fine: CasaLinearSample,
+    emit_output: bool,
     finite_values: FiniteValuePolicy,
     cube_native_weight_transfer: bool,
     interpolate_prediction: &mut impl FnMut(&P, &P, [f64; 2]) -> Result<T, SpectralOperatorError>,
-) -> Result<CasaResampledGroup<T>, SpectralOperatorError> {
+) -> Result<Option<CasaResampledGroup<T>>, SpectralOperatorError> {
     if left.samples.len() != right.samples.len()
         || left.observed.len() != left.samples.len()
         || right.observed.len() != right.samples.len()
@@ -5169,20 +5175,15 @@ fn resample_native_pair<P, T>(
         {
             return Err(SpectralOperatorError::InvalidSample);
         }
-        correlations.push(left_selected.address().correlation_type);
-        observed
-            .push(left.observed[ordinal] * left_factor + right.observed[ordinal] * right_factor);
-        if cube_native_weight_transfer {
+        let weight = if cube_native_weight_transfer {
             let nearest = if fine.nearest_is_right() {
                 right_weighted
             } else {
                 left_weighted
             };
-            weights.push(
-                nearest
-                    .source_imaging_weight()
-                    .ok_or(SpectralOperatorError::InvalidSample)?,
-            );
+            nearest
+                .source_imaging_weight()
+                .ok_or(SpectralOperatorError::InvalidSample)?
         } else {
             let left_weight = if left_factor == 0.0 {
                 0.0
@@ -5194,10 +5195,17 @@ fn resample_native_pair<P, T>(
             } else {
                 spectral_weight_for_output(right_weighted, fine.output_channel())?
             };
-            weights.push(left_weight * left_factor + right_weight * right_factor);
-        }
+            left_weight * left_factor + right_weight * right_factor
+        };
         let left_flag = !accept_polarization_input(left_selected, finite_values)?;
         let right_flag = !accept_polarization_input(right_selected, finite_values)?;
+        if !emit_output {
+            continue;
+        }
+        correlations.push(left_selected.address().correlation_type);
+        observed
+            .push(left.observed[ordinal] * left_factor + right.observed[ordinal] * right_factor);
+        weights.push(weight);
         let weight_flag = cube_native_weight_transfer && {
             let nearest = if fine.nearest_is_right() {
                 right_selected
@@ -5208,13 +5216,16 @@ fn resample_native_pair<P, T>(
         };
         flags.push(fine.linear_flag(left_flag, right_flag) || weight_flag);
     }
+    if !emit_output {
+        return Ok(None);
+    }
     let selected = left
         .samples
         .first()
         .ok_or(SpectralOperatorError::InvalidSample)?
         .selected()
         .clone();
-    Ok(CasaResampledGroup {
+    Ok(Some(CasaResampledGroup {
         output_channel: fine.output_channel(),
         frequency_hz: fine.frequency_hz(),
         selected,
@@ -5223,7 +5234,7 @@ fn resample_native_pair<P, T>(
         predicted: interpolate_prediction(&left.predicted, &right.predicted, fine.factors())?,
         weights,
         flags,
-    })
+    }))
 }
 
 fn spectral_weight_for_output(
@@ -6236,11 +6247,19 @@ impl CompleteDataOwnerState {
             predicted,
         };
         let output = self.specification.casa_linear_output_grid()?;
+        let output_channels = if self.specification.aw_projection.is_none()
+            && matches!(self.specification.basis, SpectralBasisPlan::ChannelLocal)
+        {
+            self.specification.slab.core_range()
+        } else {
+            0..self.specification.slab.total_channels()
+        };
         let mut linear_rows =
             std::mem::replace(&mut self.linear_rows, CasaLinearRowResampler::new());
         let result = linear_rows.push(
             native,
             output,
+            output_channels,
             self.finite_values,
             self.specification.cube_native_weight_transfer,
             |left, right, [left_factor, right_factor]| {
