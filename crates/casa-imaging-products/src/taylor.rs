@@ -49,7 +49,7 @@ fn normalize_channel_major_sum_weight(
 }
 
 fn normalize_taylor_plane(
-    values: Vec<f32>,
+    values: &[f32],
     normalization: ProductNormalization,
     normal_sum_weight: f64,
     residual_sum_weight: f64,
@@ -218,7 +218,7 @@ impl TaylorProducts {
                 .normal_moment(moment)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             psf.push(normalize_plane(
-                source
+                &source
                     .normal_approximation()
                     .iter()
                     .map(|value| value.re as f32)
@@ -281,7 +281,7 @@ impl TaylorProducts {
                         .collect::<Result<Vec<_>, ProductsError>>();
                 }
                 normalize_taylor_plane(
-                    source
+                    &source
                         .residual()
                         .iter()
                         .map(|value| value.re as f32)
@@ -1000,7 +1000,7 @@ mod tests {
         let raw = [32.0, 16.0, 8.0, 4.0];
         assert_eq!(
             super::normalize_taylor_plane(
-                raw.to_vec(),
+                &raw,
                 ProductNormalization::FlatNoise,
                 8.0,
                 8.0,
@@ -1011,7 +1011,7 @@ mod tests {
         );
         assert_eq!(
             super::normalize_taylor_plane(
-                raw.to_vec(),
+                &raw,
                 ProductNormalization::FlatSky,
                 8.0,
                 8.0,
@@ -1035,14 +1035,8 @@ mod tests {
             (ProductNormalization::UnitResponse, [8.0, 4.0, 2.0, 1.0]),
         ] {
             assert_eq!(
-                super::normalize_taylor_plane(
-                    raw.to_vec(),
-                    normalization,
-                    8.0,
-                    4.0,
-                    Some(sensitivity)
-                )
-                .expect("separate AW normalization sums"),
+                super::normalize_taylor_plane(&raw, normalization, 8.0, 4.0, Some(sensitivity))
+                    .expect("separate AW normalization sums"),
                 expected,
                 "{normalization:?}",
             );
@@ -1054,7 +1048,7 @@ mod tests {
         let sensitivity = crate::MosaicSensitivity::new(&[1.0]).expect("AW sensitivity");
         assert!(matches!(
             super::normalize_taylor_plane(
-                vec![1.0],
+                &[1.0],
                 ProductNormalization::FlatNoise,
                 1.0e100,
                 1.0,

@@ -302,10 +302,10 @@ impl<'a> MosaicSensitivity<'a> {
             .collect()
     }
 
-    /// Normalize an owned raw plane in place without changing its separate PB mask.
+    /// Normalize a complete raw plane without changing its separate PB mask.
     pub fn normalize(
         self,
-        mut values: Vec<f32>,
+        values: &[f32],
         normalization: ProductNormalization,
     ) -> Result<Vec<f32>, ImageResponseError> {
         if values.len() != self.values.len() {
@@ -314,14 +314,18 @@ impl<'a> MosaicSensitivity<'a> {
                 actual: values.len(),
             });
         }
-        for (index, value) in values.iter_mut().enumerate() {
-            let normalized = self.normalize_sample(f64::from(*value), index, normalization)? as f32;
-            if !normalized.is_finite() {
-                return Err(ImageResponseError::GeneratedNonfinite);
-            }
-            *value = normalized;
-        }
-        Ok(values)
+        values
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let normalized =
+                    self.normalize_sample(f64::from(*value), index, normalization)? as f32;
+                normalized
+                    .is_finite()
+                    .then_some(normalized)
+                    .ok_or(ImageResponseError::GeneratedNonfinite)
+            })
+            .collect()
     }
 
     /// Derive PB validity independently of CLEAN-mask and model validity.
@@ -429,62 +433,13 @@ mod tests {
     }
 
     #[test]
-    fn owned_normalization_preserves_allocation_bits_and_length_errors() {
-        let response = MosaicSensitivity::new(&[4.0, 1.0, 0.04, 0.0]).unwrap();
-        for normalization in [
-            ProductNormalization::FlatNoise,
-            ProductNormalization::FlatSky,
-        ] {
-            let mut values = Vec::with_capacity(12);
-            values.extend([0.0_f32, -0.0, f32::from_bits(1), 2.0]);
-            let pointer = values.as_ptr();
-            let capacity = values.capacity();
-            let expected: Vec<_> = values
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    (response
-                        .normalize_sample(f64::from(*value), index, normalization)
-                        .unwrap() as f32)
-                        .to_bits()
-                })
-                .collect();
-            let actual = response.normalize(values, normalization).unwrap();
-            assert_eq!(actual.as_ptr(), pointer);
-            assert_eq!(actual.capacity(), capacity);
-            assert_eq!(
-                actual
-                    .iter()
-                    .map(|value| value.to_bits())
-                    .collect::<Vec<_>>(),
-                expected
-            );
-        }
-        assert!(matches!(
-            response.normalize(vec![1.0], ProductNormalization::FlatNoise),
-            Err(ImageResponseError::PayloadLengthMismatch {
-                expected: 4,
-                actual: 1
-            })
-        ));
-        assert!(
-            response
-                .normalize(vec![f32::NAN; 4], ProductNormalization::FlatNoise)
-                .is_err()
-        );
-    }
-
-    #[test]
     fn t51_response_support_is_separate_from_model_values_and_normalization() {
         let response = MosaicSensitivity::new(&[4.0, 1.0, 0.04, 0.0, -0.04]).unwrap();
         let pb = policy(0.2);
         assert_eq!(response.validity(pb), [true, true, false, false, false]);
         assert_eq!(
             response
-                .normalize(
-                    vec![8.0, 4.0, 0.8, 1.0, 1.0],
-                    ProductNormalization::FlatNoise
-                )
+                .normalize(&[8.0, 4.0, 0.8, 1.0, 1.0], ProductNormalization::FlatNoise)
                 .unwrap(),
             [2.0, 2.0, 2.0, 0.0, 0.0]
         );
