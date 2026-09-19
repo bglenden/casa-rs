@@ -19,7 +19,7 @@ pub use casa_imaging_reconstruction::MosaicSensitivity;
 
 const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
 
-/// Normalize one unnormalized plane to its compiled product normalization.
+/// Normalize an owned plane in place to its compiled product normalization.
 ///
 /// `UnitResponse` and the currently supported scalar-response `FlatNoise`
 /// path divide by the scalar sensitivity (sum weight). `UnitResponse` does
@@ -31,19 +31,20 @@ const FWHM_TO_SIGMA: f64 = 1.0 / 2.354_820_045_030_949_3;
 ///
 /// Fails when the normalization is not representable by this catalog.
 pub fn normalize_plane(
-    values: &[f32],
+    mut values: Vec<f32>,
     normalization: ProductNormalization,
     sensitivity: f64,
 ) -> Result<Vec<f32>, ProductsError> {
     match normalization {
         ProductNormalization::UnitResponse | ProductNormalization::FlatNoise => {
             if !(sensitivity.is_finite() && sensitivity > 0.0) {
-                return Ok(vec![f32::NAN; values.len()]);
+                values.fill(f32::NAN);
+                return Ok(values);
             }
-            Ok(values
-                .iter()
-                .map(|value| value / sensitivity as f32)
-                .collect())
+            for value in &mut values {
+                *value /= sensitivity as f32;
+            }
+            Ok(values)
         }
         ProductNormalization::FlatSky => Err(ProductsError::UnsupportedProductRole {
             role: casa_imaging_model::ProductRole::Sensitivity,
@@ -154,7 +155,8 @@ impl ResidualBeamScaling {
     }
 }
 
-/// Rescale a normalized residual plane from its fitted beam to a selected beam.
+/// Rescale an owned residual plane from its fitted beam to a selected beam.
+/// The input allocation is retained when smoothing is not needed.
 ///
 /// This follows CASA `SIImageStore::rescaleResolution`: deconvolve the fitted
 /// beam from the selected beam, skip effectively identical or sub-pixel
@@ -165,7 +167,7 @@ impl ResidualBeamScaling {
 ///
 /// Returns [`ProductsError::BeamFitFailed`] when beam deconvolution fails.
 pub fn rescale_residual_to_beam(
-    residual: &[f32],
+    residual: Vec<f32>,
     shape: [usize; 2],
     cell_size_rad: [f64; 2],
     fitted: RestoringBeam,
@@ -177,7 +179,7 @@ pub fn rescale_residual_to_beam(
         .map_err(|error| ProductsError::BeamFitFailed(error.to_string()))?;
     let Some(smoothing_beam) = smoothing_beam else {
         return Ok(ResidualBeamScaling {
-            values: residual.to_vec(),
+            values: residual,
             smoothing_beam: None,
             area_ratio,
             applied: false,
@@ -185,7 +187,7 @@ pub fn rescale_residual_to_beam(
     };
     if smoothing_beam.minor_fwhm_rad() <= cell_size_rad[0].hypot(cell_size_rad[1]) {
         return Ok(ResidualBeamScaling {
-            values: residual.to_vec(),
+            values: residual,
             smoothing_beam: Some(smoothing_beam),
             area_ratio,
             applied: false,
@@ -199,7 +201,7 @@ pub fn rescale_residual_to_beam(
     }
     kernel.mapv_inplace(|value| (f64::from(value) / volume) as f32);
     let mut values = fft_convolve(
-        residual,
+        &residual,
         kernel.as_slice().expect("Gaussian kernel is contiguous"),
         shape,
     );
@@ -340,14 +342,77 @@ mod tests {
     }
 
     #[test]
+    fn normalization_reuses_owned_buffer_and_preserves_scalar_bits() {
+        for normalization in [
+            ProductNormalization::UnitResponse,
+            ProductNormalization::FlatNoise,
+        ] {
+            for sensitivity in [3.5, 0.0, f64::NAN] {
+                let mut values = Vec::with_capacity(16);
+                values.extend([0.0, -0.0, f32::from_bits(1), -2.25]);
+                let pointer = values.as_ptr();
+                let capacity = values.capacity();
+                let expected: Vec<f32> = values
+                    .iter()
+                    .map(|value| {
+                        if sensitivity.is_finite() && sensitivity > 0.0 {
+                            value / sensitivity as f32
+                        } else {
+                            f32::NAN
+                        }
+                    })
+                    .collect();
+                let actual = normalize_plane(values, normalization, sensitivity).unwrap();
+                assert_eq!(actual.as_ptr(), pointer);
+                assert_eq!(actual.capacity(), capacity);
+                assert_eq!(
+                    actual
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    expected
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn subpixel_beam_scaling_transfers_the_unchanged_buffer() {
+        let source = RestoringBeam::new(4.0e-6, 3.0e-6, 0.0).unwrap();
+        let target = RestoringBeam::new(4.1e-6, 3.1e-6, 0.0).unwrap();
+        let residual = vec![0.0, -0.0, f32::from_bits(0x7fc00042), -2.0];
+        let pointer = residual.as_ptr();
+        let expected: Vec<_> = residual.iter().map(|value| value.to_bits()).collect();
+        let scaling =
+            rescale_residual_to_beam(residual, [2, 2], [1.0e-6; 2], source, target).unwrap();
+        assert!(!scaling.applied());
+        assert!(scaling.smoothing_beam().is_some());
+        assert_eq!(scaling.values().as_ptr(), pointer);
+        assert_eq!(
+            scaling
+                .values()
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
     fn identical_beams_leave_the_residual_bit_exact() {
         let beam = RestoringBeam::new(4.0e-6, 3.0e-6, 0.2).expect("beam");
         let residual = vec![0.0, 1.0, -2.0, 3.0];
-        let scaling = rescale_residual_to_beam(&residual, [2, 2], [1.0e-6; 2], beam, beam).unwrap();
+        let pointer = residual.as_ptr();
+        let expected = residual.clone();
+        let scaling = rescale_residual_to_beam(residual, [2, 2], [1.0e-6; 2], beam, beam).unwrap();
         assert!(!scaling.applied());
         assert_eq!(scaling.smoothing_beam(), None);
         assert_eq!(scaling.area_ratio(), 1.0);
-        assert_eq!(scaling.values(), residual);
+        assert_eq!(scaling.values(), expected);
+        assert_eq!(scaling.values().as_ptr(), pointer);
     }
 
     #[test]
@@ -359,7 +424,7 @@ mod tests {
         residual[(shape[0] / 2) * shape[1] + shape[1] / 2] = 1.0;
 
         let scaling =
-            rescale_residual_to_beam(&residual, shape, [1.0e-6; 2], source, target).unwrap();
+            rescale_residual_to_beam(residual, shape, [1.0e-6; 2], source, target).unwrap();
         assert!(scaling.applied());
         assert!(scaling.smoothing_beam().is_some());
         assert!((scaling.area_ratio() - 4.0).abs() < 1.0e-12);
@@ -375,7 +440,7 @@ mod tests {
     fn smaller_selected_beam_fails_instead_of_silently_skipping_scaling() {
         let fitted = RestoringBeam::new(8.0e-6, 6.0e-6, 0.0).expect("fitted beam");
         let selected = RestoringBeam::new(4.0e-6, 3.0e-6, 0.0).expect("selected beam");
-        let error = rescale_residual_to_beam(&[1.0; 16], [4, 4], [1.0e-6; 2], fitted, selected)
+        let error = rescale_residual_to_beam(vec![1.0; 16], [4, 4], [1.0e-6; 2], fitted, selected)
             .expect_err("smaller target must fail");
         assert!(matches!(error, ProductsError::BeamFitFailed(_)));
     }

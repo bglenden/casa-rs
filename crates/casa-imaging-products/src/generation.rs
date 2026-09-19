@@ -958,7 +958,7 @@ fn produce_joint_member(
                 .normal_block(row, column)
                 .ok_or(ProductsError::SourceLineageMismatch)?;
             payload = normalize_plane(
-                &block
+                block
                     .normal_approximation()
                     .iter()
                     .map(|value| value.re as f32)
@@ -1041,7 +1041,7 @@ fn produce_joint_member(
                     required_normalization(member)?,
                 )?;
                 let residual = rescale_residual_to_beam(
-                    &residual,
+                    residual,
                     shape,
                     cell_size,
                     fitted_beam,
@@ -1155,7 +1155,7 @@ fn evaluate_joint_residual_plane(
         .channel_sum_weights()
         .get(channel)
         .ok_or(ProductsError::SourceLineageMismatch)?;
-    normalize_plane(&output, normalization, normalization_weight)
+    normalize_plane(output, normalization, normalization_weight)
 }
 
 fn joint_line_term(
@@ -1286,7 +1286,7 @@ fn produce_plane_member(
         | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(0)) => {
             if valid {
                 normalize_domain_plane(
-                    &psf_real_plane(plane),
+                    psf_real_plane(plane),
                     member
                         .normalization
                         .unwrap_or(ProductNormalization::UnitResponse),
@@ -1301,7 +1301,7 @@ fn produce_plane_member(
         ) => {
             if valid {
                 normalize_domain_plane(
-                    &residual_real_plane(plane),
+                    residual_real_plane(plane),
                     required_normalization(member)?,
                     plane,
                 )
@@ -1351,7 +1351,7 @@ fn produce_plane_member(
             )?;
             let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
             let residual = normalize_domain_plane(
-                &residual_real_plane(plane),
+                residual_real_plane(plane),
                 required_normalization(member)?,
                 plane,
             )?;
@@ -1361,7 +1361,7 @@ fn produce_plane_member(
                 )
             })?;
             let residual =
-                rescale_residual_to_beam(&residual, shape, cell_size, fitted_beam, *beam)?
+                rescale_residual_to_beam(residual, shape, cell_size, fitted_beam, *beam)?
                     .into_values();
             Ok(restore_model_plane(
                 &model, residual, shape, beam, cell_size,
@@ -1401,7 +1401,7 @@ fn produce_plane_member(
 }
 
 fn normalize_domain_plane(
-    values: &[f32],
+    values: Vec<f32>,
     normalization: ProductNormalization,
     plane: &DomainPlane<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
@@ -1439,7 +1439,7 @@ fn restored_plane(
     )?;
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
     let residual = normalize_domain_plane(
-        &residual_real_plane(plane),
+        residual_real_plane(plane),
         required_normalization(member)?,
         plane,
     )?;
@@ -1448,7 +1448,7 @@ fn restored_plane(
             "restoration requires a fitted beam for every valid plane".to_string(),
         )
     })?;
-    let residual = rescale_residual_to_beam(&residual, plane.shape, cell_size, fitted_beam, beam)?
+    let residual = rescale_residual_to_beam(residual, plane.shape, cell_size, fitted_beam, beam)?
         .into_values();
     Ok(restore_model_plane(
         &model,

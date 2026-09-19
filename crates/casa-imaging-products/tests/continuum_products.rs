@@ -1451,15 +1451,17 @@ fn direct_generation_rejects_same_problem_with_foreign_completions() {
 fn flat_noise_normalization_divides_by_the_exact_sensitivity() {
     let values = [2.0_f32, -4.0, 6.0];
     assert_eq!(
-        normalize_plane(&values, ProductNormalization::UnitResponse, 8.0).expect("unit response"),
+        normalize_plane(values.to_vec(), ProductNormalization::UnitResponse, 8.0)
+            .expect("unit response"),
         [0.25, -0.5, 0.75]
     );
     assert_eq!(
-        normalize_plane(&values, ProductNormalization::FlatNoise, 8.0).expect("flat noise"),
+        normalize_plane(values.to_vec(), ProductNormalization::FlatNoise, 8.0).expect("flat noise"),
         [0.25, -0.5, 0.75]
     );
     // No usable sensitivity blanks every pixel instead of dividing by zero.
-    let blanked = normalize_plane(&values, ProductNormalization::FlatNoise, 0.0).expect("blanked");
+    let blanked =
+        normalize_plane(values.to_vec(), ProductNormalization::FlatNoise, 0.0).expect("blanked");
     assert!(blanked.iter().all(|value| value.is_nan()));
 }
 
@@ -1470,13 +1472,13 @@ fn mosaic_sensitivity_owns_normalization_primary_beam_and_valid_support() {
     assert_eq!(sensitivity.primary_beam(), [1.0, 0.5, 0.25, 0.0]);
     assert_eq!(
         sensitivity
-            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatNoise)
+            .normalize(vec![32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatNoise)
             .expect("flat-noise normalization"),
         [2.0, 2.0, 2.0, 0.0]
     );
     assert_eq!(
         sensitivity
-            .normalize(&[32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatSky)
+            .normalize(vec![32.0, 16.0, 8.0, 4.0], ProductNormalization::FlatSky)
             .expect("flat-sky normalization"),
         [2.0, 4.0, 8.0, 0.0]
     );
