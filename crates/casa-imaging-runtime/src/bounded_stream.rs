@@ -339,6 +339,29 @@ impl BoundedExecution<'_> {
         self.0.is_some_and(|team| team.pool.is_some())
     }
 
+    /// Join bounded borrowed jobs inside the already installed, admitted team.
+    /// No job or borrowed source storage survives this call, including on error.
+    pub(crate) fn for_each_mut<T: Send, E: Send>(
+        self,
+        values: &mut [T],
+        operation: impl Fn(usize, &mut T) -> Result<(), E> + Send + Sync,
+    ) -> Result<(), E> {
+        let Some(pool) = self.0.and_then(|team| team.pool.as_ref()) else {
+            return values
+                .iter_mut()
+                .enumerate()
+                .try_for_each(|(index, value)| operation(index, value));
+        };
+        assert!(
+            pool.current_thread_index().is_some(),
+            "borrowed jobs outside admitted worker team"
+        );
+        values
+            .par_iter_mut()
+            .enumerate()
+            .try_for_each(|(index, value)| operation(index, value))
+    }
+
     pub(crate) fn consume_pair(
         self,
         science: impl FnOnce() -> std::io::Result<()> + Send,
@@ -4990,5 +5013,90 @@ mod tests {
                 "terminal": source.terminal,
             })
         );
+    }
+
+    #[test]
+    fn bounded_borrowed_jobs_overlap_on_all_four_admitted_workers() {
+        let team = FixedWorkerTeam::new(4).expect("four-worker team");
+        let barrier = Barrier::new(4);
+        let workers = Mutex::new(BTreeSet::new());
+        let borrowed_input = [11, 23, 37, 41];
+        let mut output = [0; 4];
+        team.install(|| {
+            BoundedExecution(Some(&team))
+                .for_each_mut(&mut output, |index, value| {
+                    workers
+                        .lock()
+                        .unwrap()
+                        .insert(rayon::current_thread_index().expect("installed worker index"));
+                    barrier.wait();
+                    *value = borrowed_input[index] + index;
+                    Ok::<_, Infallible>(())
+                })
+                .expect("joined borrowed jobs");
+        });
+        assert_eq!(output, [11, 24, 39, 44]);
+        assert_eq!(workers.lock().unwrap().len(), 4);
+        assert_eq!(team.shutdown(), 4);
+    }
+
+    #[test]
+    fn bounded_borrowed_jobs_join_every_started_job_before_returning_error() {
+        let team = FixedWorkerTeam::new(4).expect("four-worker team");
+        let barrier = Barrier::new(4);
+        let finished = AtomicUsize::new(0);
+        let mut output = [0; 4];
+        let result = team.install(|| {
+            BoundedExecution(Some(&team)).for_each_mut(&mut output, |index, value| {
+                barrier.wait();
+                *value = index + 1;
+                finished.fetch_add(1, Ordering::Release);
+                if index == 0 {
+                    Err("injected borrowed job error")
+                } else {
+                    Ok(())
+                }
+            })
+        });
+        assert_eq!(result, Err("injected borrowed job error"));
+        assert_eq!(finished.load(Ordering::Acquire), 4);
+        assert_eq!(output, [1, 2, 3, 4]);
+        assert_eq!(team.shutdown(), 4);
+    }
+
+    #[test]
+    fn bounded_borrowed_jobs_panic_joins_started_jobs_and_worker_threads() {
+        struct JobExit<'a>(&'a AtomicUsize);
+        impl Drop for JobExit<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Release);
+            }
+        }
+
+        let barrier = Barrier::new(4);
+        let finished = AtomicUsize::new(0);
+        let exits = Arc::new(AtomicUsize::new(0));
+        let mut output = [0; 4];
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let team = FixedWorkerTeam::new_with_spawn(4, |thread| {
+                spawn_observed_worker(thread, Arc::clone(&exits))
+            })
+            .expect("four-worker team");
+            team.install(|| {
+                BoundedExecution(Some(&team))
+                    .for_each_mut(&mut output, |index, value| {
+                        let _exit = JobExit(&finished);
+                        barrier.wait();
+                        *value = index + 1;
+                        assert_ne!(index, 0, "injected borrowed job panic");
+                        Ok::<_, Infallible>(())
+                    })
+                    .expect("infallible successful jobs");
+            });
+        }));
+        assert!(result.is_err());
+        assert_eq!(finished.load(Ordering::Acquire), 4);
+        assert_eq!(output, [1, 2, 3, 4]);
+        assert_eq!(exits.load(Ordering::Acquire), 4);
     }
 }

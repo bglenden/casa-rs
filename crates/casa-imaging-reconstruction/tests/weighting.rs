@@ -1155,6 +1155,154 @@ fn partition_block_worker_and_repeated_replay_choices_are_invariant() {
 }
 
 #[test]
+fn parallel_replay_preparation_preserves_ordered_groups_blocks_and_coverage() {
+    for scheme in [
+        WeightingScheme::Natural,
+        WeightingScheme::Uniform,
+        WeightingScheme::Briggs { robust: 0.5 },
+    ] {
+        let scope = if scheme == WeightingScheme::Natural {
+            WeightDensityScope::NotApplicable
+        } else {
+            WeightDensityScope::GlobalSelection
+        };
+        let problem = problem(scheme, scope, None);
+        let base = exact_samples(&problem)[0].clone();
+        let samples = (0..14)
+            .map(|index| {
+                let mut sample = base.clone();
+                sample.address.physical_row = index / 2;
+                sample.address.correlation_index = (index % 2) as u32;
+                sample.address.correlation_type = if index % 2 == 0 {
+                    CorrelationType::CircularRr
+                } else {
+                    CorrelationType::CircularLl
+                };
+                sample.input_weight = if index % 2 == 0 { 3.0 } else { 7.0 };
+                sample.channel_flag = index == 5;
+                sample
+            })
+            .collect::<Vec<_>>();
+        let views = samples
+            .iter()
+            .enumerate()
+            .map(|(index, sample)| {
+                sample.as_view().with_input_weight_group(
+                    SelectedInputWeightGroup::parallel_hands(3.0, 7.0)
+                        .with_imaging_flag(index / 2 == 2)
+                        .with_density_owner(index % 2 == 0)
+                        .with_terminal_member(index % 2 == 1),
+                )
+            })
+            .collect::<Vec<_>>();
+        // An odd block capacity exercises flush-before-group and pending reuse.
+        let plan = plan_weighting(&problem, WeightingExecutionLimits::new(5, 4).unwrap()).unwrap();
+        let mut density = begin_weighting_generation(&problem, &plan).unwrap();
+        for (view, sample) in views.iter().zip(&samples) {
+            density
+                .consume(
+                    &problem,
+                    *view,
+                    sample.address.frequency_centre_hz,
+                    exact_contributions(sample),
+                )
+                .unwrap();
+        }
+        let mut sum = density.finish(&problem).unwrap();
+        for (view, sample) in views.iter().zip(&samples) {
+            sum.consume(
+                &problem,
+                *view,
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
+            .unwrap();
+        }
+        let generation = sum.finish().unwrap();
+        let mut reference = None;
+        for workers in [1_usize, 2, 4] {
+            let mut phase = generation.begin_replay(&problem, &plan).unwrap();
+            let mut prepared = (0..samples.len()).map(|_| None).collect::<Vec<_>>();
+            let groups_per_worker = (samples.len() / 2).div_ceil(workers);
+            let barrier = std::sync::Barrier::new(workers);
+            let preparations = std::sync::atomic::AtomicUsize::new(0);
+            std::thread::scope(|threads| {
+                let phase = &phase;
+                for (output, (input, selected)) in prepared.chunks_mut(groups_per_worker * 2).zip(
+                    views
+                        .chunks(groups_per_worker * 2)
+                        .zip(samples.chunks(groups_per_worker * 2)),
+                ) {
+                    let (problem, barrier, preparations) = (&problem, &barrier, &preparations);
+                    threads.spawn(move || {
+                        barrier.wait();
+                        for (output, (view, sample)) in
+                            output.iter_mut().zip(input.iter().zip(selected))
+                        {
+                            *output = Some(
+                                phase
+                                    .prepare_sample(
+                                        problem,
+                                        *view,
+                                        sample.address.frequency_centre_hz,
+                                        exact_contributions(sample),
+                                    )
+                                    .unwrap(),
+                            );
+                            preparations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    });
+                }
+            });
+            assert_eq!(
+                preparations.load(std::sync::atomic::Ordering::Relaxed),
+                samples.len()
+            );
+            let mut blocks = Vec::new();
+            for weighted in prepared {
+                if let Some(block) = phase.commit_prepared(weighted.unwrap()).unwrap() {
+                    blocks.push((block.sequence(), block.samples().to_vec()));
+                    phase.reuse_emitted_block(block).unwrap();
+                }
+            }
+            let (last, summary) = phase.finish().unwrap();
+            if let Some(block) = last {
+                blocks.push((block.sequence(), block.into_samples()));
+            }
+            let actual = (
+                blocks,
+                summary.coverage(),
+                summary.sample_count(),
+                summary.block_count(),
+            );
+            assert_eq!(actual.2, 14);
+            assert_eq!(actual.3, 4);
+            if let Some(reference) = &reference {
+                assert_eq!(&actual, reference);
+            } else {
+                reference = Some(actual);
+            }
+        }
+        let phase = generation.begin_replay(&problem, &plan).unwrap();
+        let _prepared = phase
+            .prepare_sample(
+                &problem,
+                views[0],
+                samples[0].address.frequency_centre_hz,
+                exact_contributions(&samples[0]),
+            )
+            .unwrap();
+        assert!(
+            matches!(
+                phase.finish(),
+                Err(WeightingError::SelectedGenerationMismatch)
+            ),
+            "preparing a sample must not commit coverage or allow phase completion"
+        );
+    }
+}
+
+#[test]
 fn derived_coverage_preserves_encoded_identity_across_block_shapes_and_rejects_mismatch() {
     let problem = problem(
         WeightingScheme::Uniform,

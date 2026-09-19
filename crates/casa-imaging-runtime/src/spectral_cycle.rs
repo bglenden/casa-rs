@@ -1120,6 +1120,20 @@ struct ReconstructionCycleExecution {
 }
 
 impl SpectralCycleExecutor {
+    /// Number of samples actually prepared in successful parallel additional-initial
+    /// traversals by this executor. This diagnostic survives resource release;
+    /// serial execution reports zero, and a poisoned executor returns `None`.
+    #[must_use]
+    pub fn parallel_preparation_sample_count(&self) -> Option<u64> {
+        Some(
+            self.state
+                .lock()
+                .ok()?
+                .weighting
+                .parallel_preparation_sample_count(),
+        )
+    }
+
     /// Return transient scheduling and residency evidence for the latest
     /// completed complete-data stream.
     #[must_use]
@@ -1776,12 +1790,11 @@ impl SpectralCycleExecutor {
         }
         let paired_allocation =
             crate::weighting::initial_consumer_team_allocation(&context.node().id);
-        if context
-            .node()
-            .allocations
-            .iter()
-            .any(|usage| usage.allocation == paired_allocation)
-            && (state.gridded_compilation.is_none() || self.final_visibility_sink.is_some())
+        let preparation_allocation =
+            crate::weighting::replay_preparation_allocation(&context.node().id);
+        if context.node().allocations.iter().any(|usage| {
+            usage.allocation == paired_allocation || usage.allocation == preparation_allocation
+        }) && (state.gridded_compilation.is_none() || self.final_visibility_sink.is_some())
         {
             return Err(io::Error::other(
                 "paired initial plan lacks exclusive science/compiler ownership",
@@ -2714,7 +2727,35 @@ impl WorkImplementation for SpectralCycleExecutor {
                     "prepared-artifact reader execution binding is missing",
                 ));
             }
-            let fragment = self.fragment();
+            let mut fragment = self.fragment();
+            let preparation_allocation =
+                crate::weighting::replay_preparation_allocation(&context.node().id);
+            if context
+                .node()
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == preparation_allocation)
+            {
+                let workers = context
+                    .resources()
+                    .iter()
+                    .find(|claim| claim.resource() == &LeaseResource::Workers)
+                    .ok_or_else(|| io::Error::other("replay preparation lacks worker claim"))?
+                    .amount();
+                let preparation = crate::weighting::ReplayPreparationPlan::new(
+                    &self.problem,
+                    &self.weighting_plan,
+                    usize::try_from(workers).map_err(io::Error::other)?,
+                )
+                .map_err(io::Error::other)?;
+                fragment = Some(
+                    fragment
+                        .ok_or_else(|| {
+                            io::Error::other("replay preparation lacks weighting owner")
+                        })?
+                        .with_replay_preparation(Some(preparation)),
+                );
+            }
             let mut state = self
                 .state
                 .lock()

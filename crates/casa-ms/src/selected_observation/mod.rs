@@ -9,6 +9,7 @@
 mod access;
 mod bound_observation;
 mod content_plan;
+mod indexed_block;
 mod measures;
 mod row_access;
 mod row_selection;
@@ -32,6 +33,10 @@ pub use content_plan::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,
     SelectedObservationContentPlanError, SelectedObservationContentRequirements,
     SelectedObservationReferenceDataBudget,
+};
+pub use indexed_block::{
+    SelectedObservationBlockIndex, SelectedObservationBlockIndexPlan,
+    SelectedObservationIndexedBlock, SelectedObservationProjector,
 };
 pub use measures::{SelectedObservationMeasures, SelectedObservationMeasuresError};
 pub use row_access::{SelectedObservationRow, SelectedObservationRowSelection};

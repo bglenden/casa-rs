@@ -1080,6 +1080,7 @@ impl BoundSelectedObservation {
                 measures: self.measures,
                 sources: self.sources,
                 source_index: 0,
+                block_ordinal: 0,
                 row_replay: None,
                 source_pass_recorded: false,
                 exhausted: false,
@@ -1114,6 +1115,7 @@ pub struct SelectedObservationBlockSource<'a> {
     measures: SelectedObservationMeasures,
     sources: Vec<BoundObservationSource>,
     source_index: usize,
+    block_ordinal: u64,
     row_replay: Option<SelectedRowReplay>,
     source_pass_recorded: bool,
     exhausted: bool,
@@ -1138,6 +1140,7 @@ impl SelectedObservationBlockSource<'_> {
         &mut self,
         block: &mut SelectedObservationBlock,
     ) -> Result<Option<u32>, BoundObservationSourceError> {
+        block.index_binding = None;
         if self.exhausted {
             return Ok(None);
         }
@@ -1169,6 +1172,12 @@ impl SelectedObservationBlockSource<'_> {
                 block,
                 &mut self.measurements,
             )? {
+                self.block_ordinal = self
+                    .block_ordinal
+                    .checked_add(1)
+                    .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+                block.index_binding =
+                    Some((self.access_binding, self.traversal, self.block_ordinal));
                 return u32::try_from(self.source_index)
                     .map(Some)
                     .map_err(|_| BoundObservationSourceError::MeasurementOverflow);
@@ -1211,6 +1220,61 @@ pub struct SelectedObservationBlockConsumer<'a> {
 }
 
 impl SelectedObservationBlockConsumer<'_> {
+    /// Inspect exactly one contiguous native-run window and retain its compact
+    /// index. Call windows in canonical order and cover every block exactly once.
+    /// Projection can then run over disjoint index ranges with worker-local scratch.
+    pub fn index_block_range(
+        &mut self,
+        block: &SelectedObservationBlock,
+        range: std::ops::Range<usize>,
+        index: &mut super::SelectedObservationBlockIndex,
+    ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
+        index.clear();
+        let inspection = &mut self.inspection;
+        let rebound_sample_count = &mut self.rebound_sample_count;
+        block
+            .visit_selected_sample_range(
+                self.problem,
+                &mut self.correlations,
+                range,
+                |row, channel, correlations, _, _| {
+                    if let Some(inspection) = inspection {
+                        inspection
+                            .push_run(row, &channel, correlations)
+                            .map_err(SelectedObservationTraversalError::Inspection)?;
+                    } else {
+                        *rebound_sample_count = rebound_sample_count
+                            .checked_add(u64::try_from(correlations.len()).map_err(|_| {
+                                SelectedObservationTraversalError::MeasurementOverflow
+                            })?)
+                            .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
+                    }
+                    index
+                        .push(row, channel, correlations)
+                        .map_err(SelectedObservationTraversalError::Source)
+                },
+            )
+            .map_err(|error| match error {
+                BlockVisitError::Source(error) => SelectedObservationTraversalError::Source(error),
+                BlockVisitError::Consumer(error) => error,
+            })?;
+        self.peak_scratch_current_bytes = self.peak_scratch_current_bytes.max(
+            self.correlations
+                .len()
+                .checked_mul(size_of::<SelectedObservationRunCorrelation>())
+                .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?,
+        );
+        index.binding = Some((
+            self.problem.problem_id(),
+            block
+                .index_binding
+                .ok_or(SelectedObservationTraversalError::Source(
+                    BoundObservationSourceError::StoredSampleShapeMismatch,
+                ))?,
+        ));
+        Ok(())
+    }
+
     /// Return bytes handed to the selected-generation hasher so far.
     #[must_use]
     pub const fn generation_proof_bytes(&self) -> u64 {

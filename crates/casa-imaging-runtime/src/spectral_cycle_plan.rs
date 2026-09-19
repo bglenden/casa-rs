@@ -542,7 +542,11 @@ impl SpectralCyclePlan {
                 if strategy == GriddedNormalStrategy::CreateManagedSpill
                     && policy.visibility_write.is_none() =>
             {
-                2
+                if supports_replay_preparation(problem, &policy) {
+                    problem.geometry().spectral().output_channels() as u64
+                } else {
+                    2
+                }
             }
             SpectralPassPhase::InitialMajor => 1,
             SpectralPassPhase::FinalMajor => GRIDDED_NORMAL_LANE_COUNT as u64,
@@ -978,7 +982,11 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
             if strategy == GriddedNormalStrategy::CreateManagedSpill
                 && policy.visibility_write.is_none() =>
         {
-            workers.min(2)
+            if supports_replay_preparation(problem, policy) {
+                workers
+            } else {
+                workers.min(2)
+            }
         }
         SpectralPassPhase::InitialMajor => 1,
         SpectralPassPhase::FinalMajor => workers.min(GRIDDED_NORMAL_LANE_COUNT as u64),
@@ -988,6 +996,22 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
         SpectralPassPhase::InitialMajor => {
             let (base, source_resources) =
                 base_physical(problem, registry, policy, pass, phase_input)?;
+            let preparation = if strategy == GriddedNormalStrategy::CreateManagedSpill
+                && supports_replay_preparation(problem, policy)
+                && replay_workers > 1
+            {
+                Some(
+                    crate::weighting::ReplayPreparationPlan::new(
+                        problem,
+                        weighting,
+                        usize::try_from(replay_workers)
+                            .map_err(|_| SpectralCyclePlanError::Overflow)?,
+                    )
+                    .map_err(|_| SpectralCyclePlanError::Overflow)?,
+                )
+            } else {
+                None
+            };
             let weighting_mode = match problem.weighting().scheme() {
                 casa_imaging_model::WeightingScheme::Natural => {
                     WeightingStreamingMode::NaturalInitial
@@ -1009,7 +1033,8 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                     .map(|plan| u64::try_from(plan.bytes()))
                     .transpose()
                     .map_err(|_| SpectralCyclePlanError::Overflow)?,
-            );
+            )
+            .with_replay_preparation(preparation);
             let replay = fragment.streaming_node().clone();
             let mut physical = fragment.compose(&base)?;
             if strategy == GriddedNormalStrategy::CreateManagedSpill {
@@ -1022,6 +1047,7 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
                     artifact_budget.ok_or(SpectralCyclePlanError::Overflow)?,
                     ManagedSpillMode::Write {
                         initial_consumer_workers: replay_workers,
+                        preparation,
                     },
                 )?;
             }
@@ -2407,7 +2433,10 @@ fn base_gridded_physical<R: ImplementationRegistry>(
 #[derive(Clone, Copy)]
 enum ManagedSpillMode<'a> {
     Read(&'a crate::complete_data_operator::GriddedNormalReplayWindowPlan),
-    Write { initial_consumer_workers: u64 },
+    Write {
+        initial_consumer_workers: u64,
+        preparation: Option<crate::weighting::ReplayPreparationPlan>,
+    },
 }
 
 struct ManagedSpillModeSpec {
@@ -2474,6 +2503,19 @@ fn reusable_physical_slot(
         .map(|slot| slot.id.clone())
 }
 
+fn supports_replay_preparation(
+    problem: &CompiledProblem,
+    policy: &SpectralCycleExecutionPolicy,
+) -> bool {
+    matches!(
+        problem.reconstruction().basis(),
+        casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+    ) && problem.weighting().scheme() == casa_imaging_model::WeightingScheme::Natural
+        && problem.visibility_transform().is_none()
+        && policy.aw_projection.is_none()
+        && policy.visibility_write.is_none()
+}
+
 fn append_managed_spill_resources<R: ImplementationRegistry>(
     registry: &R,
     base: PhysicalWorkBinding,
@@ -2486,8 +2528,13 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
     let initial_consumer_workers = match mode {
         ManagedSpillMode::Write {
             initial_consumer_workers,
+            ..
         } => initial_consumer_workers,
         ManagedSpillMode::Read(_) => 1,
+    };
+    let preparation = match mode {
+        ManagedSpillMode::Write { preparation, .. } => preparation,
+        ManagedSpillMode::Read(_) => None,
     };
     let budget = admission.spill;
     let storage = policy
@@ -2495,14 +2542,28 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         .as_ref()
         .ok_or(SpectralCyclePlanError::MissingGriddedNormalStorage)?;
     let mode = mode.specification(budget);
-    let initial_team = if initial_consumer_workers == 2 {
+    let initial_team = if initial_consumer_workers > 1 || preparation.is_some() {
         let stack_bytes = bounded_worker_stack_bytes(initial_consumer_workers)?;
-        let bytes = crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(2, 1, 0)
+        let bytes = if let Some(preparation) = preparation {
+            preparation
+                .admitted_heap_bytes()
+                .map_err(|_| SpectralCyclePlanError::Overflow)?
+        } else {
+            crate::bounded_stream::BoundedKernelPlan::new::<(), ()>(
+                initial_consumer_workers as usize,
+                1,
+                0,
+            )
             .map_err(|_| SpectralCyclePlanError::Overflow)?
             .capacity_bytes()
             .checked_sub(stack_bytes)
-            .ok_or(SpectralCyclePlanError::Overflow)?;
-        let allocation = crate::weighting::initial_consumer_team_allocation(node);
+            .ok_or(SpectralCyclePlanError::Overflow)?
+        };
+        let allocation = if preparation.is_some() {
+            crate::weighting::replay_preparation_allocation(node)
+        } else {
+            crate::weighting::initial_consumer_team_allocation(node)
+        };
         Some(LogicalAllocation {
             physical_slot: PhysicalSlotId::new(format!("{}-slot", allocation.as_str())),
             id: allocation,
@@ -2715,18 +2776,18 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         owner
             .claims
             .retain(|claim| claim.resource != LeaseResource::Workers);
-        owner.claims.extend([
-            ResourceClaim {
-                resource: LeaseResource::Workers,
-                amount: initial_consumer_workers,
-                lifetime: ClaimLifetime::Work,
-            },
-            ResourceClaim {
+        owner.claims.push(ResourceClaim {
+            resource: LeaseResource::Workers,
+            amount: initial_consumer_workers,
+            lifetime: ClaimLifetime::Work,
+        });
+        if initial_consumer_workers > 1 {
+            owner.claims.push(ResourceClaim {
                 resource: LeaseResource::RuntimeOverhead(RuntimeOverheadKind::ThreadStack),
                 amount: bounded_worker_stack_bytes(initial_consumer_workers)?,
                 lifetime: ClaimLifetime::Work,
-            },
-        ]);
+            });
+        }
         owner.allocations.push(AllocationUse {
             allocation: allocation.id.clone(),
             lifetime: ClaimLifetime::through_fence(FenceKind::Io),

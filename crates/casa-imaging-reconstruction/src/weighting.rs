@@ -1150,6 +1150,19 @@ impl WeightingSumWeightPhase {
         output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<WeightingSampleValue, WeightingError> {
+        let weighted =
+            self.prepare_sample(problem, sample, output_frame_frequency_hz, contributions)?;
+        self.accumulate_prepared(problem, &weighted)?;
+        Ok(weighted)
+    }
+
+    fn prepare_sample(
+        &self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        output_frame_frequency_hz: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<WeightingSampleValue, WeightingError> {
         if self.problem != problem.problem_id()
             || self.commitment != problem.weighting().commitment_id()
         {
@@ -1158,7 +1171,7 @@ impl WeightingSumWeightPhase {
         validate_spectral_contribution_capacity(problem, &contributions)?;
         let sample =
             WeightingSelectedSample::from_selected(problem, sample, output_frame_frequency_hz)?;
-        let weighted = weighted_sample_from_state(
+        weighted_sample_from_state(
             problem,
             self.grid,
             &self.density,
@@ -1166,7 +1179,14 @@ impl WeightingSumWeightPhase {
             self.frequency_range_hz,
             sample,
             contributions,
-        )?;
+        )
+    }
+
+    fn accumulate_prepared(
+        &mut self,
+        problem: &CompiledProblem,
+        weighted: &WeightingSampleValue,
+    ) -> Result<(), WeightingError> {
         let sample = &weighted.sample;
         let spectral_values = &weighted.spectral_values;
         if let Some(rows) = &mut self.cube_rows {
@@ -1214,7 +1234,7 @@ impl WeightingSumWeightPhase {
             .sum_sample_count
             .checked_add(1)
             .ok_or(WeightingError::SampleCountOverflow)?;
-        Ok(weighted)
+        Ok(())
     }
 
     fn into_fused(self, density_prepass: bool, plan: &WeightingPlan) -> FusedWeightingPhase {
@@ -1339,12 +1359,38 @@ impl FusedWeightingPhase {
         output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
-        let weighted = self.sum.weighted_sample(
+        let weighted =
+            self.prepare_sample(problem, sample, output_frame_frequency_hz, contributions)?;
+        self.commit_prepared(problem, weighted)
+    }
+
+    /// Prepare a compact value from frozen density state without updating sums.
+    /// The runtime must commit prepared values in their original source order.
+    #[doc(hidden)]
+    pub fn prepare_sample<'a>(
+        &self,
+        problem: &CompiledProblem,
+        sample: impl Into<SelectedObservationSampleView<'a>>,
+        output_frame_frequency_hz: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<WeightingSampleValue, WeightingError> {
+        self.sum.prepare_sample(
             problem,
             sample.into(),
             output_frame_frequency_hz,
             contributions,
-        )?;
+        )
+    }
+
+    /// Update exact sums, row interpolation and block packing in source order.
+    /// Values must come from this phase's trusted in-process preparation.
+    #[doc(hidden)]
+    pub fn commit_prepared(
+        &mut self,
+        problem: &CompiledProblem,
+        weighted: WeightingSampleValue,
+    ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
+        self.sum.accumulate_prepared(problem, &weighted)?;
         let emitted = self
             .flush_before_group(&weighted)?
             .then(|| self.take_block())
@@ -2460,6 +2506,25 @@ impl WeightingReplayPhase<'_> {
         output_frame_frequency_hz: f64,
         contributions: SelectedSpectralContributions,
     ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
+        let weighted =
+            self.prepare_sample(problem, sample, output_frame_frequency_hz, contributions)?;
+        self.commit_prepared(weighted)
+    }
+
+    /// Evaluate one sample against this replay's immutable weighting generation.
+    ///
+    /// Runtime may prepare disjoint bounded ranges concurrently. Preparation
+    /// neither advances coverage nor emits a block; the original sample order
+    /// must be restored before [`Self::commit_prepared`]. It retains only the
+    /// compact weighted sample, not a copy of the source's row provenance.
+    #[doc(hidden)]
+    pub fn prepare_sample<'a>(
+        &self,
+        problem: &CompiledProblem,
+        sample: impl Into<SelectedObservationSampleView<'a>>,
+        output_frame_frequency_hz: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<WeightingSampleValue, WeightingError> {
         if self.generation.problem != problem.problem_id()
             || self.problem.problem_id() != problem.problem_id()
             || self.generation.commitment != problem.weighting().commitment_id()
@@ -2472,7 +2537,7 @@ impl WeightingReplayPhase<'_> {
             sample.into(),
             output_frame_frequency_hz,
         )?;
-        let weighted = weighted_sample_from_state(
+        weighted_sample_from_state(
             problem,
             self.generation.grid,
             &self.generation.density,
@@ -2480,7 +2545,21 @@ impl WeightingReplayPhase<'_> {
             self.generation.frequency_range_hz,
             sample,
             contributions,
-        )?;
+        )
+    }
+
+    /// Transfer a prepared sample into the sole ordered replay owner.
+    ///
+    /// The trusted runtime must use values prepared by this phase and commit
+    /// them in source order, with complete correlation groups. Preparation
+    /// storage remains part of its admitted bounded workspace until transferred.
+    /// Block boundaries, coverage, counts and returned-buffer reuse are identical
+    /// to [`Self::consume`]; this operation does not recalculate sample weights.
+    #[doc(hidden)]
+    pub fn commit_prepared(
+        &mut self,
+        weighted: WeightingSampleValue,
+    ) -> Result<Option<WeightingReplayChunk>, WeightingError> {
         let emitted = self
             .flush_before_group(&weighted)?
             .then(|| self.take_block())

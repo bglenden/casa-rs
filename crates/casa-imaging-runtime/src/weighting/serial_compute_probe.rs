@@ -559,6 +559,7 @@ impl InitialWeightedProbe<'_> {
                 };
             replay_weighting_kernel(
                 WeightingBlockKernel {
+                    preparation: None,
                     problem,
                     consumer,
                     weights: initial_weights,
@@ -1156,6 +1157,7 @@ where
                 Ok::<(), ReplayProbeError>(())
             };
         let initial_kernel = WeightingBlockKernel {
+            preparation: None,
             problem: &problem,
             consumer: initial_consumer,
             weights: initial_weights,
@@ -1310,6 +1312,7 @@ fn medium_vla_64ch_residual_refresh() -> Result<(), Box<dyn Error>> {
                 Ok::<(), ReplayProbeError>(())
             };
         let kernel = WeightingBlockKernel {
+            preparation: None,
             problem: &problem,
             consumer,
             weights: replay,

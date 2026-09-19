@@ -1386,6 +1386,10 @@ fn selected_row_spectral_geometry_uses_exact_selected_centres_including_flagged_
             })
             .expect("traverse selected geometry");
         assert_eq!(scalar_samples.len(), 2 * 2 * selected.len());
+        assert_eq!(
+            collect_indexed_samples(&problem, binding.clone(), 2),
+            scalar_samples
+        );
         let block =
             BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
                 .expect("bind borrowed geometry source");
@@ -3022,6 +3026,8 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
         })
         .expect("complete scalar traversal");
 
+    let indexed_samples = collect_indexed_samples(&problem, binding.clone(), 3);
+    assert_eq!(indexed_samples, scalar_samples);
     let block = BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
         .expect("bind block traversal");
     let (mut source, mut consumer) = block
@@ -3095,6 +3101,172 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
     );
     assert!(measurements.consumer_scratch_capacity_bytes() >= expected_scratch as u64);
     assert!(block.can_resume_after(&block_completion));
+}
+
+#[test]
+fn indexed_run_windows_preserve_complete_groups_across_row_splits_and_tail() {
+    let directory = tempfile::tempdir().expect("indexed window fixture");
+    let path = directory.path().join("indexed-windows.ms");
+    generate_fixture_with_rows(&path, 5);
+    let mut ms = MeasurementSet::open(&path).expect("open indexed fixture");
+    let mut flags = match ms
+        .main_table()
+        .cell_accessor(0, "FLAG")
+        .and_then(|cell| cell.array())
+        .expect("read fixture FLAG")
+        .clone()
+    {
+        ArrayValue::Bool(flags) => flags,
+        _ => panic!("fixture FLAG must be Bool"),
+    };
+    flags[[0, 0]] = true;
+    ms.main_table_mut()
+        .cell_accessor_mut(0, "FLAG")
+        .expect("FLAG")
+        .set(Value::Array(ArrayValue::Bool(flags)))
+        .expect("flag one parallel hand");
+    ms.main_table_mut()
+        .cell_accessor_mut(0, "WEIGHT")
+        .expect("WEIGHT")
+        .set(Value::Array(ArrayValue::Float32(
+            ArrayD::from_shape_vec(vec![2], vec![3.0, 7.0]).expect("weights"),
+        )))
+        .expect("unequal hand weights");
+    ms.save().expect("save indexed fixture");
+    drop(ms);
+    let problem = compiled_problem(&path, 5);
+    let source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(source),
+        bound_content_budget_for_rows(&problem, source, 5, 1),
+    );
+    let observation =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding.clone()])
+            .expect("serial block source");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("serial block stream");
+    let mut storage = source.create_storage(0);
+    let mut serial = Vec::new();
+    while source
+        .fill_next(&mut storage)
+        .expect("serial fill")
+        .is_some()
+    {
+        consumer
+            .consume(&storage, |run| {
+                serial
+                    .extend(run.samples().map(|sample| {
+                        (sample.selected().to_owned(), sample.spectral_evaluation())
+                    }));
+                Ok::<_, Infallible>(())
+            })
+            .expect("serial consume");
+    }
+    consumer
+        .complete(source.complete().expect("serial terminal"))
+        .expect("serial completion");
+    assert!(serial[0].0.channel_flag);
+    assert!(!serial[1].0.channel_flag);
+    assert!(serial[1].0.parallel_hand_group_flag);
+    assert_eq!(collect_indexed_samples(&problem, binding, 3), serial);
+}
+
+fn collect_indexed_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+    binding: ObservationSourceBinding,
+    maximum_runs: usize,
+) -> Vec<(SelectedObservationSample, SelectedSpectralEvaluation)> {
+    let observation =
+        BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
+            .expect("bind indexed traversal");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(problem)
+        .expect("split indexed traversal");
+    let mut storage = source.create_storage(0);
+    let plan =
+        super::SelectedObservationBlockIndexPlan::new(problem, maximum_runs).expect("index plan");
+    let mut index = plan.create_index();
+    let initial_capacity = index.capacity_bytes().expect("index capacity");
+    assert_eq!(initial_capacity, plan.capacity_bytes());
+    let mut samples = Vec::new();
+    let mut last_block_was_indexed = false;
+    while source
+        .fill_next(&mut storage)
+        .expect("fill indexed source")
+        .is_some()
+    {
+        if last_block_was_indexed {
+            assert!(
+                index.view(&storage, problem).is_err(),
+                "refill invalidates the old index"
+            );
+        }
+        let runs = storage.selected_run_count().expect("run count");
+        for start in (0..runs).step_by(maximum_runs) {
+            let end = (start + maximum_runs).min(runs);
+            consumer
+                .index_block_range(&storage, start..end, &mut index)
+                .expect("inspect window");
+            let view = index
+                .view(&storage, problem)
+                .expect("borrow indexed window");
+            assert_eq!(view.run_count(), end - start);
+            let midpoint = view.run_count().div_ceil(2);
+            let prepared = std::thread::scope(|scope| {
+                // Start the later range first, then restore canonical order on join.
+                let handles: Vec<_> = [midpoint..view.run_count(), 0..midpoint]
+                    .into_iter()
+                    .map(|range| {
+                        let view = &view;
+                        scope.spawn(move || {
+                            let mut projector = super::SelectedObservationProjector::new(problem);
+                            assert_eq!(
+                                projector.capacity_bytes(),
+                                super::SelectedObservationProjector::required_bytes(problem)
+                            );
+                            let mut partition = Vec::new();
+                            view.visit_range(&mut projector, range, |run| {
+                                partition.extend(run.samples().map(|sample| {
+                                    (sample.selected().to_owned(), sample.spectral_evaluation())
+                                }));
+                                Ok::<_, Infallible>(())
+                            })
+                            .expect("project disjoint range");
+                            partition
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .rev()
+                    .flat_map(|handle| handle.join().expect("projection worker"))
+                    .collect::<Vec<_>>()
+            });
+            samples.extend(prepared);
+            assert_eq!(
+                index.capacity_bytes().expect("reused index capacity"),
+                initial_capacity
+            );
+            assert!(index.current_bytes().expect("index populated bytes") <= initial_capacity);
+        }
+        last_block_was_indexed = true;
+    }
+    let terminal = source.complete().expect("indexed terminal source");
+    let (_, completion) = consumer
+        .complete(terminal)
+        .expect("indexed inspection completion");
+    assert_eq!(completion.sample_count(), samples.len() as u64);
+    let (generation, _) = problem
+        .inspect_selected_observation(
+            samples
+                .iter()
+                .map(|(sample, _)| Ok::<_, Infallible>(sample.clone())),
+            |_| Ok::<_, Infallible>(()),
+        )
+        .expect("independent indexed sample inspection");
+    assert_eq!(generation, completion.generation_id());
+    samples
 }
 
 #[test]

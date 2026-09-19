@@ -1392,6 +1392,7 @@ fn selected_input_weight_group(
 /// Its retained storage can be returned to the source and refilled only after
 /// downstream processing releases the block.
 pub struct SelectedObservationBlock {
+    pub(super) index_binding: Option<(u64, u64, u64)>,
     slot: usize,
     coordinate_index: usize,
     buffer: SelectedObservationBuffer,
@@ -1407,6 +1408,7 @@ pub struct SelectedObservationBlock {
 impl SelectedObservationBlock {
     pub(super) fn new(slot: usize, rows_per_block: usize) -> Self {
         Self {
+            index_binding: None,
             slot,
             coordinate_index: 0,
             buffer: SelectedObservationBuffer::default(),
@@ -1452,6 +1454,56 @@ impl SelectedObservationBlock {
         &self,
         problem: &CompiledProblem,
         correlations: &mut Vec<SelectedObservationRunCorrelation>,
+        consume: impl FnMut(
+            &SelectedObservationRunRow,
+            SelectedObservationRunChannel,
+            &[SelectedObservationRunCorrelation],
+            &MsCalEngine,
+            SelectedRowSpectralSelection,
+        ) -> Result<(), E>,
+    ) -> Result<(), BlockVisitError<E>> {
+        self.visit_selected_sample_range(
+            problem,
+            correlations,
+            0..self.selected_run_count().map_err(BlockVisitError::Source)?,
+            consume,
+        )
+    }
+
+    /// Number of complete row/channel runs in the currently filled source block.
+    pub fn selected_run_count(&self) -> Result<usize, BoundObservationSourceError> {
+        self.coordinates
+            .as_ref()
+            .and_then(|coordinates| coordinates.get(self.coordinate_index))
+            .and_then(|coordinates| {
+                self.buffer
+                    .row_count()
+                    .checked_mul(coordinates.channels.len())
+            })
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+    }
+
+    pub(super) fn projection_context(
+        &self,
+    ) -> Result<(&MsCalEngine, SelectedRowSpectralSelection), BoundObservationSourceError> {
+        let coordinates = self
+            .coordinates
+            .as_ref()
+            .and_then(|coordinates| coordinates.get(self.coordinate_index))
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        Ok((
+            self.geometry_engine
+                .as_deref()
+                .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?,
+            coordinates.row_spectral_selection(),
+        ))
+    }
+
+    pub(super) fn visit_selected_sample_range<E>(
+        &self,
+        problem: &CompiledProblem,
+        correlations: &mut Vec<SelectedObservationRunCorrelation>,
+        range: std::ops::Range<usize>,
         mut consume: impl FnMut(
             &SelectedObservationRunRow,
             SelectedObservationRunChannel,
@@ -1476,7 +1528,17 @@ impl SelectedObservationBlock {
             .ok_or(BlockVisitError::Source(
                 BoundObservationSourceError::StoredSampleShapeMismatch,
             ))?;
-        for row in 0..self.buffer.row_count() {
+        let channel_count = coordinates.channels.len();
+        let run_count = self.selected_run_count().map_err(BlockVisitError::Source)?;
+        if range.start > range.end || range.end > run_count || channel_count == 0 {
+            return Err(BlockVisitError::Source(
+                BoundObservationSourceError::StoredSampleShapeMismatch,
+            ));
+        }
+        if range.is_empty() {
+            return Ok(());
+        }
+        for row in range.start / channel_count..=(range.end - 1) / channel_count {
             let stored_row = self
                 .buffer
                 .sample(0, row, 0)
@@ -1492,7 +1554,12 @@ impl SelectedObservationBlock {
                 &self.row_geometry[row],
             )
             .map_err(BlockVisitError::Source)?;
-            for channel in coordinates.channels.iter().copied() {
+            let first_channel = range.start.saturating_sub(row * channel_count);
+            let last_channel = (range.end - row * channel_count).min(channel_count);
+            for channel in coordinates.channels[first_channel..last_channel]
+                .iter()
+                .copied()
+            {
                 let run_channel = project_run_channel(channel);
                 correlations.clear();
                 if correlations.capacity() < coordinates.products.len() {

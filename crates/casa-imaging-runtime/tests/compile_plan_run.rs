@@ -4426,9 +4426,6 @@ fn execute_initial_reconstruction_cycle(
     let residency = initial_access
         .certify_residency(problem)
         .expect("owner-certified channel-cycle residency");
-    let replay_proof_bytes = initial_access
-        .replay_proof_retained_heap_bytes(problem)
-        .expect("bounded channel-cycle replay-proof residency");
     let planning_registry = ContractOnlyRegistry::new(
         registry(byte),
         implementation_metadata(problem),
@@ -4451,9 +4448,59 @@ fn execute_initial_reconstruction_cycle(
     .with_gridded_normal_storage(artifact_storage());
     let planned = SpectralCyclePlan::initial(problem, &planning_registry, policy)
         .expect("channel-cycle initial plan");
+    execute_planned_initial_reconstruction_cycle(
+        problem,
+        byte,
+        initial_access,
+        InitialCycleTestPlan {
+            planned,
+            authority: authority(),
+            resource_policy: ResourcePolicy::Balanced,
+            expected_workers: 1,
+            require_multiple_slabs: false,
+        },
+    )
+    .completion
+}
+
+struct InitialCycleTestPlan<'a> {
+    planned: SpectralCyclePlan,
+    authority: &'a ResourceAuthority,
+    resource_policy: ResourcePolicy,
+    expected_workers: u64,
+    require_multiple_slabs: bool,
+}
+
+struct InitialCycleTestResult {
+    completion: ReconstructionCyclePhaseCompletion,
+    parallel_preparation_samples: u64,
+    slab_count: u64,
+}
+
+fn execute_planned_initial_reconstruction_cycle(
+    problem: &casa_imaging_model::CompiledProblem,
+    byte: u8,
+    initial_access: ResolvedSelectedObservationAccess,
+    plan: InitialCycleTestPlan<'_>,
+) -> InitialCycleTestResult {
+    let InitialCycleTestPlan {
+        planned,
+        authority,
+        resource_policy,
+        expected_workers,
+        require_multiple_slabs,
+    } = plan;
+    let replay_proof_bytes = initial_access
+        .replay_proof_retained_heap_bytes(problem)
+        .expect("bounded channel-cycle replay-proof residency");
+    let planning_registry = ContractOnlyRegistry::new(
+        registry(byte),
+        implementation_metadata(problem),
+        [implementation(byte)],
+    );
     let reservation = FrozenWeightingReservation::acquire(
-        authority(),
-        ResourcePolicy::Balanced,
+        authority,
+        resource_policy.clone(),
         planned.weighting_plan().planned_residency(),
         replay_proof_bytes,
     )
@@ -4468,15 +4515,53 @@ fn execute_initial_reconstruction_cycle(
         problem,
         PlanningBindings::new(
             registry(byte),
-            ResourcePolicy::Balanced,
+            resource_policy.clone(),
             planning_profile(byte),
         ),
-        authority(),
+        authority,
         &planning_registry,
         &receipts,
-        |_, _| Ok::<_, io::Error>(planned.physical_candidates()),
+        |_, _| {
+            Ok::<_, io::Error>(
+                planned
+                    .physical_candidates()
+                    .into_iter()
+                    .filter(|physical| {
+                        physical.execution_dag().initial_knobs().workers == expected_workers
+                    })
+                    .collect(),
+            )
+        },
     )
     .expect("channel-cycle runtime plan");
+    let dag = execution_plan.execution_dag();
+    assert_eq!(dag.initial_knobs().workers, expected_workers);
+    let slab_count = (problem.geometry().spectral().output_channels() as u64)
+        .div_ceil(dag.initial_knobs().slab_depth);
+    if require_multiple_slabs {
+        assert!(
+            dag.initial_knobs().slab_depth > 0
+                && dag.initial_knobs().slab_depth
+                    < problem.geometry().spectral().output_channels() as u64,
+            "the executor regression must traverse additional initial slabs"
+        );
+        let preparation = dag.logical_allocations().values().find(|allocation| {
+            allocation
+                .id
+                .as_str()
+                .starts_with("initial-replay-preparation-")
+        });
+        assert_eq!(preparation.is_some(), expected_workers > 1);
+        if let Some(preparation) = preparation {
+            assert!(
+                dag.nodes()[&preparation.lifetime.acquire_at]
+                    .claims
+                    .iter()
+                    .any(|claim| claim.resource == LeaseResource::Workers
+                        && claim.amount == expected_workers)
+            );
+        }
+    }
     let SpectralCyclePlanParts {
         weighting,
         complete_data: complete,
@@ -4522,7 +4607,6 @@ fn execute_initial_reconstruction_cycle(
     );
     let runtime_registry =
         SpectralCycleRegistry::new(registry(byte), implementation(byte), problem, executor);
-    let resource_policy = ResourcePolicy::Balanced;
     let current = RunBindings::new(problem.inputs().clone(), &resource_policy, cost_model(byte));
     let executable = ExecutableModelProblem::from_compiled(problem.clone()).expect("executable");
     let attempt = casa_imaging_runtime::ExecutionAttemptId::from_sha256([byte; 32]);
@@ -4531,7 +4615,7 @@ fn execute_initial_reconstruction_cycle(
         &execution_plan,
         &current,
         &runtime_registry,
-        authority(),
+        authority,
         &mut RunToCompletion,
         receipts.bind(execution_provenance(
             attempt,
@@ -4544,10 +4628,19 @@ fn execute_initial_reconstruction_cycle(
         receipt.node_status(&cycle_node),
         Some(ReceiptStatus::Completed)
     );
-    runtime_registry
+    let parallel_preparation_samples = runtime_registry
+        .implementation()
+        .parallel_preparation_sample_count()
+        .expect("unpoisoned execution preparation counters");
+    let completion = runtime_registry
         .implementation()
         .take_reconstruction_cycle_completion()
-        .expect("channel-cycle completion")
+        .expect("channel-cycle completion");
+    InitialCycleTestResult {
+        completion,
+        parallel_preparation_samples,
+        slab_count,
+    }
 }
 
 fn execute_dirty_channel_local_slabs(
@@ -5018,12 +5111,14 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
                 .find(|allocation| {
                     allocation.compatibility.layout.as_str() == "initial-consumer-team"
                 })
-                .expect("initial terminal pair allocation");
+                .expect("initial terminal preparation allocation");
             assert!(
                 dag.nodes()[&team.lifetime.acquire_at]
                     .claims
                     .iter()
-                    .any(|claim| { claim.resource == LeaseResource::Workers && claim.amount == 2 })
+                    .any(|claim| {
+                        claim.resource == LeaseResource::Workers && claim.amount == workers
+                    })
             );
         }
         assert_eq!(alternative.scaling.minimum_workers, workers);
@@ -5108,6 +5203,328 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
     assert_eq!(selected.execution_dag().initial_knobs().workers, 1);
     let parts = planned.into_parts(&selected).unwrap();
     assert_eq!(parts.complete_data.slab().core_depth(), 3);
+}
+
+#[test]
+fn t55_channel_replay_preparation_has_its_own_bounded_workspace_and_worker_claim() {
+    let problem = compile(channel_local_hogbom_request(238, 8, 2)).unwrap();
+    let registry = test_registry(&problem, 3, 6, None);
+    let policy = SpectralCycleExecutionPolicy::new(
+        implementation(6),
+        WeightingExecutionLimits::new(16, 4).unwrap(),
+        selected_content_residency(&problem),
+        serial_storage_io(),
+        SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+        authority().clone(),
+        ResourcePolicy::Explicit(ResourceOverride {
+            workers: Some(4),
+            ..ResourceOverride::default()
+        }),
+    )
+    .with_gridded_normal_storage(artifact_storage());
+    let plan = SpectralCyclePlan::initial(&problem, &registry, policy).unwrap();
+    let mut sizes = Vec::new();
+    let candidates = plan.physical_candidates();
+    for workers in [1, 2, 4] {
+        let physical = candidates
+            .iter()
+            .find(|physical| physical.execution_dag().initial_knobs().workers == workers)
+            .unwrap();
+        let dag = physical.execution_dag();
+        let preparation = dag
+            .logical_allocations()
+            .values()
+            .filter(|allocation| {
+                allocation
+                    .id
+                    .as_str()
+                    .starts_with("initial-replay-preparation-")
+            })
+            .collect::<Vec<_>>();
+        if workers == 1 {
+            assert!(
+                preparation.is_empty(),
+                "serial needs no parallel staging workspace"
+            );
+            assert!(
+                dag.nodes()
+                    .values()
+                    .all(|node| node.claims.iter().all(|claim| {
+                        claim.resource
+                            != LeaseResource::RuntimeOverhead(
+                                casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+                            )
+                    }))
+            );
+            continue;
+        }
+        assert_eq!(preparation.len(), 1);
+        let allocation = preparation[0];
+        assert_eq!(
+            dag.physical_slots()[&allocation.physical_slot].capacity_bytes,
+            allocation.bytes
+        );
+        let owner = &dag.nodes()[&allocation.lifetime.acquire_at];
+        assert!(
+            owner
+                .claims
+                .iter()
+                .any(|claim| claim.resource == LeaseResource::Workers && claim.amount == workers)
+        );
+        let stack_bytes = owner
+            .claims
+            .iter()
+            .filter(|claim| {
+                claim.resource
+                    == LeaseResource::RuntimeOverhead(
+                        casa_imaging_runtime::RuntimeOverheadKind::ThreadStack,
+                    )
+            })
+            .map(|claim| claim.amount)
+            .sum::<u64>();
+        assert_eq!(
+            stack_bytes,
+            if workers == 1 {
+                0
+            } else {
+                workers * 2 * 1024 * 1024
+            }
+        );
+        assert!(
+            owner
+                .allocations
+                .iter()
+                .any(|usage| usage.allocation == allocation.id
+                    && usage.lifetime == ClaimLifetime::through_fence(FenceKind::Io))
+        );
+        assert!(
+            dag.resource_alternative()
+                .demand
+                .memory
+                .iter()
+                .any(|demand| demand.allocation_id == allocation.id.as_str()
+                    && demand.hard_bytes == allocation.bytes)
+        );
+        sizes.push(allocation.bytes);
+    }
+    assert!(
+        sizes.windows(2).all(|pair| pair[0] < pair[1]),
+        "additional worker scratch must be charged"
+    );
+}
+
+#[test]
+fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
+    let _guard = run_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let directory = tempfile::tempdir().expect("parallel preparation storage");
+    let storage = ProductionStorageProfile::new(
+        directory.path(),
+        1 << 30,
+        1 << 30,
+        1_000_000,
+        1_000_000,
+        64,
+        8,
+    )
+    .unwrap();
+    let authority = ResourceAuthority::detected_with_storage_profile(&storage).unwrap();
+    let spill =
+        ManagedSpillStorage::bind(&authority, storage.io_resources(), directory.path()).unwrap();
+    for selected_channels in [8, 2] {
+        let mut baseline = None;
+        for workers in [1, 2, 4] {
+            let (problem, access) =
+                owner_resolved_channel_local_hogbom_problem(246, 8, selected_channels);
+            let planning_registry = ContractOnlyRegistry::new(
+                registry(81),
+                implementation_metadata(&problem),
+                [implementation(81)],
+            );
+            let residency = access.certify_residency(&problem).unwrap();
+            // The eight-channel fixture fills windows of three, three, and two
+            // complete correlation groups. The two-channel fixture adds nonzero
+            // visibilities and six unmapped output planes, using one short window.
+            let weighting_limits = WeightingExecutionLimits::new(3, 2).unwrap();
+            let make_plan = |resource_policy| {
+                SpectralCyclePlan::initial(
+                    &problem,
+                    &planning_registry,
+                    SpectralCycleExecutionPolicy::new(
+                        implementation(81),
+                        weighting_limits,
+                        residency.clone(),
+                        storage.io_resources(),
+                        SpectralCyclePlanningLimits::new(1_000, 1, 900_000),
+                        authority.clone(),
+                        resource_policy,
+                    )
+                    .with_gridded_normal_storage(spill.clone()),
+                )
+                .expect("bounded initial CLEAN candidate")
+            };
+            let host = CapacityDomainId::new("host-memory");
+            let minimum = make_plan(ResourcePolicy::Explicit(ResourceOverride {
+                workers: Some(workers),
+                memory_bytes: BTreeMap::from([(host.clone(), 1)]),
+                ..ResourceOverride::default()
+            }));
+            let candidates = minimum.physical_candidates();
+            let candidate = candidates
+                .iter()
+                .find(|physical| physical.execution_dag().initial_knobs().workers == workers)
+                .expect("requested team has a fully charged minimum candidate");
+            let dag = candidate.execution_dag();
+            assert_eq!(dag.initial_knobs().slab_depth, 1);
+            let alternative = dag.resource_alternative();
+            let overhead = &alternative.demand.overhead;
+            let weighting = minimum.weighting_plan().planned_residency();
+            let memory_bytes = alternative
+                .demand
+                .memory
+                .iter()
+                .map(|demand| demand.hard_bytes)
+                .sum::<u64>()
+                + [
+                    overhead.thread_stack_bytes,
+                    overhead.allocator_fragmentation_bytes,
+                    overhead.external_library_bytes,
+                    overhead.fft_workspace_bytes,
+                    overhead.driver_bytes,
+                    overhead.jit_bytes,
+                    overhead.command_buffer_bytes,
+                    alternative.demand.caches.hard_resident_bytes,
+                    alternative
+                        .headroom
+                        .memory_bytes
+                        .get(&host)
+                        .copied()
+                        .unwrap_or_default(),
+                    alternative.headroom.cache_bytes,
+                    weighting.density_layout_bytes() as u64,
+                    weighting.density_grid_bytes() as u64,
+                    weighting.robust_factor_bytes() as u64,
+                    weighting.sum_weight_bytes() as u64,
+                    access.replay_proof_retained_heap_bytes(&problem).unwrap() as u64,
+                ]
+                .into_iter()
+                .sum::<u64>();
+            let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
+                workers: Some(workers),
+                memory_bytes: BTreeMap::from([(host, memory_bytes)]),
+                ..ResourceOverride::default()
+            });
+            let planned = make_plan(resource_policy.clone());
+            let result = execute_planned_initial_reconstruction_cycle(
+                &problem,
+                81,
+                access,
+                InitialCycleTestPlan {
+                    planned,
+                    authority: &authority,
+                    resource_policy,
+                    expected_workers: workers,
+                    require_multiple_slabs: true,
+                },
+            );
+            let final_input = result.completion.into_final_major_input();
+            let normal = final_input.evidence().normal_state();
+            assert_eq!(normal.sample_count(), selected_channels as u64);
+            assert_eq!(
+                result.parallel_preparation_samples,
+                if workers == 1 {
+                    0
+                } else {
+                    normal.sample_count() * (result.slab_count - 1)
+                },
+                "the executor must actually prepare every additional pass on the selected route"
+            );
+            let mut planes = Vec::new();
+            for channel in 0..8 {
+                let window = normal.read_window(channel..channel + 1).unwrap();
+                planes.push((
+                    window
+                        .residual()
+                        .iter()
+                        .map(|value| (value.re.to_bits(), value.im.to_bits()))
+                        .collect::<Vec<_>>(),
+                    window
+                        .normal_approximation()
+                        .iter()
+                        .map(|value| (value.re.to_bits(), value.im.to_bits()))
+                        .collect::<Vec<_>>(),
+                    window
+                        .sensitivity()
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                ));
+            }
+            let cycle = final_input.evidence().reconstruction_cycle();
+            if selected_channels == 2 {
+                assert!(cycle.initial_peak_flux() > 0.0);
+                assert!(cycle.iterations() > 0);
+            }
+            let science = (
+                normal.sample_count(),
+                normal.block_count(),
+                normal
+                    .sum_weights()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                normal
+                    .channel_sum_weights()
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                planes,
+                cycle.iterations(),
+                cycle.controller_iterations(),
+                cycle.total_flux().to_bits(),
+                cycle.initial_peak_flux().to_bits(),
+                cycle.final_peak_flux().to_bits(),
+                cycle
+                    .channels()
+                    .iter()
+                    .map(|channel| {
+                        (
+                            channel.output_channel(),
+                            channel.polarization(),
+                            channel.validity(),
+                            channel.minor_cycle().map(|minor| {
+                                (
+                                    minor.iterations(),
+                                    minor.stop_reason(),
+                                    minor.recorded_component_sequence().map(|components| {
+                                        components
+                                            .iter()
+                                            .map(|component| {
+                                                (
+                                                    component.cell(),
+                                                    component.flux().to_bits(),
+                                                    component.scale_px().to_bits(),
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                    }),
+                                )
+                            }),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            if let Some(baseline) = &baseline {
+                assert_eq!(
+                    &science, baseline,
+                    "worker count must not change ordered science"
+                );
+            } else {
+                baseline = Some(science);
+            }
+        }
+    }
 }
 
 #[test]
