@@ -5473,7 +5473,7 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
         (8, 43.936e9, Some(0.25)),
     ] {
         let mut baseline = None;
-        for workers in [1, 2, 4] {
+        for (workers, memory_scale) in [(1, 1), (2, 1), (4, 1), (4, 2)] {
             let (problem, access, model_executables) =
                 owner_resolved_channel_local_hogbom_with_frequency(
                     246,
@@ -5557,7 +5557,7 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                 .sum::<u64>();
             let resource_policy = ResourcePolicy::Explicit(ResourceOverride {
                 workers: Some(workers),
-                memory_bytes: BTreeMap::from([(host, memory_bytes)]),
+                memory_bytes: BTreeMap::from([(host, memory_bytes * memory_scale)]),
                 ..ResourceOverride::default()
             });
             let planned = make_plan(resource_policy.clone());
@@ -5570,10 +5570,16 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                     authority: &authority,
                     resource_policy,
                     expected_workers: workers,
-                    require_multiple_slabs: model_value.is_none(),
+                    require_multiple_slabs: model_value.is_none() && memory_scale == 1,
                     model_executables,
                 },
             );
+            if memory_scale > 1 && model_value.is_none() {
+                assert!(
+                    result.slab_count < 8,
+                    "larger bound admits multiple planes per slab"
+                );
+            }
             let final_input = result.completion.into_final_major_input();
             let normal = final_input.evidence().normal_state();
             assert_eq!(normal.sample_count(), selected_channels as u64);
@@ -5588,15 +5594,19 @@ fn t55_initial_clean_executes_parallel_preparation_across_bounded_slabs() {
                     );
                 }
             }
-            assert_eq!(
-                result.parallel_preparation_samples,
-                if workers == 1 {
-                    0
-                } else {
-                    normal.sample_count() * (result.slab_count - 1)
-                },
-                "the executor must actually prepare every additional pass on the selected route"
-            );
+            if workers == 1 || model_value.is_some() {
+                assert_eq!(result.parallel_preparation_samples, 0);
+            } else {
+                let full_replay_samples = normal.sample_count() * (result.slab_count - 1);
+                assert!(result.parallel_preparation_samples <= full_replay_samples);
+                if selected_channels == 8 && result.slab_count > 1 {
+                    assert!(result.parallel_preparation_samples > 0);
+                    assert!(
+                        result.parallel_preparation_samples < full_replay_samples,
+                        "source windows must prepare fewer samples than exhaustive slab replays"
+                    );
+                }
+            }
             let mut planes = Vec::new();
             for channel in 0..8 {
                 let window = normal.read_window(channel..channel + 1).unwrap();

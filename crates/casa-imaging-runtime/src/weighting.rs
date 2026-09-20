@@ -16,7 +16,8 @@ use casa_imaging_model::{
     SelectedSpectralContributions, SequentialContinuumTransform,
 };
 use casa_imaging_reconstruction::runtime_adapter::{
-    SpectralOperatorInitialPhaseResidency, WeightingReplayPhase, WeightingSpectralCache,
+    SpectralOperatorInitialPhaseResidency, WeightingReplayPhase, WeightingReplayWindowSummary,
+    WeightingSpectralCache,
 };
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, FusedWeightingPhase, WeightingAlgorithmState,
@@ -269,6 +270,54 @@ impl StreamingWeightPhase for WeightingReplayPhase<'_> {
     }
 }
 
+struct WindowReplayPhase<'a>(WeightingReplayPhase<'a>);
+
+impl StreamingWeightPhase for WindowReplayPhase<'_> {
+    type Finish = WeightingReplayWindowSummary;
+
+    fn prepare_sample(
+        &self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        frequency: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<ReconstructionWeightedSample, WeightingError> {
+        self.0
+            .prepare_sample(problem, sample, frequency, contributions)
+    }
+
+    fn commit_prepared(
+        &mut self,
+        _problem: &CompiledProblem,
+        weighted: ReconstructionWeightedSample,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
+        self.0.commit_prepared(weighted)
+    }
+
+    fn consume_sample(
+        &mut self,
+        problem: &CompiledProblem,
+        sample: SelectedObservationSampleView<'_>,
+        frequency: f64,
+        contributions: SelectedSpectralContributions,
+    ) -> Result<Option<ReconstructionWeightedBlock>, WeightingError> {
+        self.0.consume(problem, sample, frequency, contributions)
+    }
+
+    fn reuse_emitted_block(
+        &mut self,
+        block: ReconstructionWeightedBlock,
+    ) -> Result<(), WeightingError> {
+        self.0.reuse_emitted_block(block)
+    }
+
+    fn finish_phase(
+        self,
+    ) -> Result<(Option<ReconstructionWeightedBlock>, Self::Finish), WeightingError> {
+        self.0.finish_window()
+    }
+}
+
 #[derive(Debug)]
 enum WeightingBlockKernelError<E> {
     Traversal(SelectedObservationTraversalError<ReplayCallbackError<E>>),
@@ -427,9 +476,9 @@ impl fmt::Display for DensityBlockKernelError {
 
 impl Error for DensityBlockKernelError {}
 
-struct CompletedWeightingBlockStream<'a, T> {
+struct CompletedWeightingBlockStream<'a, T, C = SelectedObservationCompletion> {
     selected: BoundSelectedObservation,
-    owner_completion: SelectedObservationCompletion,
+    owner_completion: C,
     weights: T,
     continuum: Option<ContinuumTransformStream<'a>>,
     spectral_support_sample_count: u64,
@@ -813,6 +862,46 @@ where
     let (source, consumer) = selected.into_block_stream(problem).map_err(|error| {
         WeightingReplayError::Traversal(SelectedObservationTraversalError::Binding(error))
     })?;
+    execute_prebound_weighting_block_stream(
+        problem,
+        source,
+        consumer,
+        plan,
+        preparation,
+        weights,
+        continuum,
+        emit,
+        SelectedObservationBlockConsumer::complete,
+    )
+}
+
+fn execute_prebound_weighting_block_stream<'a, W, F, E, C>(
+    problem: &'a CompiledProblem,
+    source: SelectedObservationBlockSource<'a>,
+    consumer: SelectedObservationBlockConsumer<'a>,
+    plan: BoundedStreamPlan,
+    preparation: Option<ReplayPreparationPlan>,
+    weights: W,
+    continuum: Option<ContinuumTransformStream<'a>>,
+    emit: F,
+    complete: impl FnOnce(
+        SelectedObservationBlockConsumer<'a>,
+        SelectedObservationTerminal,
+    ) -> Result<
+        (BoundSelectedObservation, C),
+        SelectedObservationTraversalError<std::convert::Infallible>,
+    >,
+) -> Result<CompletedWeightingBlockStream<'a, W::Finish, C>, WeightingBlockStreamFailure<E>>
+where
+    W: StreamingWeightPhase + Sync,
+    F: FnMut(
+            &ReconstructionWeightedBlock,
+            crate::bounded_stream::BoundedExecution<'_>,
+        ) -> Result<(), E>
+        + Send
+        + Sync,
+    E: Error + Send + 'static,
+{
     let outcome = match execute_bounded(
         plan,
         0,
@@ -857,8 +946,7 @@ where
         spectral_support_sample_count,
         prepared_samples,
     } = outcome.kernel_completion;
-    let (selected, owner_completion) = consumer
-        .complete(terminal)
+    let (selected, owner_completion) = complete(consumer, terminal)
         .map_err(|error| WeightingReplayError::Traversal(widen_terminal_traversal_error(error)))?;
     Ok(CompletedWeightingBlockStream {
         selected,
@@ -2610,8 +2698,9 @@ impl WeightingExecutionState {
         context: WorkExecutionContext<'_>,
         fragment: &WeightingPlanFragment<'_>,
         problem: &CompiledProblem,
+        source_window_hz: Option<[f64; 2]>,
         emit: F,
-    ) -> Result<(), WeightingReplayError<E>>
+    ) -> Result<Option<WeightingReplayWindowSummary>, WeightingReplayError<E>>
     where
         E: Error + Send + 'static,
         F: FnMut(
@@ -2646,6 +2735,77 @@ impl WeightingExecutionState {
             .artifact
             .coverage_proof
             .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+        if let Some(bounds) = source_window_hz {
+            if frozen.artifact.continuum_transform.is_some()
+                || pending.continuum_transform.is_some()
+            {
+                return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+            }
+            let replay = frozen
+                .artifact
+                .state
+                .begin_windowed_replay(problem, fragment.plan, coverage_proof, bounds)
+                .map_err(WeightingReplayError::Owner)?;
+            let (source, consumer) = retained
+                .selected
+                .into_windowed_block_stream(problem, bounds)
+                .map_err(|error| {
+                    WeightingReplayError::Traversal(SelectedObservationTraversalError::Binding(
+                        error,
+                    ))
+                })?;
+            let completed = match execute_prebound_weighting_block_stream(
+                problem,
+                source,
+                consumer,
+                plan,
+                fragment.replay_preparation,
+                WindowReplayPhase(replay),
+                None,
+                emit,
+                SelectedObservationBlockConsumer::complete_window,
+            ) {
+                Ok(completed) => completed,
+                Err(failure) => {
+                    self.latest_stream_measurements = Some(*failure.measurements);
+                    return Err(*failure.error);
+                }
+            };
+            let CompletedWeightingBlockStream {
+                selected,
+                owner_completion,
+                weights: summary,
+                prepared_samples,
+                measurements,
+                ..
+            } = completed;
+            summary
+                .validate_source_completion(
+                    owner_completion.generation_id(),
+                    owner_completion.sample_count(),
+                    owner_completion.frequency_bounds_hz(),
+                )
+                .map_err(WeightingReplayError::Owner)?;
+            if owner_completion.generation_id() != pending.owner_completion.generation_id()
+                || summary.actual().weighting_generation() != pending.state.weighting_generation()
+            {
+                return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+            }
+            self.latest_traversal_measurements = Some(*owner_completion.measurements());
+            self.latest_stream_measurements = Some(measurements);
+            self.parallel_preparation_samples = self
+                .parallel_preparation_samples
+                .checked_add(prepared_samples)
+                .ok_or(WeightingReplayError::Evidence(WeightingEvidenceError))?;
+            self.retained_observation = Some(RetainedWeightingObservation {
+                selected,
+                attempt_id: context.attempt_id(),
+                owner_node: fragment.source_read.clone(),
+                lease_epoch: context.lease_epoch(),
+            });
+            self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
+            return Ok(Some(summary));
+        }
         let replay = frozen
             .artifact
             .state
@@ -2711,7 +2871,7 @@ impl WeightingExecutionState {
             lease_epoch: context.lease_epoch(),
         });
         self.phase = WeightingExecutionPhase::PendingReplay { frozen, pending };
-        Ok(())
+        Ok(None)
     }
 
     pub(crate) fn pending_replay_inputs(
@@ -3820,13 +3980,10 @@ pub struct FrozenWeightingReservation {
 }
 
 impl FrozenWeightingReservation {
-    /// Reserve the exact frozen density, robust-factor, and sum-weight state.
-    pub fn acquire(
-        authority: &ResourceAuthority,
-        policy: ResourcePolicy,
+    pub(crate) fn required_bytes(
         residency: WeightingResidency,
         replay_proof_bytes: usize,
-    ) -> Result<Self, ResourceError> {
+    ) -> Result<u64, ResourceError> {
         let weighting_bytes = [
             residency.density_layout_bytes(),
             residency.density_grid_bytes(),
@@ -3844,9 +4001,21 @@ impl FrozenWeightingReservation {
         })?;
         let replay_proof_bytes = u64::try_from(replay_proof_bytes)
             .map_err(|_| ResourceError::Overflow("selected replay proof residency"))?;
-        let bytes = weighting_bytes
+        weighting_bytes
             .checked_add(replay_proof_bytes)
-            .ok_or(ResourceError::Overflow("cross-plan frozen residency"))?;
+            .ok_or(ResourceError::Overflow("cross-plan frozen residency"))
+    }
+
+    /// Reserve the exact frozen density, robust-factor, and sum-weight state.
+    pub fn acquire(
+        authority: &ResourceAuthority,
+        policy: ResourcePolicy,
+        residency: WeightingResidency,
+        replay_proof_bytes: usize,
+    ) -> Result<Self, ResourceError> {
+        let bytes = Self::required_bytes(residency, replay_proof_bytes)?;
+        let replay_proof_bytes = u64::try_from(replay_proof_bytes)
+            .map_err(|_| ResourceError::Overflow("selected replay proof residency"))?;
         let memory = MemoryDemand {
             allocation_id: "cross-plan-frozen-weighting".to_string(),
             hard_bytes: bytes,

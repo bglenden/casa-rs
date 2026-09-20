@@ -35,6 +35,36 @@ mod common;
 use common::{identity, observation_snapshot};
 
 #[test]
+fn selected_row_window_preserves_original_interpolation_lattice() {
+    let problem = compiled_problem();
+    let samples = exact_samples(&problem);
+    let local = SelectedRowSpectralGeometry::new(
+        samples[0].as_view(),
+        FrequencyFrame::Lsrk,
+        3,
+        (20, 1.420e9),
+        Some((24, 1.424e9)),
+    )
+    .unwrap();
+    let window = local
+        .with_lattice_first_pair_hz([1.400e9, 1.401e9])
+        .unwrap();
+    assert_eq!(window.selected_channels(), 3);
+    assert_eq!(window.first_pair_hz(), Some([1.420e9, 1.424e9]));
+    assert_eq!(window.lattice_first_pair_hz(), Some([1.400e9, 1.401e9]));
+    assert!(window.matches_sample(samples[0].as_view(), FrequencyFrame::Lsrk));
+    for pair in [
+        [1.0, 1.0],
+        [2.0, 1.0],
+        [0.0, 1.0],
+        [f64::NAN, 1.0],
+        [1.0, f64::INFINITY],
+    ] {
+        assert!(local.with_lattice_first_pair_hz(pair).is_none());
+    }
+}
+
+#[test]
 fn selected_row_spectral_geometry_checks_count_indices_and_centres() {
     let problem = compiled_problem();
     let samples = exact_samples(&problem);

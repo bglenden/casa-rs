@@ -2,7 +2,7 @@
 
 //! Exact channel-local Normal State backing, independent of physical storage.
 
-use std::{fmt, ops::Range, sync::Arc};
+use std::{borrow::Cow, fmt, ops::Range, sync::Arc};
 
 use casa_imaging_model::{ImageDomainRole, LogicalIdentity};
 use num_complex::Complex64;
@@ -149,6 +149,252 @@ mod tests {
                 .fetch_max(values.len(), Ordering::Relaxed);
             self.values.write(start, values)
         }
+    }
+
+    #[derive(Debug)]
+    struct ReadObservedStorage {
+        storage: Box<dyn NormalArrayStorage>,
+        reads: Arc<std::sync::Mutex<Vec<(usize, usize)>>>,
+    }
+
+    impl NormalArrayStorage for ReadObservedStorage {
+        fn len(&self) -> usize {
+            self.storage.len()
+        }
+        fn read(&self, start: usize, len: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+            self.reads.lock().unwrap().push((start, len));
+            self.storage.read(start, len)
+        }
+        fn write(&mut self, start: usize, values: &[f64]) -> Result<(), SpectralOperatorError> {
+            self.storage.write(start, values)
+        }
+    }
+
+    #[test]
+    fn selective_normal_plane_reads_only_requested_domain_channel_polarization_and_field() {
+        for promoted in [false, true] {
+            let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+            let reads = [
+                Arc::new(std::sync::Mutex::new(Vec::new())),
+                Arc::new(std::sync::Mutex::new(Vec::new())),
+            ];
+            let mut domains = Vec::new();
+            for (ordinal, log) in reads.iter().enumerate() {
+                let mut input = domain(0..CHANNELS, true);
+                input.domain_ordinal = ordinal;
+                if ordinal == 1 {
+                    input.domain_role = ImageDomainRole::Outlier("second".into());
+                    input.primitives.shape = [2, 3];
+                    for value in &mut input.primitives.psf {
+                        value.re += 100.0;
+                    }
+                }
+                let mut stored = StoredChannelNormalDomain::begin(input, &plan).unwrap();
+                if promoted {
+                    stored.promote_major_cycle_residual(model()).unwrap();
+                }
+                stored.storage = Box::new(ReadObservedStorage {
+                    storage: stored.storage,
+                    reads: log.clone(),
+                });
+                domains.push(stored);
+            }
+            let fields = domains[1].fields.clone();
+            let primitives = NormalStatePrimitives::ChannelLocal(domains.into_boxed_slice());
+            let selected = primitives.read_plane(1, 3, 1).unwrap();
+            assert_eq!(selected.shape(), [2, 3]);
+            assert_eq!(selected.output_channel(), 3);
+            assert_eq!(selected.sum_weight(), 8.0);
+            assert_eq!(selected.published_sum_weight(), 8.5);
+            assert_eq!(selected.validity(), SpectralChannelValidity::Blank);
+            for invalid in [
+                (2, 3, 1),
+                (1, CHANNELS, 1),
+                (1, 3, POLARIZATIONS),
+                (1, usize::MAX, 0),
+            ] {
+                assert!(matches!(
+                    primitives.read_plane(invalid.0, invalid.1, invalid.2),
+                    Err(SpectralOperatorError::InvalidSlab)
+                ));
+            }
+            assert!(reads.iter().all(|log| log.lock().unwrap().is_empty()));
+
+            let offset = (3 * POLARIZATIONS + 1) * CELLS;
+            let psf = selected.read_psf().unwrap();
+            assert_eq!(
+                *reads[1].lock().unwrap(),
+                vec![(fields.psf.start + 2 * offset, 2 * CELLS)]
+            );
+            assert_eq!(psf[0].re, offset as f64 - 0.125 + 100.0);
+            assert!(reads[0].lock().unwrap().is_empty());
+            reads[1].lock().unwrap().clear();
+
+            let residual = selected.read_residual().unwrap();
+            assert_eq!(
+                *reads[1].lock().unwrap(),
+                vec![(fields.dirty.start + 2 * offset, 2 * CELLS)]
+            );
+            assert_eq!(
+                residual[0].re,
+                offset as f64 + if promoted { 0.75 } else { 0.25 }
+            );
+            reads[1].lock().unwrap().clear();
+            let sensitivity = selected.read_sensitivity().unwrap();
+            assert_eq!(
+                *reads[1].lock().unwrap(),
+                vec![(fields.sensitivity.start + offset, CELLS)]
+            );
+            assert!(reads[0].lock().unwrap().is_empty());
+
+            let full = primitives.read_window(3..4).unwrap();
+            let expected = full.get(1).unwrap().primitives();
+            assert_eq!(psf.as_ref(), &expected.psf()[CELLS..2 * CELLS]);
+            assert_eq!(residual.as_ref(), &expected.dirty()[CELLS..2 * CELLS]);
+            assert_eq!(
+                sensitivity.as_ref(),
+                &expected.sensitivity()[CELLS..2 * CELLS]
+            );
+        }
+    }
+
+    #[test]
+    fn selective_normal_plane_requires_complete_admitted_backing() {
+        let plan = NormalStoragePlan::resident(1).unwrap();
+        let incomplete = NormalStatePrimitives::ChannelLocal(
+            vec![StoredChannelNormalDomain::begin(domain(0..1, false), &plan).unwrap()]
+                .into_boxed_slice(),
+        );
+        assert!(matches!(
+            incomplete.read_plane(0, 0, 0),
+            Err(SpectralOperatorError::IncompleteCoverage)
+        ));
+
+        let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+        let mut stored =
+            StoredChannelNormalDomain::begin(domain(0..CHANNELS, false), &plan).unwrap();
+        // A one-channel allowance suffices even with several polarizations.
+        stored.window_channels = 1;
+        let primitives = NormalStatePrimitives::ChannelLocal(vec![stored].into_boxed_slice());
+        assert_eq!(
+            primitives
+                .read_plane(0, 4, 1)
+                .unwrap()
+                .read_psf()
+                .unwrap()
+                .len(),
+            CELLS
+        );
+        assert!(primitives.read_window(0..CHANNELS).is_err());
+    }
+
+    #[test]
+    fn selective_normal_plane_borrows_constant_polynomial_planes_exactly() {
+        for promoted in [false, true] {
+            let domains = (0..2)
+                .map(|ordinal| {
+                    let mut input = domain(0..1, true);
+                    input.domain_ordinal = ordinal;
+                    input.primitives.slab.total_channels = 1;
+                    input.primitives.basis = SpectralBasisPlan::Polynomial(
+                        super::super::BlockNormalPlan::constant(1.0e9).unwrap(),
+                    );
+                    input.primitives.joint_line_term_by_channel = vec![None].into();
+                    if ordinal == 1 {
+                        input.domain_role = ImageDomainRole::Outlier("constant".into());
+                        input.primitives.shape = [2, 3];
+                        for value in &mut input.primitives.psf {
+                            value.re += 100.0;
+                        }
+                    }
+                    if promoted {
+                        input.primitives = input
+                            .primitives
+                            .promote_major_cycle_residual(model())
+                            .unwrap();
+                    }
+                    input
+                })
+                .collect();
+            let primitives =
+                NormalStatePrimitives::Coupled(SpectralPrimitiveDomains::new(domains).unwrap());
+            let selected = primitives.read_plane(1, 0, 1).unwrap();
+            assert_eq!(selected.shape(), [2, 3]);
+            assert_eq!(selected.output_channel(), 0);
+            assert_eq!(selected.sum_weight(), 2.0);
+            assert_eq!(selected.published_sum_weight(), 2.5);
+            assert_eq!(selected.validity(), SpectralChannelValidity::Blank);
+            let window = primitives.read_window(0..1).unwrap();
+            let expected = window.get(1).unwrap().primitives();
+            let residual = selected.read_residual().unwrap();
+            let psf = selected.read_psf().unwrap();
+            let sensitivity = selected.read_sensitivity().unwrap();
+            assert!(matches!(residual, Cow::Borrowed(_)));
+            assert!(matches!(psf, Cow::Borrowed(_)));
+            assert!(matches!(sensitivity, Cow::Borrowed(_)));
+            assert!(std::ptr::eq(
+                residual.as_ptr(),
+                expected.dirty()[CELLS..].as_ptr()
+            ));
+            assert_eq!(residual.as_ref(), &expected.dirty()[CELLS..]);
+            assert_eq!(psf.as_ref(), &expected.psf()[CELLS..]);
+            assert_eq!(sensitivity.as_ref(), &expected.sensitivity()[CELLS..]);
+            assert_eq!(
+                residual[0].re,
+                CELLS as f64 + if promoted { 0.75 } else { 0.25 }
+            );
+            for invalid in [
+                (2, 0, 1),
+                (1, 1, 1),
+                (1, 0, POLARIZATIONS),
+                (1, usize::MAX, 0),
+            ] {
+                assert!(matches!(
+                    primitives.read_plane(invalid.0, invalid.1, invalid.2),
+                    Err(SpectralOperatorError::InvalidSlab)
+                ));
+            }
+        }
+    }
+
+    #[test]
+    fn selective_normal_plane_rejects_nonconstant_families_and_propagates_storage_errors() {
+        let mut input = domain(0..1, false);
+        input.primitives.basis =
+            SpectralBasisPlan::Polynomial(super::super::BlockNormalPlan::taylor(1.0e9, 2).unwrap());
+        let coupled = NormalStatePrimitives::Coupled(
+            SpectralPrimitiveDomains::new(vec![input].into()).unwrap(),
+        );
+        assert!(matches!(
+            coupled.read_plane(0, 0, 0),
+            Err(SpectralOperatorError::NormalStorage(_))
+        ));
+
+        #[derive(Debug)]
+        struct FailedRead;
+        impl NormalArrayStorage for FailedRead {
+            fn len(&self) -> usize {
+                0
+            }
+            fn read(&self, _: usize, _: usize) -> Result<Box<[f64]>, SpectralOperatorError> {
+                Err(SpectralOperatorError::NormalStorage(
+                    "selected read failed".into(),
+                ))
+            }
+            fn write(&mut self, _: usize, _: &[f64]) -> Result<(), SpectralOperatorError> {
+                unreachable!()
+            }
+        }
+        let plan = NormalStoragePlan::resident(CHANNELS).unwrap();
+        let mut domain =
+            StoredChannelNormalDomain::begin(domain(0..CHANNELS, false), &plan).unwrap();
+        domain.storage = Box::new(FailedRead);
+        let primitives = NormalStatePrimitives::ChannelLocal(vec![domain].into());
+        let plane = primitives.read_plane(0, 2, 1).unwrap();
+        let error = SpectralOperatorError::NormalStorage("selected read failed".into());
+        assert_eq!(plane.read_psf(), Err(error.clone()));
+        assert_eq!(plane.read_residual(), Err(error.clone()));
+        assert_eq!(plane.read_sensitivity(), Err(error));
     }
 
     #[test]
@@ -495,6 +741,59 @@ pub(crate) struct NormalDomainMetadata<'a> {
 }
 
 impl NormalStatePrimitives {
+    pub(crate) fn read_plane(
+        &self,
+        ordinal: usize,
+        channel: usize,
+        polarization: usize,
+    ) -> Result<FinalNormalPlaneReader<'_>, SpectralOperatorError> {
+        let (backing, plane, cells) = match self {
+            Self::ChannelLocal(domains) => {
+                let domain = domains
+                    .get(ordinal)
+                    .ok_or(SpectralOperatorError::InvalidSlab)?;
+                let (plane, cells) = domain.validate_plane(channel, polarization)?;
+                (NormalPlaneBacking::Stored(domain), plane, cells)
+            }
+            Self::Coupled(domains) => {
+                let domain = domains
+                    .get(ordinal)
+                    .ok_or(SpectralOperatorError::InvalidSlab)?
+                    .primitives();
+                if !matches!(domain.basis, SpectralBasisPlan::Polynomial(plan) if plan.coefficient_term_count() == 1)
+                {
+                    return Err(SpectralOperatorError::NormalStorage("selective plane reads require channel-local or constant-polynomial normal state".into()));
+                }
+                if domain.slab.core_depth() != 1
+                    || !domain.slab.core_range().contains(&channel)
+                    || polarization >= domain.polarizations
+                {
+                    return Err(SpectralOperatorError::InvalidSlab);
+                }
+                let cells = checked_cells(domain.shape)?;
+                let values = cells
+                    .checked_mul(domain.polarizations)
+                    .ok_or(SpectralOperatorError::ResidencyOverflow)?;
+                if domain.dirty.len() != values
+                    || domain.psf.len() != values
+                    || domain.sensitivity.len() != values
+                    || domain.sum_weights.len() != domain.polarizations
+                    || domain.published_sum_weights.len() != domain.polarizations
+                    || domain.validity.len() != domain.polarizations
+                {
+                    return Err(SpectralOperatorError::ProblemMismatch);
+                }
+                (NormalPlaneBacking::Resident(domain), polarization, cells)
+            }
+        };
+        Ok(FinalNormalPlaneReader {
+            backing,
+            channel,
+            plane,
+            cells,
+        })
+    }
+
     pub(crate) fn maximum_read_channels(&self) -> usize {
         match self {
             Self::ChannelLocal(domains) => domains
@@ -814,7 +1113,136 @@ pub(crate) struct StoredChannelNormalDomain {
     next_channel: usize,
 }
 
+/// Metadata-only selection of one completed channel-local or constant-basis plane.
+///
+/// Each field read loads only that field and polarization. The reader borrows
+/// the global completion owner and retains no image payload or cache.
+/// Multi-term Taylor and joint families use their existing complete-family readers.
+#[derive(Debug)]
+pub struct FinalNormalPlaneReader<'a> {
+    backing: NormalPlaneBacking<'a>,
+    channel: usize,
+    plane: usize,
+    cells: usize,
+}
+
+#[derive(Debug)]
+enum NormalPlaneBacking<'a> {
+    Stored(&'a StoredChannelNormalDomain),
+    Resident(&'a SpectralOperatorPrimitives),
+}
+
+impl FinalNormalPlaneReader<'_> {
+    /// Direction-plane dimensions, without reading image payloads.
+    #[must_use]
+    pub fn shape(&self) -> [usize; 2] {
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.shape,
+            NormalPlaneBacking::Resident(d) => d.shape,
+        }
+    }
+
+    /// Absolute output-channel ordinal.
+    #[must_use]
+    pub fn output_channel(&self) -> usize {
+        self.channel
+    }
+
+    /// Accumulated normal-equation weight for this polarization plane.
+    #[must_use]
+    pub fn sum_weight(&self) -> f64 {
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.sum_weights[self.plane],
+            NormalPlaneBacking::Resident(d) => d.sum_weights[self.plane],
+        }
+    }
+
+    /// Publication weight for this polarization plane.
+    #[must_use]
+    pub fn published_sum_weight(&self) -> f64 {
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.published_sum_weights[self.plane],
+            NormalPlaneBacking::Resident(d) => d.published_sum_weights[self.plane],
+        }
+    }
+
+    /// Mapped, blank, or unmapped support for this polarization plane.
+    #[must_use]
+    pub fn validity(&self) -> SpectralChannelValidity {
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => d.validity[self.plane],
+            NormalPlaneBacking::Resident(d) => d.validity[self.plane],
+        }
+    }
+
+    /// Load the authoritative dirty/residual field, including promoted residuals.
+    pub fn read_residual(&self) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+        let offset = self.plane * self.cells;
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => Ok(Cow::Owned(
+                d.read_complex(&d.fields.dirty, offset, self.cells)?
+                    .into_vec(),
+            )),
+            NormalPlaneBacking::Resident(d) => {
+                Ok(Cow::Borrowed(&d.dirty()[offset..offset + self.cells]))
+            }
+        }
+    }
+
+    /// Load only the selected unnormalized point-spread-function plane.
+    pub fn read_psf(&self) -> Result<Cow<'_, [Complex64]>, SpectralOperatorError> {
+        let offset = self.plane * self.cells;
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => Ok(Cow::Owned(
+                d.read_complex(&d.fields.psf, offset, self.cells)?
+                    .into_vec(),
+            )),
+            NormalPlaneBacking::Resident(d) => {
+                Ok(Cow::Borrowed(&d.psf()[offset..offset + self.cells]))
+            }
+        }
+    }
+
+    /// Load only the selected unnormalized sensitivity plane.
+    pub fn read_sensitivity(&self) -> Result<Cow<'_, [f64]>, SpectralOperatorError> {
+        let offset = self.plane * self.cells;
+        match self.backing {
+            NormalPlaneBacking::Stored(d) => {
+                let start = d.fields.sensitivity.start + offset;
+                Ok(Cow::Owned(
+                    d.read_scalars(start..start + self.cells)?.into_vec(),
+                ))
+            }
+            NormalPlaneBacking::Resident(d) => {
+                Ok(Cow::Borrowed(&d.sensitivity()[offset..offset + self.cells]))
+            }
+        }
+    }
+}
+
 impl StoredChannelNormalDomain {
+    fn validate_plane(
+        &self,
+        channel: usize,
+        polarization: usize,
+    ) -> Result<(usize, usize), SpectralOperatorError> {
+        if !self.is_complete() {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        if channel >= self.total_channels || polarization >= self.polarizations {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
+        if self.window_channels == 0 {
+            return Err(SpectralOperatorError::NormalStorage(
+                "normal-state read exceeds the admitted channel window".into(),
+            ));
+        }
+        Ok((
+            channel * self.polarizations + polarization,
+            checked_cells(self.shape)?,
+        ))
+    }
+
     pub(crate) fn begin(
         first: SpectralDomainPrimitives,
         plan: &NormalStoragePlan,

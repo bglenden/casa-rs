@@ -338,6 +338,11 @@ impl SelectedObservationBuffer {
         self.row_indices.len()
     }
 
+    /// Source-channel range represented by the channelized arrays.
+    pub(crate) fn channel_range(&self) -> std::ops::Range<usize> {
+        self.channel_range.start..self.channel_range.end_exclusive()
+    }
+
     pub(crate) fn retained_current_bytes(&self) -> Option<usize> {
         self.retained_bytes(false)
     }

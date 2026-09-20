@@ -664,12 +664,14 @@ impl SelectedSpectralInterval {
     }
 }
 
-/// Row-local geometry of the complete selected native-channel vector.
+/// Row-local geometry of an emitted selected native-channel vector.
 ///
 /// The first two selected centres are evaluated in the requested output frame.
 /// They are not reconstructed from `CHAN_WIDTH`, and retain their exact values
-/// even when selected channels have gaps or descend in frequency. This is a
-/// non-persistent report: selected-source traversal owns its provenance.
+/// even when selected channels have gaps or descend in frequency. A restricted
+/// replay additionally retains the original vector's first pair for the
+/// interpolation lattice. This is a non-persistent report: selected-source
+/// traversal owns its provenance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SelectedRowSpectralGeometry {
     measurement_set: MeasurementSetIdentity,
@@ -684,6 +686,7 @@ pub struct SelectedRowSpectralGeometry {
     selected_channels: usize,
     first: (u32, f64),
     second: Option<(u32, f64)>,
+    lattice_first_pair_hz: Option<[f64; 2]>,
 }
 
 impl SelectedRowSpectralGeometry {
@@ -729,6 +732,7 @@ impl SelectedRowSpectralGeometry {
             selected_channels,
             first,
             second,
+            lattice_first_pair_hz: second.map(|second| [first.1, second.1]),
         })
     }
 
@@ -751,7 +755,7 @@ impl SelectedRowSpectralGeometry {
             && self.output_frame == output_frame
     }
 
-    /// Number of native channels in the complete selected vector, including flagged channels.
+    /// Number of native channels in the emitted vector, including flagged channels.
     #[must_use]
     pub const fn selected_channels(self) -> usize {
         self.selected_channels
@@ -773,6 +777,30 @@ impl SelectedRowSpectralGeometry {
     #[must_use]
     pub fn first_pair_hz(self) -> Option<[f64; 2]> {
         self.second.map(|second| [self.first.1, second.1])
+    }
+
+    /// Preserve the complete selected vector's interpolation lattice while
+    /// describing a bounded contiguous window of that vector. The local first
+    /// pair and count still describe the samples that must actually arrive.
+    #[must_use]
+    pub fn with_lattice_first_pair_hz(mut self, pair: [f64; 2]) -> Option<Self> {
+        if pair.iter().any(|value| !value.is_finite() || *value <= 0.0)
+            || !(pair[1] - pair[0]).is_finite()
+            || pair[0] == pair[1]
+            || self.second.is_some_and(|second| {
+                (second.1 - self.first.1).signum() != (pair[1] - pair[0]).signum()
+            })
+        {
+            return None;
+        }
+        self.lattice_first_pair_hz = Some(pair);
+        Some(self)
+    }
+
+    /// Exact first pair of the original selected vector, not the local window.
+    #[must_use]
+    pub const fn lattice_first_pair_hz(self) -> Option<[f64; 2]> {
+        self.lattice_first_pair_hz
     }
 }
 

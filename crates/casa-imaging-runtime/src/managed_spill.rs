@@ -705,6 +705,7 @@ fn validate_storage_directory(
 
 #[derive(Debug)]
 pub(crate) struct ManagedSpillWriter {
+    directory: Option<Vec<ManagedSpillFrameEntry>>,
     file: NamedTempFile,
     budget: ManagedSpillBudget,
     buffer: Vec<u8>,
@@ -740,6 +741,7 @@ impl ManagedSpillWriter {
         let buffer_len = usize::try_from(budget.io_buffer_bytes)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("artifact I/O buffer allocation"))?;
         let mut writer = Self {
+            directory: None,
             file,
             budget,
             buffer: vec![0; buffer_len],
@@ -758,6 +760,18 @@ impl ManagedSpillWriter {
             return Err(error);
         }
         writer.global_crc32c = checksum::transcript(writer.global_crc32c, &header);
+        Ok(writer)
+    }
+
+    /// Reserve the compiler-admitted directory before accepting any frames.
+    pub(crate) fn create_indexed(
+        storage: &ManagedSpillStorage,
+        budget: ManagedSpillBudget,
+        maximum_frames: usize,
+    ) -> Result<Self, ManagedSpillError> {
+        indexed_directory_capacity_bytes(maximum_frames)?;
+        let mut writer = Self::create(storage, budget)?;
+        writer.directory = Some(Vec::with_capacity(maximum_frames));
         Ok(writer)
     }
 
@@ -859,6 +873,15 @@ impl ManagedSpillWriter {
         payload: &[u8],
         payload_crc32c: u32,
     ) -> Result<PreparedFrame, ManagedSpillError> {
+        if self
+            .directory
+            .as_ref()
+            .is_some_and(|entries| entries.len() == entries.capacity())
+        {
+            return Err(ManagedSpillError::InvalidBudget(
+                "indexed frame capacity exhausted",
+            ));
+        }
         if sequence != self.frame_count {
             return Err(ManagedSpillError::WriterSequenceMismatch {
                 expected: self.frame_count,
@@ -938,6 +961,14 @@ impl ManagedSpillWriter {
     }
 
     fn commit_prepared_frame(&mut self, prepared: &PreparedFrame) {
+        if let Some(directory) = &mut self.directory {
+            directory.push(ManagedSpillFrameEntry {
+                offset: self.bytes_written - prepared.encoded_bytes as u64,
+                record_count: decode_u64(&prepared.header, 24),
+                payload_bytes: decode_u64(&prepared.header, 32),
+                payload_crc32c: decode_u32(&prepared.header, 40),
+            });
+        }
         self.global_crc32c = checksum::transcript(self.global_crc32c, &prepared.header);
         self.payload_bytes = prepared.prospective_payload_bytes;
         self.record_count = prepared.prospective_record_count;
@@ -1034,6 +1065,7 @@ impl ManagedSpillWriter {
         };
         let path = self.file.into_temp_path();
         Ok(ManagedSpillArtifact {
+            directory: self.directory.map(Arc::new),
             path,
             budget: self.budget,
             seal,
@@ -1058,8 +1090,51 @@ impl ManagedSpillWriter {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ManagedSpillFrameEntry {
+    offset: u64,
+    record_count: u64,
+    payload_bytes: u64,
+    payload_crc32c: u32,
+}
+
+/// Includes the retained vector and Arc bookkeeping, without a seal-time copy.
+pub(crate) fn indexed_directory_capacity_bytes(frames: usize) -> Result<u64, ManagedSpillError> {
+    frames
+        .checked_mul(std::mem::size_of::<ManagedSpillFrameEntry>())
+        .filter(|&bytes| bytes <= isize::MAX as usize)
+        .and_then(|bytes| {
+            bytes.checked_add(
+                std::mem::size_of::<Vec<ManagedSpillFrameEntry>>()
+                    + 2 * std::mem::size_of::<usize>(),
+            )
+        })
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or(ManagedSpillError::ArithmeticOverflow(
+            "indexed directory capacity",
+        ))
+}
+
+/// Required original physical sequences, bound to this writer-owned directory.
+#[derive(Clone, Debug)]
+pub(crate) struct ManagedSpillSelection {
+    directory: Arc<Vec<ManagedSpillFrameEntry>>,
+    sequences: Arc<[u64]>,
+}
+
+impl ManagedSpillSelection {
+    pub(crate) fn sequences(&self) -> &[u64] {
+        &self.sequences
+    }
+
+    pub(crate) fn capacity_bytes(&self) -> u64 {
+        (std::mem::size_of_val(self.sequences.as_ref()) + 2 * std::mem::size_of::<usize>()) as u64
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct ManagedSpillArtifact {
+    directory: Option<Arc<Vec<ManagedSpillFrameEntry>>>,
     path: TempPath,
     budget: ManagedSpillBudget,
     seal: ManagedSpillSeal,
@@ -1069,6 +1144,91 @@ pub(crate) struct ManagedSpillArtifact {
 }
 
 impl ManagedSpillArtifact {
+    pub(crate) fn indexed_directory_bytes(&self) -> u64 {
+        self.directory.as_ref().map_or(0, |entries| {
+            indexed_directory_capacity_bytes(entries.capacity())
+                .expect("validated directory capacity")
+        })
+    }
+
+    pub(crate) fn bind_selection(
+        &self,
+        sequences: Arc<[u64]>,
+    ) -> Result<ManagedSpillSelection, ManagedSpillError> {
+        let directory = self
+            .directory
+            .as_ref()
+            .ok_or(ManagedSpillError::InvalidBudget(
+                "artifact has no writer-owned directory",
+            ))?;
+        if sequences.windows(2).any(|pair| pair[0] >= pair[1])
+            || sequences
+                .last()
+                .is_some_and(|&sequence| sequence >= self.seal.frame_count)
+        {
+            return Err(ManagedSpillError::InvalidBudget(
+                "selected sequences must be strictly increasing and in range",
+            ));
+        }
+        Ok(ManagedSpillSelection {
+            directory: Arc::clone(directory),
+            sequences,
+        })
+    }
+
+    pub(crate) fn selected_block_source(
+        &self,
+        selection: ManagedSpillSelection,
+        frame_counts: Arc<[usize]>,
+        source_slot_bytes: u64,
+    ) -> Result<ManagedSpillSelectedBlockSource, ManagedSpillError> {
+        if !self
+            .directory
+            .as_ref()
+            .is_some_and(|directory| Arc::ptr_eq(directory, &selection.directory))
+        {
+            return Err(ManagedSpillError::FileIdentityMismatch);
+        }
+        let total = frame_counts
+            .iter()
+            .try_fold(0_usize, |total, &count| total.checked_add(count))
+            .ok_or(ManagedSpillError::ArithmeticOverflow(
+                "selected schedule count",
+            ))?;
+        if frame_counts.contains(&0) || total != selection.sequences.len() {
+            return Err(ManagedSpillError::InvalidBudget(
+                "schedule must exactly cover required selected frames",
+            ));
+        }
+        let mut cursor = 0;
+        for &count in frame_counts.iter() {
+            let bytes = selection.sequences[cursor..cursor + count]
+                .iter()
+                .try_fold(0_u64, |bytes, &sequence| {
+                    bytes
+                        .checked_add(FRAME_HEADER_BYTES as u64)?
+                        .checked_add(selection.directory[sequence as usize].payload_bytes)
+                })
+                .ok_or(ManagedSpillError::ArithmeticOverflow(
+                    "selected window bytes",
+                ))?;
+            if bytes > source_slot_bytes {
+                return Err(ManagedSpillError::InvalidBudget(
+                    "selected window exceeds admitted slot",
+                ));
+            }
+            cursor += count;
+        }
+        // Reuse the existing identity, length, cache policy and slot machinery.
+        // Its full-stream completion is deliberately never minted by this source.
+        let reader = self.open_source(frame_counts, source_slot_bytes)?;
+        Ok(ManagedSpillSelectedBlockSource {
+            reader,
+            selection,
+            cursor: 0,
+        })
+    }
+
     pub(crate) fn retained_path_bytes(&self) -> usize {
         self.path.as_os_str().as_encoded_bytes().len()
     }
@@ -1119,6 +1279,14 @@ impl ManagedSpillArtifact {
                 "only an empty sealed artifact can have an empty source schedule",
             ));
         }
+        self.open_source(frame_counts, source_slot_bytes)
+    }
+
+    fn open_source(
+        &self,
+        frame_counts: Arc<[usize]>,
+        source_slot_bytes: u64,
+    ) -> Result<ManagedSpillBlockSource, ManagedSpillError> {
         usize::try_from(source_slot_bytes)
             .map_err(|_| ManagedSpillError::ArithmeticOverflow("source slot bytes"))?;
         let file = File::open(&self.path).map_err(|source| ManagedSpillError::Io {
@@ -1945,6 +2113,243 @@ impl OrderedBlockSource for ManagedSpillBlockSource {
             resident_current_bytes: storage.resident_current_bytes(),
             resident_capacity_bytes: storage.resident_capacity_bytes(),
         })
+    }
+
+    fn complete(self) -> Result<Self::Completion, Self::Error> {
+        self.complete_read()
+    }
+}
+
+/// Bounded input replay whose completion records only its required selection.
+/// This does not attest generated products or authorize their publication.
+#[derive(Debug)]
+pub(crate) struct ManagedSpillSelectedBlockSource {
+    reader: ManagedSpillBlockSource,
+    selection: ManagedSpillSelection,
+    cursor: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ManagedSpillSelectedReadCompletion {
+    selection: ManagedSpillSelection,
+    artifact_seal: ManagedSpillSeal,
+    measurements: ManagedSpillMeasurements,
+}
+
+impl ManagedSpillSelectedReadCompletion {
+    pub(crate) fn selection(&self) -> &ManagedSpillSelection {
+        &self.selection
+    }
+    pub(crate) const fn artifact_seal(&self) -> ManagedSpillSeal {
+        self.artifact_seal
+    }
+    pub(crate) const fn measurements(&self) -> ManagedSpillMeasurements {
+        self.measurements
+    }
+}
+
+impl ManagedSpillSelectedBlockSource {
+    pub(crate) fn complete_read(
+        &self,
+    ) -> Result<ManagedSpillSelectedReadCompletion, ManagedSpillError> {
+        let reader = &self.reader;
+        if reader.poisoned {
+            return Err(ManagedSpillError::ReaderPoisoned);
+        }
+        if !reader.finished || self.cursor != self.selection.sequences.len() {
+            return Err(ManagedSpillError::IncompleteRead);
+        }
+        let slots = reader.created_slots.load(Ordering::Acquire) as u64;
+        Ok(ManagedSpillSelectedReadCompletion {
+            selection: self.selection.clone(),
+            artifact_seal: reader.seal,
+            measurements: ManagedSpillMeasurements {
+                direction: ManagedSpillIoDirection::Read,
+                artifact_bytes: reader.seal.artifact_bytes,
+                payload_bytes: reader.payload_bytes,
+                frame_count: reader.frame_count,
+                record_count: reader.record_count,
+                transferred_bytes: reader.measurements.transferred_bytes,
+                operations: reader.measurements.operations,
+                checksum_bytes: reader.payload_bytes,
+                checksum_calls: reader.frame_count,
+                peak_buffer_bytes: reader.source_slot_bytes.checked_mul(slots).ok_or(
+                    ManagedSpillError::ArithmeticOverflow("selected slot residency"),
+                )?,
+                payload_copy_bytes: 0,
+                payload_copy_operations: 0,
+                buffer_allocations: slots,
+                buffer_reuses: reader.blocks_filled.saturating_sub(slots),
+            },
+        })
+    }
+
+    fn fill_selected(
+        &mut self,
+        block_ordinal: u64,
+        storage: &mut ManagedSpillWindowStorage,
+        cancellation: SourceFillCancellation<'_>,
+    ) -> Result<SourcePoll, ManagedSpillError> {
+        let reader = &mut self.reader;
+        if reader.poisoned {
+            return Err(ManagedSpillError::ReaderPoisoned);
+        }
+        if cancellation.is_cancelled() {
+            return Ok(SourcePoll::Exhausted);
+        }
+        storage.frame_count = 0;
+        storage.record_count = 0;
+        storage.used_len = 0;
+        if block_ordinal != reader.blocks_filled {
+            return Err(ManagedSpillError::InvalidBudget(
+                "selected block ordinal mismatch",
+            ));
+        }
+        let previous_operations = reader.measurements.operations;
+        if !reader.initialized {
+            let mut header = [0; FILE_HEADER_BYTES];
+            read_exact_at(
+                &reader.file,
+                &mut header,
+                0,
+                &mut reader.measurements,
+                "read selected artifact header",
+            )?;
+            if header != encode_file_header() {
+                return Err(ManagedSpillError::InvalidFormat {
+                    kind: "file header",
+                });
+            }
+            reader.initialized = true;
+        }
+        let Some(&count) = reader.frame_counts.get(reader.blocks_filled as usize) else {
+            if self.cursor != self.selection.sequences.len() {
+                return Err(ManagedSpillError::IncompleteRead);
+            }
+            let mut footer = [0; FOOTER_BYTES];
+            let seal = reader.seal;
+            read_exact_at(
+                &reader.file,
+                &mut footer,
+                seal.artifact_bytes - FOOTER_BYTES as u64,
+                &mut reader.measurements,
+                "read selected artifact footer",
+            )?;
+            if footer
+                != encode_footer(
+                    seal.frame_count,
+                    seal.record_count,
+                    seal.payload_bytes,
+                    seal.artifact_bytes,
+                    seal.global_crc32c,
+                )
+            {
+                return Err(ManagedSpillError::FooterCountMismatch);
+            }
+            let length = reader
+                .file
+                .metadata()
+                .map_err(|source| ManagedSpillError::Io {
+                    operation: "inspect selected artifact completion",
+                    source,
+                })?
+                .len();
+            if length < seal.artifact_bytes {
+                return Err(ManagedSpillError::TruncatedFile {
+                    expected: seal.artifact_bytes,
+                    actual: length,
+                });
+            }
+            if length > seal.artifact_bytes {
+                return Err(ManagedSpillError::TrailingData {
+                    expected: seal.artifact_bytes,
+                    actual: length,
+                });
+            }
+            reader.finished = true;
+            return Ok(SourcePoll::Exhausted);
+        };
+        let mut logical_bytes = 0;
+        for &sequence in &self.selection.sequences[self.cursor..self.cursor + count] {
+            let entry = self.selection.directory[sequence as usize];
+            let encoded =
+                FRAME_HEADER_BYTES
+                    .checked_add(usize::try_from(entry.payload_bytes).map_err(|_| {
+                        ManagedSpillError::ArithmeticOverflow("selected payload bytes")
+                    })?)
+                    .ok_or(ManagedSpillError::ArithmeticOverflow(
+                        "selected encoded frame bytes",
+                    ))?;
+            let end = storage.used_len.checked_add(encoded).ok_or(
+                ManagedSpillError::ArithmeticOverflow("selected window bytes"),
+            )?;
+            let bytes = storage.bytes.get_mut(storage.used_len..end).ok_or(
+                ManagedSpillError::InvalidBudget("selected window exceeds storage"),
+            )?;
+            read_exact_at(
+                &reader.file,
+                bytes,
+                entry.offset,
+                &mut reader.measurements,
+                "read original selected frame",
+            )?;
+            if bytes[..FRAME_HEADER_BYTES]
+                != encode_frame_header(
+                    sequence,
+                    entry.record_count,
+                    entry.payload_bytes,
+                    entry.payload_crc32c,
+                )
+            {
+                return Err(ManagedSpillError::InvalidFormat {
+                    kind: "selected original frame header",
+                });
+            }
+            if checksum::payload(&bytes[FRAME_HEADER_BYTES..]) != entry.payload_crc32c {
+                return Err(ManagedSpillError::FrameChecksumMismatch { sequence });
+            }
+            storage.used_len = end;
+            storage.frame_count += 1;
+            storage.record_count += entry.record_count;
+            logical_bytes += entry.payload_bytes;
+        }
+        self.cursor += count;
+        reader.frame_count += count as u64;
+        reader.record_count += storage.record_count;
+        reader.payload_bytes += logical_bytes;
+        reader.blocks_filled += 1;
+        Ok(SourcePoll::Ready {
+            source_ordinal: u32::try_from(block_ordinal)
+                .map_err(|_| ManagedSpillError::ArithmeticOverflow("selected block ordinal"))?,
+            logical_units: count,
+            logical_bytes,
+            source_read_operations: reader.measurements.operations - previous_operations,
+            resident_current_bytes: storage.resident_current_bytes(),
+            resident_capacity_bytes: storage.resident_capacity_bytes(),
+        })
+    }
+}
+
+impl OrderedBlockSource for ManagedSpillSelectedBlockSource {
+    type Storage = ManagedSpillWindowStorage;
+    type Completion = ManagedSpillSelectedReadCompletion;
+    type Error = ManagedSpillError;
+
+    fn create_storage(&self, slot: usize) -> Self::Storage {
+        self.reader.create_storage(slot)
+    }
+
+    fn fill(
+        &mut self,
+        block_ordinal: u64,
+        storage: &mut Self::Storage,
+        cancellation: SourceFillCancellation<'_>,
+    ) -> Result<SourcePoll, Self::Error> {
+        let result = self.fill_selected(block_ordinal, storage, cancellation);
+        if result.is_err() {
+            self.reader.poisoned = true;
+        }
+        result
     }
 
     fn complete(self) -> Result<Self::Completion, Self::Error> {
@@ -2925,6 +3330,267 @@ mod tests {
             .expect("second frame");
         let artifact = writer.seal().expect("sealed artifact");
         (root, artifact)
+    }
+
+    fn indexed_test_artifact() -> (tempfile::TempDir, ManagedSpillArtifact) {
+        let root = tempfile::tempdir().unwrap();
+        let (_authority, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
+        let mut writer =
+            ManagedSpillWriter::create_indexed(&storage, budget(TEST_CAPACITY_BYTES), 3).unwrap();
+        for sequence in 0..3 {
+            let payload = [sequence as u8; 4];
+            writer
+                .append_frame(sequence, sequence + 1, &payload, crc32c::crc32c(&payload))
+                .unwrap();
+        }
+        (root, writer.seal().unwrap())
+    }
+
+    fn selected_test_source(
+        artifact: &ManagedSpillArtifact,
+        sequences: &[u64],
+    ) -> ManagedSpillSelectedBlockSource {
+        let selection = artifact.bind_selection(Arc::from(sequences)).unwrap();
+        let counts: Arc<[usize]> = vec![1; sequences.len()].into();
+        artifact
+            .selected_block_source(selection, counts, (FRAME_HEADER_BYTES + 4) as u64)
+            .unwrap()
+    }
+
+    #[test]
+    fn indexed_selection_reads_original_frames_and_reports_only_selected_coverage() {
+        let (_root, artifact) = indexed_test_artifact();
+        assert_eq!(
+            artifact.indexed_directory_bytes(),
+            indexed_directory_capacity_bytes(3).unwrap()
+        );
+        let mut source = selected_test_source(&artifact, &[0, 2]);
+        assert!(matches!(
+            source.complete_read(),
+            Err(ManagedSpillError::IncompleteRead)
+        ));
+        let cancelled = AtomicBool::new(false);
+        let mut storage = source.create_storage(0);
+        for (ordinal, sequence) in [0, 2].into_iter().enumerate() {
+            assert!(matches!(
+                source
+                    .fill(
+                        ordinal as u64,
+                        &mut storage,
+                        SourceFillCancellation::new(&cancelled)
+                    )
+                    .unwrap(),
+                SourcePoll::Ready { .. }
+            ));
+            let frame = storage.frames().next().unwrap();
+            assert_eq!(frame.sequence(), sequence);
+            assert_eq!(frame.record_count(), sequence + 1);
+            assert_eq!(frame.payload(), &[sequence as u8; 4]);
+        }
+        assert!(matches!(
+            source
+                .fill(2, &mut storage, SourceFillCancellation::new(&cancelled))
+                .unwrap(),
+            SourcePoll::Exhausted
+        ));
+        let completion = source.complete().unwrap();
+        assert_eq!(completion.selection().sequences(), &[0, 2]);
+        assert_eq!(completion.artifact_seal(), artifact.seal());
+        let measurements = completion.measurements();
+        assert_eq!(measurements.frame_count(), 2);
+        assert_eq!(measurements.record_count(), 4);
+        assert_eq!(measurements.payload_bytes(), 8);
+        assert_eq!(measurements.checksum_bytes(), 8);
+        assert_eq!(measurements.checksum_calls(), 2);
+        assert_eq!(
+            measurements.transferred_bytes(),
+            (FILE_HEADER_BYTES + FOOTER_BYTES + 2 * (FRAME_HEADER_BYTES + 4)) as u64
+        );
+    }
+
+    #[test]
+    fn indexed_selection_rejects_invalid_coverage_and_wrong_artifact() {
+        let (_root, artifact) = indexed_test_artifact();
+        for sequences in [&[0, 0][..], &[2, 0], &[3]] {
+            assert!(artifact.bind_selection(Arc::from(sequences)).is_err());
+        }
+        let selection = artifact.bind_selection(Arc::from([0, 2])).unwrap();
+        assert!(
+            artifact
+                .selected_block_source(selection.clone(), Arc::from([1]), 1000)
+                .is_err()
+        );
+        assert!(
+            artifact
+                .selected_block_source(selection.clone(), Arc::from([3]), 1000)
+                .is_err()
+        );
+        assert!(
+            artifact
+                .selected_block_source(selection.clone(), Arc::from([2]), 1)
+                .is_err()
+        );
+        let (_other_root, other) = indexed_test_artifact();
+        assert!(matches!(
+            other.selected_block_source(selection, Arc::from([2]), 1000),
+            Err(ManagedSpillError::FileIdentityMismatch)
+        ));
+    }
+
+    #[test]
+    fn indexed_empty_selection_checks_envelope_without_claiming_full_coverage() {
+        let (_root, artifact) = indexed_test_artifact();
+        let mut source = selected_test_source(&artifact, &[]);
+        drain_source(&mut source).unwrap();
+        let completion = source.complete().unwrap();
+        assert_eq!(completion.measurements().frame_count(), 0);
+        assert_eq!(completion.measurements().checksum_calls(), 0);
+        assert_eq!(
+            completion.measurements().transferred_bytes(),
+            (FILE_HEADER_BYTES + FOOTER_BYTES) as u64
+        );
+        assert_eq!(completion.artifact_seal().frame_count(), 3);
+    }
+
+    #[test]
+    fn indexed_selection_rejects_reordered_physical_frames_and_block_requests() {
+        let (_root, artifact) = indexed_test_artifact();
+        let file = artifact_file(&artifact);
+        let directory = artifact.directory.as_ref().unwrap();
+        let mut bytes = [0; FRAME_HEADER_BYTES + 4];
+        file.read_exact_at(&mut bytes, directory[2].offset).unwrap();
+        write_all_at(&file, &bytes, directory[0].offset);
+        let mut source = selected_test_source(&artifact, &[0]);
+        assert!(drain_source(&mut source).is_err());
+        let mut source = selected_test_source(&artifact, &[1]);
+        let cancelled = AtomicBool::new(false);
+        let mut storage = source.create_storage(0);
+        assert!(
+            source
+                .fill(1, &mut storage, SourceFillCancellation::new(&cancelled))
+                .is_err()
+        );
+        assert!(matches!(
+            source.complete(),
+            Err(ManagedSpillError::ReaderPoisoned)
+        ));
+    }
+
+    #[test]
+    fn indexed_selection_skips_offcore_corruption_but_checks_selected_original_bytes() {
+        for offset in [0, FRAME_HEADER_BYTES] {
+            let (_root, artifact) = indexed_test_artifact();
+            let file = artifact_file(&artifact);
+            let entry = artifact.directory.as_ref().unwrap()[1];
+            write_all_at(&file, &[255], entry.offset + offset as u64);
+            let mut unrelated = selected_test_source(&artifact, &[0, 2]);
+            drain_source(&mut unrelated).unwrap();
+            unrelated.complete().unwrap();
+            let mut selected = selected_test_source(&artifact, &[1]);
+            assert!(drain_source(&mut selected).is_err());
+            assert!(matches!(
+                selected.complete(),
+                Err(ManagedSpillError::ReaderPoisoned)
+            ));
+        }
+    }
+
+    #[test]
+    fn indexed_selection_validates_envelope_footer_and_file_length() {
+        for footer in [false, true] {
+            let (_root, artifact) = indexed_test_artifact();
+            let file = artifact_file(&artifact);
+            let offset = if footer {
+                artifact.seal.artifact_bytes - FOOTER_BYTES as u64
+            } else {
+                0
+            };
+            write_all_at(&file, &[255], offset);
+            let mut source = selected_test_source(&artifact, &[0]);
+            assert!(drain_source(&mut source).is_err());
+            assert!(matches!(
+                source.complete(),
+                Err(ManagedSpillError::ReaderPoisoned)
+            ));
+        }
+        for delta in [-1_i64, 1] {
+            let (_root, artifact) = indexed_test_artifact();
+            artifact_file(&artifact)
+                .set_len((artifact.seal.artifact_bytes as i64 + delta) as u64)
+                .unwrap();
+            let selection = artifact.bind_selection(Arc::from([0])).unwrap();
+            assert!(
+                artifact
+                    .selected_block_source(selection, Arc::from([1]), 1000)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn indexed_selection_detects_mutations_after_open_and_before_terminal_read() {
+        for mutation in 0..4 {
+            let (_root, artifact) = indexed_test_artifact();
+            let mut source = selected_test_source(&artifact, &[0]);
+            let cancelled = AtomicBool::new(false);
+            let mut storage = source.create_storage(0);
+            let file = artifact_file(&artifact);
+            if mutation == 0 {
+                write_all_at(
+                    &file,
+                    &[255],
+                    artifact.directory.as_ref().unwrap()[0].offset + FRAME_HEADER_BYTES as u64,
+                );
+                assert!(
+                    source
+                        .fill(0, &mut storage, SourceFillCancellation::new(&cancelled))
+                        .is_err()
+                );
+            } else {
+                source
+                    .fill(0, &mut storage, SourceFillCancellation::new(&cancelled))
+                    .unwrap();
+                match mutation {
+                    1 => file.set_len(artifact.seal.artifact_bytes - 1).unwrap(),
+                    2 => file.set_len(artifact.seal.artifact_bytes + 1).unwrap(),
+                    _ => write_all_at(
+                        &file,
+                        &[255],
+                        artifact.seal.artifact_bytes - FOOTER_BYTES as u64,
+                    ),
+                }
+                assert!(
+                    source
+                        .fill(1, &mut storage, SourceFillCancellation::new(&cancelled))
+                        .is_err()
+                );
+            }
+            assert!(matches!(
+                source.complete(),
+                Err(ManagedSpillError::ReaderPoisoned)
+            ));
+        }
+    }
+
+    #[test]
+    fn indexed_writer_never_grows_past_admitted_directory_capacity() {
+        let root = tempfile::tempdir().unwrap();
+        let (_authority, storage) = test_authority(root.path(), TEST_CAPACITY_BYTES);
+        let mut writer =
+            ManagedSpillWriter::create_indexed(&storage, budget(TEST_CAPACITY_BYTES), 1).unwrap();
+        writer
+            .append_frame(0, 1, b"x", crc32c::crc32c(b"x"))
+            .unwrap();
+        assert!(
+            writer
+                .append_frame(1, 1, b"x", crc32c::crc32c(b"x"))
+                .is_err()
+        );
+        assert_eq!(writer.directory.as_ref().unwrap().capacity(), 1);
+        assert!(matches!(
+            writer.seal(),
+            Err(ManagedSpillError::WriterPoisoned)
+        ));
     }
 
     fn sealed_numbered_artifact(frame_count: u64) -> (tempfile::TempDir, ManagedSpillArtifact) {

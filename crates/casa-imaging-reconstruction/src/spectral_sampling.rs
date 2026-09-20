@@ -159,6 +159,7 @@ pub(crate) struct NativeRowSpectralGeometry {
     pub(crate) channels: usize,
     pub(crate) first: (u32, f64),
     pub(crate) second: Option<(u32, f64)>,
+    pub(crate) lattice_first_pair_hz: Option<[f64; 2]>,
 }
 
 impl NativeRowSpectralGeometry {
@@ -174,8 +175,9 @@ impl NativeRowSpectralGeometry {
         self.second
     }
 
+    /// Original selected-vector pair: a local window must not rephase the grid.
     pub(crate) fn first_pair_hz(self) -> Option<[f64; 2]> {
-        self.second.map(|second| [self.first.1, second.1])
+        self.lattice_first_pair_hz
     }
 }
 
@@ -226,7 +228,7 @@ impl CasaLinearRowCursor {
                 return Err(SpectralStencilError::IncompleteNativeRow);
             }
             let pair = geometry
-                .first_pair_hz()
+                .lattice_first_pair_hz
                 .ok_or(SpectralStencilError::InvalidNativeRowGeometry)?;
             self.grid = Some(
                 CasaLinearGrid::compile_for_output(output, pair[0], pair[1])
@@ -1076,6 +1078,123 @@ fn sparse_terms(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn window_sample_address(channel: usize, frequency: f64) -> SelectedSampleAddress {
+        use casa_imaging_model::{
+            CorrelationType, FrequencyFrame, LogicalIdentity, MeasurementSetIdentity,
+        };
+        SelectedSampleAddress {
+            measurement_set: MeasurementSetIdentity::new(LogicalIdentity::from_sha256([1; 32])),
+            physical_row: 0,
+            data_description_id: 0,
+            spectral_window_id: 0,
+            channel_index: (channel * 2) as u32,
+            frequency_centre_hz: frequency,
+            frequency_lower_hz: frequency - 0.5,
+            frequency_upper_hz: frequency + 0.5,
+            channel_width_hz: 1.0,
+            frequency_frame: FrequencyFrame::Topocentric,
+            polarization_id: 0,
+            correlation_index: 0,
+            correlation_type: CorrelationType::StokesI,
+        }
+    }
+
+    #[test]
+    fn windowed_rows_keep_global_fine_grid_and_exact_pair_boundary_ownership() {
+        // Unequal local spacing catches accidentally recompiling the fine grid
+        // from the first pair of the restricted window. Indices also have gaps.
+        for descending in [false, true] {
+            let mut native = vec![
+                100.0, 101.0, 102.0, 102.5, 105.0, 108.0, 109.0, 111.0, 112.0,
+            ];
+            if descending {
+                native.reverse();
+            }
+            for output in [
+                vec![101.0, 104.0, 107.0, 110.0],
+                vec![110.0, 107.0, 104.0, 101.0],
+            ] {
+                let output_grid = CasaLinearOutputGrid::compile(&output).unwrap();
+                let collect = |range: std::ops::Range<usize>, original_lattice: bool| {
+                    let geometry = NativeRowSpectralGeometry {
+                        channels: range.len(),
+                        first: ((range.start * 2) as u32, native[range.start]),
+                        second: Some((((range.start + 1) * 2) as u32, native[range.start + 1])),
+                        lattice_first_pair_hz: Some(if original_lattice {
+                            [native[0], native[1]]
+                        } else {
+                            [native[range.start], native[range.start + 1]]
+                        }),
+                    };
+                    let mut cursor = CasaLinearRowCursor::new();
+                    let mut values = Vec::new();
+                    for channel in range {
+                        if let Some(samples) = cursor
+                            .push(
+                                window_sample_address(channel, native[channel]),
+                                geometry,
+                                native[channel],
+                                output_grid,
+                            )
+                            .unwrap()
+                        {
+                            for sample in
+                                samples.filter(|sample| (1..3).contains(&sample.output_channel()))
+                            {
+                                values.push((channel - 1, channel, sample));
+                            }
+                        }
+                    }
+                    cursor.finish().unwrap();
+                    values
+                };
+                let full = collect(0..native.len(), true);
+                let window = collect(2..8, true);
+                assert!(!full.is_empty());
+                assert_eq!(window, full, "native={native:?}, output={output:?}");
+                if !descending {
+                    assert_ne!(
+                        collect(2..8, false),
+                        full,
+                        "negative control must detect a locally rebuilt lattice"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn windowed_row_still_requires_complete_local_coverage() {
+        let geometry = NativeRowSpectralGeometry {
+            channels: 3,
+            first: (4, 104.0),
+            second: Some((6, 106.0)),
+            lattice_first_pair_hz: Some([100.0, 101.0]),
+        };
+        let output = CasaLinearOutputGrid::compile(&[100.0, 104.0, 108.0]).unwrap();
+        let mut cursor = CasaLinearRowCursor::new();
+        assert!(
+            cursor
+                .push(window_sample_address(0, 100.0), geometry, 100.0, output)
+                .is_err()
+        );
+        cursor
+            .push(window_sample_address(2, 104.0), geometry, 104.0, output)
+            .unwrap();
+        assert!(cursor.finish().is_err());
+        cursor
+            .push(window_sample_address(3, 106.0), geometry, 106.0, output)
+            .unwrap()
+            .unwrap()
+            .for_each(drop);
+        cursor
+            .push(window_sample_address(4, 108.0), geometry, 108.0, output)
+            .unwrap()
+            .unwrap()
+            .for_each(drop);
+        cursor.finish().unwrap();
+    }
 
     #[test]
     fn t55_cube_density_keeps_the_nominal_active_extent() {

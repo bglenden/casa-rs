@@ -709,6 +709,7 @@ pub(super) struct PreparedGriddedNormalTwoDomainWindow {
     pub(super) active_frames: usize,
     first_sequence: Option<u64>,
     record_count: u64,
+    routed_record_memberships: u64,
     prediction_groups: u64,
     prediction_record_count: u64,
     accumulation_record_count: u64,
@@ -795,6 +796,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
             active_frames: 0,
             first_sequence: None,
             record_count: 0,
+            routed_record_memberships: 0,
             prediction_groups: 0,
             prediction_record_count: 0,
             accumulation_record_count: 0,
@@ -806,6 +808,7 @@ impl PreparedGriddedNormalTwoDomainWindow {
     fn prepare<'a, I>(
         &mut self,
         first_sequence: u64,
+        selection: Option<&GriddedNormalFrameSelection>,
         descriptors: &[BlockDescriptor],
         frames: I,
         catalogs: &GriddedNormalDomainTileCatalogs,
@@ -832,15 +835,31 @@ impl PreparedGriddedNormalTwoDomainWindow {
         self.prediction_record_count = 0;
         self.accumulation_record_count = 0;
 
+        let channel_local_routes = matches!(
+            self.record_layout,
+            GriddedNormalRecordLayout::ChannelLocal { .. }
+        ) && self.record_bytes == GRIDDED_NORMAL_OPERATOR_RECORD_BYTES;
+
         let prepared = (|| {
             for (frame_ordinal, (sequence, encoded, verified_payload_crc32c)) in
                 frames.into_iter().enumerate()
             {
                 let frame_ordinal_u64 = u64::try_from(frame_ordinal)
                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-                let expected = first_sequence
+                let ordinal = first_sequence
                     .checked_add(frame_ordinal_u64)
                     .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                let expected = if let Some(selection) = selection {
+                    *selection
+                        .frame_sequences()
+                        .get(
+                            usize::try_from(ordinal)
+                                .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                        )
+                        .ok_or(SpectralOperatorError::BlockSequence)?
+                } else {
+                    ordinal
+                };
                 if sequence != expected {
                     return Err(SpectralOperatorError::BlockSequence);
                 }
@@ -896,43 +915,48 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                     .checked_add(1)
                                     .ok_or(SpectralOperatorError::CoverageOverflow)?;
                             }
-                            let group_ordinal = u32::try_from(self.groups.len())
-                                .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
-                            let (tile_ordinal, tap_count) = if let Some(aw) = record.aw {
-                                let (center, tap_count) = operators
-                                    .get(record.chart_ordinal)
-                                    .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
-                                    .aw_gridded_grid_footprint(aw)?;
-                                (
-                                    catalogs.tile_ordinal_center(record.chart_ordinal, center)?,
-                                    tap_count,
-                                )
-                            } else {
-                                (
-                                    catalogs.tile_ordinal(record.chart_ordinal, record.taps)?,
-                                    usize::try_from(GRIDDED_NORMAL_TAPS_PER_RECORD)
+                            if !channel_local_routes
+                                || (record.role != RecordRole::Prediction && owns_plane)
+                            {
+                                let group_ordinal = u32::try_from(self.groups.len())
+                                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+                                let (tile_ordinal, tap_count) = if let Some(aw) = record.aw {
+                                    let (center, tap_count) = operators
+                                        .get(record.chart_ordinal)
+                                        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?
+                                        .aw_gridded_grid_footprint(aw)?;
+                                    (
+                                        catalogs
+                                            .tile_ordinal_center(record.chart_ordinal, center)?,
+                                        tap_count,
+                                    )
+                                } else {
+                                    (
+                                        catalogs.tile_ordinal(record.chart_ordinal, record.taps)?,
+                                        usize::try_from(GRIDDED_NORMAL_TAPS_PER_RECORD)
+                                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                                    )
+                                };
+                                self.classifications.push(GriddedNormalClassification {
+                                    tile_ordinal: u32::try_from(tile_ordinal)
                                         .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                                )
-                            };
-                            self.classifications.push(GriddedNormalClassification {
-                                tile_ordinal: u32::try_from(tile_ordinal)
+                                    group_ordinal,
+                                    frame_ordinal: frame_ordinal_u32,
+                                    record_ordinal: u32::try_from(record_ordinal)
+                                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                                    tap_count: u32::try_from(
+                                        if record.role == RecordRole::Prediction || !owns_plane {
+                                            0
+                                        } else {
+                                            tap_count
+                                        },
+                                    )
                                     .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                                group_ordinal,
-                                frame_ordinal: frame_ordinal_u32,
-                                record_ordinal: u32::try_from(record_ordinal)
-                                    .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                                tap_count: u32::try_from(
-                                    if record.role == RecordRole::Prediction || !owns_plane {
-                                        0
-                                    } else {
-                                        tap_count
-                                    },
-                                )
-                                .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                            });
-                            self.tile_counts[tile_ordinal] = self.tile_counts[tile_ordinal]
-                                .checked_add(1)
-                                .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                                });
+                                self.tile_counts[tile_ordinal] = self.tile_counts[tile_ordinal]
+                                    .checked_add(1)
+                                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+                            }
                             if record.group_end {
                                 if group_needed {
                                     self.prediction_record_count = self
@@ -940,16 +964,19 @@ impl PreparedGriddedNormalTwoDomainWindow {
                                         .checked_add(group_prediction_records)
                                         .ok_or(SpectralOperatorError::CoverageOverflow)?;
                                 }
-                                self.groups.push(GriddedNormalGroupSpan {
-                                    frame_ordinal: frame_ordinal_u32,
-                                    records: u32::try_from(group_start)
-                                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?
-                                        ..u32::try_from(record_ordinal + 1)
-                                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
-                                    prediction_needed: group_needed,
-                                    prediction_lane: 0,
-                                    prediction_index: 0,
-                                });
+                                if !channel_local_routes || group_needed {
+                                    self.groups.push(GriddedNormalGroupSpan {
+                                        frame_ordinal: frame_ordinal_u32,
+                                        records: u32::try_from(group_start)
+                                            .map_err(|_| SpectralOperatorError::CoverageOverflow)?
+                                            ..u32::try_from(record_ordinal + 1).map_err(|_| {
+                                                SpectralOperatorError::CoverageOverflow
+                                            })?,
+                                        prediction_needed: group_needed,
+                                        prediction_lane: 0,
+                                        prediction_index: 0,
+                                    });
+                                }
                                 group_start = record_ordinal + 1;
                                 group_needed = false;
                                 group_prediction_records = 0;
@@ -1019,9 +1046,22 @@ impl PreparedGriddedNormalTwoDomainWindow {
             self.prepare_prediction_lanes()?;
             self.prepare_tile_routes()?;
             self.active_frames = self.frame_sequences.len();
-            self.first_sequence = Some(first_sequence);
-            self.record_count = u64::try_from(self.routes.len())
-                .map_err(|_| SpectralOperatorError::CoverageOverflow)?;
+            self.first_sequence = self.frame_sequences.first().copied();
+            self.record_count =
+                self.frame_record_counts
+                    .iter()
+                    .try_fold(0_u64, |total, count| {
+                        total
+                            .checked_add(u64::from(*count))
+                            .ok_or(SpectralOperatorError::CoverageOverflow)
+                    })?;
+            self.routed_record_memberships = self
+                .routed_record_memberships
+                .checked_add(
+                    u64::try_from(self.routes.len())
+                        .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
+                )
+                .ok_or(SpectralOperatorError::CoverageOverflow)?;
             self.prediction_groups = self
                 .prediction_groups
                 .checked_add(
@@ -1334,6 +1374,9 @@ enum GriddedNormalWorkKind {
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GriddedNormalWork {
+    program: LogicalIdentity,
+    core_channels: [usize; 2],
+    model_generation: crate::ModelGenerationId,
     first_block_sequence: u64,
     frame_count: u64,
     window_record_count: u64,
@@ -1393,6 +1436,24 @@ pub struct GriddedNormalPartial {
 }
 
 impl GriddedNormalOperatorApply {
+    fn owns_work(&self, work: GriddedNormalWork) -> bool {
+        let core = self.specification.slab().core_range();
+        work.program == self.program.identity()
+            && work.core_channels == [core.start, core.end]
+            && work.model_generation == self.model_generation
+    }
+
+    fn next_physical_sequence(&self) -> Option<u64> {
+        if let Some(selection) = &self.selection {
+            selection
+                .frame_sequences()
+                .get(usize::try_from(self.next_block_sequence).ok()?)
+                .copied()
+        } else {
+            (self.next_block_sequence < self.program.block_count())
+                .then_some(self.next_block_sequence)
+        }
+    }
     /// Apply one borrowed frame through the same eight logical works used by runtime.
     pub fn apply_encoded_block(
         &mut self,
@@ -1435,6 +1496,7 @@ impl GriddedNormalOperatorApply {
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
         prepared.prepare(
             self.next_block_sequence,
+            self.selection.as_ref(),
             &self.program.manifest.descriptors,
             frames,
             &self.tile_catalogs,
@@ -1477,7 +1539,7 @@ impl GriddedNormalOperatorApply {
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
         if prepared.first_sequence != Some(first_sequence)
             || prepared.active_frames != frame_count
-            || first_sequence != self.next_block_sequence
+            || Some(first_sequence) != self.next_physical_sequence()
         {
             return Err(SpectralOperatorError::BlockSequence);
         }
@@ -1506,6 +1568,12 @@ impl GriddedNormalOperatorApply {
             GriddedNormalWorkKind::Accumulation => prepared.lane_tap_visit_counts[lane],
         };
         Ok(GriddedNormalWork {
+            program: self.program.identity(),
+            core_channels: [
+                self.specification.slab().core_range().start,
+                self.specification.slab().core_range().end,
+            ],
+            model_generation: self.model_generation,
             first_block_sequence: first_sequence,
             frame_count: u64::try_from(frame_count)
                 .map_err(|_| SpectralOperatorError::CoverageOverflow)?,
@@ -1531,7 +1599,8 @@ impl GriddedNormalOperatorApply {
     where
         F: Fn(usize) -> Option<(u64, &'a [u8])>,
     {
-        if work.first_block_sequence != self.next_block_sequence
+        if !self.owns_work(work)
+            || Some(work.first_block_sequence) != self.next_physical_sequence()
             || work.lane >= GRIDDED_NORMAL_LANE_COUNT
         {
             return Err(SpectralOperatorError::BlockSequence);
@@ -1547,6 +1616,17 @@ impl GriddedNormalOperatorApply {
             || prepared.record_count != work.window_record_count
         {
             return Err(SpectralOperatorError::BlockSequence);
+        }
+        // Bind every borrowed frame, including frames with no routes in this lane.
+        for ordinal in 0..prepared.active_frames {
+            let (sequence, encoded) =
+                frame_at(ordinal).ok_or(SpectralOperatorError::BlockSequence)?;
+            if prepared.frame_sequences[ordinal] != sequence
+                || encoded.len()
+                    != prepared.frame_record_counts[ordinal] as usize * prepared.record_bytes
+            {
+                return Err(SpectralOperatorError::BlockSequence);
+            }
         }
         match work.kind {
             GriddedNormalWorkKind::Prediction => {
@@ -1840,10 +1920,23 @@ impl GriddedNormalOperatorApply {
         partial: GriddedNormalPartial,
     ) -> Result<(), SpectralOperatorError> {
         let work = partial.work;
-        if work.first_block_sequence != self.next_block_sequence
+        if !self.owns_work(work)
+            || Some(work.first_block_sequence) != self.next_physical_sequence()
             || work.partition_key() as usize != self.next_partition_commit
         {
             return Err(SpectralOperatorError::BlockSequence);
+        }
+        {
+            let prepared = self
+                .two_domain
+                .read()
+                .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?;
+            if prepared.first_sequence != Some(work.first_block_sequence)
+                || prepared.active_frames as u64 != work.frame_count
+                || prepared.record_count != work.window_record_count
+            {
+                return Err(SpectralOperatorError::BlockSequence);
+            }
         }
         self.next_partition_commit += 1;
         if self.next_partition_commit == GRIDDED_NORMAL_LANE_COUNT {
@@ -1920,18 +2013,11 @@ impl GriddedNormalOperatorApply {
             .next_block_sequence
             .checked_add(active_frames)
             .expect("validated gridded-normal frame coverage fits u64");
-        let routed_records = self
-            .program
-            .manifest
-            .descriptors
-            .iter()
-            .take(usize::try_from(routed_frames).expect("frame count fits usize"))
-            .map(|descriptor| descriptor.record_count)
-            .sum();
+        let routed_records = self.applied_records + prepared.record_count;
         GriddedNormalRoutingMeasurements {
             frames_routed: routed_frames,
             encoded_records: routed_records,
-            routed_record_memberships: routed_records,
+            routed_record_memberships: prepared.routed_record_memberships,
             prediction_groups: prepared.prediction_groups,
             degrid_records: prepared.degrid_records,
             grid_records: prepared.grid_records,

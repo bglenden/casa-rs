@@ -603,6 +603,8 @@ impl DecodedTaylorRecord<'_> {
 struct BlockDescriptor {
     record_count: u64,
     payload_crc32c: u32,
+    // Half-open flattened output-plane bounds; prediction-only frames are empty.
+    accumulation_output_planes: [u32; 2],
 }
 
 /// Whether compilation should derive diagnostic source cardinality.
@@ -1412,6 +1414,8 @@ impl GriddedNormalOperatorCompiler {
         Ok(GriddedNormalOperatorProgram {
             manifest: Arc::new(GriddedNormalOperatorManifest {
                 retained_metadata_bytes,
+                band_count: self.plan.band_count(),
+                band_channel_depth: self.plan.band_channel_depth(),
                 identity,
                 specification: self.specification,
                 prediction_support: self.prediction_support,
@@ -1459,6 +1463,8 @@ fn record_vector_growth(
 
 struct GriddedNormalOperatorManifest {
     retained_metadata_bytes: usize,
+    band_count: usize,
+    band_channel_depth: usize,
     identity: LogicalIdentity,
     specification: SpectralOperatorSpecification,
     prediction_support: Box<[std::ops::Range<usize>]>,
@@ -1602,6 +1608,26 @@ impl GriddedNormalOperatorProgram {
         u64::try_from(self.manifest.descriptors.len()).expect("block count fits u64")
     }
 
+    /// Number of admitted compiler channel bands (one for conservative layouts).
+    pub fn band_count(&self) -> usize {
+        self.manifest.band_count
+    }
+
+    /// Channel depth admitted for compilation bands.
+    pub fn band_channel_depth(&self) -> usize {
+        self.manifest.band_channel_depth
+    }
+
+    /// Complete output channel count bound during compilation.
+    pub fn total_channels(&self) -> usize {
+        self.manifest.specification.slab().total_channels()
+    }
+
+    /// Polarization planes per output channel.
+    pub fn polarization_count(&self) -> usize {
+        self.manifest.specification.polarization_count()
+    }
+
     /// Return exhaustive source blocks covered by the weighting replay.
     #[must_use]
     pub fn source_block_count(&self) -> u64 {
@@ -1661,6 +1687,102 @@ impl GriddedNormalOperatorProgram {
         usize::try_from(descriptor.record_count)
             .ok()?
             .checked_mul(self.record_bytes())
+    }
+
+    /// Return a conservative half-open output-plane range accumulated by a frame.
+    ///
+    /// Standard channel-local frames exclude prediction-only neighbors from this
+    /// range. Other layouts and AW frames conservatively cover every output plane.
+    /// The frame remains indivisible: prediction records belonging to its groups
+    /// must accompany any selected accumulation records. An unknown sequence
+    /// returns `None`.
+    #[must_use]
+    pub fn block_accumulation_output_plane_range(
+        &self,
+        sequence: u64,
+    ) -> Option<std::ops::Range<usize>> {
+        let descriptor = self
+            .manifest
+            .descriptors
+            .get(usize::try_from(sequence).ok()?)?;
+        if self.has_channel_local_frame_ranges() {
+            let [start, end] = descriptor.accumulation_output_planes;
+            Some(start as usize..end as usize)
+        } else {
+            Some(0..self.output_plane_count().ok()?)
+        }
+    }
+
+    /// Return whether an indivisible frame may accumulate into an output window.
+    ///
+    /// Only standard 40-byte channel-local records support frame exclusion.
+    /// Other layouts and AW frames always return `Some(true)`; an unknown frame
+    /// sequence returns `None`.
+    #[must_use]
+    pub fn block_overlaps_output_planes(
+        &self,
+        sequence: u64,
+        output_planes: std::ops::Range<usize>,
+    ) -> Option<bool> {
+        let frame = self.block_accumulation_output_plane_range(sequence)?;
+        Some(
+            !self.has_channel_local_frame_ranges()
+                || (!frame.is_empty()
+                    && !output_planes.is_empty()
+                    && frame.start < output_planes.end
+                    && output_planes.start < frame.end),
+        )
+    }
+
+    /// Bind an indivisible physical-frame selection to an output-plane core.
+    /// Every intersecting accumulation envelope is retained, including all of
+    /// its prediction neighbors and off-core encoded records. Unsupported
+    /// layouts conservatively retain the complete artifact.
+    pub fn select_frames(
+        &self,
+        output_planes: std::ops::Range<usize>,
+    ) -> Result<GriddedNormalFrameSelection, SpectralOperatorError> {
+        if output_planes.is_empty() || output_planes.end > self.output_plane_count()? {
+            return Err(SpectralOperatorError::InvalidSlab);
+        }
+        let count = (0..self.block_count())
+            .filter(|&sequence| {
+                self.block_overlaps_output_planes(sequence, output_planes.clone()) == Some(true)
+            })
+            .count();
+        let mut sequences = Vec::new();
+        sequences
+            .try_reserve_exact(count)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        let mut records = 0_u64;
+        for sequence in 0..self.block_count() {
+            if self.block_overlaps_output_planes(sequence, output_planes.clone()) == Some(true) {
+                sequences.push(sequence);
+                records = records
+                    .checked_add(self.manifest.descriptors[sequence as usize].record_count)
+                    .ok_or(SpectralOperatorError::CoverageOverflow)?;
+            }
+        }
+        let payload_bytes = records
+            .checked_mul(self.record_bytes() as u64)
+            .ok_or(SpectralOperatorError::CoverageOverflow)?;
+        Ok(GriddedNormalFrameSelection(Arc::new(
+            GriddedNormalSelectedFrames {
+                program: self.identity(),
+                output_planes,
+                sequences: sequences.into(),
+                records,
+                payload_bytes,
+            },
+        )))
+    }
+
+    fn has_channel_local_frame_ranges(&self) -> bool {
+        matches!(
+            self.manifest.record_layout,
+            GriddedNormalRecordLayout::ChannelLocal { .. }
+        ) && !self.manifest.aw_projection
+            && self.record_bytes() == GRIDDED_NORMAL_OPERATOR_RECORD_BYTES
     }
 
     /// Certify the complete prior generation once, retaining its bounded backing
@@ -1748,6 +1870,45 @@ impl GriddedNormalOperatorProgram {
         prior: &mut GriddedNormalReplaySource,
         prepared: PreparedSpectralOperator,
         storage: &GriddedNormalStoragePlan,
+    ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
+        self.begin_apply_bound(problem, model, prior, prepared, storage, None)
+    }
+
+    /// Bind the compiler-derived frame selection and admitted replay storage.
+    pub fn begin_apply_with_frame_selection(
+        &self,
+        problem: &CompiledProblem,
+        model: &ModelGeneration,
+        prior: &mut GriddedNormalReplaySource,
+        prepared: PreparedSpectralOperator,
+        storage: &GriddedNormalStoragePlan,
+        selection: &GriddedNormalFrameSelection,
+    ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
+        let core = prepared.slab().core_range();
+        let polarizations = self.manifest.specification.polarization_count();
+        if selection.program_identity() != self.identity()
+            || selection.output_planes() != (core.start * polarizations..core.end * polarizations)
+        {
+            return Err(SpectralOperatorError::GriddedRecordMismatch);
+        }
+        self.begin_apply_bound(
+            problem,
+            model,
+            prior,
+            prepared,
+            storage,
+            Some(selection.clone()),
+        )
+    }
+
+    fn begin_apply_bound(
+        &self,
+        problem: &CompiledProblem,
+        model: &ModelGeneration,
+        prior: &mut GriddedNormalReplaySource,
+        prepared: PreparedSpectralOperator,
+        storage: &GriddedNormalStoragePlan,
+        selection: Option<GriddedNormalFrameSelection>,
     ) -> Result<GriddedNormalOperatorApply, SpectralOperatorError> {
         require_supported_basis(&problem.reconstruction().basis())?;
         if storage.layout
@@ -1853,6 +2014,7 @@ impl GriddedNormalOperatorProgram {
             reusable_domains,
             model_generation,
             next_block_sequence: 0,
+            selection,
             applied_records: 0,
             next_partition_commit: 0,
             two_domain: RwLock::new(two_domain),
@@ -1876,6 +2038,56 @@ impl GriddedNormalOperatorProgram {
                 ))
             }),
         })
+    }
+}
+
+/// Immutable program-minted physical frame coverage for one output core.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GriddedNormalFrameSelection(Arc<GriddedNormalSelectedFrames>);
+
+#[derive(Debug, PartialEq, Eq)]
+struct GriddedNormalSelectedFrames {
+    program: LogicalIdentity,
+    output_planes: std::ops::Range<usize>,
+    sequences: Arc<[u64]>,
+    records: u64,
+    payload_bytes: u64,
+}
+
+impl GriddedNormalFrameSelection {
+    /// Identity of the exact compiled program that minted this selection.
+    pub fn program_identity(&self) -> LogicalIdentity {
+        self.0.program
+    }
+    /// Output core covered by this selection, including polarization planes.
+    pub fn output_planes(&self) -> std::ops::Range<usize> {
+        self.0.output_planes.clone()
+    }
+    /// Original physical frame sequences, in required replay order.
+    pub fn frame_sequences(&self) -> &[u64] {
+        &self.0.sequences
+    }
+    /// Share the immutable physical sequence table with the artifact reader.
+    pub fn frame_sequences_shared(&self) -> Arc<[u64]> {
+        Arc::clone(&self.0.sequences)
+    }
+    /// Number of indivisible selected frames.
+    pub fn frame_count(&self) -> u64 {
+        self.0.sequences.len() as u64
+    }
+    /// All encoded records, including records outside the output core.
+    pub fn record_count(&self) -> u64 {
+        self.0.records
+    }
+    /// Complete selected encoded payload size, excluding frame headers.
+    pub fn payload_bytes(&self) -> u64 {
+        self.0.payload_bytes
+    }
+    /// Retained shared allocation, including Arc counters and vector capacity.
+    pub fn retained_metadata_bytes(&self) -> usize {
+        std::mem::size_of::<GriddedNormalSelectedFrames>()
+            + 4 * std::mem::size_of::<usize>()
+            + self.0.sequences.len() * std::mem::size_of::<u64>()
     }
 }
 
@@ -1916,7 +2128,9 @@ pub struct GriddedNormalOperatorApply {
     operators: Vec<SpectralSlabOperator>,
     reusable_domains: Vec<ReusableNormalState>,
     model_generation: crate::ModelGenerationId,
+    // Replay ordinal; selected physical frame sequences can have gaps.
     next_block_sequence: u64,
+    selection: Option<GriddedNormalFrameSelection>,
     applied_records: u64,
     next_partition_commit: usize,
     two_domain: RwLock<PreparedGriddedNormalTwoDomainWindow>,
@@ -2883,8 +3097,16 @@ impl GriddedNormalOperatorApply {
             .read()
             .map_err(|_| SpectralOperatorError::GriddedSectorPoisoned)?
             .active_frames;
-        if self.next_block_sequence != self.program.block_count()
-            || self.applied_records != self.program.manifest.record_count
+        if self.next_block_sequence
+            != self.selection.as_ref().map_or(
+                self.program.block_count(),
+                GriddedNormalFrameSelection::frame_count,
+            )
+            || self.applied_records
+                != self.selection.as_ref().map_or(
+                    self.program.record_count(),
+                    GriddedNormalFrameSelection::record_count,
+                )
             || self.next_partition_commit != 0
             || active_frames != 0
         {
@@ -3224,9 +3446,13 @@ fn program_identity(
     encoder.u64(record_count);
     encoder.usize(plan.raw_record_capacity);
     encoder.usize(plan.frame_record_capacity);
+    encoder.usize(plan.band_channel_depth());
+    encoder.usize(plan.band_count());
     for descriptor in descriptors {
         encoder.u64(descriptor.record_count);
         encoder.u32(descriptor.payload_crc32c);
+        encoder.u32(descriptor.accumulation_output_planes[0]);
+        encoder.u32(descriptor.accumulation_output_planes[1]);
     }
     LogicalIdentity::from_sha256(encoder.finish())
 }
@@ -4162,6 +4388,7 @@ mod tests {
         let legacy_descriptor = BlockDescriptor {
             record_count: 1,
             payload_crc32c: crc32c::crc32c(&legacy_scalar),
+            ..BlockDescriptor::default()
         };
         assert_eq!(
             validate_encoded_block(&legacy_descriptor, &legacy_scalar, 32, None),
@@ -4188,6 +4415,7 @@ mod tests {
         let taylor_descriptor = BlockDescriptor {
             record_count: 1,
             payload_crc32c: crc32c::crc32c(&taylor),
+            ..BlockDescriptor::default()
         };
         assert_eq!(
             validate_encoded_block(&taylor_descriptor, &legacy_scalar, 32, None),
@@ -4914,6 +5142,7 @@ mod tests {
         let descriptor = BlockDescriptor {
             record_count: 1,
             payload_crc32c: crc32c::crc32c(&encoded),
+            ..BlockDescriptor::default()
         };
         assert!(
             validate_encoded_block(
@@ -4964,6 +5193,7 @@ mod tests {
         let descriptor = BlockDescriptor {
             record_count: 1,
             payload_crc32c: checksum,
+            ..BlockDescriptor::default()
         };
         assert!(
             validate_encoded_block(

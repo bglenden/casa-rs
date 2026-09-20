@@ -10,10 +10,11 @@ use std::{
 };
 
 use crate::derived::engine::{MsCalEngine, polarization_operator_angle};
+use crate::spectral_selection::PreparedFrequencyFrameConversion;
 use crate::subtables::SubTable;
 use crate::{
-    MainRowSelectionCursor, MeasurementSet, MsError, MsReadPlan, MsSelectionIoBudget,
-    ObservationOwnerError, PointingDirectionBracket,
+    MainRowSelectionCursor, MainRowSelectionFact, MeasurementSet, MsError, MsReadPlan,
+    MsSelectionIoBudget, ObservationOwnerError, PointingDirectionBracket,
     PointingDirectionColumn as StoredPointingDirectionColumn, PointingDirectionQuery,
     PointingReadPlan, PreparedSelectedPointingCatalog, SelectedObservationBuffer,
     SelectedObservationBufferRequest, SelectedPointingQueryDomain, SelectedStoredSample,
@@ -42,6 +43,7 @@ use ndarray::arr2;
 use thiserror::Error;
 
 use super::bound_observation::SelectedObservationTraversalMeasurementsBuilder;
+use super::spectral_evaluation::prepare_row_frequency_conversion;
 use super::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,
     SelectedObservationContentPlanError, SelectedObservationMeasures,
@@ -614,74 +616,110 @@ impl BoundObservationSource {
         replay: &mut SelectedRowReplay,
         block: &mut SelectedObservationBlock,
         measurements: &mut SelectedObservationTraversalMeasurementsBuilder,
+        frequency_bounds_hz: Option<[f64; 2]>,
     ) -> Result<bool, BoundObservationSourceError> {
         self.geometry_engine
             .verify_selected_observation_measures()?;
-        let Some(coordinate_index) =
-            self.fill_selected_row_group(logical_source, replay, &mut block.request_rows)?
-        else {
-            return Ok(false);
-        };
-        let coordinates = &self.coordinates[coordinate_index];
-        let fill_report = self.measurement_set.fill_selected_observation_buffer(
-            &SelectedObservationBufferRequest::new(
-                selected_visibility(logical_source.selected_columns().visibility()),
-                selected_weight(logical_source.selected_columns().weights()),
-                &block.request_rows,
-                VisibilityChannelReadRange::new(
-                    coordinates.channel_start,
-                    coordinates.channel_count,
+        loop {
+            let Some(coordinate_index) = self.fill_selected_row_group(
+                logical_source,
+                replay,
+                &mut block.request_rows,
+                &mut block.row_contexts,
+            )?
+            else {
+                return Ok(false);
+            };
+            let coordinates = &self.coordinates[coordinate_index];
+            let (channel_range, admitted_channels) = match frequency_bounds_hz {
+                Some(bounds) => {
+                    let Some(window) = selected_channel_window(
+                        self,
+                        problem,
+                        coordinates,
+                        &block.row_contexts,
+                        bounds,
+                    )?
+                    else {
+                        // The row manifest was still consumed and will be checked at terminal
+                        // poll. No channel payload is needed for a disjoint source block.
+                        continue;
+                    };
+                    (window.0, Some(window.1))
+                }
+                None => (
+                    VisibilityChannelReadRange::new(
+                        coordinates.channel_start,
+                        coordinates.channel_count,
+                    ),
+                    None,
                 ),
-            ),
-            &mut block.buffer,
-        )?;
-        block.logical_bytes = fill_report.logical_output_bytes;
-        block.source_read_operations = fill_report.read_operation_count;
-        measurements
-            .record_selected_channel_runs(fill_report.row_count, coordinates.channels.len())?;
-        measurements.record_fill(fill_report)?;
-        let arrangement_started = Instant::now();
-        for row in 0..block.buffer.row_count() {
-            let stored = block
-                .buffer
-                .sample(0, row, 0)
-                .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
-            if u32::try_from(stored.data_description_id()).ok()
-                != Some(coordinates.data_description.data_description_id())
-            {
-                return Err(
-                    BoundObservationSourceError::DataDescriptionCoordinateMismatch {
-                        data_description_id: coordinates.data_description.data_description_id(),
-                    },
-                );
-            }
-            if !self.row_predicate.matches(StoredMainRow::from(stored)) {
-                return Err(BoundObservationSourceError::SelectedRowPredicateMismatch {
-                    physical_row: u64::try_from(stored.physical_row())
-                        .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
-                });
-            }
-        }
-        let observation_pointings = evaluate_observation_pointings(self, problem, &block.buffer)?;
-        block.row_geometry.clear();
-        for row in 0..block.buffer.row_count() {
-            let stored = block
-                .buffer
-                .sample(0, row, 0)
-                .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
-            block.row_geometry.push(evaluate_row_geometry(
-                self,
-                problem,
-                stored,
-                observation_pointings
+            };
+            block.row_contexts.clear();
+            block.admitted_channel_ordinals = admitted_channels;
+            let fill_report = self.measurement_set.fill_selected_observation_buffer(
+                &SelectedObservationBufferRequest::new(
+                    selected_visibility(logical_source.selected_columns().visibility()),
+                    selected_weight(logical_source.selected_columns().weights()),
+                    &block.request_rows,
+                    channel_range,
+                ),
+                &mut block.buffer,
+            )?;
+            block.logical_bytes = fill_report.logical_output_bytes;
+            block.source_read_operations = fill_report.read_operation_count;
+            measurements.record_selected_channel_runs(
+                fill_report.row_count,
+                block
+                    .admitted_channel_ordinals
                     .as_ref()
-                    .map(|pointings| pointings[row]),
-            )?);
+                    .map_or(coordinates.channels.len(), |range| range.len()),
+            )?;
+            measurements.record_fill(fill_report)?;
+            let arrangement_started = Instant::now();
+            for row in 0..block.buffer.row_count() {
+                let stored = block
+                    .buffer
+                    .sample(0, row, 0)
+                    .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+                if u32::try_from(stored.data_description_id()).ok()
+                    != Some(coordinates.data_description.data_description_id())
+                {
+                    return Err(
+                        BoundObservationSourceError::DataDescriptionCoordinateMismatch {
+                            data_description_id: coordinates.data_description.data_description_id(),
+                        },
+                    );
+                }
+                if !self.row_predicate.matches(StoredMainRow::from(stored)) {
+                    return Err(BoundObservationSourceError::SelectedRowPredicateMismatch {
+                        physical_row: u64::try_from(stored.physical_row())
+                            .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
+                    });
+                }
+            }
+            let observation_pointings =
+                evaluate_observation_pointings(self, problem, &block.buffer)?;
+            block.row_geometry.clear();
+            for row in 0..block.buffer.row_count() {
+                let stored = block
+                    .buffer
+                    .sample(0, row, 0)
+                    .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+                block.row_geometry.push(evaluate_row_geometry(
+                    self,
+                    problem,
+                    stored,
+                    observation_pointings
+                        .as_ref()
+                        .map(|pointings| pointings[row]),
+                )?);
+            }
+            block.coordinate_index = coordinate_index;
+            block.bind_source(self, logical_source);
+            measurements.record_arrangement_nanos(arrangement_started.elapsed().as_nanos())?;
+            return Ok(true);
         }
-        block.coordinate_index = coordinate_index;
-        block.bind_source(self, logical_source);
-        measurements.record_arrangement_nanos(arrangement_started.elapsed().as_nanos())?;
-        Ok(true)
     }
 
     pub(super) fn selected_row_replay(
@@ -718,6 +756,7 @@ impl BoundObservationSource {
         logical_source: &MeasurementSetReadAccess,
         replay: &mut SelectedRowReplay,
         physical_rows: &mut Vec<usize>,
+        row_contexts: &mut Vec<SelectedReplayRow>,
     ) -> Result<Option<usize>, BoundObservationSourceError> {
         let Some(first) = replay.next_selected(self, logical_source)? else {
             return Ok(None);
@@ -734,10 +773,12 @@ impl BoundObservationSource {
                 },
             )?;
         physical_rows.clear();
+        row_contexts.clear();
         physical_rows.push(
             usize::try_from(first.physical_row())
                 .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
         );
+        row_contexts.push(first);
         while physical_rows.len() < self.content_plan.rows_per_block() {
             let Some(row) = replay.next_selected(self, logical_source)? else {
                 break;
@@ -750,14 +791,199 @@ impl BoundObservationSource {
                 usize::try_from(row.physical_row())
                     .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
             );
+            row_contexts.push(row);
         }
         Ok(Some(coordinate_index))
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct SelectedReplayRow {
+    physical_row: u64,
+    data_description_id: u32,
+    field_id: i32,
+    time_mjd_seconds: f64,
+}
+
+impl SelectedReplayRow {
+    fn new(physical_row: u64, data_description_id: u32, fact: MainRowSelectionFact) -> Self {
+        Self {
+            physical_row,
+            data_description_id,
+            field_id: fact.field_id(),
+            time_mjd_seconds: fact.time_mjd_seconds(),
+        }
+    }
+
+    const fn physical_row(self) -> u64 {
+        self.physical_row
+    }
+
+    const fn data_description_id(self) -> u32 {
+        self.data_description_id
+    }
+}
+
+fn selected_channel_window(
+    source: &BoundObservationSource,
+    problem: &CompiledProblem,
+    coordinates: &SelectedCoordinates,
+    rows: &[SelectedReplayRow],
+    frequency_bounds_hz: [f64; 2],
+) -> Result<Option<(VisibilityChannelReadRange, std::ops::Range<usize>)>, BoundObservationSourceError>
+{
+    let lower_bound = frequency_bounds_hz[0].min(frequency_bounds_hz[1]);
+    let upper_bound = frequency_bounds_hz[0].max(frequency_bounds_hz[1]);
+    if !lower_bound.is_finite() || !upper_bound.is_finite() || lower_bound == upper_bound {
+        return Err(BoundObservationSourceError::SpectralContributionMismatch);
+    }
+    let output_frame = problem.geometry().spectral().output_frame();
+    let source_frame = coordinates
+        .channels
+        .first()
+        .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?
+        .frame;
+    let mut admitted_first: Option<usize> = None;
+    let mut admitted_last: Option<usize> = None;
+    let mut cached_conversion: Option<((i32, u64), PreparedFrequencyFrameConversion)> = None;
+    for row in rows.iter().copied() {
+        let normalized_time = row.time_mjd_seconds / 86_400.0 * 86_400.0;
+        let context_key = (row.field_id, normalized_time.to_bits());
+        let conversion = if let Some((cached_key, conversion)) = cached_conversion
+            && cached_key == context_key
+        {
+            conversion
+        } else {
+            let conversion = prepare_row_frequency_conversion(
+                source.geometry_engine(),
+                row.field_id,
+                normalized_time,
+                source_frame,
+                output_frame,
+            )?;
+            cached_conversion = Some((context_key, conversion));
+            conversion
+        };
+        let mut row_window = SelectedChannelWindowSelection::new(lower_bound, upper_bound);
+        for (ordinal, channel) in coordinates.channels.iter().copied().enumerate() {
+            let centre = conversion.convert_hz(channel.centre_hz);
+            if !centre.is_finite() || centre <= 0.0 {
+                return Err(BoundObservationSourceError::SpectralContributionMismatch);
+            }
+            row_window.observe(ordinal, centre);
+        }
+        if let Some(window) = row_window.finish() {
+            let first = window.start;
+            let last = window.end - 1;
+            admitted_first = Some(admitted_first.map_or(first, |current| current.min(first)));
+            admitted_last = Some(admitted_last.map_or(last, |current| current.max(last)));
+        }
+    }
+    let (Some(admitted_first), Some(admitted_last)) = (admitted_first, admitted_last) else {
+        return Ok(None);
+    };
+    let mut physical_start = usize::MAX;
+    let mut physical_end = 0_usize;
+    for ordinal in admitted_first..=admitted_last {
+        let channel = coordinates
+            .channels
+            .get(ordinal)
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        let index = usize::try_from(channel.channel_index)
+            .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?;
+        physical_start = physical_start.min(index);
+        physical_end = physical_end.max(
+            index
+                .checked_add(1)
+                .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
+        );
+    }
+    Ok(Some((
+        VisibilityChannelReadRange::new(physical_start, physical_end - physical_start),
+        admitted_first..admitted_last + 1,
+    )))
+}
+
+#[derive(Clone, Copy)]
+struct SelectedChannelWindowSelection {
+    lower_bound: f64,
+    upper_bound: f64,
+    first: Option<usize>,
+    last: Option<usize>,
+    previous: Option<(usize, f64)>,
+}
+
+impl SelectedChannelWindowSelection {
+    const fn new(lower_bound: f64, upper_bound: f64) -> Self {
+        Self {
+            lower_bound,
+            upper_bound,
+            first: None,
+            last: None,
+            previous: None,
+        }
+    }
+
+    fn observe(&mut self, ordinal: usize, centre: f64) {
+        if (self.lower_bound..=self.upper_bound).contains(&centre) {
+            self.include(ordinal, ordinal);
+        }
+        if let Some((previous_ordinal, previous_centre)) = self.previous
+            && previous_centre.min(centre) <= self.upper_bound
+            && previous_centre.max(centre) >= self.lower_bound
+        {
+            self.include(previous_ordinal.min(ordinal), previous_ordinal.max(ordinal));
+        }
+        self.previous = Some((ordinal, centre));
+    }
+
+    fn include(&mut self, first: usize, last: usize) {
+        self.first = Some(self.first.map_or(first, |current| current.min(first)));
+        self.last = Some(self.last.map_or(last, |current| current.max(last)));
+    }
+
+    fn finish(self) -> Option<std::ops::Range<usize>> {
+        let first = self.first?;
+        let last = self.last?;
+        Some(first..last + 1)
+    }
+}
+
+#[cfg(test)]
+mod selected_channel_window_tests {
+    use super::SelectedChannelWindowSelection;
+
+    fn select(centres: &[f64], bounds: [f64; 2]) -> Option<std::ops::Range<usize>> {
+        let lower = bounds[0].min(bounds[1]);
+        let upper = bounds[0].max(bounds[1]);
+        let mut selection = SelectedChannelWindowSelection::new(lower, upper);
+        for (ordinal, centre) in centres.iter().copied().enumerate() {
+            selection.observe(ordinal, centre);
+        }
+        selection.finish()
+    }
+
+    #[test]
+    fn adjacent_pair_support_handles_descending_and_gapped_centres() {
+        assert_eq!(select(&[4.0, 3.0, 2.0, 1.0], [2.4, 3.6]), Some(0..3));
+        assert_eq!(
+            select(&[100.0, 111.0, 150.0, 220.0], [120.0, 145.0]),
+            Some(1..3)
+        );
+    }
+
+    #[test]
+    fn selection_does_not_add_a_channel_beyond_the_intersecting_pair() {
+        assert_eq!(select(&[0.0, 10.0, 20.0], [1.0, 9.0]), Some(0..2));
+        assert_eq!(select(&[0.0, 10.0, 20.0], [9.0, 11.0]), Some(0..3));
+        assert_eq!(select(&[0.0, 10.0, 20.0], [30.0, 40.0]), None);
+        assert_eq!(select(&[10.0], [9.0, 11.0]), Some(0..1));
+    }
+}
+
 pub(super) struct SelectedRowReplay {
     cursor: MainRowSelectionCursor,
-    pending: Option<SelectedMainRow>,
+    pending: Option<SelectedReplayRow>,
     manifest: Option<SelectedRowsBuilder>,
     terminal_checked: bool,
 }
@@ -767,7 +993,7 @@ impl SelectedRowReplay {
         &mut self,
         source: &BoundObservationSource,
         logical_source: &MeasurementSetReadAccess,
-    ) -> Result<Option<SelectedMainRow>, BoundObservationSourceError> {
+    ) -> Result<Option<SelectedReplayRow>, BoundObservationSourceError> {
         if let Some(row) = self.pending.take() {
             return Ok(Some(row));
         }
@@ -793,7 +1019,7 @@ impl SelectedRowReplay {
             if !source.row_predicate.matches(StoredMainRow::from(fact)) {
                 continue;
             }
-            let row = SelectedMainRow::new(
+            let row = SelectedReplayRow::new(
                 u64::try_from(fact.physical_row())
                     .map_err(|_| BoundObservationSourceError::PhysicalRowIndexOverflow)?,
                 u32::try_from(fact.data_description_id()).map_err(|_| {
@@ -801,11 +1027,15 @@ impl SelectedRowReplay {
                         data_description_id: u32::MAX,
                     }
                 })?,
+                fact,
             );
             self.manifest
                 .as_mut()
                 .expect("selected-row manifest remains active before terminal")
-                .push(row)
+                .push(SelectedMainRow::new(
+                    row.physical_row(),
+                    row.data_description_id(),
+                ))
                 .map_err(|_| BoundObservationSourceError::StaleSelectedRows)?;
             return Ok(Some(row));
         }
@@ -1106,6 +1336,7 @@ impl BoundObservationSamples<'_> {
             self.logical_source,
             &mut self.replay,
             &mut block.request_rows,
+            &mut block.row_contexts,
         )?
         else {
             return Ok(false);
@@ -1127,6 +1358,8 @@ impl BoundObservationSamples<'_> {
                 &mut block.buffer,
             )?;
         block.logical_bytes = fill_report.logical_output_bytes;
+        block.row_contexts.clear();
+        block.admitted_channel_ordinals = None;
         self.measurements.borrow_mut().record_fill(fill_report)?;
         let arrangement_started = Instant::now();
         for row in 0..block.buffer.row_count() {
@@ -1398,6 +1631,8 @@ pub struct SelectedObservationBlock {
     buffer: SelectedObservationBuffer,
     row_geometry: Vec<EvaluatedRowGeometry>,
     request_rows: Vec<usize>,
+    row_contexts: Vec<SelectedReplayRow>,
+    admitted_channel_ordinals: Option<std::ops::Range<usize>>,
     logical_source: Option<MeasurementSetReadAccess>,
     coordinates: Option<Arc<[SelectedCoordinates]>>,
     geometry_engine: Option<Arc<MsCalEngine>>,
@@ -1414,6 +1649,8 @@ impl SelectedObservationBlock {
             buffer: SelectedObservationBuffer::default(),
             row_geometry: Vec::with_capacity(rows_per_block),
             request_rows: Vec::with_capacity(rows_per_block),
+            row_contexts: Vec::with_capacity(rows_per_block),
+            admitted_channel_ordinals: None,
             logical_source: None,
             coordinates: None,
             geometry_engine: None,
@@ -1470,17 +1707,47 @@ impl SelectedObservationBlock {
         )
     }
 
+    pub(super) fn selected_channels_per_row(&self) -> Result<usize, BoundObservationSourceError> {
+        self.coordinates
+            .as_ref()
+            .and_then(|coordinates| coordinates.get(self.coordinate_index))
+            .map(|coordinates| {
+                self.admitted_channel_ordinals
+                    .as_ref()
+                    .map_or(coordinates.channels.len(), |range| range.len())
+            })
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+    }
+
     /// Number of complete row/channel runs in the currently filled source block.
     pub fn selected_run_count(&self) -> Result<usize, BoundObservationSourceError> {
         self.coordinates
             .as_ref()
             .and_then(|coordinates| coordinates.get(self.coordinate_index))
             .and_then(|coordinates| {
-                self.buffer
-                    .row_count()
-                    .checked_mul(coordinates.channels.len())
+                self.buffer.row_count().checked_mul(
+                    self.admitted_channel_ordinals
+                        .as_ref()
+                        .map_or(coordinates.channels.len(), |range| range.len()),
+                )
             })
             .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)
+    }
+
+    pub(super) fn selected_sample_count(&self) -> Result<u64, BoundObservationSourceError> {
+        let runs = u64::try_from(self.selected_run_count()?)
+            .map_err(|_| BoundObservationSourceError::MeasurementOverflow)?;
+        let correlations = self
+            .coordinates
+            .as_ref()
+            .and_then(|coordinates| coordinates.get(self.coordinate_index))
+            .map(|coordinates| coordinates.products.len())
+            .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?;
+        runs.checked_mul(
+            u64::try_from(correlations)
+                .map_err(|_| BoundObservationSourceError::MeasurementOverflow)?,
+        )
+        .ok_or(BoundObservationSourceError::MeasurementOverflow)
     }
 
     pub(super) fn projection_context(
@@ -1495,7 +1762,7 @@ impl SelectedObservationBlock {
             self.geometry_engine
                 .as_deref()
                 .ok_or(BoundObservationSourceError::StoredSampleShapeMismatch)?,
-            coordinates.row_spectral_selection(),
+            coordinates.row_spectral_selection_for_window(self.admitted_channel_ordinals.as_ref()),
         ))
     }
 
@@ -1528,7 +1795,14 @@ impl SelectedObservationBlock {
             .ok_or(BlockVisitError::Source(
                 BoundObservationSourceError::StoredSampleShapeMismatch,
             ))?;
-        let channel_count = coordinates.channels.len();
+        let channel_start = self
+            .admitted_channel_ordinals
+            .as_ref()
+            .map_or(0, |range| range.start);
+        let channel_count = self
+            .admitted_channel_ordinals
+            .as_ref()
+            .map_or(coordinates.channels.len(), |range| range.len());
         let run_count = self.selected_run_count().map_err(BlockVisitError::Source)?;
         if range.start > range.end || range.end > run_count || channel_count == 0 {
             return Err(BlockVisitError::Source(
@@ -1556,10 +1830,10 @@ impl SelectedObservationBlock {
             .map_err(BlockVisitError::Source)?;
             let first_channel = range.start.saturating_sub(row * channel_count);
             let last_channel = (range.end - row * channel_count).min(channel_count);
-            for channel in coordinates.channels[first_channel..last_channel]
-                .iter()
-                .copied()
-            {
+            for channel_ordinal in channel_start + first_channel..channel_start + last_channel {
+                let channel = coordinates.channels.get(channel_ordinal).copied().ok_or(
+                    BlockVisitError::Source(BoundObservationSourceError::StoredSampleShapeMismatch),
+                )?;
                 let run_channel = project_run_channel(channel);
                 correlations.clear();
                 if correlations.capacity() < coordinates.products.len() {
@@ -1569,7 +1843,7 @@ impl SelectedObservationBlock {
                 }
                 let channel_offset = usize::try_from(channel.channel_index)
                     .ok()
-                    .and_then(|channel| channel.checked_sub(coordinates.channel_start));
+                    .and_then(|channel| channel.checked_sub(self.buffer.channel_range().start));
                 let stokes_i_group_flag = coordinates
                     .products
                     .iter()
@@ -1616,7 +1890,8 @@ impl SelectedObservationBlock {
                     run_channel,
                     correlations.as_slice(),
                     geometry_engine,
-                    coordinates.row_spectral_selection(),
+                    coordinates
+                        .row_spectral_selection_for_window(self.admitted_channel_ordinals.as_ref()),
                 )
                 .map_err(BlockVisitError::Consumer)?;
             }
@@ -1649,11 +1924,17 @@ impl SelectedObservationBlock {
             .len()
             .checked_mul(size_of::<usize>())
             .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        let row_contexts = self
+            .row_contexts
+            .len()
+            .checked_mul(size_of::<SelectedReplayRow>())
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
         u64::try_from(
             buffer
                 .checked_add(geometry)
                 .and_then(|bytes| bytes.checked_add(projection_payload))
                 .and_then(|bytes| bytes.checked_add(request))
+                .and_then(|bytes| bytes.checked_add(row_contexts))
                 .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
         )
         .map_err(|_| BoundObservationSourceError::MeasurementOverflow)
@@ -1684,11 +1965,17 @@ impl SelectedObservationBlock {
             .capacity()
             .checked_mul(size_of::<usize>())
             .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
+        let row_contexts = self
+            .row_contexts
+            .capacity()
+            .checked_mul(size_of::<SelectedReplayRow>())
+            .ok_or(BoundObservationSourceError::MeasurementOverflow)?;
         u64::try_from(
             buffer
                 .checked_add(geometry)
                 .and_then(|bytes| bytes.checked_add(projection_payload))
                 .and_then(|bytes| bytes.checked_add(request))
+                .and_then(|bytes| bytes.checked_add(row_contexts))
                 .ok_or(BoundObservationSourceError::MeasurementOverflow)?,
         )
         .map_err(|_| BoundObservationSourceError::MeasurementOverflow)
@@ -1867,18 +2154,33 @@ pub(super) struct SelectedRowSpectralSelection {
     pub(super) channels: usize,
     pub(super) first: (u32, f64),
     pub(super) second: Option<(u32, f64)>,
+    pub(super) lattice_first_pair_hz: Option<[f64; 2]>,
 }
 
 impl SelectedCoordinates {
     fn row_spectral_selection(&self) -> SelectedRowSpectralSelection {
-        let first = self.channels[0];
+        self.row_spectral_selection_for_window(None)
+    }
+
+    fn row_spectral_selection_for_window(
+        &self,
+        window: Option<&std::ops::Range<usize>>,
+    ) -> SelectedRowSpectralSelection {
+        let range = window.cloned().unwrap_or(0..self.channels.len());
+        let first = self.channels[range.start];
+        let lattice_first = self.channels[0];
         SelectedRowSpectralSelection {
-            channels: self.channels.len(),
+            channels: range.len(),
             first: (first.channel_index, first.centre_hz),
             second: self
                 .channels
-                .get(1)
+                .get(range.start + 1)
+                .filter(|_| range.len() > 1)
                 .map(|channel| (channel.channel_index, channel.centre_hz)),
+            lattice_first_pair_hz: self
+                .channels
+                .get(1)
+                .map(|channel| [lattice_first.centre_hz, channel.centre_hz]),
         }
     }
 }

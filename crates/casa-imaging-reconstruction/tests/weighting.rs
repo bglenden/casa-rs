@@ -165,7 +165,7 @@ fn problem_with_image_size(
     taper: Option<UvTaper>,
     image_size: usize,
 ) -> casa_imaging_model::CompiledProblem {
-    problem_with_cube_density(scheme, scope, taper, image_size, None)
+    problem_with_cube_density(scheme, scope, taper, image_size, None, None)
 }
 
 fn problem_with_cube_density(
@@ -174,6 +174,7 @@ fn problem_with_cube_density(
     taper: Option<UvTaper>,
     image_size: usize,
     cube_padding: Option<usize>,
+    spectral_wcs: Option<SpectralWcs>,
 ) -> casa_imaging_model::CompiledProblem {
     let cube = cube_padding.is_some();
     let channels = if cube { 3 } else { 2 };
@@ -210,7 +211,7 @@ fn problem_with_cube_density(
             FrequencyFrame::Topocentric,
             FrequencyFrame::Topocentric,
             SpectralFrameAnchor::NotApplicable,
-            SpectralWcs::Tabular {
+            spectral_wcs.unwrap_or_else(|| SpectralWcs::Tabular {
                 channel_centres_hz: if cube {
                     vec![1.0e9, 1.001e9, 1.002e9]
                 } else {
@@ -221,7 +222,7 @@ fn problem_with_cube_density(
                 } else {
                     vec![1.0e9, 1.1e9, 1.2e9]
                 },
-            },
+            }),
             RestFrequency::NotApplicable,
             DopplerConvention::NotApplicable,
         ),
@@ -1303,6 +1304,109 @@ fn parallel_replay_preparation_preserves_ordered_groups_blocks_and_coverage() {
 }
 
 #[test]
+fn source_window_completion_is_distinct_from_full_coverage_and_checks_actual_work() {
+    let problem = problem_with_cube_density(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        None,
+        32,
+        None,
+        Some(SpectralWcs::Linear {
+            channels: 2,
+            reference_pixel: 0.0,
+            reference_frequency_hz: 1.05e9,
+            increment_hz: 0.1e9,
+        }),
+    );
+    let samples = exact_samples(&problem);
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(3, 1).unwrap()).unwrap();
+    let generation = freeze_weighting_generation(&problem, &plan, &samples).unwrap();
+    let (_, full) = replay(&generation, &problem, &plan, &samples);
+    let selected = selected_generation(&problem, &samples);
+    let proof = FrozenWeightingCoverageProof::seal(
+        &problem,
+        &generation,
+        &full,
+        selected,
+        samples.len() as u64,
+        None,
+    )
+    .unwrap();
+    let bounds = [1.04e9, 1.06e9];
+    let mut phase = generation
+        .begin_windowed_replay(&problem, &plan, proof, bounds)
+        .unwrap();
+    for sample in samples
+        .iter()
+        .filter(|sample| sample.address.channel_index == 0)
+    {
+        if let Some(block) = phase
+            .consume(
+                &problem,
+                sample,
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
+            .unwrap()
+        {
+            phase.reuse_emitted_block(block).unwrap();
+        }
+    }
+    let (last, window) = phase.finish_window().unwrap();
+    assert_eq!(last.unwrap().samples().len(), 2);
+    assert_eq!(window.actual().sample_count(), 2);
+    assert_eq!(window.actual().block_count(), 1);
+    assert_ne!(window.actual().coverage(), full.coverage());
+    assert_eq!(window.actual().coverage_proof_bytes(), 0);
+    window
+        .validate_source_completion(selected, 2, bounds)
+        .unwrap();
+    for (count, envelope) in [(4, bounds), (2, [1.05e9, 1.06e9])] {
+        assert!(
+            window
+                .validate_source_completion(selected, count, envelope)
+                .is_err()
+        );
+    }
+    let mut changed = samples.clone();
+    changed[0].visibility = SelectedVisibilitySample::Complex32([17.0, 0.0]);
+    assert!(
+        window
+            .validate_source_completion(selected_generation(&problem, &changed), 2, bounds)
+            .is_err()
+    );
+    assert!(
+        proof
+            .validate_derived_replay(selected, 2, None, window.actual())
+            .is_err()
+    );
+
+    let full_finish = generation
+        .begin_windowed_replay(&problem, &plan, proof, bounds)
+        .unwrap();
+    assert!(matches!(
+        full_finish.finish(),
+        Err(WeightingError::SelectedGenerationMismatch)
+    ));
+    let empty = generation
+        .begin_windowed_replay(&problem, &plan, proof, bounds)
+        .unwrap();
+    let (last, empty) = empty.finish_window().unwrap();
+    assert!(last.is_none());
+    assert_eq!(empty.actual().sample_count(), 0);
+    empty
+        .validate_source_completion(selected, 0, bounds)
+        .unwrap();
+    for invalid in [[f64::NAN, 1.0], [2.0, 1.0]] {
+        assert!(
+            generation
+                .begin_windowed_replay(&problem, &plan, proof, invalid)
+                .is_err()
+        );
+    }
+}
+
+#[test]
 fn derived_coverage_preserves_encoded_identity_across_block_shapes_and_rejects_mismatch() {
     let problem = problem(
         WeightingScheme::Uniform,
@@ -1822,6 +1926,7 @@ fn t55_cube_density_resamples_raw_weights_then_transfers_native_scalars() {
             None,
             32,
             Some(padding),
+            None,
         );
         let bases = exact_samples(&problem);
         let mut samples = Vec::new();
@@ -1874,6 +1979,7 @@ fn t55_cube_density_resamples_raw_weights_then_transfers_native_scalars() {
             None,
             32,
             Some(1 - padding),
+            None,
         );
         assert_ne!(
             problem.weighting().commitment_id(),
@@ -2223,6 +2329,11 @@ fn planned_and_receipted_residency_cover_every_weighting_buffer_class() {
     let generated = generation.generation_residency();
     let replayed = replay.residency();
 
+    assert_eq!(
+        planned.weighted_block_bytes(),
+        2 * std::mem::size_of::<casa_imaging_reconstruction::WeightingSampleValue>(),
+        "the two-sample inline-stencil block must charge complete records, including the original lattice pair"
+    );
     assert!(generated.density_grid_bytes() <= planned.density_grid_bytes());
     assert!(
         generated.shared_density_accumulator_bytes() <= planned.shared_density_accumulator_bytes()

@@ -1008,6 +1008,15 @@ fn selected_observation_accepts_exact_ephemeris_and_certifies_its_retained_charg
         BoundSelectedObservation::certify_residency(&problem, std::slice::from_ref(&binding))
             .expect("certify exact ephemeris binding");
 
+    assert_eq!(
+        certificate.replay_proof_retained_heap_bytes(),
+        BoundSelectedObservation::replay_proof_retained_heap_bytes(
+            &problem,
+            std::slice::from_ref(&binding)
+        )
+        .expect("same selected-read reservation"),
+    );
+
     assert!(reference_data_bytes > 0);
     assert_eq!(
         certificate.reference_data_bytes(source.identity()),
@@ -3104,6 +3113,133 @@ fn refillable_block_stream_matches_scalar_traversal_and_returns_the_owner() {
 }
 
 #[test]
+#[cfg(unix)]
+fn windowed_block_stream_exhausts_rows_without_reading_disjoint_payload() {
+    let directory = tempfile::tempdir().expect("temporary disjoint-window fixture");
+    let path = directory.path().join("disjoint-window.ms");
+    generate_fixture_with_rows(&path, 4);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize disjoint-window owner");
+    let (problem, access) = owner_problem_and_access(owner_resolution_request(&path, 4));
+    let observation = access
+        .open(&problem)
+        .expect("bind source before window replay");
+    let (mut initial_source, mut initial_consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split initial source replay");
+    let mut initial_storage = initial_source.create_storage(0);
+    while initial_source
+        .fill_next(&mut initial_storage)
+        .expect("fill initial source block")
+        .is_some()
+    {
+        initial_consumer
+            .consume(&initial_storage, |_| Ok::<_, Infallible>(()))
+            .expect("consume initial source block");
+    }
+    let initial_terminal = initial_source.complete().expect("initial terminal poll");
+    let (retained, initial_completion) = initial_consumer
+        .complete(initial_terminal)
+        .expect("mint initial replay proof");
+    assert_eq!(initial_completion.sample_count(), 16);
+
+    let (mut window_source, mut window_consumer) = retained
+        .into_windowed_block_stream(&problem, [1.5e9, 1.6e9])
+        .expect("split disjoint window replay");
+    let mut window_storage = window_source.create_storage(0);
+    let mut emitted_sample_count = 0_u64;
+    while window_source
+        .fill_next(&mut window_storage)
+        .expect("scan disjoint source rows")
+        .is_some()
+    {
+        emitted_sample_count += window_storage
+            .selected_sample_count()
+            .expect("count disjoint window block");
+        window_consumer
+            .consume(&window_storage, |_| Ok::<_, Infallible>(()))
+            .expect("consume disjoint window block");
+    }
+    let window_terminal = window_source.complete().expect("window terminal poll");
+    let (_, window_completion) = window_consumer
+        .complete_window(window_terminal)
+        .expect("complete disjoint window");
+    assert_eq!(emitted_sample_count, 0);
+    assert_eq!(window_completion.sample_count(), 0);
+    let measurements = window_completion.measurements();
+    assert_eq!(measurements.stored_row_count(), 0);
+    assert_eq!(measurements.logical_output_bytes(), 0);
+    assert_eq!(measurements.modeled_physical_read_bytes(), Some(0));
+}
+
+#[test]
+#[cfg(unix)]
+fn windowed_index_ranges_bound_rows_by_the_actual_channel_window() {
+    let directory = tempfile::tempdir().expect("temporary indexed-window fixture");
+    let path = directory.path().join("indexed-window-row-bound.ms");
+    generate_fixture_with_rows(&path, 6);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize indexed-window owner");
+    let (problem, access) = owner_problem_and_access(owner_resolution_request_with_channels(
+        &path,
+        6,
+        vec![0, 1, 2],
+    ));
+    let observation = access
+        .open(&problem)
+        .expect("bind indexed source before window replay");
+    let (mut initial_source, mut initial_consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split initial indexed replay");
+    let mut initial_storage = initial_source.create_storage(0);
+    while initial_source
+        .fill_next(&mut initial_storage)
+        .expect("fill initial indexed block")
+        .is_some()
+    {
+        initial_consumer
+            .consume(&initial_storage, |_| Ok::<_, Infallible>(()))
+            .expect("consume initial indexed block");
+    }
+    let initial_terminal = initial_source.complete().expect("initial indexed terminal");
+    let (retained, _) = initial_consumer
+        .complete(initial_terminal)
+        .expect("mint indexed replay proof");
+
+    let (mut window_source, mut window_consumer) = retained
+        .into_windowed_block_stream(&problem, [1.4001e9, 1.4009e9])
+        .expect("split narrowed indexed replay");
+    let index_plan = super::SelectedObservationBlockIndexPlan::new(&problem, 12)
+        .expect("plan indexed narrowed windows");
+    let mut index = index_plan.create_index();
+    let mut storage = window_source.create_storage(0);
+    let mut indexed_runs = 0_usize;
+    while window_source
+        .fill_next(&mut storage)
+        .expect("fill narrowed indexed block")
+        .is_some()
+    {
+        let count = storage.selected_run_count().expect("narrowed run count");
+        let mut start = 0;
+        while start < count {
+            let range = index_plan
+                .next_range(&storage, start)
+                .expect("bound indexed range by window rows");
+            assert!(range.end > range.start);
+            window_consumer
+                .index_block_range(&storage, range.clone(), &mut index)
+                .expect("index narrowed run range");
+            indexed_runs += range.len();
+            start = range.end;
+        }
+    }
+    let terminal = window_source.complete().expect("narrowed indexed terminal");
+    let (_, completion) = window_consumer
+        .complete_window(terminal)
+        .expect("complete narrowed indexed window");
+    assert_eq!(indexed_runs, 12);
+    assert_eq!(completion.sample_count(), 24);
+}
+
+#[test]
 fn indexed_run_windows_preserve_complete_groups_across_row_splits_and_tail() {
     let directory = tempfile::tempdir().expect("indexed window fixture");
     let path = directory.path().join("indexed-windows.ms");
@@ -4425,6 +4561,35 @@ fn owner_resolution_request_with_identity(
     row_count: usize,
     selection_request: LogicalIdentity,
 ) -> SelectedObservationResolutionRequest {
+    owner_resolution_request_with_identity_and_channels(
+        path,
+        row_count,
+        selection_request,
+        vec![0, 2],
+    )
+}
+
+#[cfg(unix)]
+fn owner_resolution_request_with_channels(
+    path: &std::path::Path,
+    row_count: usize,
+    channel_indices: Vec<u32>,
+) -> SelectedObservationResolutionRequest {
+    owner_resolution_request_with_identity_and_channels(
+        path,
+        row_count,
+        identity(2),
+        channel_indices,
+    )
+}
+
+#[cfg(unix)]
+fn owner_resolution_request_with_identity_and_channels(
+    path: &std::path::Path,
+    row_count: usize,
+    selection_request: LogicalIdentity,
+    channel_indices: Vec<u32>,
+) -> SelectedObservationResolutionRequest {
     let selected_rows = SelectedRows::from_ordered_main_rows(
         row_count as u64,
         (0..row_count).map(|row| SelectedMainRow::new(row as u64, 0)),
@@ -4433,7 +4598,7 @@ fn owner_resolution_request_with_identity(
     SelectedObservationResolutionRequest::new(
         path.display().to_string(),
         selection_request,
-        fixture_selection(
+        fixture_selection_with_channels(
             selected_rows,
             RowSelection::new(
                 IdSelection::All,
@@ -4445,6 +4610,7 @@ fn owner_resolution_request_with_identity(
                 IntentSelection::All,
                 IdSelection::All,
             ),
+            channel_indices,
         ),
         VisibilityColumn::Data,
         WeightColumn::Weight,
@@ -5003,11 +5169,19 @@ fn fixture_selection(
     selected_rows: SelectedRows,
     rows_filter: RowSelection,
 ) -> ObservationSelection {
+    fixture_selection_with_channels(selected_rows, rows_filter, vec![0, 2])
+}
+
+fn fixture_selection_with_channels(
+    selected_rows: SelectedRows,
+    rows_filter: RowSelection,
+    channel_indices: Vec<u32>,
+) -> ObservationSelection {
     ObservationSelection::new(
         selected_rows,
         rows_filter,
         vec![DataDescriptionSelection::new(0, 0, 0)],
-        vec![SpectralWindowSelection::new(0, vec![0, 2])],
+        vec![SpectralWindowSelection::new(0, channel_indices)],
         vec![CorrelationSelection::new(
             0,
             vec![

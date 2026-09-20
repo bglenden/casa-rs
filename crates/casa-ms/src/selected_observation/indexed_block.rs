@@ -67,6 +67,22 @@ impl SelectedObservationBlockIndexPlan {
         self.runs
     }
 
+    /// Bound a contiguous window by both run and row admission. A source spectral
+    /// window can contain fewer channels per row than the original selection.
+    pub fn next_range(
+        self,
+        block: &super::SelectedObservationBlock,
+        start: usize,
+    ) -> Result<Range<usize>, BoundObservationSourceError> {
+        let count = block.selected_run_count()?;
+        let channels = block.selected_channels_per_row()?;
+        if start > count || channels == 0 || self.runs == 0 || self.rows == 0 {
+            return Err(BoundObservationSourceError::StoredSampleShapeMismatch);
+        }
+        let row_bound = self.rows.saturating_mul(channels) - start % channels;
+        Ok(start..start.saturating_add(self.runs.min(row_bound)).min(count))
+    }
+
     /// Resident index bytes; row-domain payloads remain shared with the source block.
     #[must_use]
     pub const fn capacity_bytes(self) -> usize {

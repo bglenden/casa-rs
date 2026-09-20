@@ -161,7 +161,7 @@ pub use selected_observation::{
     SelectedObservationSpectralRangeMeasurements, SelectedObservationSpectralWindow,
     SelectedObservationTerminal, SelectedObservationTraversalError,
     SelectedObservationTraversalMeasurements, SelectedObservationTraversalRun,
-    SelectedObservationTraversalSample,
+    SelectedObservationTraversalSample, SelectedObservationWindowCompletion,
 };
 pub(crate) use selected_observation_buffer::{
     SelectedObservationBuffer, SelectedObservationBufferRequest, SelectedStoredSample,

@@ -13,7 +13,9 @@ use casa_imaging_model::{
     ProductRole, ProductSchema, ProductStorageContract, ProductSupportComparison, ProductTerm,
     ProductUnit, ProductValidityRule, ReconstructionBasis, RestoringBeamPolicy,
 };
-use casa_imaging_reconstruction::{ModelGeneration, NormalStateCatalog, SpectralChannelValidity};
+use casa_imaging_reconstruction::{
+    FinalNormalPlaneReader, ModelGeneration, NormalStateCatalog, SpectralChannelValidity,
+};
 
 use crate::ProductStoragePlan;
 use crate::beam::{RestoringBeam, fit_restoring_beam};
@@ -586,12 +588,15 @@ pub fn produce_continuum_members(
             })
         {
             let channel = normal_state.slab().core_range().start + local_channel;
-            let window = normal_state.read_window(channel..channel + 1)?;
-            let plane = domain_plane(&window, domain.role(), 0, polarization)?;
-            fitted.push(if plane.validity == SpectralChannelValidity::Valid {
+            let plane = normal_state.read_plane(
+                inputs.model_domain_ordinal(domain.role())?,
+                channel,
+                polarization,
+            )?;
+            fitted.push(if plane.validity() == SpectralChannelValidity::Valid {
                 fit_restoring_beam(
-                    &psf_real_plane(&plane),
-                    plane.shape,
+                    &psf_real_plane(&plane)?,
+                    plane.shape(),
                     inputs.cell_size_rad_for_domain(domain.role())?,
                     planned.psf_cutoff(),
                 )
@@ -697,13 +702,12 @@ pub fn produce_continuum_members(
                     }
                     continue;
                 }
-                let window = normal_state.read_window(channel..channel + 1)?;
                 for polarization in 0..normal_state.polarization_count() {
-                    let plane = domain_plane(&window, member.axes().domain(), 0, polarization)?;
-                    if plane.shape != plane_shape {
+                    let plane = normal_state.read_plane(domain_ordinal, channel, polarization)?;
+                    if plane.shape() != plane_shape {
                         return Err(ProductsError::SourceLineageMismatch);
                     }
-                    let output_channel = plane.output_channel - window_start;
+                    let output_channel = plane.output_channel() - window_start;
                     if matches!(member.role, ProductRole::SumWeights(_)) {
                         scatter_polarization_plane_state(
                             &mut output.payload,
@@ -711,7 +715,7 @@ pub fn produce_continuum_members(
                             output.shape,
                             polarization,
                             output_channel,
-                            plane.published_sum_weight as f32,
+                            plane.published_sum_weight() as f32,
                         )?;
                         continue;
                     }
@@ -1181,79 +1185,10 @@ fn h00_sensitivity(inputs: &ContinuumProductInputs<'_>) -> Result<Vec<f32>, Prod
         .collect())
 }
 
-struct DomainPlane<'a> {
-    output_channel: usize,
-    shape: [usize; 2],
-    residual: &'a [num_complex::Complex64],
-    psf: &'a [num_complex::Complex64],
-    sensitivity: &'a [f64],
-    sum_weight: f64,
-    published_sum_weight: f64,
-    validity: SpectralChannelValidity,
-}
-
-fn domain_plane<'a>(
-    normal: &'a casa_imaging_reconstruction::FinalNormalStateWindow<'_>,
-    role: &ImageDomainRole,
-    local_channel: usize,
-    polarization: usize,
-) -> Result<DomainPlane<'a>, ProductsError> {
-    let domain = normal
-        .domain_by_role(role)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    if local_channel >= normal.channel_count() {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    let cells = domain.shape()[0]
-        .checked_mul(domain.shape()[1])
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    if polarization >= normal.polarization_count() {
-        return Err(ProductsError::SourceLineageMismatch);
-    }
-    let plane = local_channel
-        .checked_mul(normal.polarization_count())
-        .and_then(|value| value.checked_add(polarization))
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    let start = plane
-        .checked_mul(cells)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    let end = start
-        .checked_add(cells)
-        .ok_or(ProductsError::SourceLineageMismatch)?;
-    Ok(DomainPlane {
-        output_channel: normal.slab().core_range().start + local_channel,
-        shape: domain.shape(),
-        residual: domain
-            .residual()
-            .get(start..end)
-            .ok_or(ProductsError::SourceLineageMismatch)?,
-        psf: domain
-            .normal_approximation()
-            .get(start..end)
-            .ok_or(ProductsError::SourceLineageMismatch)?,
-        sensitivity: domain
-            .sensitivity()
-            .get(start..end)
-            .ok_or(ProductsError::SourceLineageMismatch)?,
-        sum_weight: *domain
-            .sum_weights()
-            .get(plane)
-            .ok_or(ProductsError::SourceLineageMismatch)?,
-        published_sum_weight: *domain
-            .published_sum_weights()
-            .get(plane)
-            .ok_or(ProductsError::SourceLineageMismatch)?,
-        validity: *domain
-            .channel_validity()
-            .get(plane)
-            .ok_or(ProductsError::SourceLineageMismatch)?,
-    })
-}
-
 struct PlaneMemberRequest<'request, 'inputs, 'plane> {
     member: &'request PlannedMember,
     inputs: &'request ContinuumProductInputs<'inputs>,
-    plane: &'request DomainPlane<'plane>,
+    plane: &'request FinalNormalPlaneReader<'plane>,
     domain_ordinal: usize,
     polarization: usize,
     fitted_beam: Option<RestoringBeam>,
@@ -1274,11 +1209,11 @@ fn produce_plane_member(
         restoring_beam,
         primary_beam_model,
     } = request;
-    let scalar_sensitivity = plane.sum_weight;
-    let valid = plane.validity == SpectralChannelValidity::Valid
+    let scalar_sensitivity = plane.sum_weight();
+    let valid = plane.validity() == SpectralChannelValidity::Valid
         && scalar_sensitivity.is_finite()
         && scalar_sensitivity > 0.0;
-    let shape = plane.shape;
+    let shape = plane.shape();
     let cells = shape[0] * shape[1];
     let invalid_residual = || vec![0.0; cells];
     match member.role {
@@ -1286,7 +1221,7 @@ fn produce_plane_member(
         | ProductRole::Psf(casa_imaging_model::ProductTerm::Taylor(0)) => {
             if valid {
                 normalize_domain_plane(
-                    &psf_real_plane(plane),
+                    &psf_real_plane(plane)?,
                     member
                         .normalization
                         .unwrap_or(ProductNormalization::UnitResponse),
@@ -1301,7 +1236,7 @@ fn produce_plane_member(
         ) => {
             if valid {
                 normalize_domain_plane(
-                    &residual_real_plane(plane),
+                    &residual_real_plane(plane)?,
                     required_normalization(member)?,
                     plane,
                 )
@@ -1313,21 +1248,21 @@ fn produce_plane_member(
             casa_imaging_model::ProductTerm::Single | casa_imaging_model::ProductTerm::Taylor(0),
         ) => {
             let scale = if primary_beam_model == Some(AnalyticPrimaryBeamModel::MosaicSensitivity) {
-                if !plane.sum_weight.is_finite() || plane.sum_weight <= 0.0 {
+                if !plane.sum_weight().is_finite() || plane.sum_weight() <= 0.0 {
                     return Err(ProductsError::GeneratedNonfinite);
                 }
-                plane.sum_weight
+                plane.sum_weight()
             } else {
                 1.0
             };
             Ok(plane
-                .sensitivity
+                .read_sensitivity()?
                 .iter()
                 .map(|value| (*value / scale) as f32)
                 .collect())
         }
         ProductRole::Sensitivity => Ok(plane
-            .sensitivity
+            .read_sensitivity()?
             .iter()
             .map(|value| *value as f32)
             .collect()),
@@ -1345,13 +1280,13 @@ fn produce_plane_member(
             let model = model_real_plane(
                 inputs.final_model(),
                 domain_ordinal,
-                plane.output_channel,
+                plane.output_channel(),
                 polarization,
                 shape,
             )?;
             let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
             let residual = normalize_domain_plane(
-                &residual_real_plane(plane),
+                &residual_real_plane(plane)?,
                 required_normalization(member)?,
                 plane,
             )?;
@@ -1403,14 +1338,15 @@ fn produce_plane_member(
 fn normalize_domain_plane(
     values: &[f32],
     normalization: ProductNormalization,
-    plane: &DomainPlane<'_>,
+    plane: &FinalNormalPlaneReader<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
     match normalization {
         ProductNormalization::UnitResponse => {
-            normalize_plane(values, normalization, plane.sum_weight)
+            normalize_plane(values, normalization, plane.sum_weight())
         }
         ProductNormalization::FlatNoise | ProductNormalization::FlatSky => {
-            Ok(MosaicSensitivity::new(plane.sensitivity)?.normalize(values, normalization)?)
+            Ok(MosaicSensitivity::new(&plane.read_sensitivity()?)?
+                .normalize(values, normalization)?)
         }
     }
 }
@@ -1419,7 +1355,7 @@ fn normalize_domain_plane(
 fn restored_plane(
     member: &PlannedMember,
     inputs: &ContinuumProductInputs<'_>,
-    plane: &DomainPlane<'_>,
+    plane: &FinalNormalPlaneReader<'_>,
     domain_ordinal: usize,
     polarization: usize,
     fitted_beam: Option<RestoringBeam>,
@@ -1433,13 +1369,13 @@ fn restored_plane(
     let model = model_real_plane(
         inputs.final_model(),
         domain_ordinal,
-        plane.output_channel,
+        plane.output_channel(),
         polarization,
-        plane.shape,
+        plane.shape(),
     )?;
     let cell_size = inputs.cell_size_rad_for_domain(member.axes().domain())?;
     let residual = normalize_domain_plane(
-        &residual_real_plane(plane),
+        &residual_real_plane(plane)?,
         required_normalization(member)?,
         plane,
     )?;
@@ -1448,12 +1384,13 @@ fn restored_plane(
             "restoration requires a fitted beam for every valid plane".to_string(),
         )
     })?;
-    let residual = rescale_residual_to_beam(&residual, plane.shape, cell_size, fitted_beam, beam)?
-        .into_values();
+    let residual =
+        rescale_residual_to_beam(&residual, plane.shape(), cell_size, fitted_beam, beam)?
+            .into_values();
     Ok(restore_model_plane(
         &model,
         residual,
-        plane.shape,
+        plane.shape(),
         &beam,
         cell_size,
     ))
@@ -1510,28 +1447,36 @@ fn required_normalization(member: &PlannedMember) -> Result<ProductNormalization
         .ok_or(ProductsError::UnsupportedProblem)
 }
 
-fn psf_real_plane(plane: &DomainPlane<'_>) -> Vec<f32> {
-    plane.psf.iter().map(|value| value.re as f32).collect()
+fn psf_real_plane(plane: &FinalNormalPlaneReader<'_>) -> Result<Vec<f32>, ProductsError> {
+    Ok(plane
+        .read_psf()?
+        .iter()
+        .map(|value| value.re as f32)
+        .collect())
 }
 
-fn residual_real_plane(plane: &DomainPlane<'_>) -> Vec<f32> {
-    plane.residual.iter().map(|value| value.re as f32).collect()
+fn residual_real_plane(plane: &FinalNormalPlaneReader<'_>) -> Result<Vec<f32>, ProductsError> {
+    Ok(plane
+        .read_residual()?
+        .iter()
+        .map(|value| value.re as f32)
+        .collect())
 }
 
 fn product_plane_validity(
     rule: ProductValidityRule,
-    plane: &DomainPlane<'_>,
+    plane: &FinalNormalPlaneReader<'_>,
     primary_beam_model: Option<AnalyticPrimaryBeamModel>,
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &ImageDomainRole,
 ) -> Result<Vec<bool>, ProductsError> {
-    let shape = plane.shape;
+    let shape = plane.shape();
     match rule {
         ProductValidityRule::All => Ok(vec![true; shape[0] * shape[1]]),
         ProductValidityRule::FinalNormalState => {
-            let valid = plane.validity == SpectralChannelValidity::Valid
-                && plane.sum_weight.is_finite()
-                && plane.sum_weight > 0.0;
+            let valid = plane.validity() == SpectralChannelValidity::Valid
+                && plane.sum_weight().is_finite()
+                && plane.sum_weight() > 0.0;
             Ok(vec![valid; shape[0] * shape[1]])
         }
         ProductValidityRule::PrimaryBeam(policy) => {
@@ -1554,31 +1499,31 @@ fn primary_beam_plane(
     model: Option<AnalyticPrimaryBeamModel>,
     inputs: &ContinuumProductInputs<'_>,
     domain_role: &ImageDomainRole,
-    plane: &DomainPlane<'_>,
+    plane: &FinalNormalPlaneReader<'_>,
 ) -> Result<Vec<f32>, ProductsError> {
     match model {
         Some(AnalyticPrimaryBeamModel::CasaEvlaCommon) => {
-            analytic_evla_primary_beam(inputs, domain_role, plane.shape, plane.output_channel)
+            analytic_evla_primary_beam(inputs, domain_role, plane.shape(), plane.output_channel())
         }
         Some(AnalyticPrimaryBeamModel::CasaVlaBand) => {
-            analytic_vla_primary_beam(inputs, domain_role, plane.shape, plane.output_channel)
+            analytic_vla_primary_beam(inputs, domain_role, plane.shape(), plane.output_channel())
         }
         Some(AnalyticPrimaryBeamModel::CasaAlma12mAiry) => analytic_alma_airy_primary_beam(
             inputs,
             domain_role,
-            plane.shape,
-            plane.output_channel,
+            plane.shape(),
+            plane.output_channel(),
             10.7,
         ),
         Some(AnalyticPrimaryBeamModel::CasaAca7mAiry) => analytic_alma_airy_primary_beam(
             inputs,
             domain_role,
-            plane.shape,
-            plane.output_channel,
+            plane.shape(),
+            plane.output_channel(),
             6.25,
         ),
         Some(AnalyticPrimaryBeamModel::MosaicSensitivity) => {
-            Ok(MosaicSensitivity::new(plane.sensitivity)?.primary_beam())
+            Ok(MosaicSensitivity::new(&plane.read_sensitivity()?)?.primary_beam())
         }
         None => Err(ProductsError::UnsupportedProblem),
     }

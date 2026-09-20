@@ -211,6 +211,7 @@ enum PlannedGriddedNormalKind {
     Compilation {
         storage: ManagedSpillStorage,
         maximum_bytes: u64,
+        admission: Option<crate::complete_data_operator::GriddedNormalCompilationAdmission>,
     },
     Replay {
         descriptor: crate::GriddedNormalReplayDescriptor,
@@ -249,6 +250,7 @@ impl PlannedGriddedNormalBinding {
             kind: PlannedGriddedNormalKind::Compilation {
                 storage,
                 maximum_bytes,
+                admission: None,
             },
         }
     }
@@ -270,12 +272,19 @@ impl PlannedGriddedNormalBinding {
         })
     }
 
-    pub(crate) fn into_compilation(self) -> Option<(ManagedSpillStorage, u64)> {
+    pub(crate) fn into_compilation(
+        self,
+    ) -> Option<(
+        ManagedSpillStorage,
+        u64,
+        crate::complete_data_operator::GriddedNormalCompilationAdmission,
+    )> {
         match self.kind {
             PlannedGriddedNormalKind::Compilation {
                 storage,
                 maximum_bytes,
-            } => Some((storage, maximum_bytes)),
+                admission,
+            } => admission.map(|admission| (storage, maximum_bytes, admission)),
             PlannedGriddedNormalKind::Replay { .. } => None,
         }
     }
@@ -459,6 +468,7 @@ impl SpectralCyclePlan {
                 source_resources,
                 minor_cycle_node: None,
                 window: None,
+                compilation: None,
             }],
             weighting,
             pass,
@@ -584,6 +594,31 @@ impl SpectralCyclePlan {
         } else {
             total_channels
         };
+        // The application acquires this cross-cycle lease after this initial
+        // quote and before runtime admission. It is not available for buffers.
+        let pending_frozen_bytes =
+            if pass.phase() == SpectralPassPhase::InitialMajor && include_minor {
+                crate::FrozenWeightingReservation::required_bytes(
+                    weighting.planned_residency(),
+                    policy.selected_residency.replay_proof_retained_heap_bytes(),
+                )?
+            } else {
+                0
+            };
+        let fits = |candidate: &SpectralCyclePhysicalCandidate| match policy
+            .authority
+            .remaining_planning_memory_bytes(
+                &policy.resource_policy,
+                candidate.physical.execution_dag().resource_alternative(),
+            ) {
+            Ok(remaining) => Ok(remaining >= pending_frozen_bytes),
+            Err(ResourceError::Infeasible { resource, .. })
+                if resource.starts_with("memory-domain:") =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(SpectralCyclePlanError::from(error)),
+        };
         for workers in (minimum_workers..=maximum_workers).rev() {
             for depth in (1..=maximum_depth).rev() {
                 let gridded_spectral_windows = gridded_replay
@@ -603,7 +638,7 @@ impl SpectralCyclePlan {
                         && pass.phase() == SpectralPassPhase::InitialMajor)
                         .then_some(depth),
                 };
-                let candidate = match gridded_replay.as_ref() {
+                let mut candidate = match gridded_replay.as_ref() {
                     Some(replay) => {
                         let (capacity, support) = gridded_window_capacity
                             .as_ref()
@@ -625,6 +660,20 @@ impl SpectralCyclePlan {
                         ).map_err(SpectralCyclePlanError::from)
                             },
                             |window| {
+                                if window.has_selected_windows() {
+                                    return compose_major_physical_mode(
+                                        problem,
+                                        registry,
+                                        &policy,
+                                        &weighting,
+                                        phase,
+                                        PhysicalComposition {
+                                            workers,
+                                            window: Some(window),
+                                            retention: RetentionMode::Bounded,
+                                        },
+                                    );
+                                }
                                 let retained = compose_major_physical_mode(
                                     problem,
                                     registry,
@@ -702,8 +751,53 @@ impl SpectralCyclePlan {
                         },
                     )?,
                 };
-                if !bounded_channels || depth == 1 || candidate_memory_fits(&candidate, &policy)? {
+                if !bounded_channels || depth == 1 || fits(&candidate)? {
+                    if strategy == GriddedNormalStrategy::CreateManagedSpill
+                        && bounded_channels
+                        && policy.aw_projection.is_none()
+                        && fits(&candidate)?
+                    {
+                        // Keep the already admitted core depth. Memory pressure
+                        // coarsens the packing bands, not the scientific slab.
+                        let mut band_depth = depth;
+                        while band_depth < total_channels {
+                            let admission = crate::complete_data_operator::project_gridded_normal_compilation_banded(
+                                problem,
+                                weighting.limits().max_block_samples(),
+                                band_depth,
+                            ).map_err(SpectralCyclePlanError::ManagedSpillBudget)?;
+                            let packed = compose_major_physical_mode(
+                                problem,
+                                registry,
+                                &policy,
+                                &weighting,
+                                SpectralCyclePhasePlanning {
+                                    artifact_budget: Some(admission),
+                                    ..phase
+                                },
+                                PhysicalComposition {
+                                    workers,
+                                    window: None,
+                                    retention: RetentionMode::Retained,
+                                },
+                            )?;
+                            if fits(&packed)? {
+                                candidate = packed;
+                                break;
+                            }
+                            band_depth = band_depth.saturating_add(depth).min(total_channels);
+                        }
+                    }
                     if imaging_plan_diagnostics_enabled() {
+                        if let Some(admission) = candidate.compilation {
+                            eprintln!(
+                                "imaging_gridded_compilation_layout band_depth={} bands={} compiler_bytes={} descriptor_capacity={}",
+                                admission.compiler.band_channel_depth(),
+                                admission.compiler.band_count(),
+                                admission.compiler.workspace_bytes(),
+                                admission.compiler.descriptor_capacity()
+                            );
+                        }
                         eprintln!(
                             "imaging_spectral_window_selection phase={:?} workers={} core_depth={} window_count={}",
                             pass.phase(),
@@ -767,6 +861,21 @@ impl SpectralCyclePlan {
                 candidate.physical.execution_dag().physical_work_id() == selected.physical_work_id()
             })
             .ok_or(SpectralCyclePlanError::UnselectedPhysicalWork)?;
+        if let Some(admission) = candidate.compilation {
+            let Some(PlannedGriddedNormalBinding {
+                kind:
+                    PlannedGriddedNormalKind::Compilation {
+                        maximum_bytes,
+                        admission: selected,
+                        ..
+                    },
+            }) = self.gridded_normal.as_mut()
+            else {
+                return Err(SpectralCyclePlanError::InvalidGriddedNormalReplay);
+            };
+            *maximum_bytes = admission.spill.maximum_artifact_bytes();
+            *selected = Some(admission);
+        }
         if let Some(window) = candidate.window {
             let Some(PlannedGriddedNormalBinding {
                 kind: PlannedGriddedNormalKind::Replay { replay, .. },
@@ -823,6 +932,7 @@ struct SpectralCyclePhysicalCandidate {
     source_resources: SelectedObservationSourceResources,
     minor_cycle_node: Option<WorkNodeId>,
     window: Option<crate::complete_data_operator::GriddedNormalReplayWindowPlan>,
+    compilation: Option<crate::complete_data_operator::GriddedNormalCompilationAdmission>,
 }
 
 fn select_gridded_window_plan(
@@ -1297,6 +1407,9 @@ fn compose_major_physical_mode<R: ImplementationRegistry>(
         source_resources,
         minor_cycle_node,
         window: None,
+        compilation: (strategy == GriddedNormalStrategy::CreateManagedSpill)
+            .then_some(artifact_budget)
+            .flatten(),
     })
 }
 
@@ -2616,7 +2729,9 @@ fn append_managed_spill_resources<R: ImplementationRegistry>(
         let resources =
             crate::complete_data_operator::gridded_metadata_resources(node, &storage_id);
         let bytes = crate::complete_data_operator::gridded_backing_metadata_bytes(
-            admission.compiler.retained_metadata_bytes(),
+            admission
+                .retained_metadata_bytes()
+                .map_err(SpectralCyclePlanError::ManagedSpillBudget)?,
             storage.retained_path_bytes(),
             &resources,
             storage.resources().domain().as_str(),

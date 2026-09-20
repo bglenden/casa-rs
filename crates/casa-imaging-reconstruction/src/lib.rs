@@ -80,12 +80,12 @@ pub mod runtime_adapter {
     pub use crate::gridded_normal_operator::{
         GRIDDED_NORMAL_LANE_COUNT, GRIDDED_NORMAL_OPERATOR_RECORD_BYTES,
         GRIDDED_NORMAL_PARTITION_COUNT, GriddedNormalCompilationMeasurements,
-        GriddedNormalCompilationPlan, GriddedNormalExecutionResidency, GriddedNormalOperatorApply,
-        GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame, GriddedNormalOperatorProgram,
-        GriddedNormalOperatorStageTimings, GriddedNormalPartial, GriddedNormalReplaySource,
-        GriddedNormalRoutingMeasurements, GriddedNormalSourceCardinality,
-        GriddedNormalStorageLayout, GriddedNormalStoragePlan, GriddedNormalWork,
-        SourceCardinalityObservation, gridded_normal_operator_record_bytes,
+        GriddedNormalCompilationPlan, GriddedNormalExecutionResidency, GriddedNormalFrameSelection,
+        GriddedNormalOperatorApply, GriddedNormalOperatorCompiler, GriddedNormalOperatorFrame,
+        GriddedNormalOperatorProgram, GriddedNormalOperatorStageTimings, GriddedNormalPartial,
+        GriddedNormalReplaySource, GriddedNormalRoutingMeasurements,
+        GriddedNormalSourceCardinality, GriddedNormalStorageLayout, GriddedNormalStoragePlan,
+        GriddedNormalWork, SourceCardinalityObservation, gridded_normal_operator_record_bytes,
         gridded_normal_route_capacity_bytes, standard_convolution_support,
     };
     pub use crate::reconstruction_cycle::{
@@ -98,14 +98,14 @@ pub mod runtime_adapter {
     };
     pub use crate::spectral_operator::{
         CompleteDataOwnerCompletion, CompleteDataOwnerResult, CompleteDataOwnerSlabFold,
-        CompleteDataOwnerState, FinalVisibilitySample, PreparedSpectralOperator,
+        CompleteDataOwnerState, FinalVisibilitySample, InitialPlaneWork, PreparedSpectralOperator,
         PreparedSpectralOperatorRecycle, SpectralOperatorInitialPhaseResidency,
         SpectralOperatorPass, SpectralOperatorWorkload, SpectralSlabPlan, WProjectionDiagnostics,
         prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::weighting::{
-        FusedWeightingPhase, WeightingReplayPhase, WeightingSpectralCache,
-        begin_natural_weighting_stream,
+        FusedWeightingPhase, WeightingReplayPhase, WeightingReplayWindowSummary,
+        WeightingSpectralCache, begin_natural_weighting_stream,
     };
 }
 
@@ -145,6 +145,7 @@ pub use reconstruction_cycle::{
     ReconstructionCycleError, ReconstructionCycleEvidence, ReconstructionCycleEvidenceId,
     ReconstructionCycleResult,
 };
+pub use spectral_operator::normal_storage::FinalNormalPlaneReader;
 pub use spectral_sampling::{
     SpectralStencilError, SpectralStencilReceipt, SpectralStencilValidity, compile_spectral_stencil,
 };

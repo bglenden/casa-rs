@@ -23,6 +23,9 @@ pub struct GriddedNormalCompilationPlan {
     pub(super) maximum_atom_records: usize,
     pub(super) raw_record_capacity: usize,
     pub(super) frame_record_capacity: usize,
+    pub(super) band_channel_depth: usize,
+    pub(super) band_output_plane_depth: usize,
+    pub(super) band_count: usize,
     pub(super) maximum_artifact_bytes: u64,
     pub(super) frame_header_bytes: usize,
     pub(super) descriptor_capacity: usize,
@@ -43,6 +46,29 @@ impl GriddedNormalCompilationPlan {
         maximum_artifact_bytes: u64,
         frame_header_bytes: usize,
     ) -> Result<Self, SpectralOperatorError> {
+        Self::new_with_band_depth(
+            problem,
+            maximum_source_samples,
+            raw_record_capacity,
+            frame_record_capacity,
+            maximum_artifact_bytes,
+            frame_header_bytes,
+            usize::MAX,
+        )
+    }
+
+    /// Admit full-capacity encoded frames for fixed spectral-channel bands.
+    /// Whole groups are assigned after reduction by their lowest accumulation
+    /// plane; prediction neighbors and cross-band accumulation remain together.
+    pub fn new_with_band_depth(
+        problem: &CompiledProblem,
+        maximum_source_samples: usize,
+        raw_record_capacity: usize,
+        frame_record_capacity: usize,
+        maximum_artifact_bytes: u64,
+        frame_header_bytes: usize,
+        band_channel_depth: usize,
+    ) -> Result<Self, SpectralOperatorError> {
         let specification = SpectralOperatorSpecification::new(problem)?;
         let (
             maximum_correlations,
@@ -55,11 +81,26 @@ impl GriddedNormalCompilationPlan {
             || frame_record_capacity < maximum_atom_records
             || maximum_artifact_bytes == 0
             || frame_header_bytes == 0
+            || band_channel_depth == 0
         {
             return Err(SpectralOperatorError::ResidencyOverflow);
         }
         let layout = GriddedNormalRecordLayout::for_specification(&specification);
         let aw = specification.aw_projection().is_some();
+        let channels = specification.slab().total_channels();
+        if channels == 0 {
+            return Err(SpectralOperatorError::ResidencyOverflow);
+        }
+        let band_channel_depth =
+            if !aw && matches!(layout, GriddedNormalRecordLayout::ChannelLocal { .. }) {
+                band_channel_depth.min(channels)
+            } else {
+                channels
+            };
+        let band_count = channels.div_ceil(band_channel_depth);
+        let band_output_plane_depth = band_channel_depth
+            .checked_mul(specification.polarization_count())
+            .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let diagnostic_capacity = if aw {
             problem
                 .inputs()
@@ -75,8 +116,8 @@ impl GriddedNormalCompilationPlan {
             0
         };
         let width = record_bytes(layout, aw)?;
-        // Every nonfinal frame contains at least R-a+1 records. The final frame
-        // needs one extra descriptor; source/reduction boundaries never flush.
+        // Every nonfinal frame contains at least R-a+1 records. Each band has
+        // at most one tail; source/reduction boundaries never flush.
         let minimum_nonfinal_bytes = frame_record_capacity
             .checked_sub(maximum_atom_records)
             .and_then(|records| records.checked_add(1))
@@ -86,15 +127,16 @@ impl GriddedNormalCompilationPlan {
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         let descriptor_capacity = maximum_artifact_bytes
             .checked_div(minimum_nonfinal_bytes)
-            .and_then(|count| count.checked_add(1))
+            .and_then(|count| count.checked_add(band_count as u64))
             .and_then(|count| usize::try_from(count).ok())
             .ok_or(SpectralOperatorError::ResidencyOverflow)?;
-        let arenas = BoundedRecordEncoder::workspace_bytes(
+        let arenas = BoundedRecordEncoder::banded_workspace_bytes(
             layout,
             aw,
             raw_record_capacity,
             frame_record_capacity,
             maximum_atom_records,
+            band_count,
         )?;
         let standard = if aw || matches!(layout, GriddedNormalRecordLayout::Taylor(_)) {
             0
@@ -193,6 +235,9 @@ impl GriddedNormalCompilationPlan {
             maximum_atom_records,
             raw_record_capacity,
             frame_record_capacity,
+            band_channel_depth,
+            band_output_plane_depth,
+            band_count,
             maximum_artifact_bytes,
             frame_header_bytes,
             descriptor_capacity,
@@ -238,6 +283,18 @@ impl GriddedNormalCompilationPlan {
     #[must_use]
     pub const fn frame_record_capacity(self) -> usize {
         self.frame_record_capacity
+    }
+
+    /// Return the immutable admitted spectral-channel depth of each band.
+    #[must_use]
+    pub const fn band_channel_depth(self) -> usize {
+        self.band_channel_depth
+    }
+
+    /// Return the number of independently buffered bands, including empty bands.
+    #[must_use]
+    pub const fn band_count(self) -> usize {
+        self.band_count
     }
 
     /// Return the fixed raw-record reduction capacity.
@@ -419,12 +476,14 @@ impl CompilationFrames {
         aw: bool,
         observe: bool,
     ) -> Result<Self, SpectralOperatorError> {
-        let mut encoder = BoundedRecordEncoder::new(
+        let mut encoder = BoundedRecordEncoder::new_banded(
             layout,
             aw,
             plan.raw_record_capacity,
             plan.frame_record_capacity,
             plan.maximum_atom_records,
+            plan.band_count,
+            plan.band_output_plane_depth,
         )?;
         encoder.observe_timings(observe);
         let mut descriptors = Vec::new();
@@ -454,9 +513,10 @@ impl CompilationFrames {
         records: &[ReducedRecordKey],
         sink: &mut impl FnMut(GriddedNormalOperatorFrame<'_>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
-        self.encoder.push_group(records, &mut |bytes, count| {
-            self.ledger.emit(bytes, count, sink)
-        })
+        self.encoder
+            .push_group(records, &mut |bytes, count, planes| {
+                self.ledger.emit(bytes, count, planes, sink)
+            })
     }
 
     pub(super) fn push_taylor(
@@ -464,9 +524,10 @@ impl CompilationFrames {
         record: TaylorRecordKey,
         sink: &mut impl FnMut(GriddedNormalOperatorFrame<'_>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
-        self.encoder.push_taylor(record, &mut |bytes, count| {
-            self.ledger.emit(bytes, count, sink)
-        })
+        self.encoder
+            .push_taylor(record, &mut |bytes, count, planes| {
+                self.ledger.emit(bytes, count, planes, sink)
+            })
     }
 
     pub(super) fn finish(
@@ -474,7 +535,7 @@ impl CompilationFrames {
         sink: &mut impl FnMut(GriddedNormalOperatorFrame<'_>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         self.encoder
-            .finish(&mut |bytes, count| self.ledger.emit(bytes, count, sink))
+            .finish(&mut |bytes, count, planes| self.ledger.emit(bytes, count, planes, sink))
     }
 
     pub(super) fn measurements(&self, measurements: &mut GriddedNormalCompilationMeasurements) {
@@ -501,6 +562,7 @@ impl FrameLedger {
         &mut self,
         encoded: &[u8],
         record_count: u64,
+        accumulation_output_planes: [u32; 2],
         sink: &mut impl FnMut(GriddedNormalOperatorFrame<'_>) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         if encoded.is_empty() || record_count == 0 {
@@ -538,6 +600,7 @@ impl FrameLedger {
         self.descriptors.storage[self.descriptors.length] = BlockDescriptor {
             record_count,
             payload_crc32c,
+            accumulation_output_planes,
         };
         self.descriptors.length += 1;
         self.record_count = total_records;
@@ -673,6 +736,66 @@ mod tests {
     }
 
     #[test]
+    fn taylor_admission_keeps_one_band_and_rejects_zero_depth() {
+        let (correlations, atom, _, _) = dimensions();
+        let default =
+            GriddedNormalCompilationPlan::new(problem(), correlations, atom, atom, 4096, 72)
+                .unwrap();
+        let banded = GriddedNormalCompilationPlan::new_with_band_depth(
+            problem(),
+            correlations,
+            atom,
+            atom,
+            4096,
+            72,
+            1,
+        )
+        .unwrap();
+        assert_eq!(default, banded);
+        assert_eq!(banded.band_count(), 1);
+        assert_eq!(
+            banded.band_channel_depth(),
+            SpectralOperatorSpecification::new(problem())
+                .unwrap()
+                .slab()
+                .total_channels()
+        );
+        assert!(
+            GriddedNormalCompilationPlan::new_with_band_depth(
+                problem(),
+                correlations,
+                atom,
+                atom,
+                4096,
+                72,
+                0
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn frame_ledger_retains_trusted_accumulation_output_planes() {
+        let (correlations, atom, layout, width) = dimensions();
+        let plan = GriddedNormalCompilationPlan::new(problem(), correlations, atom, atom, 4096, 72)
+            .expect("bounded compilation plan");
+        let mut frames =
+            CompilationFrames::new(plan, layout, false, false).expect("fixed frame workspace");
+        let encoded = vec![0; width];
+        frames
+            .ledger
+            .emit(&encoded, 1, [3, 8], &mut |frame| {
+                assert_eq!(frame.encoded_bytes(), encoded);
+                Ok(())
+            })
+            .expect("emit frame with trusted metadata");
+        assert_eq!(
+            frames.ledger.descriptors[0].accumulation_output_planes,
+            [3, 8]
+        );
+    }
+
+    #[test]
     fn frame_ledger_rejects_storage_overflow_before_calling_sink_or_minting_descriptor() {
         let (correlations, atom, layout, width) = dimensions();
         let frame_bytes = 72 + width;
@@ -761,6 +884,8 @@ mod tests {
             .complete(&replay, fixture().1, None)
             .expect("seal empty program");
         assert_eq!(program.block_count(), 0);
+        assert_eq!(program.block_accumulation_output_plane_range(0), None);
+        assert_eq!(program.block_overlaps_output_planes(0, 0..1), None);
         assert_eq!(program.compilation_binding(), plan.binding());
         assert_eq!(
             program.retained_metadata_bytes(),

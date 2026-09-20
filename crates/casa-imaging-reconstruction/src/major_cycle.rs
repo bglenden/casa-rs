@@ -453,6 +453,21 @@ impl FinalNormalState {
             primitives,
         })
     }
+
+    /// Select one absolute channel and polarization without loading image data.
+    ///
+    /// Field reads are independently bounded to this plane and borrow this
+    /// completion owner. Channel-local and resident constant-basis state are
+    /// supported; multi-term Taylor and joint families use their complete-family path.
+    pub fn read_plane(
+        &self,
+        domain_ordinal: usize,
+        absolute_channel: usize,
+        polarization: usize,
+    ) -> Result<crate::FinalNormalPlaneReader<'_>, SpectralOperatorError> {
+        self.primitives
+            .read_plane(domain_ordinal, absolute_channel, polarization)
+    }
 }
 
 /// Explicitly loaded Normal State data retaining its global completion owner.

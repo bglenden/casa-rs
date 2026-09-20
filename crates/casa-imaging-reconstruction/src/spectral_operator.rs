@@ -2,7 +2,10 @@
 
 //! Serial CPU basis-neutral spectral measurement operator and normal-state primitives.
 
+mod initial_planes;
 pub(crate) mod normal_storage;
+use initial_planes::InitialPlaneBatch;
+pub use initial_planes::InitialPlaneWork;
 
 use std::{
     collections::BTreeMap,
@@ -558,6 +561,7 @@ struct SelectedSpectralRowShape {
     channels: usize,
     first: u32,
     second: Option<u32>,
+    last: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1261,6 +1265,9 @@ impl SpectralOperatorSpecification {
                             .first()
                             .ok_or(SpectralOperatorError::InvalidSample)?,
                         second: channels.get(1).copied(),
+                        last: *channels
+                            .last()
+                            .ok_or(SpectralOperatorError::InvalidSample)?,
                     },
                 });
             }
@@ -2390,6 +2397,13 @@ pub fn spectral_operator_workload(
     } else {
         0
     };
+    let source_row_workspace_bytes = source_row_workspace_bytes
+        .checked_add(InitialPlaneBatch::workspace_bytes(
+            specification,
+            pass,
+            max_replay_block_samples,
+        )?)
+        .ok_or(SpectralOperatorError::ResidencyOverflow)?;
     let chart_count = specification.charts.len();
     let maximum_chart_cells = specification
         .charts
@@ -4406,6 +4420,9 @@ pub struct CompleteDataOwnerState {
     aw_projection: Option<PreparedAwProjection>,
     science_probe: Option<SpectralScienceProbe>,
     aw_progress: Option<AwBlockProgress>,
+    source_window_hz: Option<[f64; 2]>,
+    initial_planes: Option<InitialPlaneBatch>,
+    stage_initial_planes: bool,
 }
 
 #[derive(Debug)]
@@ -5293,6 +5310,11 @@ impl CompleteDataOwnerState {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let initial_planes = InitialPlaneBatch::new(
+            &specification,
+            workload.pass,
+            workload.max_replay_block_samples,
+        )?;
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         let science_probe = SpectralScienceProbe::from_environment(&specification)?;
@@ -5321,6 +5343,9 @@ impl CompleteDataOwnerState {
             aw_projection,
             science_probe,
             aw_progress,
+            source_window_hz: None,
+            initial_planes,
+            stage_initial_planes: false,
         })
     }
 
@@ -5358,6 +5383,11 @@ impl CompleteDataOwnerState {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let initial_planes = InitialPlaneBatch::new(
+            &specification,
+            workload.pass,
+            workload.max_replay_block_samples,
+        )?;
         let linear_rows = CasaLinearRowResampler::new();
         let mosaic_response_capacity = specification.mosaic_response_route_capacity();
         let science_probe = SpectralScienceProbe::from_environment(&specification)?;
@@ -5386,6 +5416,9 @@ impl CompleteDataOwnerState {
             aw_projection,
             science_probe,
             aw_progress,
+            source_window_hz: None,
+            initial_planes,
+            stage_initial_planes: false,
         })
     }
 
@@ -5484,19 +5517,51 @@ impl CompleteDataOwnerState {
         &mut self,
         block: &WeightingReplayChunk,
     ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
+        self.stage_initial_planes = false;
+        self.consume_block_dispatched(block, |planes| {
+            for plane in planes {
+                plane.execute()?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Consume canonical source groups, dispatching disjoint initial image planes
+    /// through the runtime's already-admitted worker team.
+    #[doc(hidden)]
+    pub fn consume_block_with_initial_planes(
+        &mut self,
+        block: &WeightingReplayChunk,
+        dispatch: impl FnMut(&mut [InitialPlaneWork<'_>]) -> Result<(), SpectralOperatorError>,
+    ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
+        self.stage_initial_planes = self.initial_planes.is_some()
+            && !self.emit_final_visibilities
+            && self.science_probe.is_none()
+            && self
+                .model_binding
+                .is_none_or(ReconstructionModelBinding::is_initial_certified_zero);
+        self.consume_block_dispatched(block, dispatch)
+    }
+
+    fn consume_block_dispatched(
+        &mut self,
+        block: &WeightingReplayChunk,
+        mut dispatch: impl FnMut(&mut [InitialPlaneWork<'_>]) -> Result<(), SpectralOperatorError>,
+    ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
         if let Some(progress) = &mut self.aw_progress {
             progress.begin();
         }
         if self.science_probe.is_some() {
-            self.consume_block_inner::<true>(block)
+            self.consume_block_inner::<true>(block, &mut dispatch)
         } else {
-            self.consume_block_inner::<false>(block)
+            self.consume_block_inner::<false>(block, &mut dispatch)
         }
     }
 
     fn consume_block_inner<const OBSERVE: bool>(
         &mut self,
         block: &WeightingReplayChunk,
+        dispatch: &mut impl FnMut(&mut [InitialPlaneWork<'_>]) -> Result<(), SpectralOperatorError>,
     ) -> Result<&[FinalVisibilitySample], SpectralOperatorError> {
         if block.sequence() != self.next_block_sequence {
             return Err(SpectralOperatorError::BlockSequence);
@@ -5514,6 +5579,14 @@ impl CompleteDataOwnerState {
                 }
             }
             self.consume_correlation_group::<OBSERVE>(group)?;
+            if self.stage_initial_planes
+                && self
+                    .initial_planes
+                    .as_ref()
+                    .is_some_and(InitialPlaneBatch::ready)
+            {
+                self.flush_initial_planes(dispatch)?;
+            }
             if OBSERVE
                 && self
                     .science_probe
@@ -5531,6 +5604,9 @@ impl CompleteDataOwnerState {
                     .expect("complete diagnostic exists")
                     .finish()?;
             }
+        }
+        if self.stage_initial_planes {
+            self.flush_initial_planes(dispatch)?;
         }
         self.sample_count = self
             .sample_count
@@ -6104,7 +6180,19 @@ impl CompleteDataOwnerState {
                         self.operators[chart_ordinal]
                             .push_with_residual_polarization(sample, predicted, coordinate)?;
                     } else {
-                        self.operators[chart_ordinal].push_polarization(sample, coordinate)?;
+                        if self.stage_initial_planes {
+                            self.initial_planes
+                                .as_mut()
+                                .expect("admitted initial batch")
+                                .push(
+                                    chart_ordinal,
+                                    &self.operators[chart_ordinal],
+                                    sample,
+                                    coordinate,
+                                )?;
+                        } else {
+                            self.operators[chart_ordinal].push_polarization(sample, coordinate)?;
+                        }
                     }
                 }
             }
@@ -6143,7 +6231,43 @@ impl CompleteDataOwnerState {
         &self,
         group: &[crate::weighting::WeightingSampleValue],
     ) -> Result<bool, SpectralOperatorError> {
-        self.specification.uses_casa_linear_resampling(group)
+        if self.source_window_hz.is_none() {
+            return self.specification.uses_casa_linear_resampling(group);
+        }
+        let selected = group
+            .first()
+            .ok_or(SpectralOperatorError::InvalidSample)?
+            .selected();
+        let address = selected.address();
+        let index = self
+            .specification
+            .selected_spectral_rows
+            .binary_search_by_key(
+                &(address.measurement_set, address.spectral_window_id),
+                |entry| entry.key,
+            )
+            .map_err(|_| SpectralOperatorError::InvalidSample)?;
+        let shape = self.specification.selected_spectral_rows[index].shape;
+        let geometry = selected
+            .row_spectral_geometry()
+            .ok_or(SpectralOperatorError::MissingRowSpectralGeometry)?;
+        let Some(second) = geometry.second() else {
+            return Err(SpectralOperatorError::InvalidSample);
+        };
+        if geometry.selected_channels() < 2
+            || geometry.selected_channels() > shape.channels
+            || !(shape.first..=shape.last).contains(&geometry.first().0)
+            || second.0 <= geometry.first().0
+            || second.0 > shape.last
+            || !(geometry.first().0..=shape.last).contains(&address.channel_index)
+            || geometry.first_pair_hz().is_none()
+            || group
+                .iter()
+                .any(|weighted| weighted.selected().row_spectral_geometry() != Some(geometry))
+        {
+            return Err(SpectralOperatorError::InvalidSample);
+        }
+        Ok(true)
     }
 
     fn consume_casa_linear_group(
@@ -6371,7 +6495,19 @@ impl CompleteDataOwnerState {
                     self.operators[chart_ordinal]
                         .push_with_residual_polarization(sample, predicted, coordinate)?;
                 } else {
-                    self.operators[chart_ordinal].push_polarization(sample, coordinate)?;
+                    if self.stage_initial_planes {
+                        self.initial_planes
+                            .as_mut()
+                            .expect("admitted initial batch")
+                            .push(
+                                chart_ordinal,
+                                &self.operators[chart_ordinal],
+                                sample,
+                                coordinate,
+                            )?;
+                    } else {
+                        self.operators[chart_ordinal].push_polarization(sample, coordinate)?;
+                    }
                 }
             }
         }
@@ -6712,6 +6848,9 @@ impl CompleteDataOwnerState {
         selected_generation: SelectedObservationGenerationId,
         continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<CompleteDataOwnerResult, SpectralOperatorError> {
+        if self.source_window_hz.is_some() {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
         self.finish_casa_linear_rows()?;
         if self
             .weighting_generation
@@ -6817,6 +6956,9 @@ impl CompleteDataOwnerState {
         continuum_transform_generation: Option<ContinuumTransformGenerationId>,
     ) -> Result<(CompleteDataOwnerResult, PreparedSpectralOperatorRecycle), SpectralOperatorError>
     {
+        if self.source_window_hz.is_some() {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
         self.finish_casa_linear_rows()?;
         if !matches!(
             self.specification.basis,
@@ -6890,6 +7032,129 @@ impl CompleteDataOwnerState {
                 aw_projection: self.aw_projection,
             },
         ))
+    }
+
+    /// Complete actual source-window work before binding the original phase authority.
+    ///
+    /// The window owner has visited every native interpolation pair needed by
+    /// this slab. Actual sample/block coverage is checked independently; the
+    /// returned output slab belongs to the exhaustive parent's scientific phase.
+    pub fn complete_initial_window_recycled(
+        mut self,
+        window: &crate::weighting::WeightingReplayWindowSummary,
+        parent: &WeightingReplaySummary,
+        selected_generation: SelectedObservationGenerationId,
+    ) -> Result<(CompleteDataOwnerResult, PreparedSpectralOperatorRecycle), SpectralOperatorError>
+    {
+        let bounds = window.frequency_bounds_hz();
+        let frequencies = &self.specification.output_channel_frequencies_hz;
+        let half_width = frequencies
+            .get(1)
+            .map(|second| (*second - frequencies[0]).abs() / 2.0)
+            .ok_or(SpectralOperatorError::IncompleteCoverage)?;
+        if self.source_window_hz != Some(bounds)
+            || !window.matches_parent(
+                parent,
+                self.problem,
+                self.weighting_commitment,
+                selected_generation,
+            )
+            || !matches!(self.specification.basis, SpectralBasisPlan::ChannelLocal)
+            || self.specification.spectral_kernel != SpectralKernel::Linear
+            || self.specification.aw_projection.is_some()
+            || self.specification.mosaic
+            || self.emit_final_visibilities
+            || !self
+                .model_binding
+                .is_some_and(ReconstructionModelBinding::is_initial_certified_zero)
+            || frequencies[self.specification.slab.core_range()]
+                .iter()
+                .any(|frequency| {
+                    (*frequency - half_width).next_down() < bounds[0].next_down()
+                        || (*frequency + half_width).next_up() > bounds[1].next_up()
+                })
+        {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        // A source-certified empty window emits no chunks from which to adopt
+        // its scoped coverage. Its zero counts still pass the ordinary checker.
+        if self.sample_count == 0 && self.next_block_sequence == 0 {
+            self.coverage = CoverageEncoder::derived(window.actual().coverage());
+        }
+        self.source_window_hz = None;
+        let (mut result, recycle) =
+            self.complete_initial_slab_recycled(window.actual(), selected_generation, None)?;
+        result.completion.replay = parent.replay_id();
+        result.completion.coverage = parent.coverage();
+        result.completion.sample_count = parent.sample_count();
+        result.completion.block_count = parent.block_count();
+        Ok((result, recycle))
+    }
+
+    /// Conservative source envelope for an eligible initial channel-local slab.
+    ///
+    /// Linear output coordinates ensure every CASA fine-grid point belonging to
+    /// this slab lies within its channel edges. The source owner supplies the
+    /// native bracketing pairs, including gaps and transformed-frequency rows.
+    pub fn initial_source_window_hz(&self, problem: &CompiledProblem) -> Option<[f64; 2]> {
+        if problem.problem_id() != self.problem
+            || problem.visibility_transform().is_some()
+            || !matches!(
+                problem.geometry().spectral().wcs(),
+                casa_imaging_model::SpectralWcs::Linear { .. }
+            )
+            || !matches!(self.specification.basis, SpectralBasisPlan::ChannelLocal)
+            || self.specification.spectral_kernel != SpectralKernel::Linear
+            || self.specification.aw_projection.is_some()
+            || self.specification.mosaic
+            || self.emit_final_visibilities
+            || !self
+                .model_binding
+                .is_some_and(ReconstructionModelBinding::is_initial_certified_zero)
+            || self.specification.output_channel_frequencies_hz.len() < 2
+            || self
+                .specification
+                .selected_spectral_rows
+                .iter()
+                .any(|row| row.shape.channels < 2)
+        {
+            return None;
+        }
+        let spectral = problem.geometry().spectral();
+        let range = self.specification.slab.core_range();
+        let first = spectral.channel_boundary_hz(range.start)?;
+        let last = spectral.channel_boundary_hz(range.end)?;
+        let frequencies = &self.specification.output_channel_frequencies_hz;
+        let half_width = (frequencies[1] - frequencies[0]).abs() / 2.0;
+        let first_centre = frequencies[range.start];
+        let last_centre = frequencies[range.end - 1];
+        Some([
+            first
+                .min(last)
+                .min(first_centre.min(last_centre) - half_width)
+                .next_down(),
+            first
+                .max(last)
+                .max(first_centre.max(last_centre) + half_width)
+                .next_up(),
+        ])
+    }
+
+    /// Authorize the exact admitted source envelope before its first sample.
+    pub fn authorize_initial_source_window(
+        &mut self,
+        problem: &CompiledProblem,
+        bounds: [f64; 2],
+    ) -> Result<(), SpectralOperatorError> {
+        if self.sample_count != 0
+            || self.next_block_sequence != 0
+            || self.source_window_hz.is_some()
+            || self.initial_source_window_hz(problem) != Some(bounds)
+        {
+            return Err(SpectralOperatorError::IncompleteCoverage);
+        }
+        self.source_window_hz = Some(bounds);
+        Ok(())
     }
 }
 
@@ -7639,6 +7904,14 @@ impl SpectralSlabOperator {
         sample: SpectralOperatorSample,
         polarization: usize,
     ) -> Result<(), SpectralOperatorError> {
+        if matches!(self.basis, SpectralBasisPlan::ChannelLocal)
+            && self.aw_projection.is_none()
+            && self.mosaic_normal.is_none()
+            && self.dirty_grids.is_some()
+            && self.psf_grids.is_some()
+        {
+            return self.push_initial_plane(sample, polarization);
+        }
         if polarization >= self.polarization_count {
             return Err(SpectralOperatorError::InvalidSample);
         }
@@ -12977,7 +13250,7 @@ mod tests {
             .expect("valid cube slab")
     }
 
-    fn cube_operator(slab: SpectralSlabPlan) -> SpectralSlabOperator {
+    pub(super) fn cube_operator(slab: SpectralSlabPlan) -> SpectralSlabOperator {
         cube_operator_with_geometry(slab, geometry())
     }
 

@@ -48,6 +48,7 @@ struct Frame {
     capacity: usize,
     used: usize,
     peak: usize,
+    accumulation_output_planes: [u32; 2],
     flushes: u64,
     observe_timings: bool,
     sink_duration: Duration,
@@ -57,7 +58,7 @@ impl Frame {
     fn make_room(
         &mut self,
         records: usize,
-        sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+        sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         if records > self.capacity {
             return Err(SpectralOperatorError::ResidencyOverflow);
@@ -77,7 +78,7 @@ impl Frame {
 
     fn flush(
         &mut self,
-        sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+        sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         if self.used != 0 {
             let next = self
@@ -87,13 +88,18 @@ impl Frame {
             let records =
                 u64::try_from(self.used).map_err(|_| SpectralOperatorError::CoverageOverflow)?;
             let started = self.observe_timings.then(Instant::now);
-            let result = sink(&self.bytes[..self.used * self.record_bytes], records);
+            let result = sink(
+                &self.bytes[..self.used * self.record_bytes],
+                records,
+                self.accumulation_output_planes,
+            );
             if let Some(started) = started {
                 self.sink_duration += started.elapsed();
             }
             result?;
             self.flushes = next;
             self.used = 0;
+            self.accumulation_output_planes = [0; 2];
         }
         Ok(())
     }
@@ -101,7 +107,8 @@ impl Frame {
 
 pub(super) struct BoundedRecordEncoder {
     arena: RawArena,
-    frame: Frame,
+    frames: Box<[Frame]>,
+    band_output_plane_depth: usize,
     maximum_atom_records: usize,
     aw_projection: bool,
     peak_raw_records: usize,
@@ -113,6 +120,7 @@ pub(super) struct BoundedRecordEncoder {
 
 impl BoundedRecordEncoder {
     /// Exact heap payload of all fixed arenas; inline owner state is excluded.
+    #[cfg(test)]
     pub(super) fn workspace_bytes(
         layout: GriddedNormalRecordLayout,
         aw_projection: bool,
@@ -120,7 +128,26 @@ impl BoundedRecordEncoder {
         frame_record_capacity: usize,
         maximum_atom_records: usize,
     ) -> Result<usize, SpectralOperatorError> {
+        Self::banded_workspace_bytes(
+            layout,
+            aw_projection,
+            raw_capacity,
+            frame_record_capacity,
+            maximum_atom_records,
+            1,
+        )
+    }
+
+    pub(super) fn banded_workspace_bytes(
+        layout: GriddedNormalRecordLayout,
+        aw_projection: bool,
+        raw_capacity: usize,
+        frame_record_capacity: usize,
+        maximum_atom_records: usize,
+        band_count: usize,
+    ) -> Result<usize, SpectralOperatorError> {
         if maximum_atom_records == 0
+            || band_count == 0
             || raw_capacity < maximum_atom_records
             || frame_record_capacity < maximum_atom_records
         {
@@ -145,11 +172,14 @@ impl BoundedRecordEncoder {
         .ok_or(SpectralOperatorError::ResidencyOverflow)?;
         frame_record_capacity
             .checked_mul(record_bytes(layout, aw_projection)?)
+            .and_then(|bytes| bytes.checked_add(size_of::<Frame>()))
+            .and_then(|bytes| bytes.checked_mul(band_count))
             .and_then(|frame_bytes| raw_bytes.checked_add(frame_bytes))
             .filter(|&bytes| bytes <= isize::MAX as usize)
             .ok_or(SpectralOperatorError::ResidencyOverflow)
     }
 
+    #[cfg(test)]
     pub(super) fn new(
         layout: GriddedNormalRecordLayout,
         aw_projection: bool,
@@ -157,12 +187,40 @@ impl BoundedRecordEncoder {
         frame_record_capacity: usize,
         maximum_atom_records: usize,
     ) -> Result<Self, SpectralOperatorError> {
-        Self::workspace_bytes(
+        Self::new_banded(
             layout,
             aw_projection,
             raw_capacity,
             frame_record_capacity,
             maximum_atom_records,
+            1,
+            usize::MAX,
+        )
+    }
+
+    pub(super) fn new_banded(
+        layout: GriddedNormalRecordLayout,
+        aw_projection: bool,
+        raw_capacity: usize,
+        frame_record_capacity: usize,
+        maximum_atom_records: usize,
+        band_count: usize,
+        band_output_plane_depth: usize,
+    ) -> Result<Self, SpectralOperatorError> {
+        if band_output_plane_depth == 0
+            || (band_count > 1
+                && (aw_projection
+                    || !matches!(layout, GriddedNormalRecordLayout::ChannelLocal { .. })))
+        {
+            return Err(SpectralOperatorError::ResidencyOverflow);
+        }
+        Self::banded_workspace_bytes(
+            layout,
+            aw_projection,
+            raw_capacity,
+            frame_record_capacity,
+            maximum_atom_records,
+            band_count,
         )?;
         let arena = match layout {
             GriddedNormalRecordLayout::Taylor(plan) => RawArena::Taylor {
@@ -208,18 +266,27 @@ impl BoundedRecordEncoder {
             },
         };
         let width = record_bytes(layout, aw_projection)?;
-        Ok(Self {
-            arena,
-            frame: Frame {
+        let mut frames = Vec::new();
+        frames
+            .try_reserve_exact(band_count)
+            .map_err(|_| SpectralOperatorError::ResidencyOverflow)?;
+        for _ in 0..band_count {
+            frames.push(Frame {
                 bytes: fixed_buffer(frame_record_capacity * width, 0)?,
                 record_bytes: width,
                 capacity: frame_record_capacity,
                 used: 0,
                 peak: 0,
+                accumulation_output_planes: [0; 2],
                 flushes: 0,
                 observe_timings: false,
                 sink_duration: Duration::ZERO,
-            },
+            });
+        }
+        Ok(Self {
+            arena,
+            frames: frames.into_boxed_slice(),
+            band_output_plane_depth,
             maximum_atom_records,
             aw_projection,
             peak_raw_records: 0,
@@ -232,16 +299,20 @@ impl BoundedRecordEncoder {
 
     #[cfg(test)]
     pub(super) fn frame_record_capacity(&self) -> usize {
-        self.frame.capacity
+        self.frames[0].capacity
     }
     pub(super) fn peak_raw_records(&self) -> usize {
         self.peak_raw_records
     }
     pub(super) fn peak_frame_records(&self) -> usize {
-        self.frame.peak
+        self.frames
+            .iter()
+            .map(|frame| frame.peak)
+            .max()
+            .unwrap_or(0)
     }
     pub(super) fn flushes(&self) -> u64 {
-        self.frame.flushes
+        self.frames.iter().map(|frame| frame.flushes).sum()
     }
 
     pub(super) fn reduced_groups(&self) -> u64 {
@@ -250,7 +321,9 @@ impl BoundedRecordEncoder {
 
     pub(super) fn observe_timings(&mut self, enabled: bool) {
         self.observe_timings = enabled;
-        self.frame.observe_timings = enabled;
+        for frame in &mut self.frames {
+            frame.observe_timings = enabled;
+        }
     }
 
     pub(super) fn timings(&self) -> GriddedNormalOperatorStageTimings {
@@ -260,7 +333,7 @@ impl BoundedRecordEncoder {
     pub(super) fn push_group(
         &mut self,
         group: &[ReducedRecordKey],
-        sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+        sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         self.begin_operation()?;
         if group.is_empty() {
@@ -309,7 +382,7 @@ impl BoundedRecordEncoder {
     pub(super) fn push_taylor(
         &mut self,
         key: TaylorRecordKey,
-        sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+        sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         self.begin_operation()?;
         let RawArena::Taylor { keys, used, .. } = &self.arena else {
@@ -333,11 +406,14 @@ impl BoundedRecordEncoder {
 
     pub(super) fn finish(
         &mut self,
-        sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+        sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         self.begin_operation()?;
         self.reduce(sink)?;
-        self.frame.flush(sink)
+        for frame in &mut self.frames {
+            frame.flush(sink)?;
+        }
+        Ok(())
     }
 
     fn begin_operation(&mut self) -> Result<(), SpectralOperatorError> {
@@ -350,24 +426,32 @@ impl BoundedRecordEncoder {
 
     fn reduce(
         &mut self,
-        sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+        sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         let started = self.observe_timings.then(Instant::now);
         let encoding_before = self.timings.encoding_checksum;
-        let sink_before = self.frame.sink_duration;
+        let sink_before = if self.observe_timings {
+            self.sink_duration()
+        } else {
+            Duration::ZERO
+        };
         let result = self.reduce_inner(sink);
         if let Some(started) = started {
             self.timings.grouping_reduction += started
                 .elapsed()
                 .saturating_sub(self.timings.encoding_checksum - encoding_before)
-                .saturating_sub(self.frame.sink_duration - sink_before);
+                .saturating_sub(self.sink_duration() - sink_before);
         }
         result
     }
 
+    fn sink_duration(&self) -> Duration {
+        self.frames.iter().map(|frame| frame.sink_duration).sum()
+    }
+
     fn reduce_inner(
         &mut self,
-        sink: &mut impl FnMut(&[u8], u64) -> Result<(), SpectralOperatorError>,
+        sink: &mut impl FnMut(&[u8], u64, [u32; 2]) -> Result<(), SpectralOperatorError>,
     ) -> Result<(), SpectralOperatorError> {
         match &mut self.arena {
             RawArena::Groups {
@@ -400,7 +484,22 @@ impl BoundedRecordEncoder {
                             break;
                         }
                     }
-                    self.frame.make_room(group.len(), sink)?;
+                    let band = if self.frames.len() == 1 {
+                        0
+                    } else {
+                        group
+                            .iter()
+                            .filter(|record| record.role != RecordRole::Prediction)
+                            .map(|record| record.output_channel as usize)
+                            .min()
+                            .unwrap_or(0)
+                            / self.band_output_plane_depth
+                    };
+                    let frame = self
+                        .frames
+                        .get_mut(band)
+                        .ok_or(SpectralOperatorError::InvalidGriddedRecord)?;
+                    frame.make_room(group.len(), sink)?;
                     let started = self.observe_timings.then(Instant::now);
                     for (ordinal, record) in group.iter().enumerate() {
                         encode_record(
@@ -408,8 +507,17 @@ impl BoundedRecordEncoder {
                             multiplicity,
                             ordinal + 1 == group.len(),
                             self.aw_projection,
-                            self.frame.append_record(),
+                            frame.append_record(),
                         )?;
+                        if record.role != RecordRole::Prediction {
+                            let range = &mut frame.accumulation_output_planes;
+                            if range[0] == range[1] {
+                                range[0] = record.output_channel;
+                            } else {
+                                range[0] = range[0].min(record.output_channel);
+                            }
+                            range[1] = range[1].max(record.output_channel + 1);
+                        }
                     }
                     if let Some(started) = started {
                         self.timings.encoding_checksum += started.elapsed();
@@ -460,9 +568,9 @@ impl BoundedRecordEncoder {
                         }
                         index += 1;
                     }
-                    self.frame.make_room(1, sink)?;
+                    self.frames[0].make_room(1, sink)?;
                     let started = self.observe_timings.then(Instant::now);
-                    let encoded = self.frame.append_record();
+                    let encoded = self.frames[0].append_record();
                     encoded[..8].copy_from_slice(&taps.to_le_bytes());
                     for (bytes, sum) in encoded[8..].chunks_exact_mut(8).zip(sums.iter()) {
                         bytes.copy_from_slice(&canonical_zero_bits(*sum).to_le_bytes());
@@ -613,14 +721,176 @@ mod tests {
     }
 
     #[test]
+    fn bands_pack_after_coalescing_and_keep_cross_band_groups_whole() {
+        let term = |channel, role| ReducedRecordKey {
+            output_channel: channel,
+            role,
+            ..record(1)
+        };
+        let low = vec![
+            term(9, RecordRole::Prediction),
+            term(1, RecordRole::Accumulation),
+            term(5, RecordRole::Accumulation),
+        ];
+        let high = vec![
+            term(0, RecordRole::Prediction),
+            term(8, RecordRole::Accumulation),
+            term(9, RecordRole::Both),
+        ];
+        let layout = GriddedNormalRecordLayout::ChannelLocal { channels: 10 };
+        let mut encoder = BoundedRecordEncoder::new_banded(layout, false, 9, 6, 3, 5, 2).unwrap();
+        let mut frames = Vec::new();
+        let mut sink = |bytes: &[u8], count, planes| {
+            frames.push((bytes.to_vec(), count, planes));
+            Ok(())
+        };
+        for group in [&high, &low, &low, &high] {
+            encoder.push_group(group, &mut sink).unwrap();
+        }
+        encoder.finish(&mut sink).unwrap();
+        assert_eq!(frames.len(), 2, "empty bands do not emit tails");
+        assert_eq!((frames[0].1, frames[0].2), (3, [1, 6]));
+        assert_eq!((frames[1].1, frames[1].2), (6, [8, 10]));
+        assert_eq!(
+            frames[0].0,
+            oracle(
+                vec![ReducedRecordGroup {
+                    records: low,
+                    multiplicity: 2.0
+                }],
+                false
+            )
+        );
+        assert_eq!(
+            frames[1].0,
+            oracle(
+                vec![
+                    ReducedRecordGroup {
+                        records: high.clone(),
+                        multiplicity: 1.0
+                    },
+                    ReducedRecordGroup {
+                        records: high,
+                        multiplicity: 1.0
+                    }
+                ],
+                false
+            )
+        );
+        assert_eq!(encoder.reduced_groups(), 3);
+        assert_eq!(
+            BoundedRecordEncoder::banded_workspace_bytes(layout, false, 9, 6, 3, 5).unwrap(),
+            9 * (size_of::<ReducedRecordKey>() + size_of::<GroupRange>())
+                + 5 * (6 * 40 + size_of::<Frame>())
+        );
+    }
+
+    #[test]
+    fn band_capacity_flushes_respect_maximum_atom_and_tail_bound() {
+        let layout = GriddedNormalRecordLayout::ChannelLocal { channels: 8 };
+        let (bands, capacity, atom) = (4, 7, 3);
+        let mut encoder =
+            BoundedRecordEncoder::new_banded(layout, false, atom, capacity, atom, bands, 2)
+                .unwrap();
+        let mut counts = vec![Vec::new(); bands];
+        let mut sink = |_: &[u8], count: u64, planes: [u32; 2]| {
+            counts[planes[0] as usize / 2].push(count as usize);
+            Ok(())
+        };
+        for index in 0..40 {
+            let group = (0..atom)
+                .map(|term| ReducedRecordKey {
+                    output_channel: ((index % bands) * 2) as u32,
+                    ..record((index * atom + term) as u64)
+                })
+                .collect::<Vec<_>>();
+            encoder.push_group(&group, &mut sink).unwrap();
+        }
+        encoder.finish(&mut sink).unwrap();
+        let mut total_bytes = 0;
+        let mut frames = 0;
+        for band in counts {
+            assert!(!band.is_empty());
+            for &count in &band[..band.len() - 1] {
+                assert!((capacity - atom + 1..=capacity).contains(&count));
+            }
+            total_bytes += band.iter().map(|count| 72 + count * 40).sum::<usize>();
+            frames += band.len();
+        }
+        assert!(frames <= total_bytes / (72 + (capacity - atom + 1) * 40) + bands);
+        assert!(encoder.peak_frame_records() <= capacity);
+    }
+
+    #[test]
+    fn frame_accumulation_ranges_exclude_prediction_neighbors_and_preserve_groups() {
+        let term = |channel, role| ReducedRecordKey {
+            output_channel: channel,
+            role,
+            ..record(1)
+        };
+        let groups = [
+            vec![
+                term(0, RecordRole::Prediction),
+                term(3, RecordRole::Accumulation),
+                term(9, RecordRole::Prediction),
+            ],
+            vec![
+                term(7, RecordRole::Both),
+                term(5, RecordRole::Accumulation),
+                term(1, RecordRole::Prediction),
+            ],
+            vec![
+                term(0, RecordRole::Prediction),
+                term(1, RecordRole::Prediction),
+                term(9, RecordRole::Prediction),
+            ],
+        ];
+        let mut encoder = BoundedRecordEncoder::new(
+            GriddedNormalRecordLayout::ChannelLocal { channels: 10 },
+            false,
+            3,
+            3,
+            3,
+        )
+        .expect("whole-group frame capacity");
+        let mut frames = Vec::new();
+        let mut sink = |bytes: &[u8], count, planes| {
+            frames.push((bytes.to_vec(), count, planes));
+            Ok(())
+        };
+        for group in &groups {
+            encoder.push_group(group, &mut sink).expect("whole group");
+        }
+        encoder.finish(&mut sink).expect("finish");
+        assert_eq!(frames.len(), 3);
+        for ((bytes, count, planes), (group, expected)) in frames
+            .into_iter()
+            .zip(groups.into_iter().zip([[3, 4], [5, 8], [0, 0]]))
+        {
+            assert_eq!(count, 3);
+            assert_eq!(planes, expected);
+            assert_eq!(
+                bytes,
+                oracle(
+                    vec![ReducedRecordGroup {
+                        records: group,
+                        multiplicity: 1.0,
+                    }],
+                    false
+                )
+            );
+        }
+    }
+
+    #[test]
     fn minimum_capacities_preserve_whole_groups_and_term_order() {
         let groups = [vec![record(9), record(2)], vec![record(5), record(1)]];
         let mut encoder =
             BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, 2, 2, 2)
                 .expect("U = R = a");
-        let pointer = encoder.frame.bytes.as_ptr();
+        let pointer = encoder.frames[0].bytes.as_ptr();
         let mut frames = Vec::new();
-        let mut sink = |bytes: &[u8], records| {
+        let mut sink = |bytes: &[u8], records, _| {
             assert_eq!(bytes.as_ptr(), pointer);
             frames.push((bytes.to_vec(), records));
             Ok(())
@@ -652,8 +922,8 @@ mod tests {
             encoder.timings(),
             GriddedNormalOperatorStageTimings::default()
         );
-        assert_eq!(encoder.frame.bytes.as_ptr(), pointer);
-        assert_eq!(encoder.frame.bytes.len(), 80);
+        assert_eq!(encoder.frames[0].bytes.as_ptr(), pointer);
+        assert_eq!(encoder.frames[0].bytes.len(), 80);
     }
 
     #[test]
@@ -679,7 +949,7 @@ mod tests {
             BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, 6, 6, 2)
                 .expect("bounded groups");
         let mut bytes = Vec::new();
-        let mut sink = |frame: &[u8], count| {
+        let mut sink = |frame: &[u8], count, _| {
             assert_eq!(count, 4);
             bytes.extend_from_slice(frame);
             Ok(())
@@ -721,7 +991,7 @@ mod tests {
             BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, count, count, 2)
                 .unwrap();
         let mut bytes = Vec::new();
-        let mut sink = |frame: &[u8], _| {
+        let mut sink = |frame: &[u8], _, _| {
             bytes.extend_from_slice(frame);
             Ok(())
         };
@@ -741,6 +1011,7 @@ mod tests {
             )
             .unwrap(),
             count * (size_of::<ReducedRecordKey>() + size_of::<GroupRange>() + 40)
+                + size_of::<Frame>()
         );
     }
 
@@ -753,7 +1024,7 @@ mod tests {
                 BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, 2, 3, 1)
                     .expect("bounded encoder");
             let mut frames = Vec::new();
-            let mut sink = |bytes: &[u8], count| {
+            let mut sink = |bytes: &[u8], count, _| {
                 frames.push((bytes.to_vec(), count));
                 Ok(())
             };
@@ -810,7 +1081,7 @@ mod tests {
             BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, true, 2, 1, 1)
                 .expect("AW encoder");
         let mut bytes = Vec::new();
-        let mut sink = |frame: &[u8], count| {
+        let mut sink = |frame: &[u8], count, _| {
             assert_eq!(count, 1);
             bytes.extend_from_slice(frame);
             Ok(())
@@ -859,9 +1130,9 @@ mod tests {
                 1,
             )
             .expect("Taylor encoder");
-            let pointer = encoder.frame.bytes.as_ptr();
+            let pointer = encoder.frames[0].bytes.as_ptr();
             let mut actual = Vec::new();
-            let mut sink = |frame: &[u8], count| {
+            let mut sink = |frame: &[u8], count, _| {
                 assert_eq!(count, 1);
                 assert_eq!(frame.as_ptr(), pointer);
                 actual.extend_from_slice(frame);
@@ -886,7 +1157,7 @@ mod tests {
             assert_eq!(actual, expected);
             assert_eq!(
                 encoder.reduced_groups() as usize,
-                actual.len() / encoder.frame.record_bytes
+                actual.len() / encoder.frames[0].record_bytes
             );
             assert_eq!(encoder.peak_raw_records(), raw_capacity);
             assert_eq!(encoder.peak_frame_records(), 1);
@@ -926,9 +1197,11 @@ mod tests {
                 2
             )
             .expect("workspace"),
-            3 * (size_of::<ReducedRecordKey>() + size_of::<GroupRange>()) + 4 * 40
+            3 * (size_of::<ReducedRecordKey>() + size_of::<GroupRange>())
+                + 4 * 40
+                + size_of::<Frame>()
         );
-        let mut sink = |_: &[u8], _| -> Result<(), SpectralOperatorError> {
+        let mut sink = |_: &[u8], _, _| -> Result<(), SpectralOperatorError> {
             panic!("oversized atom never emits")
         };
         assert!(matches!(
@@ -944,7 +1217,7 @@ mod tests {
             BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, 1, 1, 1)
                 .expect("minimal encoder");
         let mut calls = 0;
-        let mut sink = |_: &[u8], _| {
+        let mut sink = |_: &[u8], _, _| {
             calls += 1;
             Err(SpectralOperatorError::DiagnosticStop)
         };
@@ -976,7 +1249,7 @@ mod tests {
             BoundedRecordEncoder::new(GriddedNormalRecordLayout::Scalar, false, 1, 1, 1)
                 .expect("timed encoder");
         encoder.observe_timings(true);
-        let mut sink = |_: &[u8], _| {
+        let mut sink = |_: &[u8], _, _| {
             std::thread::sleep(Duration::from_millis(2));
             Ok(())
         };
@@ -989,9 +1262,9 @@ mod tests {
         encoder.finish(&mut sink).expect("timed finish");
         let elapsed = started.elapsed();
         let timings = encoder.timings();
-        assert!(encoder.frame.sink_duration >= Duration::from_millis(6));
+        assert!(encoder.sink_duration() >= Duration::from_millis(6));
         assert!(
-            timings.grouping_reduction + timings.encoding_checksum + encoder.frame.sink_duration
+            timings.grouping_reduction + timings.encoding_checksum + encoder.sink_duration()
                 <= elapsed
         );
         assert_eq!(timings.record_key_construction, Duration::ZERO);

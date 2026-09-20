@@ -18,7 +18,7 @@ use thiserror::Error;
 
 use super::access::{
     BoundObservationSource, BufferedObservationBlock, EvaluatedRowGeometry, SelectedChannel,
-    SelectedCoordinates,
+    SelectedCoordinates, SelectedReplayRow,
 };
 use super::maximum_selected_correlations;
 use super::row_selection::CompiledRowPredicate;
@@ -453,13 +453,19 @@ pub(crate) fn selected_content_requirements(
         let resident = buffer
             .resident_bytes
             .checked_add(size_of::<EvaluatedRowGeometry>())
+            .and_then(|bytes| {
+                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
+            })
             .and_then(|bytes| bytes.checked_add(domain_projection_payload_bytes))
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
-        // A recycled block keeps its row-geometry allocation until the new
-        // storage buffer and POINTING output are ready. Charge that allocation
-        // during both preparation phases, not only after the block is complete.
+        // A recycled block keeps its row geometry, request indices and frequency-window
+        // metadata allocations while refilling storage and preparing POINTING output.
+        // Charge their capacity during preparation as well as completed handoff.
         let retained_geometry = size_of::<EvaluatedRowGeometry>()
             .checked_add(domain_projection_payload_bytes)
+            .and_then(|bytes| {
+                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
+            })
             .ok_or(SelectedObservationContentPlanError::ByteOverflow)?;
         let fill = buffer
             .fill_peak_bytes
@@ -469,6 +475,9 @@ pub(crate) fn selected_content_requirements(
         let geometry_build = buffer
             .resident_bytes
             .checked_add(size_of::<EvaluatedRowGeometry>())
+            .and_then(|bytes| {
+                bytes.checked_add(size_of::<SelectedReplayRow>() + size_of::<usize>())
+            })
             // Vec-to-Arc construction can hold source and destination payloads
             // simultaneously for the row currently being arranged.
             .and_then(|bytes| {

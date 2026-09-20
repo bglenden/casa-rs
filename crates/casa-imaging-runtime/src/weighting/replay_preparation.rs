@@ -202,10 +202,18 @@ impl<'a> ReplayPreparation<'a> {
         let count = storage.selected_run_count().map_err(|error| {
             WeightingBlockKernelError::Traversal(SelectedObservationTraversalError::Source(error))
         })?;
-        for start in (0..count).step_by(self.plan.index.maximum_runs()) {
-            let end = start
-                .saturating_add(self.plan.index.maximum_runs())
-                .min(count);
+        let mut start = 0;
+        while start < count {
+            let range = self
+                .plan
+                .index
+                .next_range(storage, start)
+                .map_err(|error| {
+                    WeightingBlockKernelError::Traversal(SelectedObservationTraversalError::Source(
+                        error,
+                    ))
+                })?;
+            let end = range.end;
             consumer
                 .index_block_range(storage, start..end, &mut self.index)
                 .map_err(|error| {
@@ -280,6 +288,7 @@ impl<'a> ReplayPreparation<'a> {
                 }
             }
             self.ordered_commit_nanos += started.elapsed().as_nanos();
+            start = end;
         }
         self.index.clear();
         Ok(())

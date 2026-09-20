@@ -1026,6 +1026,16 @@ impl SpectralEvaluationProjector {
                     convert(selection.first),
                     selection.second.map(convert),
                 )
+                .and_then(|geometry| {
+                    selection
+                        .lattice_first_pair_hz
+                        .map_or(Some(geometry), |pair| {
+                            geometry.with_lattice_first_pair_hz([
+                                conversion.convert_hz(pair[0]),
+                                conversion.convert_hz(pair[1]),
+                            ])
+                        })
+                })
                 .ok_or(BoundObservationSourceError::SpectralContributionMismatch)?;
                 self.last_row_geometry = Some((selection, geometry));
                 geometry
@@ -1160,6 +1170,49 @@ fn prepared_frequency_conversion_cached(
     .map_err(BoundObservationSourceError::from)?;
     *last_transform = Some((key, conversion));
     Ok(conversion)
+}
+
+/// Prepare the same CASA source-frame conversion used by sample projection for
+/// one row's channel lattice. Window planning calls this before channelized
+/// visibility payloads are read, using only MAIN row TIME/FIELD metadata.
+pub(super) fn prepare_row_frequency_conversion(
+    geometry_engine: &MsCalEngine,
+    field_id: i32,
+    time_mjd_seconds: f64,
+    source_frame: FrequencyFrame,
+    output_frame: FrequencyFrame,
+) -> Result<PreparedFrequencyFrameConversion, BoundObservationSourceError> {
+    let source_ref = frequency_ref(source_frame);
+    let output_ref = frequency_ref(output_frame);
+    if source_ref == output_ref {
+        return PreparedFrequencyFrameConversion::new(source_ref, output_ref, None, None)
+            .map_err(BoundObservationSourceError::from);
+    }
+    let field_id = usize::try_from(field_id)
+        .map_err(|_| BoundObservationSourceError::SpectralContributionMismatch)?;
+    let phase = geometry_engine.observation_direction_j2000(time_mjd_seconds, field_id)?;
+    let mut native_frame =
+        geometry_engine.spectral_frame_observatory_direction(time_mjd_seconds, phase)?;
+    if let Some(velocity) = geometry_engine.moving_radial_velocity(time_mjd_seconds, field_id)? {
+        native_frame = native_frame.with_radial_velocity(velocity);
+    }
+    let moving_rest_frame;
+    let target_frame = if output_ref == FrequencyRef::REST {
+        if native_frame.radial_velocity().is_none() {
+            return Err(BoundObservationSourceError::SpectralContributionMismatch);
+        }
+        moving_rest_frame = native_frame.clone();
+        &moving_rest_frame
+    } else {
+        &native_frame
+    };
+    PreparedFrequencyFrameConversion::new(
+        source_ref,
+        output_ref,
+        Some(&native_frame),
+        Some(target_frame),
+    )
+    .map_err(BoundObservationSourceError::from)
 }
 
 const fn frequency_ref(frame: FrequencyFrame) -> FrequencyRef {

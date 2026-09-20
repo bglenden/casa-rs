@@ -27,7 +27,7 @@ pub use bound_observation::{
     SelectedObservationCompletion, SelectedObservationReplayAuthorization,
     SelectedObservationReplayProof, SelectedObservationResidencyCertificate,
     SelectedObservationTerminal, SelectedObservationTraversalError,
-    SelectedObservationTraversalMeasurements,
+    SelectedObservationTraversalMeasurements, SelectedObservationWindowCompletion,
 };
 pub use content_plan::{
     SelectedObservationContentBudget, SelectedObservationContentPlan,

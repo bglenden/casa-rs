@@ -338,6 +338,8 @@ fn generic_scratch_bytes(
         let cells = checked_shape_values([shape[0], shape[1], 1, 1])?;
         let plane = bytes_for::<f32>(cells, "generic plane")?;
         let validity = bytes_for::<bool>(cells, "generic validity plane")?;
+        // The full-window allowance conservatively bounds field-selective reads,
+        // including the scalar-to-complex conversion overlap.
         normal_window = checked_add(
             normal_window,
             casa_imaging_reconstruction::normal_state_window_residency_bytes(

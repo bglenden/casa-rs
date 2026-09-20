@@ -30,7 +30,7 @@ const REPLAY_DOMAIN: &[u8] = b"casa-rs-weighting-replay";
 const REPLAY_VERSION: u32 = 1;
 const COVERAGE_DOMAIN: &[u8] = b"casa-rs-weighting-replay-coverage";
 const COVERAGE_HASH_CHUNK_BYTES: usize = 256;
-const COVERAGE_VERSION: u32 = 3;
+const COVERAGE_VERSION: u32 = 4;
 const F32_MINIMUM_POWER: i16 = -149;
 const F32_SUPERACCUMULATOR_LIMBS: usize = 6;
 const CONSERVATIVE_TREE_ENTRY_BYTES: usize = 64;
@@ -694,6 +694,7 @@ impl WeightingAlgorithmState {
             coverage,
             sample_count: 0,
             replay_sequence,
+            source_window: None,
         })
     }
 
@@ -729,7 +730,54 @@ impl WeightingAlgorithmState {
             coverage,
             sample_count: 0,
             replay_sequence,
+            source_window: None,
         })
+    }
+
+    /// Begin a restricted replay against the original global weighting state.
+    ///
+    /// The source owner must separately certify exhaustion of this frequency
+    /// window. Its completion is never interchangeable with a full replay.
+    #[doc(hidden)]
+    pub fn begin_windowed_replay<'a>(
+        &'a self,
+        problem: &'a CompiledProblem,
+        plan: &WeightingPlan,
+        proof: FrozenWeightingCoverageProof,
+        frequency_bounds_hz: [f64; 2],
+    ) -> Result<WeightingReplayPhase<'a>, WeightingError> {
+        if frequency_bounds_hz.iter().any(|value| !value.is_finite())
+            || frequency_bounds_hz[0] > frequency_bounds_hz[1]
+            || problem.visibility_transform().is_some()
+            || !matches!(
+                problem.reconstruction().basis(),
+                casa_imaging_model::ReconstructionBasis::ChannelLocal { .. }
+            )
+            || problem.science().spectral().sampling().kernel()
+                != casa_imaging_model::SpectralKernel::Linear
+            || !matches!(
+                problem.geometry().spectral().wcs(),
+                casa_imaging_model::SpectralWcs::Linear { .. }
+            )
+        {
+            return Err(WeightingError::ProblemMismatch);
+        }
+        let mut phase = self.begin_derived_replay(problem, plan, proof, None)?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"casa-rs-weighting-source-window-v1");
+        hasher.update(proof.coverage.as_bytes());
+        for value in frequency_bounds_hz {
+            hasher.update(value.to_bits().to_be_bytes());
+        }
+        let coverage =
+            WeightingReplayCoverageId(LogicalIdentity::from_sha256(hasher.finalize().into()));
+        phase.coverage = CoverageEncoder::derived(coverage);
+        phase.previous_checkpoint = phase.coverage.checkpoint_token();
+        phase.source_window = Some(WeightingReplayWindowScope {
+            proof,
+            frequency_bounds_hz,
+        });
+        Ok(phase)
     }
 
     fn validate_binding(
@@ -1647,6 +1695,7 @@ impl WeightingSelectedSample {
                     channels: geometry.selected_channels(),
                     first: geometry.first(),
                     second: geometry.second(),
+                    lattice_first_pair_hz: geometry.lattice_first_pair_hz(),
                 }
             }),
             field_id: sample.metadata().field_id,
@@ -1952,6 +2001,7 @@ mod selected_sample_tests {
                     channels: 3,
                     first: (0, 100.0),
                     second: Some((1, 200.0)),
+                    lattice_first_pair_hz: Some([100.0, 200.0]),
                 }),
                 field_id: 0,
                 pointing_directions: super::SelectedPointingDirections {
@@ -1967,6 +2017,26 @@ mod selected_sample_tests {
             source_imaging_weight: Some(4.0 + f64::from(channel) * 6.0),
             spectral_values: smallvec::SmallVec::new(),
         }
+    }
+
+    #[test]
+    fn exhaustive_coverage_binds_original_native_lattice() {
+        let sample = native_row_sample(0, 0);
+        let mut changed = sample.clone();
+        changed
+            .sample
+            .row_spectral_geometry
+            .as_mut()
+            .unwrap()
+            .lattice_first_pair_hz = Some([90.0, 190.0]);
+        let mut original_coverage = super::CoverageEncoder::new();
+        let mut changed_coverage = super::CoverageEncoder::new();
+        original_coverage.push(&sample);
+        changed_coverage.push(&changed);
+        assert_ne!(
+            original_coverage.checkpoint_token(),
+            changed_coverage.checkpoint_token()
+        );
     }
 
     #[test]
@@ -2320,14 +2390,17 @@ mod selected_sample_tests {
         let weighted_bytes = size_of::<WeightingSelectedSample>();
         let spectral_bytes = size_of::<Option<NativeRowSpectralGeometry>>();
         let source_bytes = size_of::<casa_imaging_model::SelectedObservationSample>();
+        let lattice_bytes = size_of::<Option<[f64; 2]>>();
         assert!(weighted_bytes < source_bytes);
         assert!(
             (weighted_bytes - spectral_bytes) * 3 < source_bytes * 2,
             "non-spectral kernel payload must retain the original compactness bound"
         );
         assert!(
-            spectral_bytes
-                < size_of::<Option<casa_imaging_model::SelectedRowSpectralGeometry>>() / 2,
+            spectral_bytes - lattice_bytes
+                < (size_of::<Option<casa_imaging_model::SelectedRowSpectralGeometry>>()
+                    - lattice_bytes)
+                    / 2,
             "row/frame provenance must not be duplicated in every weighted sample"
         );
     }
@@ -2495,6 +2568,13 @@ pub struct WeightingReplayPhase<'a> {
     previous_checkpoint: [u8; 32],
     sample_count: u64,
     replay_sequence: u64,
+    source_window: Option<WeightingReplayWindowScope>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WeightingReplayWindowScope {
+    proof: FrozenWeightingCoverageProof,
+    frequency_bounds_hz: [f64; 2],
 }
 
 impl WeightingReplayPhase<'_> {
@@ -2612,6 +2692,32 @@ impl WeightingReplayPhase<'_> {
 
     /// Finish local replay state; this is not traversal-completion evidence.
     pub fn finish(
+        self,
+    ) -> Result<(Option<WeightingReplayChunk>, WeightingReplaySummary), WeightingError> {
+        if self.source_window.is_some() || self.sample_count != self.generation.sample_count {
+            return Err(WeightingError::SelectedGenerationMismatch);
+        }
+        self.finish_counts()
+    }
+
+    /// Finish actual window-local work, retaining its original parent proof.
+    /// The runtime must match this result to source-owner window completion.
+    #[doc(hidden)]
+    pub fn finish_window(
+        mut self,
+    ) -> Result<(Option<WeightingReplayChunk>, WeightingReplayWindowSummary), WeightingError> {
+        let scope = self
+            .source_window
+            .take()
+            .ok_or(WeightingError::CoverageMismatch)?;
+        if self.sample_count > scope.proof.selected_sample_count {
+            return Err(WeightingError::SelectedGenerationMismatch);
+        }
+        let (block, actual) = self.finish_counts()?;
+        Ok((block, WeightingReplayWindowSummary { actual, scope }))
+    }
+
+    fn finish_counts(
         mut self,
     ) -> Result<(Option<WeightingReplayChunk>, WeightingReplaySummary), WeightingError> {
         if self.pending.is_some() {
@@ -2622,9 +2728,6 @@ impl WeightingReplayPhase<'_> {
         } else {
             Some(self.take_block()?)
         };
-        if self.sample_count != self.generation.sample_count {
-            return Err(WeightingError::SelectedGenerationMismatch);
-        }
         let (coverage, coverage_proof_work) = self
             .coverage
             .finish(self.generation.generation_id, self.sample_count);
@@ -2718,6 +2821,65 @@ impl WeightingReplayPhase<'_> {
         } else {
             Ok(false)
         }
+    }
+}
+
+/// Actual restricted replay work tied to one exhaustive parent generation.
+///
+/// This value does not assert exhaustive selected-observation coverage. Only
+/// source-owner window completion can authorize its use for a matching slab.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct WeightingReplayWindowSummary {
+    actual: WeightingReplaySummary,
+    scope: WeightingReplayWindowScope,
+}
+
+impl WeightingReplayWindowSummary {
+    /// Actual samples, blocks and bounded residency of the restricted replay.
+    #[must_use]
+    pub const fn actual(&self) -> &WeightingReplaySummary {
+        &self.actual
+    }
+
+    /// Output-frame envelope supplied to the source owner.
+    #[must_use]
+    pub const fn frequency_bounds_hz(&self) -> [f64; 2] {
+        self.scope.frequency_bounds_hz
+    }
+
+    /// Match actual work to the source owner's completed restricted traversal.
+    pub fn validate_source_completion(
+        &self,
+        selected_generation: SelectedObservationGenerationId,
+        sample_count: u64,
+        frequency_bounds_hz: [f64; 2],
+    ) -> Result<(), WeightingError> {
+        if selected_generation != self.scope.proof.selected_generation
+            || sample_count != self.actual.sample_count
+            || frequency_bounds_hz != self.scope.frequency_bounds_hz
+        {
+            return Err(WeightingError::CoverageMismatch);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn matches_parent(
+        &self,
+        parent: &WeightingReplaySummary,
+        problem: CompiledProblemId,
+        commitment: WeightingCommitmentId,
+        selected_generation: SelectedObservationGenerationId,
+    ) -> bool {
+        let proof = self.scope.proof;
+        proof.problem == problem
+            && proof.commitment == commitment
+            && proof.selected_generation == selected_generation
+            && proof.continuum_transform_generation.is_none()
+            && proof.generation == parent.generation
+            && proof.coverage == parent.coverage
+            && proof.weighted_sample_count == parent.sample_count
+            && self.actual.generation == parent.generation
     }
 }
 
@@ -3623,6 +3785,20 @@ impl CoverageEncoder {
                         &mut used,
                         &second.1.to_bits().to_be_bytes(),
                     );
+                }
+                match geometry.lattice_first_pair_hz {
+                    Some(pair) => {
+                        append_coverage_bytes(self, &mut chunk, &mut used, &[1]);
+                        for frequency in pair {
+                            append_coverage_bytes(
+                                self,
+                                &mut chunk,
+                                &mut used,
+                                &frequency.to_bits().to_be_bytes(),
+                            );
+                        }
+                    }
+                    None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),
                 }
             }
             None => append_coverage_bytes(self, &mut chunk, &mut used, &[0]),

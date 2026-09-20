@@ -42,7 +42,7 @@ fn required_path(variable: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and external 600s/8GiB guard"]
+#[ignore = "Q-band diagnostic only: requires owner-initialized reduced-row/512-channel fixture, fresh durable artifacts and external 8GiB guard"]
 fn t55_q_band_rebaseline_preflight() {
     let _execution_guard = EXECUTION_LOCK.lock().expect("execution lock");
     let image_size: usize = std::env::var("CASA_RS_T55_PREFLIGHT_IMAGE_SIZE")
@@ -52,7 +52,7 @@ fn t55_q_band_rebaseline_preflight() {
     let expected_rows: usize = std::env::var("CASA_RS_T55_PREFLIGHT_ROWS")
         .map(|value| value.parse().expect("positive diagnostic row count"))
         .unwrap_or(351);
-    assert!(expected_rows > 0 && expected_rows <= 35_100 && expected_rows % 351 == 0);
+    assert!(expected_rows > 0 && expected_rows <= 42_120 && expected_rows % 351 == 0);
     let workers: u64 = std::env::var("CASA_RS_T55_PREFLIGHT_WORKERS")
         .map(|value| value.parse().expect("positive diagnostic worker count"))
         .unwrap_or(1);

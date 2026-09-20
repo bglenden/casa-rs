@@ -5016,6 +5016,47 @@ mod tests {
     }
 
     #[test]
+    fn bounded_initial_plane_jobs_share_the_admitted_compiler_team() {
+        let team = FixedWorkerTeam::new(4).expect("four-worker team");
+        let barrier = Barrier::new(4);
+        let workers = Mutex::new(BTreeSet::new());
+        let input = [11, 23, 37];
+        let mut planes = [0; 3];
+        let compiler_finished = AtomicUsize::new(0);
+        team.install(|| {
+            let execution = BoundedExecution(Some(&team));
+            execution
+                .consume_pair(
+                    || {
+                        execution.for_each_mut(&mut planes, |index, plane| {
+                            workers
+                                .lock()
+                                .unwrap()
+                                .insert(rayon::current_thread_index().unwrap());
+                            barrier.wait();
+                            *plane = input[index];
+                            Ok::<_, std::io::Error>(())
+                        })
+                    },
+                    || {
+                        workers
+                            .lock()
+                            .unwrap()
+                            .insert(rayon::current_thread_index().unwrap());
+                        barrier.wait();
+                        compiler_finished.store(1, Ordering::Release);
+                        Ok(())
+                    },
+                )
+                .expect("joined science planes and compiler");
+        });
+        assert_eq!(planes, input);
+        assert_eq!(compiler_finished.load(Ordering::Acquire), 1);
+        assert_eq!(workers.lock().unwrap().len(), 4);
+        assert_eq!(team.shutdown(), 4);
+    }
+
+    #[test]
     fn bounded_borrowed_jobs_overlap_on_all_four_admitted_workers() {
         let team = FixedWorkerTeam::new(4).expect("four-worker team");
         let barrier = Barrier::new(4);

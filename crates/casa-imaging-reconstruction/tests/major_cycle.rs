@@ -1030,6 +1030,30 @@ fn sealed_gridded_program_is_reused_across_distinct_model_generations() {
             program.record_count(),
             gridded_blocks.iter().map(RecordedFrame::record_count).sum()
         );
+        assert!(program.block_count() > 0);
+        for sequence in 0..program.block_count() {
+            assert_eq!(
+                program.block_accumulation_output_plane_range(sequence),
+                Some(0..1)
+            );
+            assert_eq!(
+                program.block_overlaps_output_planes(sequence, 0..1),
+                Some(true)
+            );
+            assert_eq!(
+                program.block_overlaps_output_planes(sequence, 0..0),
+                Some(true),
+                "scalar layouts are always retained, including for empty windows"
+            );
+        }
+        assert_eq!(
+            program.block_accumulation_output_plane_range(program.block_count()),
+            None
+        );
+        assert_eq!(
+            program.block_overlaps_output_planes(program.block_count(), 0..1),
+            None
+        );
 
         let specification =
             SpectralOperatorSpecification::new(&problem).expect("initial spectral specification");
@@ -1265,6 +1289,7 @@ struct LinearReplayConfiguration {
     replay_core_channels: usize,
     output_channels: usize,
     initial_core_channels: Option<usize>,
+    selected_frames: bool,
 }
 
 impl Default for LinearReplayConfiguration {
@@ -1276,6 +1301,7 @@ impl Default for LinearReplayConfiguration {
             replay_core_channels: 2,
             output_channels: 2,
             initial_core_channels: None,
+            selected_frames: false,
         }
     }
 }
@@ -1558,6 +1584,68 @@ fn check_linear_cube_replay(
     let program = compiler
         .complete(&summary, selected_generation, None)
         .expect("seal split-channel gridded program");
+    let foreign_program = if configuration.selected_frames {
+        let atom = GriddedNormalCompilationPlan::maximum_atom_records(&problem).unwrap();
+        let plan = GriddedNormalCompilationPlan::new_with_band_depth(
+            &problem,
+            configuration.source_block_samples,
+            atom,
+            atom,
+            (samples.len() * 2 * (atom * program.record_bytes() + 32)) as u64,
+            32,
+            1,
+        )
+        .unwrap();
+        let mut compiler = GriddedNormalOperatorCompiler::new(
+            &problem,
+            plan,
+            SourceCardinalityObservation::Disabled,
+        )
+        .unwrap();
+        let mut discard = |_: GriddedNormalOperatorFrame<'_>| Ok(());
+        for block in &weighted_blocks {
+            compiler.consume_source(block, &mut discard).unwrap();
+        }
+        compiler.finish_rows_and_frames(&mut discard).unwrap();
+        Some(
+            compiler
+                .complete(&summary, selected_generation, None)
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+    assert!(program.block_count() > 0);
+    for sequence in 0..program.block_count() {
+        let range = program
+            .block_accumulation_output_plane_range(sequence)
+            .expect("known channel-local frame");
+        assert!(range.start <= range.end && range.end <= output_channels);
+        assert_eq!(
+            program.block_overlaps_output_planes(sequence, 0..0),
+            Some(false)
+        );
+        for depth in [1, 2, output_channels] {
+            for start in (0..output_channels).step_by(depth) {
+                let window = start..(start + depth).min(output_channels);
+                let contains_accumulation_plane =
+                    window.clone().any(|plane| range.contains(&plane));
+                assert_eq!(
+                    program.block_overlaps_output_planes(sequence, window),
+                    Some(contains_accumulation_plane),
+                    "frame {sequence}, range {range:?}, window start {start}, depth {depth}"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        program.block_accumulation_output_plane_range(program.block_count()),
+        None
+    );
+    assert_eq!(
+        program.block_overlaps_output_planes(program.block_count(), 0..output_channels),
+        None
+    );
     if let Some(records_per_row) = records_per_row {
         assert_eq!(
             program.record_count(),
@@ -1669,6 +1757,7 @@ fn check_linear_cube_replay(
         .bind_prior(initial_normal)
         .expect("certify prior generation");
     let mut fold = None::<CompleteDataOwnerSlabFold>;
+    let mut saw_physical_sequence_gap = false;
     for start in (0..output_channels).step_by(configuration.replay_core_channels) {
         let depth = configuration
             .replay_core_channels
@@ -1682,23 +1771,202 @@ fn check_linear_cube_replay(
             SpectralOperatorPass::ResidualRefresh,
         )
         .expect("residual window workload");
+        let convolution_support = specification.maximum_convolution_support();
         let prepared =
             prepare_spectral_operator(specification, workload).expect("residual window operator");
-        let mut apply = program
-            .begin_apply(&problem, preparation.final_model(), &mut prior, prepared)
-            .expect("begin channel-local gridded window");
-        for block in &gridded_blocks {
-            apply
-                .apply_encoded_block(block.sequence(), block.encoded_bytes())
-                .expect("apply borrowed split-channel block");
+        let selection = program.select_frames(start..start + depth).unwrap();
+        saw_physical_sequence_gap |= selection
+            .frame_sequences()
+            .windows(2)
+            .any(|pair| pair[1] != pair[0] + 1);
+        assert_eq!(selection.program_identity(), program.identity());
+        assert_eq!(
+            selection.payload_bytes(),
+            selection.record_count() * program.record_bytes() as u64
+        );
+        let maximum_records = gridded_blocks
+            .iter()
+            .map(|frame| frame.encoded_bytes().len() / program.record_bytes())
+            .max()
+            .unwrap();
+        let storage = program
+            .storage_layout(depth, convolution_support)
+            .unwrap()
+            .plan(&[maximum_records, maximum_records], maximum_records * 2)
+            .unwrap();
+        let mut apply = if configuration.selected_frames {
+            let prepare_again = || {
+                let specification = program
+                    .specification_for_slab(&problem, start, depth)
+                    .unwrap();
+                let workload = spectral_operator_workload(
+                    &specification,
+                    plan.limits().max_block_samples(),
+                    SpectralOperatorPass::ResidualRefresh,
+                )
+                .unwrap();
+                prepare_spectral_operator(specification, workload).unwrap()
+            };
+            if selection.frame_count() > 0 {
+                let incomplete = program
+                    .begin_apply_with_frame_selection(
+                        &problem,
+                        preparation.final_model(),
+                        &mut prior,
+                        prepare_again(),
+                        &storage,
+                        &selection,
+                    )
+                    .unwrap();
+                assert!(
+                    incomplete.finish().is_err(),
+                    "missing required selected coverage rejected"
+                );
+            }
+            let other_core = if start == 0 { 1..2 } else { 0..1 };
+            let wrong_core = program.select_frames(other_core).unwrap();
+            assert!(
+                program
+                    .begin_apply_with_frame_selection(
+                        &problem,
+                        preparation.final_model(),
+                        &mut prior,
+                        prepare_again(),
+                        &storage,
+                        &wrong_core
+                    )
+                    .is_err(),
+                "selection for another core rejected before prior consumption"
+            );
+            let foreign_selection = foreign_program
+                .as_ref()
+                .unwrap()
+                .select_frames(start..start + depth)
+                .unwrap();
+            assert_ne!(foreign_selection.program_identity(), program.identity());
+            assert!(
+                program
+                    .begin_apply_with_frame_selection(
+                        &problem,
+                        preparation.final_model(),
+                        &mut prior,
+                        prepare_again(),
+                        &storage,
+                        &foreign_selection
+                    )
+                    .is_err(),
+                "selection for another program rejected before prior consumption"
+            );
+            program.begin_apply_with_frame_selection(
+                &problem,
+                preparation.final_model(),
+                &mut prior,
+                prepared,
+                &storage,
+                &selection,
+            )
+        } else {
+            program.begin_apply(&problem, preparation.final_model(), &mut prior, prepared)
         }
-        let window = apply.finish().expect("finish channel-local gridded window");
+        .expect("begin channel-local gridded window");
+        let selected_blocks = gridded_blocks
+            .iter()
+            .filter(|block| {
+                !configuration.selected_frames
+                    || selection.frame_sequences().contains(&block.sequence())
+            })
+            .collect::<Vec<_>>();
+        if configuration.selected_frames && selected_blocks.len() > 1 {
+            let wrong_first = selected_blocks[1];
+            assert!(
+                apply
+                    .apply_encoded_block(wrong_first.sequence(), wrong_first.encoded_bytes())
+                    .is_err(),
+                "missing or reordered first selected frame rejected"
+            );
+        }
+        for (ordinal, blocks) in selected_blocks
+            .chunks(if configuration.selected_frames { 2 } else { 1 })
+            .enumerate()
+        {
+            let block = blocks[0];
+            if configuration.selected_frames {
+                let count = apply
+                    .two_domain_window_partition_count(
+                        blocks
+                            .iter()
+                            .map(|frame| (frame.sequence(), frame.encoded_bytes(), None)),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    count, 8,
+                    "every selected window retains canonical eight-partition execution"
+                );
+                for partition in 0..count {
+                    let work = apply
+                        .two_domain_window_partition(block.sequence(), blocks.len(), partition)
+                        .unwrap();
+                    let partial = apply
+                        .execute_two_domain_window(
+                            |index| {
+                                blocks
+                                    .get(index)
+                                    .map(|frame| (frame.sequence(), frame.encoded_bytes()))
+                            },
+                            work,
+                        )
+                        .unwrap();
+                    apply.commit_two_domain(partial).unwrap();
+                }
+            } else {
+                apply
+                    .apply_encoded_block(block.sequence(), block.encoded_bytes())
+                    .expect("apply borrowed split-channel block");
+            }
+            if configuration.selected_frames && ordinal == 0 {
+                assert!(
+                    apply
+                        .apply_encoded_block(block.sequence(), block.encoded_bytes())
+                        .is_err(),
+                    "duplicate physical frame rejected"
+                );
+            }
+        }
+        let (window, routing, _) = apply
+            .finish_with_routing_measurements()
+            .expect("finish channel-local gridded window");
+        assert_eq!(
+            routing.encoded_records,
+            if configuration.selected_frames {
+                selection.record_count()
+            } else {
+                program.record_count()
+            }
+        );
+        assert_eq!(
+            routing.frames_routed,
+            if configuration.selected_frames {
+                selection.frame_count()
+            } else {
+                program.block_count()
+            }
+        );
+        assert_eq!(
+            routing.routed_record_memberships, routing.grid_records,
+            "channel-local slabs route only their accumulation records while retaining complete prediction groups"
+        );
         fold = Some(if let Some(fold) = fold.take() {
             fold.extend(window).expect("append adjacent normal window")
         } else {
             CompleteDataOwnerSlabFold::begin(window, &normal_storage)
                 .expect("begin normal window fold")
         });
+    }
+    if configuration.selected_frames {
+        assert!(
+            saw_physical_sequence_gap,
+            "fixture must exercise nonconsecutive original frame sequences"
+        );
     }
     let joined = MajorCycleOwner::from_complete_data(
         fold.expect("nonempty spectral axis")
@@ -1780,8 +2048,8 @@ fn check_linear_cube_replay(
     }
     assert_eq!(
         predictions.len(),
-        samples.len() / native_frequencies.len() * 2,
-        "CASA linear prediction includes the two native channels admitted by its channel map, including edge extrapolation"
+        samples.len() / native_frequencies.len() * native_frequencies.len().min(output_channels),
+        "CASA linear prediction includes native channels admitted by its channel map, including edge extrapolation"
     );
     assert!(
         predictions
@@ -1911,6 +2179,29 @@ fn t55_coarse_native_atoms_preserve_final_replay_across_nondivisible_windows() {
         assert_eq!(full.gridded_residual, bounded.gridded_residual);
         assert_eq!(full.normal_content, bounded.normal_content);
     }
+}
+
+#[test]
+fn selected_physical_frames_preserve_complete_boundary_prediction_groups() {
+    let run = |selected_frames| {
+        check_linear_cube_replay(
+            &[1.0e9, 1.1e9, 1.2e9],
+            1.0e8,
+            None,
+            LinearReplayConfiguration {
+                output_channels: 3,
+                replay_core_channels: 1,
+                one_atom_capacity: true,
+                selected_frames,
+                ..LinearReplayConfiguration::default()
+            },
+        )
+    };
+    let full = run(false);
+    let selected = run(true);
+    assert_eq!(full.frames, selected.frames);
+    assert_eq!(full.gridded_residual, selected.gridded_residual);
+    assert_eq!(full.normal_content, selected.normal_content);
 }
 
 #[test]
