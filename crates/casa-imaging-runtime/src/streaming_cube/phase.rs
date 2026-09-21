@@ -55,7 +55,7 @@ pub struct InitialCube {
     problem: CompiledProblem,
     implementation: WorkImplementationId,
     weighting: WeightingPlan,
-    preparation: Option<crate::weighting::ReplayPreparationPlan>,
+    preparation: Option<crate::weighting::NativePreparationPlan>,
     source: SelectedObservationSourceResources,
     pass: SpectralPassIdentity,
     read: WorkNodeId,
@@ -261,10 +261,15 @@ impl InitialCube {
             .clone();
         let weighting =
             plan_weighting(&problem, policy.weighting_limits).map_err(io::Error::other)?;
-        let preparation = if !imported && workers > 1 {
+        let preparation = if !imported {
             Some(
-                crate::weighting::ReplayPreparationPlan::new(&problem, &weighting, workers)
-                    .map_err(io::Error::other)?,
+                crate::weighting::NativePreparationPlan::new(
+                    &problem,
+                    &weighting,
+                    workers,
+                    NativePhasePlan::source_store(&base, &problem)?.block_rows,
+                )
+                .map_err(io::Error::other)?,
             )
         } else {
             None
@@ -281,7 +286,7 @@ impl InitialCube {
                 WeightingStreamingMode::NaturalInitial,
                 None,
             )
-            .with_replay_preparation(preparation)
+            .with_native_preparation(preparation.expect("initial native source plan"))
             .compose(&base)
             .map_err(io::Error::other)?
         };
@@ -552,7 +557,7 @@ impl InitialCube {
             WeightingStreamingMode::NaturalInitial,
             None,
         )
-        .with_replay_preparation(self.preparation)
+        .with_native_preparation(self.preparation.expect("initial native source plan"))
     }
 }
 

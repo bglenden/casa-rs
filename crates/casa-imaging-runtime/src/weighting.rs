@@ -66,9 +66,33 @@ use crate::{
     ContinuumTransformedSample, plan_continuum_transform_row,
 };
 
+mod native_preparation;
 mod replay_preparation;
+pub(crate) use native_preparation::NativePreparationPlan;
 use replay_preparation::ReplayPreparation;
 pub(crate) use replay_preparation::ReplayPreparationPlan;
+
+#[derive(Clone, Copy, Debug)]
+enum PreparationPlan {
+    Replay(ReplayPreparationPlan),
+    Native(NativePreparationPlan),
+}
+
+impl PreparationPlan {
+    fn workers(self) -> usize {
+        match self {
+            Self::Replay(plan) => plan.workers(),
+            Self::Native(plan) => plan.workers,
+        }
+    }
+
+    fn admitted_heap_bytes(self) -> Result<u64, WeightingError> {
+        match self {
+            Self::Replay(plan) => plan.admitted_heap_bytes(),
+            Self::Native(plan) => Ok(plan.heap_bytes),
+        }
+    }
+}
 
 fn transformed_spectral_contributions(
     problem: &CompiledProblem,
@@ -1109,7 +1133,7 @@ pub struct WeightingPlanFragment<'a> {
     streaming: Option<WeightingStreamingMode>,
     continuum_row_bytes: Option<u64>,
     initial_working_set: Option<InitialPhaseWorkingSetBinding>,
-    replay_preparation: Option<ReplayPreparationPlan>,
+    replay_preparation: Option<PreparationPlan>,
 }
 
 /// Production selected-payload traversal shape for one continuum major pass.
@@ -1271,8 +1295,25 @@ impl<'a> WeightingPlanFragment<'a> {
         mut self,
         preparation: Option<ReplayPreparationPlan>,
     ) -> Self {
-        self.replay_preparation = preparation;
+        self.replay_preparation = preparation.map(PreparationPlan::Replay);
         self
+    }
+
+    pub(crate) fn with_native_preparation(mut self, preparation: NativePreparationPlan) -> Self {
+        self.replay_preparation = Some(PreparationPlan::Native(preparation));
+        self
+    }
+
+    fn indexed_preparation<E>(
+        &self,
+    ) -> Result<Option<ReplayPreparationPlan>, WeightingReplayError<E>> {
+        match self.replay_preparation {
+            None => Ok(None),
+            Some(PreparationPlan::Replay(plan)) => Ok(Some(plan)),
+            Some(PreparationPlan::Native(_)) => {
+                Err(WeightingReplayError::Evidence(WeightingEvidenceError))
+            }
+        }
     }
 
     /// Return the sole terminal weighted payload traversal node.
@@ -1704,6 +1745,26 @@ impl<'a> WeightingPlanFragment<'a> {
             .values()
             .cloned()
             .collect();
+        if matches!(self.replay_preparation, Some(PreparationPlan::Native(_))) {
+            let obsolete = BTreeSet::from([
+                self.ids.partial_allocation.clone(),
+                self.ids.reduction_allocation.clone(),
+                self.ids.weighted_block_allocation.clone(),
+                self.ids.spectral_cache_allocation.clone(),
+            ]);
+            for node in &mut nodes {
+                node.allocations
+                    .retain(|usage| !obsolete.contains(&usage.allocation));
+            }
+            allocations.retain(|allocation| !obsolete.contains(&allocation.id));
+            slots.retain(|slot| !matches!(&slot.lease_resource,
+                LeaseResource::Memory { allocation_id } if obsolete.iter().any(|id| id.as_str() == allocation_id)));
+            alternative.demand.memory.retain(|demand| {
+                !obsolete
+                    .iter()
+                    .any(|id| id.as_str() == demand.allocation_id)
+            });
+        }
         if let Some(preparation) = self.replay_preparation {
             let id = replay_preparation_allocation(&terminal);
             let allocation = AllocationSpec::new(
@@ -1997,7 +2058,10 @@ impl<'a> WeightingPlanFragment<'a> {
         let specs = self
             .allocation_specs()
             .map_err(|_| WeightingEvidenceError)?;
-        let mut expected = vec![&specs[0], &specs[4]];
+        let mut expected = vec![&specs[0]];
+        if !matches!(self.replay_preparation, Some(PreparationPlan::Native(_))) {
+            expected.push(&specs[4]);
+        }
         if self.initial_working_set.is_some() {
             expected.push(&specs[1]);
         }
@@ -2668,7 +2732,7 @@ impl WeightingExecutionState {
             problem,
             selected,
             plan,
-            fragment.replay_preparation,
+            fragment.indexed_preparation()?,
             stream,
             begin_continuum_stream(problem)?,
             emit,
@@ -2679,6 +2743,69 @@ impl WeightingExecutionState {
                 return Err(*failure.error);
             }
         };
+        self.accept_initial_stream(context, fragment, problem, binding, completed)
+    }
+
+    pub(crate) fn traverse_native_initial_stream<F>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        problem: &CompiledProblem,
+        selected: BoundSelectedObservation,
+        emit: F,
+    ) -> Result<(), WeightingReplayError<io::Error>>
+    where
+        F: FnMut(
+                &[&casa_imaging_reconstruction::runtime_adapter::NativeBlock],
+                &casa_imaging_reconstruction::runtime_adapter::NativeLayout,
+            ) -> io::Result<()>
+            + Send
+            + Sync,
+    {
+        self.begin_measurement_scope();
+        if !matches!(self.phase, WeightingExecutionPhase::Empty)
+            || fragment.streaming != Some(WeightingStreamingMode::NaturalInitial)
+            || problem.visibility_transform().is_some()
+        {
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        }
+        let Some(PreparationPlan::Native(preparation)) = fragment.replay_preparation else {
+            return Err(WeightingReplayError::Evidence(WeightingEvidenceError));
+        };
+        fragment
+            .authorize_source_observation(context, problem, selected.residency_certificate())
+            .map_err(WeightingReplayError::Evidence)?;
+        let plan = fragment
+            .bounded_stream_plan(context, true)
+            .map_err(WeightingReplayError::Evidence)?;
+        let completed = match native_preparation::execute(
+            problem,
+            selected,
+            plan,
+            preparation,
+            fragment.plan,
+            emit,
+        ) {
+            Ok(completed) => completed,
+            Err(failure) => {
+                self.latest_stream_measurements = Some(*failure.measurements);
+                return Err(*failure.error);
+            }
+        };
+        self.accept_initial_stream(context, fragment, problem, None, completed)
+    }
+
+    fn accept_initial_stream<E>(
+        &mut self,
+        context: WorkExecutionContext<'_>,
+        fragment: &WeightingPlanFragment<'_>,
+        problem: &CompiledProblem,
+        binding: Option<WeightingGenerationBinding>,
+        completed: CompletedWeightingBlockStream<
+            '_,
+            (WeightingAlgorithmState, WeightingReplaySummary),
+        >,
+    ) -> Result<(), WeightingReplayError<E>> {
         let CompletedWeightingBlockStream {
             selected,
             owner_completion,
@@ -2831,7 +2958,7 @@ impl WeightingExecutionState {
                 source,
                 consumer,
                 plan,
-                fragment.replay_preparation,
+                fragment.indexed_preparation()?,
                 WindowReplayPhase(replay),
                 None,
                 emit,
@@ -2895,7 +3022,7 @@ impl WeightingExecutionState {
             problem,
             retained.selected,
             plan,
-            fragment.replay_preparation,
+            fragment.indexed_preparation()?,
             replay,
             begin_continuum_stream(problem)?,
             emit,

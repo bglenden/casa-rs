@@ -50,6 +50,24 @@ impl NativePhasePlan {
         workers: usize,
         source_slots: usize,
     ) -> io::Result<Self> {
+        let store = Self::source_store(base, problem)?;
+        Self::new(
+            base,
+            authority,
+            policy,
+            storage,
+            store,
+            bands,
+            shared_owner_bytes,
+            workers,
+            source_slots,
+        )
+    }
+
+    pub(super) fn source_store(
+        base: &PhysicalWorkBinding,
+        problem: &CompiledProblem,
+    ) -> io::Result<StorePlan> {
         let [source] = problem.selected_observation().read_set().sources() else {
             return Err(io::Error::other("native cube requires one selected source"));
         };
@@ -77,23 +95,12 @@ impl NativePhasePlan {
                 .source_read_ahead_bytes,
         )
         .map_err(|_| overflow())?;
-        let store = StorePlan::for_source_buffer(
+        StorePlan::for_source_buffer(
             selection.rows().selected_row_count(),
             spw.channel_indices().len(),
             pol.products().len(),
             1,
             source_buffer_bytes,
-        )?;
-        Self::new(
-            base,
-            authority,
-            policy,
-            storage,
-            store,
-            bands,
-            shared_owner_bytes,
-            workers,
-            source_slots,
         )
     }
 
@@ -190,7 +197,7 @@ impl NativePhasePlan {
         })?;
         shared_bytes = shared_bytes.checked_add(metadata).ok_or_else(overflow)?;
         let preparation = shared_bytes
-            .checked_add(store.preparation_residency()?)
+            .checked_add(store.writer_residency()?)
             .ok_or_else(overflow)?;
         // Full-channel decoded slots conservatively bound any row-dependent
         // window. No band support needs to be guessed before source traversal.

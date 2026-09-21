@@ -30,6 +30,9 @@ use casa_imaging_model::{
     UvSelection, UvTaper, UvwCoordinateLaw, VisibilityColumn, VisibilityInnerProduct, WeightColumn,
     WeightDensityScope, WeightingContract, WeightingScheme, compile, compile_observation,
 };
+use casa_imaging_reconstruction::runtime_adapter::{
+    NativeBlock, NativeLayout, NativeWeightingPreparation,
+};
 use casa_imaging_reconstruction::{
     FrozenWeightingCoverageProof, WeightingAlgorithmState, WeightingError,
     WeightingExecutionLimits, WeightingReplayChunk, WeightingReplaySummary,
@@ -47,6 +50,10 @@ fn source(seed: u8) -> ObservationSourceInput {
 }
 
 fn source_with_cube(seed: u8, cube: bool) -> ObservationSourceInput {
+    source_with_cube_rows(seed, cube, None)
+}
+
+fn source_with_cube_rows(seed: u8, cube: bool, native_rows: Option<u64>) -> ObservationSourceInput {
     let columns = [
         MsColumnKind::Data,
         MsColumnKind::Flag,
@@ -91,11 +98,20 @@ fn source_with_cube(seed: u8, cube: bool) -> ObservationSourceInput {
         MeasurementSetIdentity::new(identity(seed, 1)),
         ObservationSourceProvenance::new(format!("fixture://weighting/{seed}"), identity(seed, 2)),
         ObservationSelection::new(
-            SelectedRows::from_ordered_main_rows(
-                3,
-                [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
-            )
-            .expect("two selected rows"),
+            if let Some(rows) = native_rows {
+                SelectedRows::from_ordered_main_rows(
+                    rows * 2 - 1,
+                    (0..usize::try_from(rows).expect("fixture row count"))
+                        .map(|row| SelectedMainRow::new(row as u64 * 2, 0)),
+                )
+                .expect("homogeneous native rows")
+            } else {
+                SelectedRows::from_ordered_main_rows(
+                    3,
+                    [SelectedMainRow::new(0, 0), SelectedMainRow::new(2, 1)],
+                )
+                .expect("two selected rows")
+            },
             RowSelection::new(
                 IdSelection::All,
                 TimeSelection::All,
@@ -106,14 +122,22 @@ fn source_with_cube(seed: u8, cube: bool) -> ObservationSourceInput {
                 IntentSelection::All,
                 IdSelection::All,
             ),
-            vec![
-                DataDescriptionSelection::new(0, 0, 0),
-                DataDescriptionSelection::new(1, 1, 0),
-            ],
-            vec![
-                SpectralWindowSelection::new(0, if cube { vec![0, 1, 2] } else { vec![0] }),
-                SpectralWindowSelection::new(1, if cube { vec![0, 1, 2] } else { vec![1] }),
-            ],
+            if native_rows.is_some() {
+                vec![DataDescriptionSelection::new(0, 0, 0)]
+            } else {
+                vec![
+                    DataDescriptionSelection::new(0, 0, 0),
+                    DataDescriptionSelection::new(1, 1, 0),
+                ]
+            },
+            if native_rows.is_some() {
+                vec![SpectralWindowSelection::new(0, vec![0, 1, 2])]
+            } else {
+                vec![
+                    SpectralWindowSelection::new(0, if cube { vec![0, 1, 2] } else { vec![0] }),
+                    SpectralWindowSelection::new(1, if cube { vec![0, 1, 2] } else { vec![1] }),
+                ]
+            },
             vec![CorrelationSelection::new(
                 0,
                 vec![CorrelationProduct::new(0, CorrelationType::StokesI)],
@@ -176,7 +200,27 @@ fn problem_with_cube_density(
     cube_padding: Option<usize>,
     spectral_wcs: Option<SpectralWcs>,
 ) -> casa_imaging_model::CompiledProblem {
-    let cube = cube_padding.is_some();
+    problem_with_source_shape(
+        scheme,
+        scope,
+        taper,
+        image_size,
+        cube_padding,
+        spectral_wcs,
+        None,
+    )
+}
+
+fn problem_with_source_shape(
+    scheme: WeightingScheme,
+    scope: WeightDensityScope,
+    taper: Option<UvTaper>,
+    image_size: usize,
+    cube_padding: Option<usize>,
+    spectral_wcs: Option<SpectralWcs>,
+    native_rows: Option<u64>,
+) -> casa_imaging_model::CompiledProblem {
+    let cube = cube_padding.is_some() || native_rows.is_some();
     let channels = if cube { 3 } else { 2 };
     let reference_pixel = image_size as f64 / 2.0;
     let model_samples = image_size * image_size * 2;
@@ -229,7 +273,7 @@ fn problem_with_cube_density(
     );
     let snapshot = compile_observation(ObservationSnapshotInput::new(
         if cube {
-            vec![source_with_cube(1, true)]
+            vec![source_with_cube_rows(1, true, native_rows)]
         } else {
             vec![source(1), source(2)]
         },
@@ -391,6 +435,259 @@ fn exact_contributions(sample: &SelectedObservationSample) -> SelectedSpectralCo
         None,
     ])
     .expect("one exact output contribution")
+}
+
+fn native_preparation_fixture() -> (
+    casa_imaging_model::CompiledProblem,
+    Vec<SelectedObservationSample>,
+) {
+    native_preparation_fixture_with_taper(None)
+}
+
+fn native_preparation_fixture_with_taper(
+    taper: Option<UvTaper>,
+) -> (
+    casa_imaging_model::CompiledProblem,
+    Vec<SelectedObservationSample>,
+) {
+    let problem = problem_with_source_shape(
+        WeightingScheme::Natural,
+        WeightDensityScope::NotApplicable,
+        taper,
+        32,
+        None,
+        None,
+        Some(7),
+    );
+    let base = exact_samples(&problem)[0].clone();
+    let samples = (0..7)
+        .flat_map(|row| {
+            let base = &base;
+            (0..3).map(move |channel| {
+                let mut sample = base.clone();
+                let hz = 1.00025e9 + channel as f64 * 1.0e6;
+                sample.address.physical_row = row * 2;
+                sample.address.channel_index = channel;
+                sample.address.frequency_centre_hz = hz;
+                sample.address.frequency_lower_hz = hz - 0.5e6;
+                sample.address.frequency_upper_hz = hz + 0.5e6;
+                sample.address.channel_width_hz = 1.0e6;
+                sample.input_weight = [0.5, 1.0e-10, 16.0][(row as usize + channel as usize) % 3];
+                sample.channel_flag = row == 2 && channel == 1;
+                sample.row_flag = row == 4;
+                sample.visibility =
+                    SelectedVisibilitySample::Complex32([row as f32 + 0.25, -(channel as f32)]);
+                sample
+            })
+        })
+        .collect();
+    (problem, samples)
+}
+
+fn native_preparation_view(
+    sample: &SelectedObservationSample,
+) -> casa_imaging_model::SelectedObservationSampleView<'_> {
+    sample.as_view().with_row_spectral_geometry(Some(
+        SelectedRowSpectralGeometry::new(
+            sample.as_view(),
+            FrequencyFrame::Topocentric,
+            3,
+            (0, 1.00025e9),
+            Some((1, 1.00125e9)),
+        )
+        .unwrap(),
+    ))
+}
+
+fn native_preparation_layout(sample: &SelectedObservationSample) -> NativeLayout {
+    NativeLayout::new(
+        sample.address,
+        vec![0, 1, 2],
+        [(0, CorrelationType::StokesI)].into_iter().collect(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn native_preparation_matches_scalar_science_and_is_worker_and_batch_invariant() {
+    let (problem, samples) = native_preparation_fixture();
+    assert_native_preparation_equivalence(problem, samples);
+}
+
+#[test]
+fn native_preparation_preserves_tapered_scalar_weights_across_worker_counts() {
+    let (problem, samples) =
+        native_preparation_fixture_with_taper(Some(UvTaper::new(10.0, 5.0, 0.2)));
+    assert_native_preparation_equivalence(problem, samples);
+}
+
+fn assert_native_preparation_equivalence(
+    problem: casa_imaging_model::CompiledProblem,
+    samples: Vec<SelectedObservationSample>,
+) {
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(4, 4).unwrap()).unwrap();
+    let mut scalar = begin_natural_weighting_stream(&problem, &plan).unwrap();
+    let mut expected = Vec::new();
+    for sample in &samples {
+        if let Some(block) = scalar
+            .consume(
+                &problem,
+                native_preparation_view(sample),
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
+            .unwrap()
+        {
+            expected.extend_from_slice(block.samples());
+            scalar.reuse_emitted_block(block).unwrap();
+        }
+    }
+    let (last, scalar_state, _) = scalar.finish().unwrap();
+    if let Some(last) = last {
+        expected.extend(last.into_samples());
+    }
+    let mut canonical = None;
+    for (worker_count, rows_per_worker) in [(1, 7), (1, 2), (2, 2), (4, 1)] {
+        let mut owner = NativeWeightingPreparation::new(&problem, &plan).unwrap();
+        let mut workers = (0..worker_count)
+            .map(|_| {
+                owner
+                    .worker(
+                        &problem,
+                        &plan,
+                        native_preparation_layout(&samples[0]),
+                        NativeBlock::new(rows_per_worker, 3, 1).unwrap(),
+                        FiniteValuePolicy::FlagInputRejectGenerated,
+                    )
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let mut offset = 0;
+        for wave in samples.chunks(worker_count * rows_per_worker * 3) {
+            let active = wave.len().div_ceil(rows_per_worker * 3);
+            std::thread::scope(|threads| {
+                for (worker, input) in workers.iter_mut().zip(wave.chunks(rows_per_worker * 3)) {
+                    let problem = &problem;
+                    threads.spawn(move || {
+                        worker.begin_batch().unwrap();
+                        // Individual calls model multiple source callbacks into
+                        // the same still-open worker allocation.
+                        for sample in input {
+                            worker
+                                .consume(
+                                    problem,
+                                    native_preparation_view(sample),
+                                    sample.address.frequency_centre_hz,
+                                    exact_contributions(sample),
+                                )
+                                .unwrap();
+                        }
+                        worker.finish_batch().unwrap();
+                    });
+                }
+            });
+            for worker in &mut workers[..active] {
+                let block = owner.commit(worker).unwrap();
+                assert_eq!(block.metadata.len() * 3, block.values.len());
+                for (index, weighted) in expected[offset..offset + block.values.len()]
+                    .iter()
+                    .enumerate()
+                {
+                    let sample = weighted.selected();
+                    assert_eq!(
+                        block.metadata[index / 3].physical_row,
+                        sample.address().physical_row
+                    );
+                    assert_eq!(
+                        block.frequencies_hz[index],
+                        sample.output_frame_frequency_hz()
+                    );
+                    assert_eq!(Some(block.weights[index]), weighted.source_imaging_weight());
+                    let SelectedVisibilitySample::Complex32([re, im]) = sample.visibility() else {
+                        panic!("complex fixture");
+                    };
+                    assert_eq!(block.values[index].re.to_bits(), f64::from(re).to_bits());
+                    assert_eq!(block.values[index].im.to_bits(), f64::from(im).to_bits());
+                    assert_eq!(
+                        block.flags[index],
+                        samples[offset + index].channel_flag || samples[offset + index].row_flag
+                    );
+                }
+                offset += block.values.len();
+            }
+        }
+        assert_eq!(offset, samples.len());
+        let (state, summary) = owner.finish().unwrap();
+        assert_eq!(state.generation_id(), scalar_state.generation_id());
+        assert_eq!(state.sum_weights(), scalar_state.sum_weights());
+        assert_eq!(summary.sample_count(), samples.len() as u64);
+        assert_eq!(
+            summary.block_count(),
+            7,
+            "native coverage blocks are canonical rows"
+        );
+        assert_eq!(summary.residency().weighted_block_bytes(), 0);
+        let identity = (summary.replay_id(), summary.coverage());
+        if let Some(canonical) = canonical {
+            assert_eq!(identity, canonical);
+        } else {
+            canonical = Some(identity);
+        }
+    }
+}
+
+#[test]
+fn native_preparation_rejects_incomplete_or_out_of_order_batches_without_completion() {
+    let (problem, samples) = native_preparation_fixture();
+    let plan = plan_weighting(&problem, WeightingExecutionLimits::new(4, 4).unwrap()).unwrap();
+    let worker = |owner: &NativeWeightingPreparation| {
+        owner
+            .worker(
+                &problem,
+                &plan,
+                native_preparation_layout(&samples[0]),
+                NativeBlock::new(2, 3, 1).unwrap(),
+                FiniteValuePolicy::FlagInputRejectGenerated,
+            )
+            .unwrap()
+    };
+    for length in [0, 1, 2, 4, 5] {
+        let mut owner = NativeWeightingPreparation::new(&problem, &plan).unwrap();
+        let mut lane = worker(&owner);
+        lane.begin_batch().unwrap();
+        for sample in &samples[..length] {
+            lane.consume(
+                &problem,
+                native_preparation_view(sample),
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
+            .unwrap();
+        }
+        assert!(lane.finish_batch().is_err());
+        assert!(owner.commit(&mut lane).is_err());
+        assert!(owner.finish().is_err());
+    }
+    let mut owner = NativeWeightingPreparation::new(&problem, &plan).unwrap();
+    let mut first = worker(&owner);
+    let mut second = worker(&owner);
+    for (lane, input) in [(&mut first, &samples[..3]), (&mut second, &samples[3..6])] {
+        lane.begin_batch().unwrap();
+        assert!(lane.begin_batch().is_err());
+        for sample in input {
+            lane.consume(
+                &problem,
+                native_preparation_view(sample),
+                sample.address.frequency_centre_hz,
+                exact_contributions(sample),
+            )
+            .unwrap();
+        }
+        lane.finish_batch().unwrap();
+    }
+    owner.commit(&mut second).unwrap();
+    assert!(owner.commit(&mut first).is_err());
+    assert!(owner.finish().is_err());
 }
 
 fn selected_generation(

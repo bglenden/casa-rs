@@ -1,7 +1,7 @@
 # Bounded streaming cube replacement plan
 
 Truth class: user-approved implementation plan, not an accepted architectural decision
-Last reality check: 2026-09-20
+Last reality check: 2026-09-21
 Status: milestones 1–3 approved; local preservation checkpoint complete
 Review: GPT-6 Pro, [conversation](https://chatgpt.com/c/6aaff6ec-fdbc-83e8-b7eb-8ca40186f3db)
 Verification: just docs-check; git diff --check; source pins compared to tested binary
@@ -21,12 +21,12 @@ Do not resume the old autoresearch controller or optimize retired attestation.
 Do not infer that an old uncommitted experiment was promoted.
 
 **Current implementation:** the segregated reconstruction `streaming_cube` module
-now has a shared flat native block, a preparation-only weighted-input adapter,
+now has shared flat native blocks and direct whole-row worker preparation,
 borrowed compact rows, contiguous band grids, exact row support, native prediction
 and residual/normal accumulation. The numerical/runtime replacement still uses a
 test-only seam, not a production selector. The current check/result and next
 executable action are in CURRENT.md. The active Goal covers milestones 1–3.
-Local preservation checkpoint: `aa076d36c6f6fc45738bde2095a6d05ab1ef8005`.
+Local pre-preparation-refactor checkpoint: `608ff13395edc604d5ee8db403db52b8c5da59e8`.
 The user additionally authorized local Obit timings as reference only, including
 the isolated native CPU core/task setup described below.
 
@@ -273,13 +273,14 @@ consumers. The table describes migration obligations, not completed deletions.
 | `NativeSpectralGroup`, `RetainedNativeSpectralGroup`, `CasaResampledGroup`, `CasaLinearRowResampler` | `streaming_cube::VisibilityRow` borrows flat channel/correlation arrays; `RowAccumulator` retains only a cursor and the previous inline prediction | `spectral_operator.rs::CompleteDataOwnerState`; `gridded_normal_operator.rs::GriddedNormalOperatorCompiler` and `gridded_normal_operator/spectral_records.rs`; their adjacent tests; `weighting.rs` uses retained-group size for admission. No production adapter added yet. | Native prediction/residual/normal and flags/weights/chunk coverage; remove covered cube consumers at milestone 4, then delete types when other-mode consumers migrate. |
 | `SpectralSlabOperator`'s separately owned per-plane arrays and lifecycle state | `streaming_cube::BandWorkspace`: contiguous `[channel,x,y]` arrays and borrowed disjoint plane views, geometry/FFT separate from elements | `spectral_operator.rs::CompleteDataOwnerState`, `spectral_operator/initial_planes.rs::InitialPlaneBatch`, adjacent operator/initial-phase tests. Test-only `streaming_cube/reference.rs::Reference` uses the old operator for comparison. | Bitwise fixed-model gridding and full application acceptance; delete cube construction/initial-plane plumbing and reference seam at milestone 4. Other spectral bases, W/AW and mosaic still need explicit migration before deleting the shared owner. |
 | `ReducedRecordKey`, `RecordRole`, `StandardRecordScratch`, cube use of `GriddedNormalCompilationPlan` | Direct native-pair prediction/accumulation; shared reconstruction `streaming_cube/input.rs::NativeBlock`, runtime `streaming_cube/input.rs::{NativeStoreWriter,NativeStore}` hold the original native payload in bounded tiles | `gridded_normal_operator.rs`, its `compilation.rs`, `spectral_records.rs`, `bounded_records.rs`, `two_domain.rs`; runtime `complete_data_operator.rs`; reconstruction `tests/major_cycle.rs` and `tests/support/gridded_frames.rs`. The new store is test-only pending application integration, with no old-store adapter. | No flattened cube artifact; complete-data numerical/I/O/resource checks and end-to-end timing. Remove covered cube compiler/store calls at milestone 4; shared non-cube replay remains until its named migration. |
-| Cube preparation's `WeightingSampleValue`/`WeightingReplayChunk` payload | `NativeInput` consumes borrowed weighted samples once into `NativeBlock`; geometry once per row, raw numeric arrays thereafter | Temporary reconstruction-owned adapter in `streaming_cube/input.rs`; currently exercised by weighting-private fixtures. `NativeBlock` is consumed directly by runtime native-store read/write and numerical borrowed-row tests. All historical weighting callers remain unchanged. | Wire this adapter at `spectral_cycle.rs`'s bounded weighting callback for the complete comparison slice; remove the covered cube's weighted-object conversion when selected-access preparation supplies the same flat fields directly. No weighted objects in stored blocks or band kernels. |
+| Cube preparation's `WeightingSampleValue`/`WeightingReplayChunk` payload | `NativePreparationWorker` consumes borrowed selected rows through the shared scalar weighting kernel directly into `NativeBlock`; geometry once per row, raw numeric arrays thereafter | The complete comparison path now uses runtime `weighting/native_preparation.rs` and the existing bounded team. `NativeInput` is reconstruction-private; its old chunk entry points are test-only references. Generic non-cube weighting still owns its replay route. | The covered cube's indexed/prepared-sample collection and weighted-chunk conversion are removed. Exact scalar/worker/batch tests cover the replacement; complete application timing and CASA acceptance remain required before promotion. |
 
-No application API was added or removed. Eight internal friend-surface exports
-(`NativeBlock`, `NativeInput`, `NativeLayout`, `RowMetadata`, `BandPlan`,
-`BandMemory`, `EpochBand`, `PreparedFft`) share the flat payload, numerical band
-owner and recyclable FFT across reconstruction and runtime. No duplicate runtime
-buffer or scientific kernel remains.
+No application API was added or removed. Nine internal friend-surface exports
+(`NativeBlock`, `NativeLayout`, `RowMetadata`, `NativeWeightingPreparation`,
+`NativePreparationWorker`, `BandPlan`, `BandMemory`, `EpochBand`, `PreparedFft`)
+share the flat payload, preparation, numerical band owner and recyclable FFT
+across reconstruction and runtime. `NativeInput` is no longer exported. No
+duplicate runtime payload buffer or scientific kernel remains.
 Runtime's future cube migration removes its use of
 `GriddedNormalCompilationPlan`, `GriddedNormalOperatorCompiler`,
 `GriddedNormalOperatorProgram` and associated replay work/storage operations;
@@ -347,14 +348,14 @@ Tests compare initial and changed-model refresh results across W1/W2/W4, band
 depths 1/2/4 and one/two source slots. They check decode counts, moved invariant
 buffers, byte-admission boundaries, unmapped waves and joined model-read errors.
 These remain focused scheduled-science proofs, not full-application acceptance.
-The preparation/controller fixture now uses actual selected-observation inspection
-and the natural-weight stream's borrowed callback, returning each emitted buffer
-for reuse. `NativePreparation` packs that stream once, derives band support while
-writing, and rejects incomplete, duplicate or out-of-order chunks. Completed bands
+The preparation/controller fixture uses actual selected-observation inspection
+and worker-local natural weighting, with reusable flat native buffers.
+`NativePreparation` derives band support while writing borrowed row partitions,
+and rejects incomplete, duplicate or out-of-order rows. Completed bands
 move through `CompleteDataOwnerResult::from_streaming_cube` into the existing
 normal-state fold and `MajorCycleOwner`, preserving terminal replay identities
 with zero additional coverage-hash work. Runtime `NativePreparation::traverse`
-now consumes the real `WeightingExecutionState` bounded selected-source callback.
+now consumes the real `WeightingExecutionState` bounded selected-source traversal.
 The store cannot authorize reconciliation: `complete_replay` still runs only in
 the scheduler's settled observation-read callback. Runtime's segregated
 `streaming_cube/completion.rs` transfers completed bands into the existing
@@ -386,10 +387,10 @@ selection validation at the full workload and cross-attempt native-store retenti
 complete application plan or timing.
 
 `NativePreparation` now binds its shape and output frequencies to the compiled
-selection. It constructs `NativeLayout` from the first real weighted callback,
-consuming that same chunk; no fixture address or second input traversal is used.
-`NativeInput` owns the coarse layout and returns it unchanged with completion,
-then `PreparedNative` transfers layout, store and band plans together. The
+selection. Workers construct `NativeLayout` from their first real selected sample;
+no fixture address or second input traversal is used. Worker-local `NativeInput`
+packs each transient shared-science result directly, then `PreparedNative`
+transfers layout, store and band plans together. The
 initial scheduler executor lives in `streaming_cube/phase.rs`, with source
 polarizations and channel counts derived from the problem rather than fixture
 constants. Failure injection remains test-only. Runtime comparison coverage
@@ -398,7 +399,7 @@ the source/weighting, paged-state and native reservations through the existing
 physical planner. It transfers its planned bands into preparation without
 recompiling them in the read node. `NativePhasePlan::for_initial_source` derives
 native row blocks from the selected source I/O-buffer envelope (at least one
-complete row), independently of weighted callback size, and tiles from the
+complete row), independently of worker/source callback boundaries, and tiles from the
 projected memory-bounded wave count. The provisional
 full-channel encoding arena bounds the narrower chosen layout; actual spectral
 support is still discovered from rows, not approximated by that I/O tiling.
@@ -430,16 +431,28 @@ The focused dependency test rejects old containers, replay records, I/O and
 per-sample reference-count/lock owners in the new numerical implementation;
 `reference.rs` is its explicit test-only exception, deleted at cutover.
 
-`NativeInput` is the named preparation conversion, not a second numerical owner.
-It reuses `accept_polarization_input`, native imaging weights and the distinct
-nearest-weight flag; Float32/Complex32 values are promoted once to Complex64.
-The one flat allocation carries partial rows/correlations across arbitrary source
-chunks and is borrowed by the storage callback without another payload copy.
-It rejects mixed source/layout, missing/duplicate/out-of-order selected cells,
-incomplete rows and post-error completion. Sink I/O errors retain their original
-error code. Shape/count completion does not scan content. The runtime must still
-count its simultaneously live weighted source chunk and this flat block, plus
-the existing encoding arena; source provenance remains with the runtime owner.
+Direct preparation borrows source ranges without constructing a channel-run
+index. Whole rows are partitioned over the existing admitted team. Workers use
+the shared spectral projector, weighting kernels, `accept_polarization_input`
+and exact sum accumulators, promoting Float32/Complex32 once to Complex64 in
+flat native arrays. There is no retained weighted-sample batch or replay-chunk
+conversion in this cube route. Exact integer bins merge without changing the
+sum; row-bound spectral calculations never split between workers.
+
+The existing weighting coverage fields are encoded on workers into canonical
+row digests. Ordered joining binds those digests with row identity and terminal
+counts in a native-specific private domain, independent of worker and batch
+counts. This is selected-source coverage, not product/model publication
+attestation. Original source inspection and run/fence completion remain with
+their existing owner. No new payload reread is introduced.
+
+`NativeStoreWriter::append_parts` encodes ordered borrowed row partitions directly,
+without concatenating native arrays. Incomplete rows, mixed source/layout,
+duplicate/out-of-order cells and post-error completion fail. Sink I/O errors
+retain their original code. Admission counts worker flat arrays, exact-sum
+state, source/projector/cache scratch and the writer encoding arena; displaced
+weighted-block/index allocations are not charged to the native route. Old chunk
+packing exists only as a test reference, not a fallback.
 
 The initial native store represents one homogeneous selected channel/correlation
 layout. Source/selection/correlation descriptors remain coarse shared input

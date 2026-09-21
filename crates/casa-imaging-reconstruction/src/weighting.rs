@@ -4,6 +4,8 @@
 
 #[path = "streaming_cube/coverage.rs"]
 mod coverage;
+#[path = "streaming_cube/preparation.rs"]
+pub(crate) mod native_preparation;
 mod spectral_cache;
 pub(super) use coverage::CoverageEncoder;
 pub use spectral_cache::WeightingSpectralCache;
@@ -3697,7 +3699,6 @@ impl ExactF64Sum {
             .sum()
     }
 
-    #[cfg(test)]
     pub(crate) fn merge(&mut self, other: Self) -> Result<(), WeightingError> {
         for (power, mantissa) in other.bins {
             let bin = self.bins.entry(power).or_default();

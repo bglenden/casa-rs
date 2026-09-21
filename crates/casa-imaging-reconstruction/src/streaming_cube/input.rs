@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Flat payload shared by preparation, native storage and band kernels.
-//! The weighted-input conversion is a temporary preparation-only migration seam;
+//! Selected samples are packed directly during worker-local preparation;
 //! historical sample objects never enter the buffer or numerical loops.
 
 use std::{io, mem::size_of};
@@ -34,7 +34,7 @@ pub struct RowMetadata {
 /// Shared identity and selected axes for one homogeneous source layout.
 /// Frequency fields in `address` describe the original first native channel;
 /// row-transformed frequencies live in the payload, not this descriptor.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NativeLayout {
     /// Coarse source/SPW/polarization identity and original first-channel address.
     pub address: SelectedSampleAddress,
@@ -102,6 +102,26 @@ pub struct NativeBlock {
 }
 
 impl NativeBlock {
+    /// Required heap allocation plus owner headers for an admitted shape.
+    pub fn required_bytes(
+        maximum_rows: usize,
+        maximum_channels: usize,
+        correlations: usize,
+    ) -> io::Result<usize> {
+        if maximum_rows == 0 || maximum_channels == 0 || !(1..=4).contains(&correlations) {
+            return Err(invalid("invalid native block dimensions"));
+        }
+        maximum_rows
+            .checked_mul(maximum_channels)
+            .and_then(|cells| cells.checked_mul(8 + 26 * correlations))
+            .and_then(|bytes| {
+                bytes.checked_add(maximum_rows.checked_mul(size_of::<RowMetadata>())?)
+            })
+            .and_then(|bytes| bytes.checked_add(size_of::<Self>()))
+            .filter(|bytes| *bytes <= isize::MAX as usize)
+            .ok_or_else(|| invalid("native block dimensions overflow"))
+    }
+
     /// Allocate a planner-admitted block after checking dimension arithmetic.
     /// Resource admission belongs to the runtime, not to this data container.
     pub fn new(
@@ -109,18 +129,7 @@ impl NativeBlock {
         maximum_channels: usize,
         correlations: usize,
     ) -> io::Result<Self> {
-        if maximum_rows == 0 || maximum_channels == 0 || !(1..=4).contains(&correlations) {
-            return Err(invalid("invalid native block dimensions"));
-        }
-        let bytes = maximum_rows
-            .checked_mul(maximum_channels)
-            .and_then(|cells| cells.checked_mul(8 + 26 * correlations))
-            .and_then(|bytes| {
-                bytes.checked_add(maximum_rows.checked_mul(size_of::<RowMetadata>())?)
-            });
-        if bytes.is_none_or(|bytes| bytes > isize::MAX as usize) {
-            return Err(invalid("native block dimensions overflow"));
-        }
+        Self::required_bytes(maximum_rows, maximum_channels, correlations)?;
         let cells = maximum_rows * maximum_channels;
         let samples = cells * correlations;
         Ok(Self {
@@ -198,15 +207,14 @@ impl NativeBlock {
     }
 }
 
-/// Preparation-only conversion from the old selected/weighted access boundary.
-/// Each sample is copied once; partial rows remain in the same flat allocation
-/// across callbacks. Completed blocks are borrowed by the storage sink.
-/// Runtime retains authoritative coverage and run association outside this owner.
-pub struct NativeInput {
+/// Worker-local packing into an admitted native block. Weighted values exist
+/// only for the duration of each shared-science call, never as a retained batch.
+pub(crate) struct NativeInput {
     layout: NativeLayout,
     block: NativeBlock,
     finite_values: FiniteValuePolicy,
     next: usize,
+    #[cfg(test)]
     rows: u64,
     previous_row: Option<u64>,
     failed: bool,
@@ -214,7 +222,7 @@ pub struct NativeInput {
 
 impl NativeInput {
     /// Consume an admitted full-channel buffer; no extra payload allocation.
-    pub fn new(
+    pub(crate) fn new(
         layout: NativeLayout,
         block: NativeBlock,
         finite_values: FiniteValuePolicy,
@@ -229,14 +237,63 @@ impl NativeInput {
             block,
             finite_values,
             next: 0,
+            #[cfg(test)]
             rows: 0,
             previous_row: None,
             failed: false,
         })
     }
 
-    /// Append a chunk and emit complete row blocks without copying them.
-    /// Any source or sink error permanently prevents this builder's completion.
+    pub(crate) fn begin_batch(&mut self) -> io::Result<()> {
+        if self.failed || self.next != 0 {
+            return Err(invalid("native input batch was not committed"));
+        }
+        self.block
+            .set_shape(self.block.maximum_rows, self.layout.channels.len())
+    }
+
+    pub(crate) fn push_sample(&mut self, sample: &WeightingSampleValue) -> io::Result<()> {
+        if self.failed || self.next == self.block.values.len() {
+            return Err(invalid("native input failed or exceeds admitted rows"));
+        }
+        let result = self.append_sample(sample);
+        self.failed = result.is_err();
+        result
+    }
+
+    pub(crate) fn finish_batch(&mut self) -> io::Result<&NativeBlock> {
+        let row_samples = self.block.channels * self.block.correlations;
+        if self.failed || self.next == 0 || self.next % row_samples != 0 {
+            self.failed = true;
+            return Err(invalid("failed, empty or incomplete native input batch"));
+        }
+        self.block
+            .set_shape(self.next / row_samples, self.block.channels)?;
+        Ok(&self.block)
+    }
+
+    pub(crate) fn commit_batch(&mut self) {
+        self.next = 0;
+    }
+
+    pub(crate) fn block(&self) -> &NativeBlock {
+        &self.block
+    }
+
+    pub(crate) fn layout(&self) -> &NativeLayout {
+        &self.layout
+    }
+
+    pub(crate) fn row_samples(&self) -> usize {
+        self.layout.channels.len() * self.layout.correlations.len()
+    }
+
+    pub(crate) fn maximum_rows(&self) -> usize {
+        self.block.maximum_rows
+    }
+
+    /// Reference-test adapter for arbitrary historical chunk boundaries.
+    #[cfg(test)]
     pub fn push(
         &mut self,
         samples: &[WeightingSampleValue],
@@ -245,94 +302,93 @@ impl NativeInput {
         if self.failed {
             return Err(invalid("native input previously failed"));
         }
-        let result = self.append(samples, &mut emit);
+        let result = (|| {
+            for sample in samples {
+                self.append_sample(sample)?;
+                if self.next == self.block.values.len() {
+                    emit(&self.block)?;
+                    self.rows += self.block.metadata.len() as u64;
+                    self.next = 0;
+                }
+            }
+            Ok(())
+        })();
         self.failed = result.is_err();
         result
     }
 
-    fn append(
-        &mut self,
-        samples: &[WeightingSampleValue],
-        emit: &mut impl FnMut(&NativeBlock) -> io::Result<()>,
-    ) -> io::Result<()> {
+    fn append_sample(&mut self, weighted: &WeightingSampleValue) -> io::Result<()> {
         let row_samples = self.block.channels * self.block.correlations;
-        for weighted in samples {
-            let sample = weighted.selected();
-            let address = sample.address();
-            let row = self.next / row_samples;
-            let channel = (self.next % row_samples) / self.block.correlations;
-            let correlation = self.next % self.block.correlations;
-            if !self.layout.contains_source(address)
-                || address.channel_index != self.layout.channels[channel]
-                || (address.correlation_index, address.correlation_type)
-                    != self.layout.correlations[correlation]
+        let sample = weighted.selected();
+        let address = sample.address();
+        let row = self.next / row_samples;
+        let channel = (self.next % row_samples) / self.block.correlations;
+        let correlation = self.next % self.block.correlations;
+        if !self.layout.contains_source(address)
+            || address.channel_index != self.layout.channels[channel]
+            || (address.correlation_index, address.correlation_type)
+                != self.layout.correlations[correlation]
+        {
+            return Err(invalid("native input source or selected order mismatch"));
+        }
+        if channel == 0 && correlation == 0 {
+            if self
+                .previous_row
+                .is_some_and(|previous| address.physical_row <= previous)
             {
-                return Err(invalid("native input source or selected order mismatch"));
+                return Err(invalid("native input row order mismatch"));
             }
-            if channel == 0 && correlation == 0 {
-                if self
-                    .previous_row
-                    .is_some_and(|previous| address.physical_row <= previous)
-                {
-                    return Err(invalid("native input row order mismatch"));
-                }
-                let geometry = sample
-                    .row_spectral_geometry()
-                    .ok_or_else(|| invalid("missing native row geometry"))?;
-                if geometry.channels != self.block.channels
-                    || geometry.first.0 != self.layout.channels[0]
-                    || geometry.second.map(|second| second.0) != Some(self.layout.channels[1])
-                    || sample.domain_projections().len() != 1
-                {
-                    return Err(invalid(
-                        "native input geometry does not match the single-domain layout",
-                    ));
-                }
-                self.block.metadata[row] = RowMetadata {
-                    physical_row: address.physical_row,
-                    uvw_m: sample.transformed_uvw_m(),
-                    phase_shift_m: sample.phase_shift_m(),
-                    original_pair_hz: geometry
-                        .first_pair_hz()
-                        .ok_or_else(|| invalid("missing original native frequency pair"))?,
-                };
-                self.previous_row = Some(address.physical_row);
-            } else if address.physical_row != self.block.metadata[row].physical_row {
+            let geometry = sample
+                .row_spectral_geometry()
+                .ok_or_else(|| invalid("missing native row geometry"))?;
+            if geometry.channels != self.block.channels
+                || geometry.first.0 != self.layout.channels[0]
+                || geometry.second.map(|second| second.0) != Some(self.layout.channels[1])
+                || sample.domain_projections().len() != 1
+            {
                 return Err(invalid(
-                    "native input row ended before its selected samples",
+                    "native input geometry does not match the single-domain layout",
                 ));
             }
-            if correlation == 0 {
-                self.block.frequencies_hz[row * self.block.channels + channel] =
-                    sample.output_frame_frequency_hz();
-            }
-            self.block.values[self.next] = match sample.visibility() {
-                SelectedVisibilitySample::Float32(value) => Complex64::new(f64::from(value), 0.0),
-                SelectedVisibilitySample::Complex32([re, im]) => {
-                    Complex64::new(f64::from(re), f64::from(im))
-                }
+            self.block.metadata[row] = RowMetadata {
+                physical_row: address.physical_row,
+                uvw_m: sample.transformed_uvw_m(),
+                phase_shift_m: sample.phase_shift_m(),
+                original_pair_hz: geometry
+                    .first_pair_hz()
+                    .ok_or_else(|| invalid("missing original native frequency pair"))?,
             };
-            self.block.weights[self.next] = weighted
-                .source_imaging_weight()
-                .ok_or_else(|| invalid("missing native imaging weight"))?;
-            self.block.flags[self.next] =
-                !accept_polarization_input(sample, self.finite_values).map_err(io::Error::other)?;
-            self.block.weight_flags[self.next] = sample.input_weight_group_flag
-                || sample.parallel_hand_group_flag
-                || sample.row_flag;
-            self.next += 1;
-            if self.next == self.block.values.len() {
-                emit(&self.block)?;
-                self.rows += self.block.metadata.len() as u64;
-                self.next = 0;
-            }
+            self.previous_row = Some(address.physical_row);
+        } else if address.physical_row != self.block.metadata[row].physical_row {
+            return Err(invalid(
+                "native input row ended before its selected samples",
+            ));
         }
+        if correlation == 0 {
+            self.block.frequencies_hz[row * self.block.channels + channel] =
+                sample.output_frame_frequency_hz();
+        }
+        self.block.values[self.next] = match sample.visibility() {
+            SelectedVisibilitySample::Float32(value) => Complex64::new(f64::from(value), 0.0),
+            SelectedVisibilitySample::Complex32([re, im]) => {
+                Complex64::new(f64::from(re), f64::from(im))
+            }
+        };
+        self.block.weights[self.next] = weighted
+            .source_imaging_weight()
+            .ok_or_else(|| invalid("missing native imaging weight"))?;
+        self.block.flags[self.next] =
+            !accept_polarization_input(sample, self.finite_values).map_err(io::Error::other)?;
+        self.block.weight_flags[self.next] =
+            sample.input_weight_group_flag || sample.parallel_hand_group_flag || sample.row_flag;
+        self.next += 1;
         Ok(())
     }
 
     /// Emit a final short block, rejecting incomplete rows and earlier errors.
     /// Return the row count and original shared layout by ownership transfer.
     /// This checks shape/count only; there is no payload verification pass.
+    #[cfg(test)]
     pub fn finish(
         mut self,
         mut emit: impl FnMut(&NativeBlock) -> io::Result<()>,

@@ -262,6 +262,21 @@ impl CoverageEncoder {
         self.clone_from(checkpoint);
     }
 
+    /// Complete one independently prepared row using the unchanged field
+    /// encoding. The native coordinator combines these digests in source order.
+    pub(crate) fn finish_row(mut self, sample_count: u64) -> ([u8; 32], CoverageProofWork) {
+        self.update(&[2]);
+        self.update(&sample_count.to_be_bytes());
+        (
+            self.hasher
+                .take()
+                .expect("row coverage owns its encoder")
+                .finalize()
+                .into(),
+            self.work,
+        )
+    }
+
     pub(crate) fn finish(
         mut self,
         generation: WeightingGenerationId,

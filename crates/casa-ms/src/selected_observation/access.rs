@@ -1707,7 +1707,9 @@ impl SelectedObservationBlock {
         )
     }
 
-    pub(super) fn selected_channels_per_row(&self) -> Result<usize, BoundObservationSourceError> {
+    /// Number of selected channels in each row of the currently filled block.
+    /// Callers can use this to partition complete rows without materializing runs.
+    pub fn selected_channels_per_row(&self) -> Result<usize, BoundObservationSourceError> {
         self.coordinates
             .as_ref()
             .and_then(|coordinates| coordinates.get(self.coordinate_index))

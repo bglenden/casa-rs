@@ -106,7 +106,10 @@ pub mod runtime_adapter {
         prepare_spectral_operator, reprepare_spectral_operator, spectral_operator_workload,
     };
     pub use crate::streaming_cube::band::{BandMemory, BandPlan, EpochBand};
-    pub use crate::streaming_cube::input::{NativeBlock, NativeInput, NativeLayout, RowMetadata};
+    pub use crate::streaming_cube::input::{NativeBlock, NativeLayout, RowMetadata};
+    pub use crate::weighting::native_preparation::{
+        NativePreparationWorker, NativeWeightingPreparation,
+    };
     pub use crate::weighting::{
         FusedWeightingPhase, WeightingReplayPhase, WeightingReplayWindowSummary,
         WeightingSpectralCache, begin_natural_weighting_stream,

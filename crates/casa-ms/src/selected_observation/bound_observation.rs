@@ -1283,6 +1283,47 @@ impl SelectedObservationBlockConsumer<'_> {
         index: &mut super::SelectedObservationBlockIndex,
     ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
         index.clear();
+        self.inspect_block_range_with(block, range, |row, channel, correlations| {
+            index.push(row, channel, correlations)
+        })?;
+        index.binding = Some((
+            self.problem.problem_id(),
+            block
+                .index_binding
+                .ok_or(SelectedObservationTraversalError::Source(
+                    BoundObservationSourceError::StoredSampleShapeMismatch,
+                ))?,
+        ));
+        Ok(())
+    }
+
+    /// Inspect one borrowed native-run window without retaining an index or samples.
+    /// Call windows in canonical order and cover every block exactly once. Workers
+    /// can independently project disjoint borrowed ranges while this owner retains
+    /// the single ordered source inspection and terminal completion.
+    pub fn inspect_block_range(
+        &mut self,
+        block: &SelectedObservationBlock,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
+        self.inspect_block_range_with(block, range, |_, _, _| Ok(()))
+    }
+
+    fn inspect_block_range_with(
+        &mut self,
+        block: &SelectedObservationBlock,
+        range: std::ops::Range<usize>,
+        mut retain: impl FnMut(
+            &SelectedObservationRunRow,
+            SelectedObservationRunChannel,
+            &[SelectedObservationRunCorrelation],
+        ) -> Result<(), BoundObservationSourceError>,
+    ) -> Result<(), SelectedObservationTraversalError<std::convert::Infallible>> {
+        if block.index_binding.is_none() {
+            return Err(SelectedObservationTraversalError::Source(
+                BoundObservationSourceError::StoredSampleShapeMismatch,
+            ));
+        }
         let inspection = &mut self.inspection;
         let rebound_sample_count = &mut self.rebound_sample_count;
         block
@@ -1302,8 +1343,7 @@ impl SelectedObservationBlockConsumer<'_> {
                             })?)
                             .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?;
                     }
-                    index
-                        .push(row, channel, correlations)
+                    retain(row, channel, correlations)
                         .map_err(SelectedObservationTraversalError::Source)
                 },
             )
@@ -1317,14 +1357,6 @@ impl SelectedObservationBlockConsumer<'_> {
                 .checked_mul(size_of::<SelectedObservationRunCorrelation>())
                 .ok_or(SelectedObservationTraversalError::MeasurementOverflow)?,
         );
-        index.binding = Some((
-            self.problem.problem_id(),
-            block
-                .index_binding
-                .ok_or(SelectedObservationTraversalError::Source(
-                    BoundObservationSourceError::StoredSampleShapeMismatch,
-                ))?,
-        ));
         Ok(())
     }
 

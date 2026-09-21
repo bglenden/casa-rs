@@ -113,6 +113,114 @@ fn assert_window(actual: &NativeBlock, original: &NativeBlock, channels: Range<u
 }
 
 #[test]
+fn worker_row_partitions_write_identical_frames_without_native_concatenation() {
+    let plan = plan(7, 9, 2, 3, 4);
+    let (_directory, expected) = store(plan);
+    let mut expected_bytes = vec![0; plan.artifact_bytes as usize];
+    expected
+        .file
+        .as_file()
+        .read_exact_at(&mut expected_bytes, 0)
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let (_, storage) = test_authority(directory.path(), plan.artifact_bytes);
+    for maximum_parts in [1, 2, 4] {
+        let mut writer = NativeStoreWriter::create(&storage, plan).unwrap();
+        assert_eq!(
+            plan.writer_residency().unwrap(),
+            (size_of::<NativeStoreWriter>() + writer.encoded.capacity()) as u64
+                + plan.page_cache_bytes
+        );
+        let encoded_pointer = writer.encoded.as_ptr();
+        for index in 0..plan.blocks() {
+            let rows = plan.rows_in(index).unwrap();
+            let mut original = NativeBlock::new(rows, plan.channels, plan.correlations).unwrap();
+            fill(&mut original, index * plan.block_rows as u64);
+            let part_rows = rows.div_ceil(maximum_parts);
+            let parts: Vec<_> = (0..rows)
+                .step_by(part_rows)
+                .map(|start| {
+                    let end = (start + part_rows).min(rows);
+                    let mut part =
+                        NativeBlock::new(end - start, plan.channels, plan.correlations).unwrap();
+                    part.metadata
+                        .copy_from_slice(&original.metadata[start..end]);
+                    let cells = start * plan.channels..end * plan.channels;
+                    let samples = cells.start * plan.correlations..cells.end * plan.correlations;
+                    part.frequencies_hz
+                        .copy_from_slice(&original.frequencies_hz[cells]);
+                    part.values
+                        .copy_from_slice(&original.values[samples.clone()]);
+                    part.weights
+                        .copy_from_slice(&original.weights[samples.clone()]);
+                    part.flags.copy_from_slice(&original.flags[samples.clone()]);
+                    part.weight_flags
+                        .copy_from_slice(&original.weight_flags[samples]);
+                    part
+                })
+                .collect();
+            writer
+                .append_parts(&parts.iter().collect::<Vec<_>>())
+                .unwrap();
+            assert_eq!(writer.encoded.as_ptr(), encoded_pointer);
+        }
+        let actual = writer.finish().unwrap();
+        let mut actual_bytes = vec![0; plan.artifact_bytes as usize];
+        actual
+            .file
+            .as_file()
+            .read_exact_at(&mut actual_bytes, 0)
+            .unwrap();
+        assert_eq!(actual_bytes, expected_bytes);
+        assert_eq!(actual.written.bytes, expected.written.bytes);
+        assert_eq!(actual.written.operations, expected.written.operations);
+        assert_eq!(
+            actual.written.checksum_bytes,
+            expected.written.checksum_bytes
+        );
+    }
+}
+
+#[test]
+fn invalid_row_partitions_poison_the_writer_before_any_frame_is_written() {
+    let plan = plan(3, 4, 2, 2, 3);
+    let directory = tempfile::tempdir().unwrap();
+    let (_, storage) = test_authority(directory.path(), plan.artifact_bytes);
+    let good = NativeBlock::new(3, 4, 2).unwrap();
+    for invalid in 0..7 {
+        let mut writer = NativeStoreWriter::create(&storage, plan).unwrap();
+        let first = NativeBlock::new(1, 4, 2).unwrap();
+        let mut second = NativeBlock::new(2, 4, 2).unwrap();
+        match invalid {
+            0 => {
+                second.values.pop();
+            }
+            1 => second.set_shape(1, 4).unwrap(),
+            2 => second.set_shape(2, 3).unwrap(),
+            3 => second = NativeBlock::new(2, 4, 1).unwrap(),
+            4 => second.metadata.clear(),
+            5 => second = NativeBlock::new(3, 4, 2).unwrap(),
+            _ => (),
+        }
+        let parts: Vec<_> = if invalid == 6 {
+            vec![]
+        } else {
+            vec![&first, &second]
+        };
+        assert_eq!(
+            writer.append_parts(&parts).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert!(writer.poisoned);
+        assert_eq!(writer.next_block, 0);
+        assert_eq!(writer.io.bytes, 0);
+        assert_eq!(writer.file.as_file().metadata().unwrap().len(), 0);
+        assert!(writer.append(&good).is_err());
+        assert!(writer.finish().is_err());
+    }
+}
+
+#[test]
 fn overlapping_band_windows_reuse_checked_frames_with_bounded_storage() {
     let plan = plan(7, 64, 2, 1, 2);
     let (_directory, mut store) = store(plan);

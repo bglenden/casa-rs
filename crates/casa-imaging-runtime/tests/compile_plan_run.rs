@@ -5239,9 +5239,15 @@ fn t55_exact_plane_candidates_resize_workspace_and_admit_the_serial_memory_floor
                 .logical_allocations()
                 .values()
                 .find(|allocation| {
-                    allocation.compatibility.layout.as_str() == "initial-consumer-team"
+                    allocation.compatibility.layout.as_str() == "weighting-replay-preparation"
                 })
                 .expect("initial terminal preparation allocation");
+            assert!(
+                dag.logical_allocations().values().all(|allocation| {
+                    allocation.compatibility.layout.as_str() != "initial-consumer-team"
+                }),
+                "preparation owns the team; storage must not allocate another one"
+            );
             assert!(
                 dag.nodes()[&team.lifetime.acquire_at]
                     .claims

@@ -7,11 +7,10 @@ use casa_imaging_model::*;
 use casa_imaging_reconstruction::{
     ExecutableModelProblem, MajorCycleOwner, MajorCyclePreparation, ModelLifecycle,
     ModelStoragePlan, MuellerMatrix, SpectralChannelValidity, SpectralOperatorSpecification,
-    WeightingExecutionLimits, WeightingReplayChunk, WeightingReplaySummary,
-    begin_natural_weighting_stream, plan_weighting,
+    WeightingExecutionLimits, WeightingReplaySummary, plan_weighting,
     runtime_adapter::{
-        CompleteDataOwnerResult, CompleteDataOwnerSlabFold, NormalStoragePlan, RowMetadata,
-        SpectralOperatorPass, WeightingSpectralCache,
+        CompleteDataOwnerResult, CompleteDataOwnerSlabFold, NativeWeightingPreparation,
+        NormalStoragePlan, RowMetadata, SpectralOperatorPass, WeightingSpectralCache,
     },
 };
 use num_complex::Complex64;
@@ -21,78 +20,99 @@ mod fixture;
 
 const OUTPUT: [f64; 4] = [1e9, 1.001e9, 1.002e9, 1.003e9];
 
-fn weighted_input(
+fn native_input(
     problem: &CompiledProblem,
-    mut consume: impl FnMut(&WeightingReplayChunk) -> io::Result<()>,
+    mut consume: impl FnMut(u64, &[&NativeBlock], &NativeLayout) -> io::Result<()>,
 ) -> (WeightingReplaySummary, SelectedObservationGenerationId) {
     let plan = plan_weighting(problem, WeightingExecutionLimits::new(7, 1).unwrap()).unwrap();
-    let mut stream = begin_natural_weighting_stream(problem, &plan).unwrap();
-    let mut cache = WeightingSpectralCache::new(problem).unwrap();
+    let mut coordinator = NativeWeightingPreparation::new(problem, &plan).unwrap();
+    let samples = fixture::selected_samples(problem);
+    let layout =
+        NativeLayout::new(samples[0].address, (0..6).collect(), layout().correlations).unwrap();
+    let mut workers: Vec<_> = (0..2)
+        .map(|_| {
+            (
+                coordinator
+                    .worker(
+                        problem,
+                        &plan,
+                        layout.clone(),
+                        NativeBlock::new(1, 6, 2).unwrap(),
+                        FiniteValuePolicy::FlagInputRejectGenerated,
+                    )
+                    .unwrap(),
+                WeightingSpectralCache::new(problem).unwrap(),
+            )
+        })
+        .collect();
+    let mut visited = 0;
+    let mut ordinal = 0;
     let (selected, count) = problem
-        .inspect_selected_observation(
-            fixture::selected_samples(problem)
-                .into_iter()
-                .map(Ok::<_, io::Error>),
-            |sample| {
-                let address = sample.address;
-                let group = SelectedInputWeightGroup::parallel_hands(
-                    sample.input_weight,
-                    sample.input_weight,
-                )
-                .with_density_owner(address.correlation_index == 0)
-                .with_terminal_member(address.correlation_index == 1)
-                .with_imaging_flag(address.channel_index == 3);
-                let row = SelectedRowSpectralGeometry::new(
-                    sample.as_view(),
-                    FrequencyFrame::Topocentric,
-                    6,
-                    (0, 0.999e9),
-                    Some((1, 1e9)),
-                )
-                .unwrap();
-                let view = sample
-                    .as_view()
-                    .with_input_weight_group(group)
-                    .with_row_spectral_geometry(Some(row));
-                let interval = SelectedSpectralInterval::new(
-                    address.frequency_centre_hz,
-                    address.frequency_lower_hz,
-                    address.frequency_upper_hz,
-                )
-                .unwrap();
-                let evaluation = SelectedSpectralEvaluation::new(
-                    interval,
-                    interval,
-                    f64::from(sample.input_weight),
-                    !sample.channel_flag,
-                )
-                .unwrap()
-                .with_row_geometry(row);
-                let contributions = cache.compile(view, evaluation).map_err(io::Error::other)?;
-                if let Some(chunk) = stream
-                    .consume(problem, view, address.frequency_centre_hz, contributions)
-                    .map_err(io::Error::other)?
-                {
-                    consume(&chunk)?;
-                    stream
-                        .reuse_emitted_block(chunk)
-                        .map_err(io::Error::other)?;
+        .inspect_selected_observation(samples.into_iter().map(Ok::<_, io::Error>), |sample| {
+            let worker_index = (visited / 12) % workers.len();
+            let (worker, cache) = &mut workers[worker_index];
+            if visited % 12 == 0 {
+                worker.begin_batch()?;
+            }
+            let address = sample.address;
+            let group =
+                SelectedInputWeightGroup::parallel_hands(sample.input_weight, sample.input_weight)
+                    .with_density_owner(address.correlation_index == 0)
+                    .with_terminal_member(address.correlation_index == 1)
+                    .with_imaging_flag(address.channel_index == 3);
+            let row = SelectedRowSpectralGeometry::new(
+                sample.as_view(),
+                FrequencyFrame::Topocentric,
+                6,
+                (0, 0.999e9),
+                Some((1, 1e9)),
+            )
+            .unwrap();
+            let view = sample
+                .as_view()
+                .with_input_weight_group(group)
+                .with_row_spectral_geometry(Some(row));
+            let interval = SelectedSpectralInterval::new(
+                address.frequency_centre_hz,
+                address.frequency_lower_hz,
+                address.frequency_upper_hz,
+            )
+            .unwrap();
+            let evaluation = SelectedSpectralEvaluation::new(
+                interval,
+                interval,
+                f64::from(sample.input_weight),
+                !sample.channel_flag,
+            )
+            .unwrap()
+            .with_row_geometry(row);
+            let contributions = cache.compile(view, evaluation).map_err(io::Error::other)?;
+            worker.consume(problem, view, address.frequency_centre_hz, contributions)?;
+            visited += 1;
+            if visited % 12 == 0 {
+                worker.finish_batch()?;
+                coordinator.commit(worker)?;
+                if worker_index + 1 == workers.len() || visited == 60 {
+                    let parts: Vec<_> = workers[..=worker_index]
+                        .iter()
+                        .map(|(worker, _)| worker.block())
+                        .collect();
+                    consume(ordinal, &parts, workers[0].0.layout())?;
+                    ordinal += 1;
                 }
-                Ok(())
-            },
-        )
+            }
+            Ok(())
+        })
         .unwrap();
-    let (last, _, replay) = stream.finish().unwrap();
-    if let Some(last) = last {
-        consume(&last).unwrap();
-    }
+    let (_, replay) = coordinator.finish().unwrap();
     assert_eq!(count, 60);
     assert_eq!(replay.sample_count(), count);
+    assert_eq!(ordinal, 3);
     (replay, selected)
 }
 
 #[test]
-fn weighted_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
+fn native_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
     use crate::streaming_cube::prepare::{NativePreparation, PreparedNative};
     let problem = fixture::problem(SpectralSamplingLaw::LINEAR);
     let specifications: Vec<_> = (0..4)
@@ -108,9 +128,9 @@ fn weighted_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
     let (_, storage) = test_authority(directory.path(), plan.artifact_bytes);
     let mut input = NativePreparation::new(&storage, plan, &problem, &OUTPUT, bands).unwrap();
     let mut first_address = None;
-    let (replay, selected) = weighted_input(&problem, |chunk| {
-        first_address.get_or_insert(chunk.samples()[0].selected().address());
-        input.consume(chunk)
+    let (replay, selected) = native_input(&problem, |_, parts, layout| {
+        first_address.get_or_insert(layout.address);
+        input.consume(parts, layout)
     });
     let PreparedNative {
         mut store,
@@ -200,7 +220,7 @@ fn weighted_preparation_and_real_bands_feed_the_existing_fold_and_controller() {
 }
 
 #[test]
-fn native_preparation_rejects_missing_duplicate_and_out_of_order_chunks() {
+fn native_preparation_rejects_missing_duplicate_and_out_of_order_row_parts() {
     use crate::streaming_cube::prepare::NativePreparation;
     let problem = fixture::problem(SpectralSamplingLaw::LINEAR);
     let budget = size_of::<NativeBlock>() + size_of::<Vec<u8>>() + 4 + 2 * (56 + 6 * 60 + 2 * 60);
@@ -224,23 +244,26 @@ fn native_preparation_rejects_missing_duplicate_and_out_of_order_chunks() {
         .unwrap()
     };
     let mut missing = create();
-    let (replay, _) = weighted_input(&problem, |chunk| {
-        if chunk.sequence() == 0 {
-            missing.consume(chunk)?;
+    let (replay, _) = native_input(&problem, |ordinal, parts, layout| {
+        if ordinal == 0 {
+            missing.consume(parts, layout)?;
         }
         Ok(())
     });
     assert!(missing.finish(&replay).is_err());
-    for ordinal in [0, 1] {
+    for duplicate in [true, false] {
         let mut input = create();
         let mut exercised = false;
-        let (replay, _) = weighted_input(&problem, |chunk| {
-            if chunk.sequence() == ordinal {
-                if ordinal == 0 {
-                    input.consume(chunk)?;
+        let (replay, _) = native_input(&problem, |ordinal, parts, layout| {
+            if ordinal == 0 {
+                if duplicate {
+                    input.consume(parts, layout)?;
+                    assert!(input.consume(parts, layout).is_err());
+                } else {
+                    let reversed: Vec<_> = parts.iter().copied().rev().collect();
+                    assert!(input.consume(&reversed, layout).is_err());
                 }
-                assert!(input.consume(chunk).is_err());
-                assert!(input.consume(chunk).is_err());
+                assert!(input.consume(parts, layout).is_err());
                 exercised = true;
             }
             Ok(())

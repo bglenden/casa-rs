@@ -12,8 +12,10 @@ use crate::derived::engine::MsCalEngine;
 
 use super::{
     BoundObservationSourceError, SelectedObservationTraversalError,
-    SelectedObservationTraversalRun, access::SelectedRowSpectralSelection,
-    maximum_selected_correlations, spectral_evaluation::SpectralEvaluationProjector,
+    SelectedObservationTraversalRun,
+    access::{BlockVisitError, SelectedRowSpectralSelection},
+    maximum_selected_correlations,
+    spectral_evaluation::SpectralEvaluationProjector,
 };
 
 /// Admission bound for one reusable index of complete selected row/channel runs.
@@ -275,6 +277,7 @@ impl SelectedObservationIndexedBlock<'_> {
 /// Worker-local spectral caches and bounded evaluation scratch; scheduling stays with the caller.
 pub struct SelectedObservationProjector {
     spectral_evaluator: SpectralEvaluationProjector,
+    correlations: Vec<SelectedObservationRunCorrelation>,
     evaluations: Vec<SelectedSpectralEvaluation>,
 }
 
@@ -284,22 +287,87 @@ impl SelectedObservationProjector {
     pub fn new(problem: &CompiledProblem) -> Self {
         Self {
             spectral_evaluator: SpectralEvaluationProjector::new(),
+            correlations: Vec::with_capacity(maximum_selected_correlations(problem)),
             evaluations: Vec::with_capacity(maximum_selected_correlations(problem)),
         }
     }
 
-    /// Evaluation scratch and inline projector bytes required before allocation.
+    /// Project a borrowed source range directly, using only worker-local bounded
+    /// correlation and spectral scratch. No index, selected sample collection,
+    /// source read, or generation inspection is created by this traversal.
+    /// The caller retains the block until every disjoint worker range completes
+    /// and inspects its runs once in canonical order through the source consumer.
+    pub fn visit_block_range<E: Error + 'static>(
+        &mut self,
+        problem: &CompiledProblem,
+        block: &super::SelectedObservationBlock,
+        range: Range<usize>,
+        mut consume: impl FnMut(SelectedObservationTraversalRun<'_>) -> Result<(), E>,
+    ) -> Result<(), SelectedObservationTraversalError<E>> {
+        if block.index_binding.is_none() {
+            return Err(SelectedObservationTraversalError::Source(
+                BoundObservationSourceError::StoredSampleShapeMismatch,
+            ));
+        }
+        let spectral_evaluator = &mut self.spectral_evaluator;
+        let evaluations = &mut self.evaluations;
+        block
+            .visit_selected_sample_range(
+                problem,
+                &mut self.correlations,
+                range,
+                |row, channel, correlations, geometry_engine, selection| {
+                    evaluations.clear();
+                    if correlations.len() > evaluations.capacity() {
+                        return Err(SelectedObservationTraversalError::Source(
+                            BoundObservationSourceError::StoredSampleShapeMismatch,
+                        ));
+                    }
+                    for correlation in correlations {
+                        let sample =
+                            SelectedObservationSampleView::from_run(row, &channel, correlation);
+                        evaluations.push(
+                            spectral_evaluator
+                                .project(problem, sample, geometry_engine, selection)
+                                .map_err(SelectedObservationTraversalError::Source)?
+                                .spectral_evaluation(),
+                        );
+                    }
+                    consume(SelectedObservationTraversalRun::new(
+                        row,
+                        channel,
+                        correlations,
+                        evaluations,
+                    ))
+                    .map_err(SelectedObservationTraversalError::Consumer)
+                },
+            )
+            .map_err(|error| match error {
+                BlockVisitError::Source(error) => SelectedObservationTraversalError::Source(error),
+                BlockVisitError::Consumer(error) => error,
+            })
+    }
+
+    /// Correlation/evaluation scratch and inline projector bytes required before allocation.
     pub fn required_bytes(problem: &CompiledProblem) -> Option<usize> {
         maximum_selected_correlations(problem)
-            .checked_mul(size_of::<SelectedSpectralEvaluation>())?
+            .checked_mul(
+                size_of::<SelectedObservationRunCorrelation>()
+                    .checked_add(size_of::<SelectedSpectralEvaluation>())?,
+            )?
             .checked_add(size_of::<Self>())
     }
 
-    /// Evaluation scratch and inline projector bytes currently allocated.
+    /// Correlation/evaluation scratch and inline projector bytes currently allocated.
     pub fn capacity_bytes(&self) -> Option<usize> {
         self.evaluations
             .capacity()
             .checked_mul(size_of::<SelectedSpectralEvaluation>())?
+            .checked_add(
+                self.correlations
+                    .capacity()
+                    .checked_mul(size_of::<SelectedObservationRunCorrelation>())?,
+            )?
             .checked_add(size_of::<Self>())
     }
 }

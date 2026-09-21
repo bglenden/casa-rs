@@ -3240,7 +3240,7 @@ fn windowed_index_ranges_bound_rows_by_the_actual_channel_window() {
 }
 
 #[test]
-fn indexed_run_windows_preserve_complete_groups_across_row_splits_and_tail() {
+fn borrowed_and_indexed_run_windows_preserve_complete_groups_across_row_splits_and_tail() {
     let directory = tempfile::tempdir().expect("indexed window fixture");
     let path = directory.path().join("indexed-windows.ms");
     generate_fixture_with_rows(&path, 5);
@@ -3305,7 +3305,231 @@ fn indexed_run_windows_preserve_complete_groups_across_row_splits_and_tail() {
     assert!(serial[0].0.channel_flag);
     assert!(!serial[1].0.channel_flag);
     assert!(serial[1].0.parallel_hand_group_flag);
-    assert_eq!(collect_indexed_samples(&problem, binding, 3), serial);
+    assert_eq!(
+        collect_indexed_samples(&problem, binding.clone(), 3),
+        serial
+    );
+    assert_eq!(collect_borrowed_samples(&problem, binding, 3), serial);
+}
+
+fn collect_borrowed_samples(
+    problem: &casa_imaging_model::CompiledProblem,
+    binding: ObservationSourceBinding,
+    maximum_runs: usize,
+) -> Vec<(SelectedObservationSample, SelectedSpectralEvaluation)> {
+    let observation =
+        BoundSelectedObservation::open(problem, test_measures(problem), vec![binding])
+            .expect("bind borrowed traversal");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(problem)
+        .expect("split borrowed traversal");
+    let mut storage = source.create_storage(0);
+    let mut samples = Vec::new();
+    while source
+        .fill_next(&mut storage)
+        .expect("fill borrowed source")
+        .is_some()
+    {
+        let runs = storage.selected_run_count().expect("borrowed run count");
+        assert_eq!(
+            storage.selected_channels_per_row().expect("row channels"),
+            2
+        );
+        for start in (0..runs).step_by(maximum_runs) {
+            let end = (start + maximum_runs).min(runs);
+            consumer
+                .inspect_block_range(&storage, start..end)
+                .expect("inspect borrowed window");
+            let midpoint = start + (end - start).div_ceil(2);
+            let prepared = std::thread::scope(|scope| {
+                let handles: Vec<_> = [midpoint..end, start..midpoint]
+                    .into_iter()
+                    .map(|range| {
+                        let storage = &storage;
+                        scope.spawn(move || {
+                            let mut projector = super::SelectedObservationProjector::new(problem);
+                            let capacity = projector.capacity_bytes();
+                            assert_eq!(
+                                capacity,
+                                super::SelectedObservationProjector::required_bytes(problem)
+                            );
+                            let mut partition = Vec::new();
+                            projector
+                                .visit_block_range(problem, storage, range, |run| {
+                                    partition.extend(run.samples().map(|sample| {
+                                        (sample.selected().to_owned(), sample.spectral_evaluation())
+                                    }));
+                                    Ok::<_, Infallible>(())
+                                })
+                                .expect("project borrowed worker range");
+                            assert_eq!(projector.capacity_bytes(), capacity);
+                            partition
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .rev()
+                    .flat_map(|handle| handle.join().expect("borrowed projection worker"))
+                    .collect::<Vec<_>>()
+            });
+            samples.extend(prepared);
+        }
+    }
+    let (_, completion) = consumer
+        .complete(source.complete().expect("borrowed terminal source"))
+        .expect("borrowed inspection completion");
+    assert_eq!(completion.sample_count(), samples.len() as u64);
+    assert_eq!(
+        completion
+            .measurements()
+            .peak_consumer_scratch_current_bytes(),
+        (2 * size_of::<SelectedObservationRunCorrelation>()) as u64
+    );
+    let (generation, _) = problem
+        .inspect_selected_observation(
+            samples
+                .iter()
+                .map(|(sample, _)| Ok::<_, Infallible>(sample.clone())),
+            |_| Ok::<_, Infallible>(()),
+        )
+        .expect("independent borrowed sample inspection");
+    assert_eq!(generation, completion.generation_id());
+    samples
+}
+
+#[test]
+fn borrowed_source_ranges_reject_invalid_windows_and_propagate_consumer_failure() {
+    let directory = tempfile::tempdir().expect("borrowed source validation fixture");
+    let path = directory.path().join("borrowed-ranges.ms");
+    generate_fixture_with_rows(&path, 2);
+    let problem = compiled_problem(&path, 2);
+    let snapshot_source = &problem.inputs().observation_snapshot().sources()[0];
+    let binding = ObservationSourceBinding::new(
+        source_state(snapshot_source),
+        bound_content_budget_for_rows(&problem, snapshot_source, 2, 1),
+    );
+    let observation =
+        BoundSelectedObservation::open(&problem, test_measures(&problem), vec![binding])
+            .expect("bind borrowed validation source");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split borrowed validation stream");
+    let mut storage = source.create_storage(0);
+    let mut projector = super::SelectedObservationProjector::new(&problem);
+    let capacity = projector.capacity_bytes();
+    assert!(
+        projector
+            .visit_block_range(&problem, &storage, 0..0, |_| Ok::<_, Infallible>(()))
+            .is_err()
+    );
+    assert!(consumer.inspect_block_range(&storage, 0..0).is_err());
+    assert!(
+        source
+            .fill_next(&mut storage)
+            .expect("fill validation block")
+            .is_some()
+    );
+    let count = storage.selected_run_count().expect("validation run count");
+    let proof_bytes = consumer.generation_proof_bytes();
+    let proof_calls = consumer.generation_proof_hash_calls();
+    for range in [std::ops::Range { start: 2, end: 1 }, 0..count + 1] {
+        assert!(
+            projector
+                .visit_block_range(&problem, &storage, range.clone(), |_| Ok::<_, Infallible>(
+                    ()
+                ))
+                .is_err()
+        );
+        assert!(consumer.inspect_block_range(&storage, range).is_err());
+    }
+    assert_eq!(consumer.generation_proof_bytes(), proof_bytes);
+    assert_eq!(consumer.generation_proof_hash_calls(), proof_calls);
+    projector
+        .visit_block_range(
+            &problem,
+            &storage,
+            count..count,
+            |_| -> Result<(), Infallible> {
+                panic!("empty borrowed range must not call consumer");
+            },
+        )
+        .expect("empty range is valid");
+    let error = projector
+        .visit_block_range(&problem, &storage, 0..count, |_| {
+            Err(std::io::Error::other("borrowed consumer failed"))
+        })
+        .expect_err("consumer error must propagate");
+    assert!(matches!(
+        error,
+        SelectedObservationTraversalError::Consumer(_)
+    ));
+    assert_eq!(projector.capacity_bytes(), capacity);
+    consumer
+        .inspect_block_range(&storage, 0..count)
+        .expect("inspect valid range after validation failures");
+    while source
+        .fill_next(&mut storage)
+        .expect("remaining validation blocks")
+        .is_some()
+    {
+        consumer
+            .inspect_block_range(
+                &storage,
+                0..storage.selected_run_count().expect("remaining runs"),
+            )
+            .expect("inspect remaining validation block");
+    }
+    consumer
+        .complete(source.complete().expect("validation terminal"))
+        .expect("invalid windows did not corrupt ordered inspection");
+}
+
+#[test]
+#[cfg(unix)]
+fn borrowed_source_inspection_preserves_rebound_sample_counts_and_completion() {
+    let directory = tempfile::tempdir().expect("borrowed rebound fixture");
+    let path = directory.path().join("borrowed-rebound.ms");
+    generate_fixture_with_rows(&path, 3);
+    initialize_measurement_set_owner_manifest(&path).expect("initialize borrowed rebound owner");
+    let request = owner_resolution_request(&path, 3);
+    let (problem, access) = owner_problem_and_access(request.clone());
+    let mut observation = access.open(&problem).expect("open borrowed rebound source");
+    let initial = observation
+        .traverse(&problem, |_| Ok::<_, Infallible>(()))
+        .expect("initial exhaustive source inspection");
+    let proof = initial.replay_proof().expect("initial replay proof");
+    drop(observation);
+    let (_, access) = owner_problem_and_access(request);
+    let observation = access
+        .rebind(&problem, &proof)
+        .expect("rebind selected source");
+    let (mut source, mut consumer) = observation
+        .into_block_stream(&problem)
+        .expect("split borrowed rebound source");
+    let mut storage = source.create_storage(0);
+    while source
+        .fill_next(&mut storage)
+        .expect("fill rebound block")
+        .is_some()
+    {
+        let runs = storage.selected_run_count().expect("rebound run count");
+        for start in (0..runs).step_by(3) {
+            consumer
+                .inspect_block_range(&storage, start..(start + 3).min(runs))
+                .expect("inspect borrowed rebound range");
+        }
+    }
+    assert_eq!(consumer.generation_proof_bytes(), 0);
+    assert_eq!(consumer.generation_proof_hash_calls(), 0);
+    let (_, completion) = consumer
+        .complete(source.complete().expect("rebound terminal"))
+        .expect("complete borrowed rebound source");
+    let authorization = proof
+        .authorize_rebound_completion(&completion)
+        .expect("ordered borrowed windows preserve rebound authorization");
+    assert_eq!(authorization.generation_id(), initial.generation_id());
+    assert_eq!(authorization.sample_count(), initial.sample_count());
 }
 
 fn collect_indexed_samples(

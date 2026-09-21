@@ -60,7 +60,7 @@ pub(super) struct StorePlan {
 }
 
 impl StorePlan {
-    /// Batch across weighted callback boundaries using the selected source's
+    /// Batch across source/worker callback boundaries using the selected source's
     /// I/O-buffer envelope. Reserve at least one complete native row; the parent
     /// separately admits this arena alongside the still-live selected source.
     pub(super) fn for_source_buffer(
@@ -194,9 +194,12 @@ impl StorePlan {
         self.rows.div_ceil(self.block_rows as u64)
     }
 
-    pub(super) fn preparation_residency(self) -> io::Result<u64> {
-        (self.preparation_bytes as u64)
-            .checked_add(self.page_cache_bytes)
+    /// Writer-owned bytes when native row arrays are admitted separately in
+    /// worker-local blocks. No full native block is included in this charge.
+    pub(super) fn writer_residency(self) -> io::Result<u64> {
+        (size_of::<NativeStoreWriter>() as u64)
+            .checked_add(self.frame_bytes as u64)
+            .and_then(|bytes| bytes.checked_add(self.page_cache_bytes))
             .ok_or_else(overflow)
     }
 
@@ -317,19 +320,38 @@ impl NativeStoreWriter {
     }
 
     pub(super) fn append(&mut self, block: &NativeBlock) -> io::Result<()> {
+        self.append_parts(&[block])
+    }
+
+    /// Write one planned row block from ordered worker-owned row partitions.
+    /// Only the encoded frame is assembled; native payload arrays stay borrowed.
+    pub(super) fn append_parts(&mut self, parts: &[&NativeBlock]) -> io::Result<()> {
         if self.poisoned {
             return Err(io::Error::other("native store writer failed earlier"));
         }
-        let result = self.append_inner(block);
+        let result = self.append_parts_inner(parts);
         self.poisoned = result.is_err();
         result
     }
 
-    fn append_inner(&mut self, block: &NativeBlock) -> io::Result<()> {
+    fn append_parts_inner(&mut self, parts: &[&NativeBlock]) -> io::Result<()> {
         let rows = self.plan.rows_in(self.next_block)?;
-        block.validate_shape(rows, self.plan.channels, self.plan.correlations)?;
+        let mut supplied_rows = 0_usize;
+        for block in parts {
+            let part_rows = block.metadata.len();
+            if part_rows == 0 {
+                return Err(invalid_input("native store row partition is empty"));
+            }
+            block.validate_shape(part_rows, self.plan.channels, self.plan.correlations)?;
+            supplied_rows = supplied_rows.checked_add(part_rows).ok_or_else(overflow)?;
+        }
+        if supplied_rows != rows {
+            return Err(invalid_input(
+                "native store row partitions do not match planned rows",
+            ));
+        }
         self.encoded.clear();
-        for row in &block.metadata {
+        for row in parts.iter().flat_map(|block| &block.metadata) {
             self.encoded
                 .extend_from_slice(&row.physical_row.to_le_bytes());
             for value in row
@@ -344,22 +366,24 @@ impl NativeStoreWriter {
         self.write_frame(None)?;
         for tile in 0..self.plan.tiles {
             self.encoded.clear();
-            for row in 0..rows {
-                for channel in self.plan.tile(tile) {
-                    let cell = row * self.plan.channels + channel;
-                    self.encoded
-                        .extend_from_slice(&block.frequencies_hz[cell].to_le_bytes());
-                    for corr in 0..self.plan.correlations {
-                        let sample = cell * self.plan.correlations + corr;
-                        for value in [
-                            block.values[sample].re,
-                            block.values[sample].im,
-                            block.weights[sample],
-                        ] {
-                            self.encoded.extend_from_slice(&value.to_le_bytes());
+            for block in parts {
+                for row in 0..block.metadata.len() {
+                    for channel in self.plan.tile(tile) {
+                        let cell = row * self.plan.channels + channel;
+                        self.encoded
+                            .extend_from_slice(&block.frequencies_hz[cell].to_le_bytes());
+                        for corr in 0..self.plan.correlations {
+                            let sample = cell * self.plan.correlations + corr;
+                            for value in [
+                                block.values[sample].re,
+                                block.values[sample].im,
+                                block.weights[sample],
+                            ] {
+                                self.encoded.extend_from_slice(&value.to_le_bytes());
+                            }
+                            self.encoded.push(u8::from(block.flags[sample]));
+                            self.encoded.push(u8::from(block.weight_flags[sample]));
                         }
-                        self.encoded.push(u8::from(block.flags[sample]));
-                        self.encoded.push(u8::from(block.weight_flags[sample]));
                     }
                 }
             }

@@ -1,35 +1,31 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! Single bounded conversion at the existing weighted callback boundary.
-//! Terminal source authority remains with WeightingReplayCompletion; this owner
-//! guarantees ordered complete consumption into the native file and band support.
+//! Ordered, zero-copy handoff from worker-owned native rows to the store.
+//! Source traversal completion remains with the existing weighting I/O fence.
 
 use super::input::{NativeStore, NativeStoreWriter, StorePlan};
 use crate::{
-    ManagedSpillStorage, WeightingExecutionState, WeightingPlanFragment, WeightingStreamingMode,
-    WorkExecutionContext,
+    ManagedSpillStorage, WeightingExecutionState, WeightingPlanFragment, WorkExecutionContext,
 };
-use casa_imaging_model::{CompiledProblem, FiniteValuePolicy, MeasurementSetReadAccess};
+use casa_imaging_model::{CompiledProblem, MeasurementSetReadAccess};
 use casa_imaging_reconstruction::{
-    WeightingReplayChunk, WeightingReplaySummary,
-    runtime_adapter::{BandPlan, NativeBlock, NativeInput, NativeLayout},
+    WeightingReplaySummary,
+    runtime_adapter::{BandPlan, NativeBlock, NativeLayout},
 };
 use std::{io, time::Instant};
 
 pub(super) struct NativePreparation<'a> {
-    input: Option<NativeInput>,
+    layout: Option<NativeLayout>,
     source: &'a MeasurementSetReadAccess,
     plan: StorePlan,
-    finite_values: FiniteValuePolicy,
     writer: NativeStoreWriter,
     bands: Vec<BandPlan>,
     output_hz: &'a [f64],
-    blocks: u64,
-    samples: u64,
+    rows: u64,
+    previous_row: Option<u64>,
     failed: bool,
-    callback_nanos: u64,
-    support_nanos: u64,
-    write_nanos: u64,
+    support_nanos: u128,
+    write_nanos: u128,
     pair_visits: u64,
 }
 
@@ -40,9 +36,6 @@ pub(super) struct PreparedNative {
 }
 
 impl<'a> NativePreparation<'a> {
-    /// Execute the admitted selected-source traversal. This returns only a
-    /// prepared store: replay completion still belongs to the scheduler's I/O
-    /// fence callback, and band results cannot enter reconciliation before it.
     pub(super) fn traverse(
         mut self,
         context: WorkExecutionContext<'_>,
@@ -51,18 +44,13 @@ impl<'a> NativePreparation<'a> {
         selected: casa_ms::BoundSelectedObservation,
         weighting: &mut WeightingExecutionState,
     ) -> io::Result<PreparedNative> {
-        if fragment.streaming_mode() != Some(WeightingStreamingMode::NaturalInitial) {
-            return Err(io::Error::other(
-                "native cube preparation requires natural weighting",
-            ));
-        }
         weighting
-            .traverse_initial_bounded_stream(
+            .traverse_native_initial_stream(
                 context,
                 fragment,
                 problem,
-                Some(selected),
-                |chunk, _| self.consume(chunk),
+                selected,
+                |parts, layout| self.consume(parts, layout),
             )
             .map_err(io::Error::other)?;
         let (replay, _, _) = weighting.pending_replay_inputs().ok_or_else(|| {
@@ -71,8 +59,6 @@ impl<'a> NativePreparation<'a> {
         self.finish(replay)
     }
 
-    /// The caller admits this plan's flat block/encoding arena together with
-    /// the weighted source chunk, band plans and other live preparation owners.
     pub(super) fn new(
         storage: &ManagedSpillStorage,
         plan: StorePlan,
@@ -100,9 +86,10 @@ impl<'a> NativePreparation<'a> {
             || spw.channel_indices().len() != plan.channels
             || pol.products().len() != plan.correlations
             || output_hz.len() != problem.geometry().spectral().output_channels()
-            || output_hz.iter().enumerate().any(|(index, hz)| {
-                problem.geometry().spectral().channel_centre_hz(index) != Some(*hz)
-            })
+            || output_hz
+                .iter()
+                .enumerate()
+                .any(|(i, hz)| problem.geometry().spectral().channel_centre_hz(i) != Some(*hz))
             || bands[0].core().start != 0
             || bands
                 .last()
@@ -116,143 +103,107 @@ impl<'a> NativePreparation<'a> {
             ));
         }
         Ok(Self {
-            input: None,
+            layout: None,
             source,
             plan,
-            finite_values: problem.numerics().finite_values(),
             writer: NativeStoreWriter::create(storage, plan)?,
             bands,
             output_hz,
-            blocks: 0,
-            samples: 0,
+            rows: 0,
+            previous_row: None,
             failed: false,
-            callback_nanos: 0,
             support_nanos: 0,
             write_nanos: 0,
             pair_visits: 0,
         })
     }
 
-    pub(super) fn consume(&mut self, chunk: &WeightingReplayChunk) -> io::Result<()> {
-        let started = Instant::now();
+    pub(super) fn consume(
+        &mut self,
+        parts: &[&NativeBlock],
+        layout: &NativeLayout,
+    ) -> io::Result<()> {
         if self.failed {
             return Err(io::Error::other("native preparation failed earlier"));
         }
         self.failed = true;
-        if chunk.sequence() != self.blocks || chunk.samples().is_empty() {
-            return Err(io::Error::other("native preparation chunk order mismatch"));
-        }
-        if self.input.is_none() {
-            let address = chunk.samples()[0].selected().address();
-            let selection = self.source.selection();
-            let dd = selection.data_descriptions()[0];
-            if address.measurement_set != self.source.measurement_set()
-                || u32::try_from(address.data_description_id).ok() != Some(dd.data_description_id())
-                || address.spectral_window_id != dd.spectral_window_id()
-                || address.polarization_id != dd.polarization_id()
-            {
-                return Err(io::Error::other(
-                    "native input does not match selected source",
-                ));
-            }
-            let layout = NativeLayout::new(
-                address,
-                selection.spectral_windows()[0].channel_indices().to_vec(),
-                selection.correlations()[0]
+        let selection = self.source.selection();
+        let dd = selection.data_descriptions()[0];
+        let address = layout.address;
+        if address.measurement_set != self.source.measurement_set()
+            || u32::try_from(address.data_description_id).ok() != Some(dd.data_description_id())
+            || address.spectral_window_id != dd.spectral_window_id()
+            || address.polarization_id != dd.polarization_id()
+            || layout.channels != selection.spectral_windows()[0].channel_indices()
+            || !layout
+                .correlations
+                .iter()
+                .copied()
+                .eq(selection.correlations()[0]
                     .products()
                     .iter()
-                    .map(|product| (product.correlation_index(), product.correlation_type()))
-                    .collect(),
-            )?;
-            self.input = Some(NativeInput::new(
-                layout,
-                NativeBlock::new(
-                    self.plan.block_rows,
-                    self.plan.channels,
-                    self.plan.correlations,
-                )?,
-                self.finite_values,
-            )?);
+                    .map(|c| (c.correlation_index(), c.correlation_type())))
+        {
+            return Err(io::Error::other(
+                "native input does not match selected source",
+            ));
         }
-        let Self {
-            input,
-            writer,
-            bands,
-            output_hz,
-            support_nanos,
-            write_nanos,
-            pair_visits,
-            ..
-        } = self;
-        input
-            .as_mut()
-            .expect("initialized above")
-            .push(chunk.samples(), |block| {
-                let started = Instant::now();
-                *pair_visits +=
-                    BandPlan::observe_all(bands, block, output_hz).map_err(io::Error::other)?;
-                *support_nanos += started.elapsed().as_nanos() as u64;
-                let started = Instant::now();
-                let result = writer.append(block);
-                *write_nanos += started.elapsed().as_nanos() as u64;
-                result
-            })?;
-        self.samples = self
-            .samples
-            .checked_add(chunk.samples().len() as u64)
-            .ok_or_else(|| io::Error::other("native preparation sample count overflow"))?;
-        self.blocks = self
-            .blocks
-            .checked_add(1)
-            .ok_or_else(|| io::Error::other("native preparation block count overflow"))?;
+        for block in parts {
+            for row in &block.metadata {
+                if self
+                    .previous_row
+                    .is_some_and(|previous| row.physical_row <= previous)
+                {
+                    return Err(io::Error::other("native input row order mismatch"));
+                }
+                self.previous_row = Some(row.physical_row);
+            }
+            let started = Instant::now();
+            self.pair_visits += BandPlan::observe_all(&mut self.bands, block, self.output_hz)
+                .map_err(io::Error::other)?;
+            self.support_nanos += started.elapsed().as_nanos();
+            self.rows = self
+                .rows
+                .checked_add(block.metadata.len() as u64)
+                .ok_or_else(|| io::Error::other("native row count overflow"))?;
+        }
+        let started = Instant::now();
+        self.writer.append_parts(parts)?;
+        self.write_nanos += started.elapsed().as_nanos();
+        if self.layout.is_none() {
+            self.layout = Some(layout.clone());
+        }
         self.failed = false;
-        self.callback_nanos += started.elapsed().as_nanos() as u64;
         Ok(())
     }
 
     pub(super) fn finish(self, replay: &WeightingReplaySummary) -> io::Result<PreparedNative> {
         if self.failed
-            || self.samples != replay.sample_count()
-            || self.blocks != replay.block_count()
+            || self.rows != self.plan.rows
+            || self
+                .rows
+                .checked_mul(self.plan.channels as u64)
+                .and_then(|n| n.checked_mul(self.plan.correlations as u64))
+                != Some(replay.sample_count())
         {
             return Err(io::Error::other(
-                "native preparation did not consume the complete weighted replay",
+                "native preparation did not consume the complete source",
             ));
         }
-        let Self {
-            input,
-            mut writer,
-            mut bands,
-            output_hz,
-            mut callback_nanos,
-            mut support_nanos,
-            mut write_nanos,
-            mut pair_visits,
-            ..
-        } = self;
-        let started = Instant::now();
-        let (_, layout) = input
-            .ok_or_else(|| io::Error::other("native preparation is empty"))?
-            .finish(|block| {
-                let started = Instant::now();
-                pair_visits += BandPlan::observe_all(&mut bands, block, output_hz)
-                    .map_err(io::Error::other)?;
-                support_nanos += started.elapsed().as_nanos() as u64;
-                let started = Instant::now();
-                let result = writer.append(block);
-                write_nanos += started.elapsed().as_nanos() as u64;
-                result
-            })?;
-        callback_nanos += started.elapsed().as_nanos() as u64;
         eprintln!(
-            "streaming_cube_preparation callback_inclusive_nanos={callback_nanos} support_nanos={support_nanos} write_nanos={write_nanos} pair_visits={pair_visits} coverage_bytes={} coverage_hash_calls={}",
+            "streaming_cube_preparation support_nanos={} write_nanos={} pair_visits={} coverage_bytes={} coverage_hash_calls={}",
+            self.support_nanos,
+            self.write_nanos,
+            self.pair_visits,
             replay.coverage_proof_bytes(),
-            replay.coverage_proof_hash_calls(),
+            replay.coverage_proof_hash_calls()
         );
         Ok(PreparedNative {
-            store: writer.finish()?,
-            bands,
-            layout,
+            store: self.writer.finish()?,
+            bands: self.bands,
+            layout: self
+                .layout
+                .ok_or_else(|| io::Error::other("native preparation is empty"))?,
         })
     }
 }
